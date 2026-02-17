@@ -124,9 +124,62 @@ const v003_audit_api_key: Migration = {
   ],
 };
 
+/** v004: 认知记忆扩展 */
+const v004_cognitive_memory: Migration = {
+  version: 'v004',
+  description: '认知记忆扩展',
+  sql: [
+    'ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS access_count INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS decay_lambda DOUBLE PRECISION NOT NULL DEFAULT 0.0001',
+    'ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS last_decayed_at BIGINT NOT NULL DEFAULT 0',
+    'ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS consolidated_from TEXT REFERENCES memory_nodes(id) ON DELETE SET NULL',
+    `CREATE TABLE IF NOT EXISTS working_memory (
+      memory_id TEXT PRIMARY KEY REFERENCES memory_nodes(id) ON DELETE CASCADE,
+      score DOUBLE PRECISION NOT NULL,
+      entered_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_working_memory_score ON working_memory(score)',
+    'CREATE INDEX IF NOT EXISTS idx_memory_nodes_salience ON memory_nodes(salience)',
+    'CREATE INDEX IF NOT EXISTS idx_memory_nodes_kind_access ON memory_nodes(kind, access_count)',
+  ],
+};
+
+/** v005: P-OS v0.1 人格模型（L0/L2/L3） */
+const v005_personality_os: Migration = {
+  version: 'v005',
+  description: 'P-OS v0.1 人格模型',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS survival_anchors (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('constraint', 'threshold', 'must_have')),
+    value_json TEXT NOT NULL,
+    severity INTEGER NOT NULL CHECK(severity >= 1 AND severity <= 5),
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+    'CREATE INDEX IF NOT EXISTS idx_survival_anchors_kind ON survival_anchors(kind)',
+    'CREATE INDEX IF NOT EXISTS idx_survival_anchors_severity ON survival_anchors(severity)',
+
+    `CREATE TABLE IF NOT EXISTS decision_style (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    style_json TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+
+    `CREATE TABLE IF NOT EXISTS cognitive_model (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    model_json TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
   v002_audit_log,
   v003_audit_api_key,
+  v004_cognitive_memory,
+  v005_personality_os,
 ];

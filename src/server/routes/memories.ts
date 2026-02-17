@@ -4,7 +4,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
-import { CreateMemorySchema, LinkMemorySchema } from '../schemas/api-schemas.js';
+import { CreateMemorySchema, LinkMemorySchema, RelatedMemoryQuerySchema } from '../schemas/api-schemas.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { parsePagination, paginate } from '../plugins/pagination.js';
 
@@ -28,7 +28,6 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS): v
   /* POST /api/v1/memories/link — 关联记忆 */
   app.post('/api/v1/memories/link', async (request) => {
     const body = LinkMemorySchema.parse(request.body);
-    /* 验证 source 和 target 存在，避免 FK 违约冒泡为 500 */
     if (!os.core.memories.getMemory(body.source)) {
       throw new NotFoundError(`记忆节点 ${body.source} 不存在`, ErrorCode.NOT_FOUND_MEMORY);
     }
@@ -37,5 +36,49 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS): v
     }
     const edge = os.core.linkMemories(body.source, body.target, body.relation, body.strength);
     return { data: edge };
+  });
+
+  /* POST /api/v1/memories/decay — 触发全量衰减 */
+  app.post('/api/v1/memories/decay', async () => {
+    const decayed = os.core.runMemoryDecay();
+    return { data: { decayed, count: decayed.length } };
+  });
+
+  /* POST /api/v1/memories/consolidate — 触发记忆固化 */
+  app.post('/api/v1/memories/consolidate', async () => {
+    const consolidated = os.core.runConsolidation();
+    return { data: { consolidated, count: consolidated.length } };
+  });
+
+  /* GET /api/v1/memories/working-set — 获取工作记忆 */
+  app.get('/api/v1/memories/working-set', async () => {
+    const slots = os.core.getWorkingMemory();
+    return { data: slots };
+  });
+
+  /* GET /api/v1/memories/:id/related — 获取相关记忆 */
+  app.get('/api/v1/memories/:id/related', async (request) => {
+    const { id } = request.params as { id: string };
+    const query = request.query as Record<string, unknown>;
+    const { depth } = RelatedMemoryQuerySchema.parse(query);
+
+    if (!os.core.memories.getMemory(id)) {
+      throw new NotFoundError(`记忆节点 ${id} 不存在`, ErrorCode.NOT_FOUND_MEMORY);
+    }
+
+    const related = os.core.memories.getRelatedMemories(id, depth);
+    return { data: related };
+  });
+
+  /* POST /api/v1/memories/:id/activate — 触发扩散激活 */
+  app.post('/api/v1/memories/:id/activate', async (request) => {
+    const { id } = request.params as { id: string };
+
+    if (!os.core.memories.getMemory(id)) {
+      throw new NotFoundError(`记忆节点 ${id} 不存在`, ErrorCode.NOT_FOUND_MEMORY);
+    }
+
+    const results = os.core.activateMemory(id);
+    return { data: { activations: results, count: results.length } };
   });
 }

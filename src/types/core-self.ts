@@ -3,6 +3,8 @@
  * 维护稳定的记忆、叙事和核心价值权重
  */
 
+import type { SurvivalAnchor, DecisionStyle, CognitiveModel } from './personality-os.js';
+
 /** 价值维度唯一标识 */
 export type ValueId = string;
 
@@ -33,6 +35,14 @@ export interface MemoryNode {
   salience: number;
   readonly createdAt: number;
   lastAccessedAt: number;
+  /** 访问次数 */
+  accessCount: number;
+  /** 当前衰减速率 λ */
+  decayLambda: number;
+  /** 上次衰减时间戳 */
+  lastDecayedAt: number;
+  /** 若为固化产物，指向原始 episodic 记忆 */
+  consolidatedFrom: MemoryId | null;
 }
 
 /** 记忆边：两个记忆节点间的关联 */
@@ -44,6 +54,50 @@ export interface MemoryEdge {
   readonly relation: string;
 }
 
+/** 工作记忆槽位 */
+export interface WorkingMemorySlot {
+  readonly memoryId: MemoryId;
+  score: number;
+  enteredAt: number;
+}
+
+/** 扩散激活结果 */
+export interface ActivationResult {
+  readonly memoryId: MemoryId;
+  readonly delta: number;
+  readonly path: readonly MemoryId[];
+}
+
+/** 记忆固化结果 */
+export interface ConsolidationResult {
+  readonly originalId: MemoryId;
+  readonly consolidatedId: MemoryId;
+  readonly newKind: 'semantic';
+}
+
+/** 认知记忆配置 */
+export interface MemoryCognitionConfig {
+  readonly decay: {
+    readonly baseLambda: number;
+    readonly valenceWeight: number;
+    readonly accessBoost: number;
+    readonly kindFactors: Readonly<Record<MemoryKind, number>>;
+  };
+  readonly activation: {
+    readonly baseActivation: number;
+    readonly damping: number;
+    readonly maxDepth: number;
+  };
+  readonly workingMemory: {
+    readonly capacity: number;
+    readonly recencyDecay: number;
+  };
+  readonly consolidation: {
+    readonly accessThreshold: number;
+    readonly minSalience: number;
+  };
+}
+
 /** 核心自我状态快照 */
 export interface CoreSelfState {
   readonly values: ReadonlyMap<ValueId, CoreValue>;
@@ -51,5 +105,9 @@ export interface CoreSelfState {
   readonly edges: readonly MemoryEdge[];
   /** 叙事摘要：当前自我认知的文本表示 */
   readonly narrative: string;
+  /** P-OS v0.1 扩展层 */
+  readonly survivalAnchors: readonly SurvivalAnchor[];
+  readonly decisionStyle: DecisionStyle;
+  readonly cognitiveModel: CognitiveModel;
   readonly updatedAt: number;
 }

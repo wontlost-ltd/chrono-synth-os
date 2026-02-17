@@ -1,9 +1,10 @@
 export { ChronoSynthOS } from './chrono-synth-os.js';
 export type { ChronoSynthOSConfig } from './chrono-synth-os.js';
 
-export { CoreRhythmLayer, ValueStore, MemoryGraph, NarrativeStore } from './core/index.js';
+export { CoreRhythmLayer, ValueStore, CognitiveMemoryGraph, CognitiveMemoryGraph as MemoryGraph, NarrativeStore, DEFAULT_COGNITION_CONFIG, SurvivalAnchorStore, DecisionStyleStore, DEFAULT_DECISION_STYLE, CognitiveModelStore } from './core/index.js';
 export { AcceleratedLayer, PersonaEngine, SimulationRunner } from './accelerated/index.js';
 export { MetaRegulationLayer, ConflictResolver, IntegrationEngine, ResourceAllocator } from './meta/index.js';
+export { compilePersonaState, summarizeForPrompt } from './intelligence/index.js';
 export { SnapshotStore, EvolutionMerger } from './recovery/index.js';
 export { EventBus, TypedEventEmitter } from './events/index.js';
 export { SqliteDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';

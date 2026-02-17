@@ -6,7 +6,19 @@ export type {
   MemoryNode,
   MemoryEdge,
   CoreSelfState,
+  WorkingMemorySlot,
+  ActivationResult,
+  ConsolidationResult,
+  MemoryCognitionConfig,
 } from './core-self.js';
+
+export type {
+  SurvivalAnchorKind,
+  SurvivalAnchor,
+  DecisionStyle,
+  CognitiveModel,
+  PersonaOSState,
+} from './personality-os.js';
 
 export type {
   PersonaVersionId,

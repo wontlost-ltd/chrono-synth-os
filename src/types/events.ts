@@ -3,7 +3,8 @@
  * 所有层间通信通过事件总线完成
  */
 
-import type { CoreValue, MemoryNode } from './core-self.js';
+import type { CoreValue, MemoryNode, ActivationResult, ConsolidationResult, WorkingMemorySlot } from './core-self.js';
+import type { SurvivalAnchor, DecisionStyle, CognitiveModel } from './personality-os.js';
 import type { PersonaVersion, PersonaStatus, SimulationResult } from './persona-version.js';
 import type { Conflict, IntegrationProposal, ResourceAllocation } from './meta-regulation.js';
 import type { SystemSnapshot } from './snapshot.js';
@@ -15,6 +16,13 @@ export interface SystemEventMap {
   'core:memory-added': { memory: MemoryNode };
   'core:memory-accessed': { memoryId: string };
   'core:narrative-changed': { narrative: string; previousNarrative: string };
+  'core:survival-updated': { anchor: SurvivalAnchor };
+  'core:decision-style-updated': { style: DecisionStyle };
+  'core:cognitive-model-updated': { model: CognitiveModel };
+  'core:memory-decayed': { memoryId: string; oldSalience: number; newSalience: number };
+  'core:memory-activated': { sourceId: string; results: readonly ActivationResult[] };
+  'core:memory-consolidated': { result: ConsolidationResult };
+  'core:working-memory-updated': { slots: readonly WorkingMemorySlot[] };
 
   /* 加速认知层事件 */
   'persona:created': { persona: PersonaVersion };

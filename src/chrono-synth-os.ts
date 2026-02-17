@@ -14,6 +14,7 @@ import { type IDatabase, createMemoryDatabase, runMigrations } from './storage/i
 import type { SystemSnapshot } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
 import type { AllocationStrategy } from './types/meta-regulation.js';
+import type { MemoryCognitionConfig } from './types/core-self.js';
 import { type Clock, realClock } from './utils/clock.js';
 import { ConsoleLogger, type Logger } from './utils/logger.js';
 import { generatePrefixedId } from './utils/id-generator.js';
@@ -26,6 +27,8 @@ export interface ChronoSynthOSConfig {
   logger?: Logger;
   integrationConfig?: Partial<IntegrationConfig>;
   evaluator?: EvaluatorFn;
+  /** 认知记忆配置 */
+  cognitionConfig?: Partial<MemoryCognitionConfig>;
   /** 跳过迁移（当数据库已由 createDatabase() 工厂初始化时设为 true） */
   skipMigrations?: boolean;
 }
@@ -58,7 +61,7 @@ export class ChronoSynthOS {
     this.bus = new EventBus();
 
     /* 初始化三层 */
-    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger);
+    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig);
     this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator);
     this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig);
 
@@ -120,6 +123,11 @@ export class ChronoSynthOS {
 
         /* 恢复叙事（直接写入，不触发事件） */
         this.core.narrative.set(snapshot.coreSelf.narrative);
+
+        /* 恢复 P-OS 层 */
+        this.core.restoreSurvivalAnchors(snapshot.coreSelf.survivalAnchors);
+        this.core.restoreDecisionStyle(snapshot.coreSelf.decisionStyle);
+        this.core.restoreCognitiveModel(snapshot.coreSelf.cognitiveModel);
 
         /* 恢复人格版本 */
         this.accelerated.restorePersonas(snapshot.personas);
@@ -190,6 +198,15 @@ export class ChronoSynthOS {
     const result = this.accelerated.runSimulation(persona.id, scenario);
 
     return { personaId: persona.id, fitnessScore: result.fitnessScore };
+  }
+
+  /** 运行认知周期：固化 → 衰减 → 刷新工作记忆 */
+  runCognitionCycle(): { decayedCount: number; consolidatedCount: number } {
+    /* 先固化（基于当前显著性判断），再衰减（应用遗忘），最后刷新工作记忆 */
+    const consolidated = this.core.runConsolidation();
+    const decayed = this.core.runMemoryDecay();
+    this.core.refreshWorkingMemory();
+    return { decayedCount: decayed.length, consolidatedCount: consolidated.length };
   }
 
   /** 停止系统（幂等） */

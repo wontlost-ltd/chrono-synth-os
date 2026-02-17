@@ -23,6 +23,15 @@ describe('SnapshotStore', () => {
         memories: new Map(),
         edges: [],
         narrative: '测试叙事',
+        survivalAnchors: [],
+        decisionStyle: {
+          riskAppetite: 0.5, timeHorizon: 0.5, explorationBias: 0.3,
+          lossAversion: 2.0, deliberationDepth: 3, regretSensitivity: 0.5, updatedAt: 0,
+        },
+        cognitiveModel: {
+          beliefs: new Map(), biasWeights: new Map(),
+          attributionStyle: 0.5, growthMindset: 0.5, updatedAt: 0,
+        },
         updatedAt: createdAt,
       },
       personas: [],

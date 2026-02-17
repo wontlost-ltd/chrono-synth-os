@@ -365,6 +365,122 @@ describe('API 集成测试', () => {
     });
   });
 
+  describe('P-OS 人格操作系统', () => {
+    it('POST /api/v1/pos/survival 创建生存锚点', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/pos/survival',
+        payload: { label: '风险底线', kind: 'threshold', value: 0.2, severity: 4 },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.data.id.startsWith('anchor_'));
+      assert.equal(body.data.kind, 'threshold');
+      assert.equal(body.data.severity, 4);
+    });
+
+    it('GET /api/v1/pos/survival 列出锚点', async () => {
+      os.core.addSurvivalAnchor('底线', 'constraint', null, 5);
+      const res = await app.inject({ method: 'GET', url: '/api/v1/pos/survival' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.length, 1);
+    });
+
+    it('PATCH /api/v1/pos/survival/:id 更新锚点', async () => {
+      const anchor = os.core.addSurvivalAnchor('底线', 'constraint', null, 3);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/pos/survival/${anchor.id}`,
+        payload: { severity: 5 },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.severity, 5);
+    });
+
+    it('DELETE /api/v1/pos/survival/:id 删除锚点', async () => {
+      const anchor = os.core.addSurvivalAnchor('临时', 'must_have', true, 1);
+      const res = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/pos/survival/${anchor.id}`,
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.deleted, true);
+    });
+
+    it('PATCH /api/v1/pos/survival/:id 不存在返回 404', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/v1/pos/survival/nonexistent',
+        payload: { severity: 1 },
+      });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('GET /api/v1/pos/decision-style 获取决策风格', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/pos/decision-style' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(typeof body.data.riskAppetite, 'number');
+      assert.equal(typeof body.data.deliberationDepth, 'number');
+    });
+
+    it('PUT /api/v1/pos/decision-style 设置决策风格', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/pos/decision-style',
+        payload: { riskAppetite: 0.1, lossAversion: 3.0 },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.riskAppetite, 0.1);
+      assert.equal(body.data.lossAversion, 3.0);
+    });
+
+    it('GET /api/v1/pos/cognitive-model 获取认知模型', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/pos/cognitive-model' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(typeof body.data.attributionStyle, 'number');
+    });
+
+    it('PUT /api/v1/pos/cognitive-model 设置认知模型', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/pos/cognitive-model',
+        payload: { beliefs: { '努力有回报': 0.8 }, growthMindset: 0.9 },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.beliefs['努力有回报'], 0.8);
+      assert.equal(body.data.growthMindset, 0.9);
+    });
+
+    it('GET /api/v1/pos/state 获取完整五层状态', async () => {
+      os.core.addValue('诚实', 0.8);
+      os.core.addSurvivalAnchor('底线', 'constraint', null, 5);
+      const res = await app.inject({ method: 'GET', url: '/api/v1/pos/state' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(Array.isArray(body.data.L0));
+      assert.ok(Array.isArray(body.data.L1));
+      assert.ok(body.data.L2);
+      assert.ok(body.data.L3);
+      assert.ok(body.data.L4);
+    });
+
+    it('GET /api/v1/pos/state/summary 获取提示词摘要', async () => {
+      os.core.addValue('诚实', 0.8);
+      os.core.updateNarrative('测试叙事');
+      const res = await app.inject({ method: 'GET', url: '/api/v1/pos/state/summary' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.ok(body.data.summary.includes('诚实'));
+    });
+  });
+
   describe('错误处理', () => {
     it('域层 RangeError 映射为 400', async () => {
       const res = await app.inject({

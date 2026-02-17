@@ -31,6 +31,7 @@ import { registerConflictRoutes } from './routes/conflicts.js';
 import { registerMetricsRoutes } from './routes/metrics.js';
 import { registerDocsRoutes } from './routes/docs.js';
 import { registerAuditRoutes } from './routes/audit.js';
+import { registerPosRoutes } from './routes/pos.js';
 
 export interface CreateAppDeps {
   os: ChronoSynthOS;
@@ -76,6 +77,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerConflictRoutes(app, deps.os);
   registerMetricsRoutes(app, deps.os);
   registerAuditRoutes(app, deps.db);
+  registerPosRoutes(app, deps.os);
   registerDocsRoutes(app);
 
   return app;

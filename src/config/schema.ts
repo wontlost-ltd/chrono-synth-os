@@ -54,6 +54,39 @@ const authSchema = z.object({
   apiKeys: z.array(z.string()).default([]),
 });
 
+const cognitionDecaySchema = z.object({
+  baseLambda: z.coerce.number().min(0).default(0.0001),
+  valenceWeight: z.coerce.number().min(0).max(1).default(0.3),
+  accessBoost: z.coerce.number().min(0).default(0.5),
+  kindFactors: z.object({
+    episodic: z.coerce.number().min(0).default(1.0),
+    semantic: z.coerce.number().min(0).default(0.5),
+    procedural: z.coerce.number().min(0).default(0.3),
+  }).default({ episodic: 1.0, semantic: 0.5, procedural: 0.3 }),
+}).default({ baseLambda: 0.0001, valenceWeight: 0.3, accessBoost: 0.5, kindFactors: { episodic: 1.0, semantic: 0.5, procedural: 0.3 } });
+
+const cognitionSchema = z.object({
+  decay: cognitionDecaySchema,
+  activation: z.object({
+    baseActivation: z.coerce.number().min(0).max(1).default(0.1),
+    damping: z.coerce.number().min(0).default(0.5),
+    maxDepth: z.coerce.number().int().min(1).max(5).default(2),
+  }).default({ baseActivation: 0.1, damping: 0.5, maxDepth: 2 }),
+  workingMemory: z.object({
+    capacity: z.coerce.number().int().min(1).max(20).default(7),
+    recencyDecay: z.coerce.number().min(0).default(0.0001),
+  }).default({ capacity: 7, recencyDecay: 0.0001 }),
+  consolidation: z.object({
+    accessThreshold: z.coerce.number().int().min(1).default(5),
+    minSalience: z.coerce.number().min(0).max(1).default(0.3),
+  }).default({ accessThreshold: 5, minSalience: 0.3 }),
+}).default({
+  decay: { baseLambda: 0.0001, valenceWeight: 0.3, accessBoost: 0.5, kindFactors: { episodic: 1.0, semantic: 0.5, procedural: 0.3 } },
+  activation: { baseActivation: 0.1, damping: 0.5, maxDepth: 2 },
+  workingMemory: { capacity: 7, recencyDecay: 0.0001 },
+  consolidation: { accessThreshold: 5, minSalience: 0.3 },
+});
+
 const requestSchema = z.object({
   timeoutMs: z.coerce.number().int().min(0).default(30_000),
   maxBodyBytes: z.coerce.number().int().min(1024).default(1_048_576),
@@ -69,6 +102,7 @@ export const AppConfigSchema = z.object({
   cors: corsSchema.default({ origin: false, credentials: false }),
   auth: authSchema.default({ enabled: false, apiKeys: [] }),
   request: requestSchema.default({ timeoutMs: 30_000, maxBodyBytes: 1_048_576 }),
+  cognition: cognitionSchema,
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -98,6 +132,16 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_AUTH_API_KEYS:           (v) => { deepSet(env, 'auth.apiKeys', v.split(',')); },
     CHRONO_REQUEST_TIMEOUT_MS:      (v) => { deepSet(env, 'request.timeoutMs', parseInt(v, 10)); },
     CHRONO_REQUEST_MAX_BODY_BYTES:  (v) => { deepSet(env, 'request.maxBodyBytes', parseInt(v, 10)); },
+    CHRONO_COGNITION_DECAY_BASE_LAMBDA:     (v) => { deepSet(env, 'cognition.decay.baseLambda', parseFloat(v)); },
+    CHRONO_COGNITION_DECAY_VALENCE_WEIGHT:  (v) => { deepSet(env, 'cognition.decay.valenceWeight', parseFloat(v)); },
+    CHRONO_COGNITION_DECAY_ACCESS_BOOST:    (v) => { deepSet(env, 'cognition.decay.accessBoost', parseFloat(v)); },
+    CHRONO_COGNITION_ACTIVATION_BASE:       (v) => { deepSet(env, 'cognition.activation.baseActivation', parseFloat(v)); },
+    CHRONO_COGNITION_ACTIVATION_DAMPING:    (v) => { deepSet(env, 'cognition.activation.damping', parseFloat(v)); },
+    CHRONO_COGNITION_ACTIVATION_MAX_DEPTH:  (v) => { deepSet(env, 'cognition.activation.maxDepth', parseInt(v, 10)); },
+    CHRONO_COGNITION_WM_CAPACITY:           (v) => { deepSet(env, 'cognition.workingMemory.capacity', parseInt(v, 10)); },
+    CHRONO_COGNITION_WM_RECENCY_DECAY:      (v) => { deepSet(env, 'cognition.workingMemory.recencyDecay', parseFloat(v)); },
+    CHRONO_COGNITION_CONSOLIDATION_THRESHOLD: (v) => { deepSet(env, 'cognition.consolidation.accessThreshold', parseInt(v, 10)); },
+    CHRONO_COGNITION_CONSOLIDATION_MIN_SALIENCE: (v) => { deepSet(env, 'cognition.consolidation.minSalience', parseFloat(v)); },
   };
 
   for (const [key, setter] of Object.entries(mapping)) {

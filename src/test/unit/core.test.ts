@@ -58,17 +58,21 @@ describe('CoreRhythmLayer', () => {
       const m = core.addMemory('episodic', '第一次编程', 0.8, 0.9);
       assert.equal(m.kind, 'episodic');
       assert.equal(m.content, '第一次编程');
+      assert.equal(m.accessCount, 0);
+      assert.ok(m.decayLambda > 0);
+      assert.equal(m.consolidatedFrom, null);
 
       const state = core.getState();
       assert.equal(state.memories.size, 1);
     });
 
-    it('访问记忆更新时间戳', () => {
+    it('访问记忆更新时间戳和访问计数', () => {
       const m = core.addMemory('semantic', '知识片段', 0.3, 0.5);
       clock.advance(500);
       const accessed = core.accessMemory(m.id);
       assert.ok(accessed);
       assert.equal(accessed!.lastAccessedAt, 1500);
+      assert.equal(accessed!.accessCount, 1);
     });
 
     it('关联记忆', () => {

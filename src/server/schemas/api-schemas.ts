@@ -29,6 +29,11 @@ export const LinkMemorySchema = z.object({
   strength: z.number().min(0).max(1),
 });
 
+/* 认知记忆 */
+export const RelatedMemoryQuerySchema = z.object({
+  depth: z.coerce.number().int().min(1).max(5).default(2),
+});
+
 /* 叙事管理 */
 export const UpdateNarrativeSchema = z.object({
   content: z.string().min(1),
@@ -66,4 +71,37 @@ export const RunRegulationSchema = z.object({
 /* 冲突管理 */
 export const ResolveConflictSchema = z.object({
   resolution: z.string().min(1),
+});
+
+/* P-OS 生存锚点 */
+export const CreateSurvivalAnchorSchema = z.object({
+  label: z.string().min(1),
+  kind: z.enum(['constraint', 'threshold', 'must_have']),
+  value: z.unknown().default(null),
+  severity: z.number().int().min(1).max(5),
+});
+
+export const UpdateSurvivalAnchorSchema = z.object({
+  label: z.string().min(1).optional(),
+  kind: z.enum(['constraint', 'threshold', 'must_have']).optional(),
+  value: z.unknown().optional(),
+  severity: z.number().int().min(1).max(5).optional(),
+});
+
+/* P-OS 决策风格 */
+export const UpdateDecisionStyleSchema = z.object({
+  riskAppetite: z.number().min(0).max(1).optional(),
+  timeHorizon: z.number().min(0).max(1).optional(),
+  explorationBias: z.number().min(0).max(1).optional(),
+  lossAversion: z.number().min(1).optional(),
+  deliberationDepth: z.number().int().min(1).max(5).optional(),
+  regretSensitivity: z.number().min(0).max(1).optional(),
+});
+
+/* P-OS 认知模型 */
+export const UpdateCognitiveModelSchema = z.object({
+  beliefs: z.record(z.string(), z.number().min(0).max(1)).optional(),
+  biasWeights: z.record(z.string(), z.number().min(0).max(1)).optional(),
+  attributionStyle: z.number().min(0).max(1).optional(),
+  growthMindset: z.number().min(0).max(1).optional(),
 });

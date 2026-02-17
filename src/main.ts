@@ -21,6 +21,7 @@ const os = new ChronoSynthOS({
     minFitness: config.integration.fitnessThreshold,
     minConfidence: config.integration.confidenceThreshold,
   },
+  cognitionConfig: config.cognition,
   skipMigrations: true,
 });
 
