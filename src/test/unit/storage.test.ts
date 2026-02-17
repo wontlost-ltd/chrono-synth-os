@@ -28,18 +28,14 @@ describe('SqliteDatabase', () => {
   });
 
   it('migrations 创建所有表', () => {
-    const tables = db.prepare<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-    ).all().map(r => r.name);
-
-    assert.ok(tables.includes('core_values'));
-    assert.ok(tables.includes('memory_nodes'));
-    assert.ok(tables.includes('memory_edges'));
-    assert.ok(tables.includes('narrative'));
-    assert.ok(tables.includes('persona_versions'));
-    assert.ok(tables.includes('conflicts'));
-    assert.ok(tables.includes('snapshots'));
-    assert.ok(tables.includes('evolution_records'));
+    const expectedTables = [
+      'core_values', 'memory_nodes', 'memory_edges', 'narrative',
+      'persona_versions', 'conflicts', 'snapshots', 'evolution_records',
+    ];
+    for (const table of expectedTables) {
+      const row = db.prepare<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM ${table}`).get();
+      assert.ok(row !== undefined, `表 ${table} 应存在`);
+    }
   });
 
   it('prepare.run 返回 changes', () => {
