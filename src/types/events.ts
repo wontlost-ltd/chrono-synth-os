@@ -8,6 +8,7 @@ import type { SurvivalAnchor, DecisionStyle, CognitiveModel } from './personalit
 import type { PersonaVersion, PersonaStatus, SimulationResult } from './persona-version.js';
 import type { Conflict, IntegrationProposal, ResourceAllocation } from './meta-regulation.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './snapshot.js';
+import type { SimulationProgress } from './life-simulation.js';
 
 /** 系统事件映射：事件名 → 载荷类型 */
 export interface SystemEventMap {
@@ -49,6 +50,12 @@ export interface SystemEventMap {
   /* 任务队列事件 */
   'task:completed': { taskId: string; result: unknown };
   'task:failed': { taskId: string; error: string };
+
+  /* 人生模拟事件 */
+  'life:simulation-progress': SimulationProgress;
+  'life:path-completed': { simulationId: string; pathId: string };
+  'life:simulation-completed': { simulationId: string };
+  'life:simulation-failed': { simulationId: string; error: string };
 
   /* 系统级事件 */
   'system:snapshot-created': { snapshot: SystemSnapshot };

@@ -38,6 +38,8 @@ import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerVisualizationRoutes } from './routes/visualization.js';
 import { registerPrivacyRoutes } from './routes/privacy.js';
 import { registerTaskRoutes } from './routes/tasks.js';
+import { registerLifeSimulationRoutes } from './routes/life-simulations.js';
+import { registerLifeSimVizRoutes } from './routes/life-simulation-viz.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 
@@ -91,6 +93,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOnboardingRoutes(app, deps.os, config);
   registerVisualizationRoutes(app, deps.os);
   registerPrivacyRoutes(app, deps.os);
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation);
+  registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
 
   /* 任务队列（可选） */
   if (config.queue.enabled) {

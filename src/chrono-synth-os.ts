@@ -12,6 +12,9 @@ import type { IntegrationConfig } from './meta/integration-engine.js';
 import { UpdateGate, type UpdateGateConfig, type UpdateTrigger } from './meta/update-gate.js';
 import { EvolutionMerger } from './recovery/evolution-merger.js';
 import { SnapshotStore } from './recovery/snapshot-store.js';
+import { LifeSimulationEngine, type LifeSimEngineConfig } from './simulation/life-simulation-engine.js';
+import { LifeSimulationService } from './simulation/life-simulation-service.js';
+import { LifeSimulationStore } from './storage/life-simulation-store.js';
 import { type IDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
@@ -21,6 +24,8 @@ import { type Clock, realClock } from './utils/clock.js';
 import { ConsoleLogger, type Logger } from './utils/logger.js';
 import { generatePrefixedId } from './utils/id-generator.js';
 import type { EvaluatorFn } from './accelerated/simulation-runner.js';
+import { compilePersonaState } from './intelligence/persona-state.js';
+import { TaskQueue } from './queue/task-queue.js';
 
 export interface ChronoSynthOSConfig {
   /** 数据库实例（默认内存） */
@@ -35,6 +40,8 @@ export interface ChronoSynthOSConfig {
   updateGateConfig?: Partial<UpdateGateConfig>;
   /** 记忆模式提取配置 */
   patternExtractionConfig?: Partial<PatternExtractionConfig>;
+  /** 人生模拟引擎配置 */
+  lifeSimulationConfig?: Partial<LifeSimEngineConfig>;
   /** 跳过迁移（当数据库已由 createDatabase() 工厂初始化时设为 true） */
   skipMigrations?: boolean;
 }
@@ -48,6 +55,8 @@ export class ChronoSynthOS {
   readonly evolution: EvolutionMerger;
   readonly updateGate: UpdateGate;
   readonly patternExtractor: MemoryPatternExtractor;
+  readonly lifeSimulation: LifeSimulationService;
+  readonly queue: TaskQueue;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -82,6 +91,15 @@ export class ChronoSynthOS {
     /* 恢复与演化 */
     this.snapshots = new SnapshotStore(this.db);
     this.evolution = new EvolutionMerger(this.db, this.clock, this.logger);
+
+    /* 任务队列 + 人生模拟 */
+    this.queue = new TaskQueue(this.db);
+    const lifeSimStore = new LifeSimulationStore(this.db);
+    const lifeSimEngine = new LifeSimulationEngine(config.lifeSimulationConfig);
+    this.lifeSimulation = new LifeSimulationService(
+      lifeSimStore, this.queue, lifeSimEngine, this.bus,
+      () => compilePersonaState(this.core),
+    );
   }
 
   /** 获取数据库实例 */

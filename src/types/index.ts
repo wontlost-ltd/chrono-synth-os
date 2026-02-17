@@ -47,3 +47,21 @@ export type {
   SystemEventMap,
   SystemEventName,
 } from './events.js';
+
+export type {
+  EmotionalState,
+  FamilyState,
+  FinanceState,
+  YearState,
+  LifePathBranch,
+  LifePath,
+  StressTestConfig,
+  LifeSimulationConfig,
+  BranchResult,
+  RetrospectiveScore,
+  LifePathResult,
+  LifeSimulationResult,
+  SimulationProgress,
+  LifeSimulationRecord,
+  LifeSimulationPathRecord,
+} from './life-simulation.js';

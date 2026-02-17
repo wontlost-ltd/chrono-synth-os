@@ -338,6 +338,44 @@ const v011_evolution_diff_report: Migration = {
   ],
 };
 
+/** v012: 人生模拟引擎 */
+const v012_life_simulation: Migration = {
+  version: 'v012',
+  description: '人生模拟引擎',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS life_simulations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      task_id TEXT NOT NULL,
+      base_simulation_id TEXT REFERENCES life_simulations(id) ON DELETE SET NULL,
+      config_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed','cancelled')),
+      summary_json TEXT,
+      progress_json TEXT,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      completed_at INTEGER
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_life_sims_tenant ON life_simulations(tenant_id, created_at)',
+
+    `CREATE TABLE IF NOT EXISTS life_simulation_paths (
+      id TEXT PRIMARY KEY,
+      simulation_id TEXT NOT NULL REFERENCES life_simulations(id) ON DELETE CASCADE,
+      path_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed')),
+      summary_json TEXT,
+      timeline_json TEXT,
+      branches_json TEXT,
+      retrospective_json TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_life_sim_paths ON life_simulation_paths(simulation_id)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -351,6 +389,7 @@ const MIGRATIONS: readonly Migration[] = [
   v009_core_values_tuning,
   v010_update_gate,
   v011_evolution_diff_report,
+  v012_life_simulation,
 ];
 
 interface MigrationRow {

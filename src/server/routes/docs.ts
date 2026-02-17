@@ -6,7 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 
 const API_DOCS = {
-  version: '0.7.0',
+  version: '0.8.0',
   endpoints: [
     /* ===== 基础设施 ===== */
     {
@@ -379,6 +379,66 @@ const API_DOCS = {
       description: '运行调控周期',
       request_schema: { strategy: 'equal|fitness_weighted|priority_based (可选)' },
       response_schema: { data: '{ status, strategy }' },
+    },
+
+    /* ===== 人生模拟 ===== */
+    {
+      method: 'POST',
+      path: '/api/v1/simulations/life',
+      description: '创建人生模拟（异步，至少 2 条路径，horizonYears ≤ 30）',
+      request_schema: { paths: 'LifePath[] (≥2)', horizonYears: 'number (1-30)', age: 'number?', stressTestConfig: '{ enabled, incomeFreezeYears?, marketDownturnFactor?, healthShock? }?' },
+      response_schema: { data: '{ simulationId, taskId, status: "accepted" }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id',
+      description: '查询模拟状态（含摘要、推荐路径、各路径评分）',
+      response_schema: { data: '{ simulationId, status, summary?: { recommendedPathId, paths: [{ pathId, compositeScore, regretProbability }] } }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id/paths/:pathId',
+      description: '获取路径时间线详情（年度快照：财富、情绪、健康、家庭、价值权重）',
+      response_schema: { data: '{ pathId, label, timeline: YearState[], branches: BranchResult[] }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/simulations/:id/stress-test',
+      description: '基于已有模拟创建压力测试变体',
+      request_schema: { variantLabel: 'string', overrides: '{ marketDownturnFactor?, incomeFreezeYears?, healthShock? }' },
+      response_schema: { data: '{ simulationId, baseSimulationId, status: "accepted" }' },
+    },
+
+    /* ===== 人生模拟可视化 ===== */
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id/visualization/overview',
+      description: '仪表盘概览（推荐路径 + 评分摘要 + 回顾结论）',
+      response_schema: { data: '{ simulationId, status, recommendedPathId, retrospective, paths, meta }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id/visualization/paths',
+      description: '多路径时间序列对比（?metrics=wealth,healthIndex&resolution=year|2y|5y）',
+      response_schema: { data: '{ simulationId, metrics, resolution, series: [{ pathId, label, points, stats }] }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id/visualization/branches/:pathId',
+      description: '分支概率结构图（决策树/桑基图数据，含 graph nodes/edges）',
+      response_schema: { data: '{ simulationId, pathId, pivotYear, baseTimeline, branches, graph: { nodes, edges } }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id/visualization/stress-comparison',
+      description: '基线 vs 压力测试变体差分（compositeScore/regretProbability delta）',
+      response_schema: { data: '{ baseSimulationId, baseSummary, variants: [{ simulationId, deltas }] }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/simulations/:id/visualization/milestones',
+      description: '里程碑聚合（峰值/谷值/阈值穿越事件，?metrics=wealth,healthIndex）',
+      response_schema: { data: '{ simulationId, metrics, milestones: [{ pathId, events, summary }] }' },
     },
 
     /* ===== 冲突管理 ===== */

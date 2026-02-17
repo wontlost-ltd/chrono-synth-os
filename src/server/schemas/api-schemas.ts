@@ -149,6 +149,34 @@ export const OnboardingImportSchema = z.object({
   })).optional(),
 });
 
+/* 人生模拟 */
+export const CreateLifeSimulationSchema = z.object({
+  paths: z.array(z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    description: z.string().default(''),
+    initialConditions: z.record(z.string(), z.unknown()).default({}),
+    branches: z.array(z.object({
+      label: z.string().min(1),
+      probability: z.number().min(0).max(1),
+      conditions: z.record(z.string(), z.unknown()).default({}),
+    })).default([]),
+  })).min(2).max(5),
+  horizonYears: z.number().int().min(1).max(30).default(10),
+  age: z.number().int().min(18).max(80).optional(),
+  stressTestConfig: z.object({
+    enabled: z.boolean().default(false),
+    incomeFreezeYears: z.number().int().min(0).default(0),
+    marketDownturnFactor: z.number().min(0).max(1).default(1),
+    healthShock: z.number().min(0).max(1).default(0),
+  }).optional(),
+});
+
+export const StressTestRequestSchema = z.object({
+  variantLabel: z.string().min(1),
+  overrides: z.record(z.string(), z.unknown()).default({}),
+});
+
 /* 决策管理 */
 export const CreateDecisionSchema = z.object({
   title: z.string().min(1),
