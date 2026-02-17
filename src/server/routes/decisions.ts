@@ -13,6 +13,7 @@ import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
 import type { DecisionCase, DecisionResult } from '../../intelligence/types.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
+import { RuleEngine } from '../../intelligence/rule-engine.js';
 import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
@@ -45,7 +46,10 @@ export function registerDecisionRoutes(app: FastifyInstance, os: ChronoSynthOS, 
     });
     const embeddingIndex = new EmbeddingIndex(os.getDatabase(), os.getClock(), llm, config.intelligence.embeddingModel);
     const retrieval = new RetrievalService(os.core.memories, embeddingIndex);
-    engine = new DecisionEngine(os.core, retrieval, llm, os.getClock(), os.getLogger(), config.intelligence.simulation);
+    const ruleEngine = config.ruleEngine.enabled
+      ? new RuleEngine(os.getClock(), config.ruleEngine)
+      : undefined;
+    engine = new DecisionEngine(os.core, retrieval, llm, os.getClock(), os.getLogger(), config.intelligence.simulation, ruleEngine);
     return engine;
   }
 

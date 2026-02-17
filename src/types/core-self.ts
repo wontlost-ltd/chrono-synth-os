@@ -17,6 +17,10 @@ export interface CoreValue {
   readonly label: string;
   /** 0-1 之间的权重，表示该价值在自我中的重要程度 */
   weight: number;
+  /** 时间折扣 0-1，0=只关注当下，1=无长期衰减 */
+  timeDiscount: number;
+  /** 情绪放大 0.5-2.0，>1 更易受情绪影响，<1 更理性 */
+  emotionAmplifier: number;
   /** 最后更新时间戳 */
   updatedAt: number;
 }

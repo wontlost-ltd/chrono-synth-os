@@ -14,10 +14,14 @@
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
-import type { SurvivalAnchor } from '../types/personality-os.js';
+import type { CognitiveModel, DecisionStyle, SurvivalAnchor } from '../types/personality-os.js';
+import type { CoreValue } from '../types/core-self.js';
 import type { LLMProvider } from './llm-provider.js';
 import type { ContextMemory, RetrievalService } from './retrieval-service.js';
+import { computeStructuralScore } from './structural-scorer.js';
+import type { ScoreBreakdown } from './structural-scorer.js';
 import { compilePersonaState, summarizeForPrompt } from './persona-state.js';
+import type { RuleEngine } from './rule-engine.js';
 import type {
   DecisionCase, DecisionResult, Explanation, RankedOption,
   SimulationConfig, SimulationRollout,
@@ -42,7 +46,6 @@ function safeParseJson<T>(content: string): T | undefined {
   try {
     return JSON.parse(content) as T;
   } catch {
-    /* 尝试提取内嵌 JSON 对象 */
     const match = content.match(/\{[\s\S]*\}/);
     if (!match) return undefined;
     try {
@@ -66,15 +69,28 @@ export class DecisionEngine {
     private readonly clock: Clock,
     private readonly logger: Logger,
     private readonly config: SimulationConfig,
+    private readonly ruleEngine?: RuleEngine,
   ) {}
 
   async evaluate(decisionCase: DecisionCase, options?: DecisionEngineOptions): Promise<DecisionResult> {
+    try {
+      return await this.evaluateWithLLM(decisionCase, options);
+    } catch (err) {
+      if (this.ruleEngine?.allowsFallback()) {
+        this.logger.warn(LAYER, 'LLM 不可用，回退到规则引擎', err);
+        const state = compilePersonaState(this.core);
+        return this.ruleEngine.evaluate(decisionCase, state);
+      }
+      throw err;
+    }
+  }
+
+  private async evaluateWithLLM(decisionCase: DecisionCase, options?: DecisionEngineOptions): Promise<DecisionResult> {
     this.logger.info(LAYER, `开始决策模拟: ${decisionCase.id}`);
     const state = compilePersonaState(this.core);
     const personaSummary = summarizeForPrompt(state);
     const query = `${decisionCase.title}\n${decisionCase.description}`;
 
-    /* 获取查询向量（容错：失败时退化为纯图检索） */
     let queryEmbedding: number[] = [];
     try {
       const embeddings = await this.llm.embed([query]);
@@ -86,25 +102,23 @@ export class DecisionEngine {
     const contextMemories = this.retrieval.getContext(query, queryEmbedding, 5);
     options?.onProgress?.({ progress: 0.1, stage: 'context' });
 
-    /* 获取备选方案 */
     const alternatives = await this.getAlternatives(decisionCase, personaSummary, contextMemories);
     const limited = alternatives.slice(0, Math.max(2, this.config.maxOptions));
     options?.onProgress?.({ progress: 0.2, stage: 'alternatives' });
 
-    /* 构建价值权重映射（同时按 id 和 label 索引，方便 LLM 输出匹配） */
     const valueWeights = new Map<string, number>();
     for (const value of state.L1.values()) {
       valueWeights.set(value.id, value.weight);
       valueWeights.set(value.label, value.weight);
     }
+    const timeHorizonMonths = this.extractTimeHorizonMonths(decisionCase.context);
 
-    /* 逐方案模拟 + 评分 */
     const ranked: Array<{ option: RankedOption; score: number }> = [];
     for (let i = 0; i < limited.length; i++) {
       const alternative = limited[i];
       const rollouts = await this.runRollouts(
         decisionCase, alternative, personaSummary, contextMemories,
-        valueWeights, state.L0, state.L2,
+        valueWeights, state.L1, state.L0, state.L2, state.L3, timeHorizonMonths,
       );
 
       const aggregate = this.aggregateRollouts(rollouts);
@@ -117,7 +131,9 @@ export class DecisionEngine {
           alignmentScore: aggregate.alignmentScore,
           riskScore: aggregate.riskScore,
           confidence: aggregate.confidence,
+          overallScore: aggregate.overallScore,
           explanation,
+          scoreBreakdown: aggregate.scoreBreakdown,
         },
         score: aggregate.overallScore,
       });
@@ -185,15 +201,18 @@ export class DecisionEngine {
     personaSummary: string,
     contextMemories: readonly ContextMemory[],
     valueWeights: ReadonlyMap<string, number>,
+    values: ReadonlyMap<string, CoreValue>,
     anchors: readonly SurvivalAnchor[],
-    decisionStyle: { riskAppetite: number; timeHorizon: number },
+    decisionStyle: DecisionStyle,
+    cognitiveModel: CognitiveModel,
+    timeHorizonMonths?: number,
   ): Promise<SimulationRollout[]> {
     const total = Math.max(1, this.config.rollouts);
     const rollouts: SimulationRollout[] = [];
     for (let i = 0; i < total; i++) {
       rollouts.push(await this.simulateAlternative(
         decisionCase, alternative, personaSummary, contextMemories,
-        valueWeights, anchors, decisionStyle,
+        valueWeights, values, anchors, decisionStyle, cognitiveModel, timeHorizonMonths,
       ));
     }
     return rollouts;
@@ -205,8 +224,11 @@ export class DecisionEngine {
     personaSummary: string,
     contextMemories: readonly ContextMemory[],
     valueWeights: ReadonlyMap<string, number>,
+    values: ReadonlyMap<string, CoreValue>,
     anchors: readonly SurvivalAnchor[],
-    decisionStyle: { riskAppetite: number; timeHorizon: number },
+    decisionStyle: DecisionStyle,
+    cognitiveModel: CognitiveModel,
+    timeHorizonMonths?: number,
   ): Promise<SimulationRollout> {
     const system = [
       'TASK:SIMULATE',
@@ -256,69 +278,89 @@ export class DecisionEngine {
       this.logger.warn(LAYER, `模拟失败，使用回退策略: ${alternative}`, err);
     }
 
-    const alignmentScore = this.computeAlignmentScore(valueWeights, valueAlignment);
-    const constraintPenalty = this.computeConstraintPenalty(anchors, constraintViolations);
-    const stylePenalty = this.computeStylePenalty(riskScore, decisionStyle);
+    const structural = computeStructuralScore({
+      valueWeights,
+      values,
+      scenarioRelevance: valueAlignment,
+      anchors,
+      violations: constraintViolations,
+      riskScore,
+      decisionStyle,
+      cognitiveModel,
+      timeHorizonMonths,
+    });
 
     return {
       alternative,
       outcomes,
       valueAlignment,
       constraintViolations,
-      alignmentScore,
+      alignmentScore: structural.alignmentScore,
       riskScore,
       confidence,
-      overallScore: alignmentScore - constraintPenalty - stylePenalty,
+      overallScore: structural.overallScore,
+      scoreBreakdown: structural.breakdown,
     };
   }
 
-  /** 价值对齐度 = 加权平均（L1 权重 × LLM 评估的对齐分数） */
-  private computeAlignmentScore(
-    valueWeights: ReadonlyMap<string, number>,
-    alignment: ReadonlyMap<string, number>,
-  ): number {
-    let totalWeight = 0;
-    let weighted = 0;
-    for (const [key, weight] of valueWeights) {
-      if (!Number.isFinite(weight)) continue;
-      totalWeight += weight;
-      weighted += weight * clamp01(alignment.get(key) ?? 0);
-    }
-    return totalWeight > 0 ? weighted / totalWeight : 0;
-  }
-
-  /** L0 约束违反惩罚 = 按严重度加权 */
-  private computeConstraintPenalty(anchors: readonly SurvivalAnchor[], violations: readonly string[]): number {
-    if (anchors.length === 0 || violations.length === 0) return 0;
-    let penalty = 0;
-    for (const violation of violations) {
-      const match = anchors.find(a => violation.includes(a.id) || violation.includes(a.label));
-      penalty += (match?.severity ?? 1) / 5;
-    }
-    return clamp01(penalty / Math.max(1, violations.length)) * 0.4;
-  }
-
-  /** L2 风格偏离惩罚 */
-  private computeStylePenalty(riskScore: number, style: { riskAppetite: number; timeHorizon: number }): number {
-    const targetRisk = 1 - clamp01(style.riskAppetite);
-    const riskGap = Math.abs(clamp01(riskScore) - targetRisk);
-    const horizonPenalty = (1 - clamp01(style.timeHorizon)) * 0.1;
-    return clamp01(riskGap * 0.3 + horizonPenalty);
-  }
-
   private aggregateRollouts(rollouts: readonly SimulationRollout[]): {
-    alignmentScore: number; riskScore: number; confidence: number; overallScore: number;
+    alignmentScore: number; riskScore: number; confidence: number; overallScore: number; scoreBreakdown?: ScoreBreakdown;
   } {
     if (rollouts.length === 0) {
       return { alignmentScore: 0, riskScore: 0.5, confidence: 0.3, overallScore: 0 };
     }
     const avg = (list: readonly number[]) => list.reduce((s, v) => s + v, 0) / list.length;
     const overallScore = avg(rollouts.map(r => r.overallScore));
+    const scoreBreakdown = this.aggregateScoreBreakdown(rollouts);
     return {
       alignmentScore: avg(rollouts.map(r => r.alignmentScore)),
       riskScore: avg(rollouts.map(r => r.riskScore)),
       confidence: avg(rollouts.map(r => r.confidence)),
       overallScore,
+      scoreBreakdown,
+    };
+  }
+
+  private aggregateScoreBreakdown(rollouts: readonly SimulationRollout[]): ScoreBreakdown | undefined {
+    let count = 0;
+    const valueTotals: Record<string, number> = {};
+    const biasTotals: Record<string, number> = {};
+    const anchorSet = new Set<string>();
+    let timeTotal = 0;
+    let biasTotal = 0;
+
+    for (const rollout of rollouts) {
+      const breakdown = rollout.scoreBreakdown;
+      if (!breakdown) continue;
+      count += 1;
+      for (const [key, value] of Object.entries(breakdown.valueContributions)) {
+        valueTotals[key] = (valueTotals[key] ?? 0) + value;
+      }
+      for (const [key, value] of Object.entries(breakdown.biasAdjustments)) {
+        biasTotals[key] = (biasTotals[key] ?? 0) + value;
+      }
+      for (const violation of breakdown.anchorViolations) {
+        anchorSet.add(violation);
+      }
+      timeTotal += breakdown.timeHorizonEffect;
+      biasTotal += breakdown.cognitiveBiasTotal;
+    }
+
+    if (count === 0) return undefined;
+
+    for (const key of Object.keys(valueTotals)) {
+      valueTotals[key] /= count;
+    }
+    for (const key of Object.keys(biasTotals)) {
+      biasTotals[key] /= count;
+    }
+
+    return {
+      valueContributions: valueTotals,
+      anchorViolations: [...anchorSet],
+      biasAdjustments: biasTotals,
+      timeHorizonEffect: timeTotal / count,
+      cognitiveBiasTotal: biasTotal / count,
     };
   }
 
@@ -375,5 +417,16 @@ export class DecisionEngine {
       evidence: contextMemories.slice(0, 3).map(m => ({ source: 'memory', content: m.content, relevance: clamp01(m.score) })),
       counterfactuals: [],
     };
+  }
+
+  private extractTimeHorizonMonths(context?: Record<string, unknown>): number | undefined {
+    if (!context) return undefined;
+    const raw = context.timeHorizonMonths;
+    if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
   }
 }

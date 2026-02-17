@@ -2,6 +2,8 @@
  * 决策引擎类型定义
  */
 
+import type { ScoreBreakdown } from './structural-scorer.js';
+
 /** 决策案例输入 */
 export interface DecisionCase {
   readonly id: string;
@@ -27,7 +29,9 @@ export interface RankedOption {
   readonly alignmentScore: number;
   readonly riskScore: number;
   readonly confidence: number;
+  readonly overallScore: number;
   readonly explanation: Explanation;
+  readonly scoreBreakdown?: ScoreBreakdown;
 }
 
 /** 决策解释 */
@@ -61,6 +65,7 @@ export interface SimulationRollout {
   readonly riskScore: number;
   readonly confidence: number;
   readonly overallScore: number;
+  readonly scoreBreakdown?: ScoreBreakdown;
 }
 
 /** 模拟配置 */

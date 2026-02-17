@@ -9,7 +9,7 @@ import type { IDatabase, IPreparedStatement, SqlValue } from '../storage/databas
 const TENANT_TABLES = new Set([
   'core_values', 'memory_nodes', 'memory_edges', 'memory_embeddings',
   'working_memory', 'persona_versions', 'conflicts', 'snapshots',
-  'evolution_records', 'survival_anchors', 'audit_log',
+  'evolution_records', 'survival_anchors', 'audit_log', 'pending_updates',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */

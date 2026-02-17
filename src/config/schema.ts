@@ -103,6 +103,11 @@ const intelligenceSchema = z.object({
   simulation: intelligenceSimulationSchema,
 });
 
+const ruleEngineSchema = z.object({
+  enabled: z.boolean().default(true),
+  fallbackStrategy: z.enum(['rule_only', 'error']).default('rule_only'),
+}).default({ enabled: true, fallbackStrategy: 'rule_only' });
+
 const onboardingSchema = z.object({
   predefinedValues: z.array(z.string()).default([
     '好奇心', '诚信', '稳定', '成长', '同理心',
@@ -138,6 +143,7 @@ export const AppConfigSchema = z.object({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
   }),
+  ruleEngine: ruleEngineSchema,
   onboarding: onboardingSchema.default({
     predefinedValues: [
       '好奇心', '诚信', '稳定', '成长', '同理心',

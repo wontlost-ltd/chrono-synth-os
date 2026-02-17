@@ -296,6 +296,39 @@ const v008_task_queue: Migration = {
   ],
 };
 
+/** v009: 核心价值扩展 */
+const v009_core_values_tuning: Migration = {
+  version: 'v009',
+  description: '核心价值扩展 time_discount/emotion_amplifier',
+  sql: [
+    '/* safe:add-column:core_values:time_discount */ ALTER TABLE core_values ADD COLUMN time_discount REAL NOT NULL DEFAULT 0.5',
+    '/* safe:add-column:core_values:emotion_amplifier */ ALTER TABLE core_values ADD COLUMN emotion_amplifier REAL NOT NULL DEFAULT 1.0',
+  ],
+};
+
+/** v010: 更新闸门 pending_updates */
+const v010_update_gate: Migration = {
+  version: 'v010',
+  description: '更新闸门 pending_updates',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS pending_updates (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      layer TEXT NOT NULL CHECK(layer IN ('L0', 'L1')),
+      trigger_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      current_value TEXT,
+      proposed_value TEXT,
+      delta REAL NOT NULL DEFAULT 0,
+      reason TEXT,
+      created_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected'))
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_pending_updates_status ON pending_updates(status)',
+    'CREATE INDEX IF NOT EXISTS idx_pending_updates_tenant ON pending_updates(tenant_id)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -306,6 +339,8 @@ const MIGRATIONS: readonly Migration[] = [
   v006_memory_embeddings,
   v007_multi_tenant,
   v008_task_queue,
+  v009_core_values_tuning,
+  v010_update_gate,
 ];
 
 interface MigrationRow {

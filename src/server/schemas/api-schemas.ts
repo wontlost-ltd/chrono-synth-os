@@ -8,10 +8,14 @@ import { z } from 'zod';
 export const CreateValueSchema = z.object({
   label: z.string().min(1),
   weight: z.number().min(0).max(1),
+  timeDiscount: z.number().min(0).max(1).default(0.5),
+  emotionAmplifier: z.number().min(0.5).max(2).default(1.0),
 });
 
 export const UpdateValueSchema = z.object({
-  weight: z.number().min(0).max(1),
+  weight: z.number().min(0).max(1).optional(),
+  timeDiscount: z.number().min(0).max(1).optional(),
+  emotionAmplifier: z.number().min(0.5).max(2).optional(),
 });
 
 /* 记忆管理 */

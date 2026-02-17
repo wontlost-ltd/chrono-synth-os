@@ -46,19 +46,32 @@ export class CoreRhythmLayer {
   }
 
   /** 添加核心价值 */
-  addValue(label: string, weight: number): CoreValue {
-    const value = this.values.create(label, weight);
+  addValue(label: string, weight: number, timeDiscount?: number, emotionAmplifier?: number): CoreValue {
+    const value = this.values.create(label, weight, timeDiscount, emotionAmplifier);
     this.bus.emit('core:value-updated', { value });
     this.logger.info(LAYER, `价值已添加: ${label} (权重=${weight})`);
     return value;
   }
 
-  /** 更新价值权重 */
+  /** 更新价值权重（向后兼容） */
   updateValue(id: ValueId, weight: number): CoreValue | undefined {
-    const value = this.values.updateWeight(id, weight);
+    return this.updateValueParams(id, { weight });
+  }
+
+  /** 更新价值参数 */
+  updateValueParams(
+    id: ValueId,
+    patch: { weight?: number; timeDiscount?: number; emotionAmplifier?: number },
+  ): CoreValue | undefined {
+    const value = this.values.update(id, patch);
     if (value) {
       this.bus.emit('core:value-updated', { value });
-      this.logger.info(LAYER, `价值已更新: ${value.label} → 权重=${weight}`);
+      const parts: string[] = [];
+      if (patch.weight !== undefined) parts.push(`权重=${patch.weight}`);
+      if (patch.timeDiscount !== undefined) parts.push(`时间折扣=${patch.timeDiscount}`);
+      if (patch.emotionAmplifier !== undefined) parts.push(`情绪放大=${patch.emotionAmplifier}`);
+      const detail = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+      this.logger.info(LAYER, `价值已更新: ${value.label}${detail}`);
     }
     return value;
   }

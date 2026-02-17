@@ -38,7 +38,7 @@ export function summarizeForPrompt(state: PersonaOSState): string {
   if (state.L1.size > 0) {
     const values = [...state.L1.values()]
       .sort((a, b) => b.weight - a.weight)
-      .map(v => `  - ${v.label}: ${v.weight.toFixed(2)}`)
+      .map(v => `  - ${v.label}: ${v.weight.toFixed(2)} (时间折扣=${v.timeDiscount.toFixed(2)}, 情绪放大=${v.emotionAmplifier.toFixed(2)})`)
       .join('\n');
     sections.push(`## 核心价值 (L1)\n${values}`);
   }

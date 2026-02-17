@@ -271,6 +271,39 @@ const v008_task_queue: Migration = {
   ],
 };
 
+/** v009: 核心价值扩展（PostgreSQL） */
+const v009_core_values_tuning: Migration = {
+  version: 'v009',
+  description: '核心价值扩展 time_discount/emotion_amplifier',
+  sql: [
+    'ALTER TABLE core_values ADD COLUMN IF NOT EXISTS time_discount DOUBLE PRECISION NOT NULL DEFAULT 0.5',
+    'ALTER TABLE core_values ADD COLUMN IF NOT EXISTS emotion_amplifier DOUBLE PRECISION NOT NULL DEFAULT 1.0',
+  ],
+};
+
+/** v010: 更新闸门 pending_updates（PostgreSQL） */
+const v010_update_gate: Migration = {
+  version: 'v010',
+  description: '更新闸门 pending_updates',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS pending_updates (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      layer TEXT NOT NULL CHECK(layer IN ('L0', 'L1')),
+      trigger_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      current_value TEXT,
+      proposed_value TEXT,
+      delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+      reason TEXT,
+      created_at BIGINT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected'))
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_pending_updates_status ON pending_updates(status)',
+    'CREATE INDEX IF NOT EXISTS idx_pending_updates_tenant ON pending_updates(tenant_id)',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -281,4 +314,6 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v006_memory_embeddings,
   v007_multi_tenant,
   v008_task_queue,
+  v009_core_values_tuning,
+  v010_update_gate,
 ];

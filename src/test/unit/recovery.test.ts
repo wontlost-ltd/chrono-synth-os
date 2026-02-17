@@ -19,7 +19,7 @@ describe('SnapshotStore', () => {
     return {
       id,
       coreSelf: {
-        values: new Map([['v1', { id: 'v1', label: 'honesty', weight: 0.8, updatedAt: 100 }]]),
+        values: new Map([['v1', { id: 'v1', label: 'honesty', weight: 0.8, timeDiscount: 0.5, emotionAmplifier: 1.0, updatedAt: 100 }]]),
         memories: new Map(),
         edges: [],
         narrative: '测试叙事',

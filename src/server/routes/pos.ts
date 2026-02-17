@@ -5,8 +5,10 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
-import { NotFoundError, ErrorCode } from '../../errors/index.js';
+import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { compilePersonaState, summarizeForPrompt } from '../../intelligence/persona-state.js';
+import { UpdateGate, type PendingUpdate } from '../../meta/update-gate.js';
+import type { SurvivalAnchorUpdate } from '../../core/survival-anchor-store.js';
 import {
   CreateSurvivalAnchorSchema,
   UpdateSurvivalAnchorSchema,
@@ -15,6 +17,54 @@ import {
 } from '../schemas/api-schemas.js';
 
 export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
+  let gate: UpdateGate | undefined;
+  function getGate(): UpdateGate {
+    if (!gate) {
+      gate = new UpdateGate(os.getDatabase(), os.getClock());
+    }
+    return gate;
+  }
+
+  function parseJsonValue(raw: string | null | undefined): unknown {
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new ValidationError('pending_updates 值不是有效 JSON', ErrorCode.VALIDATION_FORMAT);
+    }
+  }
+
+  function applyPendingUpdate(update: PendingUpdate): void {
+    const proposed = parseJsonValue(update.proposedValue);
+    if (!proposed || typeof proposed !== 'object') {
+      throw new ValidationError(`pending_updates ${update.id} 缺少有效 proposed_value`, ErrorCode.VALIDATION_FORMAT);
+    }
+    const patch = proposed as Record<string, unknown>;
+
+    if (update.layer === 'L1') {
+      const value = os.core.updateValueParams(update.targetId, {
+        weight: typeof patch.weight === 'number' ? patch.weight : undefined,
+        timeDiscount: typeof patch.timeDiscount === 'number' ? patch.timeDiscount : undefined,
+        emotionAmplifier: typeof patch.emotionAmplifier === 'number' ? patch.emotionAmplifier : undefined,
+      });
+      if (!value) {
+        throw new NotFoundError(`价值 ${update.targetId} 不存在`, ErrorCode.NOT_FOUND_VALUE);
+      }
+      return;
+    }
+
+    const anchorPatch: SurvivalAnchorUpdate = {
+      label: typeof patch.label === 'string' ? patch.label : undefined,
+      kind: typeof patch.kind === 'string' ? patch.kind as SurvivalAnchorUpdate['kind'] : undefined,
+      severity: typeof patch.severity === 'number' ? patch.severity : undefined,
+      ...(Object.prototype.hasOwnProperty.call(patch, 'value') ? { value: patch.value } : {}),
+    };
+    const anchor = os.core.updateSurvivalAnchor(update.targetId, anchorPatch);
+    if (!anchor) {
+      throw new NotFoundError(`生存锚点 ${update.targetId} 不存在`, ErrorCode.NOT_FOUND_SURVIVAL_ANCHOR);
+    }
+  }
+
   // ===== L0 生存锚点 =====
 
   /* GET /api/v1/pos/survival — 列出所有生存锚点 */
@@ -98,6 +148,36 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS): void
         updatedAt: model.updatedAt,
       },
     };
+  });
+
+  // ===== 更新闸门 =====
+
+  /* GET /api/v1/pos/pending-updates — 获取待确认更新 */
+  app.get('/api/v1/pos/pending-updates', async () => {
+    return { data: getGate().getPending() };
+  });
+
+  /* POST /api/v1/pos/pending-updates/:id/approve — 审批并应用 */
+  app.post<{ Params: { id: string } }>('/api/v1/pos/pending-updates/:id/approve', async (request) => {
+    const { id } = request.params;
+    const gate = getGate();
+    const pending = gate.getById(id);
+    if (!pending) {
+      throw new NotFoundError(`待确认更新 ${id} 不存在`, ErrorCode.NOT_FOUND_TASK);
+    }
+    applyPendingUpdate(pending);
+    const update = gate.approve(id);
+    return { data: update };
+  });
+
+  /* POST /api/v1/pos/pending-updates/:id/reject — 拒绝更新 */
+  app.post<{ Params: { id: string } }>('/api/v1/pos/pending-updates/:id/reject', async (request) => {
+    const { id } = request.params;
+    const update = getGate().reject(id);
+    if (!update) {
+      throw new NotFoundError(`待确认更新 ${id} 不存在`, ErrorCode.NOT_FOUND_TASK);
+    }
+    return { data: update };
   });
 
   // ===== 完整状态 =====
