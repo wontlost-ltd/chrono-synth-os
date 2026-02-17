@@ -33,6 +33,9 @@ import { registerDocsRoutes } from './routes/docs.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerPosRoutes } from './routes/pos.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
+import { registerOnboardingRoutes } from './routes/onboarding.js';
+import { registerVisualizationRoutes } from './routes/visualization.js';
+import { registerPrivacyRoutes } from './routes/privacy.js';
 
 export interface CreateAppDeps {
   os: ChronoSynthOS;
@@ -80,6 +83,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAuditRoutes(app, deps.db);
   registerPosRoutes(app, deps.os);
   registerDecisionRoutes(app, deps.os, config);
+  registerOnboardingRoutes(app, deps.os, config);
+  registerVisualizationRoutes(app, deps.os);
+  registerPrivacyRoutes(app, deps.os);
   registerDocsRoutes(app);
 
   return app;

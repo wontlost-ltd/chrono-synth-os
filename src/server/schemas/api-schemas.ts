@@ -106,6 +106,45 @@ export const UpdateCognitiveModelSchema = z.object({
   growthMindset: z.number().min(0).max(1).optional(),
 });
 
+/* 引导流程 */
+export const OnboardingStep1Schema = z.object({
+  title: z.string().min(1),
+  description: z.string().min(1),
+});
+
+export const OnboardingStep2Schema = z.object({
+  values: z.array(z.string().min(1)).min(3).max(10),
+  customValues: z.array(z.string().min(1)).max(5).optional(),
+});
+
+export const OnboardingStep3Schema = z.object({
+  memories: z.array(z.object({
+    description: z.string().min(1),
+    valence: z.number().min(-1).max(1).optional(),
+    salience: z.number().min(0).max(1).optional(),
+  })).min(1).max(5),
+});
+
+export const OnboardingQuestionnaireSchema = z.object({
+  responses: z.array(z.object({
+    id: z.string().min(1),
+    score: z.number().int().min(1).max(5),
+  })).min(1),
+});
+
+export const OnboardingImportSchema = z.object({
+  journalEntries: z.array(z.object({
+    content: z.string().min(1),
+    valence: z.number().min(-1).max(1).optional(),
+    salience: z.number().min(0).max(1).optional(),
+  })).optional(),
+  decisionRecords: z.array(z.object({
+    title: z.string().min(1),
+    description: z.string().min(1),
+    outcome: z.string().min(1).optional(),
+  })).optional(),
+});
+
 /* 决策管理 */
 export const CreateDecisionSchema = z.object({
   title: z.string().min(1),

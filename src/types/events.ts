@@ -41,6 +41,11 @@ export interface SystemEventMap {
   'decision:simulation-completed': { caseId: string; runId: string };
   'decision:simulation-failed': { caseId: string; runId: string; error: string };
 
+  /* 引导事件 */
+  'onboarding:session-started': { sessionId: string };
+  'onboarding:step-completed': { sessionId: string; step: number };
+  'onboarding:completed': { sessionId: string; snapshotId: string };
+
   /* 系统级事件 */
   'system:snapshot-created': { snapshot: SystemSnapshot };
   'system:snapshot-restored': { snapshotId: string };

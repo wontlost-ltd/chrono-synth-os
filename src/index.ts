@@ -7,6 +7,10 @@ export { MetaRegulationLayer, ConflictResolver, IntegrationEngine, ResourceAlloc
 export { compilePersonaState, summarizeForPrompt, ModelRouter, EmbeddingIndex, RetrievalService, DecisionEngine } from './intelligence/index.js';
 export type { LLMProvider, ChatMessage, ChatOptions, ChatResponse, LLMProviderName } from './intelligence/index.js';
 export type { DecisionCase, DecisionResult, RankedOption, Explanation, EvidenceItem, Counterfactual, SimulationRollout, SimulationConfig } from './intelligence/index.js';
+export { OnboardingService, QuestionnaireEngine, DataIngestion } from './onboarding/index.js';
+export type { OnboardingSession, Question, QuestionResponse, InferredParameters, JournalEntry, DecisionRecord } from './onboarding/index.js';
+export { ChronoClient } from './sdk/index.js';
+export type { ChronoClientOptions, ApiResponse } from './sdk/index.js';
 export { SnapshotStore, EvolutionMerger } from './recovery/index.js';
 export { EventBus, TypedEventEmitter } from './events/index.js';
 export { SqliteDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';

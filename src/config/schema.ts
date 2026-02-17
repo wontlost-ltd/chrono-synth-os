@@ -103,6 +103,16 @@ const intelligenceSchema = z.object({
   simulation: intelligenceSimulationSchema,
 });
 
+const onboardingSchema = z.object({
+  predefinedValues: z.array(z.string()).default([
+    '好奇心', '诚信', '稳定', '成长', '同理心',
+    '自律', '创造力', '自由', '影响力', '学习',
+    '健康', '家庭', '社区', '勇气', '专注',
+    '平衡', '诚实', '坚韧', '创新', '精通',
+  ]),
+  maxImportEntries: z.coerce.number().int().min(1).default(100),
+});
+
 const requestSchema = z.object({
   timeoutMs: z.coerce.number().int().min(0).default(30_000),
   maxBodyBytes: z.coerce.number().int().min(1024).default(1_048_576),
@@ -120,6 +130,15 @@ export const AppConfigSchema = z.object({
   intelligence: intelligenceSchema.default({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
+  }),
+  onboarding: onboardingSchema.default({
+    predefinedValues: [
+      '好奇心', '诚信', '稳定', '成长', '同理心',
+      '自律', '创造力', '自由', '影响力', '学习',
+      '健康', '家庭', '社区', '勇气', '专注',
+      '平衡', '诚实', '坚韧', '创新', '精通',
+    ],
+    maxImportEntries: 100,
   }),
   request: requestSchema.default({ timeoutMs: 30_000, maxBodyBytes: 1_048_576 }),
   cognition: cognitionSchema,
@@ -161,6 +180,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_INTELLIGENCE_SIM_MAX_OPTIONS:    (v) => { deepSet(env, 'intelligence.simulation.maxOptions', parseInt(v, 10)); },
     CHRONO_REQUEST_TIMEOUT_MS:      (v) => { deepSet(env, 'request.timeoutMs', parseInt(v, 10)); },
     CHRONO_REQUEST_MAX_BODY_BYTES:  (v) => { deepSet(env, 'request.maxBodyBytes', parseInt(v, 10)); },
+    CHRONO_ONBOARDING_MAX_IMPORT_ENTRIES:   (v) => { deepSet(env, 'onboarding.maxImportEntries', parseInt(v, 10)); },
     CHRONO_COGNITION_DECAY_BASE_LAMBDA:     (v) => { deepSet(env, 'cognition.decay.baseLambda', parseFloat(v)); },
     CHRONO_COGNITION_DECAY_VALENCE_WEIGHT:  (v) => { deepSet(env, 'cognition.decay.valenceWeight', parseFloat(v)); },
     CHRONO_COGNITION_DECAY_ACCESS_BOOST:    (v) => { deepSet(env, 'cognition.decay.accessBoost', parseFloat(v)); },
