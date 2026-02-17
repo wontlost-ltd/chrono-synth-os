@@ -70,6 +70,21 @@ export class ChronoSynthOS {
     this.evolution = new EvolutionMerger(this.db, this.clock, this.logger);
   }
 
+  /** 获取数据库实例 */
+  getDatabase(): IDatabase {
+    return this.db;
+  }
+
+  /** 获取系统时钟 */
+  getClock(): Clock {
+    return this.clock;
+  }
+
+  /** 获取系统日志器 */
+  getLogger(): Logger {
+    return this.logger;
+  }
+
   /** 启动系统 */
   start(): void {
     this.bus.emit('system:started', { timestamp: this.clock.now() });

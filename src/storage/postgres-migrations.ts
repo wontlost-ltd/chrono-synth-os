@@ -175,6 +175,20 @@ const v005_personality_os: Migration = {
   ],
 };
 
+/** v006: 记忆向量索引 */
+const v006_memory_embeddings: Migration = {
+  version: 'v006',
+  description: '记忆向量索引',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS memory_embeddings (
+    memory_id TEXT PRIMARY KEY REFERENCES memory_nodes(id) ON DELETE CASCADE,
+    embedding_json TEXT NOT NULL,
+    model TEXT NOT NULL,
+    updated_at BIGINT NOT NULL
+  )`,
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -182,4 +196,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v003_audit_api_key,
   v004_cognitive_memory,
   v005_personality_os,
+  v006_memory_embeddings,
 ];

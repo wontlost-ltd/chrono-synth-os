@@ -87,6 +87,22 @@ const cognitionSchema = z.object({
   consolidation: { accessThreshold: 5, minSalience: 0.3 },
 });
 
+const intelligenceSimulationSchema = z.object({
+  rollouts: z.coerce.number().int().min(1).max(10).default(3),
+  maxOptions: z.coerce.number().int().min(2).max(6).default(4),
+}).default({ rollouts: 3, maxOptions: 4 });
+
+const intelligenceSchema = z.object({
+  provider: z.enum(['openai', 'anthropic', 'ollama', 'mock']).default('mock'),
+  model: z.string().default('claude-sonnet-4-5-20250929'),
+  embeddingModel: z.string().default('text-embedding-3-small'),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  maxTokens: z.coerce.number().int().default(4096),
+  temperature: z.coerce.number().min(0).max(2).default(0.7),
+  simulation: intelligenceSimulationSchema,
+});
+
 const requestSchema = z.object({
   timeoutMs: z.coerce.number().int().min(0).default(30_000),
   maxBodyBytes: z.coerce.number().int().min(1024).default(1_048_576),
@@ -101,6 +117,10 @@ export const AppConfigSchema = z.object({
   websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000 }),
   cors: corsSchema.default({ origin: false, credentials: false }),
   auth: authSchema.default({ enabled: false, apiKeys: [] }),
+  intelligence: intelligenceSchema.default({
+    provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
+    maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
+  }),
   request: requestSchema.default({ timeoutMs: 30_000, maxBodyBytes: 1_048_576 }),
   cognition: cognitionSchema,
 });
@@ -130,6 +150,15 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_CORS_CREDENTIALS:        (v) => { deepSet(env, 'cors.credentials', v === 'true'); },
     CHRONO_AUTH_ENABLED:            (v) => { deepSet(env, 'auth.enabled', v === 'true'); },
     CHRONO_AUTH_API_KEYS:           (v) => { deepSet(env, 'auth.apiKeys', v.split(',')); },
+    CHRONO_INTELLIGENCE_PROVIDER:           (v) => { deepSet(env, 'intelligence.provider', v); },
+    CHRONO_INTELLIGENCE_MODEL:              (v) => { deepSet(env, 'intelligence.model', v); },
+    CHRONO_INTELLIGENCE_EMBEDDING_MODEL:    (v) => { deepSet(env, 'intelligence.embeddingModel', v); },
+    CHRONO_INTELLIGENCE_API_KEY:            (v) => { deepSet(env, 'intelligence.apiKey', v); },
+    CHRONO_INTELLIGENCE_BASE_URL:           (v) => { deepSet(env, 'intelligence.baseUrl', v); },
+    CHRONO_INTELLIGENCE_MAX_TOKENS:         (v) => { deepSet(env, 'intelligence.maxTokens', parseInt(v, 10)); },
+    CHRONO_INTELLIGENCE_TEMPERATURE:        (v) => { deepSet(env, 'intelligence.temperature', parseFloat(v)); },
+    CHRONO_INTELLIGENCE_SIM_ROLLOUTS:       (v) => { deepSet(env, 'intelligence.simulation.rollouts', parseInt(v, 10)); },
+    CHRONO_INTELLIGENCE_SIM_MAX_OPTIONS:    (v) => { deepSet(env, 'intelligence.simulation.maxOptions', parseInt(v, 10)); },
     CHRONO_REQUEST_TIMEOUT_MS:      (v) => { deepSet(env, 'request.timeoutMs', parseInt(v, 10)); },
     CHRONO_REQUEST_MAX_BODY_BYTES:  (v) => { deepSet(env, 'request.maxBodyBytes', parseInt(v, 10)); },
     CHRONO_COGNITION_DECAY_BASE_LAMBDA:     (v) => { deepSet(env, 'cognition.decay.baseLambda', parseFloat(v)); },

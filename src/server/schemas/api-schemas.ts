@@ -105,3 +105,19 @@ export const UpdateCognitiveModelSchema = z.object({
   attributionStyle: z.number().min(0).max(1).optional(),
   growthMindset: z.number().min(0).max(1).optional(),
 });
+
+/* 决策管理 */
+export const CreateDecisionSchema = z.object({
+  title: z.string().min(1),
+  description: z.string().min(1),
+  alternatives: z.array(z.string().min(1)).min(2).optional(),
+  constraints: z.array(z.string().min(1)).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const DecisionFeedbackSchema = z.object({
+  runId: z.string().min(1),
+  selectedAlternative: z.string().min(1),
+  satisfaction: z.number().min(0).max(1),
+  notes: z.string().optional(),
+});

@@ -36,6 +36,11 @@ export interface SystemEventMap {
   'meta:integration-proposed': { proposal: IntegrationProposal };
   'meta:integration-decided': { proposalId: string; accepted: boolean };
 
+  /* 决策引擎事件 */
+  'decision:simulation-progress': { caseId: string; runId: string; progress: number; stage: string };
+  'decision:simulation-completed': { caseId: string; runId: string };
+  'decision:simulation-failed': { caseId: string; runId: string; error: string };
+
   /* 系统级事件 */
   'system:snapshot-created': { snapshot: SystemSnapshot };
   'system:snapshot-restored': { snapshotId: string };
