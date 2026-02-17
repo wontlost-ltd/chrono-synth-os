@@ -10,7 +10,7 @@ FROM node:24-alpine
 RUN addgroup -S chrono && adduser -S chrono -G chrono
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=builder /app/dist/ dist/
 RUN mkdir -p /app/data && chown -R chrono:chrono /app
 VOLUME /app/data
