@@ -1,0 +1,125 @@
+/**
+ * PostgreSQL 集成测试
+ * 需要 TEST_POSTGRES_URL 环境变量指向可用的 PostgreSQL 实例
+ * 跳过条件：未设置 TEST_POSTGRES_URL 时自动跳过
+ */
+
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+
+const TEST_URL = process.env.TEST_POSTGRES_URL;
+
+describe('PostgreSQL 集成测试', { skip: !TEST_URL }, () => {
+  /* 延迟导入，避免在没有 pg 依赖时报错 */
+  let PostgresDatabase: typeof import('../../storage/postgres-database.js').PostgresDatabase;
+  let runPostgresMigrations: typeof import('../../storage/postgres-migrations-runner.js').runPostgresMigrations;
+  let db: InstanceType<typeof PostgresDatabase>;
+
+  before(async () => {
+    const pgMod = await import('../../storage/postgres-database.js');
+    const migMod = await import('../../storage/postgres-migrations-runner.js');
+    PostgresDatabase = pgMod.PostgresDatabase;
+    runPostgresMigrations = migMod.runPostgresMigrations;
+
+    db = new PostgresDatabase(TEST_URL!, { max: 5, idleTimeoutMs: 10_000 });
+
+    /* 清理已有表（测试隔离） */
+    const tables = [
+      'evolution_records', 'snapshots', 'conflicts', 'persona_versions',
+      'audit_log', 'narrative', 'memory_edges', 'memory_nodes',
+      'core_values', 'schema_migrations',
+    ];
+    for (const t of tables) {
+      try { db.exec(`DROP TABLE IF EXISTS ${t} CASCADE`); } catch { /* 忽略 */ }
+    }
+
+    runPostgresMigrations(db);
+  });
+
+  after(() => {
+    if (db) db.close();
+  });
+
+  it('迁移成功创建所有表', () => {
+    const rows = db.prepare<{ version: string }>(
+      'SELECT version FROM schema_migrations ORDER BY version',
+    ).all();
+    assert.ok(rows.length >= 3, '应至少有 3 个迁移版本');
+    assert.equal(rows[0].version, 'v001');
+  });
+
+  it('CRUD: core_values', () => {
+    db.prepare<void>(
+      `INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET label=excluded.label, weight=excluded.weight, updated_at=excluded.updated_at`,
+    ).run('test-val-1', '诚实', 0.8, Date.now());
+
+    const row = db.prepare<{ id: string; label: string; weight: number }>(
+      'SELECT id, label, weight FROM core_values WHERE id = ?',
+    ).get('test-val-1');
+
+    assert.ok(row);
+    assert.equal(row.id, 'test-val-1');
+    assert.equal(row.label, '诚实');
+    assert.equal(row.weight, 0.8);
+
+    /* 清理 */
+    db.prepare<void>('DELETE FROM core_values WHERE id = ?').run('test-val-1');
+  });
+
+  it('事务：成功提交', () => {
+    db.transaction(() => {
+      db.prepare<void>(
+        'INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)',
+      ).run('tx-val-1', '勇气', 0.7, Date.now());
+    });
+
+    const row = db.prepare<{ id: string }>('SELECT id FROM core_values WHERE id = ?').get('tx-val-1');
+    assert.ok(row);
+
+    db.prepare<void>('DELETE FROM core_values WHERE id = ?').run('tx-val-1');
+  });
+
+  it('事务：异常回滚', () => {
+    try {
+      db.transaction(() => {
+        db.prepare<void>(
+          'INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)',
+        ).run('tx-val-rollback', '测试', 0.5, Date.now());
+        throw new Error('故意失败');
+      });
+    } catch { /* 预期 */ }
+
+    const row = db.prepare<{ id: string }>('SELECT id FROM core_values WHERE id = ?').get('tx-val-rollback');
+    assert.equal(row, undefined, '回滚后数据不应存在');
+  });
+
+  it('占位符转换正确', async () => {
+    const { convertPlaceholders } = await import('../../storage/postgres-database.js');
+    /* 基本替换 */
+    assert.equal(convertPlaceholders('SELECT ? WHERE id = ?'), 'SELECT $1 WHERE id = $2');
+    assert.equal(convertPlaceholders('SELECT 1'), 'SELECT 1');
+
+    /* 单引号字符串内的 ? 不替换 */
+    assert.equal(convertPlaceholders("INSERT INTO t (v) VALUES ('?')"), "INSERT INTO t (v) VALUES ('?')");
+
+    /* 标准 SQL '' 转义 */
+    assert.equal(convertPlaceholders("SELECT 'it''s ?' WHERE x = ?"), "SELECT 'it''s ?' WHERE x = $1");
+
+    /* 双引号标识符内的 ? 不替换 */
+    assert.equal(convertPlaceholders('SELECT "col?" FROM t WHERE id = ?'), 'SELECT "col?" FROM t WHERE id = $1');
+
+    /* 行注释内的 ? 不替换 */
+    assert.equal(convertPlaceholders('SELECT ? -- comment ?\nWHERE x = ?'), 'SELECT $1 -- comment ?\nWHERE x = $2');
+
+    /* 块注释内的 ? 不替换 */
+    assert.equal(convertPlaceholders('SELECT ? /* comment ? */ WHERE x = ?'), 'SELECT $1 /* comment ? */ WHERE x = $2');
+
+    /* 美元引号内的 ? 不替换 */
+    assert.equal(convertPlaceholders('SELECT $$hello ? world$$ WHERE id = ?'), 'SELECT $$hello ? world$$ WHERE id = $1');
+
+    /* JSONB 运算符 ?| ?& 保留 */
+    assert.equal(convertPlaceholders("SELECT data ?| array['a'] WHERE id = ?"), "SELECT data ?| array['a'] WHERE id = $1");
+    assert.equal(convertPlaceholders("SELECT data ?& array['a'] WHERE id = ?"), "SELECT data ?& array['a'] WHERE id = $1");
+  });
+});

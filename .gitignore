@@ -1,0 +1,10 @@
+.ace-tool/
+.claude/
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.idea/
+*.iml
+.env
+*.db

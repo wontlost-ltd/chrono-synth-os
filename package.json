@@ -1,0 +1,43 @@
+{
+  "name": "chrono-synth-os",
+  "version": "0.4.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "description": "ChronoSynth OS — 混合数字人格操作系统",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test dist/test/unit/**/*.test.js",
+    "test:integration": "node --test dist/test/integration/**/*.test.js",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:golden": "npm run typecheck && npm run build && npm run test",
+    "start": "node dist/main.js",
+    "dev": "npm run build && node dist/main.js"
+  },
+  "keywords": [
+    "digital-persona",
+    "hybrid-os",
+    "identity"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/pg": "^8.16.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/websocket": "^11.2.0",
+    "dotenv": "^17.3.1",
+    "fastify": "^5.7.4",
+    "pg": "^8.18.0",
+    "pino": "^10.3.1",
+    "zod": "^4.3.6"
+  }
+}

@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: chrono-synth-os
+  namespace: chrono-synth
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: chrono-synth-os
+  policyTypes:
+    - Ingress
+  ingress:
+    # 允许同 namespace 的 Pod 访问 HTTP 端口
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+    # 允许 Prometheus 监控系统 scrape
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: monitoring
+      ports:
+        - protocol: TCP
+          port: 3000

@@ -1,0 +1,87 @@
+/**
+ * 健康检查路由
+ * /healthz 轻量探活，/readyz 深度就绪检查
+ */
+
+import type { FastifyInstance } from 'fastify';
+import type { ChronoSynthOS } from '../../chrono-synth-os.js';
+import type { IDatabase } from '../../storage/database.js';
+import { CircuitBreaker, CircuitOpenError } from '../plugins/circuit-breaker.js';
+
+/** 服务器生命周期状态（由 main.ts 管理） */
+export const serverState = {
+  ready: false,
+  shuttingDown: false,
+  startTime: Date.now(),
+};
+
+export interface HealthRouteDeps {
+  os: ChronoSynthOS;
+  /** 数据库实例，用于轻量级探活查询 */
+  db?: IDatabase;
+  /** 可选注入断路器，便于测试；不传则内部创建 */
+  circuitBreaker?: CircuitBreaker;
+}
+
+export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps): void {
+  const { os, db } = deps;
+  const dbCircuitBreaker = deps.circuitBreaker ?? new CircuitBreaker({
+    failureThreshold: 3,
+    resetTimeoutMs: 10_000,
+    halfOpenMaxRequests: 1,
+  });
+
+  /* 轻量探活：始终返回 ok */
+  app.get('/healthz', async () => {
+    return { status: 'ok' };
+  });
+
+  /* 深度就绪检查 */
+  app.get('/readyz', async (_request, reply) => {
+    if (serverState.shuttingDown) {
+      return reply.status(503).send({
+        status: 'shutting_down',
+        components: {},
+      });
+    }
+
+    const components: Record<string, unknown> = {};
+
+    /* OS 就绪状态 */
+    components.os = { status: serverState.ready ? 'ok' : 'not_ready' };
+
+    /* 数据库可达性：通过断路器执行轻量 SELECT 1 + 延迟测量 */
+    let dbOk = false;
+    let dbLatencyMs = 0;
+    let dbStatus: string = 'degraded';
+    try {
+      const start = performance.now();
+      await dbCircuitBreaker.execute(() => {
+        if (db) {
+          db.prepare<{ ok: number }>('SELECT 1 AS ok').get();
+        } else {
+          /* 无数据库实例时回退到内存检查 */
+          os.core.values.getAll();
+        }
+      });
+      dbLatencyMs = Math.round((performance.now() - start) * 100) / 100;
+      dbOk = true;
+      dbStatus = 'ok';
+    } catch (err) {
+      if (err instanceof CircuitOpenError) {
+        dbStatus = 'circuit_open';
+      }
+      dbOk = false;
+    }
+    components.database = {
+      status: dbStatus,
+      latency_ms: dbLatencyMs,
+    };
+
+    const allOk = serverState.ready && dbOk;
+    const statusCode = allOk ? 200 : 503;
+    const status = allOk ? 'ok' : 'degraded';
+
+    return reply.status(statusCode).send({ status, components });
+  });
+}

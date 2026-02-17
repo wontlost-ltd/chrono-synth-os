@@ -1,0 +1,82 @@
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { createMemoryDatabase, runMigrations, mapToJson, jsonToMap, arrayToJson, jsonToArray } from '../../storage/index.js';
+import type { IDatabase } from '../../storage/index.js';
+
+describe('serialization', () => {
+  it('Map 往返序列化', () => {
+    const original = new Map([['a', 1], ['b', 2]]);
+    const json = mapToJson(original);
+    const restored = jsonToMap<number>(json);
+    assert.deepEqual(restored, original);
+  });
+
+  it('数组往返序列化', () => {
+    const original = ['x', 'y', 'z'];
+    const json = arrayToJson(original);
+    const restored = jsonToArray<string>(json);
+    assert.deepEqual(restored, original);
+  });
+});
+
+describe('SqliteDatabase', () => {
+  let db: IDatabase;
+
+  beforeEach(() => {
+    db = createMemoryDatabase();
+    runMigrations(db);
+  });
+
+  it('migrations 创建所有表', () => {
+    const tables = db.prepare<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+    ).all().map(r => r.name);
+
+    assert.ok(tables.includes('core_values'));
+    assert.ok(tables.includes('memory_nodes'));
+    assert.ok(tables.includes('memory_edges'));
+    assert.ok(tables.includes('narrative'));
+    assert.ok(tables.includes('persona_versions'));
+    assert.ok(tables.includes('conflicts'));
+    assert.ok(tables.includes('snapshots'));
+    assert.ok(tables.includes('evolution_records'));
+  });
+
+  it('prepare.run 返回 changes', () => {
+    const result = db.prepare('INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)')
+      .run('v1', 'test', 0.5, 1000);
+    assert.equal(result.changes, 1);
+  });
+
+  it('prepare.get 返回行或 undefined', () => {
+    db.prepare('INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)')
+      .run('v1', 'test', 0.5, 1000);
+    const row = db.prepare<{ id: string }>('SELECT id FROM core_values WHERE id = ?').get('v1');
+    assert.equal(row?.id, 'v1');
+    const missing = db.prepare<{ id: string }>('SELECT id FROM core_values WHERE id = ?').get('nope');
+    assert.equal(missing, undefined);
+  });
+
+  it('transaction 成功时提交', () => {
+    db.transaction(() => {
+      db.prepare('INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)')
+        .run('v1', 'test', 0.5, 1000);
+      db.prepare('INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)')
+        .run('v2', 'test2', 0.6, 1000);
+    });
+    const rows = db.prepare<{ id: string }>('SELECT id FROM core_values').all();
+    assert.equal(rows.length, 2);
+  });
+
+  it('transaction 异常时回滚', () => {
+    assert.throws(() => {
+      db.transaction(() => {
+        db.prepare('INSERT INTO core_values (id, label, weight, updated_at) VALUES (?, ?, ?, ?)')
+          .run('v1', 'test', 0.5, 1000);
+        throw new Error('模拟失败');
+      });
+    });
+    const rows = db.prepare<{ id: string }>('SELECT id FROM core_values').all();
+    assert.equal(rows.length, 0);
+  });
+});
