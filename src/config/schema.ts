@@ -113,6 +113,13 @@ const onboardingSchema = z.object({
   maxImportEntries: z.coerce.number().int().min(1).default(100),
 });
 
+const queueSchema = z.object({
+  enabled: z.boolean().default(false),
+  pollIntervalMs: z.coerce.number().int().min(100).default(1000),
+  maxConcurrent: z.coerce.number().int().min(1).default(2),
+  maxRetries: z.coerce.number().int().min(0).default(3),
+});
+
 const requestSchema = z.object({
   timeoutMs: z.coerce.number().int().min(0).default(30_000),
   maxBodyBytes: z.coerce.number().int().min(1024).default(1_048_576),
@@ -141,6 +148,7 @@ export const AppConfigSchema = z.object({
     maxImportEntries: 100,
   }),
   request: requestSchema.default({ timeoutMs: 30_000, maxBodyBytes: 1_048_576 }),
+  queue: queueSchema.default({ enabled: false, pollIntervalMs: 1000, maxConcurrent: 2, maxRetries: 3 }),
   cognition: cognitionSchema,
 });
 
@@ -191,6 +199,10 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COGNITION_WM_RECENCY_DECAY:      (v) => { deepSet(env, 'cognition.workingMemory.recencyDecay', parseFloat(v)); },
     CHRONO_COGNITION_CONSOLIDATION_THRESHOLD: (v) => { deepSet(env, 'cognition.consolidation.accessThreshold', parseInt(v, 10)); },
     CHRONO_COGNITION_CONSOLIDATION_MIN_SALIENCE: (v) => { deepSet(env, 'cognition.consolidation.minSalience', parseFloat(v)); },
+    CHRONO_QUEUE_ENABLED:            (v) => { deepSet(env, 'queue.enabled', v === 'true'); },
+    CHRONO_QUEUE_POLL_INTERVAL_MS:   (v) => { deepSet(env, 'queue.pollIntervalMs', parseInt(v, 10)); },
+    CHRONO_QUEUE_MAX_CONCURRENT:     (v) => { deepSet(env, 'queue.maxConcurrent', parseInt(v, 10)); },
+    CHRONO_QUEUE_MAX_RETRIES:        (v) => { deepSet(env, 'queue.maxRetries', parseInt(v, 10)); },
   };
 
   for (const [key, setter] of Object.entries(mapping)) {

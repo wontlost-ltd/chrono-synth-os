@@ -46,6 +46,10 @@ export interface SystemEventMap {
   'onboarding:step-completed': { sessionId: string; step: number };
   'onboarding:completed': { sessionId: string; snapshotId: string };
 
+  /* 任务队列事件 */
+  'task:completed': { taskId: string; result: unknown };
+  'task:failed': { taskId: string; error: string };
+
   /* 系统级事件 */
   'system:snapshot-created': { snapshot: SystemSnapshot };
   'system:snapshot-restored': { snapshotId: string };

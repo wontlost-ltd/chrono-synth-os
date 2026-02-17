@@ -44,24 +44,27 @@ export function registerPrivacyRoutes(app: FastifyInstance, os: ChronoSynthOS): 
     };
   });
 
-  /* DELETE /api/v1/privacy/data */
-  app.delete('/api/v1/privacy/data', async () => {
+  /* DELETE /api/v1/privacy/data — 按租户删除 */
+  app.delete('/api/v1/privacy/data', async (request) => {
+    const tenantId = request.tenantId;
     const db = os.getDatabase();
+    const tenantTables = [
+      'memory_edges', 'memory_embeddings', 'working_memory', 'memory_nodes',
+      'core_values', 'survival_anchors', 'persona_versions', 'conflicts',
+      'snapshots', 'evolution_records', 'audit_log',
+    ] as const;
+    const singletonTables = ['narrative', 'decision_style', 'cognitive_model'] as const;
     db.transaction(() => {
-      db.exec('DELETE FROM memory_edges');
-      db.exec('DELETE FROM memory_embeddings');
-      db.exec('DELETE FROM working_memory');
-      db.exec('DELETE FROM memory_nodes');
-      db.exec('DELETE FROM core_values');
-      db.exec('DELETE FROM narrative');
-      db.exec('DELETE FROM survival_anchors');
-      db.exec('DELETE FROM decision_style');
-      db.exec('DELETE FROM cognitive_model');
-      db.exec('DELETE FROM persona_versions');
-      db.exec('DELETE FROM conflicts');
-      db.exec('DELETE FROM snapshots');
-      db.exec('DELETE FROM evolution_records');
-      db.exec('DELETE FROM audit_log');
+      for (const table of tenantTables) {
+        db.prepare<void>(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId);
+      }
+      for (const table of singletonTables) {
+        db.prepare<void>(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId);
+      }
+      /* 队列表（v008 迁移后存在） */
+      try { db.prepare<void>('DELETE FROM tasks WHERE tenant_id = ?').run(tenantId); } catch { /* 表可能不存在 */ }
+      try { db.prepare<void>('DELETE FROM quota_usage WHERE tenant_id = ?').run(tenantId); } catch { /* 表可能不存在 */ }
+      try { db.prepare<void>('DELETE FROM quota_limits WHERE tenant_id = ?').run(tenantId); } catch { /* 表可能不存在 */ }
     });
     return { data: { deleted: true, timestamp: os.getClock().now() } };
   });

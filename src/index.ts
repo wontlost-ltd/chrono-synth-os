@@ -30,3 +30,8 @@ export { CircuitBreaker, CircuitOpenError } from './server/plugins/circuit-break
 export type { CircuitState, CircuitBreakerOptions } from './server/plugins/circuit-breaker.js';
 export { parsePagination, paginate } from './server/plugins/pagination.js';
 export type { PaginationParams, PaginatedResult } from './server/plugins/pagination.js';
+
+export { TenantDatabase, TenantOSFactory, QuotaManager, DEFAULT_TENANT_ID, normalizeTenantId, runWithTenant, getTenantId } from './multi-tenant/index.js';
+export type { TenantOSFactoryConfig } from './multi-tenant/index.js';
+export { TaskQueue, TaskWorker } from './queue/index.js';
+export type { TaskStatus, TaskRecord, TaskHandler } from './queue/index.js';

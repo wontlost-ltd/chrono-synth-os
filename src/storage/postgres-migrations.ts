@@ -189,6 +189,88 @@ const v006_memory_embeddings: Migration = {
   ],
 };
 
+/** v007: 多租户隔离（PostgreSQL） */
+const v007_multi_tenant: Migration = {
+  version: 'v007',
+  description: '多租户隔离',
+  sql: [
+    /* 为所有多租户表添加 tenant_id 列 */
+    `ALTER TABLE core_values ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE memory_edges ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE memory_embeddings ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE working_memory ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE persona_versions ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE conflicts ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE evolution_records ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE survival_anchors ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    `ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+
+    /* 单例表重建为 tenant_id 主键 */
+    'ALTER TABLE narrative DROP CONSTRAINT IF EXISTS narrative_pkey',
+    'ALTER TABLE narrative DROP COLUMN IF EXISTS id',
+    `ALTER TABLE narrative ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    'ALTER TABLE narrative ADD PRIMARY KEY (tenant_id)',
+
+    'ALTER TABLE decision_style DROP CONSTRAINT IF EXISTS decision_style_pkey',
+    'ALTER TABLE decision_style DROP COLUMN IF EXISTS id',
+    `ALTER TABLE decision_style ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    'ALTER TABLE decision_style ADD PRIMARY KEY (tenant_id)',
+
+    'ALTER TABLE cognitive_model DROP CONSTRAINT IF EXISTS cognitive_model_pkey',
+    'ALTER TABLE cognitive_model DROP COLUMN IF EXISTS id',
+    `ALTER TABLE cognitive_model ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default'`,
+    'ALTER TABLE cognitive_model ADD PRIMARY KEY (tenant_id)',
+
+    /* 租户索引 */
+    'CREATE INDEX IF NOT EXISTS idx_core_values_tenant ON core_values(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant ON memory_nodes(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_persona_versions_tenant ON persona_versions(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_snapshots_tenant ON snapshots(tenant_id)',
+
+    /* 配额表 */
+    `CREATE TABLE IF NOT EXISTS quota_limits (
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      max_per_window INTEGER NOT NULL,
+      window_ms BIGINT NOT NULL,
+      PRIMARY KEY (tenant_id, resource)
+    )`,
+    `CREATE TABLE IF NOT EXISTS quota_usage (
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      window_start BIGINT NOT NULL,
+      PRIMARY KEY (tenant_id, resource, window_start)
+    )`,
+  ],
+};
+
+/** v008: 异步任务队列（PostgreSQL） */
+const v008_task_queue: Migration = {
+  version: 'v008',
+  description: '异步任务队列',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      type TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed')),
+      result TEXT,
+      error TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      available_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_tasks_status_available ON tasks(status, available_at)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_tenant ON tasks(tenant_id)',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -197,4 +279,6 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v004_cognitive_memory,
   v005_personality_os,
   v006_memory_embeddings,
+  v007_multi_tenant,
+  v008_task_queue,
 ];

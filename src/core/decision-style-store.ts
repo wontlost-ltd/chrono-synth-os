@@ -7,7 +7,7 @@ import type { DecisionStyle } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
 
 interface StyleRow {
-  id: number;
+  tenant_id: string;
   style_json: string;
   updated_at: number;
 }
@@ -51,7 +51,7 @@ export class DecisionStyleStore {
   /** 获取决策风格（未设置时返回默认值） */
   get(): DecisionStyle {
     const row = this.db.prepare<StyleRow>(
-      'SELECT style_json, updated_at FROM decision_style WHERE id = 1',
+      `SELECT style_json, updated_at FROM decision_style WHERE tenant_id = 'default'`,
     ).get();
     if (!row) return { ...DEFAULT_DECISION_STYLE, updatedAt: 0 };
     const parsed = JSON.parse(row.style_json) as Partial<Omit<DecisionStyle, 'updatedAt'>>;
@@ -74,8 +74,8 @@ export class DecisionStyleStore {
     validate(next);
     const { updatedAt: _, ...payload } = next;
     this.db.prepare<void>(
-      `INSERT INTO decision_style (id, style_json, updated_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`,
+      `INSERT INTO decision_style (tenant_id, style_json, updated_at) VALUES ('default', ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`,
     ).run(JSON.stringify(payload), now);
     return next;
   }

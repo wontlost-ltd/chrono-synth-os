@@ -8,7 +8,7 @@ import type { CognitiveModel } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
 
 interface ModelRow {
-  id: number;
+  tenant_id: string;
   model_json: string;
   updated_at: number;
 }
@@ -51,7 +51,7 @@ export class CognitiveModelStore {
   /** 获取认知模型（未设置时返回默认值） */
   get(): CognitiveModel {
     const row = this.db.prepare<ModelRow>(
-      'SELECT model_json, updated_at FROM cognitive_model WHERE id = 1',
+      `SELECT model_json, updated_at FROM cognitive_model WHERE tenant_id = 'default'`,
     ).get();
     if (!row) return buildDefault();
     const payload = JSON.parse(row.model_json) as Partial<ModelPayload>;
@@ -84,8 +84,8 @@ export class CognitiveModelStore {
       growthMindset: next.growthMindset,
     };
     this.db.prepare<void>(
-      `INSERT INTO cognitive_model (id, model_json, updated_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET model_json = excluded.model_json, updated_at = excluded.updated_at`,
+      `INSERT INTO cognitive_model (tenant_id, model_json, updated_at) VALUES ('default', ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET model_json = excluded.model_json, updated_at = excluded.updated_at`,
     ).run(JSON.stringify(payload), now);
     return next;
   }

@@ -36,6 +36,8 @@ const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
   'onboarding:session-started',
   'onboarding:step-completed',
   'onboarding:completed',
+  'task:completed',
+  'task:failed',
   'system:snapshot-created',
   'system:snapshot-restored',
   'system:evolution-completed',

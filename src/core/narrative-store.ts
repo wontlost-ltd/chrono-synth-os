@@ -6,7 +6,7 @@ import type { IDatabase } from '../storage/database.js';
 import type { Clock } from '../utils/clock.js';
 
 interface NarrativeRow {
-  id: number;
+  tenant_id: string;
   content: string;
   updated_at: number;
 }
@@ -20,7 +20,7 @@ export class NarrativeStore {
   /** 获取当前叙事 */
   get(): string {
     const row = this.db.prepare<NarrativeRow>(
-      'SELECT content FROM narrative WHERE id = 1',
+      `SELECT content FROM narrative WHERE tenant_id = 'default'`,
     ).get();
     return row?.content ?? '';
   }
@@ -30,8 +30,8 @@ export class NarrativeStore {
     const previous = this.get();
     const now = this.clock.now();
     this.db.prepare<void>(
-      `INSERT INTO narrative (id, content, updated_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+      `INSERT INTO narrative (tenant_id, content, updated_at) VALUES ('default', ?, ?)
+       ON CONFLICT(tenant_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
     ).run(content, now);
     return previous;
   }

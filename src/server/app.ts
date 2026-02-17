@@ -18,6 +18,7 @@ import { registerWebSocket } from './plugins/websocket.js';
 import { registerCors } from './plugins/cors.js';
 import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
+import { registerTenant } from './plugins/tenant.js';
 import { registerAuditLog } from './plugins/audit-log.js';
 import { registerRequestTimeout } from './plugins/request-timeout.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -36,6 +37,9 @@ import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerOnboardingRoutes } from './routes/onboarding.js';
 import { registerVisualizationRoutes } from './routes/visualization.js';
 import { registerPrivacyRoutes } from './routes/privacy.js';
+import { registerTaskRoutes } from './routes/tasks.js';
+import { TaskQueue } from '../queue/task-queue.js';
+import { TaskWorker } from '../queue/task-worker.js';
 
 export interface CreateAppDeps {
   os: ChronoSynthOS;
@@ -56,6 +60,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 同步插件 */
   registerRequestId(app);
+  registerTenant(app);
   registerMetrics(app);
   registerRequestTimeout(app, config);
   registerAuth(app, config);
@@ -86,6 +91,24 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOnboardingRoutes(app, deps.os, config);
   registerVisualizationRoutes(app, deps.os);
   registerPrivacyRoutes(app, deps.os);
+
+  /* 任务队列（可选） */
+  if (config.queue.enabled) {
+    const db = deps.db ?? deps.os.getDatabase();
+    const queue = new TaskQueue(db);
+    registerTaskRoutes(app, queue);
+    const worker = new TaskWorker(
+      queue,
+      deps.os.bus,
+      deps.os.getLogger(),
+      config.queue.pollIntervalMs,
+      config.queue.maxConcurrent,
+      config.queue.maxRetries,
+    );
+    worker.start();
+    app.addHook('onClose', () => { worker.stop(); });
+  }
+
   registerDocsRoutes(app);
 
   return app;

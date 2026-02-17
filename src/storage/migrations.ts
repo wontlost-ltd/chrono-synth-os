@@ -199,6 +199,103 @@ const v006_memory_embeddings: Migration = {
   ],
 };
 
+/** v007: 多租户隔离 */
+const v007_multi_tenant: Migration = {
+  version: 'v007',
+  description: '多租户隔离',
+  sql: [
+    /* 为所有多租户表添加 tenant_id 列 */
+    '/* safe:add-column:core_values:tenant_id */ ALTER TABLE core_values ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:memory_nodes:tenant_id */ ALTER TABLE memory_nodes ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:memory_edges:tenant_id */ ALTER TABLE memory_edges ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:memory_embeddings:tenant_id */ ALTER TABLE memory_embeddings ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:working_memory:tenant_id */ ALTER TABLE working_memory ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:persona_versions:tenant_id */ ALTER TABLE persona_versions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:conflicts:tenant_id */ ALTER TABLE conflicts ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:snapshots:tenant_id */ ALTER TABLE snapshots ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:evolution_records:tenant_id */ ALTER TABLE evolution_records ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:survival_anchors:tenant_id */ ALTER TABLE survival_anchors ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+    '/* safe:add-column:audit_log:tenant_id */ ALTER TABLE audit_log ADD COLUMN tenant_id TEXT NOT NULL DEFAULT \'default\'',
+
+    /* 单例表重建为 tenant_id 主键 */
+    'ALTER TABLE narrative RENAME TO narrative_old',
+    `CREATE TABLE IF NOT EXISTS narrative (
+      tenant_id TEXT PRIMARY KEY DEFAULT 'default',
+      content TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `INSERT OR IGNORE INTO narrative (tenant_id, content, updated_at)
+     SELECT 'default', content, updated_at FROM narrative_old`,
+    'DROP TABLE IF EXISTS narrative_old',
+
+    'ALTER TABLE decision_style RENAME TO decision_style_old',
+    `CREATE TABLE IF NOT EXISTS decision_style (
+      tenant_id TEXT PRIMARY KEY DEFAULT 'default',
+      style_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `INSERT OR IGNORE INTO decision_style (tenant_id, style_json, updated_at)
+     SELECT 'default', style_json, updated_at FROM decision_style_old`,
+    'DROP TABLE IF EXISTS decision_style_old',
+
+    'ALTER TABLE cognitive_model RENAME TO cognitive_model_old',
+    `CREATE TABLE IF NOT EXISTS cognitive_model (
+      tenant_id TEXT PRIMARY KEY DEFAULT 'default',
+      model_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `INSERT OR IGNORE INTO cognitive_model (tenant_id, model_json, updated_at)
+     SELECT 'default', model_json, updated_at FROM cognitive_model_old`,
+    'DROP TABLE IF EXISTS cognitive_model_old',
+
+    /* 租户索引 */
+    'CREATE INDEX IF NOT EXISTS idx_core_values_tenant ON core_values(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant ON memory_nodes(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_persona_versions_tenant ON persona_versions(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_snapshots_tenant ON snapshots(tenant_id)',
+
+    /* 配额表 */
+    `CREATE TABLE IF NOT EXISTS quota_limits (
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      max_per_window INTEGER NOT NULL,
+      window_ms INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, resource)
+    )`,
+    `CREATE TABLE IF NOT EXISTS quota_usage (
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      used INTEGER NOT NULL DEFAULT 0,
+      window_start INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, resource, window_start)
+    )`,
+  ],
+};
+
+/** v008: 异步任务队列 */
+const v008_task_queue: Migration = {
+  version: 'v008',
+  description: '异步任务队列',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      type TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'completed', 'failed')),
+      result TEXT,
+      error TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      available_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_tasks_status_available ON tasks(status, available_at)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_tenant ON tasks(tenant_id)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -207,6 +304,8 @@ const MIGRATIONS: readonly Migration[] = [
   v004_cognitive_memory,
   v005_personality_os,
   v006_memory_embeddings,
+  v007_multi_tenant,
+  v008_task_queue,
 ];
 
 interface MigrationRow {
