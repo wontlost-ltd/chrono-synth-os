@@ -7,7 +7,7 @@ import type { CoreValue, MemoryNode, ActivationResult, ConsolidationResult, Work
 import type { SurvivalAnchor, DecisionStyle, CognitiveModel } from './personality-os.js';
 import type { PersonaVersion, PersonaStatus, SimulationResult } from './persona-version.js';
 import type { Conflict, IntegrationProposal, ResourceAllocation } from './meta-regulation.js';
-import type { SystemSnapshot } from './snapshot.js';
+import type { SystemSnapshot, EvolutionDiffReport } from './snapshot.js';
 
 /** 系统事件映射：事件名 → 载荷类型 */
 export interface SystemEventMap {
@@ -53,7 +53,8 @@ export interface SystemEventMap {
   /* 系统级事件 */
   'system:snapshot-created': { snapshot: SystemSnapshot };
   'system:snapshot-restored': { snapshotId: string };
-  'system:evolution-completed': { mergedVersionIds: readonly string[] };
+  'system:evolution-completed': { mergedVersionIds: readonly string[]; diffReport: EvolutionDiffReport };
+  'system:patterns-extracted': { count: number };
   'system:started': { timestamp: number };
   'system:stopping': { timestamp: number };
 }

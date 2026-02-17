@@ -30,6 +30,8 @@ export interface RankedOption {
   readonly riskScore: number;
   readonly confidence: number;
   readonly overallScore: number;
+  /** 后悔概率 = regretSensitivity × (1 - overallScore) */
+  readonly regretProbability: number;
   readonly explanation: Explanation;
   readonly scoreBreakdown?: ScoreBreakdown;
 }
@@ -73,3 +75,6 @@ export interface SimulationConfig {
   readonly rollouts: number;
   readonly maxOptions: number;
 }
+
+/** 无备选方案时的默认选项 */
+export const DEFAULT_ALTERNATIVES: readonly string[] = ['保持现状', '采取行动'];

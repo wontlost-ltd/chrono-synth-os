@@ -21,6 +21,14 @@ interface ConflictRow {
   resolution: string | null;
 }
 
+const VALID_KINDS = new Set<string>(['value_divergence', 'resource_contention', 'narrative_inconsistency']);
+const VALID_SEVERITIES = new Set<string>(['low', 'medium', 'high', 'critical']);
+
+/** 分歧数量 → 严重等级阈值 */
+const SEVERITY_CRITICAL_THRESHOLD = 5;
+const SEVERITY_HIGH_THRESHOLD = 3;
+const SEVERITY_MEDIUM_THRESHOLD = 2;
+
 export class ConflictResolver {
   constructor(
     private readonly db: IDatabase,
@@ -118,7 +126,7 @@ export class ConflictResolver {
     return rows.map(r => this.toConflict(r));
   }
 
-  /** 从快照恢复冲突（清空全部冲突后重建，确保时间点一致性） */
+  /** 从快照恢复冲突（清空后重建；调用方负责事务保护） */
   restoreConflicts(conflicts: readonly Conflict[]): void {
     this.db.exec('DELETE FROM conflicts');
     for (const c of conflicts) {
@@ -170,17 +178,19 @@ export class ConflictResolver {
   }
 
   private classifySeverity(divergenceCount: number): ConflictSeverity {
-    if (divergenceCount >= 5) return 'critical';
-    if (divergenceCount >= 3) return 'high';
-    if (divergenceCount >= 2) return 'medium';
+    if (divergenceCount >= SEVERITY_CRITICAL_THRESHOLD) return 'critical';
+    if (divergenceCount >= SEVERITY_HIGH_THRESHOLD) return 'high';
+    if (divergenceCount >= SEVERITY_MEDIUM_THRESHOLD) return 'medium';
     return 'low';
   }
 
   private toConflict(row: ConflictRow): Conflict {
+    const kind = VALID_KINDS.has(row.kind) ? row.kind as ConflictKind : 'value_divergence';
+    const severity = VALID_SEVERITIES.has(row.severity) ? row.severity as ConflictSeverity : 'low';
     return {
       id: row.id,
-      kind: row.kind as ConflictKind,
-      severity: row.severity as ConflictSeverity,
+      kind,
+      severity,
       involvedVersions: jsonToArray<string>(row.involved_versions_json),
       affectedValues: jsonToArray<string>(row.affected_values_json),
       description: row.description,

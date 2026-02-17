@@ -304,6 +304,15 @@ const v010_update_gate: Migration = {
   ],
 };
 
+/** v011: 演化差异报告（PostgreSQL） */
+const v011_evolution_diff_report: Migration = {
+  version: 'v011',
+  description: '演化差异报告',
+  sql: [
+    'ALTER TABLE evolution_records ADD COLUMN IF NOT EXISTS diff_report_json TEXT',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -316,4 +325,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v008_task_queue,
   v009_core_values_tuning,
   v010_update_gate,
+  v011_evolution_diff_report,
 ];

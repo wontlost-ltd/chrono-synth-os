@@ -7,6 +7,8 @@ import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { IntegrationProposal } from '../types/meta-regulation.js';
 import type { SimulationResult } from '../types/persona-version.js';
 import type { Clock } from '../utils/clock.js';
+import type { Logger } from '../utils/logger.js';
+import type { UpdateGate, PendingUpdate } from './update-gate.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
 export interface IntegrationConfig {
@@ -24,12 +26,15 @@ const DEFAULT_CONFIG: IntegrationConfig = {
   maxWeightDelta: 0.1,
 };
 
+const LAYER = 'IntegrationEngine';
+
 export class IntegrationEngine {
   private readonly config: IntegrationConfig;
 
   constructor(
     private readonly clock: Clock,
     config?: Partial<IntegrationConfig>,
+    private readonly logger?: Logger,
   ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
@@ -64,13 +69,21 @@ export class IntegrationEngine {
       && proposal.confidence >= this.config.minConfidence;
   }
 
-  /** 将已接受的提案应用到核心层 */
-  apply(proposal: IntegrationProposal, coreLayer: CoreRhythmLayer): void {
+  /** 将已接受的提案应用到核心层（可选通过 UpdateGate 路由） */
+  apply(
+    proposal: IntegrationProposal,
+    coreLayer: CoreRhythmLayer,
+    updateGate?: UpdateGate,
+  ): { pendingUpdates: PendingUpdate[] } {
     const currentValues = coreLayer.values.getAll();
+    const pendingUpdates: PendingUpdate[] = [];
 
     for (const [valueId, targetWeight] of proposal.valueChanges) {
       const existing = currentValues.get(valueId);
-      if (!existing) continue;
+      if (!existing) {
+        this.logger?.warn(LAYER, `跳过不存在的价值维度: ${valueId}`);
+        continue;
+      }
 
       /* 限制单次调整幅度 */
       const delta = Math.max(
@@ -78,7 +91,24 @@ export class IntegrationEngine {
         Math.min(this.config.maxWeightDelta, targetWeight - existing.weight),
       );
       const newWeight = Math.max(0, Math.min(1, existing.weight + delta));
-      coreLayer.updateValue(valueId, newWeight);
+
+      if (updateGate) {
+        const result = updateGate.tryApply(
+          'L1',
+          'system_integration',
+          valueId,
+          String(existing.weight),
+          String(newWeight),
+          delta,
+          `集成提案 ${proposal.id} 调整价值权重`,
+          () => { coreLayer.updateValue(valueId, newWeight); },
+        );
+        if (result.pendingUpdate) {
+          pendingUpdates.push(result.pendingUpdate);
+        }
+      } else {
+        coreLayer.updateValue(valueId, newWeight);
+      }
     }
 
     if (proposal.narrativeUpdate) {
@@ -88,5 +118,7 @@ export class IntegrationEngine {
         : proposal.narrativeUpdate;
       coreLayer.updateNarrative(updated);
     }
+
+    return { pendingUpdates };
   }
 }

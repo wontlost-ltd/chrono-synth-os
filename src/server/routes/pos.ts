@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { compilePersonaState, summarizeForPrompt } from '../../intelligence/persona-state.js';
-import { UpdateGate, type PendingUpdate } from '../../meta/update-gate.js';
+import type { PendingUpdate } from '../../meta/update-gate.js';
 import type { SurvivalAnchorUpdate } from '../../core/survival-anchor-store.js';
 import {
   CreateSurvivalAnchorSchema,
@@ -17,14 +17,6 @@ import {
 } from '../schemas/api-schemas.js';
 
 export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
-  let gate: UpdateGate | undefined;
-  function getGate(): UpdateGate {
-    if (!gate) {
-      gate = new UpdateGate(os.getDatabase(), os.getClock());
-    }
-    return gate;
-  }
-
   function parseJsonValue(raw: string | null | undefined): unknown {
     if (raw === undefined || raw === null || raw === '') return undefined;
     try {
@@ -53,9 +45,14 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS): void
       return;
     }
 
+    if (update.layer !== 'L0') {
+      throw new ValidationError(`不支持的层级: ${update.layer}`, ErrorCode.VALIDATION_FORMAT);
+    }
+
+    const VALID_KINDS = new Set(['constraint', 'threshold', 'must_have']);
     const anchorPatch: SurvivalAnchorUpdate = {
       label: typeof patch.label === 'string' ? patch.label : undefined,
-      kind: typeof patch.kind === 'string' ? patch.kind as SurvivalAnchorUpdate['kind'] : undefined,
+      kind: typeof patch.kind === 'string' && VALID_KINDS.has(patch.kind) ? patch.kind as SurvivalAnchorUpdate['kind'] : undefined,
       severity: typeof patch.severity === 'number' ? patch.severity : undefined,
       ...(Object.prototype.hasOwnProperty.call(patch, 'value') ? { value: patch.value } : {}),
     };
@@ -79,15 +76,34 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS): void
     return { data: anchor };
   });
 
-  /* PATCH /api/v1/pos/survival/:id — 更新锚点 */
-  app.patch<{ Params: { id: string } }>('/api/v1/pos/survival/:id', async (request) => {
+  /* PATCH /api/v1/pos/survival/:id — 更新锚点（L0 通过 UpdateGate 路由） */
+  app.patch<{ Params: { id: string } }>('/api/v1/pos/survival/:id', async (request, reply) => {
     const { id } = request.params;
     const body = UpdateSurvivalAnchorSchema.parse(request.body);
-    const anchor = os.core.updateSurvivalAnchor(id, body);
-    if (!anchor) {
+
+    const current = os.core.survival.getAll().find(a => a.id === id);
+    if (!current) {
       throw new NotFoundError(`生存锚点 ${id} 不存在`, ErrorCode.NOT_FOUND_SURVIVAL_ANCHOR);
     }
-    return { data: anchor };
+
+    const delta = body.severity !== undefined ? body.severity - current.severity : 0;
+    const result = os.updateGate.tryApply(
+      'L0',
+      'user_confirmation',
+      id,
+      JSON.stringify({ label: current.label, kind: current.kind, severity: current.severity }),
+      JSON.stringify(body),
+      delta,
+      '用户更新生存锚点',
+      () => { os.core.updateSurvivalAnchor(id, body); },
+    );
+
+    if (result.applied) {
+      const updated = os.core.survival.getAll().find(a => a.id === id);
+      if (!updated) throw new NotFoundError(`生存锚点 ${id} 不存在`, ErrorCode.NOT_FOUND_SURVIVAL_ANCHOR);
+      return { data: updated };
+    }
+    return reply.status(202).send({ data: result.pendingUpdate, message: '变更需要确认' });
   });
 
   /* DELETE /api/v1/pos/survival/:id — 删除锚点 */
@@ -154,28 +170,27 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS): void
 
   /* GET /api/v1/pos/pending-updates — 获取待确认更新 */
   app.get('/api/v1/pos/pending-updates', async () => {
-    return { data: getGate().getPending() };
+    return { data: os.updateGate.getPending() };
   });
 
   /* POST /api/v1/pos/pending-updates/:id/approve — 审批并应用 */
   app.post<{ Params: { id: string } }>('/api/v1/pos/pending-updates/:id/approve', async (request) => {
     const { id } = request.params;
-    const gate = getGate();
-    const pending = gate.getById(id);
+    const pending = os.updateGate.getById(id);
     if (!pending) {
-      throw new NotFoundError(`待确认更新 ${id} 不存在`, ErrorCode.NOT_FOUND_TASK);
+      throw new NotFoundError(`待确认更新 ${id} 不存在`, ErrorCode.NOT_FOUND_PENDING_UPDATE);
     }
     applyPendingUpdate(pending);
-    const update = gate.approve(id);
+    const update = os.updateGate.approve(id);
     return { data: update };
   });
 
   /* POST /api/v1/pos/pending-updates/:id/reject — 拒绝更新 */
   app.post<{ Params: { id: string } }>('/api/v1/pos/pending-updates/:id/reject', async (request) => {
     const { id } = request.params;
-    const update = getGate().reject(id);
+    const update = os.updateGate.reject(id);
     if (!update) {
-      throw new NotFoundError(`待确认更新 ${id} 不存在`, ErrorCode.NOT_FOUND_TASK);
+      throw new NotFoundError(`待确认更新 ${id} 不存在`, ErrorCode.NOT_FOUND_PENDING_UPDATE);
     }
     return { data: update };
   });

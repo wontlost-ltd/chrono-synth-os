@@ -5,15 +5,17 @@
 
 import { AcceleratedLayer } from './accelerated/accelerated-layer.js';
 import { CoreRhythmLayer } from './core/core-rhythm-layer.js';
+import { MemoryPatternExtractor, type PatternExtractionConfig, type ValueUpdateProposal } from './core/memory-pattern-extractor.js';
 import { EventBus } from './events/event-bus.js';
 import { MetaRegulationLayer } from './meta/meta-regulation-layer.js';
 import type { IntegrationConfig } from './meta/integration-engine.js';
+import { UpdateGate, type UpdateGateConfig, type UpdateTrigger } from './meta/update-gate.js';
 import { EvolutionMerger } from './recovery/evolution-merger.js';
 import { SnapshotStore } from './recovery/snapshot-store.js';
 import { type IDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';
-import type { SystemSnapshot } from './types/snapshot.js';
+import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
-import type { AllocationStrategy } from './types/meta-regulation.js';
+import type { AllocationStrategy, ResourceAllocation } from './types/meta-regulation.js';
 import type { MemoryCognitionConfig } from './types/core-self.js';
 import { type Clock, realClock } from './utils/clock.js';
 import { ConsoleLogger, type Logger } from './utils/logger.js';
@@ -29,6 +31,10 @@ export interface ChronoSynthOSConfig {
   evaluator?: EvaluatorFn;
   /** 认知记忆配置 */
   cognitionConfig?: Partial<MemoryCognitionConfig>;
+  /** 更新闸门配置 */
+  updateGateConfig?: Partial<UpdateGateConfig>;
+  /** 记忆模式提取配置 */
+  patternExtractionConfig?: Partial<PatternExtractionConfig>;
   /** 跳过迁移（当数据库已由 createDatabase() 工厂初始化时设为 true） */
   skipMigrations?: boolean;
 }
@@ -40,6 +46,8 @@ export class ChronoSynthOS {
   readonly meta: MetaRegulationLayer;
   readonly snapshots: SnapshotStore;
   readonly evolution: EvolutionMerger;
+  readonly updateGate: UpdateGate;
+  readonly patternExtractor: MemoryPatternExtractor;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -60,10 +68,16 @@ export class ChronoSynthOS {
     /* 创建事件总线 */
     this.bus = new EventBus();
 
+    /* 更新闸门（需在 MetaRegulationLayer 之前初始化，供其使用） */
+    this.updateGate = new UpdateGate(this.db, this.clock, config.updateGateConfig, this.logger);
+
+    /* 记忆模式提取器 */
+    this.patternExtractor = new MemoryPatternExtractor(this.clock, this.logger, config.patternExtractionConfig);
+
     /* 初始化三层 */
     this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig);
     this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator);
-    this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig);
+    this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig, this.updateGate);
 
     /* 恢复与演化 */
     this.snapshots = new SnapshotStore(this.db);
@@ -112,7 +126,7 @@ export class ChronoSynthOS {
   }
 
   /** 最近一次资源分配结果 */
-  private lastAllocations: readonly import('./types/meta-regulation.js').ResourceAllocation[] = [];
+  private lastAllocations: readonly ResourceAllocation[] = [];
 
   /** 从快照恢复系统状态（完整恢复，事务保护） */
   restoreFromSnapshot(snapshotId: string): boolean {
@@ -163,25 +177,26 @@ export class ChronoSynthOS {
     return true;
   }
 
-  /** 运行演化周期：快照 → 合并最佳实验 → 快照 */
-  runEvolutionCycle(): { mergedCount: number; beforeSnapshotId: string; afterSnapshotId: string } {
+  /** 运行演化周期：快照 → 合并最佳实验 → 快照 → 差异报告 */
+  runEvolutionCycle(): { mergedCount: number; beforeSnapshotId: string; afterSnapshotId: string; diffReport: EvolutionDiffReport } {
     const beforeSnapshot = this.createSnapshot('pre_evolution');
 
     const completed = this.accelerated.getAllPersonas().filter(p => p.status === 'completed');
-    const { mergedVersionIds, valueDelta } = this.evolution.merge(completed, this.core, this.meta);
+    const { mergedVersionIds, valueDelta, diffReport } = this.evolution.merge(completed, this.core, this.meta);
 
     const afterSnapshot = this.createSnapshot('manual');
 
     if (mergedVersionIds.length > 0) {
-      this.evolution.persistRecord(beforeSnapshot.id, afterSnapshot.id, mergedVersionIds, valueDelta);
-      this.bus.emit('system:evolution-completed', { mergedVersionIds });
-      this.logger.info('System', `演化完成: 合并了 ${mergedVersionIds.length} 个人格版本`);
+      this.evolution.persistRecord(beforeSnapshot.id, afterSnapshot.id, mergedVersionIds, valueDelta, diffReport);
+      this.bus.emit('system:evolution-completed', { mergedVersionIds, diffReport });
+      this.logger.info('System', `演化完成: ${diffReport.summary}`);
     }
 
     return {
       mergedCount: mergedVersionIds.length,
       beforeSnapshotId: beforeSnapshot.id,
       afterSnapshotId: afterSnapshot.id,
+      diffReport,
     };
   }
 
@@ -215,13 +230,46 @@ export class ChronoSynthOS {
     return { personaId: persona.id, fitnessScore: result.fitnessScore };
   }
 
-  /** 运行认知周期：固化 → 衰减 → 刷新工作记忆 */
-  runCognitionCycle(): { decayedCount: number; consolidatedCount: number } {
+  /** 将价值漂移提案路由到 UpdateGate */
+  private applyValueDriftProposals(proposals: readonly ValueUpdateProposal[], trigger: UpdateTrigger): void {
+    for (const proposal of proposals) {
+      this.updateGate.tryApply(
+        'L1', trigger, proposal.valueId,
+        String(proposal.currentWeight), String(proposal.suggestedWeight),
+        proposal.delta, proposal.reason,
+        () => { this.core.updateValueParams(proposal.valueId, { weight: proposal.suggestedWeight }); },
+      );
+    }
+  }
+
+  /** 运行认知周期：固化 → 衰减 → 刷新工作记忆 → 情绪事件 → 模式提取 → 价值漂移 */
+  runCognitionCycle(): { decayedCount: number; consolidatedCount: number; patternsFound: number; emotionalEvents: number } {
     /* 先固化（基于当前显著性判断），再衰减（应用遗忘），最后刷新工作记忆 */
     const consolidated = this.core.runConsolidation();
     const decayed = this.core.runMemoryDecay();
     this.core.refreshWorkingMemory();
-    return { decayedCount: decayed.length, consolidatedCount: consolidated.length };
+
+    /* 强情绪事件检测 → 即时价值漂移（must-think 第八节触发机制之一） */
+    const emotionalProposals = this.patternExtractor.extractEmotionalEvents(
+      this.core.memories.getAllMemories(),
+      this.core.values.getAll(),
+    );
+    this.applyValueDriftProposals(emotionalProposals, 'emotional_event');
+
+    /* 模式提取 → 价值漂移提案（must-think 第六节） */
+    const patterns = this.patternExtractor.extractPatterns(
+      this.core.memories.getAllMemories(),
+      this.core.values.getAll(),
+    );
+    this.applyValueDriftProposals(
+      this.patternExtractor.patternsToProposals(patterns, this.core.values.getAll()),
+      'statistical_drift',
+    );
+    if (patterns.length > 0) {
+      this.bus.emit('system:patterns-extracted', { count: patterns.length });
+    }
+
+    return { decayedCount: decayed.length, consolidatedCount: consolidated.length, patternsFound: patterns.length, emotionalEvents: emotionalProposals.length };
   }
 
   /** 停止系统（幂等） */

@@ -119,16 +119,30 @@ describe('API 集成测试', () => {
       assert.equal(body.pagination.totalPages, 3);
     });
 
-    it('PATCH /api/v1/values/:id 更新价值', async () => {
+    it('PATCH /api/v1/values/:id 小幅更新直接应用', async () => {
+      const value = os.core.addValue('勇气', 0.7);
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/values/${value.id}`,
+        payload: { weight: 0.8 },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.weight, 0.8);
+    });
+
+    it('PATCH /api/v1/values/:id 大幅更新返回 202 待确认', async () => {
       const value = os.core.addValue('勇气', 0.7);
       const res = await app.inject({
         method: 'PATCH',
         url: `/api/v1/values/${value.id}`,
         payload: { weight: 0.9 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 202);
       const body = JSON.parse(res.body);
-      assert.equal(body.data.weight, 0.9);
+      assert.ok(body.data.id);
+      assert.equal(body.data.status, 'pending');
+      assert.equal(body.message, '变更需要确认');
     });
 
     it('PATCH /api/v1/values/:id 不存在返回 404', async () => {
@@ -387,16 +401,19 @@ describe('API 集成测试', () => {
       assert.equal(body.data.length, 1);
     });
 
-    it('PATCH /api/v1/pos/survival/:id 更新锚点', async () => {
+    it('PATCH /api/v1/pos/survival/:id 更新锚点（L0 需确认返回 202）', async () => {
       const anchor = os.core.addSurvivalAnchor('底线', 'constraint', null, 3);
       const res = await app.inject({
         method: 'PATCH',
         url: `/api/v1/pos/survival/${anchor.id}`,
         payload: { severity: 5 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 202);
       const body = JSON.parse(res.body);
-      assert.equal(body.data.severity, 5);
+      assert.ok(body.data.id);
+      assert.equal(body.data.status, 'pending');
+      assert.equal(body.data.layer, 'L0');
+      assert.equal(body.message, '变更需要确认');
     });
 
     it('DELETE /api/v1/pos/survival/:id 删除锚点', async () => {

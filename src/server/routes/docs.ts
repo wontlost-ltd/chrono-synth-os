@@ -6,7 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 
 const API_DOCS = {
-  version: '0.5.0',
+  version: '0.7.0',
   endpoints: [
     /* ===== 基础设施 ===== */
     {
@@ -39,8 +39,8 @@ const API_DOCS = {
       method: 'POST',
       path: '/api/v1/values',
       description: '创建核心价值',
-      request_schema: { label: 'string', weight: 'number (0-1)' },
-      response_schema: { data: '{ id, label, weight }' },
+      request_schema: { label: 'string', weight: 'number (0-1)', timeDiscount: 'number (0-1, 可选, 默认 0.5)', emotionAmplifier: 'number (>=0, 可选, 默认 1.0)' },
+      response_schema: { data: '{ id, label, weight, timeDiscount, emotionAmplifier }' },
     },
     {
       method: 'GET',
@@ -51,9 +51,9 @@ const API_DOCS = {
     {
       method: 'PATCH',
       path: '/api/v1/values/:id',
-      description: '更新核心价值权重',
+      description: '更新核心价值权重（小 delta 直接应用返回 200；大 delta 经 UpdateGate 评估后可能返回 202 + 待确认提案）',
       request_schema: { weight: 'number (0-1)' },
-      response_schema: { data: '{ id, label, weight }' },
+      response_schema: { data: '{ id, label, weight } | PendingUpdate (202)' },
     },
 
     /* ===== 记忆系统 ===== */
@@ -140,9 +140,9 @@ const API_DOCS = {
     {
       method: 'PATCH',
       path: '/api/v1/pos/survival/:id',
-      description: '更新 L0 生存锚点',
+      description: '更新 L0 生存锚点（L0 变更始终经 UpdateGate 确认，返回 202 + 待确认提案）',
       request_schema: { label: 'string?', kind: 'string?', value: 'unknown?', severity: 'number?' },
-      response_schema: { data: 'SurvivalAnchor' },
+      response_schema: { data: 'SurvivalAnchor | PendingUpdate (202)' },
     },
     {
       method: 'DELETE',
@@ -181,6 +181,30 @@ const API_DOCS = {
       path: '/api/v1/pos/state',
       description: '获取完整 P-OS 五层状态 + prompt-ready 摘要',
       response_schema: { data: '{ state: PersonaOSState, summary: string }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/pos/state/summary',
+      description: '获取 prompt-ready 五层人格状态文本摘要',
+      response_schema: { data: '{ summary: string }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/pos/pending-updates',
+      description: '获取待确认的 L0/L1 更新列表',
+      response_schema: { data: 'PendingUpdate[]' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/pos/pending-updates/:id/approve',
+      description: '审批并应用待确认更新',
+      response_schema: { data: 'PendingUpdate' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/pos/pending-updates/:id/reject',
+      description: '拒绝待确认更新',
+      response_schema: { data: 'PendingUpdate' },
     },
 
     /* ===== 人格分叉与模拟 ===== */
@@ -346,8 +370,8 @@ const API_DOCS = {
     {
       method: 'POST',
       path: '/api/v1/operations/evolution/run',
-      description: '运行演化周期',
-      response_schema: { data: '{ mergedCount, beforeSnapshotId, afterSnapshotId }' },
+      description: '运行演化周期（含差异报告和后悔概率）',
+      response_schema: { data: '{ mergedCount, beforeSnapshotId, afterSnapshotId, diffReport: EvolutionDiffReport }' },
     },
     {
       method: 'POST',

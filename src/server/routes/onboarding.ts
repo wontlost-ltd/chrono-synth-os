@@ -48,7 +48,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, os: ChronoSynthOS
     embeddingIndex = new EmbeddingIndex(os.getDatabase(), os.getClock(), llm, config.intelligence.embeddingModel);
     const retrieval = new RetrievalService(os.core.memories, embeddingIndex);
     const ruleEngine = config.ruleEngine.enabled
-      ? new RuleEngine(os.getClock(), config.ruleEngine)
+      ? new RuleEngine(os.getClock(), config.ruleEngine, os.getLogger())
       : undefined;
     engine = new DecisionEngine(os.core, retrieval, llm, os.getClock(), os.getLogger(), config.intelligence.simulation, ruleEngine);
     return engine;

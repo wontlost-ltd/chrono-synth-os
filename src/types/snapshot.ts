@@ -22,6 +22,23 @@ export interface SystemSnapshot {
   readonly reason: 'scheduled' | 'manual' | 'pre_evolution' | 'shutdown';
 }
 
+/** 演化差异报告 — must-think 第七节 */
+export interface EvolutionDiffReport {
+  readonly valueDiffs: ReadonlyArray<{
+    valueId: string;
+    label: string;
+    weightBefore: number;
+    weightAfter: number;
+    delta: number;
+  }>;
+  /** 后悔概率 = regretSensitivity × tanh(totalDeltaMagnitude / max(valueCount, 1)) */
+  readonly regretProbability: number;
+  /** 所有价值维度的 |delta| 之和 */
+  readonly totalDeltaMagnitude: number;
+  /** 人类可读的演化摘要 */
+  readonly summary: string;
+}
+
 /** 演化合并记录 */
 export interface EvolutionRecord {
   readonly id: string;
@@ -33,5 +50,7 @@ export interface EvolutionRecord {
   readonly mergedVersionIds: readonly string[];
   /** 价值权重变化摘要 */
   readonly valueDelta: ReadonlyMap<string, number>;
+  /** 演化差异报告（v0.7.0+） */
+  readonly diffReport?: EvolutionDiffReport;
   readonly evolvedAt: number;
 }

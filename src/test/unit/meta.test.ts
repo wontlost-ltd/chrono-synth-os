@@ -149,7 +149,7 @@ describe('MetaRegulationLayer', () => {
       const proposal = meta.proposeIntegration(result);
       assert.ok(proposal.confidence >= 0.6);
 
-      const accepted = meta.decideIntegration(proposal, result.fitnessScore, core);
+      const { accepted } = meta.decideIntegration(proposal, result.fitnessScore, core);
       assert.ok(accepted);
     });
 
@@ -164,7 +164,7 @@ describe('MetaRegulationLayer', () => {
       };
 
       const proposal = meta.proposeIntegration(result);
-      const accepted = meta.decideIntegration(proposal, result.fitnessScore, core);
+      const { accepted } = meta.decideIntegration(proposal, result.fitnessScore, core);
       assert.ok(!accepted);
     });
   });

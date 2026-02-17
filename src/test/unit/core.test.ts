@@ -146,4 +146,34 @@ describe('CoreRhythmLayer', () => {
       assert.throws(() => core.linkMemories(m1.id, m2.id, 'r', 2.0), RangeError);
     });
   });
+
+  describe('边缘场景', () => {
+    it('空叙事字符串正常存储', () => {
+      core.updateNarrative('');
+      assert.equal(core.getState().narrative, '');
+    });
+
+    it('三条记忆形成三角关系', () => {
+      const m1 = core.addMemory('episodic', 'x', 0, 0.5);
+      const m2 = core.addMemory('episodic', 'y', 0, 0.5);
+      const m3 = core.addMemory('episodic', 'z', 0, 0.5);
+      core.linkMemories(m1.id, m2.id, 'related', 0.8);
+      core.linkMemories(m2.id, m3.id, 'caused', 0.7);
+      core.linkMemories(m3.id, m1.id, 'similar', 0.6);
+      const state = core.getState();
+      assert.equal(state.edges.length, 3);
+    });
+
+    it('删除不存在的价值不抛出', () => {
+      const deleted = core.values.delete('nonexistent');
+      assert.ok(!deleted);
+    });
+
+    it('权重边界值 0 和 1 正常接受', () => {
+      const v0 = core.addValue('min', 0);
+      const v1 = core.addValue('max', 1);
+      assert.equal(v0.weight, 0);
+      assert.equal(v1.weight, 1);
+    });
+  });
 });

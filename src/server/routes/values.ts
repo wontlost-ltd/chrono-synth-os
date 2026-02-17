@@ -25,18 +25,35 @@ export function registerValueRoutes(app: FastifyInstance, os: ChronoSynthOS): vo
     return paginate(items, params);
   });
 
-  /* PATCH /api/v1/values/:id — 更新价值参数 */
-  app.patch<{ Params: { id: string } }>('/api/v1/values/:id', async (request) => {
+  /* PATCH /api/v1/values/:id — 更新价值参数（通过 UpdateGate 路由） */
+  app.patch<{ Params: { id: string } }>('/api/v1/values/:id', async (request, reply) => {
     const { id } = request.params;
     const body = UpdateValueSchema.parse(request.body);
-    const updated = os.core.updateValueParams(id, {
-      weight: body.weight,
-      timeDiscount: body.timeDiscount,
-      emotionAmplifier: body.emotionAmplifier,
-    });
-    if (!updated) {
+
+    const current = os.core.values.getAll().get(id);
+    if (!current) {
       throw new NotFoundError(`价值 ${id} 不存在`, ErrorCode.NOT_FOUND_VALUE);
     }
-    return { data: updated };
+
+    const delta = body.weight !== undefined ? body.weight - current.weight : 0;
+    const patch = { weight: body.weight, timeDiscount: body.timeDiscount, emotionAmplifier: body.emotionAmplifier };
+
+    const result = os.updateGate.tryApply(
+      'L1',
+      'user_confirmation',
+      id,
+      String(current.weight),
+      JSON.stringify(patch),
+      delta,
+      '用户更新价值参数',
+      () => { os.core.updateValueParams(id, patch); },
+    );
+
+    if (result.applied) {
+      const updated = os.core.values.getAll().get(id);
+      if (!updated) throw new NotFoundError(`价值 ${id} 不存在`, ErrorCode.NOT_FOUND_VALUE);
+      return { data: updated };
+    }
+    return reply.status(202).send({ data: result.pendingUpdate, message: '变更需要确认' });
   });
 }

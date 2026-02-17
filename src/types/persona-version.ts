@@ -38,7 +38,7 @@ export interface PersonaVersion {
   readonly values: ReadonlyMap<string, number>;
   status: PersonaStatus;
   /** 该版本产生的模拟结果 */
-  readonly results: SimulationResult[];
+  readonly results: readonly SimulationResult[];
   /** 资源消耗配额 0-1 */
   resourceQuota: number;
   readonly createdAt: number;

@@ -2,9 +2,11 @@
  * 规则引擎（离线决策能力）
  */
 
-import type { DecisionCase, DecisionResult, Explanation, RankedOption } from './types.js';
+import { DEFAULT_ALTERNATIVES, type DecisionCase, type DecisionResult, type Explanation, type RankedOption } from './types.js';
 import type { PersonaOSState } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
+import type { Logger } from '../utils/logger.js';
+import { clamp01 } from '../utils/math.js';
 import { computeStructuralScore } from './structural-scorer.js';
 import type { ScoreBreakdown } from './structural-scorer.js';
 
@@ -13,13 +15,11 @@ export interface RuleEngineConfig {
   fallbackStrategy: 'rule_only' | 'error';
 }
 
-function clamp01(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
-}
-
 function tokenize(text: string): string[] {
   return text.toLowerCase().split(/[^a-z0-9\u4e00-\u9fff]+/).filter(Boolean);
 }
+
+const LAYER = 'RuleEngine';
 
 export class RuleEngine {
   private readonly config: RuleEngineConfig;
@@ -27,6 +27,7 @@ export class RuleEngine {
   constructor(
     private readonly clock: Clock,
     config?: Partial<RuleEngineConfig>,
+    private readonly logger?: Logger,
   ) {
     this.config = { enabled: true, fallbackStrategy: 'rule_only', ...config };
   }
@@ -43,7 +44,7 @@ export class RuleEngine {
 
     const alternatives = decisionCase.alternatives && decisionCase.alternatives.length > 0
       ? [...decisionCase.alternatives]
-      : ['保持现状', '采取行动'];
+      : [...DEFAULT_ALTERNATIVES];
 
     const valueWeights = new Map<string, number>();
     for (const value of personaState.L1.values()) {
@@ -76,6 +77,7 @@ export class RuleEngine {
       });
 
       const explanation = this.buildExplanation(alternative, structural.alignmentScore, structural.overallScore, structural.breakdown);
+      const regretProbability = clamp01(personaState.L2.regretSensitivity * (1 - structural.overallScore));
       scored.push({
         option: {
           alternative,
@@ -84,6 +86,7 @@ export class RuleEngine {
           riskScore,
           confidence: 0.4,
           overallScore: structural.overallScore,
+          regretProbability,
           explanation,
           scoreBreakdown: structural.breakdown,
         },
@@ -94,12 +97,14 @@ export class RuleEngine {
     scored.sort((a, b) => b.score - a.score);
     const rankedOptions = scored.map((entry, idx) => ({ ...entry.option, rank: idx + 1 }));
 
-    return {
+    const result: DecisionResult = {
       caseId: decisionCase.id,
       recommendedAlternative: rankedOptions[0]?.alternative ?? '',
       rankedOptions,
       simulatedAt: this.clock.now(),
     };
+    this.logger?.info(LAYER, `评估完成: ${decisionCase.id} → 推荐「${result.recommendedAlternative}」 (分数=${rankedOptions[0]?.overallScore.toFixed(3) ?? 'N/A'})`);
+    return result;
   }
 
   private buildExplanation(

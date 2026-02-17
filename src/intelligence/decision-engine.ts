@@ -14,6 +14,7 @@
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
+import { clamp01 } from '../utils/math.js';
 import type { CognitiveModel, DecisionStyle, SurvivalAnchor } from '../types/personality-os.js';
 import type { CoreValue } from '../types/core-self.js';
 import type { LLMProvider } from './llm-provider.js';
@@ -22,9 +23,10 @@ import { computeStructuralScore } from './structural-scorer.js';
 import type { ScoreBreakdown } from './structural-scorer.js';
 import { compilePersonaState, summarizeForPrompt } from './persona-state.js';
 import type { RuleEngine } from './rule-engine.js';
-import type {
-  DecisionCase, DecisionResult, Explanation, RankedOption,
-  SimulationConfig, SimulationRollout,
+import {
+  DEFAULT_ALTERNATIVES,
+  type DecisionCase, type DecisionResult, type Explanation, type RankedOption,
+  type SimulationConfig, type SimulationRollout,
 } from './types.js';
 
 export interface DecisionProgress {
@@ -38,9 +40,16 @@ export interface DecisionEngineOptions {
 
 const LAYER = 'DecisionEngine';
 
-function clamp01(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
-}
+/** 记忆检索数量 */
+const CONTEXT_MEMORY_COUNT = 5;
+/** 最低备选方案数量 */
+const MIN_ALTERNATIVES = 2;
+/** 结构化评分缺失时的默认风险值 */
+const DEFAULT_RISK_SCORE = 0.5;
+/** 结构化评分缺失时的默认置信度 */
+const DEFAULT_CONFIDENCE = 0.5;
+/** 无 rollout 数据时的降级置信度 */
+const EMPTY_ROLLOUT_CONFIDENCE = 0.3;
 
 function safeParseJson<T>(content: string): T | undefined {
   try {
@@ -99,11 +108,11 @@ export class DecisionEngine {
       this.logger.warn(LAYER, '查询向量获取失败，退化为图检索', err);
     }
 
-    const contextMemories = this.retrieval.getContext(query, queryEmbedding, 5);
+    const contextMemories = this.retrieval.getContext(query, queryEmbedding, CONTEXT_MEMORY_COUNT);
     options?.onProgress?.({ progress: 0.1, stage: 'context' });
 
     const alternatives = await this.getAlternatives(decisionCase, personaSummary, contextMemories);
-    const limited = alternatives.slice(0, Math.max(2, this.config.maxOptions));
+    const limited = alternatives.slice(0, Math.max(MIN_ALTERNATIVES, this.config.maxOptions));
     options?.onProgress?.({ progress: 0.2, stage: 'alternatives' });
 
     const valueWeights = new Map<string, number>();
@@ -124,6 +133,7 @@ export class DecisionEngine {
       const aggregate = this.aggregateRollouts(rollouts);
       const explanation = await this.explainAlternative(decisionCase, alternative, rollouts, contextMemories);
 
+      const regretProbability = Math.max(0, Math.min(1, state.L2.regretSensitivity * (1 - aggregate.overallScore)));
       ranked.push({
         option: {
           alternative,
@@ -132,6 +142,7 @@ export class DecisionEngine {
           riskScore: aggregate.riskScore,
           confidence: aggregate.confidence,
           overallScore: aggregate.overallScore,
+          regretProbability,
           explanation,
           scoreBreakdown: aggregate.scoreBreakdown,
         },
@@ -192,7 +203,7 @@ export class DecisionEngine {
       this.logger.warn(LAYER, '备选项生成失败，使用默认选项', err);
     }
 
-    return ['保持现状', '采取行动'];
+    return [...DEFAULT_ALTERNATIVES];
   }
 
   private async runRollouts(
@@ -247,8 +258,8 @@ export class DecisionEngine {
     let outcomes: string[] = [];
     let valueAlignment = new Map<string, number>();
     let constraintViolations: string[] = [];
-    let riskScore = 0.5;
-    let confidence = 0.5;
+    let riskScore = DEFAULT_RISK_SCORE;
+    let confidence = DEFAULT_CONFIDENCE;
 
     try {
       const res = await this.llm.chat(
@@ -307,7 +318,7 @@ export class DecisionEngine {
     alignmentScore: number; riskScore: number; confidence: number; overallScore: number; scoreBreakdown?: ScoreBreakdown;
   } {
     if (rollouts.length === 0) {
-      return { alignmentScore: 0, riskScore: 0.5, confidence: 0.3, overallScore: 0 };
+      return { alignmentScore: 0, riskScore: DEFAULT_RISK_SCORE, confidence: EMPTY_ROLLOUT_CONFIDENCE, overallScore: 0 };
     }
     const avg = (list: readonly number[]) => list.reduce((s, v) => s + v, 0) / list.length;
     const overallScore = avg(rollouts.map(r => r.overallScore));

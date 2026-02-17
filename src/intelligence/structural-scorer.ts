@@ -5,6 +5,7 @@
 
 import type { CoreValue } from '../types/core-self.js';
 import type { CognitiveModel, DecisionStyle, SurvivalAnchor } from '../types/personality-os.js';
+import { clamp, clamp01 } from '../utils/math.js';
 
 export interface ScoreBreakdown {
   valueContributions: Record<string, number>;
@@ -26,14 +27,13 @@ export interface StructuralScoreInput {
   timeHorizonMonths?: number;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  return Math.max(min, Math.min(max, value));
-}
-
-function clamp01(value: number): number {
-  return clamp(value, 0, 1);
-}
+/** 认知偏差系数：正值 = 乐观偏移，负值 = 悲观偏移 */
+const BIAS_COEFFICIENTS: Record<string, { factor: number; useRisk: boolean }> = {
+  confirmation:  { factor: 0.05, useRisk: false },
+  loss_aversion: { factor: -0.1, useRisk: true },
+  optimism:      { factor: 0.03, useRisk: false },
+  sunk_cost:     { factor: -0.02, useRisk: false },
+};
 
 function resolveWeight(value: CoreValue, valueWeights: ReadonlyMap<string, number>): number {
   const override = valueWeights.get(value.id) ?? valueWeights.get(value.label);
@@ -72,23 +72,11 @@ function computeCognitiveBias(
 
   for (const [bias, weight] of cognitiveModel.biasWeights) {
     if (!Number.isFinite(weight)) continue;
-    if (bias === 'confirmation') {
-      const delta = weight * 0.05;
-      adjustments.confirmation = (adjustments.confirmation ?? 0) + delta;
-      total += delta;
-    } else if (bias === 'loss_aversion') {
-      const delta = -weight * clampedRisk * 0.1;
-      adjustments.loss_aversion = (adjustments.loss_aversion ?? 0) + delta;
-      total += delta;
-    } else if (bias === 'optimism') {
-      const delta = weight * 0.03;
-      adjustments.optimism = (adjustments.optimism ?? 0) + delta;
-      total += delta;
-    } else if (bias === 'sunk_cost') {
-      const delta = -weight * 0.02;
-      adjustments.sunk_cost = (adjustments.sunk_cost ?? 0) + delta;
-      total += delta;
-    }
+    const coeff = BIAS_COEFFICIENTS[bias];
+    if (!coeff) continue;
+    const delta = weight * coeff.factor * (coeff.useRisk ? clampedRisk : 1);
+    adjustments[bias] = (adjustments[bias] ?? 0) + delta;
+    total += delta;
   }
 
   const growthFactor = 0.5 + clamp01(cognitiveModel.growthMindset) * 0.5;

@@ -19,6 +19,8 @@ interface PersonaRow {
   updated_at: number;
 }
 
+const VALID_STATUSES = new Set<string>(['active', 'paused', 'completed', 'failed']);
+
 export class PersonaEngine {
   constructor(
     private readonly db: IDatabase,
@@ -27,7 +29,7 @@ export class PersonaEngine {
 
   /** 从核心价值分叉创建新人格版本 */
   create(label: string, values: ReadonlyMap<string, number>, resourceQuota: number): PersonaVersion {
-    if (!Number.isFinite(resourceQuota) || resourceQuota < 0 || resourceQuota > 1) throw new RangeError(`资源配额必须在 0-1 之间，收到 ${resourceQuota}`);
+    this.validateQuota(resourceQuota);
     const id = generatePrefixedId('persona');
     const now = this.clock.now();
     this.db.prepare<void>(
@@ -63,7 +65,7 @@ export class PersonaEngine {
 
   /** 更新资源配额 */
   setQuota(id: PersonaVersionId, quota: number): boolean {
-    if (!Number.isFinite(quota) || quota < 0 || quota > 1) throw new RangeError(`资源配额必须在 0-1 之间，收到 ${quota}`);
+    this.validateQuota(quota);
     const now = this.clock.now();
     const result = this.db.prepare<void>(
       'UPDATE persona_versions SET resource_quota = ?, updated_at = ? WHERE id = ?',
@@ -120,12 +122,19 @@ export class PersonaEngine {
     );
   }
 
+  private validateQuota(value: number): void {
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      throw new RangeError(`资源配额必须在 0-1 之间，收到 ${value}`);
+    }
+  }
+
   private toPersona(row: PersonaRow): PersonaVersion {
+    const status = VALID_STATUSES.has(row.status) ? row.status as PersonaStatus : 'failed';
     return {
       id: row.id,
       label: row.label,
       values: jsonToMap<number>(row.values_json),
-      status: row.status as PersonaStatus,
+      status,
       results: deepParse<SimulationResult[]>(row.results_json),
       resourceQuota: row.resource_quota,
       createdAt: row.created_at,
