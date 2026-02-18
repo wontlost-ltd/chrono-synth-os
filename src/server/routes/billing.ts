@@ -102,7 +102,12 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       throw new StateError('尚未关联 Stripe 客户，请先完成注册', ErrorCode.VALIDATION_REQUIRED);
     }
 
-    const session = await createCheckoutSession(config, sub.stripe_customer_id, priceId, successUrl, cancelUrl);
+    let session;
+    try {
+      session = await createCheckoutSession(config, sub.stripe_customer_id, priceId, successUrl, cancelUrl);
+    } catch (err) {
+      throw new StateError(`支付会话创建失败: ${err instanceof Error ? err.message : String(err)}`, ErrorCode.STATE_INVALID_TRANSITION);
+    }
     return { data: { sessionId: session.id, url: session.url } };
   });
 
@@ -123,7 +128,12 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       throw new StateError('尚未关联 Stripe 客户', ErrorCode.VALIDATION_REQUIRED);
     }
 
-    const session = await createPortalSession(config, sub.stripe_customer_id, returnUrl);
+    let session;
+    try {
+      session = await createPortalSession(config, sub.stripe_customer_id, returnUrl);
+    } catch (err) {
+      throw new StateError(`客户门户创建失败: ${err instanceof Error ? err.message : String(err)}`, ErrorCode.STATE_INVALID_TRANSITION);
+    }
     return { data: { url: session.url } };
   });
 
@@ -155,19 +165,20 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
 
     const now = Date.now();
     const eventId = (event as { id?: string }).id;
+    if (!eventId) {
+      throw new ValidationError('Webhook 事件缺少 id 字段', ErrorCode.VALIDATION_REQUIRED);
+    }
     let duplicate = false;
 
     try {
       db.transaction(() => {
         /* 幂等性：事件去重与处理在同一事务内 */
-        if (eventId) {
-          const inserted = db.prepare<void>(
-            'INSERT OR IGNORE INTO webhook_events (event_id, event_type, processed_at) VALUES (?, ?, ?)',
-          ).run(eventId, event.type, now);
-          if (inserted.changes === 0) {
-            duplicate = true;
-            return;
-          }
+        const inserted = db.prepare<void>(
+          'INSERT OR IGNORE INTO webhook_events (event_id, event_type, processed_at) VALUES (?, ?, ?)',
+        ).run(eventId, event.type, now);
+        if (inserted.changes === 0) {
+          duplicate = true;
+          return;
         }
 
         switch (event.type) {

@@ -31,11 +31,7 @@ export function registerLifeSimulationRoutes(
     const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '20', 10) || 20));
     const offset = (page - 1) * pageSize;
 
-    const total = options?.db
-      ? (options.db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM life_simulations WHERE tenant_id = ?').get(tenantId)?.count ?? 0)
-      : 0;
-
-    const records = service.getByTenant(tenantId, pageSize + offset).slice(offset);
+    const { records, total } = service.getByTenantPaginated(tenantId, pageSize, offset);
     return {
       data: records.map(r => ({
         simulationId: r.id,

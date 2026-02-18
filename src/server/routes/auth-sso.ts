@@ -12,6 +12,7 @@ import { buildAuthorizeUrl, exchangeCode, fetchUserInfo } from '../plugins/auth0
 import type { JwtPayload, UserRole } from '../../types/auth.js';
 import { syncPlanToQuota } from '../../billing/plans.js';
 import { ConfigError, ValidationError, AuthenticationError, ErrorCode } from '../../errors/index.js';
+import { SsoAuthorizeQuerySchema, SsoCallbackQuerySchema } from '../schemas/api-schemas.js';
 
 /** SSO 状态参数存储接口 */
 interface SsoStateStore {
@@ -108,7 +109,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
       throw new ConfigError('SSO 启用但 server.publicUrl 未配置', ErrorCode.CONFIG_INVALID);
     }
 
-    const { redirect_uri } = request.query as { redirect_uri?: string };
+    const { redirect_uri } = SsoAuthorizeQuerySchema.parse(request.query);
 
     const redirectPath = (redirect_uri && redirect_uri.startsWith('/') && !redirect_uri.startsWith('//'))
       ? redirect_uri
@@ -125,11 +126,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
 
   /* GET /api/v1/auth/sso/callback */
   app.get('/api/v1/auth/sso/callback', ssoRateLimit, async (request, reply) => {
-    const { code, state, error: authError } = request.query as {
-      code?: string;
-      state?: string;
-      error?: string;
-    };
+    const { code, state, error: authError } = SsoCallbackQuerySchema.parse(request.query);
 
     if (authError) {
       throw new AuthenticationError(`Auth0 错误: ${authError}`, ErrorCode.AUTH_SSO_FAILED);
@@ -153,12 +150,16 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
       const tokens = await exchangeCode(ssoConfig, code, callbackUri);
       const userInfo = await fetchUserInfo(ssoConfig.domain, tokens.access_token);
 
+      if (!userInfo.email) {
+        throw new AuthenticationError('身份提供商未返回邮箱地址', ErrorCode.AUTH_SSO_FAILED);
+      }
+
       const emailVerified = (userInfo as { email_verified?: boolean }).email_verified;
-      if (userInfo.email && emailVerified !== true) {
+      if (emailVerified !== true) {
         throw new AuthenticationError('邮箱未验证', ErrorCode.AUTH_SSO_FAILED);
       }
 
-      const email = userInfo.email ?? userInfo.sub;
+      const email = userInfo.email;
 
       // 查找或创建用户
       const existingUser = db.prepare<{ id: string; tenant_id: string; role: string }>(

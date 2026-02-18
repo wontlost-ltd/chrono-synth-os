@@ -22,7 +22,7 @@ interface SharedRow {
 
 export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase): void {
   /* POST /api/v1/simulations/:id/share */
-  app.post('/api/v1/simulations/:id/share', async (request, reply) => {
+  app.post('/api/v1/simulations/:id/share', async (request) => {
     const { id: simulationId } = request.params as { id: string };
     const ownerUserId = (request.user as { sub?: string })?.sub;
     const tenantId = request.tenantId;
@@ -52,7 +52,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
       db.prepare(
         'UPDATE shared_simulations SET permission = ?, updated_at = ? WHERE id = ?',
       ).run(permission, Date.now(), existing.id);
-      return reply.status(200).send({ data: { id: existing.id, simulationId, userId, permission, updated: true } });
+      return { data: { id: existing.id, simulationId, userId, permission, created: false } };
     }
 
     const shareId = randomUUID();
@@ -62,7 +62,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
       'INSERT INTO shared_simulations (id, simulation_id, owner_user_id, shared_with_user_id, permission, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(shareId, simulationId, ownerUserId, userId, permission, now, now);
 
-    return reply.status(201).send({ data: { id: shareId, simulationId, userId, permission } });
+    return { data: { id: shareId, simulationId, userId, permission, created: true } };
   });
 
   /* GET /api/v1/shared */

@@ -228,3 +228,14 @@ export const DecisionFeedbackSchema = z.object({
   satisfaction: z.number().int().min(1).max(5),
   notes: z.string().optional(),
 });
+
+/* SSO 查询参数 */
+export const SsoAuthorizeQuerySchema = z.object({
+  redirect_uri: z.string().optional(),
+});
+
+export const SsoCallbackQuerySchema = z.object({
+  code: z.string().optional(),
+  state: z.string().optional(),
+  error: z.string().optional(),
+});

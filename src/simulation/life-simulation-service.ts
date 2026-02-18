@@ -89,4 +89,9 @@ export class LifeSimulationService {
   getByTenant(tenantId: string, limit?: number): LifeSimulationRecord[] {
     return this.store.getByTenant(tenantId, limit);
   }
+
+  /** 按租户分页查询（SQL 级 OFFSET） */
+  getByTenantPaginated(tenantId: string, limit: number, offset: number): { records: LifeSimulationRecord[]; total: number } {
+    return this.store.getByTenantPaginated(tenantId, limit, offset);
+  }
 }

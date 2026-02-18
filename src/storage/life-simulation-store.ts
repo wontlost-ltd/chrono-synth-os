@@ -175,6 +175,17 @@ export class LifeSimulationStore {
     ).all(tenantId, limit).map(rowToSimRecord);
   }
 
+  /** 按租户分页查询（SQL 级 OFFSET） */
+  getByTenantPaginated(tenantId: string, limit: number, offset: number): { records: LifeSimulationRecord[]; total: number } {
+    const total = this.db.prepare<{ count: number }>(
+      'SELECT COUNT(*) as count FROM life_simulations WHERE tenant_id = ?',
+    ).get(tenantId)?.count ?? 0;
+    const records = this.db.prepare<SimRow>(
+      'SELECT * FROM life_simulations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    ).all(tenantId, limit, offset).map(rowToSimRecord);
+    return { records, total };
+  }
+
   /** 查询路径详情（可选租户隔离） */
   getPathDetail(simId: string, pathId: string, tenantId?: string): LifeSimulationPathRecord | undefined {
     const row = tenantId
