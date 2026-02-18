@@ -7,6 +7,9 @@
 import type { ChatMessage, ChatOptions, ChatResponse, LLMProvider, LLMProviderName } from './llm-provider.js';
 import type { TokenBudget } from './token-budget.js';
 import type { CostTracker } from './cost-tracker.js';
+import type { QuotaManager } from '../multi-tenant/quota-manager.js';
+import type { UsageTracker } from '../billing/usage-tracker.js';
+import { QuotaExceededError } from '../errors/index.js';
 
 export interface ModelRouterConfig {
   readonly provider: LLMProviderName;
@@ -19,6 +22,8 @@ export interface ModelRouterConfig {
   readonly timeoutMs?: number;
   readonly tokenBudget?: TokenBudget;
   readonly costTracker?: CostTracker;
+  readonly quotaManager?: QuotaManager;
+  readonly usageTracker?: UsageTracker;
   readonly tenantId?: string;
 }
 
@@ -71,6 +76,8 @@ export class ModelRouter implements LLMProvider {
   private readonly timeoutMs: number;
   private readonly tokenBudget?: TokenBudget;
   private readonly costTracker?: CostTracker;
+  private readonly quotaManager?: QuotaManager;
+  private readonly usageTracker?: UsageTracker;
   private readonly tenantId: string;
 
   constructor(config: ModelRouterConfig) {
@@ -84,17 +91,24 @@ export class ModelRouter implements LLMProvider {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.tokenBudget = config.tokenBudget;
     this.costTracker = config.costTracker;
+    this.quotaManager = config.quotaManager;
+    this.usageTracker = config.usageTracker;
     this.tenantId = config.tenantId ?? 'default';
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
     const estimatedTokens = options?.maxTokens ?? this.maxTokens;
 
+    /* 计划配额检查（llm_tokens，按预估 token 数量） */
+    if (this.quotaManager && !this.quotaManager.checkQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
+      throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
+    }
+
     /* 预检查 token 预算 */
     if (this.tokenBudget) {
       const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
       if (!check.allowed) {
-        throw new Error(`Token 预算不足: ${check.reason}`);
+        throw new QuotaExceededError(`Token 预算不足: ${check.reason}`);
       }
     }
 
@@ -119,11 +133,19 @@ export class ModelRouter implements LLMProvider {
     }
 
     /* 记录 token 使用量到预算缓存 */
-    if (this.tokenBudget) {
-      const totalTokens = response.usage?.totalTokens ?? 0;
-      if (totalTokens > 0) {
-        this.tokenBudget.recordUsage(this.tenantId, totalTokens);
-      }
+    const totalTokens = response.usage?.totalTokens ?? 0;
+    if (this.tokenBudget && totalTokens > 0) {
+      this.tokenBudget.recordUsage(this.tenantId, totalTokens);
+    }
+
+    /* 记录到计费用量跟踪（反映在 billing/usage 端点） */
+    if (this.usageTracker && totalTokens > 0) {
+      this.usageTracker.record(this.tenantId, 'llm_tokens', totalTokens);
+    }
+
+    /* 消费计划配额（按实际 token 数量） */
+    if (this.quotaManager && totalTokens > 0) {
+      this.quotaManager.recordUsage(this.tenantId, 'llm_tokens', totalTokens);
     }
 
     return response;
@@ -134,9 +156,14 @@ export class ModelRouter implements LLMProvider {
     let estimatedTokens = 0;
     for (const t of texts) estimatedTokens += Math.ceil(t.length / 4);
 
+    /* 计划配额预检查 */
+    if (this.quotaManager && !this.quotaManager.checkQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
+      throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
+    }
+
     if (this.tokenBudget) {
       const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
-      if (!check.allowed) throw new Error(`Token 预算不足: ${check.reason}`);
+      if (!check.allowed) throw new QuotaExceededError(`Token 预算不足: ${check.reason}`);
     }
 
     let embeddings: number[][];
@@ -152,6 +179,15 @@ export class ModelRouter implements LLMProvider {
       this.costTracker.record(this.tenantId, this.provider, this.embeddingModel, estimatedTokens, 0);
     }
     if (this.tokenBudget) this.tokenBudget.recordUsage(this.tenantId, estimatedTokens);
+
+    /* 记录嵌入 token 用量到计费 + 配额 */
+    if (this.usageTracker && estimatedTokens > 0) {
+      this.usageTracker.record(this.tenantId, 'llm_tokens', estimatedTokens);
+    }
+    if (this.quotaManager && estimatedTokens > 0) {
+      this.quotaManager.recordUsage(this.tenantId, 'llm_tokens', estimatedTokens);
+    }
+
     return embeddings;
   }
 

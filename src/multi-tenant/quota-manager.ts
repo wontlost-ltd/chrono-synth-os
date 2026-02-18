@@ -1,6 +1,7 @@
 /**
  * 租户配额管理
  * 基于 quota_limits / quota_usage 表实现每租户资源限制
+ * 支持按数量消费（如 LLM token 按实际用量计量）
  */
 
 import type { IDatabase } from '../storage/database.js';
@@ -39,11 +40,11 @@ export class QuotaManager {
   }
 
   /** 检查租户是否还有配额（无限制返回 true） */
-  checkQuota(tenantId: string, resource: string, now?: number): boolean {
+  checkQuota(tenantId: string, resource: string, quantity = 1, now?: number): boolean {
     const limit = this.db.prepare<QuotaLimitRow>(
       'SELECT * FROM quota_limits WHERE tenant_id = ? AND resource = ?',
     ).get(tenantId, resource);
-    if (!limit) return true; /* 无配额限制 */
+    if (!limit) return true;
 
     const ts = now ?? Date.now();
     const windowStart = ts - limit.window_ms;
@@ -52,18 +53,19 @@ export class QuotaManager {
       'SELECT * FROM quota_usage WHERE tenant_id = ? AND resource = ? AND window_start >= ?',
     ).get(tenantId, resource, windowStart);
 
-    return !usage || usage.used < limit.max_per_window;
+    const used = usage?.used ?? 0;
+    return (used + quantity) <= limit.max_per_window;
   }
 
-  /** 原子性检查并消费配额（单条 UPSERT + WHERE 条件，无竞态） */
-  consumeQuota(tenantId: string, resource: string, now?: number): boolean {
+  /** 原子性检查并消费配额（支持按数量消费） */
+  consumeQuota(tenantId: string, resource: string, quantity = 1, now?: number): boolean {
     const ts = now ?? Date.now();
     const limit = this.db.prepare<QuotaLimitRow>(
       'SELECT * FROM quota_limits WHERE tenant_id = ? AND resource = ?',
     ).get(tenantId, resource);
 
     if (!limit) {
-      this.recordUsage(tenantId, resource, ts);
+      this.recordUsage(tenantId, resource, quantity, ts);
       return true;
     }
     if (limit.max_per_window <= 0) return false;
@@ -71,14 +73,14 @@ export class QuotaManager {
     const windowStart = ts - (ts % limit.window_ms);
     const result = this.db.prepare<void>(
       `INSERT INTO quota_usage (tenant_id, resource, used, window_start)
-       VALUES (?, ?, 1, ?)
-       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + 1 WHERE used < ?`,
-    ).run(tenantId, resource, windowStart, limit.max_per_window);
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + ? WHERE used + ? <= ?`,
+    ).run(tenantId, resource, quantity, windowStart, quantity, quantity, limit.max_per_window);
     return result.changes > 0;
   }
 
-  /** 记录一次资源使用 */
-  recordUsage(tenantId: string, resource: string, now?: number): void {
+  /** 记录资源使用（按数量） */
+  recordUsage(tenantId: string, resource: string, quantity = 1, now?: number): void {
     const ts = now ?? Date.now();
     const limit = this.db.prepare<QuotaLimitRow>(
       'SELECT * FROM quota_limits WHERE tenant_id = ? AND resource = ?',
@@ -88,8 +90,8 @@ export class QuotaManager {
 
     this.db.prepare<void>(
       `INSERT INTO quota_usage (tenant_id, resource, used, window_start)
-       VALUES (?, ?, 1, ?)
-       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + 1`,
-    ).run(tenantId, resource, windowStart);
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + ?`,
+    ).run(tenantId, resource, quantity, windowStart, quantity);
   }
 }

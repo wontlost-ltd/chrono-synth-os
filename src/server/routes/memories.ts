@@ -10,6 +10,8 @@ import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 import { TokenBudget } from '../../intelligence/token-budget.js';
 import { CostTracker } from '../../intelligence/cost-tracker.js';
+import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { UsageTracker } from '../../billing/usage-tracker.js';
 import { CreateMemorySchema, LinkMemorySchema, RelatedMemoryQuerySchema } from '../schemas/api-schemas.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { parsePagination } from '../plugins/pagination.js';
@@ -18,6 +20,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   const sharedDb = os.getDatabase();
   const tokenBudget = config ? new TokenBudget(config.intelligence.budget, sharedDb) : undefined;
   const costTracker = config ? new CostTracker(sharedDb) : undefined;
+  const quotaManager = config ? new QuotaManager(sharedDb) : undefined;
+  const usageTracker = config ? new UsageTracker(sharedDb) : undefined;
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
@@ -46,6 +50,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
       temperature: config.intelligence.temperature,
       tokenBudget,
       costTracker,
+      quotaManager,
+      usageTracker,
       tenantId,
     });
     const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);

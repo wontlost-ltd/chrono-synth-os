@@ -23,6 +23,8 @@ import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 import { TokenBudget } from '../../intelligence/token-budget.js';
 import { CostTracker } from '../../intelligence/cost-tracker.js';
+import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { UsageTracker } from '../../billing/usage-tracker.js';
 import {
   OnboardingStep1Schema,
   OnboardingStep2Schema,
@@ -59,6 +61,8 @@ export function registerOnboardingRoutes(
   const sharedDb = db ?? os.getDatabase();
   const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
   const costTracker = new CostTracker(sharedDb);
+  const quotaManager = new QuotaManager(sharedDb);
+  const usageTracker = new UsageTracker(sharedDb);
   const questionnaire = new QuestionnaireEngine();
 
   function getOS(tenantId: string): ChronoSynthOS {
@@ -104,6 +108,8 @@ export function registerOnboardingRoutes(
       temperature: config.intelligence.temperature,
       tokenBudget,
       costTracker,
+      quotaManager,
+      usageTracker,
       tenantId,
     });
     const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);

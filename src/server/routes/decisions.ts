@@ -92,6 +92,8 @@ export function registerDecisionRoutes(
       temperature: config.intelligence.temperature,
       tokenBudget,
       costTracker,
+      quotaManager,
+      usageTracker,
       tenantId,
     });
     const embeddingIndex = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
@@ -161,8 +163,10 @@ export function registerDecisionRoutes(
     };
   });
 
-  /* POST /api/v1/decisions/:id/simulate */
-  app.post<{ Params: { id: string } }>('/api/v1/decisions/:id/simulate', async (request) => {
+  /* POST /api/v1/decisions/:id/simulate — 限流: 10 次/分钟 */
+  app.post<{ Params: { id: string } }>('/api/v1/decisions/:id/simulate', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request) => {
     const { id } = request.params;
     const tenantId = request.tenantId;
 

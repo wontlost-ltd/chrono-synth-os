@@ -50,8 +50,10 @@ export function registerLifeSimulationRoutes(
     };
   });
 
-  /* POST /api/v1/simulations/life — 创建模拟任务 */
-  app.post('/api/v1/simulations/life', async (request, reply) => {
+  /* POST /api/v1/simulations/life — 创建模拟任务（限流: 5 次/分钟） */
+  app.post('/api/v1/simulations/life', {
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
     const body = CreateLifeSimulationSchema.parse(request.body);
     const tenantId = request.tenantId;
 
@@ -131,9 +133,10 @@ export function registerLifeSimulationRoutes(
     },
   );
 
-  /* POST /api/v1/simulations/:id/stress-test — 压力测试变体 */
+  /* POST /api/v1/simulations/:id/stress-test — 压力测试变体（限流: 5 次/分钟） */
   app.post<{ Params: { id: string } }>(
     '/api/v1/simulations/:id/stress-test',
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const { id } = request.params;
       const body = StressTestRequestSchema.parse(request.body);
