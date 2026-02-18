@@ -13,6 +13,7 @@ import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload, UserRow, RefreshTokenRow } from '../../types/auth.js';
 import { ErrorCode } from '../../errors/index.js';
+import { RegisterSchema, LoginSchema, RefreshTokenSchema, LogoutSchema } from '../schemas/api-schemas.js';
 import { createCustomer } from '../../billing/stripe-client.js';
 import { syncPlanToQuota } from '../../billing/plans.js';
 
@@ -26,21 +27,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
   /* POST /api/v1/auth/register */
   app.post('/api/v1/auth/register', async (request, reply) => {
-    const { email, password } = request.body as { email?: string; password?: string };
-    if (!email || !password) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: ErrorCode.VALIDATION_REQUIRED,
-        message: '邮箱和密码不能为空',
-      });
-    }
-    if (password.length < 8) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: ErrorCode.VALIDATION_FORMAT,
-        message: '密码至少 8 个字符',
-      });
-    }
+    const { email, password } = RegisterSchema.parse(request.body);
 
     const existing = db.prepare<UserRow>('SELECT id FROM users WHERE email = ?').get(email);
     if (existing) {
@@ -88,14 +75,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
   /* POST /api/v1/auth/login */
   app.post('/api/v1/auth/login', async (request, reply) => {
-    const { email, password } = request.body as { email?: string; password?: string };
-    if (!email || !password) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: ErrorCode.VALIDATION_REQUIRED,
-        message: '邮箱和密码不能为空',
-      });
-    }
+    const { email, password } = LoginSchema.parse(request.body);
 
     const user = db.prepare<UserRow>('SELECT * FROM users WHERE email = ?').get(email);
     if (!user) {
@@ -121,14 +101,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
   /* POST /api/v1/auth/refresh */
   app.post('/api/v1/auth/refresh', async (request, reply) => {
-    const { refreshToken } = request.body as { refreshToken?: string };
-    if (!refreshToken) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: ErrorCode.VALIDATION_REQUIRED,
-        message: '刷新令牌不能为空',
-      });
-    }
+    const { refreshToken } = RefreshTokenSchema.parse(request.body);
 
     const tokenHash = hashToken(refreshToken);
     const row = db.prepare<RefreshTokenRow>(
@@ -161,7 +134,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
   /* POST /api/v1/auth/logout */
   app.post('/api/v1/auth/logout', async (request, reply) => {
-    const { refreshToken } = request.body as { refreshToken?: string };
+    const { refreshToken } = LogoutSchema.parse(request.body ?? {});
     if (refreshToken) {
       const tokenHash = hashToken(refreshToken);
       db.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE token_hash = ?').run(tokenHash);

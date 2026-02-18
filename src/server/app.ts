@@ -105,21 +105,21 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAuthRoutes(app, db, config);
   registerBillingRoutes(app, db, config);
   registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker });
-  registerValueRoutes(app, deps.os);
-  registerMemoryRoutes(app, deps.os);
-  registerNarrativeRoutes(app, deps.os);
-  registerPersonaRoutes(app, deps.os);
-  registerSnapshotRoutes(app, deps.os);
-  registerOperationRoutes(app, deps.os);
-  registerConflictRoutes(app, deps.os);
+  registerValueRoutes(app, deps.os, tenantFactory);
+  registerMemoryRoutes(app, deps.os, tenantFactory);
+  registerNarrativeRoutes(app, deps.os, tenantFactory);
+  registerPersonaRoutes(app, deps.os, tenantFactory);
+  registerSnapshotRoutes(app, deps.os, tenantFactory);
+  registerOperationRoutes(app, deps.os, tenantFactory);
+  registerConflictRoutes(app, deps.os, tenantFactory);
   registerMetricsRoutes(app, deps.os);
   registerAuditRoutes(app, deps.db);
-  registerPosRoutes(app, deps.os);
+  registerPosRoutes(app, deps.os, tenantFactory);
   registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
   registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
-  registerVisualizationRoutes(app, deps.os);
+  registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory);
-  registerLifeSimulationRoutes(app, deps.os.lifeSimulation);
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
@@ -137,6 +137,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       config.queue.maxConcurrent,
       config.queue.maxRetries,
     );
+    worker.register('life_simulation', async (task) => {
+      const payload = JSON.parse(task.payload) as { simulationId: string };
+      deps.os.lifeSimulation.executeTask(payload.simulationId);
+    });
     worker.start();
     app.addHook('onClose', () => { worker.stop(); });
   }

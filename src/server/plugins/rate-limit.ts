@@ -13,6 +13,10 @@ export async function registerRateLimit(app: FastifyInstance, config: AppConfig)
   const options: Parameters<typeof rateLimit>[1] = {
     max: config.rateLimit.max,
     timeWindow: config.rateLimit.timeWindowMs,
+    keyGenerator: (request) => {
+      const tenantId = (request as { tenantId?: string }).tenantId;
+      return tenantId && tenantId !== 'default' ? tenantId : request.ip;
+    },
     /* 确保正常响应也携带限流头（X-RateLimit-Limit/Remaining/Reset） */
     addHeadersOnExceeding: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true },
     addHeaders: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true, 'retry-after': true },

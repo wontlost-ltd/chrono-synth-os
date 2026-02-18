@@ -8,11 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
-
-interface ShareBody {
-  userId: string;
-  permission: 'view' | 'edit';
-}
+import { ShareSimulationSchema } from '../schemas/api-schemas.js';
 
 interface SharedRow {
   id: string;
@@ -34,15 +30,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
       return reply.status(401).send({ error: 'AuthenticationError', message: '需要登录' });
     }
 
-    const { userId, permission } = request.body as ShareBody;
-
-    if (!userId || !permission) {
-      return reply.status(400).send({ error: 'ValidationError', message: '必须提供 userId 和 permission' });
-    }
-
-    if (!['view', 'edit'].includes(permission)) {
-      return reply.status(400).send({ error: 'ValidationError', message: 'permission 必须为 view 或 edit' });
-    }
+    const { userId, permission } = ShareSimulationSchema.parse(request.body);
 
     /* 验证模拟归属当前租户 */
     const simulation = db.prepare<{ tenant_id: string }>(

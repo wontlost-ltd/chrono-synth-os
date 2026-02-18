@@ -177,6 +177,42 @@ export const StressTestRequestSchema = z.object({
   overrides: z.record(z.string(), z.unknown()).default({}),
 });
 
+/* 认证 */
+export const RegisterSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+});
+
+export const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
+export const RefreshTokenSchema = z.object({
+  refreshToken: z.string().min(1),
+});
+
+export const LogoutSchema = z.object({
+  refreshToken: z.string().min(1).optional(),
+});
+
+/* 计费 */
+export const CheckoutSchema = z.object({
+  priceId: z.string().min(1),
+  successUrl: z.string().min(1),
+  cancelUrl: z.string().min(1),
+});
+
+export const PortalSchema = z.object({
+  returnUrl: z.string().min(1),
+});
+
+/* 协作 */
+export const ShareSimulationSchema = z.object({
+  userId: z.string().min(1),
+  permission: z.enum(['view', 'edit']),
+});
+
 /* 决策管理 */
 export const CreateDecisionSchema = z.object({
   title: z.string().min(1),

@@ -4,8 +4,9 @@
  * GET /api/v1/decisions/:id/fingerprint — 决策指纹
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
+import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 
 interface ValueNode {
   readonly id: string;
@@ -19,10 +20,17 @@ interface ValueEdge {
   readonly weight: number;
 }
 
-export function registerVisualizationRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
+export function registerVisualizationRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
+  function getOS(request: FastifyRequest): ChronoSynthOS {
+    const tid = request.tenantId;
+    if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
+    return os;
+  }
+
   /* GET /api/v1/values/visualization */
-  app.get('/api/v1/values/visualization', async () => {
-    const values = [...os.core.values.getAll().values()];
+  app.get('/api/v1/values/visualization', async (request) => {
+    const tenantOS = getOS(request);
+    const values = [...tenantOS.core.values.getAll().values()];
 
     const nodes: ValueNode[] = values.map(v => ({
       id: v.id,
@@ -37,7 +45,7 @@ export function registerVisualizationRoutes(app: FastifyInstance, os: ChronoSynt
     }
 
     const edgeCounts = new Map<string, number>();
-    const memories = os.core.memories.getAllMemories();
+    const memories = tenantOS.core.memories.getAllMemories();
     for (const mem of memories.values()) {
       const lowerContent = mem.content.toLowerCase();
       const hitIds: string[] = [];

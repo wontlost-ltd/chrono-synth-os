@@ -219,7 +219,7 @@ describe('决策 API 集成测试', () => {
         payload: {
           runId,
           selectedAlternative: '选项A',
-          satisfaction: 0.8,
+          satisfaction: 4,
           notes: '实际体验良好',
         },
       });
@@ -244,7 +244,7 @@ describe('决策 API 集成测试', () => {
         payload: {
           runId: 'run_nonexistent',
           selectedAlternative: 'A',
-          satisfaction: 0.5,
+          satisfaction: 3,
         },
       });
       assert.equal(res.statusCode, 404);
@@ -318,7 +318,7 @@ describe('决策 API 集成测试', () => {
         payload: {
           runId,
           selectedAlternative: result.recommendedAlternative,
-          satisfaction: 0.9,
+          satisfaction: 5,
           notes: '推荐结果符合预期',
         },
       });

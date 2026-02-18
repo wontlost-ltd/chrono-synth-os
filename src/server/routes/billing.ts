@@ -17,6 +17,7 @@ import {
   createPortalSession,
   constructWebhookEvent,
 } from '../../billing/stripe-client.js';
+import { CheckoutSchema, PortalSchema } from '../schemas/api-schemas.js';
 
 interface SubscriptionRow {
   readonly id: string;
@@ -81,16 +82,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
 
   /* POST /api/v1/billing/checkout — 创建 Checkout Session */
   app.post('/api/v1/billing/checkout', async (request, reply) => {
-    const { priceId, successUrl, cancelUrl } = request.body as {
-      priceId?: string; successUrl?: string; cancelUrl?: string;
-    };
-    if (!priceId || !successUrl || !cancelUrl) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_REQUIRED',
-        message: 'priceId, successUrl, cancelUrl 不能为空',
-      });
-    }
+    const { priceId, successUrl, cancelUrl } = CheckoutSchema.parse(request.body);
 
     if (!VALID_PRICE_IDS.has(priceId)) {
       return reply.status(400).send({
@@ -127,14 +119,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
 
   /* POST /api/v1/billing/portal — 创建客户门户 */
   app.post('/api/v1/billing/portal', async (request, reply) => {
-    const { returnUrl } = request.body as { returnUrl?: string };
-    if (!returnUrl) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_REQUIRED',
-        message: 'returnUrl 不能为空',
-      });
-    }
+    const { returnUrl } = PortalSchema.parse(request.body);
 
     if (!isSafeRedirectUrl(returnUrl, config.server.publicUrl)) {
       return reply.status(400).send({

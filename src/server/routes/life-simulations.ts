@@ -14,18 +14,18 @@ import {
 export function registerLifeSimulationRoutes(
   app: FastifyInstance,
   service: LifeSimulationService,
+  options?: { queueEnabled?: boolean },
 ): void {
-  /* POST /api/v1/simulations/life — 创建异步模拟任务 */
+  const asyncMode = options?.queueEnabled ?? false;
+
+  /* POST /api/v1/simulations/life — 创建模拟任务 */
   app.post('/api/v1/simulations/life', async (request, reply) => {
     const body = CreateLifeSimulationSchema.parse(request.body);
     const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
     const { simulationId, taskId } = service.enqueue(body, tenantId);
 
-    /* 同步执行（简化版，不依赖 TaskWorker 轮询） */
-    try {
-      service.executeTask(simulationId);
-    } catch {
-      /* 异步执行失败不影响入队 */
+    if (!asyncMode) {
+      try { service.executeTask(simulationId); } catch { /* 异步回退 */ }
     }
 
     return reply.status(202).send({
@@ -109,10 +109,8 @@ export function registerLifeSimulationRoutes(
 
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);
 
-      try {
-        service.executeTask(simulationId);
-      } catch {
-        /* 异步执行失败不影响入队 */
+      if (!asyncMode) {
+        try { service.executeTask(simulationId); } catch { /* 异步回退 */ }
       }
 
       return reply.status(202).send({
