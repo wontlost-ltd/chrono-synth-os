@@ -55,13 +55,26 @@ export class QuotaManager {
     return !usage || usage.used < limit.max_per_window;
   }
 
-  /** 原子性检查并消费配额（事务内 check + record，避免竞态） */
+  /** 原子性检查并消费配额（单条 UPSERT + WHERE 条件，无竞态） */
   consumeQuota(tenantId: string, resource: string, now?: number): boolean {
-    return this.db.transaction(() => {
-      if (!this.checkQuota(tenantId, resource, now)) return false;
-      this.recordUsage(tenantId, resource, now);
+    const ts = now ?? Date.now();
+    const limit = this.db.prepare<QuotaLimitRow>(
+      'SELECT * FROM quota_limits WHERE tenant_id = ? AND resource = ?',
+    ).get(tenantId, resource);
+
+    if (!limit) {
+      this.recordUsage(tenantId, resource, ts);
       return true;
-    });
+    }
+    if (limit.max_per_window <= 0) return false;
+
+    const windowStart = ts - (ts % limit.window_ms);
+    const result = this.db.prepare<void>(
+      `INSERT INTO quota_usage (tenant_id, resource, used, window_start)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + 1 WHERE used < ?`,
+    ).run(tenantId, resource, windowStart, limit.max_per_window);
+    return result.changes > 0;
   }
 
   /** 记录一次资源使用 */
