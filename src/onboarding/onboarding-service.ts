@@ -17,7 +17,7 @@ import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import type { SystemSnapshot } from '../types/snapshot.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
-import { NotFoundError, ErrorCode } from '../errors/index.js';
+import { NotFoundError, StateError, ErrorCode } from '../errors/index.js';
 
 export interface OnboardingSession {
   readonly id: string;
@@ -148,7 +148,7 @@ export class OnboardingService {
   /** Step 4: 运行首次决策模拟 */
   private async processStep4(session: MutableSession): Promise<void> {
     if (!session.decision) {
-      throw new Error('请先完成步骤 1 (描述决策问题)');
+      throw new StateError('请先完成步骤 1 (描述决策问题)', ErrorCode.STATE_INVALID_TRANSITION);
     }
     const result = await this.engine.evaluate(session.decision);
     session.simulationResult = result;
@@ -156,6 +156,9 @@ export class OnboardingService {
 
   /** Step 5: 保存基线快照 */
   private processStep5(session: MutableSession): void {
+    if (!session.simulationResult) {
+      throw new StateError('请先完成步骤 4 (运行首次决策模拟)', ErrorCode.STATE_INVALID_TRANSITION);
+    }
     const snapshot = this.createSnapshot('manual');
     session.snapshotId = snapshot.id;
     this.bus.emit('onboarding:completed', { sessionId: session.id, snapshotId: snapshot.id, tenantId: this.tenantId });

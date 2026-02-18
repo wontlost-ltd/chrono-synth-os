@@ -123,6 +123,9 @@ describe('OnboardingService', () => {
 
     it('Step 5: 保存基线快照', async () => {
       const session = onboarding.createSession();
+      await onboarding.submitStep(session.id, 1, { title: '测试', description: '描述' });
+      core.addValue('诚信', 0.8);
+      await onboarding.submitStep(session.id, 4, {});
       const updated = await onboarding.submitStep(session.id, 5, {});
       assert.ok(updated.snapshotId);
       assert.equal(snapshotCount, 1);
@@ -153,6 +156,9 @@ describe('OnboardingService', () => {
       let completedEvent: { sessionId: string; snapshotId: string } | undefined;
       bus.on('onboarding:completed', (e) => { completedEvent = e; });
       const session = onboarding.createSession();
+      await onboarding.submitStep(session.id, 1, { title: '测试', description: '描述' });
+      core.addValue('诚信', 0.8);
+      await onboarding.submitStep(session.id, 4, {});
       await onboarding.submitStep(session.id, 5, {});
       assert.ok(completedEvent);
       assert.equal(completedEvent.sessionId, session.id);

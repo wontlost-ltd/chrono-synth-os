@@ -273,7 +273,7 @@ const API_DOCS = {
       path: '/api/v1/decisions/:id/feedback',
       description: '用户反馈校准',
       request_schema: { runId: 'string', selectedAlternative: 'string', satisfaction: 'number (1-5)', notes: 'string?' },
-      response_schema: { data: '{ recorded: true }' },
+      response_schema: { data: '{ feedbackId, runId, stored: true }' },
     },
 
     /* ===== 引导流程 ===== */

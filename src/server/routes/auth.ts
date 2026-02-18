@@ -125,6 +125,12 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
   /* POST /api/v1/auth/logout */
   app.post('/api/v1/auth/logout', async (request, reply) => {
+    /* 路由已在 JWT 豁免列表中，手动尝试验证以获取用户上下文 */
+    const authHeader = request.headers.authorization;
+    if (config.jwt.enabled && authHeader?.startsWith('Bearer ')) {
+      try { await request.jwtVerify(); } catch { /* 令牌无效时仍允许 logout 继续 */ }
+    }
+
     const { refreshToken } = LogoutSchema.parse(request.body ?? {});
     if (refreshToken) {
       const tokenHash = hashToken(refreshToken);

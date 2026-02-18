@@ -29,7 +29,9 @@ export class SnapshotStore {
       'SELECT * FROM snapshots WHERE id = ?',
     ).get(id);
     if (!row) return undefined;
-    return deepParse<SystemSnapshot>(row.data_json) ?? undefined;
+    const parsed = deepParse<SystemSnapshot>(row.data_json);
+    if (!parsed) throw new Error(`快照 ${id} JSON 解析失败`);
+    return parsed;
   }
 
   /** 获取最新快照 */
@@ -38,7 +40,9 @@ export class SnapshotStore {
       'SELECT * FROM snapshots ORDER BY created_at DESC LIMIT 1',
     ).get();
     if (!row) return undefined;
-    return deepParse<SystemSnapshot>(row.data_json) ?? undefined;
+    const parsed = deepParse<SystemSnapshot>(row.data_json);
+    if (!parsed) throw new Error(`快照 ${row.id} JSON 解析失败`);
+    return parsed;
   }
 
   /** 列出所有快照的元数据 */
