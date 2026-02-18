@@ -8,7 +8,7 @@ import type { LifeSimulationService } from '../../simulation/life-simulation-ser
 import type { IDatabase } from '../../storage/database.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
-import { NotFoundError, StateError, ErrorCode } from '../../errors/index.js';
+import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import {
   CreateLifeSimulationSchema,
   StressTestRequestSchema,
@@ -53,7 +53,7 @@ export function registerLifeSimulationRoutes(
     const tenantId = request.tenantId;
 
     if (quotaManager && !quotaManager.consumeQuota(tenantId, 'simulation')) {
-      throw new StateError('模拟次数配额已用尽', ErrorCode.STATE_INVALID_TRANSITION);
+      throw new QuotaExceededError('模拟次数配额已用尽');
     }
 
     const { simulationId, taskId } = service.enqueue(body, tenantId);
@@ -143,7 +143,7 @@ export function registerLifeSimulationRoutes(
       };
 
       if (quotaManager && !quotaManager.consumeQuota(tenantId, 'simulation')) {
-        throw new StateError('模拟次数配额已用尽', ErrorCode.STATE_INVALID_TRANSITION);
+        throw new QuotaExceededError('模拟次数配额已用尽');
       }
 
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);

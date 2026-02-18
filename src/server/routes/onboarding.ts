@@ -48,15 +48,32 @@ export function registerOnboardingRoutes(
     return os;
   }
 
-  /** 懒加载决策引擎（按租户） */
+  /** 懒加载决策引擎（按租户，LRU 驱逐上限 64） */
+  const MAX_TENANT_CACHE = 64;
   const engines = new Map<string, DecisionEngine>();
   const onboardings = new Map<string, OnboardingService>();
   const ingestions = new Map<string, DataIngestion>();
   const embeddingIndexes = new Map<string, EmbeddingIndex>();
 
+  /** 驱逐最旧的租户缓存 */
+  function evictOldest(): void {
+    if (engines.size < MAX_TENANT_CACHE) return;
+    const oldest = engines.keys().next().value;
+    if (oldest) {
+      engines.delete(oldest);
+      onboardings.delete(oldest);
+      ingestions.delete(oldest);
+      embeddingIndexes.delete(oldest);
+    }
+  }
+
   function getEngine(tenantId: string): DecisionEngine {
     const cached = engines.get(tenantId);
-    if (cached) return cached;
+    if (cached) {
+      engines.delete(tenantId);
+      engines.set(tenantId, cached);
+      return cached;
+    }
 
     const tenantOS = getOS(tenantId);
     const llm = new ModelRouter({
@@ -78,6 +95,7 @@ export function registerOnboardingRoutes(
       ? new RuleEngine(tenantOS.getClock(), config.ruleEngine, tenantOS.getLogger())
       : undefined;
     const engine = new DecisionEngine(tenantOS.core, retrieval, llm, tenantOS.getClock(), tenantOS.getLogger(), config.intelligence.simulation, ruleEngine);
+    evictOldest();
     engines.set(tenantId, engine);
     return engine;
   }

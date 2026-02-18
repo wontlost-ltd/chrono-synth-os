@@ -91,8 +91,18 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
     ? createRedisStateStore(app.redis as unknown as { set: Function; get: Function; del: Function })
     : createMemoryStateStore();
 
+  const ssoRateLimit = {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: 60_000,
+        keyGenerator: (request: { ip: string }) => request.ip,
+      },
+    },
+  };
+
   /* GET /api/v1/auth/sso/authorize */
-  app.get('/api/v1/auth/sso/authorize', async (request, reply) => {
+  app.get('/api/v1/auth/sso/authorize', ssoRateLimit, async (request, reply) => {
 
     if (!baseUrl) {
       throw new ConfigError('SSO 启用但 server.publicUrl 未配置', ErrorCode.CONFIG_INVALID);
@@ -114,7 +124,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
   });
 
   /* GET /api/v1/auth/sso/callback */
-  app.get('/api/v1/auth/sso/callback', async (request, reply) => {
+  app.get('/api/v1/auth/sso/callback', ssoRateLimit, async (request, reply) => {
     const { code, state, error: authError } = request.query as {
       code?: string;
       state?: string;

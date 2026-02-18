@@ -57,19 +57,33 @@ async function start(): Promise<void> {
     forceTimeout.unref();
 
     app.close().then(async () => {
-      os.close();
+      try { os.close(); } catch (e) {
+        logger.warn('Server', `关闭 OS 时出错: ${e instanceof Error ? e.message : String(e)}`);
+      }
       await shutdownTracing();
       clearTimeout(forceTimeout);
       logger.info('Server', '服务已关闭');
       process.exit(0);
     }).catch((err) => {
       logger.error('Server', '关闭时出错', err);
+      try { os.close(); } catch { /* 最终兜底 */ }
       process.exit(1);
     });
   }
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  process.on('uncaughtException', (err) => {
+    logger.error('Server', `未捕获异常: ${err.message}`, err);
+    shutdown('uncaughtException');
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    logger.error('Server', `未处理的 Promise 拒绝: ${msg}`, reason);
+    shutdown('unhandledRejection');
+  });
 }
 
 start().catch((err) => {

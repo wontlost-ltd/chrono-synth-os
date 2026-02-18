@@ -63,11 +63,17 @@ export function registerDecisionRoutes(
     return os;
   }
 
-  /** 懒加载决策引擎（按租户） */
+  /** 懒加载决策引擎（按租户，LRU 驱逐上限 64） */
+  const MAX_ENGINES = 64;
   const engines = new Map<string, DecisionEngine>();
   function getEngine(tenantId: string): DecisionEngine {
     const cached = engines.get(tenantId);
-    if (cached) return cached;
+    if (cached) {
+      /* LRU 置顶 */
+      engines.delete(tenantId);
+      engines.set(tenantId, cached);
+      return cached;
+    }
 
     const tenantOS = getOS(tenantId);
     const llm = new ModelRouter({
@@ -88,6 +94,11 @@ export function registerDecisionRoutes(
       ? new RuleEngine(tenantOS.getClock(), config.ruleEngine, tenantOS.getLogger())
       : undefined;
     const engine = new DecisionEngine(tenantOS.core, retrieval, llm, tenantOS.getClock(), tenantOS.getLogger(), config.intelligence.simulation, ruleEngine);
+    /* LRU 驱逐最旧条目 */
+    if (engines.size >= MAX_ENGINES) {
+      const oldest = engines.keys().next().value;
+      if (oldest) engines.delete(oldest);
+    }
     engines.set(tenantId, engine);
     return engine;
   }

@@ -71,10 +71,18 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
 
   // ===== L0 生存锚点 =====
 
-  /* GET /api/v1/pos/survival — 列出所有生存锚点 */
+  /* GET /api/v1/pos/survival — 列出所有生存锚点（分页） */
   app.get('/api/v1/pos/survival', async (request) => {
     const tenantOS = getOS(request);
-    return { data: tenantOS.core.survival.getAll() };
+    const all = tenantOS.core.survival.getAll();
+    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
+    const p = Math.max(1, parseInt(page || '1', 10) || 1);
+    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
+    const offset = (p - 1) * ps;
+    return {
+      data: all.slice(offset, offset + ps),
+      pagination: { page: p, pageSize: ps, total: all.length, totalPages: Math.ceil(all.length / ps) || 1 },
+    };
   });
 
   /* POST /api/v1/pos/survival — 添加锚点 */
@@ -183,10 +191,18 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
 
   // ===== 更新闸门 =====
 
-  /* GET /api/v1/pos/pending-updates — 获取待确认更新 */
+  /* GET /api/v1/pos/pending-updates — 获取待确认更新（分页） */
   app.get('/api/v1/pos/pending-updates', async (request) => {
     const tenantOS = getOS(request);
-    return { data: tenantOS.updateGate.getPending() };
+    const all = tenantOS.updateGate.getPending();
+    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
+    const p = Math.max(1, parseInt(page || '1', 10) || 1);
+    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
+    const offset = (p - 1) * ps;
+    return {
+      data: all.slice(offset, offset + ps),
+      pagination: { page: p, pageSize: ps, total: all.length, totalPages: Math.ceil(all.length / ps) || 1 },
+    };
   });
 
   /* POST /api/v1/pos/pending-updates/:id/approve — 审批并应用 */

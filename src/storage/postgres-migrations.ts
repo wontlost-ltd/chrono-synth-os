@@ -508,6 +508,14 @@ const v017_decision_onboarding_persistence: Migration = {
   ],
 };
 
+const v018_refresh_token_index: Migration = {
+  version: 'v018',
+  description: '刷新令牌复合索引与过期清理',
+  sql: [
+    'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash_revoked ON refresh_tokens(token_hash, is_revoked)',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -527,4 +535,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v015_shared_simulations,
   v016_webhook_and_llm_usage,
   v017_decision_onboarding_persistence,
+  v018_refresh_token_index,
 ];

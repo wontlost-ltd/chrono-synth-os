@@ -76,10 +76,10 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
   });
 }
 
-/** 查询审计日志（按租户过滤，最近 N 条） */
-export function queryAuditLog(db: IDatabase, limit = 100, tenantId?: string): AuditEntry[] {
+/** 查询审计日志（按租户过滤，分页） */
+export function queryAuditLog(db: IDatabase, limit = 100, tenantId?: string, offset = 0): AuditEntry[] {
   const tid = tenantId ?? 'default';
   return db.prepare<AuditEntry>(
-    'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ?',
-  ).all(tid, limit);
+    'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+  ).all(tid, limit, offset);
 }

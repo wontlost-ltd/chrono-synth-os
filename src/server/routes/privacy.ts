@@ -181,13 +181,24 @@ export function registerPrivacyRoutes(
     };
   });
 
-  /* GET /api/v1/privacy/audit-trail — 租户审计日志 */
+  /* GET /api/v1/privacy/audit-trail — 租户审计日志（分页） */
   app.get('/api/v1/privacy/audit-trail', async (request) => {
     const tenantId = request.tenantId;
+    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
+    const p = Math.max(1, parseInt(page || '1', 10) || 1);
+    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
+    const offset = (p - 1) * ps;
+
     const db = os.getDatabase();
+    const total = db.prepare<{ count: number }>(
+      'SELECT COUNT(*) as count FROM audit_log WHERE tenant_id = ?',
+    ).get(tenantId)?.count ?? 0;
     const rows = db.prepare<Record<string, unknown>>(
-      'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 100',
-    ).all(tenantId);
-    return { data: rows };
+      'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
+    ).all(tenantId, ps, offset);
+    return {
+      data: rows,
+      pagination: { page: p, pageSize: ps, total, totalPages: Math.ceil(total / ps) || 1 },
+    };
   });
 }
