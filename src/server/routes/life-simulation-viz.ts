@@ -21,6 +21,12 @@ import {
   type Resolution,
 } from '../../simulation/visualization-helpers.js';
 
+function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
+  if (!json) return fallback;
+  try { return JSON.parse(json); }
+  catch { return fallback; }
+}
+
 /** 为请求的指标构建元数据列表 */
 function buildMetricMeta(metrics: MetricKey[]) {
   return metrics.map(k => METRIC_META.get(k)).filter(Boolean);
@@ -48,7 +54,7 @@ export function registerLifeSimVizRoutes(
         throw new StateError('模拟摘要缺失', ErrorCode.STATE_INVALID_TRANSITION);
       }
 
-      const summary = JSON.parse(record.summaryJson);
+      const summary = safeJsonParse(record.summaryJson, {}) as Record<string, unknown>;
       return {
         data: {
           simulationId: record.id,
@@ -57,7 +63,7 @@ export function registerLifeSimVizRoutes(
           retrospective: summary.retrospective,
           paths: summary.paths,
           meta: {
-            horizonYears: JSON.parse(record.configJson).horizonYears,
+            horizonYears: (safeJsonParse(record.configJson, {}) as Record<string, unknown>).horizonYears,
             baseSimulationId: record.baseSimulationId,
             completedAt: record.completedAt,
           },
@@ -86,7 +92,7 @@ export function registerLifeSimVizRoutes(
       const pathRecords = service.getPathsBySimulation(id);
 
       const series = pathRecords.map(pr => {
-        const timeline: YearState[] = pr.timelineJson ? JSON.parse(pr.timelineJson) : [];
+        const timeline: YearState[] = (safeJsonParse(pr.timelineJson, []) as YearState[]);
         const points = downsampleTimeline(timeline, metrics, step);
         const stats = computeStats(points, metrics);
         return { pathId: pr.pathId, label: pr.label, points, stats };
@@ -128,10 +134,10 @@ export function registerLifeSimVizRoutes(
       const metrics = parseMetrics(q.metrics);
       const step = resolutionStep(q.resolution as Resolution);
 
-      const config = JSON.parse(simRecord.configJson);
-      const horizonYears: number = config.horizonYears ?? 10;
-      const mainTimeline: YearState[] = pathRecord.timelineJson ? JSON.parse(pathRecord.timelineJson) : [];
-      const branchResults: BranchResult[] = pathRecord.branchesJson ? JSON.parse(pathRecord.branchesJson) : [];
+      const config = safeJsonParse(simRecord.configJson, {}) as Record<string, unknown>;
+      const horizonYears: number = (config.horizonYears as number) ?? 10;
+      const mainTimeline: YearState[] = (safeJsonParse(pathRecord.timelineJson, []) as YearState[]);
+      const branchResults: BranchResult[] = (safeJsonParse(pathRecord.branchesJson, []) as BranchResult[]);
 
       const maxBranchLength = branchResults.reduce((max, br) => Math.max(max, br.timeline.length), 0);
       const pivotYear = maxBranchLength > 0
@@ -194,18 +200,18 @@ export function registerLifeSimVizRoutes(
         throw new StateError('模拟摘要缺失', ErrorCode.STATE_INVALID_TRANSITION);
       }
 
-      const baseSummary = JSON.parse(baseRecord.summaryJson);
+      const baseSummary = safeJsonParse(baseRecord.summaryJson, { paths: [] }) as Record<string, unknown>;
       const variantRecords = service.getVariants(id, tenantId);
 
       const basePathMap = new Map<string, { compositeScore: number; regretProbability: number }>();
-      for (const p of baseSummary.paths) {
+      for (const p of (baseSummary.paths as Array<{ pathId: string; compositeScore: number; regretProbability: number }>)) {
         basePathMap.set(p.pathId, p);
       }
 
       const variants = variantRecords
         .filter(v => v.status === 'completed' && v.summaryJson)
         .map(v => {
-          const vSummary = JSON.parse(v.summaryJson!);
+          const vSummary = safeJsonParse(v.summaryJson, { paths: [], recommendedPathId: null }) as Record<string, unknown>;
 
           const deltas = (vSummary.paths as Array<{ pathId: string; compositeScore: number; regretProbability: number }>)
             .map(vp => {
@@ -255,7 +261,7 @@ export function registerLifeSimVizRoutes(
       const pathRecords = service.getPathsBySimulation(id);
 
       const milestones = pathRecords.map(pr => {
-        const timeline: YearState[] = pr.timelineJson ? JSON.parse(pr.timelineJson) : [];
+        const timeline: YearState[] = (safeJsonParse(pr.timelineJson, []) as YearState[]);
         const events = extractMilestones(timeline, metrics);
 
         const startSnapshot: Partial<Record<MetricKey, number>> = timeline.length > 0

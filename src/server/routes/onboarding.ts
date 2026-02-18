@@ -128,7 +128,7 @@ export function registerOnboardingRoutes(
   }
 
   /* POST /api/v1/onboarding/start */
-  app.post('/api/v1/onboarding/start', async (request) => {
+  app.post('/api/v1/onboarding/start', async (request, reply) => {
     const tenantId = request.tenantId;
     const session = getOnboarding(tenantId).createSession();
     /* 持久化到 DB */
@@ -136,7 +136,7 @@ export function registerOnboardingRoutes(
       `INSERT INTO onboarding_sessions (id, tenant_id, current_step, completed_steps_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(session.id, tenantId, session.currentStep, JSON.stringify(session.completedSteps), session.createdAt, session.updatedAt);
-    return { data: session };
+    return reply.status(201).send({ data: session });
   });
 
   /* GET /api/v1/onboarding/status/:sessionId */

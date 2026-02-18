@@ -110,7 +110,7 @@ export function registerDecisionRoutes(
   }
 
   /* POST /api/v1/decisions */
-  app.post('/api/v1/decisions', async (request) => {
+  app.post('/api/v1/decisions', async (request, reply) => {
     const body = CreateDecisionSchema.parse(request.body);
     const tenantId = request.tenantId;
     const id = generatePrefixedId('dec');
@@ -130,7 +130,7 @@ export function registerDecisionRoutes(
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, tenantId, body.title, body.description, JSON.stringify(body.alternatives), body.constraints ? JSON.stringify(body.constraints) : null, body.context ? JSON.stringify(body.context) : null, now);
 
-    return { data: decisionCase };
+    return reply.status(201).send({ data: decisionCase });
   });
 
   /* GET /api/v1/decisions */

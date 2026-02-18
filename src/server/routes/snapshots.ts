@@ -17,11 +17,11 @@ export function registerSnapshotRoutes(app: FastifyInstance, os: ChronoSynthOS, 
   }
 
   /* POST /api/v1/snapshots — 创建快照 */
-  app.post('/api/v1/snapshots', async (request) => {
+  app.post('/api/v1/snapshots', async (request, reply) => {
     const body = CreateSnapshotSchema.parse(request.body ?? {});
     const tenantOS = getOS(request);
     const snapshot = tenantOS.createSnapshot(body.reason);
-    return { data: { id: snapshot.id, reason: snapshot.reason, createdAt: snapshot.createdAt } };
+    return reply.status(201).send({ data: { id: snapshot.id, reason: snapshot.reason, createdAt: snapshot.createdAt } });
   });
 
   /* GET /api/v1/snapshots — 获取快照列表（支持分页） */

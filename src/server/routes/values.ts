@@ -17,11 +17,11 @@ export function registerValueRoutes(app: FastifyInstance, os: ChronoSynthOS, ten
   }
 
   /* POST /api/v1/values — 创建价值 */
-  app.post('/api/v1/values', async (request) => {
+  app.post('/api/v1/values', async (request, reply) => {
     const body = CreateValueSchema.parse(request.body);
     const tenantOS = getOS(request);
     const value = tenantOS.core.addValue(body.label, body.weight, body.timeDiscount, body.emotionAmplifier);
-    return { data: value };
+    return reply.status(201).send({ data: value });
   });
 
   /* GET /api/v1/values — 获取所有价值（统一分页响应） */

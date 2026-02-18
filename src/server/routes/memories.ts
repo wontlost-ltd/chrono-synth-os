@@ -17,11 +17,11 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   }
 
   /* POST /api/v1/memories — 创建记忆 */
-  app.post('/api/v1/memories', async (request) => {
+  app.post('/api/v1/memories', async (request, reply) => {
     const body = CreateMemorySchema.parse(request.body);
     const tenantOS = getOS(request);
     const memory = tenantOS.core.addMemory(body.kind, body.content, body.valence, body.salience);
-    return { data: memory };
+    return reply.status(201).send({ data: memory });
   });
 
   /* GET /api/v1/memories — 获取所有记忆（SQL 级分页） */
@@ -38,7 +38,7 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   });
 
   /* POST /api/v1/memories/link — 关联记忆 */
-  app.post('/api/v1/memories/link', async (request) => {
+  app.post('/api/v1/memories/link', async (request, reply) => {
     const body = LinkMemorySchema.parse(request.body);
     const tenantOS = getOS(request);
     if (!tenantOS.core.memories.getMemory(body.source)) {
@@ -48,7 +48,7 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
       throw new NotFoundError(`记忆节点 ${body.target} 不存在`, ErrorCode.NOT_FOUND_MEMORY);
     }
     const edge = tenantOS.core.linkMemories(body.source, body.target, body.relation, body.strength);
-    return { data: edge };
+    return reply.status(201).send({ data: edge });
   });
 
   /* POST /api/v1/memories/decay — 触发全量衰减 */

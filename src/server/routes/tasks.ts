@@ -7,6 +7,12 @@ import type { FastifyInstance } from 'fastify';
 import type { TaskQueue } from '../../queue/task-queue.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 
+function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
+  if (!json) return fallback;
+  try { return JSON.parse(json); }
+  catch { return fallback; }
+}
+
 export function registerTaskRoutes(app: FastifyInstance, queue: TaskQueue): void {
   app.get<{ Params: { taskId: string } }>('/api/v1/tasks/:taskId', async (request) => {
     const task = queue.getTask(request.params.taskId);
@@ -22,7 +28,7 @@ export function registerTaskRoutes(app: FastifyInstance, queue: TaskQueue): void
         id: task.id,
         type: task.type,
         status: task.status,
-        result: task.result ? JSON.parse(task.result) : null,
+        result: task.result ? safeJsonParse(task.result) : null,
         error: task.error,
         createdAt: task.createdAt,
         updatedAt: task.updatedAt,

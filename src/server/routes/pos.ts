@@ -85,11 +85,11 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
   });
 
   /* POST /api/v1/pos/survival — 添加锚点 */
-  app.post('/api/v1/pos/survival', async (request) => {
+  app.post('/api/v1/pos/survival', async (request, reply) => {
     const body = CreateSurvivalAnchorSchema.parse(request.body);
     const tenantOS = getOS(request);
     const anchor = tenantOS.core.addSurvivalAnchor(body.label, body.kind, body.value, body.severity);
-    return { data: anchor };
+    return reply.status(201).send({ data: anchor });
   });
 
   /* PATCH /api/v1/pos/survival/:id — 更新锚点（L0 通过 UpdateGate 路由） */
