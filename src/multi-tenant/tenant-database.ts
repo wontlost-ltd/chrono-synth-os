@@ -46,6 +46,13 @@ function detectOp(sql: string): SqlOp {
   return 'OTHER';
 }
 
+/** INSERT 语句的列列表中是否已包含 tenant_id */
+function insertAlreadyHasTenantId(sql: string): boolean {
+  const match = /INSERT\s+(?:OR\s+\w+\s+)?INTO\s+\w+\s*\(([^)]+)\)/i.exec(sql);
+  if (!match) return false;
+  return match[1].split(',').some(col => col.trim().replace(/["'`]/g, '').toLowerCase() === 'tenant_id');
+}
+
 /**
  * 为 INSERT 语句注入 tenant_id 列和占位符
  * INSERT INTO table (col1, col2) VALUES (?, ?)
@@ -137,6 +144,10 @@ export class TenantDatabase implements IDatabase {
     const op = detectOp(sql);
 
     if (op === 'INSERT') {
+      if (insertAlreadyHasTenantId(sql)) {
+        /* SQL 已包含 tenant_id 列（租户感知 store），跳过重写 */
+        return this.inner.prepare<T>(sql);
+      }
       const rewritten = rewriteInsert(sql);
       return new TenantStatement<T>(
         this.inner.prepare<T>(rewritten),

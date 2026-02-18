@@ -42,10 +42,10 @@ export class CoreRhythmLayer {
   ) {
     this.values = new ValueStore(db, clock);
     this.memories = new CognitiveMemoryGraph(db, clock, cognitionConfig, encryption);
-    this.narrative = new NarrativeStore(db, clock);
+    this.narrative = new NarrativeStore(db, clock, tenantId);
     this.survival = new SurvivalAnchorStore(db, clock);
-    this.decisionStyle = new DecisionStyleStore(db, clock);
-    this.cognitiveModel = new CognitiveModelStore(db, clock);
+    this.decisionStyle = new DecisionStyleStore(db, clock, tenantId);
+    this.cognitiveModel = new CognitiveModelStore(db, clock, tenantId);
   }
 
   /** 添加核心价值 */

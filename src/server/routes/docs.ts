@@ -329,13 +329,13 @@ const API_DOCS = {
     {
       method: 'POST',
       path: '/api/v1/privacy/export',
-      description: '导出所有数据（JSON 格式）',
+      description: '导出所有数据（JSON 格式，仅 admin）',
       response_schema: { data: '{ exportId, format, content }' },
     },
     {
       method: 'DELETE',
       path: '/api/v1/privacy/data',
-      description: '删除当前租户所有数据（GDPR 合规，按 tenant_id 隔离）',
+      description: '删除当前租户所有数据（GDPR 合规，按 tenant_id 隔离，仅 admin）',
       response_schema: { data: '{ deleted: true, timestamp: number }' },
     },
     {
@@ -376,13 +376,13 @@ const API_DOCS = {
     {
       method: 'POST',
       path: '/api/v1/operations/evolution/run',
-      description: '运行演化周期（含差异报告和后悔概率）',
+      description: '运行演化周期（含差异报告和后悔概率，仅 admin）',
       response_schema: { data: '{ mergedCount, beforeSnapshotId, afterSnapshotId, diffReport: EvolutionDiffReport }' },
     },
     {
       method: 'POST',
       path: '/api/v1/operations/regulation/run',
-      description: '运行调控周期',
+      description: '运行调控周期（仅 admin）',
       request_schema: { strategy: 'equal|fitness_weighted|priority_based (可选)' },
       response_schema: { data: '{ status, strategy }' },
     },

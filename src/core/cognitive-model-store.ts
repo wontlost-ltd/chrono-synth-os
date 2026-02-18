@@ -43,16 +43,21 @@ function validate(model: CognitiveModel): void {
 }
 
 export class CognitiveModelStore {
+  private readonly tenantId: string;
+
   constructor(
     private readonly db: IDatabase,
     private readonly clock: Clock,
-  ) {}
+    tenantId = 'default',
+  ) {
+    this.tenantId = tenantId;
+  }
 
   /** 获取认知模型（未设置时返回默认值） */
   get(): CognitiveModel {
     const row = this.db.prepare<ModelRow>(
-      `SELECT model_json, updated_at FROM cognitive_model WHERE tenant_id = 'default'`,
-    ).get();
+      'SELECT model_json, updated_at FROM cognitive_model WHERE tenant_id = ?',
+    ).get(this.tenantId);
     if (!row) return buildDefault();
     const payload = JSON.parse(row.model_json) as Partial<ModelPayload>;
     const defaults = buildDefault();
@@ -84,9 +89,9 @@ export class CognitiveModelStore {
       growthMindset: next.growthMindset,
     };
     this.db.prepare<void>(
-      `INSERT INTO cognitive_model (tenant_id, model_json, updated_at) VALUES ('default', ?, ?)
+      `INSERT INTO cognitive_model (tenant_id, model_json, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(tenant_id) DO UPDATE SET model_json = excluded.model_json, updated_at = excluded.updated_at`,
-    ).run(JSON.stringify(payload), now);
+    ).run(this.tenantId, JSON.stringify(payload), now);
     return next;
   }
 }

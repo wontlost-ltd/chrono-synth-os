@@ -40,7 +40,14 @@ function isPublicPath(url: string): boolean {
   return false;
 }
 
+declare module 'fastify' {
+  interface FastifyInstance {
+    jwtEnabled: boolean;
+  }
+}
+
 export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): Promise<void> {
+  app.decorate('jwtEnabled', config.jwt.enabled);
   if (!config.jwt.enabled) return;
 
   await app.register(fastifyJwt, {

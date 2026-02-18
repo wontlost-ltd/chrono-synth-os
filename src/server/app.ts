@@ -21,7 +21,7 @@ import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerJwtAuth } from './plugins/jwt-auth.js';
 import { registerRedis } from './plugins/redis.js';
-import { registerTenant } from './plugins/tenant.js';
+import { registerTenantDecorator, registerTenantHook } from './plugins/tenant.js';
 import { registerAuditLog } from './plugins/audit-log.js';
 import { registerRequestTimeout } from './plugins/request-timeout.js';
 import { registerObservability } from './plugins/observability.js';
@@ -72,7 +72,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 同步插件 */
   registerRequestId(app);
-  registerTenant(app);
+  registerTenantDecorator(app);  /* 仅注册装饰器，hook 延迟到 JWT 之后 */
   registerRequestLogContext(app);
   registerApiVersion(app);
   registerMetrics(app);
@@ -83,6 +83,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 异步插件 */
   await registerJwtAuth(app, config);
+  registerTenantHook(app);  /* 在 JWT 之后注册，确保 request.user 已填充 */
   await registerAuth0(app, config);
   await registerRedis(app, config);
   await registerCors(app, config);

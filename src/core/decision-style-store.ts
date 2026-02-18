@@ -43,16 +43,21 @@ function validate(style: DecisionStyle): void {
 }
 
 export class DecisionStyleStore {
+  private readonly tenantId: string;
+
   constructor(
     private readonly db: IDatabase,
     private readonly clock: Clock,
-  ) {}
+    tenantId = 'default',
+  ) {
+    this.tenantId = tenantId;
+  }
 
   /** 获取决策风格（未设置时返回默认值） */
   get(): DecisionStyle {
     const row = this.db.prepare<StyleRow>(
-      `SELECT style_json, updated_at FROM decision_style WHERE tenant_id = 'default'`,
-    ).get();
+      'SELECT style_json, updated_at FROM decision_style WHERE tenant_id = ?',
+    ).get(this.tenantId);
     if (!row) return { ...DEFAULT_DECISION_STYLE, updatedAt: 0 };
     const parsed = JSON.parse(row.style_json) as Partial<Omit<DecisionStyle, 'updatedAt'>>;
     return { ...DEFAULT_DECISION_STYLE, ...parsed, updatedAt: row.updated_at };
@@ -74,9 +79,9 @@ export class DecisionStyleStore {
     validate(next);
     const { updatedAt: _, ...payload } = next;
     this.db.prepare<void>(
-      `INSERT INTO decision_style (tenant_id, style_json, updated_at) VALUES ('default', ?, ?)
+      `INSERT INTO decision_style (tenant_id, style_json, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(tenant_id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`,
-    ).run(JSON.stringify(payload), now);
+    ).run(this.tenantId, JSON.stringify(payload), now);
     return next;
   }
 }

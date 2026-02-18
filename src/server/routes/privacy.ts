@@ -12,6 +12,7 @@ import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
 import { compilePersonaState } from '../../intelligence/persona-state.js';
 import { PaginationQuerySchema } from '../schemas/api-schemas.js';
+import { requireRole } from '../plugins/rbac.js';
 
 /** 直接按 tenant_id 查询的表（外键依赖顺序：子表在前） */
 const TENANT_TABLES = [
@@ -107,8 +108,8 @@ export function registerPrivacyRoutes(
     return os;
   }
 
-  /* POST /api/v1/privacy/export — 完整租户数据导出 */
-  app.post('/api/v1/privacy/export', async (request) => {
+  /* POST /api/v1/privacy/export — 完整租户数据导出（仅 admin） */
+  app.post('/api/v1/privacy/export', { preHandler: requireRole('admin') }, async (request) => {
     const tenantId = request.tenantId;
     const exportId = generatePrefixedId('exp');
     const db = os.getDatabase();
@@ -153,8 +154,8 @@ export function registerPrivacyRoutes(
     };
   });
 
-  /* DELETE /api/v1/privacy/data — GDPR Right to Erasure */
-  app.delete('/api/v1/privacy/data', async (request) => {
+  /* DELETE /api/v1/privacy/data — GDPR Right to Erasure（仅 admin） */
+  app.delete('/api/v1/privacy/data', { preHandler: requireRole('admin') }, async (request) => {
     const tenantId = request.tenantId;
     const db = os.getDatabase();
     const deletedCounts: Record<string, number> = {};

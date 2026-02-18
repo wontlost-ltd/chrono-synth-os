@@ -9,16 +9,17 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 export function registerRequestLogContext(app: FastifyInstance): void {
   app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
     const requestId = (reply.getHeader('X-Request-Id') as string) || 'unknown';
-    const tenantId = request.tenantId ?? 'default';
-    request.log = request.log.child({ requestId, tenantId });
+    request.log = request.log.child({ requestId });
     done();
   });
 
+  /* preHandler 在 onRequest（JWT + tenant 解析）之后执行，tenantId 已确定 */
   app.addHook('preHandler', (request: FastifyRequest, _reply: FastifyReply, done) => {
+    const tenantId = request.tenantId ?? 'default';
     const userId = (request as unknown as { user?: { sub?: string } }).user?.sub;
-    if (userId) {
-      request.log = request.log.child({ userId });
-    }
+    request.log = userId
+      ? request.log.child({ tenantId, userId })
+      : request.log.child({ tenantId });
     done();
   });
 }

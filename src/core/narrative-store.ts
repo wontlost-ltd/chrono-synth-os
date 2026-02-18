@@ -12,16 +12,21 @@ interface NarrativeRow {
 }
 
 export class NarrativeStore {
+  private readonly tenantId: string;
+
   constructor(
     private readonly db: IDatabase,
     private readonly clock: Clock,
-  ) {}
+    tenantId = 'default',
+  ) {
+    this.tenantId = tenantId;
+  }
 
   /** 获取当前叙事 */
   get(): string {
     const row = this.db.prepare<NarrativeRow>(
-      `SELECT content FROM narrative WHERE tenant_id = 'default'`,
-    ).get();
+      'SELECT content FROM narrative WHERE tenant_id = ?',
+    ).get(this.tenantId);
     return row?.content ?? '';
   }
 
@@ -30,9 +35,9 @@ export class NarrativeStore {
     const previous = this.get();
     const now = this.clock.now();
     this.db.prepare<void>(
-      `INSERT INTO narrative (tenant_id, content, updated_at) VALUES ('default', ?, ?)
+      `INSERT INTO narrative (tenant_id, content, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(tenant_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-    ).run(content, now);
+    ).run(this.tenantId, content, now);
     return previous;
   }
 }
