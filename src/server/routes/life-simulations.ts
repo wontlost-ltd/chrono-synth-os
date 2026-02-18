@@ -18,10 +18,26 @@ export function registerLifeSimulationRoutes(
 ): void {
   const asyncMode = options?.queueEnabled ?? false;
 
+  /* GET /api/v1/simulations — 列出租户的所有模拟 */
+  app.get('/api/v1/simulations', async (request) => {
+    const tenantId = request.tenantId;
+    const query = request.query as Record<string, string | undefined>;
+    const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10) || 20));
+    const records = service.getByTenant(tenantId, limit);
+    return {
+      data: records.map(r => ({
+        simulationId: r.id,
+        status: r.status,
+        createdAt: r.createdAt,
+        completedAt: r.completedAt,
+      })),
+    };
+  });
+
   /* POST /api/v1/simulations/life — 创建模拟任务 */
   app.post('/api/v1/simulations/life', async (request, reply) => {
     const body = CreateLifeSimulationSchema.parse(request.body);
-    const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+    const tenantId = request.tenantId;
     const { simulationId, taskId } = service.enqueue(body, tenantId);
 
     if (!asyncMode) {
@@ -36,7 +52,7 @@ export function registerLifeSimulationRoutes(
   /* GET /api/v1/simulations/:id — 状态 + 摘要 */
   app.get<{ Params: { id: string } }>('/api/v1/simulations/:id', async (request) => {
     const { id } = request.params;
-    const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+    const tenantId = request.tenantId;
     const record = service.getStatus(id, tenantId);
     if (!record) {
       throw new NotFoundError(`模拟 ${id} 不存在`, ErrorCode.NOT_FOUND_VALUE);
@@ -60,7 +76,7 @@ export function registerLifeSimulationRoutes(
     '/api/v1/simulations/:id/paths/:pathId',
     async (request) => {
       const { id, pathId } = request.params;
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
       const pathRecord = service.getPathDetail(id, pathId, tenantId);
       if (!pathRecord) {
         throw new NotFoundError(`路径 ${pathId} 不存在`, ErrorCode.NOT_FOUND_VALUE);
@@ -85,7 +101,7 @@ export function registerLifeSimulationRoutes(
     async (request, reply) => {
       const { id } = request.params;
       const body = StressTestRequestSchema.parse(request.body);
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
 
       const baseRecord = service.getStatus(id, tenantId);
       if (!baseRecord) {

@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
 import { ShareSimulationSchema } from '../schemas/api-schemas.js';
+import { AuthenticationError, AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index.js';
 
 interface SharedRow {
   id: string;
@@ -24,10 +25,10 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
   app.post('/api/v1/simulations/:id/share', async (request, reply) => {
     const { id: simulationId } = request.params as { id: string };
     const ownerUserId = (request.user as { sub?: string })?.sub;
-    const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+    const tenantId = request.tenantId;
 
     if (!ownerUserId) {
-      return reply.status(401).send({ error: 'AuthenticationError', message: '需要登录' });
+      throw new AuthenticationError('需要登录', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
     const { userId, permission } = ShareSimulationSchema.parse(request.body);
@@ -37,7 +38,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
       'SELECT tenant_id FROM life_simulations WHERE id = ?',
     ).get(simulationId);
     if (!simulation || simulation.tenant_id !== tenantId) {
-      return reply.status(404).send({ error: 'NotFound', message: '模拟不存在' });
+      throw new NotFoundError('模拟不存在', ErrorCode.NOT_FOUND_VALUE);
     }
 
     const existing = db.prepare<{ id: string; owner_user_id: string }>(
@@ -46,7 +47,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
 
     if (existing) {
       if (existing.owner_user_id !== ownerUserId) {
-        return reply.status(403).send({ error: 'AuthorizationError', message: '无权限修改他人分享' });
+        throw new AuthorizationError('无权限修改他人分享', ErrorCode.AUTH_INSUFFICIENT_ROLE);
       }
       db.prepare(
         'UPDATE shared_simulations SET permission = ?, updated_at = ? WHERE id = ?',
@@ -65,15 +66,24 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
   });
 
   /* GET /api/v1/shared */
-  app.get('/api/v1/shared', async (request, reply) => {
+  app.get('/api/v1/shared', async (request) => {
     const userId = (request.user as { sub?: string })?.sub;
     if (!userId) {
-      return reply.status(401).send({ error: 'AuthenticationError', message: '需要登录' });
+      throw new AuthenticationError('需要登录', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
+    const query = request.query as Record<string, string | undefined>;
+    const page = Math.max(1, parseInt(query.page || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '20', 10) || 20));
+    const offset = (page - 1) * pageSize;
+
+    const total = db.prepare<{ count: number }>(
+      'SELECT COUNT(*) as count FROM shared_simulations WHERE shared_with_user_id = ?',
+    ).get(userId)?.count ?? 0;
+
     const shares = db.prepare<SharedRow>(
-      'SELECT id, simulation_id, owner_user_id, permission, created_at FROM shared_simulations WHERE shared_with_user_id = ? ORDER BY created_at DESC',
-    ).all(userId);
+      'SELECT id, simulation_id, owner_user_id, permission, created_at FROM shared_simulations WHERE shared_with_user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    ).all(userId, pageSize, offset);
 
     return {
       data: shares.map((s: SharedRow) => ({
@@ -83,6 +93,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
         permission: s.permission,
         createdAt: new Date(s.created_at).toISOString(),
       })),
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
     };
   });
 
@@ -92,7 +103,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
     const ownerUserId = (request.user as { sub?: string })?.sub;
 
     if (!ownerUserId) {
-      return reply.status(401).send({ error: 'AuthenticationError', message: '需要登录' });
+      throw new AuthenticationError('需要登录', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
     const existing = db.prepare<{ owner_user_id: string }>(
@@ -100,10 +111,10 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
     ).get(simulationId, userId);
 
     if (!existing) {
-      return reply.status(404).send({ error: 'NotFound', message: '未找到对应的分享记录' });
+      throw new NotFoundError('未找到对应的分享记录', ErrorCode.NOT_FOUND_VALUE);
     }
     if (existing.owner_user_id !== ownerUserId) {
-      return reply.status(403).send({ error: 'AuthorizationError', message: '无权限取消他人分享' });
+      throw new AuthorizationError('无权限取消他人分享', ErrorCode.AUTH_INSUFFICIENT_ROLE);
     }
 
     db.prepare(

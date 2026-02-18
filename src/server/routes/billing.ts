@@ -18,6 +18,7 @@ import {
   constructWebhookEvent,
 } from '../../billing/stripe-client.js';
 import { CheckoutSchema, PortalSchema } from '../schemas/api-schemas.js';
+import { ValidationError, StateError, ErrorCode } from '../../errors/index.js';
 
 interface SubscriptionRow {
   readonly id: string;
@@ -57,7 +58,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
 
   /* GET /api/v1/billing/usage — 当前租户用量 */
   app.get('/api/v1/billing/usage', async (request) => {
-    const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+    const tenantId = request.tenantId;
     const sub = db.prepare<SubscriptionRow>(
       'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get(tenantId);
@@ -81,36 +82,24 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
   if (!config.stripe.enabled) return;
 
   /* POST /api/v1/billing/checkout — 创建 Checkout Session */
-  app.post('/api/v1/billing/checkout', async (request, reply) => {
+  app.post('/api/v1/billing/checkout', async (request) => {
     const { priceId, successUrl, cancelUrl } = CheckoutSchema.parse(request.body);
 
     if (!VALID_PRICE_IDS.has(priceId)) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_INVALID_PLAN',
-        message: '无效的 priceId',
-      });
+      throw new ValidationError('无效的 priceId', ErrorCode.VALIDATION_FORMAT);
     }
 
     if (!isSafeRedirectUrl(successUrl, config.server.publicUrl) || !isSafeRedirectUrl(cancelUrl, config.server.publicUrl)) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_INVALID_URL',
-        message: '重定向 URL 必须为相对路径或同源地址',
-      });
+      throw new ValidationError('重定向 URL 必须为相对路径或同源地址', ErrorCode.VALIDATION_FORMAT);
     }
 
-    const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+    const tenantId = request.tenantId;
     const sub = db.prepare<SubscriptionRow>(
       'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get(tenantId);
 
     if (!sub?.stripe_customer_id) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_REQUIRED',
-        message: '尚未关联 Stripe 客户，请先完成注册',
-      });
+      throw new StateError('尚未关联 Stripe 客户，请先完成注册', ErrorCode.VALIDATION_REQUIRED);
     }
 
     const session = await createCheckoutSession(config, sub.stripe_customer_id, priceId, successUrl, cancelUrl);
@@ -118,28 +107,20 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
   });
 
   /* POST /api/v1/billing/portal — 创建客户门户 */
-  app.post('/api/v1/billing/portal', async (request, reply) => {
+  app.post('/api/v1/billing/portal', async (request) => {
     const { returnUrl } = PortalSchema.parse(request.body);
 
     if (!isSafeRedirectUrl(returnUrl, config.server.publicUrl)) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_INVALID_URL',
-        message: '重定向 URL 必须为相对路径或同源地址',
-      });
+      throw new ValidationError('重定向 URL 必须为相对路径或同源地址', ErrorCode.VALIDATION_FORMAT);
     }
 
-    const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+    const tenantId = request.tenantId;
     const sub = db.prepare<SubscriptionRow>(
       'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get(tenantId);
 
     if (!sub?.stripe_customer_id) {
-      return reply.status(400).send({
-        error: 'ValidationError',
-        code: 'VALIDATION_REQUIRED',
-        message: '尚未关联 Stripe 客户',
-      });
+      throw new StateError('尚未关联 Stripe 客户', ErrorCode.VALIDATION_REQUIRED);
     }
 
     const session = await createPortalSession(config, sub.stripe_customer_id, returnUrl);
@@ -148,19 +129,28 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
 
   /* POST /api/v1/billing/webhook — Stripe Webhook 回调 */
   app.post('/api/v1/billing/webhook', {
-    config: { rawBody: true },
+    preParsing: async (request, _reply, payload) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of payload) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+      }
+      const rawBody = Buffer.concat(chunks);
+      (request as { rawBody?: Buffer }).rawBody = rawBody;
+      const { Readable } = await import('node:stream');
+      return Readable.from(rawBody);
+    },
   }, async (request, reply) => {
     const sig = request.headers['stripe-signature'] as string | undefined;
     if (!sig) {
-      return reply.status(400).send({ error: '缺少 Stripe 签名' });
+      throw new ValidationError('缺少 Stripe 签名', ErrorCode.VALIDATION_REQUIRED);
     }
 
     let event;
     try {
-      const body = (request as { rawBody?: string | Buffer }).rawBody ?? JSON.stringify(request.body);
+      const body = (request as { rawBody?: Buffer }).rawBody ?? JSON.stringify(request.body);
       event = constructWebhookEvent(config, body, sig);
     } catch {
-      return reply.status(400).send({ error: 'Webhook 签名验证失败' });
+      throw new ValidationError('Webhook 签名验证失败', ErrorCode.VALIDATION_FORMAT);
     }
 
     const now = Date.now();
@@ -233,7 +223,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       });
     } catch (err) {
       app.log.error({ err }, 'Stripe webhook 处理失败');
-      return reply.status(500).send({ error: 'Webhook 处理失败' });
+      throw err;
     }
 
     if (duplicate) {

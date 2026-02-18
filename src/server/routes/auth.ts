@@ -12,7 +12,7 @@ import { hash, verify } from '@node-rs/argon2';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload, UserRow, RefreshTokenRow } from '../../types/auth.js';
-import { ErrorCode } from '../../errors/index.js';
+import { ErrorCode, StateError, AuthenticationError } from '../../errors/index.js';
 import { RegisterSchema, LoginSchema, RefreshTokenSchema, LogoutSchema } from '../schemas/api-schemas.js';
 import { createCustomer } from '../../billing/stripe-client.js';
 import { syncPlanToQuota } from '../../billing/plans.js';
@@ -31,11 +31,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
     const existing = db.prepare<UserRow>('SELECT id FROM users WHERE email = ?').get(email);
     if (existing) {
-      return reply.status(409).send({
-        error: 'StateError',
-        code: ErrorCode.AUTH_EMAIL_EXISTS,
-        message: '该邮箱已注册',
-      });
+      throw new StateError('该邮箱已注册', ErrorCode.AUTH_EMAIL_EXISTS);
     }
 
     const now = Date.now();
@@ -74,25 +70,17 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
   });
 
   /* POST /api/v1/auth/login */
-  app.post('/api/v1/auth/login', async (request, reply) => {
+  app.post('/api/v1/auth/login', async (request) => {
     const { email, password } = LoginSchema.parse(request.body);
 
     const user = db.prepare<UserRow>('SELECT * FROM users WHERE email = ?').get(email);
     if (!user) {
-      return reply.status(401).send({
-        error: 'AuthenticationError',
-        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
-        message: '邮箱或密码错误',
-      });
+      throw new AuthenticationError('邮箱或密码错误', ErrorCode.AUTH_INVALID_CREDENTIALS);
     }
 
     const valid = await verify(user.password_hash, password);
     if (!valid) {
-      return reply.status(401).send({
-        error: 'AuthenticationError',
-        code: ErrorCode.AUTH_INVALID_CREDENTIALS,
-        message: '邮箱或密码错误',
-      });
+      throw new AuthenticationError('邮箱或密码错误', ErrorCode.AUTH_INVALID_CREDENTIALS);
     }
 
     const tokens = await generateTokenPair(app, db, config, user.id, user.tenant_id, user.role);
@@ -100,7 +88,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
   });
 
   /* POST /api/v1/auth/refresh */
-  app.post('/api/v1/auth/refresh', async (request, reply) => {
+  app.post('/api/v1/auth/refresh', async (request) => {
     const { refreshToken } = RefreshTokenSchema.parse(request.body);
 
     const tokenHash = hashToken(refreshToken);
@@ -109,11 +97,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
     ).get(tokenHash);
 
     if (!row || row.expires_at < Date.now()) {
-      return reply.status(401).send({
-        error: 'AuthenticationError',
-        code: ErrorCode.AUTH_EXPIRED,
-        message: '刷新令牌无效或已过期',
-      });
+      throw new AuthenticationError('刷新令牌无效或已过期', ErrorCode.AUTH_EXPIRED);
     }
 
     /* 吊销旧令牌（令牌轮转） */
@@ -121,11 +105,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
     const user = db.prepare<UserRow>('SELECT * FROM users WHERE id = ?').get(row.user_id);
     if (!user) {
-      return reply.status(401).send({
-        error: 'AuthenticationError',
-        code: ErrorCode.AUTH_INVALID_TOKEN,
-        message: '用户不存在',
-      });
+      throw new AuthenticationError('用户不存在', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
     const tokens = await generateTokenPair(app, db, config, user.id, user.tenant_id, user.role);

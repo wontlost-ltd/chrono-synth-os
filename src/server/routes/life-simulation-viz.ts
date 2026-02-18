@@ -36,7 +36,7 @@ export function registerLifeSimVizRoutes(
     '/api/v1/simulations/:id/visualization/overview',
     async (request) => {
       const { id } = request.params;
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
       const record = service.getStatus(id, tenantId);
       if (!record) {
         throw new NotFoundError(`模拟 ${id} 不存在`, ErrorCode.NOT_FOUND_VALUE);
@@ -71,7 +71,7 @@ export function registerLifeSimVizRoutes(
     '/api/v1/simulations/:id/visualization/paths',
     async (request) => {
       const { id } = request.params;
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
       const record = service.getStatus(id, tenantId);
       if (!record) {
         throw new NotFoundError(`模拟 ${id} 不存在`, ErrorCode.NOT_FOUND_VALUE);
@@ -109,7 +109,7 @@ export function registerLifeSimVizRoutes(
     '/api/v1/simulations/:id/visualization/branches/:pathId',
     async (request) => {
       const { id, pathId } = request.params;
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
 
       const simRecord = service.getStatus(id, tenantId);
       if (!simRecord) {
@@ -181,7 +181,7 @@ export function registerLifeSimVizRoutes(
     '/api/v1/simulations/:id/visualization/stress-comparison',
     async (request) => {
       const { id } = request.params;
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
 
       const baseRecord = service.getStatus(id, tenantId);
       if (!baseRecord) {
@@ -240,7 +240,7 @@ export function registerLifeSimVizRoutes(
     '/api/v1/simulations/:id/visualization/milestones',
     async (request) => {
       const { id } = request.params;
-      const tenantId = (request as { tenantId?: string }).tenantId ?? 'default';
+      const tenantId = request.tenantId;
 
       const record = service.getStatus(id, tenantId);
       if (!record) {

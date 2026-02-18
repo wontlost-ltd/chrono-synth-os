@@ -11,6 +11,7 @@ import type { AppConfig } from '../../config/schema.js';
 import { buildAuthorizeUrl, exchangeCode, fetchUserInfo } from '../plugins/auth0.js';
 import type { JwtPayload, UserRole } from '../../types/auth.js';
 import { syncPlanToQuota } from '../../billing/plans.js';
+import { ConfigError, ValidationError, AuthenticationError, ErrorCode } from '../../errors/index.js';
 
 /** SSO 状态参数临时存储（生产环境应使用 Redis） */
 const MAX_PENDING_STATES = 10_000;
@@ -51,8 +52,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
     cleanExpiredStates();
 
     if (!baseUrl) {
-      app.log.error('SSO 启用但 server.publicUrl 未配置');
-      return reply.status(500).send({ error: 'SSOError', message: 'SSO 未配置回调地址' });
+      throw new ConfigError('SSO 启用但 server.publicUrl 未配置', ErrorCode.CONFIG_INVALID);
     }
 
     const { redirect_uri } = request.query as { redirect_uri?: string };
@@ -82,22 +82,22 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
     };
 
     if (authError) {
-      return reply.status(400).send({ error: 'SSOError', message: `Auth0 错误: ${authError}` });
+      throw new AuthenticationError(`Auth0 错误: ${authError}`, ErrorCode.AUTH_SSO_FAILED);
     }
 
     if (!code || !state) {
-      return reply.status(400).send({ error: 'SSOError', message: '缺少 code 或 state 参数' });
+      throw new ValidationError('缺少 code 或 state 参数', ErrorCode.VALIDATION_REQUIRED);
     }
 
     const pending = pendingStates.get(state);
     if (!pending || Date.now() - pending.createdAt > STATE_TTL_MS) {
       if (pending) pendingStates.delete(state);
-      return reply.status(400).send({ error: 'SSOError', message: 'state 参数无效或已过期' });
+      throw new AuthenticationError('state 参数无效或已过期', ErrorCode.AUTH_SSO_FAILED);
     }
     pendingStates.delete(state);
 
     if (!baseUrl) {
-      return reply.status(500).send({ error: 'SSOError', message: 'SSO 未配置回调地址' });
+      throw new ConfigError('SSO 未配置回调地址', ErrorCode.CONFIG_INVALID);
     }
     const callbackUri = `${baseUrl}/api/v1/auth/sso/callback`;
 
@@ -107,7 +107,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
 
       const emailVerified = (userInfo as { email_verified?: boolean }).email_verified;
       if (userInfo.email && emailVerified !== true) {
-        return reply.status(401).send({ error: 'SSOError', message: '邮箱未验证' });
+        throw new AuthenticationError('邮箱未验证', ErrorCode.AUTH_SSO_FAILED);
       }
 
       const email = userInfo.email ?? userInfo.sub;
@@ -162,10 +162,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
       return reply.redirect(redirectUrl.toString());
     } catch (err) {
       app.log.error({ err }, 'SSO callback 处理失败');
-      return reply.status(500).send({
-        error: 'SSOError',
-        message: err instanceof Error ? err.message : 'SSO 认证失败',
-      });
+      throw err;
     }
   });
 }

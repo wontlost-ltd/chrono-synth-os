@@ -185,16 +185,9 @@ export function registerPrivacyRoutes(
   app.get('/api/v1/privacy/audit-trail', async (request) => {
     const tenantId = request.tenantId;
     const db = os.getDatabase();
-    let rows: unknown[];
-    try {
-      rows = db.prepare<Record<string, unknown>>(
-        'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 100',
-      ).all(tenantId);
-    } catch {
-      rows = db.prepare<Record<string, unknown>>(
-        'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log ORDER BY timestamp DESC LIMIT 100',
-      ).all();
-    }
+    const rows = db.prepare<Record<string, unknown>>(
+      'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT 100',
+    ).all(tenantId);
     return { data: rows };
   });
 }

@@ -462,6 +462,105 @@ const API_DOCS = {
       response_schema: { data: '{ id, resolved, resolution }' },
     },
 
+    /* ===== 认证 ===== */
+    {
+      method: 'POST',
+      path: '/api/v1/auth/register',
+      description: '注册新用户（创建租户 + free 订阅 + 配额）',
+      request_schema: { email: 'string (email)', password: 'string (≥8 字符)' },
+      response_schema: { data: '{ userId, email, tenantId, accessToken, refreshToken, expiresIn }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/auth/login',
+      description: '用户登录',
+      request_schema: { email: 'string', password: 'string' },
+      response_schema: { data: '{ userId, email, tenantId, role, accessToken, refreshToken, expiresIn }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/auth/refresh',
+      description: '刷新访问令牌（令牌轮转，旧令牌自动吊销）',
+      request_schema: { refreshToken: 'string' },
+      response_schema: { data: '{ userId, email, accessToken, refreshToken, expiresIn }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/auth/logout',
+      description: '登出（吊销刷新令牌）',
+      request_schema: { refreshToken: 'string?' },
+      response_schema: '204 No Content',
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/auth/sso/authorize',
+      description: 'SSO 授权重定向（Auth0/OIDC）',
+      request_schema: { redirect_uri: 'string (query)' },
+      response_schema: '302 重定向到 IdP',
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/auth/sso/callback',
+      description: 'SSO 回调（交换 code 为 JWT 令牌对）',
+      request_schema: { code: 'string (query)', state: 'string (query)' },
+      response_schema: { data: '{ userId, email, tenantId, role, accessToken, refreshToken, expiresIn }' },
+    },
+
+    /* ===== 计费 ===== */
+    {
+      method: 'GET',
+      path: '/api/v1/billing/plans',
+      description: '获取所有可用计划',
+      response_schema: { data: '{ id, name, limits }[]' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/billing/usage',
+      description: '获取当前租户用量和订阅状态',
+      response_schema: { data: '{ planId, status, limits, usage, periodEnd }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/billing/checkout',
+      description: '创建 Stripe Checkout Session',
+      request_schema: { priceId: 'string', successUrl: 'string', cancelUrl: 'string' },
+      response_schema: { data: '{ sessionId, url }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/billing/portal',
+      description: '创建 Stripe 客户门户链接',
+      request_schema: { returnUrl: 'string' },
+      response_schema: { data: '{ url }' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/billing/webhook',
+      description: 'Stripe Webhook 回调（需要 stripe-signature 头）',
+      response_schema: { received: 'boolean' },
+    },
+
+    /* ===== 协作 ===== */
+    {
+      method: 'POST',
+      path: '/api/v1/simulations/:id/share',
+      description: '分享模拟给其他用户',
+      request_schema: { userId: 'string', permission: 'view | edit' },
+      response_schema: { data: '{ id, simulationId, userId, permission }' },
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/shared',
+      description: '获取分享给我的模拟列表',
+      response_schema: { data: '{ id, simulationId, ownerUserId, permission, createdAt }[]' },
+    },
+    {
+      method: 'DELETE',
+      path: '/api/v1/simulations/:id/share/:userId',
+      description: '取消分享',
+      response_schema: '204 No Content',
+    },
+
     /* ===== 审计 ===== */
     {
       method: 'GET',

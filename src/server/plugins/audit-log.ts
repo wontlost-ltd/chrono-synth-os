@@ -78,16 +78,8 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
 
 /** 查询审计日志（按租户过滤，最近 N 条） */
 export function queryAuditLog(db: IDatabase, limit = 100, tenantId?: string): AuditEntry[] {
-  if (tenantId) {
-    try {
-      return db.prepare<AuditEntry>(
-        'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ?',
-      ).all(tenantId, limit);
-    } catch {
-      /* 兼容无 tenant_id 列的旧表 */
-    }
-  }
+  const tid = tenantId ?? 'default';
   return db.prepare<AuditEntry>(
-    'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log ORDER BY timestamp DESC LIMIT ?',
-  ).all(limit);
+    'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ?',
+  ).all(tid, limit);
 }
