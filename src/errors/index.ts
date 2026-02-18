@@ -5,6 +5,8 @@ export {
   StateError,
   StorageError,
   ConfigError,
+  AuthenticationError,
+  AuthorizationError,
   ErrorCode,
 } from './errors.js';
 export type { ErrorCodeValue } from './errors.js';

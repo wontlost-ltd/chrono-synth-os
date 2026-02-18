@@ -18,9 +18,14 @@ import { registerWebSocket } from './plugins/websocket.js';
 import { registerCors } from './plugins/cors.js';
 import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
+import { registerJwtAuth } from './plugins/jwt-auth.js';
+import { registerRedis } from './plugins/redis.js';
 import { registerTenant } from './plugins/tenant.js';
 import { registerAuditLog } from './plugins/audit-log.js';
 import { registerRequestTimeout } from './plugins/request-timeout.js';
+import { registerObservability } from './plugins/observability.js';
+import { registerAuthRoutes } from './routes/auth.js';
+import { registerBillingRoutes } from './routes/billing.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerValueRoutes } from './routes/values.js';
 import { registerMemoryRoutes } from './routes/memories.js';
@@ -40,6 +45,9 @@ import { registerPrivacyRoutes } from './routes/privacy.js';
 import { registerTaskRoutes } from './routes/tasks.js';
 import { registerLifeSimulationRoutes } from './routes/life-simulations.js';
 import { registerLifeSimVizRoutes } from './routes/life-simulation-viz.js';
+import { registerSsoRoutes } from './routes/auth-sso.js';
+import { registerAuth0 } from './plugins/auth0.js';
+import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 
@@ -67,8 +75,12 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerRequestTimeout(app, config);
   registerAuth(app, config);
   registerAuditLog(app, deps.db);
+  registerObservability(app, config);
 
   /* 异步插件 */
+  await registerJwtAuth(app, config);
+  await registerAuth0(app, config);
+  await registerRedis(app, config);
   await registerCors(app, config);
   await registerHelmet(app);
   await registerRateLimit(app, config);
@@ -78,6 +90,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerErrorHandler(app);
 
   /* 路由 */
+  const db = deps.db ?? deps.os.getDatabase();
+  registerAuthRoutes(app, db, config);
+  registerBillingRoutes(app, db, config);
   registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker });
   registerValueRoutes(app, deps.os);
   registerMemoryRoutes(app, deps.os);
@@ -95,11 +110,13 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerPrivacyRoutes(app, deps.os);
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation);
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
+  registerSsoRoutes(app, db, config);
+  registerCollaborationRoutes(app, db);
 
   /* 任务队列（可选） */
   if (config.queue.enabled) {
-    const db = deps.db ?? deps.os.getDatabase();
-    const queue = new TaskQueue(db);
+    const queueDb = deps.db ?? deps.os.getDatabase();
+    const queue = new TaskQueue(queueDb);
     registerTaskRoutes(app, queue);
     const worker = new TaskWorker(
       queue,

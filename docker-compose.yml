@@ -1,28 +1,125 @@
-version: "3.9"
-
 services:
-  chrono-synth-os:
-    build: .
+  backend:
+    build:
+      context: .
+      args:
+        - VERSION=${VERSION:-latest}
     ports:
       - "3000:3000"
     environment:
-      - CHRONO_DB_PATH=/app/data/chrono.db
+      - CHRONO_DB_DRIVER=postgres
+      - CHRONO_DB_CONNECTION_STRING=postgresql://chrono:chrono@postgres:5432/chrono_synth
       - CHRONO_LOG_LEVEL=info
       - CHRONO_LOG_JSON=true
       - CHRONO_SERVER_HOST=0.0.0.0
       - CHRONO_SERVER_PORT=3000
-      - CHRONO_CORS_ORIGIN=false
+      - CHRONO_CORS_ORIGIN=${CORS_ORIGIN:-http://localhost}
+      - CHRONO_CORS_CREDENTIALS=true
       - CHRONO_AUTH_ENABLED=false
+      - CHRONO_JWT_ENABLED=${JWT_ENABLED:-true}
+      - CHRONO_JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - CHRONO_REDIS_ENABLED=true
+      - CHRONO_REDIS_URL=redis://redis:6379
+      - CHRONO_STRIPE_ENABLED=${STRIPE_ENABLED:-false}
+      - CHRONO_STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - CHRONO_STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - CHRONO_STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - CHRONO_OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - CHRONO_OTEL_ENDPOINT=http://jaeger:4318
     volumes:
       - chrono-data:/app/data
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s
+    networks:
+      - chrono-net
+
+  frontend:
+    build:
+      context: ${FRONTEND_PATH:-../chrono-synth-web}
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
       start_period: 10s
+    networks:
+      - chrono-net
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: chrono_synth
+      POSTGRES_USER: chrono
+      POSTGRES_PASSWORD: chrono
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chrono -d chrono_synth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - chrono-net
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:14269/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - chrono-net
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - chrono-net
 
 volumes:
   chrono-data:
     driver: local
+  pg-data:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  chrono-net:
+    driver: bridge

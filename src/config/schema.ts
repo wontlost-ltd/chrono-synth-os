@@ -27,6 +27,7 @@ const logSchema = z.object({
 const serverSchema = z.object({
   host: z.string().default('0.0.0.0'),
   port: z.coerce.number().int().min(1).max(65535).default(3000),
+  publicUrl: z.string().url().optional(),
 });
 
 const integrationSchema = z.object({
@@ -52,6 +53,29 @@ const corsSchema = z.object({
 const authSchema = z.object({
   enabled: z.boolean().default(false),
   apiKeys: z.array(z.string()).default([]),
+});
+
+const jwtSchema = z.object({
+  enabled: z.boolean().default(false),
+  secret: z.string().default('change-me-in-production'),
+  issuer: z.string().default('chrono-synth-os'),
+  accessTtlMs: z.coerce.number().int().default(15 * 60 * 1000),       /* 15 分钟 */
+  refreshTtlMs: z.coerce.number().int().default(7 * 24 * 60 * 60 * 1000), /* 7 天 */
+  algorithm: z.enum(['HS256', 'HS384', 'HS512']).default('HS256'),
+});
+
+const redisSchema = z.object({
+  enabled: z.boolean().default(false),
+  url: z.string().default('redis://localhost:6379'),
+  keyPrefix: z.string().default('chrono:'),
+  tls: z.boolean().default(false),
+});
+
+const stripeSchema = z.object({
+  enabled: z.boolean().default(false),
+  secretKey: z.string().default(''),
+  webhookSecret: z.string().default(''),
+  publishableKey: z.string().default(''),
 });
 
 const cognitionDecaySchema = z.object({
@@ -92,6 +116,12 @@ const intelligenceSimulationSchema = z.object({
   maxOptions: z.coerce.number().int().min(2).max(6).default(4),
 }).default({ rollouts: 3, maxOptions: 4 });
 
+const intelligenceBudgetSchema = z.object({
+  monthlyTokenLimit: z.coerce.number().int().min(0).default(1_000_000),
+  dailyTokenLimit: z.coerce.number().int().min(0).default(100_000),
+  alertThreshold: z.coerce.number().min(0).max(1).default(0.8),
+}).default({ monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 });
+
 const intelligenceSchema = z.object({
   provider: z.enum(['openai', 'anthropic', 'ollama', 'mock']).default('mock'),
   model: z.string().default('claude-sonnet-4-5-20250929'),
@@ -101,6 +131,21 @@ const intelligenceSchema = z.object({
   maxTokens: z.coerce.number().int().default(4096),
   temperature: z.coerce.number().min(0).max(2).default(0.7),
   simulation: intelligenceSimulationSchema,
+  budget: intelligenceBudgetSchema,
+});
+
+const encryptionSchema = z.object({
+  enabled: z.boolean().default(false),
+  masterKey: z.string().default('change-me-in-production-32chars!'),
+  keyRotationIntervalDays: z.coerce.number().int().min(1).default(90),
+});
+
+const ssoSchema = z.object({
+  enabled: z.boolean().default(false),
+  domain: z.string().default(''),
+  clientId: z.string().default(''),
+  clientSecret: z.string().default(''),
+  audience: z.string().default(''),
 });
 
 const ruleEngineSchema = z.object({
@@ -116,6 +161,14 @@ const onboardingSchema = z.object({
     '平衡', '诚实', '坚韧', '创新', '精通',
   ]),
   maxImportEntries: z.coerce.number().int().min(1).default(100),
+});
+
+const observabilitySchema = z.object({
+  enabled: z.boolean().default(false),
+  otlpEndpoint: z.string().default('http://localhost:4318'),
+  serviceName: z.string().default('chrono-synth-os'),
+  serviceVersion: z.string().default('0.8.0'),
+  sampleRate: z.coerce.number().min(0).max(1).default(1.0),
 });
 
 const queueSchema = z.object({
@@ -139,10 +192,19 @@ export const AppConfigSchema = z.object({
   websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000 }),
   cors: corsSchema.default({ origin: false, credentials: false }),
   auth: authSchema.default({ enabled: false, apiKeys: [] }),
+  jwt: jwtSchema.default({
+    enabled: false, secret: 'change-me-in-production', issuer: 'chrono-synth-os',
+    accessTtlMs: 15 * 60 * 1000, refreshTtlMs: 7 * 24 * 60 * 60 * 1000, algorithm: 'HS256',
+  }),
+  redis: redisSchema.default({ enabled: false, url: 'redis://localhost:6379', keyPrefix: 'chrono:', tls: false }),
+  stripe: stripeSchema.default({ enabled: false, secretKey: '', webhookSecret: '', publishableKey: '' }),
   intelligence: intelligenceSchema.default({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
+    budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
   }),
+  encryption: encryptionSchema.default({ enabled: false, masterKey: 'change-me-in-production-32chars!', keyRotationIntervalDays: 90 }),
+  sso: ssoSchema.default({ enabled: false, domain: '', clientId: '', clientSecret: '', audience: '' }),
   ruleEngine: ruleEngineSchema,
   onboarding: onboardingSchema.default({
     predefinedValues: [
@@ -155,6 +217,10 @@ export const AppConfigSchema = z.object({
   }),
   request: requestSchema.default({ timeoutMs: 30_000, maxBodyBytes: 1_048_576 }),
   queue: queueSchema.default({ enabled: false, pollIntervalMs: 1000, maxConcurrent: 2, maxRetries: 3 }),
+  observability: observabilitySchema.default({
+    enabled: false, otlpEndpoint: 'http://localhost:4318', serviceName: 'chrono-synth-os',
+    serviceVersion: '0.8.0', sampleRate: 1.0,
+  }),
   cognition: cognitionSchema,
 });
 
@@ -173,6 +239,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_LOG_JSON:                (v) => { deepSet(env, 'log.json', v === 'true'); },
     CHRONO_SERVER_HOST:             (v) => { deepSet(env, 'server.host', v); },
     CHRONO_SERVER_PORT:             (v) => { deepSet(env, 'server.port', parseInt(v, 10)); },
+    CHRONO_SERVER_PUBLIC_URL:       (v) => { deepSet(env, 'server.publicUrl', v); },
     CHRONO_INTEGRATION_FITNESS:     (v) => { deepSet(env, 'integration.fitnessThreshold', parseFloat(v)); },
     CHRONO_INTEGRATION_CONFIDENCE:  (v) => { deepSet(env, 'integration.confidenceThreshold', parseFloat(v)); },
     CHRONO_RATE_LIMIT_MAX:          (v) => { deepSet(env, 'rateLimit.max', parseInt(v, 10)); },
@@ -209,6 +276,36 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_QUEUE_POLL_INTERVAL_MS:   (v) => { deepSet(env, 'queue.pollIntervalMs', parseInt(v, 10)); },
     CHRONO_QUEUE_MAX_CONCURRENT:     (v) => { deepSet(env, 'queue.maxConcurrent', parseInt(v, 10)); },
     CHRONO_QUEUE_MAX_RETRIES:        (v) => { deepSet(env, 'queue.maxRetries', parseInt(v, 10)); },
+    CHRONO_JWT_ENABLED:              (v) => { deepSet(env, 'jwt.enabled', v === 'true'); },
+    CHRONO_JWT_SECRET:               (v) => { deepSet(env, 'jwt.secret', v); },
+    CHRONO_JWT_ISSUER:               (v) => { deepSet(env, 'jwt.issuer', v); },
+    CHRONO_JWT_ACCESS_TTL_MS:        (v) => { deepSet(env, 'jwt.accessTtlMs', parseInt(v, 10)); },
+    CHRONO_JWT_REFRESH_TTL_MS:       (v) => { deepSet(env, 'jwt.refreshTtlMs', parseInt(v, 10)); },
+    CHRONO_JWT_ALGORITHM:            (v) => { deepSet(env, 'jwt.algorithm', v); },
+    CHRONO_REDIS_ENABLED:            (v) => { deepSet(env, 'redis.enabled', v === 'true'); },
+    CHRONO_REDIS_URL:                (v) => { deepSet(env, 'redis.url', v); },
+    CHRONO_REDIS_KEY_PREFIX:         (v) => { deepSet(env, 'redis.keyPrefix', v); },
+    CHRONO_REDIS_TLS:                (v) => { deepSet(env, 'redis.tls', v === 'true'); },
+    CHRONO_STRIPE_ENABLED:           (v) => { deepSet(env, 'stripe.enabled', v === 'true'); },
+    CHRONO_STRIPE_SECRET_KEY:        (v) => { deepSet(env, 'stripe.secretKey', v); },
+    CHRONO_STRIPE_WEBHOOK_SECRET:    (v) => { deepSet(env, 'stripe.webhookSecret', v); },
+    CHRONO_STRIPE_PUBLISHABLE_KEY:   (v) => { deepSet(env, 'stripe.publishableKey', v); },
+    CHRONO_INTELLIGENCE_BUDGET_MONTHLY:       (v) => { deepSet(env, 'intelligence.budget.monthlyTokenLimit', parseInt(v, 10)); },
+    CHRONO_INTELLIGENCE_BUDGET_DAILY:         (v) => { deepSet(env, 'intelligence.budget.dailyTokenLimit', parseInt(v, 10)); },
+    CHRONO_INTELLIGENCE_BUDGET_ALERT:         (v) => { deepSet(env, 'intelligence.budget.alertThreshold', parseFloat(v)); },
+    CHRONO_ENCRYPTION_ENABLED:               (v) => { deepSet(env, 'encryption.enabled', v === 'true'); },
+    CHRONO_ENCRYPTION_MASTER_KEY:            (v) => { deepSet(env, 'encryption.masterKey', v); },
+    CHRONO_ENCRYPTION_KEY_ROTATION_DAYS:     (v) => { deepSet(env, 'encryption.keyRotationIntervalDays', parseInt(v, 10)); },
+    CHRONO_SSO_ENABLED:                      (v) => { deepSet(env, 'sso.enabled', v === 'true'); },
+    CHRONO_SSO_DOMAIN:                       (v) => { deepSet(env, 'sso.domain', v); },
+    CHRONO_SSO_CLIENT_ID:                    (v) => { deepSet(env, 'sso.clientId', v); },
+    CHRONO_SSO_CLIENT_SECRET:                (v) => { deepSet(env, 'sso.clientSecret', v); },
+    CHRONO_SSO_AUDIENCE:                     (v) => { deepSet(env, 'sso.audience', v); },
+    CHRONO_OTEL_ENABLED:             (v) => { deepSet(env, 'observability.enabled', v === 'true'); },
+    CHRONO_OTEL_ENDPOINT:            (v) => { deepSet(env, 'observability.otlpEndpoint', v); },
+    CHRONO_OTEL_SERVICE_NAME:        (v) => { deepSet(env, 'observability.serviceName', v); },
+    CHRONO_OTEL_SERVICE_VERSION:     (v) => { deepSet(env, 'observability.serviceVersion', v); },
+    CHRONO_OTEL_SAMPLE_RATE:         (v) => { deepSet(env, 'observability.sampleRate', parseFloat(v)); },
   };
 
   for (const [key, setter] of Object.entries(mapping)) {
@@ -282,7 +379,25 @@ export function loadConfig(overrides?: DeepPartial<AppConfig>, configPath?: stri
     merged = deepMerge(merged, overrides as Record<string, unknown>);
   }
 
-  return AppConfigSchema.parse(merged);
+  const parsed = AppConfigSchema.parse(merged);
+
+  if (parsed.jwt.enabled && parsed.jwt.secret === 'change-me-in-production') {
+    throw new Error('jwt.enabled=true 时必须设置非默认的 jwt.secret');
+  }
+  if (parsed.encryption.enabled && parsed.encryption.masterKey === 'change-me-in-production-32chars!') {
+    throw new Error('encryption.enabled=true 时必须设置有效的 encryption.masterKey');
+  }
+  if (parsed.stripe.enabled && (!parsed.stripe.secretKey || !parsed.stripe.webhookSecret)) {
+    throw new Error('stripe.enabled=true 时必须设置 stripe.secretKey 与 stripe.webhookSecret');
+  }
+  if (parsed.sso.enabled && (!parsed.sso.domain || !parsed.sso.clientId || !parsed.sso.clientSecret)) {
+    throw new Error('sso.enabled=true 时必须设置 sso.domain、sso.clientId、sso.clientSecret');
+  }
+  if (parsed.sso.enabled && !parsed.server.publicUrl) {
+    throw new Error('sso.enabled=true 时必须设置 server.publicUrl 作为回调基础地址');
+  }
+
+  return parsed;
 }
 
 /** 获取日志级别类型（用于类型安全桥接） */

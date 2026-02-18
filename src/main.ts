@@ -1,17 +1,22 @@
 /**
  * 服务器入口
- * 加载配置 → 创建日志 → 初始化数据库 → 启动 HTTP 服务
+ * 加载配置 → 初始化追踪 → 创建日志 → 初始化数据库 → 启动 HTTP 服务
  */
 
 import 'dotenv/config';
 import { loadConfig } from './config/index.js';
+
+/* OpenTelemetry 必须在其他模块之前初始化 */
+const config = loadConfig();
+
+import { initTracing, shutdownTracing } from './observability/tracing.js';
+initTracing(config.observability);
+
 import { PinoLogger } from './logging/index.js';
 import { createDatabase } from './storage/index.js';
 import { ChronoSynthOS } from './chrono-synth-os.js';
 import { createApp } from './server/index.js';
 import { serverState } from './server/routes/health.js';
-
-const config = loadConfig();
 const logger = new PinoLogger(config.log.level, config.log.json);
 const db = createDatabase(config);
 const os = new ChronoSynthOS({
@@ -37,8 +42,9 @@ async function start(): Promise<void> {
   function shutdown(signal: string): void {
     logger.info('Server', `收到 ${signal}，开始优雅关闭...`);
     serverState.shuttingDown = true;
-    app.close().then(() => {
+    app.close().then(async () => {
       os.close();
+      await shutdownTracing();
       logger.info('Server', '服务已关闭');
       process.exit(0);
     }).catch((err) => {

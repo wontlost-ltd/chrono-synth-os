@@ -39,6 +39,17 @@ export function registerAuth(app: FastifyInstance, config: AppConfig): void {
       return done();
     }
 
+    /* 如果已经通过 JWT 认证（由 jwt-auth 插件设置），跳过 API Key 检查 */
+    if (request.user) {
+      return done();
+    }
+
+    /* 认证路由自身豁免 */
+    const path = request.url.split('?')[0];
+    if (path.startsWith('/api/v1/auth/')) {
+      return done();
+    }
+
     /* 支持 header 和 query 两种传递方式（WebSocket 客户端可能无法设置自定义 header） */
     const rawKey = request.headers['x-api-key']
       ?? (request.query as Record<string, string>)?.apiKey;

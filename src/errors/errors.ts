@@ -36,6 +36,13 @@ export const ErrorCode = {
   STORAGE_WRITE: 'STORAGE_WRITE',
   STORAGE_MIGRATION: 'STORAGE_MIGRATION',
 
+  /* 认证错误 (401/403) */
+  AUTH_EXPIRED: 'AUTH_EXPIRED',
+  AUTH_INVALID_TOKEN: 'AUTH_INVALID_TOKEN',
+  AUTH_INSUFFICIENT_ROLE: 'AUTH_INSUFFICIENT_ROLE',
+  AUTH_INVALID_CREDENTIALS: 'AUTH_INVALID_CREDENTIALS',
+  AUTH_EMAIL_EXISTS: 'AUTH_EMAIL_EXISTS',
+
   /* 配置错误 (500) */
   CONFIG_INVALID: 'CONFIG_INVALID',
   CONFIG_MISSING: 'CONFIG_MISSING',
@@ -96,6 +103,22 @@ export class StorageError extends ChronoError {
   constructor(message: string, code: ErrorCodeValue = ErrorCode.STORAGE_READ, details?: unknown) {
     super(message, 500, code, details);
     this.name = 'StorageError';
+  }
+}
+
+/** 认证错误 (401) */
+export class AuthenticationError extends ChronoError {
+  constructor(message: string, code: ErrorCodeValue = ErrorCode.AUTH_INVALID_TOKEN, details?: unknown) {
+    super(message, 401, code, details);
+    this.name = 'AuthenticationError';
+  }
+}
+
+/** 授权错误 (403) */
+export class AuthorizationError extends ChronoError {
+  constructor(message: string, code: ErrorCodeValue = ErrorCode.AUTH_INSUFFICIENT_ROLE, details?: unknown) {
+    super(message, 403, code, details);
+    this.name = 'AuthorizationError';
   }
 }
 

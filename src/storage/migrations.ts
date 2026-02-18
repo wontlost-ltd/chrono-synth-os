@@ -376,6 +376,110 @@ const v012_life_simulation: Migration = {
   ],
 };
 
+/** v013: 用户认证与刷新令牌 */
+const v013_users_auth: Migration = {
+  version: 'v013',
+  description: '用户认证与刷新令牌',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('admin', 'member', 'viewer')),
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)',
+    'CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)',
+    `CREATE TABLE IF NOT EXISTS refresh_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      is_revoked INTEGER NOT NULL DEFAULT 0,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens(token_hash)',
+  ],
+};
+
+/** v014: 订阅与用量记录 */
+const v014_subscriptions: Migration = {
+  version: 'v014',
+  description: '订阅与用量记录',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS subscriptions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      plan_id TEXT NOT NULL DEFAULT 'free',
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'past_due', 'canceled', 'trialing')),
+      current_period_start INTEGER NOT NULL,
+      current_period_end INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_subscriptions_tenant ON subscriptions(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id)',
+    `CREATE TABLE IF NOT EXISTS usage_records (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      quantity INTEGER NOT NULL DEFAULT 1,
+      recorded_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_usage_records_tenant_resource ON usage_records(tenant_id, resource, recorded_at)',
+  ],
+};
+
+/** v015: 协作分享 */
+const v015_shared_simulations: Migration = {
+  version: 'v015',
+  description: '协作分享模拟',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS shared_simulations (
+      id TEXT PRIMARY KEY,
+      simulation_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      shared_with_user_id TEXT NOT NULL,
+      permission TEXT NOT NULL DEFAULT 'view' CHECK(permission IN ('view', 'edit')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_shared_sims_sim ON shared_simulations(simulation_id)',
+    'CREATE INDEX IF NOT EXISTS idx_shared_sims_shared_with ON shared_simulations(shared_with_user_id)',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_sims_unique ON shared_simulations(simulation_id, shared_with_user_id)',
+  ],
+};
+
+/** v016: Webhook 幂等性 + LLM 用量持久化 */
+const v016_webhook_and_llm_usage: Migration = {
+  version: 'v016',
+  description: 'Webhook 事件去重表与 LLM 用量持久化表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS webhook_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      processed_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS llm_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL,
+      output_tokens INTEGER NOT NULL,
+      total_tokens INTEGER NOT NULL,
+      estimated_cost_usd REAL NOT NULL,
+      recorded_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_llm_usage_tenant ON llm_usage(tenant_id, recorded_at)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -390,6 +494,10 @@ const MIGRATIONS: readonly Migration[] = [
   v010_update_gate,
   v011_evolution_diff_report,
   v012_life_simulation,
+  v013_users_auth,
+  v014_subscriptions,
+  v015_shared_simulations,
+  v016_webhook_and_llm_usage,
 ];
 
 interface MigrationRow {
