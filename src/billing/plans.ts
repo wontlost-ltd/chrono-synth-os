@@ -3,6 +3,9 @@
  * 定义所有可用的订阅计划及其资源限制
  */
 
+import type { IDatabase } from '../storage/database.js';
+import { QuotaManager } from '../multi-tenant/quota-manager.js';
+
 export interface PlanLimits {
   readonly maxSimulations: number;
   readonly maxPaths: number;
@@ -47,4 +50,23 @@ export function getPlan(planId: string): Plan | undefined {
 export function getPlanLimits(planId: string): PlanLimits {
   const plan = getPlan(planId);
   return plan?.limits ?? PLANS[0].limits;
+}
+
+/** 将计划限制同步到 QuotaManager（设置 simulation/llm_tokens 配额） */
+export function syncPlanToQuota(db: IDatabase, tenantId: string, planId: string): void {
+  const qm = new QuotaManager(db);
+  const limits = getPlanLimits(planId);
+  const monthMs = 30 * 24 * 60 * 60 * 1000;
+
+  if (limits.maxSimulations < 0) {
+    /* 无限计划：清除配额限制 */
+    qm.clearLimit(tenantId, 'simulation');
+  } else if (limits.maxSimulations > 0) {
+    qm.setLimit(tenantId, 'simulation', limits.maxSimulations, monthMs);
+  }
+  if (limits.llmTokensPerMonth < 0) {
+    qm.clearLimit(tenantId, 'llm_tokens');
+  } else if (limits.llmTokensPerMonth > 0) {
+    qm.setLimit(tenantId, 'llm_tokens', limits.llmTokensPerMonth, monthMs);
+  }
 }

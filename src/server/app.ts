@@ -10,6 +10,7 @@ import type { IDatabase } from '../storage/database.js';
 import type { AppConfig } from '../config/schema.js';
 import { loadConfig } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
+import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerRequestId } from './plugins/request-id.js';
 import { registerRateLimit } from './plugins/rate-limit.js';
@@ -55,9 +56,7 @@ export interface CreateAppDeps {
   os: ChronoSynthOS;
   logger?: PinoLogger;
   config?: AppConfig;
-  /** 数据库实例，用于审计日志和健康检查（可选） */
   db?: IDatabase;
-  /** 断路器实例，用于健康检查（可选，便于测试注入） */
   circuitBreaker?: CircuitBreaker;
 }
 
@@ -89,8 +88,16 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 错误处理（在路由之前注册，以捕获路由中的错误） */
   registerErrorHandler(app);
 
-  /* 路由 */
+  /* 多租户 OS 工厂 */
   const db = deps.db ?? deps.os.getDatabase();
+  const tenantFactory = new TenantOSFactory(
+    db,
+    deps.os.getClock(),
+    deps.os.getLogger(),
+  );
+  app.addHook('onClose', () => { tenantFactory.clear(); });
+
+  /* 路由 */
   registerAuthRoutes(app, db, config);
   registerBillingRoutes(app, db, config);
   registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker });
@@ -104,8 +111,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerMetricsRoutes(app, deps.os);
   registerAuditRoutes(app, deps.db);
   registerPosRoutes(app, deps.os);
-  registerDecisionRoutes(app, deps.os, config);
-  registerOnboardingRoutes(app, deps.os, config);
+  registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
+  registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
   registerVisualizationRoutes(app, deps.os);
   registerPrivacyRoutes(app, deps.os);
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation);

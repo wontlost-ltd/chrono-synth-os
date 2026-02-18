@@ -480,6 +480,59 @@ const v016_webhook_and_llm_usage: Migration = {
   ],
 };
 
+/** v017: 决策与引导会话持久化 */
+const v017_decision_onboarding_persistence: Migration = {
+  version: 'v017',
+  description: '决策案例/运行结果与引导会话持久化',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS decision_cases (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      alternatives_json TEXT NOT NULL,
+      constraints_json TEXT,
+      context_json TEXT,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_decision_cases_tenant ON decision_cases(tenant_id)',
+
+    `CREATE TABLE IF NOT EXISTS decision_runs (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL REFERENCES decision_cases(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      result_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_decision_runs_case ON decision_runs(case_id)',
+    'CREATE INDEX IF NOT EXISTS idx_decision_runs_tenant ON decision_runs(tenant_id)',
+
+    `CREATE TABLE IF NOT EXISTS decision_feedbacks (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES decision_runs(id) ON DELETE CASCADE,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      selected_alternative TEXT NOT NULL,
+      satisfaction INTEGER NOT NULL,
+      notes TEXT,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_decision_feedbacks_run ON decision_feedbacks(run_id)',
+
+    `CREATE TABLE IF NOT EXISTS onboarding_sessions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL DEFAULT 'default',
+      current_step INTEGER NOT NULL DEFAULT 1,
+      completed_steps_json TEXT NOT NULL DEFAULT '[]',
+      decision_json TEXT,
+      simulation_result_json TEXT,
+      snapshot_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_onboarding_sessions_tenant ON onboarding_sessions(tenant_id)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -498,6 +551,7 @@ const MIGRATIONS: readonly Migration[] = [
   v014_subscriptions,
   v015_shared_simulations,
   v016_webhook_and_llm_usage,
+  v017_decision_onboarding_persistence,
 ];
 
 interface MigrationRow {

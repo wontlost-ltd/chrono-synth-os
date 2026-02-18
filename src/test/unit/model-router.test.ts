@@ -1,6 +1,10 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ModelRouter } from '../../intelligence/model-router.js';
+import { TokenBudget } from '../../intelligence/token-budget.js';
+import { CostTracker } from '../../intelligence/cost-tracker.js';
+import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import type { IDatabase } from '../../storage/index.js';
 
 describe('ModelRouter (Mock Provider)', () => {
   const router = new ModelRouter({
@@ -114,6 +118,69 @@ describe('ModelRouter (Mock Provider)', () => {
         embeddingModel: 'none',
       });
       await assert.rejects(() => anthropic.embed(['test']), /不支持嵌入/);
+    });
+  });
+
+  describe('TokenBudget 集成', () => {
+    let db: IDatabase;
+
+    beforeEach(() => {
+      db = createMemoryDatabase();
+      runMigrations(db);
+    });
+
+    it('预算充足时正常调用', async () => {
+      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 }, db);
+      const r = new ModelRouter({
+        provider: 'mock',
+        model: 'mock',
+        embeddingModel: 'mock',
+        tokenBudget,
+        tenantId: 'tenant-1',
+      });
+
+      const res = await r.chat([{ role: 'user', content: '普通消息' }]);
+      assert.equal(res.content, 'OK');
+    });
+
+    it('预算不足时抛出错误', async () => {
+      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 10, dailyTokenLimit: 10, alertThreshold: 0.8 }, db);
+      const r = new ModelRouter({
+        provider: 'mock',
+        model: 'mock',
+        embeddingModel: 'mock',
+        tokenBudget,
+        tenantId: 'tenant-1',
+        maxTokens: 100,
+      });
+
+      await assert.rejects(() => r.chat([{ role: 'user', content: 'test' }]), /Token 预算不足/);
+    });
+  });
+
+  describe('CostTracker 集成', () => {
+    let db: IDatabase;
+
+    beforeEach(() => {
+      db = createMemoryDatabase();
+      runMigrations(db);
+    });
+
+    it('chat 后 CostTracker 写入 llm_usage 记录', async () => {
+      const costTracker = new CostTracker(db);
+      const r = new ModelRouter({
+        provider: 'mock',
+        model: 'mock',
+        embeddingModel: 'mock',
+        costTracker,
+        tenantId: 'tenant-1',
+      });
+
+      await r.chat([{ role: 'user', content: '普通消息' }]);
+
+      /* mock 不返回 usage，所以 inputTokens/outputTokens 为 0，但应有写入记录 */
+      const summary = costTracker.getMonthlySummary('tenant-1');
+      assert.equal(summary.totalCalls, 1);
     });
   });
 });

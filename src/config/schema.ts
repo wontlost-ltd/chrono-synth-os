@@ -167,7 +167,7 @@ const observabilitySchema = z.object({
   enabled: z.boolean().default(false),
   otlpEndpoint: z.string().default('http://localhost:4318'),
   serviceName: z.string().default('chrono-synth-os'),
-  serviceVersion: z.string().default('0.8.0'),
+  serviceVersion: z.string().default('2.0.0'),
   sampleRate: z.coerce.number().min(0).max(1).default(1.0),
 });
 

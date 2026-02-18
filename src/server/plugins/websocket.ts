@@ -1,9 +1,10 @@
 /**
  * WebSocket 事件流插件
  * 允许客户端订阅系统事件，实时推送变更
+ * 连接时验证 JWT 认证，绑定租户，仅推送该租户的事件
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import websocketPlugin from '@fastify/websocket';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
@@ -77,13 +78,22 @@ export async function registerWebSocket(
 
   await app.register(websocketPlugin);
 
-  app.get('/ws', { websocket: true }, (socket, _request) => {
+  app.get('/ws', { websocket: true }, (socket, request: FastifyRequest) => {
+    /* JWT 鉴权：从已验证的 request.user 获取租户 */
+    const user = (request as unknown as { user?: { sub?: string; tenantId?: string } }).user;
+    if (config.jwt.enabled && !user?.sub) {
+      safeSend(socket, { type: 'error', code: 'AUTH_REQUIRED', message: '需要认证' });
+      socket.close(4001, 'Authentication required');
+      return;
+    }
+
+    const connectionTenantId = user?.tenantId ?? request.tenantId ?? 'default';
+
     wsConnectionCount++;
 
     /** 每个连接独立的事件监听器集合 */
     const listeners = new Map<string, (payload: SystemEventMap[SystemEventName]) => void>();
 
-    /** 清理标志：确保 cleanup 只执行一次（error 会触发 close，防止双重清理） */
     let cleaned = false;
 
     function cleanup(): void {
@@ -100,7 +110,7 @@ export async function registerWebSocket(
       listeners.clear();
     }
 
-    safeSend(socket, { type: 'connected' });
+    safeSend(socket, { type: 'connected', tenantId: connectionTenantId });
 
     /* 心跳 */
     const heartbeat = setInterval(() => {
@@ -117,9 +127,11 @@ export async function registerWebSocket(
 
       if (msg.type === 'subscribe' && msg.event && VALID_EVENTS.has(msg.event)) {
         const eventName = msg.event as SystemEventName;
-        /* 避免重复订阅 */
         if (!listeners.has(eventName)) {
           const listener = (payload: SystemEventMap[SystemEventName]) => {
+            /* 租户隔离：仅推送与当前连接租户匹配的事件 */
+            const eventTenantId = (payload as Record<string, unknown>).tenantId as string | undefined;
+            if (eventTenantId && eventTenantId !== connectionTenantId) return;
             safeSend(socket, { type: 'event', event: eventName, data: payload });
           };
           os.bus.on(eventName, listener as (payload: SystemEventMap[typeof eventName]) => void);

@@ -63,7 +63,7 @@ export class TaskWorker {
     const handler = this.handlers.get(task.type);
     if (!handler) {
       this.queue.fail(task.id, `未注册的任务类型: ${task.type}`);
-      this.bus.emit('task:failed', { taskId: task.id, error: `未注册的任务类型: ${task.type}` });
+      this.bus.emit('task:failed', { taskId: task.id, error: `未注册的任务类型: ${task.type}`, tenantId: task.tenantId });
       return;
     }
 
@@ -71,7 +71,7 @@ export class TaskWorker {
       try {
         const result = await handler(task);
         this.queue.complete(task.id, result);
-        this.bus.emit('task:completed', { taskId: task.id, result: result ?? null });
+        this.bus.emit('task:completed', { taskId: task.id, result: result ?? null, tenantId: task.tenantId });
         this.logger.info(LAYER, `任务完成: ${task.id} (类型=${task.type})`);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -83,7 +83,7 @@ export class TaskWorker {
           this.logger.warn(LAYER, `任务重试 ${task.retryCount + 1}: ${task.id} (延迟=${delay}ms)`);
         } else {
           this.queue.fail(task.id, errorMsg);
-          this.bus.emit('task:failed', { taskId: task.id, error: errorMsg });
+          this.bus.emit('task:failed', { taskId: task.id, error: errorMsg, tenantId: task.tenantId });
           this.logger.error(LAYER, `任务失败: ${task.id} — ${errorMsg}`);
         }
       }

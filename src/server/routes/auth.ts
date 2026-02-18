@@ -13,6 +13,8 @@ import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload, UserRow, RefreshTokenRow } from '../../types/auth.js';
 import { ErrorCode } from '../../errors/index.js';
+import { createCustomer } from '../../billing/stripe-client.js';
+import { syncPlanToQuota } from '../../billing/plans.js';
 
 /** 对刷新令牌做 SHA-256 哈希后存储，避免明文泄露 */
 function hashToken(token: string): string {
@@ -58,13 +60,25 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
       'INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(userId, email, passwordHash, 'admin', tenantId, now, now);
 
+    /* 创建 Stripe 客户（异步，不阻塞注册） */
+    let stripeCustomerId: string | null = null;
+    if (config.stripe.enabled) {
+      try {
+        const customer = await createCustomer(config, email, tenantId);
+        stripeCustomerId = customer.id;
+      } catch (e) { app.log.warn(`Stripe 客户创建失败: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+
     /* 初始化 free 订阅 */
     const subId = `sub_${randomUUID()}`;
     const periodEnd = now + 365 * 24 * 60 * 60 * 1000;
     db.prepare<void>(
-      `INSERT INTO subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
-       VALUES (?, ?, 'free', 'active', ?, ?, ?, ?)`,
-    ).run(subId, tenantId, now, periodEnd, now, now);
+      `INSERT INTO subscriptions (id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
+       VALUES (?, ?, ?, 'free', 'active', ?, ?, ?, ?)`,
+    ).run(subId, tenantId, stripeCustomerId, now, periodEnd, now, now);
+
+    /* 同步计划配额到 QuotaManager */
+    syncPlanToQuota(db, tenantId, 'free');
 
     const tokens = await generateTokenPair(app, db, config, userId, tenantId, 'admin');
     return reply.status(201).send({

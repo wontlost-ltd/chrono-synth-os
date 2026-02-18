@@ -45,23 +45,23 @@ export class LifeSimulationService {
         simulationId,
         onProgress: (p) => {
           this.store.updateProgress(simulationId, p);
-          this.bus.emit('life:simulation-progress', p);
+          this.bus.emit('life:simulation-progress', { ...p, tenantId: record.tenantId });
         },
       });
 
       /* 逐路径保存 */
       for (const pathResult of result.paths) {
         this.store.savePathResult(simulationId, pathResult);
-        this.bus.emit('life:path-completed', { simulationId, pathId: pathResult.pathId });
+        this.bus.emit('life:path-completed', { simulationId, pathId: pathResult.pathId, tenantId: record.tenantId });
       }
 
       this.store.saveResult(simulationId, result);
       this.store.setStatus(simulationId, 'completed');
-      this.bus.emit('life:simulation-completed', { simulationId });
+      this.bus.emit('life:simulation-completed', { simulationId, tenantId: record.tenantId });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       this.store.setStatus(simulationId, 'failed', error);
-      this.bus.emit('life:simulation-failed', { simulationId, error });
+      this.bus.emit('life:simulation-failed', { simulationId, error, tenantId: record.tenantId });
     }
   }
 

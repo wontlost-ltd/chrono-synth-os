@@ -4,6 +4,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { FieldEncryption } from '../storage/encryption.js';
 import type {
   MemoryNode, MemoryEdge, MemoryId, MemoryKind,
   MemoryCognitionConfig, WorkingMemorySlot, ActivationResult, ConsolidationResult,
@@ -63,13 +64,26 @@ export const DEFAULT_COGNITION_CONFIG: MemoryCognitionConfig = {
 
 export class CognitiveMemoryGraph {
   private readonly config: MemoryCognitionConfig;
+  private readonly encryption?: FieldEncryption;
 
   constructor(
     private readonly db: IDatabase,
     private readonly clock: Clock,
     config?: Partial<MemoryCognitionConfig>,
+    encryption?: FieldEncryption,
   ) {
     this.config = config ? mergeConfig(DEFAULT_COGNITION_CONFIG, config) : DEFAULT_COGNITION_CONFIG;
+    this.encryption = encryption?.isEnabled ? encryption : undefined;
+  }
+
+  /** 加密内容（如果启用） */
+  private encryptContent(content: string): string {
+    return this.encryption ? this.encryption.encrypt(content) : content;
+  }
+
+  /** 解密内容（如果启用） */
+  private decryptContent(content: string): string {
+    return this.encryption ? this.encryption.decrypt(content) : content;
   }
 
   // ===== CRUD 方法 =====
@@ -81,10 +95,11 @@ export class CognitiveMemoryGraph {
     const id = generatePrefixedId('mem');
     const now = this.clock.now();
     const decayLambda = this.computeLambda(kind, valence, 0);
+    const storedContent = this.encryptContent(content);
     this.db.prepare<void>(
       `INSERT INTO memory_nodes (id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, kind, content, valence, salience, now, now, 0, decayLambda, now, null);
+    ).run(id, kind, storedContent, valence, salience, now, now, 0, decayLambda, now, null);
     return { id, kind, content, valence, salience, createdAt: now, lastAccessedAt: now, accessCount: 0, decayLambda, lastDecayedAt: now, consolidatedFrom: null };
   }
 
@@ -176,10 +191,11 @@ export class CognitiveMemoryGraph {
       ? mem.decayLambda
       : this.computeLambda(mem.kind, mem.valence, accessCount);
     const consolidatedFrom = mem.consolidatedFrom ?? null;
+    const storedContent = this.encryptContent(mem.content);
     this.db.prepare<void>(
       `INSERT INTO memory_nodes (id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, content=excluded.content, valence=excluded.valence, salience=excluded.salience, created_at=excluded.created_at, last_accessed_at=excluded.last_accessed_at, access_count=excluded.access_count, decay_lambda=excluded.decay_lambda, last_decayed_at=excluded.last_decayed_at, consolidated_from=excluded.consolidated_from`,
-    ).run(mem.id, mem.kind, mem.content, mem.valence, mem.salience, mem.createdAt, lastAccessedAt, accessCount, decayLambda, lastDecayedAt, consolidatedFrom);
+    ).run(mem.id, mem.kind, storedContent, mem.valence, mem.salience, mem.createdAt, lastAccessedAt, accessCount, decayLambda, lastDecayedAt, consolidatedFrom);
   }
 
   // ===== 遗忘衰减 =====
@@ -456,7 +472,7 @@ export class CognitiveMemoryGraph {
     return {
       id: row.id,
       kind: row.kind as MemoryKind,
-      content: row.content,
+      content: this.decryptContent(row.content),
       valence: row.valence,
       salience: row.salience,
       createdAt: row.created_at,

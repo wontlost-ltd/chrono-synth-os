@@ -5,6 +5,8 @@
  */
 
 import type { ChatMessage, ChatOptions, ChatResponse, LLMProvider, LLMProviderName } from './llm-provider.js';
+import type { TokenBudget } from './token-budget.js';
+import type { CostTracker } from './cost-tracker.js';
 
 export interface ModelRouterConfig {
   readonly provider: LLMProviderName;
@@ -15,6 +17,9 @@ export interface ModelRouterConfig {
   readonly maxTokens?: number;
   readonly temperature?: number;
   readonly timeoutMs?: number;
+  readonly tokenBudget?: TokenBudget;
+  readonly costTracker?: CostTracker;
+  readonly tenantId?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -64,6 +69,9 @@ export class ModelRouter implements LLMProvider {
   private readonly maxTokens: number;
   private readonly temperature: number;
   private readonly timeoutMs: number;
+  private readonly tokenBudget?: TokenBudget;
+  private readonly costTracker?: CostTracker;
+  private readonly tenantId: string;
 
   constructor(config: ModelRouterConfig) {
     this.provider = config.provider;
@@ -74,16 +82,51 @@ export class ModelRouter implements LLMProvider {
     this.maxTokens = config.maxTokens ?? 4096;
     this.temperature = config.temperature ?? 0.7;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.tokenBudget = config.tokenBudget;
+    this.costTracker = config.costTracker;
+    this.tenantId = config.tenantId ?? 'default';
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
+    const estimatedTokens = options?.maxTokens ?? this.maxTokens;
+
+    /* 预检查 token 预算 */
+    if (this.tokenBudget) {
+      const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
+      if (!check.allowed) {
+        throw new Error(`Token 预算不足: ${check.reason}`);
+      }
+    }
+
+    let response: ChatResponse;
     switch (this.provider) {
-      case 'openai': return this.chatOpenAI(messages, options);
-      case 'anthropic': return this.chatAnthropic(messages, options);
-      case 'ollama': return this.chatOllama(messages, options);
-      case 'mock': return this.chatMock(messages, options);
+      case 'openai': response = await this.chatOpenAI(messages, options); break;
+      case 'anthropic': response = await this.chatAnthropic(messages, options); break;
+      case 'ollama': response = await this.chatOllama(messages, options); break;
+      case 'mock': response = await this.chatMock(messages, options); break;
       default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
     }
+
+    /* 记录成本 */
+    if (this.costTracker) {
+      this.costTracker.record(
+        this.tenantId,
+        this.provider,
+        this.model,
+        response.usage?.inputTokens ?? 0,
+        response.usage?.outputTokens ?? 0,
+      );
+    }
+
+    /* 记录 token 使用量到预算缓存 */
+    if (this.tokenBudget) {
+      const totalTokens = response.usage?.totalTokens ?? 0;
+      if (totalTokens > 0) {
+        this.tokenBudget.recordUsage(this.tenantId, totalTokens);
+      }
+    }
+
+    return response;
   }
 
   async embed(texts: readonly string[]): Promise<number[][]> {

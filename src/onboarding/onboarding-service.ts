@@ -53,6 +53,7 @@ export class OnboardingService {
     private readonly clock: Clock,
     private readonly logger: Logger,
     private readonly createSnapshot: (reason: SystemSnapshot['reason']) => SystemSnapshot,
+    private readonly tenantId?: string,
   ) {}
 
   /** 创建新的引导会话 */
@@ -67,7 +68,7 @@ export class OnboardingService {
       updatedAt: now,
     };
     this.sessions.set(id, session);
-    this.bus.emit('onboarding:session-started', { sessionId: id });
+    this.bus.emit('onboarding:session-started', { sessionId: id, tenantId: this.tenantId });
     this.logger.info(LAYER, `引导会话已创建: ${id}`);
     return this.toReadonly(session);
   }
@@ -111,7 +112,7 @@ export class OnboardingService {
     }
     session.currentStep = Math.min(step + 1, 6);
 
-    this.bus.emit('onboarding:step-completed', { sessionId, step });
+    this.bus.emit('onboarding:step-completed', { sessionId, step, tenantId: this.tenantId });
     this.logger.info(LAYER, `步骤 ${step} 完成: ${sessionId}`);
 
     return this.toReadonly(session);
@@ -157,7 +158,7 @@ export class OnboardingService {
   private processStep5(session: MutableSession): void {
     const snapshot = this.createSnapshot('manual');
     session.snapshotId = snapshot.id;
-    this.bus.emit('onboarding:completed', { sessionId: session.id, snapshotId: snapshot.id });
+    this.bus.emit('onboarding:completed', { sessionId: session.id, snapshotId: snapshot.id, tenantId: this.tenantId });
     this.logger.info(LAYER, `引导完成，基线快照: ${snapshot.id}`);
   }
 

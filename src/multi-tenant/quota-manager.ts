@@ -31,6 +31,13 @@ export class QuotaManager {
     ).run(tenantId, resource, maxPerWindow, windowMs);
   }
 
+  /** 清除租户某项资源的配额限制（用于无限计划） */
+  clearLimit(tenantId: string, resource: string): void {
+    this.db.prepare<void>(
+      'DELETE FROM quota_limits WHERE tenant_id = ? AND resource = ?',
+    ).run(tenantId, resource);
+  }
+
   /** 检查租户是否还有配额（无限制返回 true） */
   checkQuota(tenantId: string, resource: string, now?: number): boolean {
     const limit = this.db.prepare<QuotaLimitRow>(
@@ -46,6 +53,13 @@ export class QuotaManager {
     ).get(tenantId, resource, windowStart);
 
     return !usage || usage.used < limit.max_per_window;
+  }
+
+  /** 原子性检查并消费配额（check + record 合一，避免竞态） */
+  consumeQuota(tenantId: string, resource: string, now?: number): boolean {
+    if (!this.checkQuota(tenantId, resource, now)) return false;
+    this.recordUsage(tenantId, resource, now);
+    return true;
   }
 
   /** 记录一次资源使用 */

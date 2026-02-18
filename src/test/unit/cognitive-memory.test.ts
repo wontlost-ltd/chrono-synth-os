@@ -1,9 +1,11 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { TestClock } from '../../utils/index.js';
 import { CognitiveMemoryGraph, DEFAULT_COGNITION_CONFIG } from '../../core/memory-graph.js';
+import { FieldEncryption } from '../../storage/encryption.js';
 import type { MemoryCognitionConfig } from '../../types/core-self.js';
 
 describe('CognitiveMemoryGraph', () => {
@@ -407,6 +409,66 @@ describe('CognitiveMemoryGraph', () => {
       const r = g.admitToWorkingMemory(m4.id);
       assert.equal(g.getWorkingMemorySlots().length, 3);
       assert.ok(r.evicted !== null, '应驱逐最低分（m1, salience=0.5）');
+    });
+  });
+
+  // ===== FieldEncryption 集成 =====
+
+  describe('FieldEncryption 集成', () => {
+    let encryptedGraph: CognitiveMemoryGraph;
+    let encDb: IDatabase;
+    let encryption: FieldEncryption;
+
+    beforeEach(() => {
+      encDb = createMemoryDatabase();
+      runMigrations(encDb);
+      const masterKey = randomBytes(32).toString('base64');
+      encryption = new FieldEncryption({ enabled: true, masterKey, keyRotationIntervalDays: 90 });
+      encryptedGraph = new CognitiveMemoryGraph(encDb, new TestClock(1000), undefined, encryption);
+    });
+
+    it('addMemory 返回明文 content', () => {
+      const m = encryptedGraph.addMemory('episodic', '机密数据', 0.5, 0.8);
+      assert.equal(m.content, '机密数据');
+    });
+
+    it('DB 中存储的是密文而非明文', () => {
+      const m = encryptedGraph.addMemory('episodic', '机密数据', 0.5, 0.8);
+      const row = encDb.prepare<{ content: string }>('SELECT content FROM memory_nodes WHERE id = ?').get(m.id);
+      assert.ok(row);
+      assert.notEqual(row.content, '机密数据', 'DB 中应为密文');
+    });
+
+    it('getMemory 返回解密后的明文', () => {
+      const m = encryptedGraph.addMemory('episodic', '机密数据', 0.5, 0.8);
+      const retrieved = encryptedGraph.getMemory(m.id);
+      assert.ok(retrieved);
+      assert.equal(retrieved.content, '机密数据');
+    });
+
+    it('getAllMemories 返回解密后的明文', () => {
+      encryptedGraph.addMemory('episodic', '记忆一', 0.5, 0.8);
+      encryptedGraph.addMemory('semantic', '记忆二', 0.3, 0.6);
+      const all = encryptedGraph.getAllMemories();
+      assert.equal(all.size, 2);
+      const contents = [...all.values()].map(m => m.content);
+      assert.ok(contents.includes('记忆一'));
+      assert.ok(contents.includes('记忆二'));
+    });
+
+    it('accessMemory 返回解密后的明文', () => {
+      const m = encryptedGraph.addMemory('episodic', '机密数据', 0.5, 0.8);
+      const accessed = encryptedGraph.accessMemory(m.id);
+      assert.ok(accessed);
+      assert.equal(accessed.content, '机密数据');
+    });
+
+    it('未启用加密时 content 以明文存储', () => {
+      const plainGraph = new CognitiveMemoryGraph(encDb, new TestClock(1000));
+      const m = plainGraph.addMemory('episodic', '明文数据', 0.5, 0.8);
+      const row = encDb.prepare<{ content: string }>('SELECT content FROM memory_nodes WHERE id = ?').get(m.id);
+      assert.ok(row);
+      assert.equal(row.content, '明文数据');
     });
   });
 });
