@@ -55,4 +55,35 @@ describe('QuotaManager', () => {
     /* 更新后限额变为 10，仅用了 1 → 有配额 */
     assert.equal(qm.checkQuota('tenant-a', 'decisions', now), true);
   });
+
+  it('consumeQuota 无限制时始终成功并记录用量', () => {
+    const now = 100_000;
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), true);
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), true);
+  });
+
+  it('consumeQuota 达到限额后拒绝', () => {
+    qm.setLimit('tenant-a', 'sim', 2, 60_000);
+    const now = 100_000;
+
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), true);
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), true);
+    /* 第 3 次应被拒绝 */
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), false);
+  });
+
+  it('consumeQuota 限额为 0 时直接拒绝', () => {
+    qm.setLimit('tenant-a', 'sim', 0, 60_000);
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', 100_000), false);
+  });
+
+  it('clearLimit 后恢复无限制', () => {
+    qm.setLimit('tenant-a', 'sim', 1, 60_000);
+    const now = 100_000;
+    qm.consumeQuota('tenant-a', 'sim', now);
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), false);
+
+    qm.clearLimit('tenant-a', 'sim');
+    assert.equal(qm.consumeQuota('tenant-a', 'sim', now), true);
+  });
 });

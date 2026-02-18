@@ -47,4 +47,24 @@ describe('TenantOSFactory', () => {
     factory.clear();
     assert.equal(factory.cachedCount, 0);
   });
+
+  it('evict 驱逐指定租户', () => {
+    factory.getTenantOS('t1');
+    factory.getTenantOS('t2');
+    assert.equal(factory.cachedCount, 2);
+
+    factory.evict('t1');
+    assert.equal(factory.cachedCount, 1);
+
+    /* 再次获取应创建新实例 */
+    const os1 = factory.getTenantOS('t1');
+    assert.equal(factory.cachedCount, 2);
+    assert.ok(os1);
+  });
+
+  it('evict 不存在的租户无影响', () => {
+    factory.getTenantOS('t1');
+    factory.evict('nonexistent');
+    assert.equal(factory.cachedCount, 1);
+  });
 });
