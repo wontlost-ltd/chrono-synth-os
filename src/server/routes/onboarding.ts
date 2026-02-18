@@ -158,10 +158,14 @@ export function registerOnboardingRoutes(
     }
 
     const tenantId = request.tenantId;
+    if (step < 1 || step > 3 || Number.isNaN(step)) {
+      throw new ValidationError(`无效步骤: ${request.params.step}，有效范围 1-3`, ErrorCode.VALIDATION_RANGE);
+    }
+
     let data: Record<string, unknown> = {};
     if (step === 1) data = OnboardingStep1Schema.parse(request.body);
     else if (step === 2) data = OnboardingStep2Schema.parse(request.body);
-    else if (step === 3) data = OnboardingStep3Schema.parse(request.body);
+    else data = OnboardingStep3Schema.parse(request.body);
 
     const session = await getOnboarding(tenantId).submitStep(sessionId, step, data);
 

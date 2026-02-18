@@ -15,6 +15,7 @@ import {
   UpdateSurvivalAnchorSchema,
   UpdateDecisionStyleSchema,
   UpdateCognitiveModelSchema,
+  PaginationQuerySchema,
 } from '../schemas/api-schemas.js';
 
 export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
@@ -75,13 +76,11 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
   app.get('/api/v1/pos/survival', async (request) => {
     const tenantOS = getOS(request);
     const all = tenantOS.core.survival.getAll();
-    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
-    const p = Math.max(1, parseInt(page || '1', 10) || 1);
-    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
-    const offset = (p - 1) * ps;
+    const { page, pageSize } = PaginationQuerySchema.parse(request.query);
+    const offset = (page - 1) * pageSize;
     return {
-      data: all.slice(offset, offset + ps),
-      pagination: { page: p, pageSize: ps, total: all.length, totalPages: Math.ceil(all.length / ps) || 1 },
+      data: all.slice(offset, offset + pageSize),
+      pagination: { page, pageSize, total: all.length, totalPages: Math.ceil(all.length / pageSize) || 1 },
     };
   });
 
@@ -195,13 +194,11 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
   app.get('/api/v1/pos/pending-updates', async (request) => {
     const tenantOS = getOS(request);
     const all = tenantOS.updateGate.getPending();
-    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
-    const p = Math.max(1, parseInt(page || '1', 10) || 1);
-    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
-    const offset = (p - 1) * ps;
+    const { page, pageSize } = PaginationQuerySchema.parse(request.query);
+    const offset = (page - 1) * pageSize;
     return {
-      data: all.slice(offset, offset + ps),
-      pagination: { page: p, pageSize: ps, total: all.length, totalPages: Math.ceil(all.length / ps) || 1 },
+      data: all.slice(offset, offset + pageSize),
+      pagination: { page, pageSize, total: all.length, totalPages: Math.ceil(all.length / pageSize) || 1 },
     };
   });
 

@@ -8,7 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
-import { ShareSimulationSchema } from '../schemas/api-schemas.js';
+import { ShareSimulationSchema, PaginationQuerySchema } from '../schemas/api-schemas.js';
 import { AuthenticationError, AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index.js';
 
 interface SharedRow {
@@ -72,9 +72,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
       throw new AuthenticationError('需要登录', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
-    const query = request.query as Record<string, string | undefined>;
-    const page = Math.max(1, parseInt(query.page || '1', 10) || 1);
-    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '20', 10) || 20));
+    const { page, pageSize } = PaginationQuerySchema.parse(request.query);
     const offset = (page - 1) * pageSize;
 
     const total = db.prepare<{ count: number }>(

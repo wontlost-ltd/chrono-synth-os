@@ -5,6 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { LifeSimulationService } from '../../simulation/life-simulation-service.js';
+import type { LifeSimulationConfig } from '../../types/life-simulation.js';
 import type { IDatabase } from '../../storage/database.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
@@ -12,7 +13,14 @@ import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index
 import {
   CreateLifeSimulationSchema,
   StressTestRequestSchema,
+  PaginationQuerySchema,
 } from '../schemas/api-schemas.js';
+
+function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
+  if (!json) return fallback;
+  try { return JSON.parse(json); }
+  catch { return fallback; }
+}
 
 export function registerLifeSimulationRoutes(
   app: FastifyInstance,
@@ -26,9 +34,7 @@ export function registerLifeSimulationRoutes(
   /* GET /api/v1/simulations — 列出租户的所有模拟 */
   app.get('/api/v1/simulations', async (request) => {
     const tenantId = request.tenantId;
-    const query = request.query as Record<string, string | undefined>;
-    const page = Math.max(1, parseInt(query.page || '1', 10) || 1);
-    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '20', 10) || 20));
+    const { page, pageSize } = PaginationQuerySchema.parse(request.query);
     const offset = (page - 1) * pageSize;
 
     const { records, total } = service.getByTenantPaginated(tenantId, pageSize, offset);
@@ -56,7 +62,7 @@ export function registerLifeSimulationRoutes(
     usageTracker?.record(tenantId, 'simulation', 1);
 
     if (!asyncMode) {
-      try { service.executeTask(simulationId); } catch { /* 异步回退 */ }
+      try { service.executeTask(simulationId); } catch (e) { app.log.warn({ err: e, simulationId }, '同步执行回退为异步'); }
     }
 
     return reply.status(202).send({
@@ -77,8 +83,8 @@ export function registerLifeSimulationRoutes(
       data: {
         simulationId: record.id,
         status: record.status,
-        progress: record.progressJson ? JSON.parse(record.progressJson) : null,
-        summary: record.summaryJson ? JSON.parse(record.summaryJson) : null,
+        progress: safeJsonParse(record.progressJson),
+        summary: safeJsonParse(record.summaryJson),
         error: record.error,
         createdAt: record.createdAt,
         completedAt: record.completedAt,
@@ -102,9 +108,9 @@ export function registerLifeSimulationRoutes(
           pathId: pathRecord.pathId,
           label: pathRecord.label,
           status: pathRecord.status,
-          summary: pathRecord.summaryJson ? JSON.parse(pathRecord.summaryJson) : null,
-          timeline: pathRecord.timelineJson ? JSON.parse(pathRecord.timelineJson) : [],
-          branches: pathRecord.branchesJson ? JSON.parse(pathRecord.branchesJson) : [],
+          summary: safeJsonParse(pathRecord.summaryJson),
+          timeline: safeJsonParse(pathRecord.timelineJson, []),
+          branches: safeJsonParse(pathRecord.branchesJson, []),
         },
       };
     },
@@ -124,8 +130,8 @@ export function registerLifeSimulationRoutes(
       }
 
       /* 基于原始配置创建压力测试变体 */
-      const baseConfig = JSON.parse(baseRecord.configJson);
-      const stressConfig = {
+      const baseConfig = safeJsonParse(baseRecord.configJson, {}) as LifeSimulationConfig;
+      const stressConfig: LifeSimulationConfig = {
         ...baseConfig,
         stressTestConfig: {
           enabled: true,

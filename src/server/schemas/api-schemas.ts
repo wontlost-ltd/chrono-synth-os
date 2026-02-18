@@ -229,6 +229,12 @@ export const DecisionFeedbackSchema = z.object({
   notes: z.string().optional(),
 });
 
+/* 通用分页查询参数 */
+export const PaginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 /* SSO 查询参数 */
 export const SsoAuthorizeQuerySchema = z.object({
   redirect_uri: z.string().optional(),

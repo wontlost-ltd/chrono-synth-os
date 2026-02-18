@@ -11,6 +11,7 @@ import type { IDatabase, SqlValue } from '../../storage/database.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
 import { compilePersonaState } from '../../intelligence/persona-state.js';
+import { PaginationQuerySchema } from '../schemas/api-schemas.js';
 
 /** 直接按 tenant_id 查询的表（外键依赖顺序：子表在前） */
 const TENANT_TABLES = [
@@ -60,7 +61,10 @@ const RELATED_TABLES: Array<{
   },
 ];
 
+const TENANT_TABLE_SET: ReadonlySet<string> = new Set(TENANT_TABLES);
+
 function safeDelete(db: IDatabase, table: string, tenantId: string): number {
+  if (!TENANT_TABLE_SET.has(table)) return 0;
   try {
     return db.prepare<void>(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId).changes;
   } catch {
@@ -77,6 +81,7 @@ function safeDeleteQuery(db: IDatabase, sql: string, params: SqlValue[]): number
 }
 
 function exportTable(db: IDatabase, table: string, tenantId: string): unknown[] {
+  if (!TENANT_TABLE_SET.has(table)) return [];
   try {
     return db.prepare<Record<string, unknown>>(`SELECT * FROM ${table} WHERE tenant_id = ?`).all(tenantId);
   } catch {
@@ -184,9 +189,7 @@ export function registerPrivacyRoutes(
   /* GET /api/v1/privacy/audit-trail — 租户审计日志（分页） */
   app.get('/api/v1/privacy/audit-trail', async (request) => {
     const tenantId = request.tenantId;
-    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
-    const p = Math.max(1, parseInt(page || '1', 10) || 1);
-    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
+    const { page: p, pageSize: ps } = PaginationQuerySchema.parse(request.query);
     const offset = (p - 1) * ps;
 
     const db = os.getDatabase();

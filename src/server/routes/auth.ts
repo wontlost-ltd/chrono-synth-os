@@ -172,7 +172,11 @@ async function generateTokenPair(
 /** 清理过期和已吊销的刷新令牌（30 天保留窗口） */
 export function cleanupExpiredTokens(db: IDatabase): number {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  return db.prepare<void>(
-    'DELETE FROM refresh_tokens WHERE (is_revoked = 1 AND created_at < ?) OR (expires_at < ?)',
-  ).run(cutoff, cutoff).changes;
+  let changes = 0;
+  db.transaction(() => {
+    changes = db.prepare<void>(
+      'DELETE FROM refresh_tokens WHERE (is_revoked = 1 AND created_at < ?) OR (expires_at < ?)',
+    ).run(cutoff, cutoff).changes;
+  });
+  return changes;
 }
