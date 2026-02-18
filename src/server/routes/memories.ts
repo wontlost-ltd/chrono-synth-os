@@ -73,8 +73,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   });
 
   /* GET /api/v1/memories/:id/related — 获取相关记忆 */
-  app.get('/api/v1/memories/:id/related', async (request) => {
-    const { id } = request.params as { id: string };
+  app.get<{ Params: { id: string } }>('/api/v1/memories/:id/related', async (request) => {
+    const { id } = request.params;
     const query = request.query as Record<string, unknown>;
     const { depth } = RelatedMemoryQuerySchema.parse(query);
     const tenantOS = getOS(request);
@@ -88,8 +88,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   });
 
   /* POST /api/v1/memories/:id/activate — 触发扩散激活 */
-  app.post('/api/v1/memories/:id/activate', async (request) => {
-    const { id } = request.params as { id: string };
+  app.post<{ Params: { id: string } }>('/api/v1/memories/:id/activate', async (request) => {
+    const { id } = request.params;
     const tenantOS = getOS(request);
 
     if (!tenantOS.core.memories.getMemory(id)) {

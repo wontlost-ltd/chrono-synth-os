@@ -24,7 +24,13 @@ import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { reportUsage as reportStripeUsage } from '../../billing/stripe-client.js';
-import { CreateDecisionSchema, DecisionFeedbackSchema } from '../schemas/api-schemas.js';
+import { CreateDecisionSchema, DecisionFeedbackSchema, PaginationQuerySchema } from '../schemas/api-schemas.js';
+
+function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
+  if (!json) return fallback;
+  try { return JSON.parse(json); }
+  catch { return fallback; }
+}
 
 interface DecisionCaseRow {
   id: string;
@@ -130,10 +136,8 @@ export function registerDecisionRoutes(
   /* GET /api/v1/decisions */
   app.get('/api/v1/decisions', async (request) => {
     const tenantId = request.tenantId;
-    const { page, pageSize } = request.query as { page?: string; pageSize?: string };
-    const p = Math.max(1, parseInt(page || '1', 10) || 1);
-    const ps = Math.min(100, Math.max(1, parseInt(pageSize || '20', 10) || 20));
-    const offset = (p - 1) * ps;
+    const { page, pageSize } = PaginationQuerySchema.parse(request.query);
+    const offset = (page - 1) * pageSize;
 
     const total = sharedDb.prepare<{ count: number }>(
       'SELECT COUNT(*) as count FROM decision_cases WHERE tenant_id = ?',
@@ -141,19 +145,19 @@ export function registerDecisionRoutes(
 
     const rows = sharedDb.prepare<DecisionCaseRow>(
       'SELECT * FROM decision_cases WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-    ).all(tenantId, ps, offset);
+    ).all(tenantId, pageSize, offset);
 
     return {
       data: rows.map((r) => ({
         id: r.id,
         title: r.title,
         description: r.description,
-        alternatives: JSON.parse(r.alternatives_json),
-        constraints: r.constraints_json ? JSON.parse(r.constraints_json) : undefined,
-        context: r.context_json ? JSON.parse(r.context_json) : undefined,
+        alternatives: safeJsonParse(r.alternatives_json, []),
+        constraints: r.constraints_json ? safeJsonParse(r.constraints_json) : undefined,
+        context: r.context_json ? safeJsonParse(r.context_json) : undefined,
         createdAt: new Date(r.created_at).toISOString(),
       })),
-      pagination: { page: p, pageSize: ps, total, totalPages: Math.ceil(total / ps) },
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) || 1 },
     };
   });
 
@@ -178,9 +182,9 @@ export function registerDecisionRoutes(
       id: row.id,
       title: row.title,
       description: row.description,
-      alternatives: JSON.parse(row.alternatives_json),
-      constraints: row.constraints_json ? JSON.parse(row.constraints_json) : undefined,
-      context: row.context_json ? JSON.parse(row.context_json) : undefined,
+      alternatives: safeJsonParse(row.alternatives_json, []) as string[],
+      constraints: row.constraints_json ? safeJsonParse(row.constraints_json, []) as string[] : undefined,
+      context: row.context_json ? safeJsonParse(row.context_json) as Record<string, unknown> : undefined,
     };
 
     const runId = generatePrefixedId('run');
@@ -233,7 +237,7 @@ export function registerDecisionRoutes(
     if (!row) {
       throw new NotFoundError(`决策运行 ${runId} 不存在`, ErrorCode.NOT_FOUND_DECISION_RUN);
     }
-    return { data: { runId, result: JSON.parse(row.result_json) } };
+    return { data: { runId, result: safeJsonParse(row.result_json) } };
   });
 
   /* POST /api/v1/decisions/:id/feedback */
