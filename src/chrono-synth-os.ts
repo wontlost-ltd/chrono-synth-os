@@ -47,6 +47,8 @@ export interface ChronoSynthOSConfig {
   encryptionConfig?: EncryptionConfig;
   /** 跳过迁移（当数据库已由 createDatabase() 工厂初始化时设为 true） */
   skipMigrations?: boolean;
+  /** 租户 ID（用于事件租户隔离，默认 'default'） */
+  tenantId?: string;
 }
 
 export class ChronoSynthOS {
@@ -64,6 +66,7 @@ export class ChronoSynthOS {
   private readonly db: IDatabase;
   private readonly clock: Clock;
   private readonly logger: Logger;
+  private readonly tenantId: string;
   private stopped = false;
   private closed = false;
 
@@ -71,6 +74,7 @@ export class ChronoSynthOS {
     this.db = config.db ?? createMemoryDatabase();
     this.clock = config.clock ?? realClock;
     this.logger = config.logger ?? new ConsoleLogger('info');
+    this.tenantId = config.tenantId ?? 'default';
 
     /* 初始化数据库表（createDatabase 工厂已处理迁移时跳过） */
     if (!config.skipMigrations) {
@@ -92,9 +96,9 @@ export class ChronoSynthOS {
       : undefined;
 
     /* 初始化三层 */
-    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig, encryption);
-    this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator);
-    this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig, this.updateGate);
+    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig, encryption, this.tenantId);
+    this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator, this.tenantId);
+    this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig, this.updateGate, this.tenantId);
 
     /* 恢复与演化 */
     this.snapshots = new SnapshotStore(this.db);
@@ -125,9 +129,14 @@ export class ChronoSynthOS {
     return this.logger;
   }
 
+  /** 获取租户 ID */
+  getTenantId(): string {
+    return this.tenantId;
+  }
+
   /** 启动系统 */
   start(): void {
-    this.bus.emit('system:started', { timestamp: this.clock.now() });
+    this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
 
@@ -146,7 +155,7 @@ export class ChronoSynthOS {
       this.snapshots.save(snap);
       return snap;
     });
-    this.bus.emit('system:snapshot-created', { snapshot });
+    this.bus.emit('system:snapshot-created', { snapshot, tenantId: this.tenantId });
     this.logger.info('System', `快照已创建: ${snapshot.id} (原因=${reason})`);
     return snapshot;
   }
@@ -198,7 +207,7 @@ export class ChronoSynthOS {
     /* 恢复资源分配状态（内存，无需事务） */
     this.lastAllocations = snapshot.allocations;
 
-    this.bus.emit('system:snapshot-restored', { snapshotId });
+    this.bus.emit('system:snapshot-restored', { snapshotId, tenantId: this.tenantId });
     this.logger.info('System', `系统已从快照恢复: ${snapshotId}`);
     return true;
   }
@@ -214,7 +223,7 @@ export class ChronoSynthOS {
 
     if (mergedVersionIds.length > 0) {
       this.evolution.persistRecord(beforeSnapshot.id, afterSnapshot.id, mergedVersionIds, valueDelta, diffReport);
-      this.bus.emit('system:evolution-completed', { mergedVersionIds, diffReport });
+      this.bus.emit('system:evolution-completed', { mergedVersionIds, diffReport, tenantId: this.tenantId });
       this.logger.info('System', `演化完成: ${diffReport.summary}`);
     }
 
@@ -292,7 +301,7 @@ export class ChronoSynthOS {
       'statistical_drift',
     );
     if (patterns.length > 0) {
-      this.bus.emit('system:patterns-extracted', { count: patterns.length });
+      this.bus.emit('system:patterns-extracted', { count: patterns.length, tenantId: this.tenantId });
     }
 
     return { decayedCount: decayed.length, consolidatedCount: consolidated.length, patternsFound: patterns.length, emotionalEvents: emotionalProposals.length };
@@ -303,7 +312,7 @@ export class ChronoSynthOS {
     if (this.stopped) return;
     this.stopped = true;
     try {
-      this.bus.emit('system:stopping', { timestamp: this.clock.now() });
+      this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');
     } finally {
       this.bus.removeAllListeners();

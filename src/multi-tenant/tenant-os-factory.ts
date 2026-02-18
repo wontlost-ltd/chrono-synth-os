@@ -91,6 +91,7 @@ export class TenantOSFactory {
       logger: this.logger,
       encryptionConfig: this.encryptionConfig,
       skipMigrations: true,  /* 迁移由宿主数据库统一管理 */
+      tenantId,
     });
     os.start();
     this.logger.info('TenantOSFactory', `租户 OS 实例已创建: ${tenantId}`);

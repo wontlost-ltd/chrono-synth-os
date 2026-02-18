@@ -73,7 +73,7 @@ export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, t
     }
     const ok = tenantOS.accelerated.personas.setStatus(id, body.status);
     if (ok) {
-      tenantOS.bus.emit('persona:status-changed', { personaId: id, oldStatus: persona.status, newStatus: body.status });
+      tenantOS.bus.emit('persona:status-changed', { personaId: id, oldStatus: persona.status, newStatus: body.status, tenantId: request.tenantId });
     }
     return { data: { id, status: body.status, updated: ok } };
   });

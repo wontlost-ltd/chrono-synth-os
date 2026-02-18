@@ -24,6 +24,7 @@ export class AcceleratedLayer {
     clock: Clock,
     private readonly logger: Logger,
     evaluator?: EvaluatorFn,
+    private readonly tenantId?: string,
   ) {
     this.personas = new PersonaEngine(db, clock);
     this.simulator = new SimulationRunner(clock, evaluator);
@@ -32,7 +33,7 @@ export class AcceleratedLayer {
   /** 从核心价值分叉创建新的人格版本 */
   forkPersona(label: string, coreValues: ReadonlyMap<string, number>, resourceQuota = 0.2): PersonaVersion {
     const persona = this.personas.create(label, coreValues, resourceQuota);
-    this.bus.emit('persona:created', { persona });
+    this.bus.emit('persona:created', { persona, tenantId: this.tenantId });
     this.logger.info(LAYER, `人格已创建: ${label} (配额=${resourceQuota})`);
     return persona;
   }
@@ -44,7 +45,7 @@ export class AcceleratedLayer {
     const oldStatus = persona.status;
     const ok = this.personas.setStatus(id, 'paused');
     if (ok) {
-      this.bus.emit('persona:status-changed', { personaId: id, oldStatus, newStatus: 'paused' });
+      this.bus.emit('persona:status-changed', { personaId: id, oldStatus, newStatus: 'paused', tenantId: this.tenantId });
       this.logger.info(LAYER, `人格已暂停: ${persona.label}`);
     }
     return ok;
@@ -56,7 +57,7 @@ export class AcceleratedLayer {
     if (!persona || persona.status !== 'paused') return false;
     const ok = this.personas.setStatus(id, 'active');
     if (ok) {
-      this.bus.emit('persona:status-changed', { personaId: id, oldStatus: 'paused', newStatus: 'active' });
+      this.bus.emit('persona:status-changed', { personaId: id, oldStatus: 'paused', newStatus: 'active', tenantId: this.tenantId });
       this.logger.info(LAYER, `人格已恢复: ${persona.label}`);
     }
     return ok;
@@ -69,7 +70,7 @@ export class AcceleratedLayer {
 
     const result = this.simulator.run(persona, scenario);
     this.personas.addResult(personaId, result);
-    this.bus.emit('persona:simulation-completed', { result });
+    this.bus.emit('persona:simulation-completed', { result, tenantId: this.tenantId });
     this.logger.info(LAYER, `模拟完成: 人格=${persona.label}, 场景=${scenario.id}, 适应度=${result.fitnessScore.toFixed(3)}`);
     return result;
   }
@@ -87,7 +88,7 @@ export class AcceleratedLayer {
     const oldStatus = persona.status;
     const ok = this.personas.setStatus(id, 'completed');
     if (ok) {
-      this.bus.emit('persona:status-changed', { personaId: id, oldStatus, newStatus: 'completed' });
+      this.bus.emit('persona:status-changed', { personaId: id, oldStatus, newStatus: 'completed', tenantId: this.tenantId });
       this.logger.info(LAYER, `人格已完成: ${persona.label}`);
     }
     return ok;

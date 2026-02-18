@@ -31,6 +31,24 @@ import {
   OnboardingImportSchema,
 } from '../schemas/api-schemas.js';
 
+function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
+  if (!json) return fallback;
+  try { return JSON.parse(json); }
+  catch { return fallback; }
+}
+
+interface OnboardingSessionRow {
+  id: string;
+  tenant_id: string;
+  current_step: number;
+  completed_steps_json: string;
+  decision_json: string | null;
+  simulation_result_json: string | null;
+  snapshot_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 export function registerOnboardingRoutes(
   app: FastifyInstance,
   os: ChronoSynthOS,
@@ -107,7 +125,7 @@ export function registerOnboardingRoutes(
     const svc = new OnboardingService(
       tenantOS.core,
       getEngine(tenantId),
-      os.bus,
+      tenantOS.bus,
       tenantOS.getClock(),
       tenantOS.getLogger(),
       (reason) => tenantOS.createSnapshot(reason),
@@ -142,11 +160,31 @@ export function registerOnboardingRoutes(
   /* GET /api/v1/onboarding/status/:sessionId */
   app.get<{ Params: { sessionId: string } }>('/api/v1/onboarding/status/:sessionId', async (request) => {
     const tenantId = request.tenantId;
-    const session = getOnboarding(tenantId).getSession(request.params.sessionId);
-    if (!session) {
-      throw new NotFoundError(`引导会话 ${request.params.sessionId} 不存在`, ErrorCode.NOT_FOUND_ONBOARDING);
+    const { sessionId } = request.params;
+
+    /* 优先从内存服务读取 */
+    const memSession = getOnboarding(tenantId).getSession(sessionId);
+    if (memSession) return { data: memSession };
+
+    /* 回退到 DB 读取（服务重启后内存缓存已丢失） */
+    const row = sharedDb.prepare<OnboardingSessionRow>(
+      'SELECT * FROM onboarding_sessions WHERE id = ? AND tenant_id = ?',
+    ).get(sessionId, tenantId);
+    if (!row) {
+      throw new NotFoundError(`引导会话 ${sessionId} 不存在`, ErrorCode.NOT_FOUND_ONBOARDING);
     }
-    return { data: session };
+    return {
+      data: {
+        id: row.id,
+        currentStep: row.current_step,
+        completedSteps: safeJsonParse(row.completed_steps_json, []) as number[],
+        decision: row.decision_json ? safeJsonParse(row.decision_json) : undefined,
+        simulationResult: row.simulation_result_json ? safeJsonParse(row.simulation_result_json) : undefined,
+        snapshotId: row.snapshot_id ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    };
   });
 
   /* POST /api/v1/onboarding/step/:step */

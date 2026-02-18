@@ -38,6 +38,7 @@ export class CoreRhythmLayer {
     private readonly logger: Logger,
     cognitionConfig?: Partial<MemoryCognitionConfig>,
     encryption?: FieldEncryption,
+    private readonly tenantId?: string,
   ) {
     this.values = new ValueStore(db, clock);
     this.memories = new CognitiveMemoryGraph(db, clock, cognitionConfig, encryption);
@@ -50,7 +51,7 @@ export class CoreRhythmLayer {
   /** 添加核心价值 */
   addValue(label: string, weight: number, timeDiscount?: number, emotionAmplifier?: number): CoreValue {
     const value = this.values.create(label, weight, timeDiscount, emotionAmplifier);
-    this.bus.emit('core:value-updated', { value });
+    this.bus.emit('core:value-updated', { value, tenantId: this.tenantId });
     this.logger.info(LAYER, `价值已添加: ${label} (权重=${weight})`);
     return value;
   }
@@ -67,7 +68,7 @@ export class CoreRhythmLayer {
   ): CoreValue | undefined {
     const value = this.values.update(id, patch);
     if (value) {
-      this.bus.emit('core:value-updated', { value });
+      this.bus.emit('core:value-updated', { value, tenantId: this.tenantId });
       const parts: string[] = [];
       if (patch.weight !== undefined) parts.push(`权重=${patch.weight}`);
       if (patch.timeDiscount !== undefined) parts.push(`时间折扣=${patch.timeDiscount}`);
@@ -81,7 +82,7 @@ export class CoreRhythmLayer {
   /** 添加记忆 */
   addMemory(kind: MemoryKind, content: string, valence: number, salience: number): MemoryNode {
     const memory = this.memories.addMemory(kind, content, valence, salience);
-    this.bus.emit('core:memory-added', { memory });
+    this.bus.emit('core:memory-added', { memory, tenantId: this.tenantId });
     this.logger.info(LAYER, `记忆已添加: [${kind}] id=${memory.id}`);
     return memory;
   }
@@ -90,7 +91,7 @@ export class CoreRhythmLayer {
   accessMemory(id: string): MemoryNode | undefined {
     const memory = this.memories.accessMemory(id);
     if (memory) {
-      this.bus.emit('core:memory-accessed', { memoryId: id });
+      this.bus.emit('core:memory-accessed', { memoryId: id, tenantId: this.tenantId });
     }
     return memory;
   }
@@ -103,7 +104,7 @@ export class CoreRhythmLayer {
   /** 更新叙事 */
   updateNarrative(content: string): void {
     const previous = this.narrative.set(content);
-    this.bus.emit('core:narrative-changed', { narrative: content, previousNarrative: previous });
+    this.bus.emit('core:narrative-changed', { narrative: content, previousNarrative: previous, tenantId: this.tenantId });
     this.logger.info(LAYER, '叙事已更新');
   }
 
@@ -112,7 +113,7 @@ export class CoreRhythmLayer {
   /** 添加生存锚点 */
   addSurvivalAnchor(label: string, kind: SurvivalAnchor['kind'], value: unknown, severity: number): SurvivalAnchor {
     const anchor = this.survival.create(label, kind, value, severity);
-    this.bus.emit('core:survival-updated', { anchor });
+    this.bus.emit('core:survival-updated', { anchor, tenantId: this.tenantId });
     this.logger.info(LAYER, `生存锚点已添加: ${label} (类型=${kind}, 严重度=${severity})`);
     return anchor;
   }
@@ -121,7 +122,7 @@ export class CoreRhythmLayer {
   updateSurvivalAnchor(id: string, patch: SurvivalAnchorUpdate): SurvivalAnchor | undefined {
     const anchor = this.survival.update(id, patch);
     if (anchor) {
-      this.bus.emit('core:survival-updated', { anchor });
+      this.bus.emit('core:survival-updated', { anchor, tenantId: this.tenantId });
       this.logger.info(LAYER, `生存锚点已更新: ${anchor.label}`);
     }
     return anchor;
@@ -137,7 +138,7 @@ export class CoreRhythmLayer {
   /** 设置决策风格（合并更新） */
   setDecisionStyle(patch: Partial<DecisionStyle>): DecisionStyle {
     const style = this.decisionStyle.set(patch);
-    this.bus.emit('core:decision-style-updated', { style });
+    this.bus.emit('core:decision-style-updated', { style, tenantId: this.tenantId });
     this.logger.info(LAYER, '决策风格已更新');
     return style;
   }
@@ -147,7 +148,7 @@ export class CoreRhythmLayer {
   /** 设置认知模型（合并更新） */
   setCognitiveModel(patch: Partial<CognitiveModel>): CognitiveModel {
     const model = this.cognitiveModel.set(patch);
-    this.bus.emit('core:cognitive-model-updated', { model });
+    this.bus.emit('core:cognitive-model-updated', { model, tenantId: this.tenantId });
     this.logger.info(LAYER, '认知模型已更新');
     return model;
   }
@@ -214,7 +215,7 @@ export class CoreRhythmLayer {
   runMemoryDecay(): Array<{ memoryId: string; oldSalience: number; newSalience: number }> {
     const results = this.memories.decayAll();
     for (const r of results) {
-      this.bus.emit('core:memory-decayed', r);
+      this.bus.emit('core:memory-decayed', { ...r, tenantId: this.tenantId });
     }
     if (results.length > 0) {
       this.logger.info(LAYER, `记忆衰减: ${results.length} 个记忆受影响`);
@@ -226,7 +227,7 @@ export class CoreRhythmLayer {
   activateMemory(id: MemoryId): ActivationResult[] {
     const results = this.memories.spreadActivation(id);
     if (results.length > 0) {
-      this.bus.emit('core:memory-activated', { sourceId: id, results });
+      this.bus.emit('core:memory-activated', { sourceId: id, results, tenantId: this.tenantId });
       this.logger.info(LAYER, `扩散激活: 从 ${id} 激活了 ${results.length} 个相邻记忆`);
     }
     return results;
@@ -236,7 +237,7 @@ export class CoreRhythmLayer {
   runConsolidation(): ConsolidationResult[] {
     const results = this.memories.consolidateAll();
     for (const r of results) {
-      this.bus.emit('core:memory-consolidated', { result: r });
+      this.bus.emit('core:memory-consolidated', { result: r, tenantId: this.tenantId });
     }
     if (results.length > 0) {
       this.logger.info(LAYER, `记忆固化: ${results.length} 个 episodic 记忆转为 semantic`);
@@ -252,7 +253,7 @@ export class CoreRhythmLayer {
   /** 刷新并广播工作记忆 */
   refreshWorkingMemory(): WorkingMemorySlot[] {
     const slots = this.memories.refreshWorkingMemory();
-    this.bus.emit('core:working-memory-updated', { slots });
+    this.bus.emit('core:working-memory-updated', { slots, tenantId: this.tenantId });
     return slots;
   }
 }
