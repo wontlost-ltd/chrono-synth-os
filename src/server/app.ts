@@ -25,6 +25,8 @@ import { registerTenant } from './plugins/tenant.js';
 import { registerAuditLog } from './plugins/audit-log.js';
 import { registerRequestTimeout } from './plugins/request-timeout.js';
 import { registerObservability } from './plugins/observability.js';
+import { registerRequestLogContext } from './plugins/request-log-context.js';
+import { registerApiVersion } from './plugins/api-version.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerBillingRoutes } from './routes/billing.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -70,6 +72,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 同步插件 */
   registerRequestId(app);
   registerTenant(app);
+  registerRequestLogContext(app);
+  registerApiVersion(app);
   registerMetrics(app);
   registerRequestTimeout(app, config);
   registerAuth(app, config);
@@ -114,7 +118,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
   registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
   registerVisualizationRoutes(app, deps.os);
-  registerPrivacyRoutes(app, deps.os);
+  registerPrivacyRoutes(app, deps.os, tenantFactory);
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation);
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);

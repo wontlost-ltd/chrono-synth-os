@@ -83,8 +83,8 @@ describe('可视化与隐私 API 集成测试', () => {
       assert.ok(body.data.exportId.startsWith('exp_'));
       assert.equal(body.data.format, 'json');
       assert.ok(body.data.content.persona);
-      assert.ok(body.data.content.snapshotId);
-      assert.ok(body.data.content.exportedAt);
+      assert.ok(body.data.exportedAt);
+      assert.ok(body.data.tenantId);
     });
   });
 

@@ -1,12 +1,29 @@
 /**
  * 健康检查路由
- * /healthz 轻量探活，/readyz 深度就绪检查
+ * /healthz 轻量探活（含版本），/readyz 深度就绪检查（含 Redis）
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { IDatabase } from '../../storage/database.js';
 import { CircuitBreaker, CircuitOpenError } from '../plugins/circuit-breaker.js';
+
+/** 从 package.json 读取版本（构建时固化） */
+let _version: string | undefined;
+function getVersion(): string {
+  if (_version) return _version;
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(resolve(dir, '../../../package.json'), 'utf-8'));
+    _version = pkg.version ?? 'unknown';
+  } catch {
+    _version = 'unknown';
+  }
+  return _version!;
+}
 
 /** 服务器生命周期状态（由 main.ts 管理） */
 export const serverState = {
@@ -31,9 +48,13 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
     halfOpenMaxRequests: 1,
   });
 
-  /* 轻量探活：始终返回 ok */
+  /* 轻量探活：版本 + 运行时间 */
   app.get('/healthz', async () => {
-    return { status: 'ok' };
+    return {
+      status: 'ok',
+      version: getVersion(),
+      uptime: Math.floor((Date.now() - serverState.startTime) / 1000),
+    };
   });
 
   /* 深度就绪检查 */
@@ -41,6 +62,7 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
     if (serverState.shuttingDown) {
       return reply.status(503).send({
         status: 'shutting_down',
+        version: getVersion(),
         components: {},
       });
     }
@@ -60,7 +82,6 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
         if (db) {
           db.prepare<{ ok: number }>('SELECT 1 AS ok').get();
         } else {
-          /* 无数据库实例时回退到内存检查 */
           os.core.values.getAll();
         }
       });
@@ -73,15 +94,26 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
       }
       dbOk = false;
     }
-    components.database = {
-      status: dbStatus,
-      latency_ms: dbLatencyMs,
-    };
+    components.database = { status: dbStatus, latency_ms: dbLatencyMs };
 
-    const allOk = serverState.ready && dbOk;
+    /* Redis 可达性 */
+    let redisOk = true;
+    if (app.redis) {
+      try {
+        const start = performance.now();
+        await app.redis.ping();
+        const latency = Math.round((performance.now() - start) * 100) / 100;
+        components.redis = { status: 'ok', latency_ms: latency };
+      } catch {
+        components.redis = { status: 'degraded' };
+        redisOk = false;
+      }
+    }
+
+    const allOk = serverState.ready && dbOk && redisOk;
     const statusCode = allOk ? 200 : 503;
     const status = allOk ? 'ok' : 'degraded';
 
-    return reply.status(statusCode).send({ status, components });
+    return reply.status(statusCode).send({ status, version: getVersion(), components });
   });
 }

@@ -2,6 +2,7 @@
  * 限流插件
  * 基于 @fastify/rate-limit 实现全局请求限流
  * 当 Redis 可用时使用 Redis 存储实现分布式限流
+ * 响应头遵循 IETF draft-ietf-httpapi-ratelimit-headers
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -12,10 +13,14 @@ export async function registerRateLimit(app: FastifyInstance, config: AppConfig)
   const options: Parameters<typeof rateLimit>[1] = {
     max: config.rateLimit.max,
     timeWindow: config.rateLimit.timeWindowMs,
+    /* 确保正常响应也携带限流头（X-RateLimit-Limit/Remaining/Reset） */
+    addHeadersOnExceeding: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true },
+    addHeaders: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true, 'retry-after': true },
     errorResponseBuilder: (_request, context) => ({
       error: 'RateLimitError',
       code: 'RATE_LIMIT_EXCEEDED',
       message: `请求过于频繁，请在 ${Math.ceil(context.ttl / 1000)} 秒后重试`,
+      retryAfter: Math.ceil(context.ttl / 1000),
     }),
   };
 

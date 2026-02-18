@@ -32,7 +32,10 @@ describe('API 集成测试', () => {
     it('GET /healthz 返回 200', async () => {
       const res = await app.inject({ method: 'GET', url: '/healthz' });
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(JSON.parse(res.body), { status: 'ok' });
+      const body = JSON.parse(res.body);
+      assert.equal(body.status, 'ok');
+      assert.equal(body.version, '2.0.0');
+      assert.equal(typeof body.uptime, 'number');
     });
 
     it('GET /readyz 返回 200 包含 components', async () => {
