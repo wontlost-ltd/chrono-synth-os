@@ -99,7 +99,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     ).get(tenantId);
 
     if (!sub?.stripe_customer_id) {
-      throw new StateError('尚未关联 Stripe 客户，请先完成注册', ErrorCode.VALIDATION_REQUIRED);
+      throw new StateError('尚未关联 Stripe 客户，请先完成注册', ErrorCode.STATE_INVALID_TRANSITION);
     }
 
     let session;
@@ -125,7 +125,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     ).get(tenantId);
 
     if (!sub?.stripe_customer_id) {
-      throw new StateError('尚未关联 Stripe 客户', ErrorCode.VALIDATION_REQUIRED);
+      throw new StateError('尚未关联 Stripe 客户', ErrorCode.STATE_INVALID_TRANSITION);
     }
 
     let session;

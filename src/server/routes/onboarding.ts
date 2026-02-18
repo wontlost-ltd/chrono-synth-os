@@ -152,8 +152,7 @@ export function registerOnboardingRoutes(
   /* POST /api/v1/onboarding/step/:step */
   app.post<{ Params: { step: string }; Querystring: { sessionId?: string } }>('/api/v1/onboarding/step/:step', async (request) => {
     const step = Number.parseInt(request.params.step, 10);
-    const query = request.query as Record<string, string>;
-    const sessionId = query.sessionId;
+    const sessionId = request.query.sessionId;
     if (!sessionId) {
       throw new ValidationError('缺少 sessionId 查询参数', ErrorCode.VALIDATION_REQUIRED);
     }

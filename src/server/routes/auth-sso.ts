@@ -22,8 +22,15 @@ interface SsoStateStore {
 
 const STATE_TTL_SECONDS = 300;
 
+/** Redis 客户端方法签名 */
+interface RedisClient {
+  set(key: string, value: string, mode: string, ttl: number): Promise<unknown>;
+  get(key: string): Promise<string | null>;
+  del(key: string): Promise<unknown>;
+}
+
 /** Redis 存储（多实例安全） */
-function createRedisStateStore(redis: { set: Function; get: Function; del: Function }): SsoStateStore {
+function createRedisStateStore(redis: RedisClient): SsoStateStore {
   const prefix = 'sso_state:';
   return {
     async set(state, data) {
@@ -89,7 +96,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
 
   const baseUrl = config.server.publicUrl;
   const stateStore: SsoStateStore = app.redis
-    ? createRedisStateStore(app.redis as unknown as { set: Function; get: Function; del: Function })
+    ? createRedisStateStore(app.redis as unknown as RedisClient)
     : createMemoryStateStore();
 
   const ssoRateLimit = {

@@ -22,8 +22,8 @@ interface SharedRow {
 
 export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase): void {
   /* POST /api/v1/simulations/:id/share */
-  app.post('/api/v1/simulations/:id/share', async (request) => {
-    const { id: simulationId } = request.params as { id: string };
+  app.post<{ Params: { id: string } }>('/api/v1/simulations/:id/share', async (request) => {
+    const { id: simulationId } = request.params;
     const ownerUserId = (request.user as { sub?: string })?.sub;
     const tenantId = request.tenantId;
 
@@ -98,8 +98,8 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
   });
 
   /* DELETE /api/v1/simulations/:id/share/:userId */
-  app.delete('/api/v1/simulations/:id/share/:userId', async (request, reply) => {
-    const { id: simulationId, userId } = request.params as { id: string; userId: string };
+  app.delete<{ Params: { id: string; userId: string } }>('/api/v1/simulations/:id/share/:userId', async (request, reply) => {
+    const { id: simulationId, userId } = request.params;
     const ownerUserId = (request.user as { sub?: string })?.sub;
 
     if (!ownerUserId) {

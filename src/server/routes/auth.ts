@@ -132,7 +132,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
     }
 
     /* 如果有 JWT 用户上下文，吊销该用户的所有刷新令牌 */
-    const jwtUser = request.user as import('../../types/auth.js').JwtPayload | undefined;
+    const jwtUser = request.user as JwtPayload | undefined;
     if (jwtUser) {
       db.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE user_id = ?').run(jwtUser.sub);
     }
