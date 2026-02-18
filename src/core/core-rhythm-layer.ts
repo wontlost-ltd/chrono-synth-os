@@ -14,6 +14,7 @@ import type { SurvivalAnchor, DecisionStyle, CognitiveModel } from '../types/per
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import { CognitiveMemoryGraph } from './memory-graph.js';
+import type { FieldEncryption } from '../storage/encryption.js';
 import { CognitiveModelStore } from './cognitive-model-store.js';
 import { DecisionStyleStore } from './decision-style-store.js';
 import { NarrativeStore } from './narrative-store.js';
@@ -36,9 +37,10 @@ export class CoreRhythmLayer {
     private readonly clock: Clock,
     private readonly logger: Logger,
     cognitionConfig?: Partial<MemoryCognitionConfig>,
+    encryption?: FieldEncryption,
   ) {
     this.values = new ValueStore(db, clock);
-    this.memories = new CognitiveMemoryGraph(db, clock, cognitionConfig);
+    this.memories = new CognitiveMemoryGraph(db, clock, cognitionConfig, encryption);
     this.narrative = new NarrativeStore(db, clock);
     this.survival = new SurvivalAnchorStore(db, clock);
     this.decisionStyle = new DecisionStyleStore(db, clock);

@@ -49,6 +49,7 @@ import { registerTaskRoutes } from './routes/tasks.js';
 import { registerLifeSimulationRoutes } from './routes/life-simulations.js';
 import { registerLifeSimVizRoutes } from './routes/life-simulation-viz.js';
 import { registerSsoRoutes } from './routes/auth-sso.js';
+import { cleanupExpiredTokens } from './routes/auth.js';
 import { registerAuth0 } from './plugins/auth0.js';
 import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { TaskQueue } from '../queue/task-queue.js';
@@ -98,6 +99,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     db,
     deps.os.getClock(),
     deps.os.getLogger(),
+    undefined,
+    deps.config?.encryption,
   );
   app.addHook('onClose', () => { tenantFactory.clear(); });
 
@@ -119,7 +122,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory);
-  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled });
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
@@ -146,6 +149,16 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   }
 
   registerDocsRoutes(app);
+
+  /* 定期清理过期刷新令牌（每 24 小时） */
+  if (config.jwt.enabled) {
+    const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
+    const cleanupTimer = setInterval(() => {
+      try { cleanupExpiredTokens(db); } catch { /* 清理失败不影响服务 */ }
+    }, CLEANUP_INTERVAL);
+    cleanupTimer.unref();
+    app.addHook('onClose', () => { clearInterval(cleanupTimer); });
+  }
 
   return app;
 }

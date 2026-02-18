@@ -136,6 +136,20 @@ export class CognitiveMemoryGraph {
     return row ? this.toNode(row) : undefined;
   }
 
+  /** 批量获取记忆（减少 N+1 查询） */
+  getMemoryBatch(ids: MemoryId[]): Map<MemoryId, MemoryNode> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db.prepare<MemoryRow>(
+      `SELECT * FROM memory_nodes WHERE id IN (${placeholders})`,
+    ).all(...ids);
+    const map = new Map<MemoryId, MemoryNode>();
+    for (const row of rows) {
+      map.set(row.id, this.toNode(row));
+    }
+    return map;
+  }
+
   /** 获取全部记忆 */
   getAllMemories(): Map<MemoryId, MemoryNode> {
     const rows = this.db.prepare<MemoryRow>('SELECT * FROM memory_nodes').all();
@@ -144,6 +158,15 @@ export class CognitiveMemoryGraph {
       map.set(row.id, this.toNode(row));
     }
     return map;
+  }
+
+  /** 分页获取记忆 */
+  getMemoriesPaginated(limit: number, offset: number): { nodes: MemoryNode[]; total: number } {
+    const total = this.db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes').get()?.count ?? 0;
+    const rows = this.db.prepare<MemoryRow>(
+      'SELECT * FROM memory_nodes ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    ).all(limit, offset);
+    return { nodes: rows.map(r => this.toNode(r)), total };
   }
 
   /** 添加记忆关联边 */
@@ -332,8 +355,11 @@ export class CognitiveMemoryGraph {
   refreshWorkingMemory(): WorkingMemorySlot[] {
     return this.db.transaction(() => {
       const slots = this.db.prepare<WorkingMemoryRow>('SELECT * FROM working_memory').all();
+      const memIds = slots.map(s => s.memory_id);
+      const memMap = this.getMemoryBatch(memIds);
+
       for (const slot of slots) {
-        const mem = this.getMemory(slot.memory_id);
+        const mem = memMap.get(slot.memory_id);
         if (!mem) {
           this.db.prepare<void>('DELETE FROM working_memory WHERE memory_id = ?').run(slot.memory_id);
           continue;
@@ -426,22 +452,32 @@ export class CognitiveMemoryGraph {
     const related: MemoryNode[] = [];
 
     for (let depth = 0; depth < maxDepth; depth++) {
+      if (frontier.length === 0) break;
+
+      /* 批量查询当前层所有节点的边 */
+      const placeholders = frontier.map(() => '?').join(',');
+      const edges = this.db.prepare<EdgeRow>(
+        `SELECT * FROM memory_edges WHERE source IN (${placeholders}) OR target IN (${placeholders})`,
+      ).all(...frontier, ...frontier);
+
+      /* 收集未访问的邻居 ID */
+      const neighborIds: string[] = [];
+      for (const edge of edges) {
+        const nodeId = frontier.includes(edge.source) ? edge.target : edge.source;
+        if (!visited.has(nodeId)) {
+          visited.add(nodeId);
+          neighborIds.push(nodeId);
+        }
+      }
+
+      /* 批量加载邻居节点 */
+      const memMap = this.getMemoryBatch(neighborIds);
       const nextFrontier: string[] = [];
-      for (const nodeId of frontier) {
-        const edges = this.db.prepare<EdgeRow>(
-          'SELECT * FROM memory_edges WHERE source = ? OR target = ?',
-        ).all(nodeId, nodeId);
-
-        for (const edge of edges) {
-          const neighborId = edge.source === nodeId ? edge.target : edge.source;
-          if (visited.has(neighborId)) continue;
-          visited.add(neighborId);
-
-          const mem = this.getMemory(neighborId);
-          if (mem) {
-            related.push(mem);
-            nextFrontier.push(neighborId);
-          }
+      for (const nid of neighborIds) {
+        const mem = memMap.get(nid);
+        if (mem) {
+          related.push(mem);
+          nextFrontier.push(nid);
         }
       }
       frontier = nextFrontier;

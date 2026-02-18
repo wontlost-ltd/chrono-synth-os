@@ -20,6 +20,7 @@ import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
 import type { AllocationStrategy, ResourceAllocation } from './types/meta-regulation.js';
 import type { MemoryCognitionConfig } from './types/core-self.js';
+import { FieldEncryption, type EncryptionConfig } from './storage/encryption.js';
 import { type Clock, realClock } from './utils/clock.js';
 import { ConsoleLogger, type Logger } from './utils/logger.js';
 import { generatePrefixedId } from './utils/id-generator.js';
@@ -42,6 +43,8 @@ export interface ChronoSynthOSConfig {
   patternExtractionConfig?: Partial<PatternExtractionConfig>;
   /** 人生模拟引擎配置 */
   lifeSimulationConfig?: Partial<LifeSimEngineConfig>;
+  /** 字段加密配置 */
+  encryptionConfig?: EncryptionConfig;
   /** 跳过迁移（当数据库已由 createDatabase() 工厂初始化时设为 true） */
   skipMigrations?: boolean;
 }
@@ -83,8 +86,13 @@ export class ChronoSynthOS {
     /* 记忆模式提取器 */
     this.patternExtractor = new MemoryPatternExtractor(this.clock, this.logger, config.patternExtractionConfig);
 
+    /* 字段加密（可选） */
+    const encryption = config.encryptionConfig?.enabled
+      ? new FieldEncryption(config.encryptionConfig)
+      : undefined;
+
     /* 初始化三层 */
-    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig);
+    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig, encryption);
     this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator);
     this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig, this.updateGate);
 

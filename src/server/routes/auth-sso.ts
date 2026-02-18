@@ -13,25 +13,66 @@ import type { JwtPayload, UserRole } from '../../types/auth.js';
 import { syncPlanToQuota } from '../../billing/plans.js';
 import { ConfigError, ValidationError, AuthenticationError, ErrorCode } from '../../errors/index.js';
 
-/** SSO 状态参数临时存储（生产环境应使用 Redis） */
-const MAX_PENDING_STATES = 10_000;
-const STATE_TTL_MS = 300_000;
-const pendingStates = new Map<string, { redirectUri: string; createdAt: number }>();
+/** SSO 状态参数存储接口 */
+interface SsoStateStore {
+  set(state: string, data: { redirectUri: string }): Promise<void>;
+  getAndDelete(state: string): Promise<{ redirectUri: string } | null>;
+}
 
-function cleanExpiredStates(): void {
-  const fiveMinutesAgo = Date.now() - STATE_TTL_MS;
-  for (const [key, val] of pendingStates) {
-    if (val.createdAt < fiveMinutesAgo) pendingStates.delete(key);
-  }
-  /* 防止 Map 无限增长：超过上限时移除最旧的条目 */
-  if (pendingStates.size > MAX_PENDING_STATES) {
-    const iter = pendingStates.keys();
-    let toRemove = pendingStates.size - MAX_PENDING_STATES;
-    while (toRemove-- > 0) {
-      const key = iter.next().value;
-      if (key) pendingStates.delete(key);
+const STATE_TTL_SECONDS = 300;
+
+/** Redis 存储（多实例安全） */
+function createRedisStateStore(redis: { set: Function; get: Function; del: Function }): SsoStateStore {
+  const prefix = 'sso_state:';
+  return {
+    async set(state, data) {
+      await redis.set(`${prefix}${state}`, JSON.stringify(data), 'EX', STATE_TTL_SECONDS);
+    },
+    async getAndDelete(state) {
+      const raw = await redis.get(`${prefix}${state}`);
+      if (!raw) return null;
+      await redis.del(`${prefix}${state}`);
+      return JSON.parse(raw as string);
+    },
+  };
+}
+
+/** 内存存储回退（单实例） */
+function createMemoryStateStore(): SsoStateStore {
+  const MAX_PENDING = 10_000;
+  const TTL_MS = STATE_TTL_SECONDS * 1000;
+  const pending = new Map<string, { redirectUri: string; createdAt: number }>();
+
+  function clean() {
+    const cutoff = Date.now() - TTL_MS;
+    for (const [key, val] of pending) {
+      if (val.createdAt < cutoff) pending.delete(key);
+    }
+    if (pending.size > MAX_PENDING) {
+      const iter = pending.keys();
+      let toRemove = pending.size - MAX_PENDING;
+      while (toRemove-- > 0) {
+        const key = iter.next().value;
+        if (key) pending.delete(key);
+      }
     }
   }
+
+  return {
+    async set(state, data) {
+      clean();
+      pending.set(state, { ...data, createdAt: Date.now() });
+    },
+    async getAndDelete(state) {
+      const entry = pending.get(state);
+      if (!entry || Date.now() - entry.createdAt > TTL_MS) {
+        if (entry) pending.delete(state);
+        return null;
+      }
+      pending.delete(state);
+      return { redirectUri: entry.redirectUri };
+    },
+  };
 }
 
 export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
@@ -46,10 +87,12 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
   };
 
   const baseUrl = config.server.publicUrl;
+  const stateStore: SsoStateStore = app.redis
+    ? createRedisStateStore(app.redis as unknown as { set: Function; get: Function; del: Function })
+    : createMemoryStateStore();
 
   /* GET /api/v1/auth/sso/authorize */
   app.get('/api/v1/auth/sso/authorize', async (request, reply) => {
-    cleanExpiredStates();
 
     if (!baseUrl) {
       throw new ConfigError('SSO 启用但 server.publicUrl 未配置', ErrorCode.CONFIG_INVALID);
@@ -64,10 +107,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
     const callbackUri = `${baseUrl}/api/v1/auth/sso/callback`;
     const state = randomBytes(32).toString('hex');
 
-    pendingStates.set(state, {
-      redirectUri: redirectPath,
-      createdAt: Date.now(),
-    });
+    await stateStore.set(state, { redirectUri: redirectPath });
 
     const authorizeUrl = buildAuthorizeUrl(ssoConfig, callbackUri, state);
     return reply.redirect(authorizeUrl);
@@ -89,12 +129,10 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
       throw new ValidationError('缺少 code 或 state 参数', ErrorCode.VALIDATION_REQUIRED);
     }
 
-    const pending = pendingStates.get(state);
-    if (!pending || Date.now() - pending.createdAt > STATE_TTL_MS) {
-      if (pending) pendingStates.delete(state);
+    const pending = await stateStore.getAndDelete(state);
+    if (!pending) {
       throw new AuthenticationError('state 参数无效或已过期', ErrorCode.AUTH_SSO_FAILED);
     }
-    pendingStates.delete(state);
 
     if (!baseUrl) {
       throw new ConfigError('SSO 未配置回调地址', ErrorCode.CONFIG_INVALID);
@@ -151,9 +189,10 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
 
       // 存储刷新令牌
       const tokenHash = createHash('sha256').update(refreshToken).digest('hex');
+      const now = Date.now();
       db.prepare(
-        'INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(randomUUID(), userId, tokenHash, Date.now() + config.jwt.refreshTtlMs, Date.now());
+        'INSERT INTO refresh_tokens (id, user_id, token_hash, is_revoked, expires_at, created_at) VALUES (?, ?, ?, 0, ?, ?)',
+      ).run(`rt_${randomUUID()}`, userId, tokenHash, now + config.jwt.refreshTtlMs, now);
 
       // 重定向到前端并携带 token（通过 URL fragment 避免服务端日志泄露）
       const redirectUrl = new URL(pending.redirectUri, baseUrl);

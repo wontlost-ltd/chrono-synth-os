@@ -22,11 +22,22 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+/** 认证端点专用限流：按 IP，5 次/分钟 */
+const authRateLimit = {
+  config: {
+    rateLimit: {
+      max: 5,
+      timeWindow: 60_000,
+      keyGenerator: (request: { ip: string }) => request.ip,
+    },
+  },
+};
+
 export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
   if (!config.jwt.enabled) return;
 
   /* POST /api/v1/auth/register */
-  app.post('/api/v1/auth/register', async (request, reply) => {
+  app.post('/api/v1/auth/register', authRateLimit, async (request, reply) => {
     const { email, password } = RegisterSchema.parse(request.body);
 
     const existing = db.prepare<UserRow>('SELECT id FROM users WHERE email = ?').get(email);
@@ -70,7 +81,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
   });
 
   /* POST /api/v1/auth/login */
-  app.post('/api/v1/auth/login', async (request) => {
+  app.post('/api/v1/auth/login', authRateLimit, async (request) => {
     const { email, password } = LoginSchema.parse(request.body);
 
     const user = db.prepare<UserRow>('SELECT * FROM users WHERE email = ?').get(email);
@@ -88,7 +99,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
   });
 
   /* POST /api/v1/auth/refresh */
-  app.post('/api/v1/auth/refresh', async (request) => {
+  app.post('/api/v1/auth/refresh', authRateLimit, async (request) => {
     const { refreshToken } = RefreshTokenSchema.parse(request.body);
 
     const tokenHash = hashToken(refreshToken);
@@ -156,4 +167,12 @@ async function generateTokenPair(
     refreshToken,
     expiresIn: Math.floor(config.jwt.accessTtlMs / 1000),
   };
+}
+
+/** 清理过期和已吊销的刷新令牌（30 天保留窗口） */
+export function cleanupExpiredTokens(db: IDatabase): number {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  return db.prepare<void>(
+    'DELETE FROM refresh_tokens WHERE (is_revoked = 1 AND created_at < ?) OR (expires_at < ?)',
+  ).run(cutoff, cutoff).changes;
 }

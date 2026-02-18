@@ -5,7 +5,10 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { LifeSimulationService } from '../../simulation/life-simulation-service.js';
-import { NotFoundError, ErrorCode } from '../../errors/index.js';
+import type { IDatabase } from '../../storage/database.js';
+import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { UsageTracker } from '../../billing/usage-tracker.js';
+import { NotFoundError, StateError, ErrorCode } from '../../errors/index.js';
 import {
   CreateLifeSimulationSchema,
   StressTestRequestSchema,
@@ -14,16 +17,25 @@ import {
 export function registerLifeSimulationRoutes(
   app: FastifyInstance,
   service: LifeSimulationService,
-  options?: { queueEnabled?: boolean },
+  options?: { queueEnabled?: boolean; db?: IDatabase },
 ): void {
   const asyncMode = options?.queueEnabled ?? false;
+  const quotaManager = options?.db ? new QuotaManager(options.db) : undefined;
+  const usageTracker = options?.db ? new UsageTracker(options.db) : undefined;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */
   app.get('/api/v1/simulations', async (request) => {
     const tenantId = request.tenantId;
     const query = request.query as Record<string, string | undefined>;
-    const limit = Math.min(100, Math.max(1, parseInt(query.limit || '20', 10) || 20));
-    const records = service.getByTenant(tenantId, limit);
+    const page = Math.max(1, parseInt(query.page || '1', 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '20', 10) || 20));
+    const offset = (page - 1) * pageSize;
+
+    const total = options?.db
+      ? (options.db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM life_simulations WHERE tenant_id = ?').get(tenantId)?.count ?? 0)
+      : 0;
+
+    const records = service.getByTenant(tenantId, pageSize + offset).slice(offset);
     return {
       data: records.map(r => ({
         simulationId: r.id,
@@ -31,6 +43,7 @@ export function registerLifeSimulationRoutes(
         createdAt: r.createdAt,
         completedAt: r.completedAt,
       })),
+      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) || 1 },
     };
   });
 
@@ -38,7 +51,13 @@ export function registerLifeSimulationRoutes(
   app.post('/api/v1/simulations/life', async (request, reply) => {
     const body = CreateLifeSimulationSchema.parse(request.body);
     const tenantId = request.tenantId;
+
+    if (quotaManager && !quotaManager.consumeQuota(tenantId, 'simulation')) {
+      throw new StateError('模拟次数配额已用尽', ErrorCode.STATE_INVALID_TRANSITION);
+    }
+
     const { simulationId, taskId } = service.enqueue(body, tenantId);
+    usageTracker?.record(tenantId, 'simulation', 1);
 
     if (!asyncMode) {
       try { service.executeTask(simulationId); } catch { /* 异步回退 */ }
@@ -123,7 +142,12 @@ export function registerLifeSimulationRoutes(
         },
       };
 
+      if (quotaManager && !quotaManager.consumeQuota(tenantId, 'simulation')) {
+        throw new StateError('模拟次数配额已用尽', ErrorCode.STATE_INVALID_TRANSITION);
+      }
+
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);
+      usageTracker?.record(tenantId, 'simulation', 1);
 
       if (!asyncMode) {
         try { service.executeTask(simulationId); } catch { /* 异步回退 */ }

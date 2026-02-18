@@ -7,7 +7,7 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { CreateMemorySchema, LinkMemorySchema, RelatedMemoryQuerySchema } from '../schemas/api-schemas.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
-import { parsePagination, paginate } from '../plugins/pagination.js';
+import { parsePagination } from '../plugins/pagination.js';
 
 export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
   function getOS(request: FastifyRequest): ChronoSynthOS {
@@ -24,14 +24,17 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
     return { data: memory };
   });
 
-  /* GET /api/v1/memories — 获取所有记忆（统一分页响应） */
+  /* GET /api/v1/memories — 获取所有记忆（SQL 级分页） */
   app.get('/api/v1/memories', async (request) => {
     const query = request.query as Record<string, unknown>;
     const tenantOS = getOS(request);
-    const all = tenantOS.core.memories.getAllMemories();
-    const items = [...all.values()];
     const params = parsePagination(query);
-    return paginate(items, params);
+    const offset = (params.page - 1) * params.pageSize;
+    const { nodes, total } = tenantOS.core.memories.getMemoriesPaginated(params.pageSize, offset);
+    return {
+      data: nodes,
+      pagination: { page: params.page, pageSize: params.pageSize, total, totalPages: Math.ceil(total / params.pageSize) || 1 },
+    };
   });
 
   /* POST /api/v1/memories/link — 关联记忆 */

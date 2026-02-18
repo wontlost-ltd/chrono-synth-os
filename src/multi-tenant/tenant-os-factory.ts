@@ -5,6 +5,7 @@
 
 import { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { IDatabase } from '../storage/database.js';
+import type { EncryptionConfig } from '../storage/encryption.js';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import { TenantDatabase } from './tenant-database.js';
@@ -25,13 +26,17 @@ export class TenantOSFactory {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly maxCached: number;
 
+  private readonly encryptionConfig?: EncryptionConfig;
+
   constructor(
     private readonly db: IDatabase,
     private readonly clock: Clock,
     private readonly logger: Logger,
     config?: TenantOSFactoryConfig,
+    encryptionConfig?: EncryptionConfig,
   ) {
     this.maxCached = config?.maxCachedTenants ?? 64;
+    this.encryptionConfig = encryptionConfig;
   }
 
   /** 获取或创建租户 OS 实例 */
@@ -84,6 +89,7 @@ export class TenantOSFactory {
       db: tenantDb,
       clock: this.clock,
       logger: this.logger,
+      encryptionConfig: this.encryptionConfig,
       skipMigrations: true,  /* 迁移由宿主数据库统一管理 */
     });
     os.start();
