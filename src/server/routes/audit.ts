@@ -11,6 +11,7 @@ export function registerAuditRoutes(app: FastifyInstance, db: IDatabase | undefi
   app.get<{ Querystring: { limit?: string } }>('/api/v1/audit', async (request) => {
     if (!db) return { data: [] };
     const limit = Math.min(parseInt(request.query.limit || '100', 10) || 100, 1000);
-    return { data: queryAuditLog(db, limit) };
+    const tenantId = request.tenantId;
+    return { data: queryAuditLog(db, limit, tenantId) };
   });
 }

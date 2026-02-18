@@ -87,13 +87,15 @@ export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase)
       'SELECT id, simulation_id, owner_user_id, permission, created_at FROM shared_simulations WHERE shared_with_user_id = ? ORDER BY created_at DESC',
     ).all(userId);
 
-    return shares.map((s: SharedRow) => ({
-      id: s.id,
-      simulationId: s.simulation_id,
-      ownerUserId: s.owner_user_id,
-      permission: s.permission,
-      createdAt: new Date(s.created_at).toISOString(),
-    }));
+    return {
+      data: shares.map((s: SharedRow) => ({
+        id: s.id,
+        simulationId: s.simulation_id,
+        ownerUserId: s.owner_user_id,
+        permission: s.permission,
+        createdAt: new Date(s.created_at).toISOString(),
+      })),
+    };
   });
 
   /* DELETE /api/v1/simulations/:id/share/:userId */

@@ -189,6 +189,6 @@ export const CreateDecisionSchema = z.object({
 export const DecisionFeedbackSchema = z.object({
   runId: z.string().min(1),
   selectedAlternative: z.string().min(1),
-  satisfaction: z.number().min(0).max(1),
+  satisfaction: z.number().int().min(1).max(5),
   notes: z.string().optional(),
 });

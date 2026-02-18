@@ -33,6 +33,12 @@ function hashApiKey(apiKey: string | undefined): string | null {
 export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined): void {
   if (!db) return;
 
+  /* 记录请求开始时间，用于计算延迟 */
+  app.addHook('onRequest', (request: FastifyRequest, _reply: FastifyReply, done) => {
+    (request as unknown as Record<string, number>).__startTime = performance.now();
+    done();
+  });
+
   app.addHook('onResponse', (request: FastifyRequest, reply: FastifyReply, done) => {
     const routePath = request.routeOptions?.url ?? request.url.split('?')[0];
     if (!AUDITED_METHODS.has(request.method) || EXCLUDED_PATHS.has(routePath)) {
@@ -48,8 +54,9 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
       const apiKey = (request.headers['x-api-key'] as string | undefined)
         ?? (request.query as Record<string, string>)?.apiKey;
       const apiKeyHash = hashApiKey(apiKey);
+      const tenantId = request.tenantId ?? 'default';
       db.prepare<void>(
-        'INSERT INTO audit_log (id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO audit_log (id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         crypto.randomUUID(),
         Date.now(),
@@ -59,6 +66,7 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
         reply.statusCode,
         Math.round(latency * 100) / 100,
         apiKeyHash,
+        tenantId,
       );
     } catch {
       /* 审计写入失败不应中断请求 */
@@ -68,8 +76,17 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
   });
 }
 
-/** 查询审计日志（最近 N 条） */
-export function queryAuditLog(db: IDatabase, limit = 100): AuditEntry[] {
+/** 查询审计日志（按租户过滤，最近 N 条） */
+export function queryAuditLog(db: IDatabase, limit = 100, tenantId?: string): AuditEntry[] {
+  if (tenantId) {
+    try {
+      return db.prepare<AuditEntry>(
+        'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ?',
+      ).all(tenantId, limit);
+    } catch {
+      /* 兼容无 tenant_id 列的旧表 */
+    }
+  }
   return db.prepare<AuditEntry>(
     'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log ORDER BY timestamp DESC LIMIT ?',
   ).all(limit);

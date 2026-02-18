@@ -219,7 +219,7 @@ export const AppConfigSchema = z.object({
   queue: queueSchema.default({ enabled: false, pollIntervalMs: 1000, maxConcurrent: 2, maxRetries: 3 }),
   observability: observabilitySchema.default({
     enabled: false, otlpEndpoint: 'http://localhost:4318', serviceName: 'chrono-synth-os',
-    serviceVersion: '0.8.0', sampleRate: 1.0,
+    serviceVersion: '2.0.0', sampleRate: 1.0,
   }),
   cognition: cognitionSchema,
 });

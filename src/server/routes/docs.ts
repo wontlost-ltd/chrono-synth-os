@@ -6,7 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 
 const API_DOCS = {
-  version: '0.8.0',
+  version: '2.0.0',
   endpoints: [
     /* ===== 基础设施 ===== */
     {
@@ -243,6 +243,12 @@ const API_DOCS = {
     },
 
     /* ===== 决策引擎 ===== */
+    {
+      method: 'GET',
+      path: '/api/v1/decisions',
+      description: '获取所有决策案例（支持分页：?page=1&pageSize=20）',
+      response_schema: { data: 'DecisionCase[]', pagination: '{ page, pageSize, total, totalPages }' },
+    },
     {
       method: 'POST',
       path: '/api/v1/decisions',

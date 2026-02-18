@@ -10,6 +10,7 @@ import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import { buildAuthorizeUrl, exchangeCode, fetchUserInfo } from '../plugins/auth0.js';
 import type { JwtPayload, UserRole } from '../../types/auth.js';
+import { syncPlanToQuota } from '../../billing/plans.js';
 
 /** SSO 状态参数临时存储（生产环境应使用 Redis） */
 const MAX_PENDING_STATES = 10_000;
@@ -126,12 +127,21 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
         role = existingUser.role as UserRole;
       } else {
         userId = randomUUID();
-        tenantId = 'default';
-        role = 'member';
+        tenantId = `tenant_${randomUUID()}`;
+        role = 'admin';
         const now = Date.now();
         db.prepare(
           'INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
         ).run(userId, email, 'sso-managed', role, tenantId, now, now);
+
+        /* 初始化 free 订阅与配额 */
+        const subId = `sub_${randomUUID()}`;
+        const periodEnd = now + 365 * 24 * 60 * 60 * 1000;
+        db.prepare(
+          `INSERT INTO subscriptions (id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
+           VALUES (?, ?, NULL, 'free', 'active', ?, ?, ?, ?)`,
+        ).run(subId, tenantId, now, periodEnd, now, now);
+        syncPlanToQuota(db, tenantId, 'free');
       }
 
       // 签发自有 JWT
