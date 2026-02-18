@@ -55,11 +55,13 @@ export class QuotaManager {
     return !usage || usage.used < limit.max_per_window;
   }
 
-  /** 原子性检查并消费配额（check + record 合一，避免竞态） */
+  /** 原子性检查并消费配额（事务内 check + record，避免竞态） */
   consumeQuota(tenantId: string, resource: string, now?: number): boolean {
-    if (!this.checkQuota(tenantId, resource, now)) return false;
-    this.recordUsage(tenantId, resource, now);
-    return true;
+    return this.db.transaction(() => {
+      if (!this.checkQuota(tenantId, resource, now)) return false;
+      this.recordUsage(tenantId, resource, now);
+      return true;
+    });
   }
 
   /** 记录一次资源使用 */

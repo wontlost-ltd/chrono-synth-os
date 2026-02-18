@@ -23,7 +23,7 @@ const TENANT_TABLES = [
   'snapshots', 'evolution_records',
   'narrative', 'decision_style', 'cognitive_model',
   'tasks', 'quota_usage', 'quota_limits',
-  'usage_records', 'subscriptions', 'users',
+  'usage_records', 'subscriptions',
   'audit_log',
 ] as const;
 
@@ -48,8 +48,14 @@ const RELATED_TABLES: Array<{
   },
   {
     name: 'refresh_tokens',
-    exportSql: 'SELECT * FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)',
+    exportSql: 'SELECT id, user_id, is_revoked, expires_at, created_at FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)',
     deleteSql: 'DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)',
+    params: (t) => [t],
+  },
+  {
+    name: 'users',
+    exportSql: 'SELECT id, email, role, tenant_id, created_at, updated_at FROM users WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM users WHERE tenant_id = ?',
     params: (t) => [t],
   },
 ];
@@ -159,6 +165,11 @@ export function registerPrivacyRoutes(
         if (count > 0) deletedCounts[table] = count;
       }
     });
+
+    /* 驱逐缓存中的租户 OS 实例，防止内存残留 */
+    if (tenantFactory) {
+      tenantFactory.evict(tenantId);
+    }
 
     return {
       data: {

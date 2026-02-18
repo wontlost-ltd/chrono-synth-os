@@ -59,6 +59,17 @@ export class TenantOSFactory {
     return this.cache.size;
   }
 
+  /** 驱逐指定租户的缓存实例 */
+  evict(tenantId: string): void {
+    const normalized = normalizeTenantId(tenantId);
+    const entry = this.cache.get(normalized);
+    if (entry) {
+      entry.os.close();
+      this.cache.delete(normalized);
+      this.logger.info('TenantOSFactory', `租户 OS 实例已驱逐: ${normalized}`);
+    }
+  }
+
   /** 清理所有缓存的租户实例 */
   clear(): void {
     for (const entry of this.cache.values()) {
