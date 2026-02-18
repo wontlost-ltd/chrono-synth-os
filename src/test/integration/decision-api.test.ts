@@ -47,7 +47,7 @@ describe('决策 API 集成测试', () => {
         },
       });
 
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.ok(body.data.id.startsWith('dec_'));
       assert.equal(body.data.title, '职业选择');
@@ -224,7 +224,7 @@ describe('决策 API 集成测试', () => {
         },
       });
 
-      assert.equal(feedbackRes.statusCode, 200);
+      assert.equal(feedbackRes.statusCode, 201);
       const body = JSON.parse(feedbackRes.body);
       assert.equal(body.data.runId, runId);
       assert.equal(body.data.stored, true);
@@ -281,7 +281,7 @@ describe('决策 API 集成测试', () => {
           context: { currentCity: '北京', targetCity: '成都' },
         },
       });
-      assert.equal(createRes.statusCode, 200);
+      assert.equal(createRes.statusCode, 201);
       const { id: decisionId } = JSON.parse(createRes.body).data;
 
       /* 2. 运行模拟 */
@@ -322,7 +322,7 @@ describe('决策 API 集成测试', () => {
           notes: '推荐结果符合预期',
         },
       });
-      assert.equal(fbRes.statusCode, 200);
+      assert.equal(fbRes.statusCode, 201);
       assert.equal(JSON.parse(fbRes.body).data.stored, true);
     });
   });

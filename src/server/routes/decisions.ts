@@ -241,7 +241,7 @@ export function registerDecisionRoutes(
   });
 
   /* POST /api/v1/decisions/:id/feedback */
-  app.post<{ Params: { id: string } }>('/api/v1/decisions/:id/feedback', async (request) => {
+  app.post<{ Params: { id: string } }>('/api/v1/decisions/:id/feedback', async (request, reply) => {
     const { id } = request.params;
     const tenantId = request.tenantId;
     const body = DecisionFeedbackSchema.parse(request.body);
@@ -259,6 +259,6 @@ export function registerDecisionRoutes(
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(feedbackId, body.runId, tenantId, body.selectedAlternative, body.satisfaction, body.notes ?? null, Date.now());
 
-    return { data: { runId: body.runId, stored: true } };
+    return reply.status(201).send({ data: { feedbackId, runId: body.runId, stored: true } });
   });
 }

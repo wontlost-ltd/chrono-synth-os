@@ -93,7 +93,7 @@ describe('API 集成测试', () => {
         url: '/api/v1/values',
         payload: { label: '诚实', weight: 0.8 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.data.label, '诚实');
       assert.equal(body.data.weight, 0.8);
@@ -165,7 +165,7 @@ describe('API 集成测试', () => {
         url: '/api/v1/memories',
         payload: { kind: 'episodic', content: '第一次冒险', valence: 0.5, salience: 0.8 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.data.kind, 'episodic');
       assert.equal(body.data.content, '第一次冒险');
@@ -191,7 +191,7 @@ describe('API 集成测试', () => {
         url: '/api/v1/memories/link',
         payload: { source: m1.id, target: m2.id, relation: '关联', strength: 0.7 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
     });
   });
 
@@ -224,7 +224,7 @@ describe('API 集成测试', () => {
         url: '/api/v1/personas/fork',
         payload: { label: '探索者', resourceQuota: 0.3 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.equal(body.data.label, '探索者');
       assert.equal(body.data.resourceQuota, 0.3);
@@ -267,7 +267,7 @@ describe('API 集成测试', () => {
         url: '/api/v1/snapshots',
         payload: { reason: 'manual' },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.ok(body.data.id);
       assert.equal(body.data.reason, 'manual');
@@ -389,7 +389,7 @@ describe('API 集成测试', () => {
         url: '/api/v1/pos/survival',
         payload: { label: '风险底线', kind: 'threshold', value: 0.2, severity: 4 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.ok(body.data.id.startsWith('anchor_'));
       assert.equal(body.data.kind, 'threshold');

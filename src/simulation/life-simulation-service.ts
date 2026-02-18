@@ -38,7 +38,9 @@ export class LifeSimulationService {
     this.store.setStatus(simulationId, 'running');
 
     try {
-      const config: LifeSimulationConfig = JSON.parse(record.configJson);
+      let config: LifeSimulationConfig;
+      try { config = JSON.parse(record.configJson) as LifeSimulationConfig; }
+      catch { throw new Error(`模拟 ${simulationId} 配置 JSON 解析失败`); }
       const coreState = this.getState();
 
       const result = this.engine.simulate(config, coreState, {

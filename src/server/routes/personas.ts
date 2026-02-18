@@ -34,7 +34,7 @@ export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, t
   }
 
   /* POST /api/v1/personas/fork — 从核心价值分叉 */
-  app.post('/api/v1/personas/fork', async (request) => {
+  app.post('/api/v1/personas/fork', async (request, reply) => {
     const body = ForkPersonaSchema.parse(request.body);
     const tenantOS = getOS(request);
     const coreValues = new Map<string, number>();
@@ -42,7 +42,7 @@ export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, t
       coreValues.set(id, v.weight);
     }
     const persona = tenantOS.accelerated.forkPersona(body.label, coreValues, body.resourceQuota);
-    return { data: serializePersona(persona) };
+    return reply.status(201).send({ data: serializePersona(persona) });
   });
 
   /* POST /api/v1/personas/simulate — 运行模拟 */

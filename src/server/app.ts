@@ -119,7 +119,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       config.queue.maxRetries,
     );
     worker.register('life_simulation', async (task) => {
-      const payload = JSON.parse(task.payload) as { simulationId: string };
+      let payload: { simulationId: string };
+      try { payload = JSON.parse(task.payload) as { simulationId: string }; }
+      catch { throw new Error(`任务 ${task.id} payload 解析失败`); }
       deps.os.lifeSimulation.executeTask(payload.simulationId);
     });
     worker.start();

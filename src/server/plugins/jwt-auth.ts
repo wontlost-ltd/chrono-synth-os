@@ -25,8 +25,10 @@ const AUTH_PATHS = new Set([
   '/api/v1/auth/login',
   '/api/v1/auth/register',
   '/api/v1/auth/refresh',
+  '/api/v1/auth/logout',
   '/api/v1/auth/sso/authorize',
   '/api/v1/auth/sso/callback',
+  '/api/v1/billing/plans',
 ]);
 
 function isPublicPath(url: string): boolean {

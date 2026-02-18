@@ -8,10 +8,14 @@ export function mapToJson<V>(map: ReadonlyMap<string, V>): string {
   return JSON.stringify(Object.fromEntries(map));
 }
 
-/** JSON 字符串 → Map */
+/** JSON 字符串 → Map（解析失败返回空 Map） */
 export function jsonToMap<V>(json: string): Map<string, V> {
-  const obj = JSON.parse(json) as Record<string, V>;
-  return new Map(Object.entries(obj));
+  try {
+    const obj = JSON.parse(json) as Record<string, V>;
+    return new Map(Object.entries(obj));
+  } catch {
+    return new Map<string, V>();
+  }
 }
 
 /** 数组 → JSON 字符串 */
@@ -19,9 +23,13 @@ export function arrayToJson<T>(arr: readonly T[]): string {
   return JSON.stringify(arr);
 }
 
-/** JSON 字符串 → 数组 */
+/** JSON 字符串 → 数组（解析失败返回空数组） */
 export function jsonToArray<T>(json: string): T[] {
-  return JSON.parse(json) as T[];
+  try {
+    return JSON.parse(json) as T[];
+  } catch {
+    return [] as T[];
+  }
 }
 
 /**
@@ -52,7 +60,11 @@ export function deepStringify(value: unknown): string {
   return JSON.stringify(value, mapReplacer);
 }
 
-/** 深度反序列化（恢复 Map） */
-export function deepParse<T>(json: string): T {
-  return JSON.parse(json, mapReviver) as T;
+/** 深度反序列化（恢复 Map，解析失败返回 null） */
+export function deepParse<T>(json: string): T | null {
+  try {
+    return JSON.parse(json, mapReviver) as T;
+  } catch {
+    return null;
+  }
 }

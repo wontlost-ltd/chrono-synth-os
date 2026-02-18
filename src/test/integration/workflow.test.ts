@@ -35,7 +35,7 @@ describe('端到端工作流', () => {
       url: '/api/v1/values',
       payload: { label: '诚实', weight: 0.8 },
     });
-    assert.equal(createValueRes.statusCode, 200);
+    assert.equal(createValueRes.statusCode, 201);
     JSON.parse(createValueRes.body).data;
 
     const createValue2Res = await app.inject({
@@ -43,7 +43,7 @@ describe('端到端工作流', () => {
       url: '/api/v1/values',
       payload: { label: '勇气', weight: 0.6 },
     });
-    assert.equal(createValue2Res.statusCode, 200);
+    assert.equal(createValue2Res.statusCode, 201);
 
     /* 2. 更新叙事 */
     const narrativeRes = await app.inject({
@@ -59,7 +59,7 @@ describe('端到端工作流', () => {
       url: '/api/v1/personas/fork',
       payload: { label: '探索者', resourceQuota: 0.3 },
     });
-    assert.equal(forkRes.statusCode, 200);
+    assert.equal(forkRes.statusCode, 201);
     const persona = JSON.parse(forkRes.body).data;
 
     /* 4. 运行模拟 */
@@ -106,7 +106,7 @@ describe('端到端工作流', () => {
       url: '/api/v1/snapshots',
       payload: { reason: 'manual' },
     });
-    assert.equal(snapRes.statusCode, 200);
+    assert.equal(snapRes.statusCode, 201);
     const snapshot = JSON.parse(snapRes.body).data;
 
     /* 9. 修改状态（应被恢复覆盖） */

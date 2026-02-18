@@ -34,7 +34,7 @@ describe('多租户与任务队列集成测试', () => {
   describe('租户识别 (X-Tenant-Id)', () => {
     it('无 X-Tenant-Id 使用默认租户', async () => {
       const res = await app.inject({ method: 'POST', url: '/api/v1/values', payload: { label: '诚信', weight: 0.8 } });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
     });
 
     it('有 X-Tenant-Id 时请求包含租户标识', async () => {
@@ -44,7 +44,7 @@ describe('多租户与任务队列集成测试', () => {
         headers: { 'x-tenant-id': 'test-tenant' },
         payload: { label: '勇气', weight: 0.6 },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
     });
 
     it('无效 X-Tenant-Id 回退到默认租户', async () => {

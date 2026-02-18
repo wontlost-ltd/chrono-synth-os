@@ -81,9 +81,17 @@ describe('计费 API 集成测试', () => {
   describe('POST /api/v1/billing/checkout（Stripe 未启用时）', () => {
     it('Stripe 未启用时 checkout 返回 404', async () => {
       /* config.stripe.enabled 默认 false，路由不注册 */
+      const regRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        payload: { email: 'checkout@example.com', password: 'password123' },
+      });
+      const { accessToken, tenantId } = JSON.parse(regRes.body).data;
+
       const res = await app.inject({
         method: 'POST',
         url: '/api/v1/billing/checkout',
+        headers: { authorization: `Bearer ${accessToken}`, 'x-tenant-id': tenantId },
         payload: { priceId: 'price_xxx', successUrl: '/success', cancelUrl: '/cancel' },
       });
       assert.equal(res.statusCode, 404);

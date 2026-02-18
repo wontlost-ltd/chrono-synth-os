@@ -135,7 +135,7 @@ export class PersonaEngine {
       label: row.label,
       values: jsonToMap<number>(row.values_json),
       status,
-      results: deepParse<SimulationResult[]>(row.results_json),
+      results: deepParse<SimulationResult[]>(row.results_json) ?? [],
       resourceQuota: row.resource_quota,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

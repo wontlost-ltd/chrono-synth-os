@@ -39,10 +39,11 @@ describe('协作 API 集成测试', () => {
   /** 创建模拟并返回 simulationId */
   function createSimulation(tenantId: string): string {
     const simId = `sim_test_${Date.now()}`;
+    const taskId = `task_test_${Date.now()}`;
     db.prepare(
-      `INSERT INTO life_simulations (id, tenant_id, config_json, status, created_at, updated_at)
-       VALUES (?, ?, '{}', 'completed', ?, ?)`,
-    ).run(simId, tenantId, Date.now(), Date.now());
+      `INSERT INTO life_simulations (id, tenant_id, task_id, config_json, status, created_at, updated_at)
+       VALUES (?, ?, ?, '{}', 'completed', ?, ?)`,
+    ).run(simId, tenantId, taskId, Date.now(), Date.now());
     return simId;
   }
 
@@ -74,7 +75,7 @@ describe('协作 API 集成测试', () => {
         },
         payload: { userId: target.userId, permission: 'view' },
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.ok(body.data.id);
       assert.equal(body.data.simulationId, simId);

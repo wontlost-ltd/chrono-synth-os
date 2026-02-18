@@ -40,7 +40,8 @@ function createRedisStateStore(redis: RedisClient): SsoStateStore {
       const raw = await redis.get(`${prefix}${state}`);
       if (!raw) return null;
       await redis.del(`${prefix}${state}`);
-      return JSON.parse(raw as string);
+      try { return JSON.parse(raw as string); }
+      catch { return null; }
     },
   };
 }

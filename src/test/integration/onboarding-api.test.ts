@@ -35,7 +35,7 @@ describe('引导 API 集成测试', () => {
         method: 'POST',
         url: '/api/v1/onboarding/start',
       });
-      assert.equal(res.statusCode, 200);
+      assert.equal(res.statusCode, 201);
       const body = JSON.parse(res.body);
       assert.ok(body.data.id.startsWith('onb_'));
       assert.equal(body.data.currentStep, 1);
