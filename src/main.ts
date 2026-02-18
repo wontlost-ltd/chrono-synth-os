@@ -39,12 +39,26 @@ async function start(): Promise<void> {
   await app.listen({ host: config.server.host, port: config.server.port });
   logger.info('Server', `服务已启动: http://${config.server.host}:${config.server.port}`);
 
+  let isShuttingDown = false;
   function shutdown(signal: string): void {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
     logger.info('Server', `收到 ${signal}，开始优雅关闭...`);
     serverState.shuttingDown = true;
+    serverState.ready = false;
+
+    /* 强制退出兜底：防止关闭流程挂起 */
+    const forceTimeout = setTimeout(() => {
+      logger.warn('Server', '优雅关闭超时 (15s)，强制退出');
+      process.exit(1);
+    }, 15_000);
+    forceTimeout.unref();
+
     app.close().then(async () => {
       os.close();
       await shutdownTracing();
+      clearTimeout(forceTimeout);
       logger.info('Server', '服务已关闭');
       process.exit(0);
     }).catch((err) => {
