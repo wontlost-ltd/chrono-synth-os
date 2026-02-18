@@ -396,6 +396,12 @@ export function loadConfig(overrides?: DeepPartial<AppConfig>, configPath?: stri
   if (parsed.sso.enabled && !parsed.server.publicUrl) {
     throw new Error('sso.enabled=true 时必须设置 server.publicUrl 作为回调基础地址');
   }
+  if (parsed.stripe.enabled && !parsed.server.publicUrl) {
+    throw new Error('stripe.enabled=true 时必须设置 server.publicUrl（用于安全重定向校验）');
+  }
+  if (parsed.cors.origin === true && parsed.cors.credentials) {
+    throw new Error('cors.origin=true (wildcard) 不能与 credentials=true 同时使用');
+  }
 
   return parsed;
 }

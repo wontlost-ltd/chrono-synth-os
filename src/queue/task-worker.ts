@@ -38,11 +38,31 @@ export class TaskWorker {
     this.logger.info(LAYER, `工作者已启动（间隔=${this.pollIntervalMs}ms, 并发=${this.maxConcurrent}）`);
   }
 
-  /** 停止轮询 */
-  stop(): void {
+  /** 当前是否健康：轮询已启动且无积压失败 */
+  isHealthy(): boolean {
+    return this.timer !== undefined;
+  }
+
+  /** 当前正在执行的任务数 */
+  get inflight(): number {
+    return this.running;
+  }
+
+  /** 停止轮询并等待正在执行的任务完成 */
+  async stop(drainTimeoutMs = 10_000): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
+    }
+    if (this.running > 0) {
+      this.logger.info(LAYER, `等待 ${this.running} 个进行中的任务完成…`);
+      const deadline = Date.now() + drainTimeoutMs;
+      while (this.running > 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (this.running > 0) {
+        this.logger.warn(LAYER, `排空超时，仍有 ${this.running} 个任务未完成`);
+      }
     }
     this.logger.info(LAYER, '工作者已停止');
   }

@@ -5,6 +5,7 @@ export {
   StateError,
   StorageError,
   ConfigError,
+  QuotaExceededError,
   AuthenticationError,
   AuthorizationError,
   ErrorCode,

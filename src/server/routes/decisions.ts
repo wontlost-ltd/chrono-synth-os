@@ -11,7 +11,7 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
-import { NotFoundError, ErrorCode } from '../../errors/index.js';
+import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
 import type { DecisionCase } from '../../intelligence/types.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
@@ -147,7 +147,7 @@ export function registerDecisionRoutes(
   });
 
   /* POST /api/v1/decisions/:id/simulate */
-  app.post<{ Params: { id: string } }>('/api/v1/decisions/:id/simulate', async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/api/v1/decisions/:id/simulate', async (request) => {
     const { id } = request.params;
     const tenantId = request.tenantId;
 
@@ -160,7 +160,7 @@ export function registerDecisionRoutes(
 
     /* 原子性配额检查 + 消费 */
     if (!quotaManager.consumeQuota(tenantId, 'simulation')) {
-      return reply.status(429).send({ error: 'QuotaExceeded', code: 'QUOTA_EXCEEDED', message: '模拟次数配额已用尽' });
+      throw new QuotaExceededError('模拟次数配额已用尽');
     }
 
     const decisionCase: DecisionCase = {

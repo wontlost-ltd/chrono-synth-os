@@ -31,6 +31,9 @@ export const ErrorCode = {
   STATE_SYSTEM_RUNNING: 'STATE_SYSTEM_RUNNING',
   STATE_SYSTEM_STOPPED: 'STATE_SYSTEM_STOPPED',
 
+  /* 配额超限 (429) */
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
+
   /* 存储错误 (500) */
   STORAGE_READ: 'STORAGE_READ',
   STORAGE_WRITE: 'STORAGE_WRITE',
@@ -120,6 +123,14 @@ export class AuthorizationError extends ChronoError {
   constructor(message: string, code: ErrorCodeValue = ErrorCode.AUTH_INSUFFICIENT_ROLE, details?: unknown) {
     super(message, 403, code, details);
     this.name = 'AuthorizationError';
+  }
+}
+
+/** 配额超限 (429) */
+export class QuotaExceededError extends ChronoError {
+  constructor(message: string, code: ErrorCodeValue = ErrorCode.QUOTA_EXCEEDED, details?: unknown) {
+    super(message, 429, code, details);
+    this.name = 'QuotaExceededError';
   }
 }
 

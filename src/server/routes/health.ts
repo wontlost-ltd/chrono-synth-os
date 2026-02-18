@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { IDatabase } from '../../storage/database.js';
+import type { TaskWorker } from '../../queue/task-worker.js';
 import { CircuitBreaker, CircuitOpenError } from '../plugins/circuit-breaker.js';
 
 /** 从 package.json 读取版本（构建时固化） */
@@ -38,6 +39,8 @@ export interface HealthRouteDeps {
   db?: IDatabase;
   /** 可选注入断路器，便于测试；不传则内部创建 */
   circuitBreaker?: CircuitBreaker;
+  /** 可选任务工作者，用于报告队列健康状态 */
+  worker?: TaskWorker;
 }
 
 export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps): void {
@@ -108,6 +111,12 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
         components.redis = { status: 'degraded' };
         redisOk = false;
       }
+    }
+
+    /* 任务队列工作者 */
+    if (deps.worker) {
+      const healthy = deps.worker.isHealthy();
+      components.worker = { status: healthy ? 'ok' : 'stopped', inflight: deps.worker.inflight };
     }
 
     const allOk = serverState.ready && dbOk && redisOk;

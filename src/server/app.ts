@@ -104,10 +104,32 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   );
   app.addHook('onClose', () => { tenantFactory.clear(); });
 
+  /* 任务队列（提前创建以便注入健康路由） */
+  let worker: TaskWorker | undefined;
+  if (config.queue.enabled) {
+    const queueDb = deps.db ?? deps.os.getDatabase();
+    const queue = new TaskQueue(queueDb);
+    registerTaskRoutes(app, queue);
+    worker = new TaskWorker(
+      queue,
+      deps.os.bus,
+      deps.os.getLogger(),
+      config.queue.pollIntervalMs,
+      config.queue.maxConcurrent,
+      config.queue.maxRetries,
+    );
+    worker.register('life_simulation', async (task) => {
+      const payload = JSON.parse(task.payload) as { simulationId: string };
+      deps.os.lifeSimulation.executeTask(payload.simulationId);
+    });
+    worker.start();
+    app.addHook('onClose', async () => { await worker!.stop(); });
+  }
+
   /* 路由 */
   registerAuthRoutes(app, db, config);
   registerBillingRoutes(app, db, config);
-  registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker });
+  registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker, worker });
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
@@ -126,27 +148,6 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
-
-  /* 任务队列（可选） */
-  if (config.queue.enabled) {
-    const queueDb = deps.db ?? deps.os.getDatabase();
-    const queue = new TaskQueue(queueDb);
-    registerTaskRoutes(app, queue);
-    const worker = new TaskWorker(
-      queue,
-      deps.os.bus,
-      deps.os.getLogger(),
-      config.queue.pollIntervalMs,
-      config.queue.maxConcurrent,
-      config.queue.maxRetries,
-    );
-    worker.register('life_simulation', async (task) => {
-      const payload = JSON.parse(task.payload) as { simulationId: string };
-      deps.os.lifeSimulation.executeTask(payload.simulationId);
-    });
-    worker.start();
-    app.addHook('onClose', () => { worker.stop(); });
-  }
 
   registerDocsRoutes(app);
 
