@@ -134,7 +134,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerBillingRoutes(app, db, config);
   registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker, worker });
   registerValueRoutes(app, deps.os, tenantFactory);
-  registerMemoryRoutes(app, deps.os, tenantFactory);
+  registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);

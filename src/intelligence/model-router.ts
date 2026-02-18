@@ -130,13 +130,29 @@ export class ModelRouter implements LLMProvider {
   }
 
   async embed(texts: readonly string[]): Promise<number[][]> {
+    /* 粗略估算 token 量（~4 字符 / token） */
+    let estimatedTokens = 0;
+    for (const t of texts) estimatedTokens += Math.ceil(t.length / 4);
+
+    if (this.tokenBudget) {
+      const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
+      if (!check.allowed) throw new Error(`Token 预算不足: ${check.reason}`);
+    }
+
+    let embeddings: number[][];
     switch (this.provider) {
-      case 'openai': return this.embedOpenAI(texts);
-      case 'ollama': return this.embedOllama(texts);
-      case 'mock': return texts.map(t => hashVector(t));
+      case 'openai': embeddings = await this.embedOpenAI(texts); break;
+      case 'ollama': embeddings = await this.embedOllama(texts); break;
+      case 'mock': embeddings = texts.map(t => hashVector(t)); break;
       case 'anthropic': throw new Error('Anthropic 不支持嵌入接口');
       default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
     }
+
+    if (this.costTracker) {
+      this.costTracker.record(this.tenantId, this.provider, this.embeddingModel, estimatedTokens, 0);
+    }
+    if (this.tokenBudget) this.tokenBudget.recordUsage(this.tenantId, estimatedTokens);
+    return embeddings;
   }
 
   private async chatOpenAI(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {

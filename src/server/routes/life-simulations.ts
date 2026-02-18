@@ -9,6 +9,7 @@ import type { LifeSimulationConfig } from '../../types/life-simulation.js';
 import type { IDatabase } from '../../storage/database.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
+import { getPlanLimits } from '../../billing/plans.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import {
   CreateLifeSimulationSchema,
@@ -53,6 +54,20 @@ export function registerLifeSimulationRoutes(
   app.post('/api/v1/simulations/life', async (request, reply) => {
     const body = CreateLifeSimulationSchema.parse(request.body);
     const tenantId = request.tenantId;
+
+    /* maxPaths 计划限制检查 */
+    if (options?.db) {
+      const sub = options.db.prepare<{ plan_id: string }>(
+        'SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+      ).get(tenantId);
+      const limits = getPlanLimits(sub?.plan_id ?? 'free');
+      const pathCount = Array.isArray((body as Record<string, unknown>).paths)
+        ? ((body as Record<string, unknown>).paths as unknown[]).length
+        : 0;
+      if (limits.maxPaths > 0 && pathCount > limits.maxPaths) {
+        throw new QuotaExceededError(`路径数 ${pathCount} 超出计划限制 ${limits.maxPaths}`);
+      }
+    }
 
     if (quotaManager && !quotaManager.consumeQuota(tenantId, 'simulation')) {
       throw new QuotaExceededError('模拟次数配额已用尽');
@@ -131,6 +146,19 @@ export function registerLifeSimulationRoutes(
 
       /* 基于原始配置创建压力测试变体 */
       const baseConfig = safeJsonParse(baseRecord.configJson, {}) as LifeSimulationConfig;
+
+      /* maxPaths 计划限制检查（压力测试沿用原始路径数） */
+      if (options?.db) {
+        const sub = options.db.prepare<{ plan_id: string }>(
+          'SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+        ).get(tenantId);
+        const limits = getPlanLimits(sub?.plan_id ?? 'free');
+        const pathCount = Array.isArray(baseConfig.paths) ? baseConfig.paths.length : 0;
+        if (limits.maxPaths > 0 && pathCount > limits.maxPaths) {
+          throw new QuotaExceededError(`路径数 ${pathCount} 超出计划限制 ${limits.maxPaths}`);
+        }
+      }
+
       const stressConfig: LifeSimulationConfig = {
         ...baseConfig,
         stressTestConfig: {

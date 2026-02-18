@@ -516,6 +516,15 @@ const v018_refresh_token_index: Migration = {
   ],
 };
 
+const v019_task_queue_claim: Migration = {
+  version: 'v019',
+  description: '任务队列安全 — 工作者领取标记',
+  sql: [
+    'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_by TEXT',
+    'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claimed_at BIGINT',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -536,4 +545,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v016_webhook_and_llm_usage,
   v017_decision_onboarding_persistence,
   v018_refresh_token_index,
+  v019_task_queue_claim,
 ];

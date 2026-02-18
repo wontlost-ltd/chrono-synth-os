@@ -10,7 +10,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
-import { PLANS, getPlanLimits } from '../../billing/plans.js';
+import { PLANS, getPlanLimits, syncPlanToQuota } from '../../billing/plans.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import {
   createCheckoutSession,
@@ -217,6 +217,11 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
                 now,
                 tenantSub.id,
               );
+
+              /* 计划变更时同步配额限制 */
+              if (resolvedPlanId !== tenantSub.plan_id) {
+                syncPlanToQuota(db, tenantSub.tenant_id, resolvedPlanId);
+              }
             }
             break;
           }
@@ -225,9 +230,15 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
             const customerId = typeof subscription.customer === 'string'
               ? subscription.customer
               : (subscription.customer as { id: string })?.id ?? '';
+            const canceledSub = db.prepare<SubscriptionRow>(
+              'SELECT * FROM subscriptions WHERE stripe_customer_id = ?',
+            ).get(customerId);
             db.prepare<void>(
               `UPDATE subscriptions SET status = 'canceled', plan_id = 'free', updated_at = ? WHERE stripe_customer_id = ?`,
             ).run(now, customerId);
+            if (canceledSub) {
+              syncPlanToQuota(db, canceledSub.tenant_id, 'free');
+            }
             break;
           }
         }

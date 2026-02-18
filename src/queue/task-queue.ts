@@ -21,6 +21,8 @@ export interface TaskRecord {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly availableAt: number;
+  readonly claimedBy: string | null;
+  readonly claimedAt: number | null;
 }
 
 interface TaskRow {
@@ -36,6 +38,8 @@ interface TaskRow {
   created_at: number;
   updated_at: number;
   available_at: number;
+  claimed_by: string | null;
+  claimed_at: number | null;
 }
 
 function rowToRecord(row: TaskRow): TaskRecord {
@@ -52,11 +56,17 @@ function rowToRecord(row: TaskRow): TaskRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     availableAt: row.available_at,
+    claimedBy: row.claimed_by,
+    claimedAt: row.claimed_at,
   };
 }
 
 export class TaskQueue {
-  constructor(private readonly db: IDatabase) {}
+  private readonly workerId: string;
+
+  constructor(private readonly db: IDatabase, workerId?: string) {
+    this.workerId = workerId ?? generatePrefixedId('worker');
+  }
 
   /** 入队新任务 */
   enqueue(tenantId: string, type: string, payload: unknown, maxRetries = 3): string {
@@ -78,11 +88,12 @@ export class TaskQueue {
       ).get(ts);
       if (!row) return undefined;
 
-      this.db.prepare<void>(
-        `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
-      ).run(ts, row.id);
+      const updated = this.db.prepare<void>(
+        `UPDATE tasks SET status = 'running', claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
+      ).run(this.workerId, ts, ts, row.id);
+      if (updated.changes === 0) return undefined;
 
-      return rowToRecord({ ...row, status: 'running', updated_at: ts });
+      return rowToRecord({ ...row, status: 'running', claimed_by: this.workerId, claimed_at: ts, updated_at: ts });
     });
   }
 
@@ -113,5 +124,30 @@ export class TaskQueue {
       'SELECT * FROM tasks WHERE id = ?',
     ).get(taskId);
     return row ? rowToRecord(row) : undefined;
+  }
+
+  /**
+   * 回收卡死任务：将超时的 running 任务重置为 pending
+   * @param staleThresholdMs 判定卡死的阈值（默认 5 分钟）
+   * @returns 回收的任务数
+   */
+  reapStaleTasks(staleThresholdMs = 300_000): number {
+    const now = Date.now();
+    const cutoff = now - staleThresholdMs;
+    const staleCondition = `status = 'running' AND ((claimed_at IS NOT NULL AND claimed_at < ?) OR (claimed_at IS NULL AND updated_at < ?))`;
+
+    /* 可重试的任务：重置为 pending */
+    const requeued = this.db.prepare<void>(
+      `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL, available_at = ?, updated_at = ?, retry_count = retry_count + 1
+       WHERE ${staleCondition} AND retry_count < max_retries`,
+    ).run(now, now, cutoff, cutoff);
+
+    /* 已耗尽重试的任务：标记为 failed */
+    const failed = this.db.prepare<void>(
+      `UPDATE tasks SET status = 'failed', error = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ?
+       WHERE ${staleCondition} AND retry_count >= max_retries`,
+    ).run('任务超时且已达到最大重试次数', now, cutoff, cutoff);
+
+    return requeued.changes + failed.changes;
   }
 }

@@ -542,6 +542,16 @@ const v018_refresh_token_index: Migration = {
   ],
 };
 
+/** v019: 任务队列安全 — claimed_by/claimed_at 列 */
+const v019_task_queue_claim: Migration = {
+  version: 'v019',
+  description: '任务队列安全 — 工作者领取标记',
+  sql: [
+    '/* safe:add-column:tasks:claimed_by */ ALTER TABLE tasks ADD COLUMN claimed_by TEXT',
+    '/* safe:add-column:tasks:claimed_at */ ALTER TABLE tasks ADD COLUMN claimed_at INTEGER',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -562,6 +572,7 @@ const MIGRATIONS: readonly Migration[] = [
   v016_webhook_and_llm_usage,
   v017_decision_onboarding_persistence,
   v018_refresh_token_index,
+  v019_task_queue_claim,
 ];
 
 interface MigrationRow {

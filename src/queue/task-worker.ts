@@ -15,6 +15,7 @@ const LAYER = 'TaskWorker';
 export class TaskWorker {
   private readonly handlers = new Map<string, TaskHandler>();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private reaperTimer: ReturnType<typeof setInterval> | undefined;
   private running = 0;
 
   constructor(
@@ -24,6 +25,8 @@ export class TaskWorker {
     private readonly pollIntervalMs = 1000,
     private readonly maxConcurrent = 2,
     private readonly maxRetries = 3,
+    private readonly reapIntervalMs = 60_000,
+    private readonly staleThresholdMs = 300_000,
   ) {}
 
   /** 注册任务处理器 */
@@ -35,6 +38,7 @@ export class TaskWorker {
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => { void this.tick(); }, this.pollIntervalMs);
+    this.reaperTimer = setInterval(() => { this.reapStale(); }, this.reapIntervalMs);
     this.logger.info(LAYER, `工作者已启动（间隔=${this.pollIntervalMs}ms, 并发=${this.maxConcurrent}）`);
   }
 
@@ -53,6 +57,10 @@ export class TaskWorker {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
+    }
+    if (this.reaperTimer) {
+      clearInterval(this.reaperTimer);
+      this.reaperTimer = undefined;
     }
     if (this.running > 0) {
       this.logger.info(LAYER, `等待 ${this.running} 个进行中的任务完成…`);
@@ -75,6 +83,18 @@ export class TaskWorker {
 
       this.running++;
       void this.handleTask(task).finally(() => { this.running--; });
+    }
+  }
+
+  /** 回收卡死任务 */
+  private reapStale(): void {
+    try {
+      const reaped = this.queue.reapStaleTasks(this.staleThresholdMs);
+      if (reaped > 0) {
+        this.logger.warn(LAYER, `回收 ${reaped} 个卡死任务`);
+      }
+    } catch (err) {
+      this.logger.error(LAYER, `卡死任务回收失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
