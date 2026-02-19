@@ -82,6 +82,11 @@ export function registerDecisionRoutes(
     }
 
     const tenantOS = getOS(tenantId);
+    const stripeCustomerId = config.stripe.enabled
+      ? sharedDb.prepare<{ stripe_customer_id: string | null }>(
+          'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+        ).get(tenantId)?.stripe_customer_id ?? undefined
+      : undefined;
     const llm = new ModelRouter({
       provider: config.intelligence.provider,
       model: config.intelligence.model,
@@ -95,6 +100,8 @@ export function registerDecisionRoutes(
       quotaManager,
       usageTracker,
       tenantId,
+      stripeConfig: config,
+      stripeCustomerId,
     });
     const embeddingIndex = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
     const retrieval = new RetrievalService(tenantOS.core.memories, embeddingIndex);

@@ -40,6 +40,11 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
       embeddingIndexes.set(tenantId, cached);
       return cached;
     }
+    const stripeCustomerId = config?.stripe.enabled
+      ? sharedDb.prepare<{ stripe_customer_id: string | null }>(
+          'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+        ).get(tenantId)?.stripe_customer_id ?? undefined
+      : undefined;
     const llm = new ModelRouter({
       provider: config.intelligence.provider,
       model: config.intelligence.model,
@@ -53,6 +58,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
       quotaManager,
       usageTracker,
       tenantId,
+      stripeConfig: config,
+      stripeCustomerId,
     });
     const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
     if (embeddingIndexes.size >= MAX_EMBEDDING_CACHE) {
@@ -63,8 +70,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
     return idx;
   }
 
-  /* POST /api/v1/memories — 创建记忆 */
-  app.post('/api/v1/memories', async (request, reply) => {
+  /* POST /api/v1/memories — 创建记忆，限流: 30 次/分钟 */
+  app.post('/api/v1/memories', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = CreateMemorySchema.parse(request.body);
     const tenantOS = getOS(request);
     const memory = tenantOS.core.addMemory(body.kind, body.content, body.valence, body.salience);

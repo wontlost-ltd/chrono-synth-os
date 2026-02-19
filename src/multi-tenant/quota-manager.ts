@@ -68,7 +68,7 @@ export class QuotaManager {
       this.recordUsage(tenantId, resource, quantity, ts);
       return true;
     }
-    if (limit.max_per_window <= 0) return false;
+    if (limit.max_per_window <= 0 || quantity > limit.max_per_window) return false;
 
     const windowStart = ts - (ts % limit.window_ms);
     const result = this.db.prepare<void>(

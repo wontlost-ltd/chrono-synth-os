@@ -98,6 +98,11 @@ export function registerOnboardingRoutes(
     }
 
     const tenantOS = getOS(tenantId);
+    const stripeCustomerId = config.stripe.enabled
+      ? sharedDb.prepare<{ stripe_customer_id: string | null }>(
+          'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+        ).get(tenantId)?.stripe_customer_id ?? undefined
+      : undefined;
     const llm = new ModelRouter({
       provider: config.intelligence.provider,
       model: config.intelligence.model,
@@ -111,6 +116,8 @@ export function registerOnboardingRoutes(
       quotaManager,
       usageTracker,
       tenantId,
+      stripeConfig: config,
+      stripeCustomerId,
     });
     const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
     embeddingIndexes.set(tenantId, idx);
@@ -246,8 +253,8 @@ export function registerOnboardingRoutes(
     return { data: result };
   });
 
-  /* POST /api/v1/onboarding/import */
-  app.post('/api/v1/onboarding/import', async (request) => {
+  /* POST /api/v1/onboarding/import — 限流: 5 次/分钟 */
+  app.post('/api/v1/onboarding/import', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request) => {
     const tenantId = request.tenantId;
     const body = OnboardingImportSchema.parse(request.body);
     const total = (body.journalEntries?.length ?? 0) + (body.decisionRecords?.length ?? 0);

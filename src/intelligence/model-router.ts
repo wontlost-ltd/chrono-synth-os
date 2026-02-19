@@ -9,7 +9,9 @@ import type { TokenBudget } from './token-budget.js';
 import type { CostTracker } from './cost-tracker.js';
 import type { QuotaManager } from '../multi-tenant/quota-manager.js';
 import type { UsageTracker } from '../billing/usage-tracker.js';
+import type { AppConfig } from '../config/schema.js';
 import { QuotaExceededError } from '../errors/index.js';
+import { reportUsage as reportStripeUsage } from '../billing/stripe-client.js';
 
 export interface ModelRouterConfig {
   readonly provider: LLMProviderName;
@@ -25,6 +27,8 @@ export interface ModelRouterConfig {
   readonly quotaManager?: QuotaManager;
   readonly usageTracker?: UsageTracker;
   readonly tenantId?: string;
+  readonly stripeConfig?: AppConfig;
+  readonly stripeCustomerId?: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -79,6 +83,8 @@ export class ModelRouter implements LLMProvider {
   private readonly quotaManager?: QuotaManager;
   private readonly usageTracker?: UsageTracker;
   private readonly tenantId: string;
+  private readonly stripeConfig?: AppConfig;
+  private readonly stripeCustomerId?: string;
 
   constructor(config: ModelRouterConfig) {
     this.provider = config.provider;
@@ -94,22 +100,24 @@ export class ModelRouter implements LLMProvider {
     this.quotaManager = config.quotaManager;
     this.usageTracker = config.usageTracker;
     this.tenantId = config.tenantId ?? 'default';
+    this.stripeConfig = config.stripeConfig;
+    this.stripeCustomerId = config.stripeCustomerId;
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
     const estimatedTokens = options?.maxTokens ?? this.maxTokens;
 
-    /* 计划配额检查（llm_tokens，按预估 token 数量） */
-    if (this.quotaManager && !this.quotaManager.checkQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
-      throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
-    }
-
-    /* 预检查 token 预算 */
+    /* 预检查 token 预算（先于配额消费，避免 budget 拒绝后浪费配额） */
     if (this.tokenBudget) {
       const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
       if (!check.allowed) {
         throw new QuotaExceededError(`Token 预算不足: ${check.reason}`);
       }
+    }
+
+    /* 原子性配额预消费（按预估 token 数量） */
+    if (this.quotaManager && !this.quotaManager.consumeQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
+      throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
     }
 
     let response: ChatResponse;
@@ -132,20 +140,17 @@ export class ModelRouter implements LLMProvider {
       );
     }
 
-    /* 记录 token 使用量到预算缓存 */
     const totalTokens = response.usage?.totalTokens ?? 0;
     if (this.tokenBudget && totalTokens > 0) {
       this.tokenBudget.recordUsage(this.tenantId, totalTokens);
     }
-
-    /* 记录到计费用量跟踪（反映在 billing/usage 端点） */
     if (this.usageTracker && totalTokens > 0) {
       this.usageTracker.record(this.tenantId, 'llm_tokens', totalTokens);
     }
 
-    /* 消费计划配额（按实际 token 数量） */
-    if (this.quotaManager && totalTokens > 0) {
-      this.quotaManager.recordUsage(this.tenantId, 'llm_tokens', totalTokens);
+    /* Stripe 计量上报（异步，不阻塞） */
+    if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && totalTokens > 0) {
+      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', totalTokens).catch(() => {});
     }
 
     return response;
@@ -156,14 +161,14 @@ export class ModelRouter implements LLMProvider {
     let estimatedTokens = 0;
     for (const t of texts) estimatedTokens += Math.ceil(t.length / 4);
 
-    /* 计划配额预检查 */
-    if (this.quotaManager && !this.quotaManager.checkQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
-      throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
-    }
-
     if (this.tokenBudget) {
       const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
       if (!check.allowed) throw new QuotaExceededError(`Token 预算不足: ${check.reason}`);
+    }
+
+    /* 原子性配额预消费 */
+    if (this.quotaManager && !this.quotaManager.consumeQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
+      throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
     }
 
     let embeddings: number[][];
@@ -179,13 +184,13 @@ export class ModelRouter implements LLMProvider {
       this.costTracker.record(this.tenantId, this.provider, this.embeddingModel, estimatedTokens, 0);
     }
     if (this.tokenBudget) this.tokenBudget.recordUsage(this.tenantId, estimatedTokens);
-
-    /* 记录嵌入 token 用量到计费 + 配额 */
     if (this.usageTracker && estimatedTokens > 0) {
       this.usageTracker.record(this.tenantId, 'llm_tokens', estimatedTokens);
     }
-    if (this.quotaManager && estimatedTokens > 0) {
-      this.quotaManager.recordUsage(this.tenantId, 'llm_tokens', estimatedTokens);
+
+    /* Stripe 计量上报（异步，不阻塞） */
+    if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && estimatedTokens > 0) {
+      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', estimatedTokens).catch(() => {});
     }
 
     return embeddings;
