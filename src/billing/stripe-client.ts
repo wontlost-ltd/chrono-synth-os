@@ -90,13 +90,19 @@ export async function reportUsage(
   customerId: string,
   eventName: string,
   quantity: number,
+  idempotencyKey?: string,
 ): Promise<void> {
   const stripe = getStripe(config);
-  await stripe.billing.meterEvents.create({
+  const params = {
     event_name: eventName,
     payload: {
       stripe_customer_id: customerId,
       value: String(quantity),
     },
-  });
+  };
+  if (idempotencyKey) {
+    await stripe.billing.meterEvents.create(params, { idempotencyKey });
+  } else {
+    await stripe.billing.meterEvents.create(params);
+  }
 }

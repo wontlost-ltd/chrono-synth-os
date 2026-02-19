@@ -11,7 +11,7 @@ import type { AppConfig } from '../../config/schema.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { getPlanLimits } from '../../billing/plans.js';
-import { reportUsage as reportStripeUsage } from '../../billing/stripe-client.js';
+import { BillingOutbox, billingMetrics } from '../../billing/billing-outbox.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import {
   CreateLifeSimulationSchema,
@@ -33,7 +33,7 @@ export function registerLifeSimulationRoutes(
   const asyncMode = options?.queueEnabled ?? false;
   const quotaManager = options?.db ? new QuotaManager(options.db) : undefined;
   const usageTracker = options?.db ? new UsageTracker(options.db) : undefined;
-  const stripeConfig = options?.config;
+  const billingOutbox = options?.db && options?.config ? new BillingOutbox(options.db, options.config) : undefined;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */
   app.get('/api/v1/simulations', async (request) => {
@@ -81,14 +81,13 @@ export function registerLifeSimulationRoutes(
     const { simulationId, taskId } = service.enqueue(body, tenantId);
     usageTracker?.record(tenantId, 'simulation', 1);
 
-    if (stripeConfig?.stripe.enabled && options?.db) {
+    if (billingOutbox && options?.db && options?.config?.stripe.enabled) {
       const sub = options.db.prepare<{ stripe_customer_id: string | null }>(
         'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
       ).get(tenantId);
       if (sub?.stripe_customer_id) {
-        reportStripeUsage(stripeConfig, sub.stripe_customer_id, 'simulation', 1).catch((e) => {
-          app.log.warn({ err: e }, 'Stripe 计量上报失败');
-        });
+        billingMetrics.meterEventsEnqueued++;
+        billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1);
       }
     }
 
@@ -196,14 +195,13 @@ export function registerLifeSimulationRoutes(
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);
       usageTracker?.record(tenantId, 'simulation', 1);
 
-      if (stripeConfig?.stripe.enabled && options?.db) {
+      if (billingOutbox && options?.db) {
         const sub2 = options.db.prepare<{ stripe_customer_id: string | null }>(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId);
         if (sub2?.stripe_customer_id) {
-          reportStripeUsage(stripeConfig, sub2.stripe_customer_id, 'simulation', 1).catch((e) => {
-            app.log.warn({ err: e }, 'Stripe 计量上报失败');
-          });
+          billingMetrics.meterEventsEnqueued++;
+          billingOutbox.enqueue(tenantId, sub2.stripe_customer_id, 'simulation', 1);
         }
       }
 

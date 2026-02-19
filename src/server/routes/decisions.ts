@@ -23,7 +23,7 @@ import { TokenBudget } from '../../intelligence/token-budget.js';
 import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
-import { reportUsage as reportStripeUsage } from '../../billing/stripe-client.js';
+import { BillingOutbox, billingMetrics } from '../../billing/billing-outbox.js';
 import { CreateDecisionSchema, DecisionFeedbackSchema, PaginationQuerySchema } from '../schemas/api-schemas.js';
 
 function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
@@ -63,6 +63,7 @@ export function registerDecisionRoutes(
   const costTracker = new CostTracker(sharedDb);
   const usageTracker = new UsageTracker(sharedDb);
   const quotaManager = new QuotaManager(sharedDb);
+  const billingOutbox = new BillingOutbox(sharedDb, config);
 
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
@@ -102,6 +103,7 @@ export function registerDecisionRoutes(
       tenantId,
       stripeConfig: config,
       stripeCustomerId,
+      billingOutbox,
     });
     const embeddingIndex = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
     const retrieval = new RetrievalService(tenantOS.core.memories, embeddingIndex);
@@ -214,15 +216,14 @@ export function registerDecisionRoutes(
       /* 记录用量（配额已在 consumeQuota 中扣减） */
       usageTracker.record(tenantId, 'simulation', 1);
 
-      /* Stripe 计量上报 */
+      /* Stripe 计量上报（通过发件箱持久化） */
       if (config.stripe.enabled) {
         const sub = sharedDb.prepare<{ stripe_customer_id: string | null }>(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId);
         if (sub?.stripe_customer_id) {
-          reportStripeUsage(config, sub.stripe_customer_id, 'simulation', 1).catch((e) => {
-            os.getLogger().warn('Billing', `Stripe 计量上报失败: ${e instanceof Error ? e.message : String(e)}`);
-          });
+          billingMetrics.meterEventsEnqueued++;
+          billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1);
         }
       }
 

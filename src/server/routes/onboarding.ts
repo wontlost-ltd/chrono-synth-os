@@ -25,6 +25,7 @@ import { TokenBudget } from '../../intelligence/token-budget.js';
 import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
+import { BillingOutbox } from '../../billing/billing-outbox.js';
 import {
   OnboardingStep1Schema,
   OnboardingStep2Schema,
@@ -63,6 +64,7 @@ export function registerOnboardingRoutes(
   const costTracker = new CostTracker(sharedDb);
   const quotaManager = new QuotaManager(sharedDb);
   const usageTracker = new UsageTracker(sharedDb);
+  const billingOutbox = new BillingOutbox(sharedDb, config);
   const questionnaire = new QuestionnaireEngine();
 
   function getOS(tenantId: string): ChronoSynthOS {
@@ -118,6 +120,7 @@ export function registerOnboardingRoutes(
       tenantId,
       stripeConfig: config,
       stripeCustomerId,
+      billingOutbox,
     });
     const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
     embeddingIndexes.set(tenantId, idx);

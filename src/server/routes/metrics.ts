@@ -8,12 +8,20 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { getMetricsSnapshot, getTotalRequests } from '../plugins/metrics.js';
 import { getWsConnectionCount } from '../plugins/websocket.js';
+import { billingMetrics } from '../../billing/billing-outbox.js';
 
 const startTime = Date.now();
 
 export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
   app.get('/metrics', async () => {
     const mem = process.memoryUsage();
+    let outboxPending = 0;
+    let outboxFailed = 0;
+    try {
+      const db = os.getDatabase();
+      outboxPending = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM billing_outbox WHERE status = 'pending'`).get()?.count ?? 0;
+      outboxFailed = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM billing_outbox WHERE status = 'failed'`).get()?.count ?? 0;
+    } catch { /* 发件箱表可能尚未创建 */ }
     return {
       uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
       requests: {
@@ -24,6 +32,13 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): 
         persona_count: os.accelerated.getAllPersonas().length,
         conflict_count: os.meta.conflicts.getUnresolved().length,
         snapshot_count: os.snapshots.list().length,
+      },
+      billing: {
+        meter_events_enqueued: billingMetrics.meterEventsEnqueued,
+        meter_events_processed: billingMetrics.meterEventsProcessed,
+        meter_events_failed: billingMetrics.meterEventsFailed,
+        outbox_pending: outboxPending,
+        outbox_failed: outboxFailed,
       },
       system: {
         memory_mb: {
@@ -91,6 +106,25 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): 
     lines.push('# HELP chrono_ws_connections_active 活跃 WebSocket 连接数');
     lines.push('# TYPE chrono_ws_connections_active gauge');
     lines.push(`chrono_ws_connections_active ${getWsConnectionCount()}`);
+
+    /* 计费 */
+    lines.push('# HELP chrono_billing_meter_events_total Stripe 计量事件统计');
+    lines.push('# TYPE chrono_billing_meter_events_total counter');
+    lines.push(`chrono_billing_meter_events_total{status="enqueued"} ${billingMetrics.meterEventsEnqueued}`);
+    lines.push(`chrono_billing_meter_events_total{status="processed"} ${billingMetrics.meterEventsProcessed}`);
+    lines.push(`chrono_billing_meter_events_total{status="failed"} ${billingMetrics.meterEventsFailed}`);
+
+    let outboxPendingProm = 0;
+    let outboxFailedProm = 0;
+    try {
+      const db = os.getDatabase();
+      outboxPendingProm = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM billing_outbox WHERE status = 'pending'`).get()?.count ?? 0;
+      outboxFailedProm = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM billing_outbox WHERE status = 'failed'`).get()?.count ?? 0;
+    } catch { /* 发件箱表可能尚未创建 */ }
+    lines.push('# HELP chrono_billing_outbox_backlog 计量发件箱积压');
+    lines.push('# TYPE chrono_billing_outbox_backlog gauge');
+    lines.push(`chrono_billing_outbox_backlog{status="pending"} ${outboxPendingProm}`);
+    lines.push(`chrono_billing_outbox_backlog{status="failed"} ${outboxFailedProm}`);
 
     return reply
       .header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')

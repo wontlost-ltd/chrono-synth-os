@@ -10,6 +10,8 @@ import type { CostTracker } from './cost-tracker.js';
 import type { QuotaManager } from '../multi-tenant/quota-manager.js';
 import type { UsageTracker } from '../billing/usage-tracker.js';
 import type { AppConfig } from '../config/schema.js';
+import type { BillingOutbox } from '../billing/billing-outbox.js';
+import { billingMetrics } from '../billing/billing-outbox.js';
 import { QuotaExceededError } from '../errors/index.js';
 import { reportUsage as reportStripeUsage } from '../billing/stripe-client.js';
 
@@ -29,6 +31,7 @@ export interface ModelRouterConfig {
   readonly tenantId?: string;
   readonly stripeConfig?: AppConfig;
   readonly stripeCustomerId?: string;
+  readonly billingOutbox?: BillingOutbox;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -85,6 +88,7 @@ export class ModelRouter implements LLMProvider {
   private readonly tenantId: string;
   private readonly stripeConfig?: AppConfig;
   private readonly stripeCustomerId?: string;
+  private readonly billingOutbox?: BillingOutbox;
 
   constructor(config: ModelRouterConfig) {
     this.provider = config.provider;
@@ -102,6 +106,7 @@ export class ModelRouter implements LLMProvider {
     this.tenantId = config.tenantId ?? 'default';
     this.stripeConfig = config.stripeConfig;
     this.stripeCustomerId = config.stripeCustomerId;
+    this.billingOutbox = config.billingOutbox;
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
@@ -148,9 +153,19 @@ export class ModelRouter implements LLMProvider {
       this.usageTracker.record(this.tenantId, 'llm_tokens', totalTokens);
     }
 
-    /* Stripe 计量上报（异步，不阻塞） */
+    /* Stripe 计量上报 */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && totalTokens > 0) {
-      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', totalTokens).catch((e) => { console.error('[ModelRouter] Stripe 计量上报失败:', e instanceof Error ? e.message : String(e)); });
+      billingMetrics.meterEventsEnqueued++;
+      if (this.billingOutbox) {
+        this.billingOutbox.enqueue(this.tenantId, this.stripeCustomerId, 'llm_tokens', totalTokens);
+      } else {
+        reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', totalTokens).then(() => {
+          billingMetrics.meterEventsProcessed++;
+        }).catch((e) => {
+          console.error('[ModelRouter] Stripe 计量上报失败:', e instanceof Error ? e.message : String(e));
+          billingMetrics.meterEventsFailed++;
+        });
+      }
     }
 
     return response;
@@ -188,9 +203,19 @@ export class ModelRouter implements LLMProvider {
       this.usageTracker.record(this.tenantId, 'llm_tokens', estimatedTokens);
     }
 
-    /* Stripe 计量上报（异步，不阻塞） */
+    /* Stripe 计量上报 */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && estimatedTokens > 0) {
-      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', estimatedTokens).catch((e) => { console.error('[ModelRouter] Stripe 计量上报失败:', e instanceof Error ? e.message : String(e)); });
+      billingMetrics.meterEventsEnqueued++;
+      if (this.billingOutbox) {
+        this.billingOutbox.enqueue(this.tenantId, this.stripeCustomerId, 'llm_tokens', estimatedTokens);
+      } else {
+        reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', estimatedTokens).then(() => {
+          billingMetrics.meterEventsProcessed++;
+        }).catch((e) => {
+          console.error('[ModelRouter] Stripe 计量上报失败:', e instanceof Error ? e.message : String(e));
+          billingMetrics.meterEventsFailed++;
+        });
+      }
     }
 
     return embeddings;

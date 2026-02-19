@@ -11,6 +11,7 @@ import { ModelRouter } from '../../intelligence/model-router.js';
 import { TokenBudget } from '../../intelligence/token-budget.js';
 import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { BillingOutbox } from '../../billing/billing-outbox.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { CreateMemorySchema, LinkMemorySchema, RelatedMemoryQuerySchema } from '../schemas/api-schemas.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
@@ -22,6 +23,7 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   const costTracker = config ? new CostTracker(sharedDb) : undefined;
   const quotaManager = config ? new QuotaManager(sharedDb) : undefined;
   const usageTracker = config ? new UsageTracker(sharedDb) : undefined;
+  const billingOutbox = config ? new BillingOutbox(sharedDb, config) : undefined;
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
@@ -60,6 +62,7 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
       tenantId,
       stripeConfig: config,
       stripeCustomerId,
+      billingOutbox: billingOutbox ?? undefined,
     });
     const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
     if (embeddingIndexes.size >= MAX_EMBEDDING_CACHE) {

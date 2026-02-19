@@ -552,6 +552,27 @@ const v019_task_queue_claim: Migration = {
   ],
 };
 
+const v020_billing_outbox: Migration = {
+  version: 'v020',
+  description: 'Stripe 计量发件箱 — 持久化重试',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS billing_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tenant_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      event_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      processed_at INTEGER
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_billing_outbox_status ON billing_outbox (status, created_at)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -573,6 +594,7 @@ const MIGRATIONS: readonly Migration[] = [
   v017_decision_onboarding_persistence,
   v018_refresh_token_index,
   v019_task_queue_claim,
+  v020_billing_outbox,
 ];
 
 interface MigrationRow {

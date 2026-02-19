@@ -54,6 +54,7 @@ import { registerAuth0 } from './plugins/auth0.js';
 import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
+import { BillingOutbox } from '../billing/billing-outbox.js';
 
 export interface CreateAppDeps {
   os: ChronoSynthOS;
@@ -162,6 +163,19 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     }, CLEANUP_INTERVAL);
     cleanupTimer.unref();
     app.addHook('onClose', () => { clearInterval(cleanupTimer); });
+  }
+
+  /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
+  if (config.stripe.enabled) {
+    const billingOutbox = new BillingOutbox(db, config);
+    const FLUSH_INTERVAL_MS = 60_000;
+    const flushTimer = setInterval(() => {
+      void billingOutbox.flush().catch((err) => {
+        deps.os.getLogger().warn('Billing', `计量发件箱刷新失败: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, FLUSH_INTERVAL_MS);
+    flushTimer.unref();
+    app.addHook('onClose', () => { clearInterval(flushTimer); });
   }
 
   return app;
