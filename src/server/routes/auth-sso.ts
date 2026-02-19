@@ -201,8 +201,14 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
         syncPlanToQuota(db, tenantId, 'free');
       }
 
+      // 查询当前订阅计划（用于计划感知限流）
+      const activeSub = db.prepare<{ plan_id: string }>(
+        'SELECT plan_id FROM subscriptions WHERE tenant_id = ? AND status = \'active\' ORDER BY created_at DESC LIMIT 1',
+      ).get(tenantId);
+      const planId = activeSub?.plan_id ?? 'free';
+
       // 签发自有 JWT
-      const signPayload = { sub: userId, tenantId, role } as unknown as JwtPayload;
+      const signPayload = { sub: userId, tenantId, role, planId } as unknown as JwtPayload;
       const accessToken = app.jwt.sign(signPayload);
       const refreshToken = randomUUID();
 

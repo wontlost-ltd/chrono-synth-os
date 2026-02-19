@@ -6,6 +6,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
+import type { AppConfig } from '../../config/schema.js';
 import { getMetricsSnapshot, getTotalRequests } from '../plugins/metrics.js';
 import { getWsConnectionCount } from '../plugins/websocket.js';
 import { billingMetrics } from '../../billing/billing-outbox.js';
@@ -34,7 +35,8 @@ function getQueueBacklog(os: ChronoSynthOS): { pending: number; running: number;
 
 const startTime = Date.now();
 
-export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
+export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, config?: AppConfig): void {
+  const retentionMs = config?.observability.metricsRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
   app.get('/metrics', async () => {
     const mem = process.memoryUsage();
     let outboxPending = 0;
@@ -189,18 +191,19 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): 
     lines.push(`chrono_queue_backlog{status="running"} ${queueBacklog.running}`);
     lines.push(`chrono_queue_backlog{status="failed"} ${queueBacklog.failed}`);
 
-    /* 每租户使用量（最近 24 小时，限制最多 200 条避免基数爆炸） */
+    /* 每租户使用量（可配置保留窗口，限制最多 200 条避免基数爆炸） */
     try {
       const db = os.getDatabase();
-      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - retentionMs;
       const tenantUsage = db.prepare<{ tenant_id: string; resource: string; total: number }>(
         `SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource ORDER BY total DESC LIMIT 200`,
       ).all(cutoff);
       if (tenantUsage.length > 0) {
-        lines.push('# HELP chrono_tenant_usage_24h 每租户资源使用量（最近24小时）');
-        lines.push('# TYPE chrono_tenant_usage_24h gauge');
+        const retentionDays = Math.round(retentionMs / (24 * 60 * 60 * 1000));
+        lines.push(`# HELP chrono_tenant_usage 每租户资源使用量（最近${retentionDays}天）`);
+        lines.push('# TYPE chrono_tenant_usage gauge');
         for (const row of tenantUsage) {
-          lines.push(`chrono_tenant_usage_24h{tenant="${row.tenant_id}",resource="${row.resource}"} ${row.total}`);
+          lines.push(`chrono_tenant_usage{tenant="${row.tenant_id}",resource="${row.resource}"} ${row.total}`);
         }
       }
     } catch { /* usage_records 表可能尚未创建 */ }

@@ -68,9 +68,44 @@ let recentEventsFilled = false;
 /** 全局递增事件序列号 */
 let globalSeq = 0;
 
-/** 缓存一个事件到环形缓冲区 */
+/** 持久化事件日志的 DB 引用（由 registerWebSocket 设置） */
+let eventLogDb: import('../../storage/database.js').IDatabase | undefined;
+
+/** 事件日志保留窗口（默认 1 小时） */
+const EVENT_LOG_TTL_MS = 60 * 60 * 1000;
+
+/** 缓存一个事件到环形缓冲区并持久化到 DB（seq 由 DB 生成，多副本安全） */
 function bufferEvent(event: string, data: unknown, tenantId?: string): number {
-  const seq = ++globalSeq;
+  let seq: number;
+  const payload = JSON.stringify(data);
+  const now = Date.now();
+
+  /* 优先由 DB AUTOINCREMENT/BIGSERIAL 生成 seq（多副本安全） */
+  if (eventLogDb) {
+    try {
+      /* RETURNING seq 适用于 PG 和 SQLite >= 3.35 */
+      const row = eventLogDb.prepare<{ seq: number }>(
+        'INSERT INTO ws_event_log (event, data_json, tenant_id, created_at) VALUES (?, ?, ?, ?) RETURNING seq',
+      ).get(event, payload, tenantId ?? null, now);
+      seq = row?.seq ?? 0;
+      if (!seq) throw new Error('no seq returned');
+    } catch {
+      /* 回退：旧版 SQLite 不支持 RETURNING，使用 lastInsertRowid */
+      try {
+        const result = eventLogDb.prepare<void>(
+          'INSERT INTO ws_event_log (event, data_json, tenant_id, created_at) VALUES (?, ?, ?, ?)',
+        ).run(event, payload, tenantId ?? null, now);
+        seq = Number(result.lastInsertRowid) || ++globalSeq;
+      } catch {
+        seq = ++globalSeq;
+      }
+    }
+  } else {
+    seq = ++globalSeq;
+  }
+
+  if (seq > globalSeq) globalSeq = seq;
+
   const entry: BufferedEvent = { seq, event, data, tenantId };
   if (recentEvents.length < EVENT_BUFFER_SIZE) {
     recentEvents.push(entry);
@@ -79,7 +114,32 @@ function bufferEvent(event: string, data: unknown, tenantId?: string): number {
   }
   recentEventsWriteIdx = (recentEventsWriteIdx + 1) % EVENT_BUFFER_SIZE;
   if (recentEventsWriteIdx === 0 && recentEvents.length >= EVENT_BUFFER_SIZE) recentEventsFilled = true;
+
   return seq;
+}
+
+/** 从持久化事件日志恢复（当内存缓冲区不足时回退） */
+function getPersistedEventsSince(sinceSeq: number, tenantId: string): BufferedEvent[] {
+  if (!eventLogDb) return [];
+  try {
+    const rows = eventLogDb.prepare<{ seq: number; event: string; data_json: string; tenant_id: string | null }>(
+      'SELECT seq, event, data_json, tenant_id FROM ws_event_log WHERE seq > ? AND (tenant_id IS NULL OR tenant_id = ?) ORDER BY seq ASC LIMIT 1000',
+    ).all(sinceSeq, tenantId);
+    return rows.map(r => ({
+      seq: r.seq,
+      event: r.event,
+      data: JSON.parse(r.data_json),
+      tenantId: r.tenant_id ?? undefined,
+    }));
+  } catch { return []; }
+}
+
+/** 清理过期事件日志 */
+function pruneEventLog(): void {
+  if (!eventLogDb) return;
+  try {
+    eventLogDb.prepare<void>('DELETE FROM ws_event_log WHERE created_at < ?').run(Date.now() - EVENT_LOG_TTL_MS);
+  } catch { /* 清理失败不影响服务 */ }
 }
 
 /** 获取缓冲区中最旧的序列号 */
@@ -132,6 +192,18 @@ export async function registerWebSocket(
   config: AppConfig,
 ): Promise<void> {
   if (!config.websocket.enabled) return;
+
+  /* 初始化持久化事件日志 */
+  try {
+    eventLogDb = os.getDatabase();
+    /* 启动时恢复 globalSeq（从持久化日志中读取最大序列号） */
+    const maxSeqRow = eventLogDb.prepare<{ max_seq: number | null }>('SELECT MAX(seq) as max_seq FROM ws_event_log').get();
+    if (maxSeqRow?.max_seq && maxSeqRow.max_seq > globalSeq) globalSeq = maxSeqRow.max_seq;
+  } catch { eventLogDb = undefined; }
+
+  /* 定期清理过期事件日志（每 10 分钟） */
+  const pruneInterval = setInterval(pruneEventLog, 10 * 60 * 1000);
+  app.addHook('onClose', async () => { clearInterval(pruneInterval); });
 
   await app.register(websocketPlugin);
 
@@ -257,16 +329,23 @@ export async function registerWebSocket(
       if (msg.type === 'replay' && typeof msg.sinceSeq === 'number') {
         const oldestSeq = getOldestBufferedSeq();
         let replayFrom = msg.sinceSeq;
-        /* 检测重放间隙：请求的序列号早于缓冲区最旧事件 */
-        if (oldestSeq !== null && replayFrom < oldestSeq) {
-          safeSend(socket, { type: 'replay-gap', oldestSeq, lastSeq: globalSeq });
-          replayFrom = oldestSeq - 1;
-        } else if (replayFrom > globalSeq) {
+        let missed: BufferedEvent[];
+
+        if (replayFrom > globalSeq) {
           /* 客户端序列号超前（可能连接到不同副本）*/
           safeSend(socket, { type: 'replay-gap', oldestSeq: oldestSeq ?? 0, lastSeq: globalSeq });
           replayFrom = globalSeq;
+          missed = [];
+        } else if (oldestSeq !== null && replayFrom < oldestSeq) {
+          /* 内存缓冲区不足，尝试从持久化日志恢复 */
+          missed = getPersistedEventsSince(replayFrom, connectionTenantId);
+          if (missed.length === 0) {
+            safeSend(socket, { type: 'replay-gap', oldestSeq, lastSeq: globalSeq });
+          }
+        } else {
+          missed = getBufferedEventsSince(replayFrom, connectionTenantId);
         }
-        const missed = getBufferedEventsSince(replayFrom, connectionTenantId);
+
         for (const entry of missed) {
           safeSend(socket, { type: 'event', event: entry.event, data: entry.data, seq: entry.seq });
         }

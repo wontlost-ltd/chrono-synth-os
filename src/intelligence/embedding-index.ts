@@ -137,7 +137,41 @@ export class EmbeddingIndex {
     this.ivfBuilt = false;
   }
 
-  /** 构建 IVF 分区索引（简化 K-Means，3 轮迭代） */
+  /** 尝试从 DB 加载持久化的 IVF 质心（避免冷启动重建） */
+  private loadPersistedCentroids(): Float64Array[] | null {
+    try {
+      const row = this.db.prepare<{ centroids_json: string }>(
+        'SELECT centroids_json FROM ivf_centroids WHERE model = ? ORDER BY built_at DESC LIMIT 1',
+      ).get(this.model);
+      if (!row) return null;
+      const parsed = JSON.parse(row.centroids_json) as number[][];
+      return parsed.map(arr => Float64Array.from(arr));
+    } catch { return null; }
+  }
+
+  /** 加载持久化质心的元数据（向量数 + 构建时间） */
+  private loadPersistedMeta(): { numVectors: number; builtAt: number } | null {
+    try {
+      const row = this.db.prepare<{ num_vectors: number; built_at: number }>(
+        'SELECT num_vectors, built_at FROM ivf_centroids WHERE model = ?',
+      ).get(this.model);
+      return row ? { numVectors: row.num_vectors, builtAt: row.built_at } : null;
+    } catch { return null; }
+  }
+
+  /** 持久化 IVF 质心到 DB */
+  private persistCentroids(centroids: Float64Array[]): void {
+    try {
+      const json = JSON.stringify(centroids.map(c => Array.from(c)));
+      this.db.prepare<void>(
+        `INSERT INTO ivf_centroids (model, centroids_json, num_vectors, built_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(model) DO UPDATE SET centroids_json=excluded.centroids_json, num_vectors=excluded.num_vectors, built_at=excluded.built_at`,
+      ).run(this.model, json, this.vectorCache.size, Date.now());
+    } catch { /* 持久化失败不阻塞检索 */ }
+  }
+
+  /** 构建 IVF 分区索引（简化 K-Means，3 轮迭代；支持从持久化质心恢复） */
   private buildIVF(): void {
     const entries = [...this.vectorCache.entries()].map(([id, c]) => ({
       memoryId: id, vector: c.vector, norm: c.norm,
@@ -152,39 +186,71 @@ export class EmbeddingIndex {
     const dim = entries[0].vector.length;
     const nPartitions = Math.min(MAX_PARTITIONS, Math.ceil(Math.sqrt(entries.length)));
 
-    /* 初始化质心（随机选取） */
-    const seedIdx = sampleIndices(entries.length, nPartitions);
-    const centroids = seedIdx.map(i => Float64Array.from(entries[i].vector));
+    /* 尝试从持久化质心恢复（跳过 K-Means）；向量数变化超 50% 或超 24 小时则废弃 */
+    const IVF_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    let centroids: Float64Array[];
+    const persisted = this.loadPersistedCentroids();
+    const persistedMeta = this.loadPersistedMeta();
+    const centroidsValid = persisted
+      && persisted.length === nPartitions
+      && persisted[0].length === dim
+      && persistedMeta !== null
+      && Math.abs(persistedMeta.numVectors - entries.length) / Math.max(persistedMeta.numVectors, 1) < 0.5
+      && (Date.now() - persistedMeta.builtAt) < IVF_MAX_AGE_MS;
+    if (centroidsValid && persisted) {
+      centroids = persisted;
+    } else {
+      /* 初始化质心（随机选取） */
+      const seedIdx = sampleIndices(entries.length, nPartitions);
+      centroids = seedIdx.map(i => Float64Array.from(entries[i].vector));
 
-    /* 3 轮 K-Means 迭代 */
-    let assignments = new Int32Array(entries.length);
-    for (let iter = 0; iter < 3; iter++) {
-      /* 分配阶段 */
-      for (let i = 0; i < entries.length; i++) {
-        let bestSim = -Infinity;
-        let bestIdx = 0;
-        const eNorm = entries[i].norm;
-        for (let c = 0; c < centroids.length; c++) {
-          const cNorm = computeNorm(centroids[c]);
-          const sim = cosineSimilarityFast(entries[i].vector, eNorm, centroids[c], cNorm);
-          if (sim > bestSim) { bestSim = sim; bestIdx = c; }
+      /* 3 轮 K-Means 迭代 */
+      for (let iter = 0; iter < 3; iter++) {
+        /* 分配阶段 */
+        const assignments = new Int32Array(entries.length);
+        for (let i = 0; i < entries.length; i++) {
+          let bestSim = -Infinity;
+          let bestIdx = 0;
+          const eNorm = entries[i].norm;
+          for (let c = 0; c < centroids.length; c++) {
+            const cNorm = computeNorm(centroids[c]);
+            const sim = cosineSimilarityFast(entries[i].vector, eNorm, centroids[c], cNorm);
+            if (sim > bestSim) { bestSim = sim; bestIdx = c; }
+          }
+          assignments[i] = bestIdx;
         }
-        assignments[i] = bestIdx;
-      }
-      /* 更新质心 */
-      const counts = new Int32Array(nPartitions);
-      const sums = centroids.map(() => new Float64Array(dim));
-      for (let i = 0; i < entries.length; i++) {
-        const c = assignments[i];
-        counts[c]++;
-        vectorAdd(sums[c], entries[i].vector);
-      }
-      for (let c = 0; c < nPartitions; c++) {
-        if (counts[c] > 0) {
-          vectorScale(sums[c], counts[c]);
-          centroids[c] = sums[c];
+        /* 更新质心 */
+        const counts = new Int32Array(nPartitions);
+        const sums = centroids.map(() => new Float64Array(dim));
+        for (let i = 0; i < entries.length; i++) {
+          const c = assignments[i];
+          counts[c]++;
+          vectorAdd(sums[c], entries[i].vector);
+        }
+        for (let c = 0; c < nPartitions; c++) {
+          if (counts[c] > 0) {
+            vectorScale(sums[c], counts[c]);
+            centroids[c] = sums[c];
+          }
         }
       }
+
+      /* 持久化新质心 */
+      this.persistCentroids(centroids);
+    }
+
+    /* 最终分配阶段（无论质心来源都需要将向量分配到分区） */
+    const finalAssignments = new Int32Array(entries.length);
+    for (let i = 0; i < entries.length; i++) {
+      let bestSim = -Infinity;
+      let bestIdx = 0;
+      const eNorm = entries[i].norm;
+      for (let c = 0; c < centroids.length; c++) {
+        const cNorm = computeNorm(centroids[c]);
+        const sim = cosineSimilarityFast(entries[i].vector, eNorm, centroids[c], cNorm);
+        if (sim > bestSim) { bestSim = sim; bestIdx = c; }
+      }
+      finalAssignments[i] = bestIdx;
     }
 
     /* 构建分区 */
@@ -194,7 +260,7 @@ export class EmbeddingIndex {
       entries: [],
     }));
     for (let i = 0; i < entries.length; i++) {
-      this.partitions[assignments[i]].entries.push(entries[i]);
+      this.partitions[finalAssignments[i]].entries.push(entries[i]);
     }
 
     this.ivfBuilt = true;

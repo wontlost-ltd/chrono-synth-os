@@ -583,6 +583,29 @@ const v021_task_priority: Migration = {
   ],
 };
 
+/** v022: IVF 质心持久化 + WebSocket 事件日志 */
+const v022_ivf_and_event_log: Migration = {
+  version: 'v022',
+  description: 'IVF 质心持久化与 WebSocket 持久化事件日志',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS ivf_centroids (
+      model TEXT PRIMARY KEY,
+      centroids_json TEXT NOT NULL,
+      num_vectors INTEGER NOT NULL DEFAULT 0,
+      built_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS ws_event_log (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      event TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      tenant_id TEXT,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_ws_event_log_tenant ON ws_event_log (tenant_id, seq)',
+    'CREATE INDEX IF NOT EXISTS idx_ws_event_log_created ON ws_event_log (created_at)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -606,6 +629,7 @@ const MIGRATIONS: readonly Migration[] = [
   v019_task_queue_claim,
   v020_billing_outbox,
   v021_task_priority,
+  v022_ivf_and_event_log,
 ];
 
 interface MigrationRow {

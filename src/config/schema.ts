@@ -169,6 +169,8 @@ const observabilitySchema = z.object({
   serviceName: z.string().default('chrono-synth-os'),
   serviceVersion: z.string().default('2.0.0'),
   sampleRate: z.coerce.number().min(0).max(1).default(1.0),
+  /** 租户使用量指标保留窗口（毫秒），默认 7 天 */
+  metricsRetentionMs: z.coerce.number().int().min(3_600_000).default(7 * 24 * 60 * 60 * 1000),
 });
 
 const queueSchema = z.object({
@@ -219,7 +221,7 @@ export const AppConfigSchema = z.object({
   queue: queueSchema.default({ enabled: false, pollIntervalMs: 1000, maxConcurrent: 2, maxRetries: 3 }),
   observability: observabilitySchema.default({
     enabled: false, otlpEndpoint: 'http://localhost:4318', serviceName: 'chrono-synth-os',
-    serviceVersion: '2.0.0', sampleRate: 1.0,
+    serviceVersion: '2.0.0', sampleRate: 1.0, metricsRetentionMs: 7 * 24 * 60 * 60 * 1000,
   }),
   cognition: cognitionSchema,
 });
@@ -306,6 +308,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_OTEL_SERVICE_NAME:        (v) => { deepSet(env, 'observability.serviceName', v); },
     CHRONO_OTEL_SERVICE_VERSION:     (v) => { deepSet(env, 'observability.serviceVersion', v); },
     CHRONO_OTEL_SAMPLE_RATE:         (v) => { deepSet(env, 'observability.sampleRate', parseFloat(v)); },
+    CHRONO_OTEL_METRICS_RETENTION_MS: (v) => { deepSet(env, 'observability.metricsRetentionMs', parseInt(v, 10)); },
   };
 
   for (const [key, setter] of Object.entries(mapping)) {

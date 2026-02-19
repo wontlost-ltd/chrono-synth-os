@@ -14,6 +14,8 @@ export interface JwtPayload {
   readonly tenantId: string;
   /** 用户角色 */
   readonly role: UserRole;
+  /** 当前订阅计划 ID（用于计划感知限流） */
+  readonly planId?: string;
   /** 签发时间（Unix 秒） */
   readonly iat: number;
   /** 过期时间（Unix 秒） */
