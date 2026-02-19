@@ -10,6 +10,8 @@ export interface PlanLimits {
   readonly maxSimulations: number;
   readonly maxPaths: number;
   readonly llmTokensPerMonth: number;
+  /** API 请求限流（每分钟最大请求数），-1 表示无限制 */
+  readonly rateLimitPerMinute: number;
 }
 
 export interface Plan {
@@ -25,19 +27,19 @@ export const PLANS: readonly Plan[] = [
     id: 'free',
     name: '免费版',
     stripePriceId: '',
-    limits: { maxSimulations: 3, maxPaths: 2, llmTokensPerMonth: 10_000 },
+    limits: { maxSimulations: 3, maxPaths: 2, llmTokensPerMonth: 10_000, rateLimitPerMinute: 60 },
   },
   {
     id: 'pro',
     name: '专业版',
     stripePriceId: 'price_pro_monthly',
-    limits: { maxSimulations: 50, maxPaths: 10, llmTokensPerMonth: 500_000 },
+    limits: { maxSimulations: 50, maxPaths: 10, llmTokensPerMonth: 500_000, rateLimitPerMinute: 300 },
   },
   {
     id: 'enterprise',
     name: '企业版',
     stripePriceId: 'price_enterprise_monthly',
-    limits: { maxSimulations: -1, maxPaths: -1, llmTokensPerMonth: -1 },
+    limits: { maxSimulations: -1, maxPaths: -1, llmTokensPerMonth: -1, rateLimitPerMinute: -1 },
   },
 ];
 

@@ -3,15 +3,56 @@
  * 基于 @fastify/rate-limit 实现全局请求限流
  * 当 Redis 可用时使用 Redis 存储实现分布式限流
  * 响应头遵循 IETF draft-ietf-httpapi-ratelimit-headers
+ * 支持计划感知动态限流：付费计划享有更高配额
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import type { AppConfig } from '../../config/schema.js';
+import { getPlanLimits } from '../../billing/plans.js';
+
+/** 租户计划限流缓存（避免每次请求查 DB，TTL 5 分钟，最多 10000 条目） */
+const PLAN_CACHE_MAX_SIZE = 10_000;
+const PLAN_CACHE_TTL_MS = 5 * 60 * 1000;
+const planRateLimitCache = new Map<string, { max: number; cachedAt: number }>();
+
+/** 无限制计划使用极高的限额值 */
+const UNLIMITED_MAX = 1_000_000;
 
 export async function registerRateLimit(app: FastifyInstance, config: AppConfig): Promise<void> {
+  const defaultMax = config.rateLimit.max;
+
   const options: Parameters<typeof rateLimit>[1] = {
-    max: config.rateLimit.max,
+    max: (request: FastifyRequest, _key: string) => {
+      const tenantId = (request as { tenantId?: string }).tenantId;
+      if (!tenantId || tenantId === 'default') return defaultMax;
+
+      /* 查询缓存 */
+      const cached = planRateLimitCache.get(tenantId);
+      if (cached && Date.now() - cached.cachedAt < PLAN_CACHE_TTL_MS) return cached.max;
+
+      /* 从请求上下文获取计划信息（JWT payload 中的 planId） */
+      const user = (request as unknown as { user?: { planId?: string } }).user;
+      const planId = user?.planId;
+
+      /* 仅当有明确的 planId 时才缓存结果；无 planId 时使用默认值不缓存 */
+      if (!planId) return defaultMax;
+
+      const limits = getPlanLimits(planId);
+      const planMax = limits.rateLimitPerMinute < 0 ? UNLIMITED_MAX : limits.rateLimitPerMinute;
+
+      /* LRU 淘汰：超过上限时清除最旧的 1/4 条目 */
+      if (planRateLimitCache.size >= PLAN_CACHE_MAX_SIZE) {
+        const toDelete = Math.floor(PLAN_CACHE_MAX_SIZE / 4);
+        const iterator = planRateLimitCache.keys();
+        for (let i = 0; i < toDelete; i++) {
+          const key = iterator.next().value;
+          if (key) planRateLimitCache.delete(key);
+        }
+      }
+      planRateLimitCache.set(tenantId, { max: planMax, cachedAt: Date.now() });
+      return planMax;
+    },
     timeWindow: config.rateLimit.timeWindowMs,
     keyGenerator: (request) => {
       const tenantId = (request as { tenantId?: string }).tenantId;

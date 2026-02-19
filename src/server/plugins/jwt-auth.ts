@@ -17,8 +17,8 @@ declare module '@fastify/jwt' {
   }
 }
 
-/** 不需要认证的路径前缀（运维端点豁免） */
-const PUBLIC_PATHS = new Set(['/healthz', '/readyz', '/metrics']);
+/** 不需要认证的路径前缀（仅健康检查端点豁免，指标端点需认证） */
+const PUBLIC_PATHS = new Set(['/healthz', '/readyz']);
 
 /** 认证路由自身豁免（注册/登录无需 token） */
 const AUTH_PATHS = new Set([

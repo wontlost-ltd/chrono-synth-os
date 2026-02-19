@@ -525,6 +525,38 @@ const v019_task_queue_claim: Migration = {
   ],
 };
 
+/** v020: Stripe 计量发件箱 */
+const v020_billing_outbox: Migration = {
+  version: 'v020',
+  description: 'Stripe 计量发件箱 — 持久化重试',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS billing_outbox (
+      id SERIAL PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      customer_id TEXT NOT NULL,
+      event_name TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at BIGINT NOT NULL,
+      processed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_billing_outbox_status ON billing_outbox (status, created_at)',
+  ],
+};
+
+/** v021: 任务队列优先级 */
+const v021_task_priority: Migration = {
+  version: 'v021',
+  description: '任务队列优先级支持',
+  sql: [
+    'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks (priority DESC, created_at ASC) WHERE status = \'pending\'',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -546,4 +578,6 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v017_decision_onboarding_persistence,
   v018_refresh_token_index,
   v019_task_queue_claim,
+  v020_billing_outbox,
+  v021_task_priority,
 ];

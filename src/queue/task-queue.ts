@@ -68,23 +68,29 @@ export class TaskQueue {
     this.workerId = workerId ?? generatePrefixedId('worker');
   }
 
-  /** 入队新任务 */
-  enqueue(tenantId: string, type: string, payload: unknown, maxRetries = 3): string {
+  /** 入队新任务（priority: 0=普通, 1=高优先, 2=紧急） */
+  enqueue(tenantId: string, type: string, payload: unknown, maxRetries = 3, priority = 0): string {
     const id = generatePrefixedId('task');
     const now = Date.now();
     this.db.prepare<void>(
-      `INSERT INTO tasks (id, tenant_id, type, payload, status, retry_count, max_retries, created_at, updated_at, available_at)
-       VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`,
-    ).run(id, tenantId, type, JSON.stringify(payload), maxRetries, now, now, now);
+      `INSERT INTO tasks (id, tenant_id, type, payload, status, retry_count, max_retries, created_at, updated_at, available_at, priority)
+       VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)`,
+    ).run(id, tenantId, type, JSON.stringify(payload), maxRetries, now, now, now, priority);
     return id;
   }
 
-  /** 原子出队：获取并锁定一个可执行的任务 */
+  /** 原子出队：优先级降序 + 时间升序，同一租户连续运行任务数受限（公平调度） */
   dequeue(now?: number): TaskRecord | undefined {
     const ts = now ?? Date.now();
     return this.db.transaction(() => {
+      /* 按优先级降序、创建时间升序选取，同时统计各租户正在运行的任务数实现公平调度 */
       const row = this.db.prepare<TaskRow>(
-        `SELECT * FROM tasks WHERE status = 'pending' AND available_at <= ? ORDER BY created_at ASC LIMIT 1`,
+        `SELECT t.* FROM tasks t
+         LEFT JOIN (SELECT tenant_id, COUNT(*) as running_count FROM tasks WHERE status = 'running' GROUP BY tenant_id) r
+         ON t.tenant_id = r.tenant_id
+         WHERE t.status = 'pending' AND t.available_at <= ?
+         ORDER BY t.priority DESC, COALESCE(r.running_count, 0) ASC, t.created_at ASC
+         LIMIT 1`,
       ).get(ts);
       if (!row) return undefined;
 

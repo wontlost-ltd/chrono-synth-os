@@ -573,6 +573,16 @@ const v020_billing_outbox: Migration = {
   ],
 };
 
+/** v021: 任务队列优先级 */
+const v021_task_priority: Migration = {
+  version: 'v021',
+  description: '任务队列优先级支持',
+  sql: [
+    '/* safe:add-column:tasks:priority */ ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_priority_created ON tasks (priority DESC, created_at ASC) WHERE status = \'pending\'',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -595,6 +605,7 @@ const MIGRATIONS: readonly Migration[] = [
   v018_refresh_token_index,
   v019_task_queue_claim,
   v020_billing_outbox,
+  v021_task_priority,
 ];
 
 interface MigrationRow {
