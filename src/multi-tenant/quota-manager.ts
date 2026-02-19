@@ -74,7 +74,7 @@ export class QuotaManager {
     const result = this.db.prepare<void>(
       `INSERT INTO quota_usage (tenant_id, resource, used, window_start)
        VALUES (?, ?, ?, ?)
-       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + ? WHERE used + ? <= ?`,
+       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = quota_usage.used + ? WHERE quota_usage.used + ? <= ?`,
     ).run(tenantId, resource, quantity, windowStart, quantity, quantity, limit.max_per_window);
     return result.changes > 0;
   }
@@ -91,7 +91,7 @@ export class QuotaManager {
     this.db.prepare<void>(
       `INSERT INTO quota_usage (tenant_id, resource, used, window_start)
        VALUES (?, ?, ?, ?)
-       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = used + ?`,
+       ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = quota_usage.used + ?`,
     ).run(tenantId, resource, quantity, windowStart, quantity);
   }
 }

@@ -88,5 +88,7 @@ async function start(): Promise<void> {
 
 start().catch((err) => {
   logger.error('Server', '启动失败', err);
+  console.error('启动失败详细:', err instanceof Error ? err.message : err);
+  if (err instanceof Error) console.error(err.stack);
   process.exit(1);
 });

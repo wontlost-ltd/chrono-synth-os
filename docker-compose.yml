@@ -17,15 +17,21 @@ services:
       - CHRONO_CORS_CREDENTIALS=true
       - CHRONO_AUTH_ENABLED=false
       - CHRONO_JWT_ENABLED=${JWT_ENABLED:-true}
-      - CHRONO_JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - CHRONO_JWT_SECRET=${JWT_SECRET:-supersecretjwtkey-for-local-dev-only}
       - CHRONO_REDIS_ENABLED=true
       - CHRONO_REDIS_URL=redis://redis:6379
       - CHRONO_STRIPE_ENABLED=${STRIPE_ENABLED:-false}
       - CHRONO_STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - CHRONO_STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
       - CHRONO_STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - CHRONO_QUEUE_ENABLED=true
       - CHRONO_OTEL_ENABLED=${OTEL_ENABLED:-false}
       - CHRONO_OTEL_ENDPOINT=http://jaeger:4318
+      - CHRONO_INTELLIGENCE_PROVIDER=rightcode
+      - CHRONO_INTELLIGENCE_MODEL=gpt-5.2
+      - CHRONO_INTELLIGENCE_API_KEY=${INTELLIGENCE_API_KEY:-}
+      - CHRONO_INTELLIGENCE_BASE_URL=https://right.codes/codex
+      - CHRONO_INTELLIGENCE_EMBEDDING_MODEL=text-embedding-3-small
     volumes:
       - chrono-data:/app/data
     restart: unless-stopped
@@ -35,7 +41,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -54,7 +60,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -81,7 +87,7 @@ services:
       - chrono-net
 
   jaeger:
-    image: jaegertracing/all-in-one:1.62
+    image: jaegertracing/all-in-one:1.76.0
     ports:
       - "16686:16686"
       - "4318:4318"
