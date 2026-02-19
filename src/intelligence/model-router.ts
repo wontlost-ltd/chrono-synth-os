@@ -15,6 +15,24 @@ import { billingMetrics } from '../billing/billing-outbox.js';
 import { QuotaExceededError } from '../errors/index.js';
 import { reportUsage as reportStripeUsage } from '../billing/stripe-client.js';
 
+/** LLM 调用指标（用于可观测性） */
+export const llmMetrics = {
+  chatCalls: 0,
+  chatErrors: 0,
+  chatLatencyMs: [] as number[],
+  embedCalls: 0,
+  embedErrors: 0,
+  embedLatencyMs: [] as number[],
+  totalTokensConsumed: 0,
+};
+
+const LLM_LATENCY_SAMPLES = 1024;
+
+function recordLlmLatency(arr: number[], ms: number): void {
+  if (arr.length >= LLM_LATENCY_SAMPLES) arr.shift();
+  arr.push(ms);
+}
+
 export interface ModelRouterConfig {
   readonly provider: LLMProviderName;
   readonly model: string;
@@ -126,13 +144,22 @@ export class ModelRouter implements LLMProvider {
     }
 
     let response: ChatResponse;
-    switch (this.provider) {
-      case 'openai': response = await this.chatOpenAI(messages, options); break;
-      case 'anthropic': response = await this.chatAnthropic(messages, options); break;
-      case 'ollama': response = await this.chatOllama(messages, options); break;
-      case 'mock': response = await this.chatMock(messages, options); break;
-      default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
+    const chatStart = performance.now();
+    llmMetrics.chatCalls++;
+    try {
+      switch (this.provider) {
+        case 'openai': response = await this.chatOpenAI(messages, options); break;
+        case 'anthropic': response = await this.chatAnthropic(messages, options); break;
+        case 'ollama': response = await this.chatOllama(messages, options); break;
+        case 'mock': response = await this.chatMock(messages, options); break;
+        default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
+      }
+    } catch (err) {
+      llmMetrics.chatErrors++;
+      recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
+      throw err;
     }
+    recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
 
     /* 记录成本 */
     if (this.costTracker) {
@@ -146,6 +173,7 @@ export class ModelRouter implements LLMProvider {
     }
 
     const totalTokens = response.usage?.totalTokens ?? 0;
+    if (totalTokens > 0) llmMetrics.totalTokensConsumed += totalTokens;
     if (this.tokenBudget && totalTokens > 0) {
       this.tokenBudget.recordUsage(this.tenantId, totalTokens);
     }
@@ -187,13 +215,22 @@ export class ModelRouter implements LLMProvider {
     }
 
     let embeddings: number[][];
-    switch (this.provider) {
-      case 'openai': embeddings = await this.embedOpenAI(texts); break;
-      case 'ollama': embeddings = await this.embedOllama(texts); break;
-      case 'mock': embeddings = texts.map(t => hashVector(t)); break;
-      case 'anthropic': throw new Error('Anthropic 不支持嵌入接口');
-      default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
+    const embedStart = performance.now();
+    llmMetrics.embedCalls++;
+    try {
+      switch (this.provider) {
+        case 'openai': embeddings = await this.embedOpenAI(texts); break;
+        case 'ollama': embeddings = await this.embedOllama(texts); break;
+        case 'mock': embeddings = texts.map(t => hashVector(t)); break;
+        case 'anthropic': throw new Error('Anthropic 不支持嵌入接口');
+        default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
+      }
+    } catch (err) {
+      llmMetrics.embedErrors++;
+      recordLlmLatency(llmMetrics.embedLatencyMs, performance.now() - embedStart);
+      throw err;
     }
+    recordLlmLatency(llmMetrics.embedLatencyMs, performance.now() - embedStart);
 
     if (this.costTracker) {
       this.costTracker.record(this.tenantId, this.provider, this.embeddingModel, estimatedTokens, 0);

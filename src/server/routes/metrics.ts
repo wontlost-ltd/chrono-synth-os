@@ -9,6 +9,28 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { getMetricsSnapshot, getTotalRequests } from '../plugins/metrics.js';
 import { getWsConnectionCount } from '../plugins/websocket.js';
 import { billingMetrics } from '../../billing/billing-outbox.js';
+import { llmMetrics } from '../../intelligence/model-router.js';
+import { calculatePercentile } from '../plugins/metrics.js';
+
+function llmLatencyPercentiles(arr: number[]): { p50: number; p90: number; p99: number } {
+  if (arr.length === 0) return { p50: 0, p90: 0, p99: 0 };
+  const sorted = [...arr].sort((a, b) => a - b);
+  return {
+    p50: Math.round(calculatePercentile(sorted, 50) * 100) / 100,
+    p90: Math.round(calculatePercentile(sorted, 90) * 100) / 100,
+    p99: Math.round(calculatePercentile(sorted, 99) * 100) / 100,
+  };
+}
+
+function getQueueBacklog(os: ChronoSynthOS): { pending: number; running: number; failed: number } {
+  try {
+    const db = os.getDatabase();
+    const pending = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM task_queue WHERE status = 'pending'`).get()?.count ?? 0;
+    const running = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM task_queue WHERE status = 'running'`).get()?.count ?? 0;
+    const failed = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM task_queue WHERE status = 'failed'`).get()?.count ?? 0;
+    return { pending, running, failed };
+  } catch { return { pending: 0, running: 0, failed: 0 }; }
+}
 
 const startTime = Date.now();
 
@@ -40,6 +62,16 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): 
         outbox_pending: outboxPending,
         outbox_failed: outboxFailed,
       },
+      llm: {
+        chat_calls: llmMetrics.chatCalls,
+        chat_errors: llmMetrics.chatErrors,
+        chat_latency_ms: llmLatencyPercentiles(llmMetrics.chatLatencyMs),
+        embed_calls: llmMetrics.embedCalls,
+        embed_errors: llmMetrics.embedErrors,
+        embed_latency_ms: llmLatencyPercentiles(llmMetrics.embedLatencyMs),
+        total_tokens_consumed: llmMetrics.totalTokensConsumed,
+      },
+      queue: getQueueBacklog(os),
       system: {
         memory_mb: {
           rss: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
@@ -125,6 +157,37 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): 
     lines.push('# TYPE chrono_billing_outbox_backlog gauge');
     lines.push(`chrono_billing_outbox_backlog{status="pending"} ${outboxPendingProm}`);
     lines.push(`chrono_billing_outbox_backlog{status="failed"} ${outboxFailedProm}`);
+
+    /* LLM */
+    const chatLatency = llmLatencyPercentiles(llmMetrics.chatLatencyMs);
+    const embedLatency = llmLatencyPercentiles(llmMetrics.embedLatencyMs);
+    lines.push('# HELP chrono_llm_calls_total LLM 调用总数');
+    lines.push('# TYPE chrono_llm_calls_total counter');
+    lines.push(`chrono_llm_calls_total{method="chat"} ${llmMetrics.chatCalls}`);
+    lines.push(`chrono_llm_calls_total{method="embed"} ${llmMetrics.embedCalls}`);
+    lines.push('# HELP chrono_llm_errors_total LLM 调用错误数');
+    lines.push('# TYPE chrono_llm_errors_total counter');
+    lines.push(`chrono_llm_errors_total{method="chat"} ${llmMetrics.chatErrors}`);
+    lines.push(`chrono_llm_errors_total{method="embed"} ${llmMetrics.embedErrors}`);
+    lines.push('# HELP chrono_llm_latency_ms LLM 调用延迟百分位');
+    lines.push('# TYPE chrono_llm_latency_ms summary');
+    lines.push(`chrono_llm_latency_ms{method="chat",quantile="0.5"} ${chatLatency.p50}`);
+    lines.push(`chrono_llm_latency_ms{method="chat",quantile="0.9"} ${chatLatency.p90}`);
+    lines.push(`chrono_llm_latency_ms{method="chat",quantile="0.99"} ${chatLatency.p99}`);
+    lines.push(`chrono_llm_latency_ms{method="embed",quantile="0.5"} ${embedLatency.p50}`);
+    lines.push(`chrono_llm_latency_ms{method="embed",quantile="0.9"} ${embedLatency.p90}`);
+    lines.push(`chrono_llm_latency_ms{method="embed",quantile="0.99"} ${embedLatency.p99}`);
+    lines.push('# HELP chrono_llm_tokens_consumed_total LLM token 消耗总量');
+    lines.push('# TYPE chrono_llm_tokens_consumed_total counter');
+    lines.push(`chrono_llm_tokens_consumed_total ${llmMetrics.totalTokensConsumed}`);
+
+    /* 任务队列 */
+    const queueBacklog = getQueueBacklog(os);
+    lines.push('# HELP chrono_queue_backlog 任务队列积压');
+    lines.push('# TYPE chrono_queue_backlog gauge');
+    lines.push(`chrono_queue_backlog{status="pending"} ${queueBacklog.pending}`);
+    lines.push(`chrono_queue_backlog{status="running"} ${queueBacklog.running}`);
+    lines.push(`chrono_queue_backlog{status="failed"} ${queueBacklog.failed}`);
 
     return reply
       .header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')

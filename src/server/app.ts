@@ -67,6 +67,15 @@ export interface CreateAppDeps {
 export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const config = deps.config ?? loadConfig();
 
+  /* SQLite 多副本安全检查 */
+  if (config.db.driver === 'sqlite' && process.env.REPLICA_COUNT && Number(process.env.REPLICA_COUNT) > 1) {
+    const msg = `SQLite 不支持多写入器。当前 REPLICA_COUNT=${process.env.REPLICA_COUNT}，请切换到 Postgres (db.driver='postgres') 后再部署多副本。`;
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(msg);
+    }
+    console.warn(`[WARN] ${msg}`);
+  }
+
   const app: FastifyInstance = deps.logger
     ? Fastify({ loggerInstance: deps.logger.pino, bodyLimit: config.request.maxBodyBytes }) as unknown as FastifyInstance
     : Fastify({ logger: false, bodyLimit: config.request.maxBodyBytes });
