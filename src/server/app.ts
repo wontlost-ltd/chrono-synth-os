@@ -121,7 +121,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   let worker: TaskWorker | undefined;
   if (config.queue.enabled) {
     const queueDb = deps.db ?? deps.os.getDatabase();
-    const queue = new TaskQueue(queueDb);
+    const queue = new TaskQueue(queueDb, undefined, {
+      maxPendingPerTenant: config.queue.maxPendingPerTenant,
+      completedRetentionMs: config.queue.completedRetentionMs,
+    });
     registerTaskRoutes(app, queue);
     worker = new TaskWorker(
       queue,

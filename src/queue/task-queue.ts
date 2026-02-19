@@ -5,6 +5,7 @@
 
 import type { IDatabase } from '../storage/database.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { QuotaExceededError } from '../errors/index.js';
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -61,21 +62,43 @@ function rowToRecord(row: TaskRow): TaskRecord {
   };
 }
 
+export interface TaskQueueConfig {
+  /** 每租户最大待处理任务数（超出时 enqueue 抛异常），0=无限制 */
+  readonly maxPendingPerTenant: number;
+  /** 已完成/失败任务保留时长（毫秒），超过后由 purgeCompleted 清理 */
+  readonly completedRetentionMs: number;
+}
+
+const DEFAULT_QUEUE_CONFIG: TaskQueueConfig = {
+  maxPendingPerTenant: 1000,
+  completedRetentionMs: 7 * 24 * 60 * 60 * 1000,
+};
+
 export class TaskQueue {
   private readonly workerId: string;
+  private readonly config: TaskQueueConfig;
 
-  constructor(private readonly db: IDatabase, workerId?: string) {
+  constructor(private readonly db: IDatabase, workerId?: string, config?: Partial<TaskQueueConfig>) {
     this.workerId = workerId ?? generatePrefixedId('worker');
+    this.config = { ...DEFAULT_QUEUE_CONFIG, ...config };
   }
 
   /** 入队新任务（priority: 0=普通, 1=高优先, 2=紧急） */
   enqueue(tenantId: string, type: string, payload: unknown, maxRetries = 3, priority = 0): string {
     const id = generatePrefixedId('task');
     const now = Date.now();
-    this.db.prepare<void>(
+    const maxPending = this.config.maxPendingPerTenant;
+
+    /* 原子化 INSERT...SELECT：在单条 SQL 中完成深度检查 + 插入，避免竞态 */
+    const result = this.db.prepare<void>(
       `INSERT INTO tasks (id, tenant_id, type, payload, status, retry_count, max_retries, created_at, updated_at, available_at, priority)
-       VALUES (?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?)`,
-    ).run(id, tenantId, type, JSON.stringify(payload), maxRetries, now, now, now, priority);
+       SELECT ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?
+       WHERE ? = 0 OR (SELECT COUNT(*) FROM tasks WHERE tenant_id = ? AND status IN ('pending', 'running')) < ?`,
+    ).run(id, tenantId, type, JSON.stringify(payload), maxRetries, now, now, now, priority, maxPending, tenantId, maxPending);
+
+    if (result.changes === 0) {
+      throw new QuotaExceededError(`租户 ${tenantId} 待处理任务已达上限 (${maxPending})`);
+    }
     return id;
   }
 
@@ -130,6 +153,28 @@ export class TaskQueue {
       'SELECT * FROM tasks WHERE id = ?',
     ).get(taskId);
     return row ? rowToRecord(row) : undefined;
+  }
+
+  /**
+   * 清理已完成/失败的过期任务（批量删除，避免大表膨胀）
+   * @returns 清理的任务数
+   */
+  purgeCompleted(batchSize = 1000): number {
+    const cutoff = Date.now() - this.config.completedRetentionMs;
+    let total = 0;
+    while (true) {
+      const ids = this.db.prepare<{ id: string }>(
+        `SELECT id FROM tasks WHERE status IN ('completed', 'failed') AND updated_at < ? LIMIT ?`,
+      ).all(cutoff, batchSize);
+      if (ids.length === 0) break;
+      const placeholders = ids.map(() => '?').join(',');
+      this.db.prepare<void>(
+        `DELETE FROM tasks WHERE id IN (${placeholders})`,
+      ).run(...ids.map(r => r.id));
+      total += ids.length;
+      if (ids.length < batchSize) break;
+    }
+    return total;
   }
 
   /**

@@ -624,6 +624,16 @@ const v023_api_keys: Migration = {
   ],
 };
 
+/** v024: 任务队列性能索引（purge + 公平调度查询优化） */
+const v024_task_queue_indexes: Migration = {
+  version: 'v024',
+  description: '任务队列 purge 和公平调度性能索引',
+  sql: [
+    'CREATE INDEX IF NOT EXISTS idx_tasks_status_updated ON tasks (status, updated_at)',
+    'CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON tasks (tenant_id, status)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -649,6 +659,7 @@ const MIGRATIONS: readonly Migration[] = [
   v021_task_priority,
   v022_ivf_and_event_log,
   v023_api_keys,
+  v024_task_queue_indexes,
 ];
 
 interface MigrationRow {

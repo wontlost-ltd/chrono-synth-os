@@ -184,6 +184,10 @@ const queueSchema = z.object({
   pollIntervalMs: z.coerce.number().int().min(100).default(1000),
   maxConcurrent: z.coerce.number().int().min(1).default(2),
   maxRetries: z.coerce.number().int().min(0).default(3),
+  /** 每租户最大待处理任务数（0=无限制） */
+  maxPendingPerTenant: z.coerce.number().int().min(0).default(1000),
+  /** 已完成/失败任务保留时长（毫秒），默认 7 天 */
+  completedRetentionMs: z.coerce.number().int().min(3_600_000).default(7 * 24 * 60 * 60 * 1000),
 });
 
 const requestSchema = z.object({
@@ -224,7 +228,7 @@ export const AppConfigSchema = z.object({
     maxImportEntries: 100,
   }),
   request: requestSchema.default({ timeoutMs: 30_000, maxBodyBytes: 1_048_576 }),
-  queue: queueSchema.default({ enabled: false, pollIntervalMs: 1000, maxConcurrent: 2, maxRetries: 3 }),
+  queue: queueSchema.default({ enabled: false, pollIntervalMs: 1000, maxConcurrent: 2, maxRetries: 3, maxPendingPerTenant: 1000, completedRetentionMs: 7 * 24 * 60 * 60 * 1000 }),
   observability: observabilitySchema.default({
     enabled: false, otlpEndpoint: 'http://localhost:4318', serviceName: 'chrono-synth-os',
     serviceVersion: '2.0.0', sampleRate: 1.0, metricsRetentionMs: 7 * 24 * 60 * 60 * 1000,
@@ -287,6 +291,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_QUEUE_POLL_INTERVAL_MS:   (v) => { deepSet(env, 'queue.pollIntervalMs', parseInt(v, 10)); },
     CHRONO_QUEUE_MAX_CONCURRENT:     (v) => { deepSet(env, 'queue.maxConcurrent', parseInt(v, 10)); },
     CHRONO_QUEUE_MAX_RETRIES:        (v) => { deepSet(env, 'queue.maxRetries', parseInt(v, 10)); },
+    CHRONO_QUEUE_MAX_PENDING_PER_TENANT: (v) => { deepSet(env, 'queue.maxPendingPerTenant', parseInt(v, 10)); },
+    CHRONO_QUEUE_COMPLETED_RETENTION_MS: (v) => { deepSet(env, 'queue.completedRetentionMs', parseInt(v, 10)); },
     CHRONO_JWT_ENABLED:              (v) => { deepSet(env, 'jwt.enabled', v === 'true'); },
     CHRONO_JWT_SECRET:               (v) => { deepSet(env, 'jwt.secret', v); },
     CHRONO_JWT_ISSUER:               (v) => { deepSet(env, 'jwt.issuer', v); },

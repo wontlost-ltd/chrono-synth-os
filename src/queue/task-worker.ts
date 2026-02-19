@@ -16,6 +16,7 @@ export class TaskWorker {
   private readonly handlers = new Map<string, TaskHandler>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private reaperTimer: ReturnType<typeof setInterval> | undefined;
+  private purgeTimer: ReturnType<typeof setInterval> | undefined;
   private running = 0;
 
   constructor(
@@ -39,6 +40,8 @@ export class TaskWorker {
     if (this.timer) return;
     this.timer = setInterval(() => { void this.tick(); }, this.pollIntervalMs);
     this.reaperTimer = setInterval(() => { this.reapStale(); }, this.reapIntervalMs);
+    /* 每小时清理过期的已完成/失败任务 */
+    this.purgeTimer = setInterval(() => { this.purgeCompleted(); }, 60 * 60 * 1000);
     this.logger.info(LAYER, `工作者已启动（间隔=${this.pollIntervalMs}ms, 并发=${this.maxConcurrent}）`);
   }
 
@@ -62,6 +65,10 @@ export class TaskWorker {
       clearInterval(this.reaperTimer);
       this.reaperTimer = undefined;
     }
+    if (this.purgeTimer) {
+      clearInterval(this.purgeTimer);
+      this.purgeTimer = undefined;
+    }
     if (this.running > 0) {
       this.logger.info(LAYER, `等待 ${this.running} 个进行中的任务完成…`);
       const deadline = Date.now() + drainTimeoutMs;
@@ -83,6 +90,18 @@ export class TaskWorker {
 
       this.running++;
       void this.handleTask(task).finally(() => { this.running--; });
+    }
+  }
+
+  /** 清理过期已完成任务 */
+  private purgeCompleted(): void {
+    try {
+      const purged = this.queue.purgeCompleted();
+      if (purged > 0) {
+        this.logger.info(LAYER, `清理 ${purged} 个过期已完成任务`);
+      }
+    } catch (err) {
+      this.logger.error(LAYER, `已完成任务清理失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

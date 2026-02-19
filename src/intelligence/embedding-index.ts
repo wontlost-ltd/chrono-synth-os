@@ -40,6 +40,8 @@ const IVF_THRESHOLD = 256;
 const MAX_PARTITIONS = 64;
 /** 默认探测分区数 */
 const DEFAULT_NPROBE = 4;
+/** 默认缓存最大容量（向量数），超出时淘汰最久未访问的条目 */
+const DEFAULT_MAX_CACHE_SIZE = 50_000;
 
 /** 预计算向量的 L2 范数 */
 function computeNorm(v: Float64Array): number {
@@ -76,19 +78,56 @@ function vectorScale(a: Float64Array, s: number): void {
 }
 
 export class EmbeddingIndex {
-  /** 内存向量缓存：memoryId → 预计算向量 + 范数 */
+  /** 内存向量缓存：memoryId → 预计算向量 + 范数（Map 保持插入序，用作 LRU 基础） */
   private vectorCache = new Map<string, CachedVector>();
+  /** LRU 访问时间戳：memoryId → 上次访问时间 */
+  private accessOrder = new Map<string, number>();
   private cacheLoadedAt = 0;
   /** IVF 分区索引（仅当向量数 >= IVF_THRESHOLD 时构建） */
   private partitions: IVFPartition[] = [];
   private ivfBuilt = false;
+  private readonly maxCacheSize: number;
 
   constructor(
     private readonly db: IDatabase,
     private readonly clock: Clock,
     private readonly llm: LLMProvider,
     private readonly model: string,
-  ) {}
+    maxCacheSize?: number,
+  ) {
+    this.maxCacheSize = maxCacheSize ?? DEFAULT_MAX_CACHE_SIZE;
+  }
+
+  /** 淘汰最久未访问的缓存条目直到容量合规（局部选择避免全量排序） */
+  private evictIfNeeded(): void {
+    const overflow = this.vectorCache.size - this.maxCacheSize;
+    if (overflow <= 0) return;
+
+    /* 选出最旧的 overflow 个条目（单次遍历 + 小堆替代全量排序） */
+    const victims: Array<[string, number]> = [];
+    let maxInVictims = -Infinity;
+    for (const entry of this.accessOrder) {
+      if (victims.length < overflow) {
+        victims.push(entry);
+        if (entry[1] > maxInVictims) maxInVictims = entry[1];
+      } else if (entry[1] < maxInVictims) {
+        /* 替换 victims 中最大（最新）的条目 */
+        let maxIdx = 0;
+        for (let i = 1; i < victims.length; i++) {
+          if (victims[i][1] > victims[maxIdx][1]) maxIdx = i;
+        }
+        victims[maxIdx] = entry;
+        maxInVictims = -Infinity;
+        for (const v of victims) { if (v[1] > maxInVictims) maxInVictims = v[1]; }
+      }
+    }
+
+    for (const [key] of victims) {
+      this.vectorCache.delete(key);
+      this.accessOrder.delete(key);
+    }
+    this.ivfBuilt = false;
+  }
 
   /** 对单条记忆建立向量索引 */
   async indexMemory(memoryId: string, text: string): Promise<boolean> {
@@ -106,6 +145,8 @@ export class EmbeddingIndex {
     const norm = computeNorm(typed);
     if (norm > 0) {
       this.vectorCache.set(memoryId, { vector: typed, norm });
+      this.accessOrder.set(memoryId, Date.now());
+      this.evictIfNeeded();
       /* 新向量使 IVF 索引失效，下次检索时重建 */
       this.ivfBuilt = false;
     }
@@ -133,7 +174,9 @@ export class EmbeddingIndex {
       } catch { /* 跳过损坏的向量 */ }
     }
     this.vectorCache = newCache;
+    this.accessOrder = new Map([...newCache.keys()].map(k => [k, now]));
     this.cacheLoadedAt = now;
+    this.evictIfNeeded();
     this.ivfBuilt = false;
   }
 
@@ -266,6 +309,12 @@ export class EmbeddingIndex {
     this.ivfBuilt = true;
   }
 
+  /** 更新检索结果的 LRU 访问时间 */
+  private touchResults(results: EmbeddingMatch[]): void {
+    const now = Date.now();
+    for (const r of results) this.accessOrder.set(r.memoryId, now);
+  }
+
   /** 向量检索（余弦相似度排序，返回 topK 个最相似结果） */
   search(queryEmbedding: readonly number[], topK: number): EmbeddingMatch[] {
     if (queryEmbedding.length === 0) return [];
@@ -280,15 +329,20 @@ export class EmbeddingIndex {
     const k = Math.max(1, topK);
 
     /* 当向量数 >= IVF_THRESHOLD 时使用分区索引 */
+    let results: EmbeddingMatch[];
     if (this.vectorCache.size >= IVF_THRESHOLD) {
       if (!this.ivfBuilt) this.buildIVF();
       if (this.partitions.length > 0) {
-        return this.searchIVF(queryEmbedding, queryNorm, k);
+        results = this.searchIVF(queryEmbedding, queryNorm, k);
+      } else {
+        results = this.searchBrute(queryEmbedding, queryNorm, k);
       }
+    } else {
+      /* 暴力搜索（小数据集或 IVF 未就绪） */
+      results = this.searchBrute(queryEmbedding, queryNorm, k);
     }
-
-    /* 暴力搜索（小数据集或 IVF 未就绪） */
-    return this.searchBrute(queryEmbedding, queryNorm, k);
+    this.touchResults(results);
+    return results;
   }
 
   /** 暴力搜索所有向量 */
