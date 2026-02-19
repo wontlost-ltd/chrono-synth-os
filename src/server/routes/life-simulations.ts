@@ -32,7 +32,7 @@ export function registerLifeSimulationRoutes(
 ): void {
   const asyncMode = options?.queueEnabled ?? false;
   if (!asyncMode && process.env.NODE_ENV === 'production') {
-    console.warn('[WARN] 模拟路由在同步模式下运行。生产环境建议启用 queue.enabled=true 以避免 CPU 反压。');
+    throw new Error('生产环境禁止同步模拟。请设置 queue.enabled=true 启用异步任务队列以避免 CPU 反压。');
   }
   const quotaManager = options?.db ? new QuotaManager(options.db) : undefined;
   const usageTracker = options?.db ? new UsageTracker(options.db) : undefined;

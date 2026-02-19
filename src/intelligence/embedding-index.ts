@@ -1,7 +1,10 @@
 /**
  * 向量索引：为记忆节点提供嵌入向量存储和余弦相似度检索
- * 使用内存缓存 + 预计算范数避免 O(N) JSON 反序列化
+ * 使用内存缓存 + 预计算范数 + IVF 分区索引避免 O(N) 全量扫描
  * 缓存有 TTL（默认 5 分钟），过期后从 DB 重载
+ *
+ * IVF 策略：将向量按质心分区（nPartitions），检索时仅扫描 nProbe 个最近分区
+ * 当向量数 < IVF_THRESHOLD 时退化为暴力搜索
  */
 
 import type { IDatabase } from '../storage/database.js';
@@ -23,7 +26,20 @@ interface CachedVector {
   readonly norm: number;
 }
 
+/** IVF 分区（一组向量共享一个质心） */
+interface IVFPartition {
+  centroid: Float64Array;
+  centroidNorm: number;
+  entries: Array<{ memoryId: string; vector: Float64Array; norm: number }>;
+}
+
 const CACHE_TTL_MS = 5 * 60 * 1000;
+/** 超过此数量才启用 IVF 分区（小数据集暴力搜索更快） */
+const IVF_THRESHOLD = 256;
+/** 分区数 = sqrt(N)，上限 64 */
+const MAX_PARTITIONS = 64;
+/** 默认探测分区数 */
+const DEFAULT_NPROBE = 4;
 
 /** 预计算向量的 L2 范数 */
 function computeNorm(v: Float64Array): number {
@@ -40,10 +56,32 @@ function cosineSimilarityFast(a: readonly number[] | Float64Array, aNorm: number
   return dot / (aNorm * bNorm);
 }
 
+/** 随机选取 k 个不同索引 */
+function sampleIndices(total: number, k: number): number[] {
+  const indices = new Set<number>();
+  while (indices.size < k) {
+    indices.add(Math.floor(Math.random() * total));
+  }
+  return [...indices];
+}
+
+/** 向量加法（a += b） */
+function vectorAdd(a: Float64Array, b: Float64Array): void {
+  for (let i = 0; i < a.length; i++) a[i] += b[i];
+}
+
+/** 向量除以标量 */
+function vectorScale(a: Float64Array, s: number): void {
+  for (let i = 0; i < a.length; i++) a[i] /= s;
+}
+
 export class EmbeddingIndex {
   /** 内存向量缓存：memoryId → 预计算向量 + 范数 */
   private vectorCache = new Map<string, CachedVector>();
   private cacheLoadedAt = 0;
+  /** IVF 分区索引（仅当向量数 >= IVF_THRESHOLD 时构建） */
+  private partitions: IVFPartition[] = [];
+  private ivfBuilt = false;
 
   constructor(
     private readonly db: IDatabase,
@@ -68,6 +106,8 @@ export class EmbeddingIndex {
     const norm = computeNorm(typed);
     if (norm > 0) {
       this.vectorCache.set(memoryId, { vector: typed, norm });
+      /* 新向量使 IVF 索引失效，下次检索时重建 */
+      this.ivfBuilt = false;
     }
     return true;
   }
@@ -94,6 +134,70 @@ export class EmbeddingIndex {
     }
     this.vectorCache = newCache;
     this.cacheLoadedAt = now;
+    this.ivfBuilt = false;
+  }
+
+  /** 构建 IVF 分区索引（简化 K-Means，3 轮迭代） */
+  private buildIVF(): void {
+    const entries = [...this.vectorCache.entries()].map(([id, c]) => ({
+      memoryId: id, vector: c.vector, norm: c.norm,
+    }));
+
+    if (entries.length < IVF_THRESHOLD) {
+      this.partitions = [];
+      this.ivfBuilt = true;
+      return;
+    }
+
+    const dim = entries[0].vector.length;
+    const nPartitions = Math.min(MAX_PARTITIONS, Math.ceil(Math.sqrt(entries.length)));
+
+    /* 初始化质心（随机选取） */
+    const seedIdx = sampleIndices(entries.length, nPartitions);
+    const centroids = seedIdx.map(i => Float64Array.from(entries[i].vector));
+
+    /* 3 轮 K-Means 迭代 */
+    let assignments = new Int32Array(entries.length);
+    for (let iter = 0; iter < 3; iter++) {
+      /* 分配阶段 */
+      for (let i = 0; i < entries.length; i++) {
+        let bestSim = -Infinity;
+        let bestIdx = 0;
+        const eNorm = entries[i].norm;
+        for (let c = 0; c < centroids.length; c++) {
+          const cNorm = computeNorm(centroids[c]);
+          const sim = cosineSimilarityFast(entries[i].vector, eNorm, centroids[c], cNorm);
+          if (sim > bestSim) { bestSim = sim; bestIdx = c; }
+        }
+        assignments[i] = bestIdx;
+      }
+      /* 更新质心 */
+      const counts = new Int32Array(nPartitions);
+      const sums = centroids.map(() => new Float64Array(dim));
+      for (let i = 0; i < entries.length; i++) {
+        const c = assignments[i];
+        counts[c]++;
+        vectorAdd(sums[c], entries[i].vector);
+      }
+      for (let c = 0; c < nPartitions; c++) {
+        if (counts[c] > 0) {
+          vectorScale(sums[c], counts[c]);
+          centroids[c] = sums[c];
+        }
+      }
+    }
+
+    /* 构建分区 */
+    this.partitions = centroids.map(c => ({
+      centroid: c,
+      centroidNorm: computeNorm(c),
+      entries: [],
+    }));
+    for (let i = 0; i < entries.length; i++) {
+      this.partitions[assignments[i]].entries.push(entries[i]);
+    }
+
+    this.ivfBuilt = true;
   }
 
   /** 向量检索（余弦相似度排序，返回 topK 个最相似结果） */
@@ -109,7 +213,20 @@ export class EmbeddingIndex {
 
     const k = Math.max(1, topK);
 
-    /* 维护一个大小为 K 的最小堆（按 score 升序），保留 topK 最大 */
+    /* 当向量数 >= IVF_THRESHOLD 时使用分区索引 */
+    if (this.vectorCache.size >= IVF_THRESHOLD) {
+      if (!this.ivfBuilt) this.buildIVF();
+      if (this.partitions.length > 0) {
+        return this.searchIVF(queryEmbedding, queryNorm, k);
+      }
+    }
+
+    /* 暴力搜索（小数据集或 IVF 未就绪） */
+    return this.searchBrute(queryEmbedding, queryNorm, k);
+  }
+
+  /** 暴力搜索所有向量 */
+  private searchBrute(queryEmbedding: readonly number[], queryNorm: number, k: number): EmbeddingMatch[] {
     const heap: EmbeddingMatch[] = [];
 
     for (const [memoryId, cached] of this.vectorCache) {
@@ -128,8 +245,45 @@ export class EmbeddingIndex {
     return heap.sort((a, b) => b.score - a.score);
   }
 
+  /** IVF 分区检索：仅扫描最近的 nProbe 个分区 */
+  private searchIVF(queryEmbedding: readonly number[], queryNorm: number, k: number): EmbeddingMatch[] {
+    const nProbe = Math.min(DEFAULT_NPROBE, this.partitions.length);
+
+    /* 找到与查询最接近的 nProbe 个分区 */
+    const partitionScores = this.partitions.map((p, idx) => ({
+      idx,
+      sim: cosineSimilarityFast(queryEmbedding, queryNorm, p.centroid, p.centroidNorm),
+    }));
+    partitionScores.sort((a, b) => b.sim - a.sim);
+
+    const heap: EmbeddingMatch[] = [];
+
+    for (let pi = 0; pi < nProbe; pi++) {
+      const partition = this.partitions[partitionScores[pi].idx];
+      for (const entry of partition.entries) {
+        const score = cosineSimilarityFast(queryEmbedding, queryNorm, entry.vector, entry.norm);
+        if (!Number.isFinite(score)) continue;
+
+        if (heap.length < k) {
+          heap.push({ memoryId: entry.memoryId, score });
+          if (heap.length === k) heap.sort((a, b) => a.score - b.score);
+        } else if (score > heap[0].score) {
+          heap[0] = { memoryId: entry.memoryId, score };
+          heap.sort((a, b) => a.score - b.score);
+        }
+      }
+    }
+
+    return heap.sort((a, b) => b.score - a.score);
+  }
+
   /** 缓存大小（用于监控） */
   get cacheSize(): number {
     return this.vectorCache.size;
+  }
+
+  /** 分区数（用于监控） */
+  get partitionCount(): number {
+    return this.partitions.length;
   }
 }

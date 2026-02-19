@@ -25,9 +25,9 @@ function llmLatencyPercentiles(arr: number[]): { p50: number; p90: number; p99: 
 function getQueueBacklog(os: ChronoSynthOS): { pending: number; running: number; failed: number } {
   try {
     const db = os.getDatabase();
-    const pending = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM task_queue WHERE status = 'pending'`).get()?.count ?? 0;
-    const running = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM task_queue WHERE status = 'running'`).get()?.count ?? 0;
-    const failed = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM task_queue WHERE status = 'failed'`).get()?.count ?? 0;
+    const pending = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM tasks WHERE status = 'pending'`).get()?.count ?? 0;
+    const running = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM tasks WHERE status = 'running'`).get()?.count ?? 0;
+    const failed = db.prepare<{ count: number }>(`SELECT COUNT(*) as count FROM tasks WHERE status = 'failed'`).get()?.count ?? 0;
     return { pending, running, failed };
   } catch { return { pending: 0, running: 0, failed: 0 }; }
 }
@@ -188,6 +188,22 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS): 
     lines.push(`chrono_queue_backlog{status="pending"} ${queueBacklog.pending}`);
     lines.push(`chrono_queue_backlog{status="running"} ${queueBacklog.running}`);
     lines.push(`chrono_queue_backlog{status="failed"} ${queueBacklog.failed}`);
+
+    /* 每租户使用量（最近 24 小时，限制最多 200 条避免基数爆炸） */
+    try {
+      const db = os.getDatabase();
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const tenantUsage = db.prepare<{ tenant_id: string; resource: string; total: number }>(
+        `SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource ORDER BY total DESC LIMIT 200`,
+      ).all(cutoff);
+      if (tenantUsage.length > 0) {
+        lines.push('# HELP chrono_tenant_usage_24h 每租户资源使用量（最近24小时）');
+        lines.push('# TYPE chrono_tenant_usage_24h gauge');
+        for (const row of tenantUsage) {
+          lines.push(`chrono_tenant_usage_24h{tenant="${row.tenant_id}",resource="${row.resource}"} ${row.total}`);
+        }
+      }
+    } catch { /* usage_records 表可能尚未创建 */ }
 
     return reply
       .header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')

@@ -236,6 +236,7 @@ export class ModelRouter implements LLMProvider {
       this.costTracker.record(this.tenantId, this.provider, this.embeddingModel, estimatedTokens, 0);
     }
     if (this.tokenBudget) this.tokenBudget.recordUsage(this.tenantId, estimatedTokens);
+    if (estimatedTokens > 0) llmMetrics.totalTokensConsumed += estimatedTokens;
     if (this.usageTracker && estimatedTokens > 0) {
       this.usageTracker.record(this.tenantId, 'llm_tokens', estimatedTokens);
     }

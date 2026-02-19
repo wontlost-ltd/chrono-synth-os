@@ -53,9 +53,61 @@ const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
   'system:stopping',
 ]);
 
+/** 最近事件环形缓冲区（用于断线重连重放） */
+const EVENT_BUFFER_SIZE = 256;
+interface BufferedEvent {
+  seq: number;
+  event: string;
+  data: unknown;
+  tenantId?: string;
+}
+const recentEvents: BufferedEvent[] = [];
+let recentEventsWriteIdx = 0;
+let recentEventsFilled = false;
+
+/** 全局递增事件序列号 */
+let globalSeq = 0;
+
+/** 缓存一个事件到环形缓冲区 */
+function bufferEvent(event: string, data: unknown, tenantId?: string): number {
+  const seq = ++globalSeq;
+  const entry: BufferedEvent = { seq, event, data, tenantId };
+  if (recentEvents.length < EVENT_BUFFER_SIZE) {
+    recentEvents.push(entry);
+  } else {
+    recentEvents[recentEventsWriteIdx] = entry;
+  }
+  recentEventsWriteIdx = (recentEventsWriteIdx + 1) % EVENT_BUFFER_SIZE;
+  if (recentEventsWriteIdx === 0 && recentEvents.length >= EVENT_BUFFER_SIZE) recentEventsFilled = true;
+  return seq;
+}
+
+/** 获取缓冲区中最旧的序列号 */
+function getOldestBufferedSeq(): number | null {
+  if (recentEvents.length === 0) return null;
+  if (!recentEventsFilled) return recentEvents[0].seq;
+  return recentEvents[recentEventsWriteIdx].seq;
+}
+
+/** 获取 sinceSeq 之后的缓冲事件 */
+function getBufferedEventsSince(sinceSeq: number, tenantId: string): BufferedEvent[] {
+  const result: BufferedEvent[] = [];
+  const len = recentEventsFilled ? EVENT_BUFFER_SIZE : recentEvents.length;
+  for (let i = 0; i < len; i++) {
+    const entry = recentEvents[i];
+    if (entry.seq > sinceSeq) {
+      if (!entry.tenantId || entry.tenantId === tenantId) {
+        result.push(entry);
+      }
+    }
+  }
+  return result.sort((a, b) => a.seq - b.seq);
+}
+
 interface ClientMessage {
-  type: 'subscribe' | 'unsubscribe' | 'pong';
+  type: 'subscribe' | 'unsubscribe' | 'pong' | 'replay';
   event?: string;
+  sinceSeq?: number;
 }
 
 /** 活跃 WebSocket 连接计数 */
@@ -193,12 +245,32 @@ export async function registerWebSocket(
             /* 租户隔离：仅推送与当前连接租户匹配的事件 */
             const eventTenantId = (payload as Record<string, unknown>).tenantId as string | undefined;
             if (eventTenantId && eventTenantId !== connectionTenantId) return;
-            safeSend(socket, { type: 'event', event: eventName, data: payload });
+            const seq = bufferEvent(eventName, payload, eventTenantId);
+            safeSend(socket, { type: 'event', event: eventName, data: payload, seq });
           };
           os.bus.on(eventName, listener as (payload: SystemEventMap[typeof eventName]) => void);
           listeners.set(eventName, listener);
         }
         safeSend(socket, { type: 'subscribed', event: eventName });
+      }
+
+      if (msg.type === 'replay' && typeof msg.sinceSeq === 'number') {
+        const oldestSeq = getOldestBufferedSeq();
+        let replayFrom = msg.sinceSeq;
+        /* 检测重放间隙：请求的序列号早于缓冲区最旧事件 */
+        if (oldestSeq !== null && replayFrom < oldestSeq) {
+          safeSend(socket, { type: 'replay-gap', oldestSeq, lastSeq: globalSeq });
+          replayFrom = oldestSeq - 1;
+        } else if (replayFrom > globalSeq) {
+          /* 客户端序列号超前（可能连接到不同副本）*/
+          safeSend(socket, { type: 'replay-gap', oldestSeq: oldestSeq ?? 0, lastSeq: globalSeq });
+          replayFrom = globalSeq;
+        }
+        const missed = getBufferedEventsSince(replayFrom, connectionTenantId);
+        for (const entry of missed) {
+          safeSend(socket, { type: 'event', event: entry.event, data: entry.data, seq: entry.seq });
+        }
+        safeSend(socket, { type: 'replay-complete', lastSeq: globalSeq, replayedCount: missed.length });
       }
 
       if (msg.type === 'unsubscribe' && msg.event) {
