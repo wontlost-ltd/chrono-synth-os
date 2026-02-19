@@ -235,6 +235,15 @@ export const PaginationQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+/* API Key 管理 */
+export const CreateApiKeySchema = z.object({
+  planId: z.string().min(1).default('free'),
+});
+
+export const RevokeApiKeySchema = z.object({
+  keyId: z.string().min(1),
+});
+
 /* SSO 查询参数 */
 export const SsoAuthorizeQuerySchema = z.object({
   redirect_uri: z.string().optional(),

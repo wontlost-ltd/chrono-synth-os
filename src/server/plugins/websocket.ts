@@ -73,6 +73,8 @@ let eventLogDb: import('../../storage/database.js').IDatabase | undefined;
 
 /** 事件日志保留窗口（运行时由 config.websocket.eventLogRetentionMs 覆盖） */
 let EVENT_LOG_TTL_MS = 60 * 60 * 1000;
+/** 断线重连重放最大事件数（运行时由 config.websocket.replayLimit 覆盖） */
+let REPLAY_LIMIT = 1000;
 
 /** 缓存一个事件到环形缓冲区并持久化到 DB（seq 由 DB 生成，多副本安全） */
 function bufferEvent(event: string, data: unknown, tenantId?: string): number {
@@ -123,7 +125,7 @@ function getPersistedEventsSince(sinceSeq: number, tenantId: string): BufferedEv
   if (!eventLogDb) return [];
   try {
     const rows = eventLogDb.prepare<{ seq: number; event: string; data_json: string; tenant_id: string | null }>(
-      'SELECT seq, event, data_json, tenant_id FROM ws_event_log WHERE seq > ? AND (tenant_id IS NULL OR tenant_id = ?) ORDER BY seq ASC LIMIT 1000',
+      `SELECT seq, event, data_json, tenant_id FROM ws_event_log WHERE seq > ? AND (tenant_id IS NULL OR tenant_id = ?) ORDER BY seq ASC LIMIT ${REPLAY_LIMIT}`,
     ).all(sinceSeq, tenantId);
     return rows.map(r => ({
       seq: r.seq,
@@ -193,8 +195,9 @@ export async function registerWebSocket(
 ): Promise<void> {
   if (!config.websocket.enabled) return;
 
-  /* 应用可配置的事件日志保留窗口 */
+  /* 应用可配置参数 */
   EVENT_LOG_TTL_MS = config.websocket.eventLogRetentionMs;
+  REPLAY_LIMIT = config.websocket.replayLimit;
 
   /* 初始化持久化事件日志 */
   try {

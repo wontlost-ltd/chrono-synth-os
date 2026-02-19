@@ -108,6 +108,15 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
       } catch { /* api_keys 表可能尚未创建，回退到静态 Key */ }
     }
 
+    /* requireDbKeys 启用时禁止静态 Key 回退（生产环境强制 DB Key） */
+    if (config.auth.requireDbKeys) {
+      return reply.status(403).send({
+        error: 'AuthorizationError',
+        code: 'AUTH_INVALID_KEY',
+        message: 'API Key 无效（生产模式仅接受 DB 管理的 Key）',
+      });
+    }
+
     /* 回退到配置文件静态 Key（向后兼容，无租户绑定） */
     const authorized = validKeys.some(k => safeCompare(apiKey, k));
     if (!authorized) {

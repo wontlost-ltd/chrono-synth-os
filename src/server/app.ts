@@ -52,6 +52,7 @@ import { registerSsoRoutes } from './routes/auth-sso.js';
 import { cleanupExpiredTokens } from './routes/auth.js';
 import { registerAuth0 } from './plugins/auth0.js';
 import { registerCollaborationRoutes } from './routes/collaboration.js';
+import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
@@ -162,6 +163,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
+  registerApiKeyRoutes(app, db);
 
   registerDocsRoutes(app);
 
@@ -181,25 +183,28 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const retentionTimer = setInterval(() => {
     const now = Date.now();
     const log = deps.os.getLogger();
-    const pruneTable = (table: string, whereClause: string, ...params: SqlValue[]) => {
+    const pruneTable = (table: string, pkColumn: string, whereClause: string, ...params: SqlValue[]) => {
       try {
         let total = 0;
-        /* 批量删除避免长事务锁表 */
-        const stmt = db.prepare<void>(
-          `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${whereClause} LIMIT ${RETENTION_BATCH_SIZE})`,
-        );
-        let deleted: number;
-        do {
-          const result = stmt.run(...params);
-          deleted = result.changes ?? 0;
-          total += deleted;
-        } while (deleted >= RETENTION_BATCH_SIZE);
+        /* 批量删除：先 SELECT 主键再 DELETE，兼容 SQLite 和 PostgreSQL */
+        while (true) {
+          const ids = db.prepare<{ pk: SqlValue }>(
+            `SELECT ${pkColumn} AS pk FROM ${table} WHERE ${whereClause} LIMIT ${RETENTION_BATCH_SIZE}`,
+          ).all(...params);
+          if (ids.length === 0) break;
+          const placeholders = ids.map(() => '?').join(',');
+          db.prepare<void>(
+            `DELETE FROM ${table} WHERE ${pkColumn} IN (${placeholders})`,
+          ).run(...ids.map(r => r.pk));
+          total += ids.length;
+          if (ids.length < RETENTION_BATCH_SIZE) break;
+        }
         if (total > 0) log.info('Retention', `清理 ${table}: 删除 ${total} 行`);
       } catch { /* 表可能不存在 */ }
     };
-    pruneTable('usage_records', 'recorded_at < ?', now - 90 * 24 * 60 * 60 * 1000);
-    pruneTable('billing_outbox', 'status = ? AND processed_at < ?', 'sent', now - 30 * 24 * 60 * 60 * 1000);
-    pruneTable('webhook_events', 'processed_at < ?', now - 7 * 24 * 60 * 60 * 1000);
+    pruneTable('usage_records', 'id', 'recorded_at < ?', now - 90 * 24 * 60 * 60 * 1000);
+    pruneTable('billing_outbox', 'id', 'status = ? AND processed_at < ?', 'sent', now - 30 * 24 * 60 * 60 * 1000);
+    pruneTable('webhook_events', 'event_id', 'processed_at < ?', now - 7 * 24 * 60 * 60 * 1000);
   }, DATA_RETENTION_INTERVAL);
   retentionTimer.unref();
   app.addHook('onClose', () => { clearInterval(retentionTimer); });

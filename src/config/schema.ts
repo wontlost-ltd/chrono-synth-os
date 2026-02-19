@@ -45,6 +45,8 @@ const websocketSchema = z.object({
   heartbeatIntervalMs: z.coerce.number().int().min(1000).default(30_000),
   /** WebSocket 事件日志保留窗口（毫秒），默认 1 小时 */
   eventLogRetentionMs: z.coerce.number().int().min(60_000).default(60 * 60 * 1000),
+  /** 断线重连重放最大事件数，默认 1000 */
+  replayLimit: z.coerce.number().int().min(100).max(10_000).default(1000),
 });
 
 const corsSchema = z.object({
@@ -55,6 +57,8 @@ const corsSchema = z.object({
 const authSchema = z.object({
   enabled: z.boolean().default(false),
   apiKeys: z.array(z.string()).default([]),
+  /** 生产环境强制使用 DB 存储的 API Key（禁用静态配置 Key 回退） */
+  requireDbKeys: z.boolean().default(false),
 });
 
 const jwtSchema = z.object({
@@ -193,9 +197,9 @@ export const AppConfigSchema = z.object({
   server: serverSchema.default({ host: '0.0.0.0', port: 3000 }),
   integration: integrationSchema.default({ fitnessThreshold: 0.6, confidenceThreshold: 0.5 }),
   rateLimit: rateLimitSchema.default({ max: 100, timeWindowMs: 60_000 }),
-  websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000, eventLogRetentionMs: 60 * 60 * 1000 }),
+  websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000, eventLogRetentionMs: 60 * 60 * 1000, replayLimit: 1000 }),
   cors: corsSchema.default({ origin: false, credentials: false }),
-  auth: authSchema.default({ enabled: false, apiKeys: [] }),
+  auth: authSchema.default({ enabled: false, apiKeys: [], requireDbKeys: false }),
   jwt: jwtSchema.default({
     enabled: false, secret: 'change-me-in-production', issuer: 'chrono-synth-os',
     accessTtlMs: 15 * 60 * 1000, refreshTtlMs: 7 * 24 * 60 * 60 * 1000, algorithm: 'HS256',
@@ -251,10 +255,12 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_WEBSOCKET_ENABLED:       (v) => { deepSet(env, 'websocket.enabled', v === 'true'); },
     CHRONO_WEBSOCKET_HEARTBEAT_MS:  (v) => { deepSet(env, 'websocket.heartbeatIntervalMs', parseInt(v, 10)); },
     CHRONO_WEBSOCKET_EVENT_LOG_RETENTION_MS: (v) => { deepSet(env, 'websocket.eventLogRetentionMs', parseInt(v, 10)); },
+    CHRONO_WEBSOCKET_REPLAY_LIMIT:  (v) => { deepSet(env, 'websocket.replayLimit', parseInt(v, 10)); },
     CHRONO_CORS_ORIGIN:             (v) => { deepSet(env, 'cors.origin', v === 'true' ? true : v === 'false' ? false : v); },
     CHRONO_CORS_CREDENTIALS:        (v) => { deepSet(env, 'cors.credentials', v === 'true'); },
     CHRONO_AUTH_ENABLED:            (v) => { deepSet(env, 'auth.enabled', v === 'true'); },
     CHRONO_AUTH_API_KEYS:           (v) => { deepSet(env, 'auth.apiKeys', v.split(',')); },
+    CHRONO_AUTH_REQUIRE_DB_KEYS:    (v) => { deepSet(env, 'auth.requireDbKeys', v === 'true'); },
     CHRONO_INTELLIGENCE_PROVIDER:           (v) => { deepSet(env, 'intelligence.provider', v); },
     CHRONO_INTELLIGENCE_MODEL:              (v) => { deepSet(env, 'intelligence.model', v); },
     CHRONO_INTELLIGENCE_EMBEDDING_MODEL:    (v) => { deepSet(env, 'intelligence.embeddingModel', v); },
