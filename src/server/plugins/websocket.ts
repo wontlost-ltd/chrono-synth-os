@@ -10,6 +10,9 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { SystemEventName, SystemEventMap } from '../../types/events.js';
 
+/** 进程唯一标识（防止自己收到自己发布的事件） */
+const processId = crypto.randomUUID();
+
 /** 所有合法的事件名称集合（运行时校验用） */
 const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
   'core:value-updated',
@@ -69,6 +72,8 @@ function safeSend(socket: { readyState: number; send: (data: string) => void }, 
   }
 }
 
+const REDIS_EVENT_CHANNEL = 'chrono:events';
+
 export async function registerWebSocket(
   app: FastifyInstance,
   os: ChronoSynthOS,
@@ -77,6 +82,41 @@ export async function registerWebSocket(
   if (!config.websocket.enabled) return;
 
   await app.register(websocketPlugin);
+
+  /* Redis 事件背板：跨副本事件传播 */
+  let redisPub: typeof app.redis | undefined;
+  let redisSub: typeof app.redis | undefined;
+  if (app.redis) {
+    redisPub = app.redis;
+    redisSub = app.redis.duplicate();
+    await redisSub.subscribe(REDIS_EVENT_CHANNEL);
+    redisSub.on('message', (_channel: string, message: string) => {
+      try {
+        const parsed = JSON.parse(message) as { event?: string; payload?: unknown; origin?: string };
+        if (!parsed.event || !parsed.origin || parsed.origin === processId) return;
+        if (!VALID_EVENTS.has(parsed.event)) return;
+        os.bus.emit(parsed.event as SystemEventName, parsed.payload as SystemEventMap[SystemEventName]);
+      } catch { /* 忽略格式错误的消息 */ }
+    });
+
+    /* 本地事件发布到 Redis */
+    for (const eventName of VALID_EVENTS) {
+      os.bus.on(eventName as SystemEventName, (payload) => {
+        redisPub?.publish(REDIS_EVENT_CHANNEL, JSON.stringify({
+          event: eventName,
+          payload,
+          origin: processId,
+        })).catch(() => { /* 发布失败不阻塞 */ });
+      });
+    }
+
+    app.addHook('onClose', async () => {
+      if (redisSub) {
+        await redisSub.unsubscribe(REDIS_EVENT_CHANNEL).catch(() => {});
+        redisSub.disconnect();
+      }
+    });
+  }
 
   app.get('/ws', { websocket: true }, (socket, request: FastifyRequest) => {
     /* JWT 鉴权：从已验证的 request.user 获取租户 */

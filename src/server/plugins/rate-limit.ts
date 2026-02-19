@@ -28,9 +28,11 @@ export async function registerRateLimit(app: FastifyInstance, config: AppConfig)
     }),
   };
 
-  /* 当 Redis 可用时使用 Redis 存储 */
+  /* 当 Redis 可用时使用 Redis 存储（分布式限流） */
   if (app.redis) {
     options.redis = app.redis;
+  } else if (process.env.NODE_ENV === 'production') {
+    console.warn('[WARN] Redis 未配置，限流为单进程模式。多副本部署建议配置 Redis 以启用分布式限流。');
   }
 
   await app.register(rateLimit, options);
