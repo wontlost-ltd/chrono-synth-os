@@ -580,6 +580,24 @@ const v022_ivf_and_event_log: Migration = {
   ],
 };
 
+/** v023: API Key 租户绑定（PostgreSQL） */
+const v023_api_keys: Migration = {
+  version: 'v023',
+  description: 'API Key 租户绑定（支持计划感知限流）',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS api_keys (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      key_hash TEXT NOT NULL UNIQUE,
+      plan_id TEXT NOT NULL DEFAULT 'free',
+      is_revoked INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys (key_hash)',
+    'CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys (tenant_id)',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -604,4 +622,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v020_billing_outbox,
   v021_task_priority,
   v022_ivf_and_event_log,
+  v023_api_keys,
 ];

@@ -1,11 +1,16 @@
 /**
  * API Key 认证插件
  * 对 /api/* 和 /ws 路由强制校验 X-API-Key（header 或 ?apiKey 查询参数）
- * /healthz, /readyz, /metrics 运维端点豁免
+ * /healthz, /readyz 运维端点豁免
+ *
+ * 支持两种 API Key 来源：
+ * 1. 配置文件静态 Key（向后兼容，无租户绑定）
+ * 2. DB 存储的 Key（绑定 tenantId + planId，支持计划感知限流）
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { AppConfig } from '../../config/schema.js';
+import type { IDatabase } from '../../storage/database.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
 /** 不需要认证的路径前缀（仅健康检查端点豁免，指标端点需认证） */
@@ -25,13 +30,27 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(hashA, hashB);
 }
 
-export function registerAuth(app: FastifyInstance, config: AppConfig): void {
+interface ApiKeyRow {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly key_hash: string;
+  readonly plan_id: string;
+  readonly is_revoked: number;
+}
+
+/** API Key 的 SHA-256 哈希（与数据库存储格式一致） */
+function hashKey(key: string): string {
+  return createHash('sha256').update(key).digest('hex');
+}
+
+export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IDatabase): void {
   if (!config.auth.enabled) return;
-  if (config.auth.apiKeys.length === 0) {
-    app.log.warn('auth.enabled=true 但 apiKeys 为空，所有需认证的端点将被拒绝访问');
-  }
 
   const validKeys = config.auth.apiKeys;
+
+  if (validKeys.length === 0 && !db) {
+    app.log.warn('auth.enabled=true 但 apiKeys 为空且无 DB，所有需认证的端点将被拒绝访问');
+  }
 
   app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
     /* 运维端点和 CORS 预检请求豁免 */
@@ -41,6 +60,12 @@ export function registerAuth(app: FastifyInstance, config: AppConfig): void {
 
     /* 如果已经通过 JWT 认证（由 jwt-auth 插件设置），跳过 API Key 检查 */
     if (request.user) {
+      return done();
+    }
+
+    /* 携带 Bearer token 时交给 jwt-auth 插件处理，避免误拒 JWT 请求 */
+    const authHeader = request.headers.authorization;
+    if (config.jwt.enabled && authHeader && authHeader.startsWith('Bearer ')) {
       return done();
     }
 
@@ -63,6 +88,27 @@ export function registerAuth(app: FastifyInstance, config: AppConfig): void {
       });
     }
 
+    /* 优先从 DB 查找 API Key（绑定租户和计划） */
+    if (db) {
+      try {
+        const keyHash = hashKey(apiKey);
+        const row = db.prepare<ApiKeyRow>(
+          'SELECT id, tenant_id, key_hash, plan_id, is_revoked FROM api_keys WHERE key_hash = ? AND is_revoked = 0',
+        ).get(keyHash);
+        if (row) {
+          /* 注入伪 JWT user 以便下游计划感知限流和租户解析 */
+          (request as unknown as { user: { sub: string; tenantId: string; role: string; planId: string } }).user = {
+            sub: `apikey:${row.id}`,
+            tenantId: row.tenant_id,
+            role: 'member',
+            planId: row.plan_id,
+          };
+          return done();
+        }
+      } catch { /* api_keys 表可能尚未创建，回退到静态 Key */ }
+    }
+
+    /* 回退到配置文件静态 Key（向后兼容，无租户绑定） */
     const authorized = validKeys.some(k => safeCompare(apiKey, k));
     if (!authorized) {
       return reply.status(403).send({

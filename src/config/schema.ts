@@ -43,6 +43,8 @@ const rateLimitSchema = z.object({
 const websocketSchema = z.object({
   enabled: z.boolean().default(true),
   heartbeatIntervalMs: z.coerce.number().int().min(1000).default(30_000),
+  /** WebSocket 事件日志保留窗口（毫秒），默认 1 小时 */
+  eventLogRetentionMs: z.coerce.number().int().min(60_000).default(60 * 60 * 1000),
 });
 
 const corsSchema = z.object({
@@ -191,7 +193,7 @@ export const AppConfigSchema = z.object({
   server: serverSchema.default({ host: '0.0.0.0', port: 3000 }),
   integration: integrationSchema.default({ fitnessThreshold: 0.6, confidenceThreshold: 0.5 }),
   rateLimit: rateLimitSchema.default({ max: 100, timeWindowMs: 60_000 }),
-  websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000 }),
+  websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000, eventLogRetentionMs: 60 * 60 * 1000 }),
   cors: corsSchema.default({ origin: false, credentials: false }),
   auth: authSchema.default({ enabled: false, apiKeys: [] }),
   jwt: jwtSchema.default({
@@ -248,6 +250,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_RATE_LIMIT_WINDOW_MS:    (v) => { deepSet(env, 'rateLimit.timeWindowMs', parseInt(v, 10)); },
     CHRONO_WEBSOCKET_ENABLED:       (v) => { deepSet(env, 'websocket.enabled', v === 'true'); },
     CHRONO_WEBSOCKET_HEARTBEAT_MS:  (v) => { deepSet(env, 'websocket.heartbeatIntervalMs', parseInt(v, 10)); },
+    CHRONO_WEBSOCKET_EVENT_LOG_RETENTION_MS: (v) => { deepSet(env, 'websocket.eventLogRetentionMs', parseInt(v, 10)); },
     CHRONO_CORS_ORIGIN:             (v) => { deepSet(env, 'cors.origin', v === 'true' ? true : v === 'false' ? false : v); },
     CHRONO_CORS_CREDENTIALS:        (v) => { deepSet(env, 'cors.credentials', v === 'true'); },
     CHRONO_AUTH_ENABLED:            (v) => { deepSet(env, 'auth.enabled', v === 'true'); },

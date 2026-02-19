@@ -71,8 +71,8 @@ let globalSeq = 0;
 /** 持久化事件日志的 DB 引用（由 registerWebSocket 设置） */
 let eventLogDb: import('../../storage/database.js').IDatabase | undefined;
 
-/** 事件日志保留窗口（默认 1 小时） */
-const EVENT_LOG_TTL_MS = 60 * 60 * 1000;
+/** 事件日志保留窗口（运行时由 config.websocket.eventLogRetentionMs 覆盖） */
+let EVENT_LOG_TTL_MS = 60 * 60 * 1000;
 
 /** 缓存一个事件到环形缓冲区并持久化到 DB（seq 由 DB 生成，多副本安全） */
 function bufferEvent(event: string, data: unknown, tenantId?: string): number {
@@ -192,6 +192,9 @@ export async function registerWebSocket(
   config: AppConfig,
 ): Promise<void> {
   if (!config.websocket.enabled) return;
+
+  /* 应用可配置的事件日志保留窗口 */
+  EVENT_LOG_TTL_MS = config.websocket.eventLogRetentionMs;
 
   /* 初始化持久化事件日志 */
   try {

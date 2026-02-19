@@ -55,6 +55,7 @@ import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
+import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
   os: ChronoSynthOS;
@@ -87,7 +88,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerApiVersion(app);
   registerMetrics(app);
   registerRequestTimeout(app, config);
-  registerAuth(app, config);
+  registerAuth(app, config, deps.db);
   registerAuditLog(app, deps.db);
   registerObservability(app, config);
 
@@ -173,6 +174,35 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     cleanupTimer.unref();
     app.addHook('onClose', () => { clearInterval(cleanupTimer); });
   }
+
+  /* 定期清理过期数据（每 6 小时：usage_records 90 天、billing_outbox 30 天、webhook_events 7 天） */
+  const DATA_RETENTION_INTERVAL = 6 * 60 * 60 * 1000;
+  const RETENTION_BATCH_SIZE = 5000;
+  const retentionTimer = setInterval(() => {
+    const now = Date.now();
+    const log = deps.os.getLogger();
+    const pruneTable = (table: string, whereClause: string, ...params: SqlValue[]) => {
+      try {
+        let total = 0;
+        /* 批量删除避免长事务锁表 */
+        const stmt = db.prepare<void>(
+          `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${whereClause} LIMIT ${RETENTION_BATCH_SIZE})`,
+        );
+        let deleted: number;
+        do {
+          const result = stmt.run(...params);
+          deleted = result.changes ?? 0;
+          total += deleted;
+        } while (deleted >= RETENTION_BATCH_SIZE);
+        if (total > 0) log.info('Retention', `清理 ${table}: 删除 ${total} 行`);
+      } catch { /* 表可能不存在 */ }
+    };
+    pruneTable('usage_records', 'recorded_at < ?', now - 90 * 24 * 60 * 60 * 1000);
+    pruneTable('billing_outbox', 'status = ? AND processed_at < ?', 'sent', now - 30 * 24 * 60 * 60 * 1000);
+    pruneTable('webhook_events', 'processed_at < ?', now - 7 * 24 * 60 * 60 * 1000);
+  }, DATA_RETENTION_INTERVAL);
+  retentionTimer.unref();
+  app.addHook('onClose', () => { clearInterval(retentionTimer); });
 
   /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
   if (config.stripe.enabled) {
