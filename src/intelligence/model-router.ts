@@ -150,7 +150,7 @@ export class ModelRouter implements LLMProvider {
 
     /* Stripe 计量上报（异步，不阻塞） */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && totalTokens > 0) {
-      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', totalTokens).catch(() => {});
+      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', totalTokens).catch((e) => { console.error('[ModelRouter] Stripe 计量上报失败:', e instanceof Error ? e.message : String(e)); });
     }
 
     return response;
@@ -190,7 +190,7 @@ export class ModelRouter implements LLMProvider {
 
     /* Stripe 计量上报（异步，不阻塞） */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && estimatedTokens > 0) {
-      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', estimatedTokens).catch(() => {});
+      reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', estimatedTokens).catch((e) => { console.error('[ModelRouter] Stripe 计量上报失败:', e instanceof Error ? e.message : String(e)); });
     }
 
     return embeddings;

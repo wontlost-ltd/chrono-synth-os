@@ -101,6 +101,7 @@ export async function registerWebSocket(
       cleaned = true;
       wsConnectionCount--;
       clearInterval(heartbeat);
+      clearInterval(rateLimitReset);
       for (const [event, listener] of listeners) {
         os.bus.off(
           event as SystemEventName,
@@ -117,10 +118,30 @@ export async function registerWebSocket(
       safeSend(socket, { type: 'ping' });
     }, config.websocket.heartbeatIntervalMs);
 
+    /* 消息速率限制：最多 30 条/秒 */
+    const WS_MAX_MESSAGES_PER_SECOND = 30;
+    const WS_MAX_PAYLOAD_BYTES = 4096;
+    let messageCount = 0;
+    const rateLimitReset = setInterval(() => { messageCount = 0; }, 1000);
+
     socket.on('message', (raw: Buffer | string) => {
+      const rawBytes = typeof raw === 'string' ? Buffer.byteLength(raw, 'utf-8') : raw.length;
+
+      if (rawBytes > WS_MAX_PAYLOAD_BYTES) {
+        safeSend(socket, { type: 'error', code: 'PAYLOAD_TOO_LARGE', message: `消息不得超过 ${WS_MAX_PAYLOAD_BYTES} 字节` });
+        return;
+      }
+
+      messageCount++;
+      if (messageCount > WS_MAX_MESSAGES_PER_SECOND) {
+        safeSend(socket, { type: 'error', code: 'RATE_LIMIT', message: '消息速率超限，请等待 1 秒后重试' });
+        return;
+      }
+
+      const rawStr = typeof raw === 'string' ? raw : raw.toString('utf-8');
       let msg: ClientMessage;
       try {
-        msg = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf-8'));
+        msg = JSON.parse(rawStr);
       } catch {
         return;
       }

@@ -7,9 +7,11 @@ import type { FastifyInstance } from 'fastify';
 import type { LifeSimulationService } from '../../simulation/life-simulation-service.js';
 import type { LifeSimulationConfig } from '../../types/life-simulation.js';
 import type { IDatabase } from '../../storage/database.js';
+import type { AppConfig } from '../../config/schema.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { getPlanLimits } from '../../billing/plans.js';
+import { reportUsage as reportStripeUsage } from '../../billing/stripe-client.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import {
   CreateLifeSimulationSchema,
@@ -26,11 +28,12 @@ function safeJsonParse(json: string | null | undefined, fallback: unknown = null
 export function registerLifeSimulationRoutes(
   app: FastifyInstance,
   service: LifeSimulationService,
-  options?: { queueEnabled?: boolean; db?: IDatabase },
+  options?: { queueEnabled?: boolean; db?: IDatabase; config?: AppConfig },
 ): void {
   const asyncMode = options?.queueEnabled ?? false;
   const quotaManager = options?.db ? new QuotaManager(options.db) : undefined;
   const usageTracker = options?.db ? new UsageTracker(options.db) : undefined;
+  const stripeConfig = options?.config;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */
   app.get('/api/v1/simulations', async (request) => {
@@ -77,6 +80,17 @@ export function registerLifeSimulationRoutes(
 
     const { simulationId, taskId } = service.enqueue(body, tenantId);
     usageTracker?.record(tenantId, 'simulation', 1);
+
+    if (stripeConfig?.stripe.enabled && options?.db) {
+      const sub = options.db.prepare<{ stripe_customer_id: string | null }>(
+        'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+      ).get(tenantId);
+      if (sub?.stripe_customer_id) {
+        reportStripeUsage(stripeConfig, sub.stripe_customer_id, 'simulation', 1).catch((e) => {
+          app.log.warn({ err: e }, 'Stripe 计量上报失败');
+        });
+      }
+    }
 
     if (!asyncMode) {
       try { service.executeTask(simulationId); } catch (e) { app.log.warn({ err: e, simulationId }, '同步执行回退为异步'); }
@@ -181,6 +195,17 @@ export function registerLifeSimulationRoutes(
 
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);
       usageTracker?.record(tenantId, 'simulation', 1);
+
+      if (stripeConfig?.stripe.enabled && options?.db) {
+        const sub2 = options.db.prepare<{ stripe_customer_id: string | null }>(
+          'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
+        ).get(tenantId);
+        if (sub2?.stripe_customer_id) {
+          reportStripeUsage(stripeConfig, sub2.stripe_customer_id, 'simulation', 1).catch((e) => {
+            app.log.warn({ err: e }, 'Stripe 计量上报失败');
+          });
+        }
+      }
 
       if (!asyncMode) {
         try { service.executeTask(simulationId); } catch { /* 异步回退 */ }

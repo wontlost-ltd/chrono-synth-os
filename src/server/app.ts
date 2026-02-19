@@ -147,7 +147,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory);
-  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db });
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
