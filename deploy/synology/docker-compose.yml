@@ -120,6 +120,7 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.76.0
     container_name: chrono-jaeger
+    user: root
     ports:
       - "${JAEGER_UI_PORT:-16686}:16686"
     environment:
