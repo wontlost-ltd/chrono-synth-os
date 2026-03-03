@@ -12,6 +12,10 @@ export interface PlanLimits {
   readonly llmTokensPerMonth: number;
   /** API 请求限流（每分钟最大请求数），-1 表示无限制 */
   readonly rateLimitPerMinute: number;
+  /** 最大分身数量，-1 表示无限制 */
+  readonly maxAvatars: number;
+  /** 最大记忆节点数量，-1 表示无限制 */
+  readonly maxMemoryNodes: number;
 }
 
 export interface Plan {
@@ -27,19 +31,19 @@ export const PLANS: readonly Plan[] = [
     id: 'free',
     name: '免费版',
     stripePriceId: '',
-    limits: { maxSimulations: 3, maxPaths: 2, llmTokensPerMonth: 10_000, rateLimitPerMinute: 60 },
+    limits: { maxSimulations: 3, maxPaths: 2, llmTokensPerMonth: 10_000, rateLimitPerMinute: 60, maxAvatars: 2, maxMemoryNodes: 10_000 },
   },
   {
     id: 'pro',
     name: '专业版',
     stripePriceId: 'price_pro_monthly',
-    limits: { maxSimulations: 50, maxPaths: 10, llmTokensPerMonth: 500_000, rateLimitPerMinute: 300 },
+    limits: { maxSimulations: 50, maxPaths: 10, llmTokensPerMonth: 500_000, rateLimitPerMinute: 300, maxAvatars: 5, maxMemoryNodes: 100_000 },
   },
   {
     id: 'enterprise',
     name: '企业版',
     stripePriceId: 'price_enterprise_monthly',
-    limits: { maxSimulations: -1, maxPaths: -1, llmTokensPerMonth: -1, rateLimitPerMinute: -1 },
+    limits: { maxSimulations: -1, maxPaths: -1, llmTokensPerMonth: -1, rateLimitPerMinute: -1, maxAvatars: -1, maxMemoryNodes: -1 },
   },
 ];
 
@@ -70,5 +74,10 @@ export function syncPlanToQuota(db: IDatabase, tenantId: string, planId: string)
     qm.clearLimit(tenantId, 'llm_tokens');
   } else if (limits.llmTokensPerMonth > 0) {
     qm.setLimit(tenantId, 'llm_tokens', limits.llmTokensPerMonth, monthMs);
+  }
+  if (limits.maxMemoryNodes < 0) {
+    qm.clearLimit(tenantId, 'memory_nodes');
+  } else if (limits.maxMemoryNodes > 0) {
+    qm.setLimit(tenantId, 'memory_nodes', limits.maxMemoryNodes, monthMs);
   }
 }

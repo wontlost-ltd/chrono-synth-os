@@ -9,6 +9,7 @@ import type { PersonaVersion, PersonaStatus, SimulationResult } from './persona-
 import type { Conflict, IntegrationProposal, ResourceAllocation } from './meta-regulation.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './snapshot.js';
 import type { SimulationProgress } from './life-simulation.js';
+import type { AutorunRunMetrics } from './avatar-autorun.js';
 
 /** 为事件载荷附加可选 tenantId，用于 WebSocket 租户隔离过滤 */
 type TenantTagged<T> = T & { tenantId?: string };
@@ -27,6 +28,16 @@ export interface SystemEventMap {
   'core:memory-activated': TenantTagged<{ sourceId: string; results: readonly ActivationResult[] }>;
   'core:memory-consolidated': TenantTagged<{ result: ConsolidationResult }>;
   'core:working-memory-updated': TenantTagged<{ slots: readonly WorkingMemorySlot[] }>;
+  'core:memory-evicted': TenantTagged<{ memoryId: string; reason: string; salience: number }>;
+
+  /* Avatar 自动运行事件 */
+  'avatar:autorun-enqueued': TenantTagged<{ avatarId: string; configId: string; runId: string; taskId: string }>;
+  'avatar:autorun-started': TenantTagged<{ avatarId: string; runId: string }>;
+  'avatar:autorun-completed': TenantTagged<{ avatarId: string; runId: string; metrics: AutorunRunMetrics }>;
+  'avatar:autorun-failed': TenantTagged<{ avatarId: string; runId: string; error: string }>;
+  'avatar:drift-detected': TenantTagged<{ avatarId: string; driftScore: number; threshold: number }>;
+  'avatar:drift-review-submitted': TenantTagged<{ avatarId: string; reviewId: string }>;
+  'knowledge:ingested': TenantTagged<{ sourceId: string; itemCount: number; memoryIds: string[] }>;
 
   /* 加速认知层事件 */
   'persona:created': TenantTagged<{ persona: PersonaVersion }>;

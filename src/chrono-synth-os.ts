@@ -277,11 +277,12 @@ export class ChronoSynthOS {
     }
   }
 
-  /** 运行认知周期：固化 → 衰减 → 刷新工作记忆 → 情绪事件 → 模式提取 → 价值漂移 */
-  runCognitionCycle(): { decayedCount: number; consolidatedCount: number; patternsFound: number; emotionalEvents: number } {
-    /* 先固化（基于当前显著性判断），再衰减（应用遗忘），最后刷新工作记忆 */
+  /** 运行认知周期：固化 → 衰减(含L1) → 容量淘汰(L2) → 刷新工作记忆 → 情绪事件 → 模式提取 → 价值漂移 */
+  runCognitionCycle(): { decayedCount: number; consolidatedCount: number; patternsFound: number; emotionalEvents: number; evictedCount: number } {
+    /* 先固化（基于当前显著性判断，含L3清理），再衰减（含L1淘汰），然后容量淘汰（L2），最后刷新工作记忆 */
     const consolidated = this.core.runConsolidation();
-    const decayed = this.core.runMemoryDecay();
+    const decayResult = this.core.runMemoryDecay();
+    const capacityEvicted = this.core.runMemoryEviction();
     this.core.refreshWorkingMemory();
 
     /* 强情绪事件检测 → 即时价值漂移（must-think 第八节触发机制之一） */
@@ -304,7 +305,13 @@ export class ChronoSynthOS {
       this.bus.emit('system:patterns-extracted', { count: patterns.length, tenantId: this.tenantId });
     }
 
-    return { decayedCount: decayed.length, consolidatedCount: consolidated.length, patternsFound: patterns.length, emotionalEvents: emotionalProposals.length };
+    return {
+      decayedCount: decayResult.decayed.length,
+      consolidatedCount: consolidated.length,
+      patternsFound: patterns.length,
+      emotionalEvents: emotionalProposals.length,
+      evictedCount: decayResult.evicted.length + capacityEvicted.length,
+    };
   }
 
   /** 停止系统（幂等） */

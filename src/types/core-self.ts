@@ -100,6 +100,25 @@ export interface MemoryCognitionConfig {
     readonly accessThreshold: number;
     readonly minSalience: number;
   };
+  readonly eviction: {
+    /** 低于此值在衰减时物理删除，0=禁用 */
+    readonly salienceFloor: number;
+    /** 容量上限，-1=无限 */
+    readonly maxMemoryNodes: number;
+    /** 达上限后淘汰至此比例 (0.8-0.99) */
+    readonly capacityTargetRatio: number;
+    /** 固化后删除原始 episodic */
+    readonly deleteConsolidatedSources: boolean;
+    /** 每批最大删除数 */
+    readonly batchSize: number;
+  };
+}
+
+/** 记忆淘汰结果 */
+export interface EvictionResult {
+  readonly memoryId: MemoryId;
+  readonly reason: 'salience_floor' | 'capacity_overflow' | 'consolidation_cleanup';
+  readonly salience: number;
 }
 
 /** 核心自我状态快照 */

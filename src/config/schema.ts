@@ -95,6 +95,14 @@ const cognitionDecaySchema = z.object({
   }).default({ episodic: 1.0, semantic: 0.5, procedural: 0.3 }),
 }).default({ baseLambda: 0.0001, valenceWeight: 0.3, accessBoost: 0.5, kindFactors: { episodic: 1.0, semantic: 0.5, procedural: 0.3 } });
 
+const cognitionEvictionSchema = z.object({
+  salienceFloor: z.coerce.number().min(0).max(1).default(0.01),
+  maxMemoryNodes: z.coerce.number().int().default(10_000),
+  capacityTargetRatio: z.coerce.number().min(0.8).max(0.99).default(0.9),
+  deleteConsolidatedSources: z.boolean().default(true),
+  batchSize: z.coerce.number().int().min(1).default(1000),
+}).default({ salienceFloor: 0.01, maxMemoryNodes: 10_000, capacityTargetRatio: 0.9, deleteConsolidatedSources: true, batchSize: 1000 });
+
 const cognitionSchema = z.object({
   decay: cognitionDecaySchema,
   activation: z.object({
@@ -110,11 +118,13 @@ const cognitionSchema = z.object({
     accessThreshold: z.coerce.number().int().min(1).default(5),
     minSalience: z.coerce.number().min(0).max(1).default(0.3),
   }).default({ accessThreshold: 5, minSalience: 0.3 }),
+  eviction: cognitionEvictionSchema,
 }).default({
   decay: { baseLambda: 0.0001, valenceWeight: 0.3, accessBoost: 0.5, kindFactors: { episodic: 1.0, semantic: 0.5, procedural: 0.3 } },
   activation: { baseActivation: 0.1, damping: 0.5, maxDepth: 2 },
   workingMemory: { capacity: 7, recencyDecay: 0.0001 },
   consolidation: { accessThreshold: 5, minSalience: 0.3 },
+  eviction: { salienceFloor: 0.01, maxMemoryNodes: 10_000, capacityTargetRatio: 0.9, deleteConsolidatedSources: true, batchSize: 1000 },
 });
 
 const intelligenceSimulationSchema = z.object({
@@ -190,6 +200,25 @@ const queueSchema = z.object({
   completedRetentionMs: z.coerce.number().int().min(3_600_000).default(7 * 24 * 60 * 60 * 1000),
 });
 
+const avatarAutorunSchema = z.object({
+  schedulerIntervalMs: z.coerce.number().int().min(10_000).default(60_000),
+  maxItemsPerRun: z.coerce.number().int().min(1).default(100),
+  defaultDriftThreshold: z.coerce.number().min(0).max(1).default(0.3),
+  sourceTimeoutMs: z.coerce.number().int().min(1_000).default(30_000),
+  maxSourcesPerAvatar: z.coerce.number().int().min(1).default(50),
+}).default({
+  schedulerIntervalMs: 60_000,
+  maxItemsPerRun: 100,
+  defaultDriftThreshold: 0.3,
+  sourceTimeoutMs: 30_000,
+  maxSourcesPerAvatar: 50,
+});
+
+const sseSchema = z.object({
+  enabled: z.boolean().default(true),
+  maxConnectionsPerTenant: z.coerce.number().int().min(1).default(50),
+}).default({ enabled: true, maxConnectionsPerTenant: 50 });
+
 const requestSchema = z.object({
   timeoutMs: z.coerce.number().int().min(0).default(30_000),
   maxBodyBytes: z.coerce.number().int().min(1024).default(1_048_576),
@@ -234,6 +263,8 @@ export const AppConfigSchema = z.object({
     serviceVersion: '2.0.0', sampleRate: 1.0, metricsRetentionMs: 7 * 24 * 60 * 60 * 1000,
   }),
   cognition: cognitionSchema,
+  avatarAutorun: avatarAutorunSchema,
+  sse: sseSchema,
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -287,6 +318,11 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COGNITION_WM_RECENCY_DECAY:      (v) => { deepSet(env, 'cognition.workingMemory.recencyDecay', parseFloat(v)); },
     CHRONO_COGNITION_CONSOLIDATION_THRESHOLD: (v) => { deepSet(env, 'cognition.consolidation.accessThreshold', parseInt(v, 10)); },
     CHRONO_COGNITION_CONSOLIDATION_MIN_SALIENCE: (v) => { deepSet(env, 'cognition.consolidation.minSalience', parseFloat(v)); },
+    CHRONO_COGNITION_EVICTION_SALIENCE_FLOOR:    (v) => { deepSet(env, 'cognition.eviction.salienceFloor', parseFloat(v)); },
+    CHRONO_COGNITION_EVICTION_MAX_MEMORY_NODES:  (v) => { deepSet(env, 'cognition.eviction.maxMemoryNodes', parseInt(v, 10)); },
+    CHRONO_COGNITION_EVICTION_CAPACITY_TARGET_RATIO: (v) => { deepSet(env, 'cognition.eviction.capacityTargetRatio', parseFloat(v)); },
+    CHRONO_COGNITION_EVICTION_DELETE_CONSOLIDATED_SOURCES: (v) => { deepSet(env, 'cognition.eviction.deleteConsolidatedSources', v === 'true'); },
+    CHRONO_COGNITION_EVICTION_BATCH_SIZE:        (v) => { deepSet(env, 'cognition.eviction.batchSize', parseInt(v, 10)); },
     CHRONO_QUEUE_ENABLED:            (v) => { deepSet(env, 'queue.enabled', v === 'true'); },
     CHRONO_QUEUE_POLL_INTERVAL_MS:   (v) => { deepSet(env, 'queue.pollIntervalMs', parseInt(v, 10)); },
     CHRONO_QUEUE_MAX_CONCURRENT:     (v) => { deepSet(env, 'queue.maxConcurrent', parseInt(v, 10)); },
@@ -324,6 +360,10 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_OTEL_SERVICE_VERSION:     (v) => { deepSet(env, 'observability.serviceVersion', v); },
     CHRONO_OTEL_SAMPLE_RATE:         (v) => { deepSet(env, 'observability.sampleRate', parseFloat(v)); },
     CHRONO_OTEL_METRICS_RETENTION_MS: (v) => { deepSet(env, 'observability.metricsRetentionMs', parseInt(v, 10)); },
+    CHRONO_AUTORUN_SCHEDULER_MS:     (v) => { deepSet(env, 'avatarAutorun.schedulerIntervalMs', parseInt(v, 10)); },
+    CHRONO_AUTORUN_MAX_ITEMS:        (v) => { deepSet(env, 'avatarAutorun.maxItemsPerRun', parseInt(v, 10)); },
+    CHRONO_AUTORUN_DRIFT_THRESHOLD:  (v) => { deepSet(env, 'avatarAutorun.defaultDriftThreshold', parseFloat(v)); },
+    CHRONO_AUTORUN_SOURCE_TIMEOUT_MS: (v) => { deepSet(env, 'avatarAutorun.sourceTimeoutMs', parseInt(v, 10)); },
   };
 
   for (const [key, setter] of Object.entries(mapping)) {

@@ -244,6 +244,97 @@ export const RevokeApiKeySchema = z.object({
   keyId: z.string().min(1),
 });
 
+/* 移动端设备管理 */
+export const RegisterDeviceSchema = z.object({
+  deviceUid: z.string().min(1),
+  platform: z.enum(['ios', 'android', 'web']),
+  pushToken: z.string().optional(),
+  appVersion: z.string().optional(),
+});
+
+export const UpdatePushTokenSchema = z.object({
+  pushToken: z.string().min(1),
+});
+
+/* 身份管理 */
+export const UpdateIdentitySchema = z.object({
+  displayName: z.string().min(1).max(100).optional(),
+  bio: z.string().max(500).optional(),
+});
+
+/* 分身管理 */
+export const CreateAvatarSchema = z.object({
+  label: z.string().min(1).max(50),
+  kind: z.enum(['general', 'work', 'social', 'family', 'creative']).default('general'),
+  behaviorOverrides: z.object({
+    valueWeightAdjustments: z.record(z.string(), z.number().min(-0.3).max(0.3)).optional(),
+    decisionStyleOverrides: z.object({
+      riskAppetite: z.number().min(0).max(1).optional(),
+      timeHorizon: z.number().min(0).max(1).optional(),
+      explorationBias: z.number().min(0).max(1).optional(),
+    }).optional(),
+    contextBeliefs: z.record(z.string(), z.number().min(0).max(1)).optional(),
+    memoryFilter: z.object({
+      kinds: z.array(z.enum(['episodic', 'semantic', 'procedural'])).optional(),
+      minSalience: z.number().min(0).max(1).optional(),
+    }).optional(),
+  }).optional(),
+});
+
+export const UpdateAvatarSchema = CreateAvatarSchema.partial();
+
+/* 设备-分身绑定 */
+export const InstallAvatarSchema = z.object({
+  avatarId: z.string().min(1),
+});
+
+/* Avatar 自动运行 */
+export const UpsertAutorunConfigSchema = z.object({
+  enabled: z.boolean(),
+  intervalMinutes: z.number().int().min(15).max(10080),
+  driftThreshold: z.number().min(0).max(1).default(0.3),
+  reviewRequired: z.boolean().default(false),
+  knowledgeSourceIds: z.array(z.string()).max(50).default([]),
+});
+
+export const CreateKnowledgeSourceSchema = z.object({
+  type: z.enum(['rss', 'api', 'file', 'manual']),
+  name: z.string().min(1).max(120),
+  config: z.object({
+    url: z.string().url().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    pollingMinutes: z.number().int().min(15).max(10080).optional(),
+    fileRef: z.string().optional(),
+    manualText: z.string().max(20_000).optional(),
+  }).refine(cfg => cfg.url || cfg.fileRef || cfg.manualText, '至少提供 url/fileRef/manualText 之一'),
+});
+
+export const UpdateKnowledgeSourceSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  type: z.enum(['rss', 'api', 'file', 'manual']).optional(),
+  config: z.object({
+    url: z.string().url().optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    pollingMinutes: z.number().int().min(15).max(10080).optional(),
+    fileRef: z.string().optional(),
+    manualText: z.string().max(20_000).optional(),
+  }).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const TriggerAutorunSchema = z.object({
+  sourceIds: z.array(z.string()).optional(),
+});
+
+export const DriftReviewSchema = z.object({
+  decisions: z.array(z.object({
+    path: z.string().min(1),
+    action: z.enum(['accept', 'reject', 'modify']),
+    value: z.any().optional(),
+  })).min(1),
+  comment: z.string().max(500).optional(),
+});
+
 /* SSO 查询参数 */
 export const SsoAuthorizeQuerySchema = z.object({
   redirect_uri: z.string().optional(),

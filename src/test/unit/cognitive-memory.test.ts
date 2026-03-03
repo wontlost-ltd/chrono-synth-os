@@ -107,9 +107,9 @@ describe('CognitiveMemoryGraph', () => {
       graph.addMemory('semantic', 'b', 0.0, 0.8);
       clock.advance(50000);
 
-      const results = graph.decayAll();
-      assert.ok(results.length >= 1, '至少一个记忆被衰减');
-      for (const r of results) {
+      const { decayed, evicted } = graph.decayAll();
+      assert.ok(decayed.length + evicted.length >= 1, '至少一个记忆被衰减或淘汰');
+      for (const r of decayed) {
         assert.ok(r.newSalience < r.oldSalience, `${r.memoryId}: ${r.oldSalience} -> ${r.newSalience}`);
       }
     });
@@ -117,10 +117,12 @@ describe('CognitiveMemoryGraph', () => {
     it('salience 不低于 0', () => {
       graph.addMemory('episodic', 'a', 0.0, 0.01);
       clock.advance(1_000_000);
-      const results = graph.decayAll();
-      for (const r of results) {
+      const { decayed, evicted } = graph.decayAll();
+      for (const r of decayed) {
         assert.ok(r.newSalience >= 0);
       }
+      /* 极低 salience 在默认配置下可能被 L1 淘汰 */
+      assert.ok(decayed.length + evicted.length >= 0);
     });
   });
 
@@ -246,7 +248,10 @@ describe('CognitiveMemoryGraph', () => {
 
   describe('记忆固化', () => {
     it('满足条件时固化 episodic → semantic', () => {
-      const config: Partial<MemoryCognitionConfig> = { consolidation: { accessThreshold: 3, minSalience: 0.3 } };
+      const config: Partial<MemoryCognitionConfig> = {
+        consolidation: { accessThreshold: 3, minSalience: 0.3 },
+        eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+      };
       const g = new CognitiveMemoryGraph(db, clock, config);
 
       const m = g.addMemory('episodic', '反复访问的事件', 0.5, 0.8);
@@ -347,6 +352,7 @@ describe('CognitiveMemoryGraph', () => {
     it('创建 → 访问 → 衰减 → 激活 → 固化', () => {
       const config: Partial<MemoryCognitionConfig> = {
         consolidation: { accessThreshold: 3, minSalience: 0.1 },
+        eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
       };
       const g = new CognitiveMemoryGraph(db, clock, config);
 
@@ -362,8 +368,8 @@ describe('CognitiveMemoryGraph', () => {
 
       /* 时间推进 + 全量衰减 */
       clock.advance(50000);
-      const decayed = g.decayAll();
-      assert.ok(decayed.length >= 1);
+      const { decayed, evicted } = g.decayAll();
+      assert.ok(decayed.length + evicted.length >= 1);
 
       /* 扩散激活 */
       const activations = g.spreadActivation(m1.id);
@@ -389,6 +395,11 @@ describe('CognitiveMemoryGraph', () => {
       assert.equal(DEFAULT_COGNITION_CONFIG.activation.maxDepth, 2);
       assert.equal(DEFAULT_COGNITION_CONFIG.workingMemory.capacity, 7);
       assert.equal(DEFAULT_COGNITION_CONFIG.consolidation.accessThreshold, 5);
+      assert.equal(DEFAULT_COGNITION_CONFIG.eviction.salienceFloor, 0.01);
+      assert.equal(DEFAULT_COGNITION_CONFIG.eviction.maxMemoryNodes, 10_000);
+      assert.equal(DEFAULT_COGNITION_CONFIG.eviction.capacityTargetRatio, 0.9);
+      assert.equal(DEFAULT_COGNITION_CONFIG.eviction.deleteConsolidatedSources, true);
+      assert.equal(DEFAULT_COGNITION_CONFIG.eviction.batchSize, 1000);
     });
 
     it('自定义配置覆盖默认值', () => {
@@ -409,6 +420,179 @@ describe('CognitiveMemoryGraph', () => {
       const r = g.admitToWorkingMemory(m4.id);
       assert.equal(g.getWorkingMemorySlots().length, 3);
       assert.ok(r.evicted !== null, '应驱逐最低分（m1, salience=0.5）');
+    });
+  });
+
+  // ===== 记忆淘汰 =====
+
+  describe('记忆淘汰', () => {
+    describe('L1 显著性下限', () => {
+      it('低 salience 衰减后被物理删除', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0.05, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+        const m = g.addMemory('episodic', '低重要性事件', 0.0, 0.06);
+        clock.advance(500_000);
+
+        const { evicted } = g.decayAll();
+        assert.ok(evicted.length >= 1, '应有记忆被L1淘汰');
+        assert.equal(evicted[0].memoryId, m.id);
+        assert.equal(evicted[0].reason, 'salience_floor');
+        assert.equal(g.getMemory(m.id), undefined, '节点应已被物理删除');
+      });
+
+      it('salienceFloor=0 不触发L1淘汰', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+        g.addMemory('episodic', '低重要性事件', 0.0, 0.001);
+        clock.advance(1_000_000);
+
+        const { evicted } = g.decayAll();
+        assert.equal(evicted.length, 0, 'salienceFloor=0 应禁用L1');
+      });
+
+      it('关联边和工作记忆同步清理', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0.05, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+        const m1 = g.addMemory('episodic', '低重要性', 0.0, 0.06);
+        const m2 = g.addMemory('semantic', '关联知识', 0.5, 0.9);
+        g.addEdge(m1.id, m2.id, 'related', 0.8);
+        g.admitToWorkingMemory(m1.id);
+
+        /* 10000ms 足以使 m1(episodic,0.06) 衰减至 0.05 以下，但 m2(semantic,0.9) 仍远高于阈值 */
+        clock.advance(10_000);
+        g.decayAll();
+
+        assert.equal(g.getMemory(m1.id), undefined, '节点已删除');
+        assert.equal(g.getEdgesFor(m1.id).length, 0, '关联边已清理');
+        assert.equal(g.getWorkingMemorySlots().filter(s => s.memoryId === m1.id).length, 0, '工作记忆已清理');
+        assert.ok(g.getMemory(m2.id), '关联节点不受影响');
+      });
+    });
+
+    describe('L2 容量淘汰', () => {
+      it('超 maxMemoryNodes 淘汰最低分至 targetRatio', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0, maxMemoryNodes: 5, capacityTargetRatio: 0.8, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+
+        /* 创建 6 个记忆（超过上限 5） */
+        for (let i = 0; i < 6; i++) {
+          g.addMemory('episodic', `事件${i}`, 0.0, (i + 1) * 0.1);
+        }
+        assert.equal(g.getMemoryCount(), 6);
+
+        const evicted = g.evictExcess();
+        /* target = floor(5 * 0.8) = 4, 需淘汰 6 - 4 = 2 */
+        assert.equal(evicted.length, 2, '应淘汰 2 个记忆');
+        assert.equal(g.getMemoryCount(), 4);
+
+        /* 验证淘汰的是最低分 */
+        for (const e of evicted) {
+          assert.equal(e.reason, 'capacity_overflow');
+        }
+      });
+
+      it('maxMemoryNodes=-1 不触发容量淘汰', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+        for (let i = 0; i < 10; i++) {
+          g.addMemory('episodic', `事件${i}`, 0.0, 0.5);
+        }
+        const evicted = g.evictExcess();
+        assert.equal(evicted.length, 0);
+      });
+
+      it('分批淘汰', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0, maxMemoryNodes: 3, capacityTargetRatio: 0.6, deleteConsolidatedSources: false, batchSize: 2 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+        for (let i = 0; i < 6; i++) {
+          g.addMemory('episodic', `事件${i}`, 0.0, (i + 1) * 0.1);
+        }
+        /* target = floor(3 * 0.6) = 1, 需淘汰 6 - 1 = 5，batchSize=2 */
+        const evicted = g.evictExcess();
+        assert.equal(evicted.length, 5, '应淘汰 5 个记忆');
+        assert.equal(g.getMemoryCount(), 1);
+      });
+
+      it('未超限时不淘汰', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          eviction: { salienceFloor: 0, maxMemoryNodes: 10, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+        for (let i = 0; i < 5; i++) {
+          g.addMemory('episodic', `事件${i}`, 0.0, 0.5);
+        }
+        const evicted = g.evictExcess();
+        assert.equal(evicted.length, 0);
+      });
+    });
+
+    describe('L3 固化清理', () => {
+      it('deleteConsolidatedSources=true 时固化后删除原始', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          consolidation: { accessThreshold: 2, minSalience: 0.1 },
+          eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: true, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+
+        const m = g.addMemory('episodic', '反复事件', 0.5, 0.8);
+        g.accessMemory(m.id);
+        g.accessMemory(m.id);
+
+        const result = g.consolidateMemory(m.id)!;
+        assert.ok(result, '应成功固化');
+
+        /* 原始 episodic 已被删除 */
+        assert.equal(g.getMemory(m.id), undefined, '原始节点应被删除');
+
+        /* 新 semantic 保留 */
+        const consolidated = g.getMemory(result.consolidatedId)!;
+        assert.ok(consolidated, '固化产物应存在');
+        assert.equal(consolidated.kind, 'semantic');
+      });
+
+      it('deleteConsolidatedSources=false 时保留原始', () => {
+        const config: Partial<MemoryCognitionConfig> = {
+          consolidation: { accessThreshold: 2, minSalience: 0.1 },
+          eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
+        };
+        const g = new CognitiveMemoryGraph(db, clock, config);
+
+        const m = g.addMemory('episodic', '反复事件', 0.5, 0.8);
+        g.accessMemory(m.id);
+        g.accessMemory(m.id);
+
+        const result = g.consolidateMemory(m.id)!;
+        assert.ok(result);
+
+        /* 原始 episodic 保留 */
+        assert.ok(g.getMemory(m.id), '原始节点应保留');
+        /* 新 semantic 也存在 */
+        assert.ok(g.getMemory(result.consolidatedId), '固化产物应存在');
+      });
+    });
+
+    describe('getMemoryCount', () => {
+      it('准确计数', () => {
+        assert.equal(graph.getMemoryCount(), 0);
+        graph.addMemory('episodic', 'a', 0.0, 0.5);
+        assert.equal(graph.getMemoryCount(), 1);
+        const m2 = graph.addMemory('semantic', 'b', 0.0, 0.5);
+        assert.equal(graph.getMemoryCount(), 2);
+        graph.deleteMemory(m2.id);
+        assert.equal(graph.getMemoryCount(), 1);
+      });
     });
   });
 

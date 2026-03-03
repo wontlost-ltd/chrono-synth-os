@@ -634,6 +634,216 @@ const v024_task_queue_indexes: Migration = {
   ],
 };
 
+/** v025: 配置中心与附加组件 */
+const v025_config_and_addons: Migration = {
+  version: 'v025',
+  description: '配置中心（config_items/config_audit）与附加组件（add_ons/tenant_add_ons/entitlements）',
+  sql: [
+    /* 配置项表 */
+    `CREATE TABLE IF NOT EXISTS config_items (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN ('public', 'protected', 'admin', 'secret')),
+      requires_restart INTEGER NOT NULL DEFAULT 0,
+      group_key TEXT NOT NULL DEFAULT 'general',
+      updated_at INTEGER NOT NULL,
+      updated_by TEXT NOT NULL
+    )`,
+
+    /* 配置审计日志 */
+    `CREATE TABLE IF NOT EXISTS config_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      config_key TEXT NOT NULL,
+      old_value TEXT,
+      new_value TEXT,
+      changed_by TEXT NOT NULL,
+      changed_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_config_audit_key ON config_audit(config_key)',
+    'CREATE INDEX IF NOT EXISTS idx_config_audit_time ON config_audit(changed_at)',
+
+    /* 附加组件定义 */
+    `CREATE TABLE IF NOT EXISTS add_ons (
+      id TEXT PRIMARY KEY,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      stripe_price_id TEXT NOT NULL DEFAULT '',
+      resource TEXT NOT NULL,
+      quota_amount INTEGER NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_add_ons_code ON add_ons(code)',
+
+    /* 租户已购附加组件 */
+    `CREATE TABLE IF NOT EXISTS tenant_add_ons (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      add_on_id TEXT NOT NULL REFERENCES add_ons(id),
+      stripe_subscription_item_id TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'canceled')),
+      purchased_at INTEGER NOT NULL,
+      canceled_at INTEGER
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_tenant_add_ons_tenant ON tenant_add_ons(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tenant_add_ons_status ON tenant_add_ons(tenant_id, status)',
+
+    /* 权益快照表 */
+    `CREATE TABLE IF NOT EXISTS entitlements (
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      effective_limit INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'plan',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, resource)
+    )`,
+  ],
+};
+
+/** v026: 移动端设备管理 */
+const v026_mobile_devices: Migration = {
+  version: 'v026',
+  description: '移动端设备注册与推送 token 管理',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS devices (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      device_uid TEXT NOT NULL,
+      platform TEXT NOT NULL CHECK(platform IN ('ios', 'android', 'web')),
+      push_token TEXT,
+      app_version TEXT,
+      last_seen_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_tenant_user_uid ON devices(tenant_id, user_id, device_uid)',
+    'CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_devices_tenant ON devices(tenant_id)',
+  ],
+};
+
+/** v027: 身份与分身系统 */
+const v027_identity_avatar: Migration = {
+  version: 'v027',
+  description: '身份与分身系统',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS identities (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      tenant_id TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      bio TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_identities_user ON identities(user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_identities_tenant ON identities(tenant_id)',
+
+    `CREATE TABLE IF NOT EXISTS avatars (
+      id TEXT PRIMARY KEY,
+      identity_id TEXT NOT NULL REFERENCES identities(id),
+      label TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'general'
+        CHECK(kind IN ('general','work','social','family','creative')),
+      behavior_overrides TEXT,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_avatars_identity ON avatars(identity_id)',
+
+    `CREATE TABLE IF NOT EXISTS device_avatars (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES devices(id),
+      avatar_id TEXT NOT NULL REFERENCES avatars(id),
+      is_active INTEGER NOT NULL DEFAULT 0,
+      installed_at INTEGER NOT NULL,
+      UNIQUE(device_id, avatar_id)
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_device_avatars_device ON device_avatars(device_id)',
+    'CREATE INDEX IF NOT EXISTS idx_device_avatars_avatar ON device_avatars(avatar_id)',
+
+    /* 为已有用户回填 identity */
+    `INSERT OR IGNORE INTO identities (id, user_id, tenant_id, display_name, created_at, updated_at)
+     SELECT 'ident_' || REPLACE(id, 'user_', ''), id, tenant_id, email, created_at, updated_at
+     FROM users`,
+
+    /* 为已有 identity 创建默认 avatar */
+    `INSERT OR IGNORE INTO avatars (id, identity_id, label, kind, is_default, is_active, created_at, updated_at)
+     SELECT 'avt_' || REPLACE(id, 'ident_', ''), id, '默认', 'general', 1, 1, created_at, updated_at
+     FROM identities`,
+  ],
+};
+
+/** v028: 记忆淘汰索引 */
+const v028_memory_eviction_indexes: Migration = {
+  version: 'v028',
+  description: '记忆淘汰索引（salience + last_accessed_at）',
+  sql: [
+    'CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant_salience ON memory_nodes(tenant_id, salience)',
+    'CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant_last_accessed ON memory_nodes(tenant_id, last_accessed_at)',
+  ],
+};
+
+/** v029: Avatar 自动运行 + 知识源 */
+const v029_avatar_autorun: Migration = {
+  version: 'v029',
+  description: 'Avatar 自动运行配置、运行日志、知识源表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS avatar_autorun_config (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      avatar_id TEXT NOT NULL REFERENCES avatars(id),
+      enabled INTEGER NOT NULL DEFAULT 0,
+      interval_ms INTEGER NOT NULL,
+      next_run_at INTEGER NOT NULL,
+      knowledge_source_ids_json TEXT NOT NULL DEFAULT '[]',
+      drift_check_interval_ms INTEGER NOT NULL DEFAULT 86400000,
+      drift_threshold REAL NOT NULL DEFAULT 0.3,
+      review_required INTEGER NOT NULL DEFAULT 0,
+      last_run_at INTEGER,
+      last_drift_check_at INTEGER,
+      last_error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_autorun_config_avatar ON avatar_autorun_config(tenant_id, avatar_id)',
+    'CREATE INDEX IF NOT EXISTS idx_autorun_config_due ON avatar_autorun_config(tenant_id, enabled, next_run_at)',
+
+    `CREATE TABLE IF NOT EXISTS avatar_autorun_runlog (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      avatar_id TEXT NOT NULL,
+      config_id TEXT NOT NULL REFERENCES avatar_autorun_config(id),
+      task_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK(status IN ('pending','running','completed','failed','skipped')),
+      metrics_json TEXT,
+      error TEXT,
+      started_at INTEGER,
+      completed_at INTEGER,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_autorun_runlog_avatar ON avatar_autorun_runlog(tenant_id, avatar_id, started_at)',
+
+    `CREATE TABLE IF NOT EXISTS knowledge_sources (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('rss','api','file','manual')),
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config_json TEXT NOT NULL,
+      state_json TEXT,
+      last_ingested_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_knowledge_sources_tenant ON knowledge_sources(tenant_id, enabled, type)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -660,6 +870,11 @@ const MIGRATIONS: readonly Migration[] = [
   v022_ivf_and_event_log,
   v023_api_keys,
   v024_task_queue_indexes,
+  v025_config_and_addons,
+  v026_mobile_devices,
+  v027_identity_avatar,
+  v028_memory_eviction_indexes,
+  v029_avatar_autorun,
 ];
 
 interface MigrationRow {

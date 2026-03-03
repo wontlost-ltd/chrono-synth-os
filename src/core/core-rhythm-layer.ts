@@ -8,7 +8,7 @@ import type { EventBus } from '../events/event-bus.js';
 import type { IDatabase } from '../storage/database.js';
 import type {
   CoreSelfState, CoreValue, MemoryEdge, MemoryId, MemoryKind, MemoryNode, ValueId,
-  MemoryCognitionConfig, ActivationResult, ConsolidationResult, WorkingMemorySlot,
+  MemoryCognitionConfig, ActivationResult, ConsolidationResult, WorkingMemorySlot, EvictionResult,
 } from '../types/core-self.js';
 import type { SurvivalAnchor, DecisionStyle, CognitiveModel } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
@@ -211,16 +211,34 @@ export class CoreRhythmLayer {
 
   // ===== 认知方法 =====
 
-  /** 触发全量衰减 */
-  runMemoryDecay(): Array<{ memoryId: string; oldSalience: number; newSalience: number }> {
-    const results = this.memories.decayAll();
-    for (const r of results) {
+  /** 触发全量衰减（含 L1 显著性下限淘汰） */
+  runMemoryDecay(): { decayed: Array<{ memoryId: string; oldSalience: number; newSalience: number }>; evicted: EvictionResult[] } {
+    const { decayed, evicted } = this.memories.decayAll();
+    for (const r of decayed) {
       this.bus.emit('core:memory-decayed', { ...r, tenantId: this.tenantId });
     }
-    if (results.length > 0) {
-      this.logger.info(LAYER, `记忆衰减: ${results.length} 个记忆受影响`);
+    for (const e of evicted) {
+      this.bus.emit('core:memory-evicted', { memoryId: e.memoryId, reason: e.reason, salience: e.salience, tenantId: this.tenantId });
     }
-    return results;
+    if (decayed.length > 0) {
+      this.logger.info(LAYER, `记忆衰减: ${decayed.length} 个记忆受影响`);
+    }
+    if (evicted.length > 0) {
+      this.logger.info(LAYER, `记忆淘汰(L1): ${evicted.length} 个记忆因低于显著性下限被删除`);
+    }
+    return { decayed, evicted };
+  }
+
+  /** 触发容量淘汰（L2） */
+  runMemoryEviction(): EvictionResult[] {
+    const evicted = this.memories.evictExcess();
+    for (const e of evicted) {
+      this.bus.emit('core:memory-evicted', { memoryId: e.memoryId, reason: e.reason, salience: e.salience, tenantId: this.tenantId });
+    }
+    if (evicted.length > 0) {
+      this.logger.info(LAYER, `记忆淘汰(L2): ${evicted.length} 个记忆因超容量被删除`);
+    }
+    return evicted;
   }
 
   /** 触发扩散激活 */

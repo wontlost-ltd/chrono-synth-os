@@ -14,6 +14,7 @@ describe('认知记忆集成测试', () => {
       logger: new SilentLogger(),
       cognitionConfig: {
         consolidation: { accessThreshold: 3, minSalience: 0.2 },
+        eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
       },
     });
     os.start();

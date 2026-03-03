@@ -7,7 +7,7 @@ import type { IDatabase } from '../storage/database.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type {
   MemoryNode, MemoryEdge, MemoryId, MemoryKind,
-  MemoryCognitionConfig, WorkingMemorySlot, ActivationResult, ConsolidationResult,
+  MemoryCognitionConfig, WorkingMemorySlot, ActivationResult, ConsolidationResult, EvictionResult,
 } from '../types/core-self.js';
 import type { Clock } from '../utils/clock.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -59,6 +59,13 @@ export const DEFAULT_COGNITION_CONFIG: MemoryCognitionConfig = {
   consolidation: {
     accessThreshold: 5,
     minSalience: 0.3,
+  },
+  eviction: {
+    salienceFloor: 0.01,
+    maxMemoryNodes: 10_000,
+    capacityTargetRatio: 0.9,
+    deleteConsolidatedSources: true,
+    batchSize: 1000,
   },
 };
 
@@ -223,12 +230,14 @@ export class CognitiveMemoryGraph {
 
   // ===== 遗忘衰减 =====
 
-  /** 批量衰减所有记忆 */
-  decayAll(): Array<{ memoryId: string; oldSalience: number; newSalience: number }> {
+  /** 批量衰减所有记忆（含 L1 显著性下限淘汰） */
+  decayAll(): { decayed: Array<{ memoryId: string; oldSalience: number; newSalience: number }>; evicted: EvictionResult[] } {
     const now = this.clock.now();
     const rows = this.db.prepare<MemoryRow>('SELECT * FROM memory_nodes').all();
-    const results: Array<{ memoryId: string; oldSalience: number; newSalience: number }> = [];
+    const decayed: Array<{ memoryId: string; oldSalience: number; newSalience: number }> = [];
+    const evicted: EvictionResult[] = [];
     const EPSILON = 1e-6;
+    const { salienceFloor } = this.config.eviction;
 
     return this.db.transaction(() => {
       for (const row of rows) {
@@ -241,13 +250,20 @@ export class CognitiveMemoryGraph {
 
         if (Math.abs(oldSalience - newSalience) < EPSILON) continue;
 
+        /* L1：低于显著性下限时物理删除 */
+        if (salienceFloor > 0 && newSalience < salienceFloor) {
+          this.deleteMemoryInternal(row.id);
+          evicted.push({ memoryId: row.id, reason: 'salience_floor', salience: newSalience });
+          continue;
+        }
+
         this.db.prepare<void>(
           'UPDATE memory_nodes SET salience = ?, last_decayed_at = ? WHERE id = ?',
         ).run(newSalience, now, row.id);
 
-        results.push({ memoryId: row.id, oldSalience, newSalience });
+        decayed.push({ memoryId: row.id, oldSalience, newSalience });
       }
-      return results;
+      return { decayed, evicted };
     });
   }
 
@@ -430,6 +446,11 @@ export class CognitiveMemoryGraph {
         ).run(newSource, newTarget, edge.strength, edge.relation);
       }
 
+      /* L3：固化完成后删除原始 episodic（consolidated_from 列有 ON DELETE SET NULL） */
+      if (this.config.eviction.deleteConsolidatedSources) {
+        this.deleteMemoryInternal(memoryId);
+      }
+
       return { originalId: memoryId, consolidatedId: newId, newKind: 'semantic' as const };
     });
   }
@@ -485,7 +506,51 @@ export class CognitiveMemoryGraph {
     return related;
   }
 
+  // ===== 淘汰方法 =====
+
+  /** 获取记忆节点总数 */
+  getMemoryCount(): number {
+    return this.db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes').get()?.count ?? 0;
+  }
+
+  /** 容量淘汰：超过 maxMemoryNodes 时按评分淘汰至 targetRatio */
+  evictExcess(): EvictionResult[] {
+    const { maxMemoryNodes, capacityTargetRatio, batchSize } = this.config.eviction;
+    if (maxMemoryNodes < 0) return [];
+
+    const count = this.getMemoryCount();
+    if (count <= maxMemoryNodes) return [];
+
+    const target = Math.floor(maxMemoryNodes * capacityTargetRatio);
+    let toEvict = count - target;
+    const evicted: EvictionResult[] = [];
+
+    return this.db.transaction(() => {
+      while (toEvict > 0) {
+        const limit = Math.min(toEvict, batchSize);
+        const rows = this.db.prepare<{ id: string; salience: number }>(
+          'SELECT id, salience FROM memory_nodes ORDER BY salience ASC, last_accessed_at ASC LIMIT ?',
+        ).all(limit);
+        if (rows.length === 0) break;
+
+        for (const row of rows) {
+          this.deleteMemoryInternal(row.id);
+          evicted.push({ memoryId: row.id, reason: 'capacity_overflow', salience: row.salience });
+        }
+        toEvict -= rows.length;
+      }
+      return evicted;
+    });
+  }
+
   // ===== 内部方法 =====
+
+  /** 内部删除方法：删除边 → 工作记忆 → 节点（memory_embeddings 有 CASCADE） */
+  private deleteMemoryInternal(id: MemoryId): void {
+    this.db.prepare<void>('DELETE FROM memory_edges WHERE source = ? OR target = ?').run(id, id);
+    this.db.prepare<void>('DELETE FROM working_memory WHERE memory_id = ?').run(id);
+    this.db.prepare<void>('DELETE FROM memory_nodes WHERE id = ?').run(id);
+  }
 
   /** 计算衰减速率 λ（保证非负有限值） */
   private computeLambda(kind: MemoryKind, valence: number, accessCount: number): number {
@@ -537,5 +602,6 @@ function mergeConfig(base: MemoryCognitionConfig, override: Partial<MemoryCognit
     activation: { ...base.activation, ...override.activation },
     workingMemory: { ...base.workingMemory, ...override.workingMemory },
     consolidation: { ...base.consolidation, ...override.consolidation },
+    eviction: { ...base.eviction, ...override.eviction },
   };
 }
