@@ -13,8 +13,8 @@ import type { SystemEventName, SystemEventMap } from '../../types/events.js';
 /** 进程唯一标识（防止自己收到自己发布的事件） */
 const processId = crypto.randomUUID();
 
-/** 所有合法的事件名称集合（运行时校验用） */
-const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
+/** 所有合法的事件名称集合（运行时校验用，同时供 SSE 路由复用） */
+export const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
   'core:value-updated',
   'core:memory-added',
   'core:memory-accessed',
@@ -51,11 +51,18 @@ const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
   'system:evolution-completed',
   'system:started',
   'system:stopping',
+  'avatar:autorun-enqueued',
+  'avatar:autorun-started',
+  'avatar:autorun-completed',
+  'avatar:autorun-failed',
+  'avatar:drift-detected',
+  'avatar:drift-review-submitted',
+  'knowledge:ingested',
 ]);
 
 /** 最近事件环形缓冲区（用于断线重连重放） */
 const EVENT_BUFFER_SIZE = 256;
-interface BufferedEvent {
+export interface BufferedEvent {
   seq: number;
   event: string;
   data: unknown;
@@ -77,7 +84,7 @@ let EVENT_LOG_TTL_MS = 60 * 60 * 1000;
 let REPLAY_LIMIT = 1000;
 
 /** 缓存一个事件到环形缓冲区并持久化到 DB（seq 由 DB 生成，多副本安全） */
-function bufferEvent(event: string, data: unknown, tenantId?: string): number {
+export function bufferEvent(event: string, data: unknown, tenantId?: string): number {
   let seq: number;
   const payload = JSON.stringify(data);
   const now = Date.now();
@@ -121,7 +128,7 @@ function bufferEvent(event: string, data: unknown, tenantId?: string): number {
 }
 
 /** 从持久化事件日志恢复（当内存缓冲区不足时回退） */
-function getPersistedEventsSince(sinceSeq: number, tenantId: string): BufferedEvent[] {
+export function getPersistedEventsSince(sinceSeq: number, tenantId: string): BufferedEvent[] {
   if (!eventLogDb) return [];
   try {
     const rows = eventLogDb.prepare<{ seq: number; event: string; data_json: string; tenant_id: string | null }>(
@@ -145,14 +152,14 @@ function pruneEventLog(): void {
 }
 
 /** 获取缓冲区中最旧的序列号 */
-function getOldestBufferedSeq(): number | null {
+export function getOldestBufferedSeq(): number | null {
   if (recentEvents.length === 0) return null;
   if (!recentEventsFilled) return recentEvents[0].seq;
   return recentEvents[recentEventsWriteIdx].seq;
 }
 
 /** 获取 sinceSeq 之后的缓冲事件 */
-function getBufferedEventsSince(sinceSeq: number, tenantId: string): BufferedEvent[] {
+export function getBufferedEventsSince(sinceSeq: number, tenantId: string): BufferedEvent[] {
   const result: BufferedEvent[] = [];
   const len = recentEventsFilled ? EVENT_BUFFER_SIZE : recentEvents.length;
   for (let i = 0; i < len; i++) {
@@ -374,4 +381,9 @@ export async function registerWebSocket(
     socket.on('error', () => cleanup());
     socket.on('close', () => cleanup());
   });
+}
+
+/** 获取当前全局事件序列号（供 SSE / handoff 使用） */
+export function currentGlobalSeq(): number {
+  return globalSeq;
 }

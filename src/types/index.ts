@@ -49,6 +49,16 @@ export type {
 } from './events.js';
 
 export type {
+  KnowledgeSourceType,
+  KnowledgeSourceRecord,
+  AvatarAutorunConfig,
+  AutorunRunStatus,
+  AvatarAutorunRunLog,
+  AutorunRunMetrics,
+  KnowledgeItem,
+} from './avatar-autorun.js';
+
+export type {
   EmotionalState,
   FamilyState,
   FinanceState,
