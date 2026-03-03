@@ -53,9 +53,27 @@ import { cleanupExpiredTokens } from './routes/auth.js';
 import { registerAuth0 } from './plugins/auth0.js';
 import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { registerApiKeyRoutes } from './routes/api-keys.js';
+import { registerAdminConfigRoutes } from './routes/admin-config.js';
+import { registerMobileRoutes } from './routes/mobile.js';
+import { registerIdentityRoutes } from './routes/identity.js';
+import { registerAvatarRoutes } from './routes/avatars.js';
+import { registerAvatarAutorunRoutes } from './routes/avatar-autorun.js';
+import { registerKnowledgeSourceRoutes } from './routes/knowledge-sources.js';
+import { registerSseRoutes } from './routes/sse.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
+import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
+import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
+import { AvatarService } from '../identity/avatar-service.js';
+import { AvatarAutorunService } from '../identity/avatar-autorun-service.js';
+import { KnowledgeIngestionService } from '../knowledge/knowledge-ingestion-service.js';
+import { KnowledgeSourceRegistry } from '../knowledge/knowledge-source-registry.js';
+import { ManualKnowledgeSource } from '../knowledge/sources/manual-source.js';
+import { RssKnowledgeSource } from '../knowledge/sources/rss-source.js';
+import { ApiKnowledgeSource } from '../knowledge/sources/api-source.js';
+import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
+import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -125,7 +143,6 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       maxPendingPerTenant: config.queue.maxPendingPerTenant,
       completedRetentionMs: config.queue.completedRetentionMs,
     });
-    registerTaskRoutes(app, queue);
     worker = new TaskWorker(
       queue,
       deps.os.bus,
@@ -134,12 +151,55 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       config.queue.maxConcurrent,
       config.queue.maxRetries,
     );
-    worker.register('life_simulation', async (task) => {
+    registerTaskRoutes(app, queue, worker);
+    worker.register('life_simulation', async (task, _signal) => {
       let payload: { simulationId: string };
       try { payload = JSON.parse(task.payload) as { simulationId: string }; }
       catch { throw new Error(`任务 ${task.id} payload 解析失败`); }
       deps.os.lifeSimulation.executeTask(payload.simulationId);
-    });
+    }, 180_000);
+
+    /* Avatar 自动运行 handler */
+    const autorunStore = new AvatarAutorunStore(queueDb);
+    const knowledgeStore = new KnowledgeSourceStore(queueDb);
+    const avatarService = new AvatarService(queueDb);
+    const quotaManager = new QuotaManager(queueDb);
+    const knowledgeRegistry = new KnowledgeSourceRegistry();
+    knowledgeRegistry.register('manual', new ManualKnowledgeSource());
+    knowledgeRegistry.register('rss', new RssKnowledgeSource());
+    knowledgeRegistry.register('api', new ApiKnowledgeSource());
+    knowledgeRegistry.register('file', new FileKnowledgeSource());
+
+    const knowledgeIngestion = new KnowledgeIngestionService(
+      knowledgeRegistry, knowledgeStore, deps.os.core.memories,
+      undefined, deps.os.bus, deps.os.getLogger(),
+      config.avatarAutorun.maxItemsPerRun,
+    );
+
+    const autorunService = new AvatarAutorunService(
+      queueDb, queue, deps.os.bus, deps.os.getLogger(),
+      quotaManager, avatarService, autorunStore, knowledgeStore,
+      knowledgeIngestion, tenantFactory, config,
+    );
+
+    worker.register('avatar_autorun', async (task, signal) => {
+      let payload: { runId: string; configId: string };
+      try { payload = JSON.parse(task.payload) as { runId: string; configId: string }; }
+      catch { throw new Error(`任务 ${task.id} payload 解析失败`); }
+      await autorunService.executeRun(payload.runId, signal);
+    }, 300_000);
+
+    /* 自动运行调度器 */
+    const autorunSchedulerTimer = setInterval(() => {
+      try { autorunService.scheduleDueRuns(Date.now()); }
+      catch (err) { app.log.error({ err }, 'Avatar 自动运行调度器异常'); }
+    }, config.avatarAutorun.schedulerIntervalMs);
+    autorunSchedulerTimer.unref();
+    app.addHook('onClose', () => { clearInterval(autorunSchedulerTimer); });
+
+    /* 注册自动运行路由（需 autorunService） */
+    registerAvatarAutorunRoutes(app, queueDb, autorunService);
+
     worker.start();
     app.addHook('onClose', async () => { await worker!.stop(); });
   }
@@ -167,6 +227,17 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerSsoRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
   registerApiKeyRoutes(app, db);
+  registerAdminConfigRoutes(app, db, config);
+  registerMobileRoutes(app, db);
+  registerIdentityRoutes(app, db);
+  registerAvatarRoutes(app, db, deps.os, tenantFactory);
+  registerKnowledgeSourceRoutes(app, db);
+  registerSseRoutes(app, deps.os, config);
+
+  /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
+  if (!config.queue.enabled) {
+    registerAvatarAutorunRoutes(app, db, undefined);
+  }
 
   registerDocsRoutes(app);
 

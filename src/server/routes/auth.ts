@@ -16,6 +16,7 @@ import { ErrorCode, StateError, AuthenticationError } from '../../errors/index.j
 import { RegisterSchema, LoginSchema, RefreshTokenSchema, LogoutSchema } from '../schemas/api-schemas.js';
 import { createCustomer } from '../../billing/stripe-client.js';
 import { syncPlanToQuota } from '../../billing/plans.js';
+import { IdentityService } from '../../identity/identity-service.js';
 
 /** 对刷新令牌做 SHA-256 哈希后存储，避免明文泄露 */
 function hashToken(token: string): string {
@@ -73,6 +74,10 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
 
     /* 同步计划配额到 QuotaManager */
     syncPlanToQuota(db, tenantId, 'free');
+
+    /* 创建身份 + 默认分身 */
+    const identityService = new IdentityService(db);
+    identityService.create(userId, tenantId, email.split('@')[0]);
 
     const tokens = await generateTokenPair(app, db, config, userId, tenantId, 'admin');
     return reply.status(201).send({

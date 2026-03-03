@@ -3,7 +3,8 @@
  * 通过 preHandler 钩子验证 JWT 用户角色，拒绝无权限请求
  *
  * 行为：
- * - JWT 未启用：透传（无认证体系时不阻断）
+ * - 生产环境：强制 RBAC，JWT 未启用时拒绝所有写操作
+ * - 开发/测试环境 + JWT 未启用：透传（方便开发调试）
  * - JWT 已启用 + request.user 存在：检查角色
  * - JWT 已启用 + request.user 不存在：拒绝（API Key 用户无法访问 admin 端点）
  */
@@ -11,6 +12,8 @@
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
 import type { UserRole, JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 /**
  * 创建角色守卫 preHandler
@@ -21,7 +24,15 @@ export function requireRole(...allowedRoles: UserRole[]): preHandlerHookHandler 
   return (request: FastifyRequest, _reply: FastifyReply, done) => {
     const jwtEnabled = (request.server as unknown as { jwtEnabled?: boolean }).jwtEnabled;
     if (!jwtEnabled) {
-      /* JWT 未启用 — 无认证体系，RBAC 透传 */
+      if (IS_PRODUCTION) {
+        /* 生产环境强制认证 — JWT 未启用时拒绝受保护端点 */
+        done(new AuthorizationError(
+          '生产环境必须启用 JWT 认证',
+          ErrorCode.AUTH_INSUFFICIENT_ROLE,
+        ));
+        return;
+      }
+      /* 开发/测试环境 — RBAC 透传 */
       done();
       return;
     }

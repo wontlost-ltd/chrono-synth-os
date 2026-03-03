@@ -120,8 +120,8 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
   /* POST /api/v1/memories/decay — 触发全量衰减 */
   app.post('/api/v1/memories/decay', async (request) => {
     const tenantOS = getOS(request);
-    const decayed = tenantOS.core.runMemoryDecay();
-    return { data: { decayed, count: decayed.length } };
+    const { decayed, evicted } = tenantOS.core.runMemoryDecay();
+    return { data: { decayed, evicted, decayedCount: decayed.length, evictedCount: evicted.length } };
   });
 
   /* POST /api/v1/memories/consolidate — 触发记忆固化 */

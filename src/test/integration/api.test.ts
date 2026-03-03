@@ -524,6 +524,178 @@ describe('API 集成测试', () => {
   });
 });
 
+describe('身份与分身 API', () => {
+  let os: ChronoSynthOS;
+  let app: FastifyInstance;
+
+  const jwtConfig = loadConfig({
+    rateLimit: { max: 10000, timeWindowMs: 60_000 },
+    websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    jwt: { enabled: true, secret: 'test-secret-32-chars-minimum!!!!!', accessTtlMs: 3600_000, refreshTtlMs: 86400_000 },
+  });
+
+  let accessToken: string;
+
+  beforeEach(async () => {
+    const clock = new TestClock(1000);
+    const logger = new SilentLogger();
+    os = new ChronoSynthOS({ clock, logger });
+    os.start();
+    app = await createApp({ os, config: jwtConfig });
+
+    /* 注册用户（自动创建 Identity + 默认 Avatar） */
+    const regRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: 'test@example.com', password: 'password123' },
+    });
+    const regBody = JSON.parse(regRes.body);
+    accessToken = regBody.data.accessToken;
+  });
+
+  afterEach(() => { os.close(); });
+
+  it('GET /api/v1/identity 返回注册时创建的身份', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/identity',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.data.id);
+    assert.equal(body.data.displayName, 'test');
+  });
+
+  it('PATCH /api/v1/identity 更新身份', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/identity',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { displayName: '新名字', bio: '自我介绍' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.displayName, '新名字');
+    assert.equal(body.data.bio, '自我介绍');
+  });
+
+  it('GET /api/v1/avatars 包含默认分身', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.length, 1);
+    assert.equal(body.data[0].isDefault, true);
+    assert.equal(body.data[0].label, '默认');
+  });
+
+  it('POST /api/v1/avatars 创建分身', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: '工作模式', kind: 'work' },
+    });
+    assert.equal(res.statusCode, 201);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.label, '工作模式');
+    assert.equal(body.data.kind, 'work');
+    assert.equal(body.data.isDefault, false);
+  });
+
+  it('POST /api/v1/avatars 超出 free 配额返回 429', async () => {
+    /* free 计划限额 2，默认已占 1，再创建 1 个到达上限 */
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: '分身1', kind: 'social' },
+    });
+    /* 第 3 个应超配额 */
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: '分身2', kind: 'family' },
+    });
+    assert.equal(res.statusCode, 429);
+  });
+
+  it('PATCH /api/v1/avatars/:id 更新分身', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: '旧名' },
+    });
+    const avatarId = JSON.parse(createRes.body).data.id;
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/avatars/${avatarId}`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: '新名' },
+    });
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).data.label, '新名');
+  });
+
+  it('DELETE /api/v1/avatars/:id 软删除分身', async () => {
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: '临时' },
+    });
+    const avatarId = JSON.parse(createRes.body).data.id;
+
+    const delRes = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/avatars/${avatarId}`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(delRes.statusCode, 204);
+
+    /* 删除后查询返回 404 */
+    const getRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/avatars/${avatarId}`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(getRes.statusCode, 404);
+  });
+
+  it('GET /api/v1/avatars/:id/projection 返回投影状态', async () => {
+    /* 先添加价值以确保投影有内容 */
+    os.core.addValue('诚实', 0.8);
+
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    const defaultAvatar = JSON.parse(listRes.body).data[0];
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/avatars/${defaultAvatar.id}/projection`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.data.avatarId, defaultAvatar.id);
+    assert.ok(body.data.L0);
+    assert.ok(body.data.L1);
+    assert.ok(body.data.L2);
+    assert.ok(body.data.L3);
+    assert.ok(body.data.L4);
+  });
+});
+
 describe('API Key 认证', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
@@ -585,8 +757,17 @@ describe('API Key 认证', () => {
 
     const readyRes = await app.inject({ method: 'GET', url: '/readyz' });
     assert.equal(readyRes.statusCode, 200);
+  });
 
-    const metricsRes = await app.inject({ method: 'GET', url: '/metrics' });
-    assert.equal(metricsRes.statusCode, 200);
+  it('/metrics 端点需要 API Key', async () => {
+    const noKeyRes = await app.inject({ method: 'GET', url: '/metrics' });
+    assert.equal(noKeyRes.statusCode, 401);
+
+    const withKeyRes = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+      headers: { 'x-api-key': 'test-key-123' },
+    });
+    assert.equal(withKeyRes.statusCode, 200);
   });
 });

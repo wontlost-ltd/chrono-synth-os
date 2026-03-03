@@ -17,7 +17,10 @@ import {
   createPortalSession,
   constructWebhookEvent,
 } from '../../billing/stripe-client.js';
+import { listAddOns, getAddOnById, seedDefaultAddOns } from '../../billing/add-ons.js';
+import { EntitlementService } from '../../billing/entitlement-service.js';
 import { CheckoutSchema, PortalSchema } from '../schemas/api-schemas.js';
+import { requireRole } from '../plugins/rbac.js';
 import { ValidationError, StateError, ErrorCode } from '../../errors/index.js';
 
 interface SubscriptionRow {
@@ -50,13 +53,22 @@ function isSafeRedirectUrl(url: string, publicUrl?: string): boolean {
 
 export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
   const usageTracker = new UsageTracker(db);
+  const entitlementService = new EntitlementService(db);
+
+  /* 初始化默认附加组件（幂等） */
+  seedDefaultAddOns(db);
 
   /* GET /api/v1/billing/plans — 所有可用计划 */
   app.get('/api/v1/billing/plans', async () => {
     return { data: PLANS.map(p => ({ id: p.id, name: p.name, limits: p.limits })) };
   });
 
-  /* GET /api/v1/billing/usage — 当前租户用量 */
+  /* GET /api/v1/billing/add-ons — 可购买的附加组件 */
+  app.get('/api/v1/billing/add-ons', async () => {
+    return { data: listAddOns(db) };
+  });
+
+  /* GET /api/v1/billing/usage — 当前租户用量（含附加组件权益） */
   app.get('/api/v1/billing/usage', async (request) => {
     const tenantId = request.tenantId;
     const sub = db.prepare<SubscriptionRow>(
@@ -64,14 +76,18 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     ).get(tenantId);
 
     const planId = sub?.plan_id ?? 'free';
-    const limits = getPlanLimits(planId);
+    const baseLimits = getPlanLimits(planId);
+    const effectiveLimits = entitlementService.computeEffectiveLimits(tenantId);
+    const activeAddOns = entitlementService.getActiveTenantAddOns(tenantId);
     const usage = usageTracker.getSummary(tenantId);
 
     return {
       data: {
         planId,
         status: sub?.status ?? 'active',
-        limits,
+        limits: baseLimits,
+        effectiveLimits,
+        addOns: activeAddOns,
         usage,
         periodEnd: sub?.current_period_end,
       },
@@ -81,8 +97,8 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
   /* 以下路由需要 Stripe 启用 */
   if (!config.stripe.enabled) return;
 
-  /* POST /api/v1/billing/checkout — 创建 Checkout Session */
-  app.post('/api/v1/billing/checkout', async (request) => {
+  /* POST /api/v1/billing/checkout — 创建 Checkout Session（限流: 5 次/分钟） */
+  app.post('/api/v1/billing/checkout', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request) => {
     const { priceId, successUrl, cancelUrl } = CheckoutSchema.parse(request.body);
 
     if (!VALID_PRICE_IDS.has(priceId)) {
@@ -218,9 +234,10 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
                 tenantSub.id,
               );
 
-              /* 计划变更时同步配额限制 */
+              /* 计划变更时同步配额限制与权益 */
               if (resolvedPlanId !== tenantSub.plan_id) {
                 syncPlanToQuota(db, tenantSub.tenant_id, resolvedPlanId);
+                entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
               }
             }
             break;
@@ -238,6 +255,11 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
             ).run(now, customerId);
             if (canceledSub) {
               syncPlanToQuota(db, canceledSub.tenant_id, 'free');
+              /* 取消订阅时取消所有附加组件并重新同步权益 */
+              db.prepare<void>(
+                `UPDATE tenant_add_ons SET status = 'canceled', canceled_at = ? WHERE tenant_id = ? AND status = 'active'`,
+              ).run(Date.now(), canceledSub.tenant_id);
+              entitlementService.syncTenantEntitlements(canceledSub.tenant_id);
             }
             break;
           }
@@ -253,5 +275,70 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     }
 
     return reply.status(200).send({ received: true });
+  });
+
+  /* ── 附加组件管理路由（admin） ── */
+
+  /* POST /api/v1/billing/add-ons — 创建附加组件 */
+  app.post('/api/v1/billing/add-ons', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    const { code, name, description, stripePriceId, resource, quotaAmount } = request.body as {
+      code: string; name: string; description?: string; stripePriceId?: string;
+      resource: string; quotaAmount: number;
+    };
+    if (!code || !name || !resource || typeof quotaAmount !== 'number') {
+      throw new ValidationError('code/name/resource/quotaAmount 为必填', ErrorCode.VALIDATION_REQUIRED);
+    }
+    const { createAddOn } = await import('../../billing/add-ons.js');
+    const addon = createAddOn(db, { code, name, description: description ?? '', stripePriceId: stripePriceId ?? '', resource, quotaAmount });
+    return { data: addon };
+  });
+
+  /* PATCH /api/v1/billing/add-ons/:id — 更新附加组件 */
+  app.patch('/api/v1/billing/add-ons/:id', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    const { id } = request.params as { id: string };
+    const existing = getAddOnById(db, id);
+    if (!existing) throw new ValidationError('附加组件不存在', ErrorCode.VALIDATION_FORMAT);
+    const { updateAddOn } = await import('../../billing/add-ons.js');
+    updateAddOn(db, id, request.body as Record<string, unknown>);
+    return { data: { updated: true } };
+  });
+
+  /* DELETE /api/v1/billing/add-ons/:id — 停用附加组件 */
+  app.delete('/api/v1/billing/add-ons/:id', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    const { id } = request.params as { id: string };
+    const { deactivateAddOn } = await import('../../billing/add-ons.js');
+    deactivateAddOn(db, id);
+    return { data: { deactivated: true } };
+  });
+
+  /* POST /api/v1/billing/add-ons/:id/purchase — 租户购买附加组件 */
+  app.post('/api/v1/billing/add-ons/:id/purchase', async (request) => {
+    const { id } = request.params as { id: string };
+    const tenantId = request.tenantId;
+    const addon = getAddOnById(db, id);
+    if (!addon || !addon.isActive) {
+      throw new ValidationError('附加组件不存在或已停用', ErrorCode.VALIDATION_FORMAT);
+    }
+    const { randomUUID } = await import('node:crypto');
+    const now = Date.now();
+    db.prepare<void>(
+      `INSERT INTO tenant_add_ons (id, tenant_id, add_on_id, status, purchased_at) VALUES (?, ?, ?, 'active', ?)`,
+    ).run(`ta_${randomUUID()}`, tenantId, id, now);
+    entitlementService.syncTenantEntitlements(tenantId);
+    return { data: { purchased: true, addOnId: id } };
+  });
+
+  /* GET /api/v1/billing/entitlements — 租户有效权益 */
+  app.get('/api/v1/billing/entitlements', async (request) => {
+    const tenantId = request.tenantId;
+    const limits = entitlementService.computeEffectiveLimits(tenantId);
+    const addOns = entitlementService.getActiveTenantAddOns(tenantId);
+    return { data: { effectiveLimits: limits, activeAddOns: addOns } };
   });
 }

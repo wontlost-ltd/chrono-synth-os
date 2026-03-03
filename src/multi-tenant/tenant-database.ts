@@ -10,6 +10,7 @@ const TENANT_TABLES = new Set([
   'core_values', 'memory_nodes', 'memory_edges', 'memory_embeddings',
   'working_memory', 'persona_versions', 'conflicts', 'snapshots',
   'evolution_records', 'survival_anchors', 'audit_log', 'pending_updates',
+  'avatar_autorun_config', 'avatar_autorun_runlog', 'knowledge_sources',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */

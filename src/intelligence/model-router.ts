@@ -12,7 +12,8 @@ import type { UsageTracker } from '../billing/usage-tracker.js';
 import type { AppConfig } from '../config/schema.js';
 import type { BillingOutbox } from '../billing/billing-outbox.js';
 import { billingMetrics } from '../billing/billing-outbox.js';
-import { QuotaExceededError } from '../errors/index.js';
+import { QuotaExceededError, ValidationError } from '../errors/index.js';
+import { checkInputSafety, validateOutput } from './llm-safety.js';
 import { reportUsage as reportStripeUsage } from '../billing/stripe-client.js';
 
 /** LLM 调用指标（用于可观测性） */
@@ -130,6 +131,16 @@ export class ModelRouter implements LLMProvider {
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
     const estimatedTokens = options?.maxTokens ?? this.maxTokens;
 
+    /* 安全检查：提示注入检测（mock 模式跳过，避免影响测试） */
+    if (this.provider !== 'mock') {
+      const safetyCheck = checkInputSafety(messages);
+      if (!safetyCheck.safe) {
+        throw new ValidationError(
+          `LLM 安全策略拒绝: ${safetyCheck.reason}`,
+        );
+      }
+    }
+
     /* 预检查 token 预算（先于配额消费，避免 budget 拒绝后浪费配额） */
     if (this.tokenBudget) {
       const check = this.tokenBudget.checkBudget(this.tenantId, estimatedTokens);
@@ -160,6 +171,11 @@ export class ModelRouter implements LLMProvider {
       throw err;
     }
     recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
+
+    /* 输出安全验证：清理敏感信息泄露 */
+    if (this.provider !== 'mock') {
+      response = validateOutput(response);
+    }
 
     /* 记录成本 */
     if (this.costTracker) {

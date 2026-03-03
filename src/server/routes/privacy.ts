@@ -26,6 +26,7 @@ const TENANT_TABLES = [
   'narrative', 'decision_style', 'cognitive_model',
   'tasks', 'quota_usage', 'quota_limits',
   'usage_records', 'subscriptions',
+  'avatar_autorun_runlog', 'avatar_autorun_config', 'knowledge_sources',
   'audit_log',
 ] as const;
 
@@ -108,8 +109,8 @@ export function registerPrivacyRoutes(
     return os;
   }
 
-  /* POST /api/v1/privacy/export — 完整租户数据导出（仅 admin） */
-  app.post('/api/v1/privacy/export', { preHandler: requireRole('admin') }, async (request) => {
+  /* POST /api/v1/privacy/export — 完整租户数据导出（仅 admin，限流: 3 次/分钟） */
+  app.post('/api/v1/privacy/export', { preHandler: requireRole('admin'), config: { rateLimit: { max: 3, timeWindow: '1 minute' } } }, async (request) => {
     const tenantId = request.tenantId;
     const exportId = generatePrefixedId('exp');
     const db = os.getDatabase();
@@ -154,8 +155,8 @@ export function registerPrivacyRoutes(
     };
   });
 
-  /* DELETE /api/v1/privacy/data — GDPR Right to Erasure（仅 admin） */
-  app.delete('/api/v1/privacy/data', { preHandler: requireRole('admin') }, async (request) => {
+  /* DELETE /api/v1/privacy/data — GDPR Right to Erasure（仅 admin，限流: 1 次/分钟） */
+  app.delete('/api/v1/privacy/data', { preHandler: requireRole('admin'), config: { rateLimit: { max: 1, timeWindow: '1 minute' } } }, async (request) => {
     const tenantId = request.tenantId;
     const db = os.getDatabase();
     const deletedCounts: Record<string, number> = {};

@@ -120,8 +120,8 @@ export function registerDecisionRoutes(
     return engine;
   }
 
-  /* POST /api/v1/decisions */
-  app.post('/api/v1/decisions', async (request, reply) => {
+  /* POST /api/v1/decisions — 限流: 30 次/分钟 */
+  app.post('/api/v1/decisions', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = CreateDecisionSchema.parse(request.body);
     const tenantId = request.tenantId;
     const id = generatePrefixedId('dec');

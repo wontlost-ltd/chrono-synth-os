@@ -1,6 +1,7 @@
 /**
  * 任务工作者
  * 轮询 TaskQueue 并分发给注册的处理器
+ * 安全治理：任务类型白名单 + 每任务超时 + 取消支持
  */
 
 import type { TaskQueue, TaskRecord } from './task-queue.js';
@@ -8,12 +9,15 @@ import type { EventBus } from '../events/event-bus.js';
 import type { Logger } from '../utils/logger.js';
 import { runWithTenant } from '../multi-tenant/tenant-context.js';
 
-export type TaskHandler = (task: TaskRecord) => Promise<unknown>;
+export type TaskHandler = (task: TaskRecord, signal: AbortSignal) => Promise<unknown>;
 
 const LAYER = 'TaskWorker';
+const DEFAULT_TASK_TIMEOUT_MS = 120_000;
 
 export class TaskWorker {
   private readonly handlers = new Map<string, TaskHandler>();
+  private readonly taskTimeouts = new Map<string, number>();
+  private readonly activeAbortControllers = new Map<string, AbortController>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private reaperTimer: ReturnType<typeof setInterval> | undefined;
   private purgeTimer: ReturnType<typeof setInterval> | undefined;
@@ -30,9 +34,28 @@ export class TaskWorker {
     private readonly staleThresholdMs = 300_000,
   ) {}
 
-  /** 注册任务处理器 */
-  register(type: string, handler: TaskHandler): void {
+  /** 注册任务处理器（含可选超时） */
+  register(type: string, handler: TaskHandler, timeoutMs?: number): void {
     this.handlers.set(type, handler);
+    if (timeoutMs !== undefined) {
+      this.taskTimeouts.set(type, timeoutMs);
+    }
+  }
+
+  /** 取消正在执行的任务 */
+  cancelTask(taskId: string): boolean {
+    const controller = this.activeAbortControllers.get(taskId);
+    if (controller) {
+      controller.abort();
+      this.logger.info(LAYER, `任务已取消: ${taskId}`);
+      return true;
+    }
+    return false;
+  }
+
+  /** 获取已注册的任务类型列表 */
+  get registeredTypes(): string[] {
+    return [...this.handlers.keys()];
   }
 
   /** 启动轮询 */
@@ -117,35 +140,53 @@ export class TaskWorker {
     }
   }
 
-  /** 执行单个任务（在租户上下文中运行） */
+  /** 执行单个任务（在租户上下文中运行，含超时和取消支持） */
   private async handleTask(task: TaskRecord): Promise<void> {
     const handler = this.handlers.get(task.type);
     if (!handler) {
-      this.queue.fail(task.id, `未注册的任务类型: ${task.type}`);
-      this.bus.emit('task:failed', { taskId: task.id, error: `未注册的任务类型: ${task.type}`, tenantId: task.tenantId });
+      const error = `未注册的任务类型: ${task.type}（已注册: ${this.registeredTypes.join(', ') || '无'}）`;
+      this.queue.fail(task.id, error);
+      this.bus.emit('task:failed', { taskId: task.id, error, tenantId: task.tenantId });
+      this.logger.warn(LAYER, `拒绝未知任务类型: ${task.type} (任务=${task.id})`);
       return;
     }
 
-    await runWithTenant(task.tenantId, async () => {
-      try {
-        const result = await handler(task);
-        this.queue.complete(task.id, result);
-        this.bus.emit('task:completed', { taskId: task.id, result: result ?? null, tenantId: task.tenantId });
-        this.logger.info(LAYER, `任务完成: ${task.id} (类型=${task.type})`);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
+    const controller = new AbortController();
+    this.activeAbortControllers.set(task.id, controller);
+    const timeoutMs = this.taskTimeouts.get(task.type) ?? DEFAULT_TASK_TIMEOUT_MS;
+    const timer = setTimeout(() => {
+      controller.abort();
+      this.logger.warn(LAYER, `任务超时 (${timeoutMs}ms): ${task.id} (类型=${task.type})`);
+    }, timeoutMs);
 
-        if (task.retryCount + 1 < (task.maxRetries || this.maxRetries)) {
-          const delay = Math.min(30_000, 1000 * 2 ** task.retryCount);
-          const availableAt = Date.now() + delay;
-          this.queue.reschedule(task.id, task.retryCount + 1, availableAt, errorMsg);
-          this.logger.warn(LAYER, `任务重试 ${task.retryCount + 1}: ${task.id} (延迟=${delay}ms)`);
-        } else {
-          this.queue.fail(task.id, errorMsg);
-          this.bus.emit('task:failed', { taskId: task.id, error: errorMsg, tenantId: task.tenantId });
-          this.logger.error(LAYER, `任务失败: ${task.id} — ${errorMsg}`);
+    try {
+      await runWithTenant(task.tenantId, async () => {
+        try {
+          const result = await handler(task, controller.signal);
+          if (controller.signal.aborted) {
+            throw new Error(`任务执行超时 (${timeoutMs}ms)`);
+          }
+          this.queue.complete(task.id, result);
+          this.bus.emit('task:completed', { taskId: task.id, result: result ?? null, tenantId: task.tenantId });
+          this.logger.info(LAYER, `任务完成: ${task.id} (类型=${task.type})`);
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+
+          if (task.retryCount + 1 < (task.maxRetries || this.maxRetries)) {
+            const delay = Math.min(30_000, 1000 * 2 ** task.retryCount);
+            const availableAt = Date.now() + delay;
+            this.queue.reschedule(task.id, task.retryCount + 1, availableAt, errorMsg);
+            this.logger.warn(LAYER, `任务重试 ${task.retryCount + 1}: ${task.id} (延迟=${delay}ms)`);
+          } else {
+            this.queue.fail(task.id, errorMsg);
+            this.bus.emit('task:failed', { taskId: task.id, error: errorMsg, tenantId: task.tenantId });
+            this.logger.error(LAYER, `任务失败: ${task.id} — ${errorMsg}`);
+          }
         }
-      }
-    });
+      });
+    } finally {
+      clearTimeout(timer);
+      this.activeAbortControllers.delete(task.id);
+    }
   }
 }

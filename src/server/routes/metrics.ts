@@ -11,6 +11,7 @@ import { getMetricsSnapshot, getTotalRequests } from '../plugins/metrics.js';
 import { getWsConnectionCount } from '../plugins/websocket.js';
 import { billingMetrics } from '../../billing/billing-outbox.js';
 import { llmMetrics } from '../../intelligence/model-router.js';
+import { safetyMetrics } from '../../intelligence/llm-safety.js';
 import { calculatePercentile } from '../plugins/metrics.js';
 
 function llmLatencyPercentiles(arr: number[]): { p50: number; p90: number; p99: number } {
@@ -72,6 +73,12 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         embed_errors: llmMetrics.embedErrors,
         embed_latency_ms: llmLatencyPercentiles(llmMetrics.embedLatencyMs),
         total_tokens_consumed: llmMetrics.totalTokensConsumed,
+        safety: {
+          input_checks: safetyMetrics.inputChecks,
+          input_blocked: safetyMetrics.inputBlocked,
+          output_checks: safetyMetrics.outputChecks,
+          output_sanitized: safetyMetrics.outputSanitized,
+        },
       },
       queue: getQueueBacklog(os),
       system: {
