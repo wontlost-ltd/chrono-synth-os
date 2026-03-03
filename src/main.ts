@@ -1,22 +1,25 @@
 /**
  * 服务器入口
- * 加载配置 → 初始化追踪 → 创建日志 → 初始化数据库 → 启动 HTTP 服务
+ * 两阶段启动：先初始化 OTEL tracing（必须在 http 模块被 import 之前），
+ * 再动态 import 其余所有模块，确保 auto-instrumentation 能 hook 到 http 层。
  */
 
 import 'dotenv/config';
 import { loadConfig } from './config/index.js';
 
-/* OpenTelemetry 必须在其他模块之前初始化 */
 const config = loadConfig();
 
-import { initTracing, shutdownTracing } from './observability/tracing.js';
+/* 阶段 1：OTEL 必须在任何 http/net 模块被 import 之前初始化 */
+const { initTracing, shutdownTracing } = await import('./observability/tracing.js');
 initTracing(config.observability);
 
-import { PinoLogger } from './logging/index.js';
-import { createDatabase } from './storage/index.js';
-import { ChronoSynthOS } from './chrono-synth-os.js';
-import { createApp } from './server/index.js';
-import { serverState } from './server/routes/health.js';
+/* 阶段 2：动态 import 确保 auto-instrumentation 已就绪 */
+const { PinoLogger } = await import('./logging/index.js');
+const { createDatabase } = await import('./storage/index.js');
+const { ChronoSynthOS } = await import('./chrono-synth-os.js');
+const { createApp } = await import('./server/index.js');
+const { serverState } = await import('./server/routes/health.js');
+
 const logger = new PinoLogger(config.log.level, config.log.json);
 const db = createDatabase(config);
 const os = new ChronoSynthOS({
