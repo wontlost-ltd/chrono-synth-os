@@ -1,0 +1,175 @@
+# ChronoSynthOS — 群晖 NAS 完整部署
+# 实际硬件：Pentium N3710 (Braswell, 4C/4T, 无 AVX), 8GB RAM, DSM 7.3
+# 数据盘：/volume2
+#
+# 部署步骤：
+#   1. SSH 登录群晖：ssh rpang@你的群晖IP
+#   2. cd /volume2/docker/chrono-synth-os
+#   3. cp deploy/synology/.env.synology deploy/synology/.env && 修改密钥
+#   4. docker compose -f deploy/synology/docker-compose.yml build
+#   5. docker compose -f deploy/synology/docker-compose.yml up -d
+#
+# 如果 Node 24 崩溃 (Illegal Instruction)：
+#   修改 .env 中 NODE_VERSION=22，然后重新 build
+
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/synology/Dockerfile.synology
+      args:
+        - NODE_VERSION=${NODE_VERSION:-24}
+    container_name: chrono-backend
+    ports:
+      - "${CHRONO_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      - CHRONO_DB_DRIVER=postgres
+      - CHRONO_DB_CONNECTION_STRING=postgresql://chrono:${PG_PASSWORD:-chrono_nas}@postgres:5432/chrono_synth
+      - CHRONO_REDIS_ENABLED=true
+      - CHRONO_REDIS_URL=redis://redis:6379
+      - CHRONO_QUEUE_ENABLED=true
+      - CHRONO_OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - CHRONO_OTEL_ENDPOINT=http://jaeger:4318
+    volumes:
+      - chrono-data:/app/data
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"const h=require('http');const r=h.get('http://127.0.0.1:3000/healthz',s=>{process.exit(s.statusCode===200?0:1)});r.on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    networks:
+      - chrono-net
+    # N3710: 4核 1.6GHz / 8GB — 保守分配，留资源给 DSM
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: '2.0'
+        reservations:
+          memory: 384M
+          cpus: '0.25'
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: chrono-postgres
+    environment:
+      POSTGRES_DB: chrono_synth
+      POSTGRES_USER: chrono
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-chrono_nas}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    # N3710 低功耗优化：减少内存占用
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=128MB"
+      - "-c"
+      - "effective_cache_size=256MB"
+      - "-c"
+      - "work_mem=2MB"
+      - "-c"
+      - "max_connections=20"
+      - "-c"
+      - "wal_buffers=4MB"
+      - "-c"
+      - "random_page_cost=1.1"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chrono -d chrono_synth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - chrono-net
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '1.0'
+
+  redis:
+    image: redis:7-alpine
+    container_name: chrono-redis
+    command:
+      - "redis-server"
+      - "--save"
+      - "300"
+      - "1"
+      - "--save"
+      - "60"
+      - "100"
+      - "--maxmemory"
+      - "128mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--loglevel"
+      - "warning"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - chrono-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.76.0
+    container_name: chrono-jaeger
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    volumes:
+      - jaeger-data:/badger
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:14269/"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      - chrono-net
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.5'
+
+volumes:
+  chrono-data:
+    driver: local
+  pg-data:
+    driver: local
+  redis-data:
+    driver: local
+  jaeger-data:
+    driver: local
+
+networks:
+  chrono-net:
+    driver: bridge

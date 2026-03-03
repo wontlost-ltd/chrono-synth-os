@@ -1,0 +1,30 @@
+# ChronoSynthOS — 群晖 NAS 专用 Dockerfile
+# Pentium N3710 (Braswell) 无 AVX 指令集，使用 Debian slim 代替 Alpine
+#
+# 如果 Node 24 在你的 CPU 上崩溃 (Illegal Instruction)，
+# 将下方两行的 24-slim 改为 22-slim 即可回退到 Node 22 LTS
+
+ARG NODE_VERSION=24
+FROM node:${NODE_VERSION}-slim AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src/ src/
+RUN npm run build
+
+FROM node:${NODE_VERSION}-slim
+RUN groupadd -r chrono && useradd -r -g chrono chrono
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=builder /app/dist/ dist/
+RUN mkdir -p /app/data && chown -R chrono:chrono /app
+VOLUME /app/data
+USER chrono
+ENV NODE_ENV=production
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "const h=require('http');const r=h.get('http://127.0.0.1:3000/healthz',s=>{process.exit(s.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.setTimeout(4000,()=>{r.destroy();process.exit(1)})"
+ENV CHRONO_DB_PATH=/app/data/chrono.db
+CMD ["node", "dist/main.js"]
