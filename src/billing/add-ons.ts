@@ -66,7 +66,7 @@ export function seedDefaultAddOns(db: IDatabase): void {
 
     db.prepare<void>(
       `INSERT INTO add_ons (id, code, name, description, stripe_price_id, resource, quota_amount, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, '', ?, ?, 1, ?, ?)`,
+       VALUES (?, ?, ?, ?, '', ?, ?, TRUE, ?, ?)`,
     ).run(`addon_${randomUUID()}`, def.code, def.name, def.description, def.resource, def.quotaAmount, now, now);
   }
 }
@@ -74,7 +74,7 @@ export function seedDefaultAddOns(db: IDatabase): void {
 /** 列出所有附加组件（可选仅活跃） */
 export function listAddOns(db: IDatabase, activeOnly = true): AddOn[] {
   const sql = activeOnly
-    ? 'SELECT * FROM add_ons WHERE is_active = 1 ORDER BY code'
+    ? 'SELECT * FROM add_ons WHERE is_active = TRUE ORDER BY code'
     : 'SELECT * FROM add_ons ORDER BY code';
   return db.prepare<AddOnRow>(sql).all().map(rowToAddOn);
 }
@@ -97,7 +97,7 @@ export function createAddOn(db: IDatabase, data: Omit<AddOn, 'id' | 'isActive' |
   const now = Date.now();
   db.prepare<void>(
     `INSERT INTO add_ons (id, code, name, description, stripe_price_id, resource, quota_amount, is_active, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?)`,
   ).run(id, data.code, data.name, data.description, data.stripePriceId, data.resource, data.quotaAmount, now, now);
   return { ...data, id, isActive: true, createdAt: now, updatedAt: now };
 }
@@ -119,6 +119,6 @@ export function updateAddOn(db: IDatabase, id: string, data: Partial<Pick<AddOn,
 /** 停用附加组件 */
 export function deactivateAddOn(db: IDatabase, id: string): void {
   db.prepare<void>(
-    'UPDATE add_ons SET is_active = 0, updated_at = ? WHERE id = ?',
+    'UPDATE add_ons SET is_active = FALSE, updated_at = ? WHERE id = ?',
   ).run(Date.now(), id);
 }
