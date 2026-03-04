@@ -298,7 +298,7 @@ export const UpsertAutorunConfigSchema = z.object({
 });
 
 export const CreateKnowledgeSourceSchema = z.object({
-  type: z.enum(['rss', 'api', 'file', 'manual']),
+  type: z.enum(['rss', 'api', 'file', 'manual', 'llm']),
   name: z.string().min(1).max(120),
   config: z.object({
     url: z.string().url().optional(),
@@ -306,18 +306,24 @@ export const CreateKnowledgeSourceSchema = z.object({
     pollingMinutes: z.number().int().min(15).max(10080).optional(),
     fileRef: z.string().optional(),
     manualText: z.string().max(20_000).optional(),
-  }).refine(cfg => cfg.url || cfg.fileRef || cfg.manualText, '至少提供 url/fileRef/manualText 之一'),
+    systemPrompt: z.string().max(5000).optional(),
+    topics: z.array(z.string().max(200)).max(100).optional(),
+    itemsPerRun: z.number().int().min(1).max(20).optional(),
+  }).refine(cfg => cfg.url || cfg.fileRef || cfg.manualText || cfg.systemPrompt, '至少提供 url/fileRef/manualText/systemPrompt 之一'),
 });
 
 export const UpdateKnowledgeSourceSchema = z.object({
   name: z.string().min(1).max(120).optional(),
-  type: z.enum(['rss', 'api', 'file', 'manual']).optional(),
+  type: z.enum(['rss', 'api', 'file', 'manual', 'llm']).optional(),
   config: z.object({
     url: z.string().url().optional(),
     headers: z.record(z.string(), z.string()).optional(),
     pollingMinutes: z.number().int().min(15).max(10080).optional(),
     fileRef: z.string().optional(),
     manualText: z.string().max(20_000).optional(),
+    systemPrompt: z.string().max(5000).optional(),
+    topics: z.array(z.string().max(200)).max(100).optional(),
+    itemsPerRun: z.number().int().min(1).max(20).optional(),
   }).optional(),
   enabled: z.boolean().optional(),
 });

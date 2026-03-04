@@ -73,7 +73,9 @@ import { ManualKnowledgeSource } from '../knowledge/sources/manual-source.js';
 import { RssKnowledgeSource } from '../knowledge/sources/rss-source.js';
 import { ApiKnowledgeSource } from '../knowledge/sources/api-source.js';
 import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
+import { LlmKnowledgeSource } from '../knowledge/sources/llm-source.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
+import { ModelRouter } from '../intelligence/model-router.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -169,6 +171,16 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     knowledgeRegistry.register('rss', new RssKnowledgeSource());
     knowledgeRegistry.register('api', new ApiKnowledgeSource());
     knowledgeRegistry.register('file', new FileKnowledgeSource());
+    const llmRouter = new ModelRouter({
+      provider: config.intelligence.provider,
+      model: config.intelligence.model,
+      embeddingModel: config.intelligence.embeddingModel,
+      apiKey: config.intelligence.apiKey,
+      baseUrl: config.intelligence.baseUrl,
+      maxTokens: config.intelligence.maxTokens,
+      temperature: config.intelligence.temperature,
+    });
+    knowledgeRegistry.register('llm', new LlmKnowledgeSource(llmRouter));
 
     const knowledgeIngestion = new KnowledgeIngestionService(
       knowledgeRegistry, knowledgeStore, deps.os.core.memories,

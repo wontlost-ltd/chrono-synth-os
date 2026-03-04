@@ -844,6 +844,33 @@ const v029_avatar_autorun: Migration = {
   ],
 };
 
+/** v030: 知识源支持 LLM 类型 */
+const v030_knowledge_source_llm: Migration = {
+  version: 'v030',
+  description: '知识源支持 LLM 类型（重建 CHECK 约束）',
+  sql: [
+    /* SQLite 不支持 ALTER CHECK，需要重建表 */
+    `CREATE TABLE IF NOT EXISTS knowledge_sources_new (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('rss','api','file','manual','llm')),
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      config_json TEXT NOT NULL,
+      state_json TEXT,
+      last_ingested_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `INSERT OR IGNORE INTO knowledge_sources_new
+     SELECT id, tenant_id, type, name, enabled, config_json, state_json, last_ingested_at, created_at, updated_at
+     FROM knowledge_sources`,
+    'DROP TABLE IF EXISTS knowledge_sources',
+    'ALTER TABLE knowledge_sources_new RENAME TO knowledge_sources',
+    'CREATE INDEX IF NOT EXISTS idx_knowledge_sources_tenant ON knowledge_sources(tenant_id, enabled, type)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -875,6 +902,7 @@ const MIGRATIONS: readonly Migration[] = [
   v027_identity_avatar,
   v028_memory_eviction_indexes,
   v029_avatar_autorun,
+  v030_knowledge_source_llm,
 ];
 
 interface MigrationRow {

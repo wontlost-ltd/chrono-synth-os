@@ -820,6 +820,16 @@ const v029_avatar_autorun: Migration = {
   ],
 };
 
+/** v030: 知识源支持 LLM 类型 */
+const v030_knowledge_source_llm: Migration = {
+  version: 'v030',
+  description: '知识源支持 LLM 类型（更新 CHECK 约束）',
+  sql: [
+    `ALTER TABLE knowledge_sources DROP CONSTRAINT IF EXISTS knowledge_sources_type_check`,
+    `ALTER TABLE knowledge_sources ADD CONSTRAINT knowledge_sources_type_check CHECK(type IN ('rss','api','file','manual','llm'))`,
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -851,4 +861,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v027_identity_avatar,
   v028_memory_eviction_indexes,
   v029_avatar_autorun,
+  v030_knowledge_source_llm,
 ];

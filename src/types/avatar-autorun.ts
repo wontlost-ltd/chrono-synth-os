@@ -3,7 +3,7 @@
  */
 
 /** 知识源类型 */
-export type KnowledgeSourceType = 'rss' | 'api' | 'file' | 'manual';
+export type KnowledgeSourceType = 'rss' | 'api' | 'file' | 'manual' | 'llm';
 
 /** 知识源数据库记录 */
 export interface KnowledgeSourceRecord {
@@ -73,7 +73,7 @@ export interface KnowledgeItem {
   readonly content: string;
   readonly url?: string;
   readonly publishedAt?: number;
-  readonly kind?: 'episodic' | 'semantic';
+  readonly kind?: 'episodic' | 'semantic' | 'procedural';
   readonly valence?: number;
   readonly salience?: number;
   readonly fingerprint?: string;
