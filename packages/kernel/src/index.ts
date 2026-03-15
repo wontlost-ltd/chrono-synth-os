@@ -3,15 +3,17 @@
  * 零 node:* 依赖，可在 Node/Web Worker/Tauri/React Native 中运行
  */
 
+import type { KernelEventType } from './events/domain-events.js';
+
 /** 租户上下文 — 标识当前操作的租户与操作者 */
 export interface TenantScope {
   readonly tenantId: string;
   readonly actorId?: string;
 }
 
-/** 领域事件基类型 */
+/** 领域事件基类型 — type 接受已知事件类型，同时允许扩展 */
 export interface DomainEvent {
-  readonly type: string;
+  readonly type: KernelEventType | (string & {});
   readonly tenantId: string;
   readonly occurredAt: number;
   readonly payload: Record<string, unknown>;
@@ -36,3 +38,8 @@ export type {
   EventPublisher,
 } from './ports/host-adapters.js';
 export type { KeyHandle, KeyRotationResult, KeyResolver } from './ports/key-resolver.js';
+
+export * from './domain/identity/index.js';
+export * from './domain/persona/index.js';
+export * from './domain/core-self/index.js';
+export * from './events/index.js';

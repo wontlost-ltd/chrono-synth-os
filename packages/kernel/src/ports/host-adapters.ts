@@ -27,9 +27,9 @@ export interface AppendResult {
   readonly newVersion: number;
 }
 
-/** 内核事件 */
+/** 内核事件 — type 与 DomainEvent 保持一致 */
 export interface KernelEvent {
-  readonly type: string;
+  readonly type: DomainEvent['type'];
   readonly payload: Record<string, unknown>;
   readonly occurredAt: number;
 }
