@@ -26,6 +26,15 @@ export function registerKnowledgeSourceRoutes(app: FastifyInstance, db: IDatabas
     };
   });
 
+  /* GET /api/v1/knowledge-sources/:sourceId — 单条查询 */
+  app.get<{ Params: { sourceId: string } }>('/api/v1/knowledge-sources/:sourceId', async (request) => {
+    const { sourceId } = request.params;
+    const tenantId = request.tenantId;
+    const source = store.getById(sourceId, tenantId);
+    if (!source) throw new NotFoundError(`知识源 ${sourceId} 不存在`, ErrorCode.NOT_FOUND_KNOWLEDGE_SOURCE);
+    return { data: source };
+  });
+
   /* POST /api/v1/knowledge-sources — 创建 */
   app.post('/api/v1/knowledge-sources', {
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
@@ -57,6 +66,17 @@ export function registerKnowledgeSourceRoutes(app: FastifyInstance, db: IDatabas
 
     if (!updated) throw new NotFoundError(`知识源 ${sourceId} 不存在`, ErrorCode.NOT_FOUND_KNOWLEDGE_SOURCE);
     return { data: updated };
+  });
+
+  /* POST /api/v1/knowledge-sources/:sourceId/sync — 手动触发同步 */
+  app.post<{ Params: { sourceId: string } }>('/api/v1/knowledge-sources/:sourceId/sync', async (request) => {
+    const { sourceId } = request.params;
+    const tenantId = request.tenantId;
+    const source = store.getById(sourceId, tenantId);
+    if (!source) throw new NotFoundError(`知识源 ${sourceId} 不存在`, ErrorCode.NOT_FOUND_KNOWLEDGE_SOURCE);
+    /* 更新 updated_at 作为同步标记；实际摄入由 autorun 异步执行 */
+    store.update(sourceId, tenantId, {});
+    return { data: { id: sourceId, synced: true } };
   });
 
   /* DELETE /api/v1/knowledge-sources/:sourceId — 删除 */

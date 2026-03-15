@@ -3,28 +3,14 @@
  * /healthz 轻量探活（含版本），/readyz 深度就绪检查（含 Redis）
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { IDatabase } from '../../storage/database.js';
 import type { TaskWorker } from '../../queue/task-worker.js';
 import { CircuitBreaker, CircuitOpenError } from '../plugins/circuit-breaker.js';
+import { getPackageVersion } from '../../utils/package-version.js';
 
-/** 从 package.json 读取版本（构建时固化） */
-let _version: string | undefined;
-function getVersion(): string {
-  if (_version) return _version;
-  try {
-    const dir = dirname(fileURLToPath(import.meta.url));
-    const pkg = JSON.parse(readFileSync(resolve(dir, '../../../package.json'), 'utf-8'));
-    _version = pkg.version ?? 'unknown';
-  } catch {
-    _version = 'unknown';
-  }
-  return _version!;
-}
+const getVersion = getPackageVersion;
 
 /** 服务器生命周期状态（由 main.ts 管理） */
 export const serverState = {
@@ -41,6 +27,12 @@ export interface HealthRouteDeps {
   circuitBreaker?: CircuitBreaker;
   /** 可选任务工作者，用于报告队列健康状态 */
   worker?: TaskWorker;
+  /** 可选观测工作者，用于报告异步观测健康状态 */
+  observabilityWorker?: { isHealthy(): boolean; inflight: number };
+  /** 可选 runtime 恢复工作者，用于报告 runtime recovery 健康状态 */
+  runtimeRecoveryWorker?: { isHealthy(): boolean; inflight: number };
+  /** 可选 settlement reconciliation 工作者，用于报告账务对账健康状态 */
+  settlementReconciliationWorker?: { isHealthy(): boolean; inflight: number };
 }
 
 export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps): void {
@@ -117,6 +109,30 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
     if (deps.worker) {
       const healthy = deps.worker.isHealthy();
       components.worker = { status: healthy ? 'ok' : 'stopped', inflight: deps.worker.inflight };
+    }
+
+    if (deps.observabilityWorker) {
+      const healthy = deps.observabilityWorker.isHealthy();
+      components.observability_worker = {
+        status: healthy ? 'ok' : 'stopped',
+        inflight: deps.observabilityWorker.inflight,
+      };
+    }
+
+    if (deps.runtimeRecoveryWorker) {
+      const healthy = deps.runtimeRecoveryWorker.isHealthy();
+      components.runtime_recovery_worker = {
+        status: healthy ? 'ok' : 'stopped',
+        inflight: deps.runtimeRecoveryWorker.inflight,
+      };
+    }
+
+    if (deps.settlementReconciliationWorker) {
+      const healthy = deps.settlementReconciliationWorker.isHealthy();
+      components.settlement_reconciliation_worker = {
+        status: healthy ? 'ok' : 'stopped',
+        inflight: deps.settlementReconciliationWorker.inflight,
+      };
     }
 
     const allOk = serverState.ready && dbOk && redisOk;

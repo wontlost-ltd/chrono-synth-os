@@ -1,6 +1,12 @@
 /**
  * 租户隔离数据库包装器
  * 自动为多租户表注入 tenant_id 过滤条件
+ *
+ * 安全设计：
+ * - exec() 拦截：禁止对租户表执行无参数化的 DML，防止跨租户数据泄漏
+ * - INSERT 重写：在列列表和 VALUES 中注入 tenant_id
+ * - SELECT/UPDATE/DELETE 重写：注入 WHERE tenant_id = ? 条件
+ * - 不支持的 SQL 模式（CTE、子查询、INSERT...SELECT）直接抛异常，拒绝静默放行
  */
 
 import type { IDatabase, IPreparedStatement, SqlValue } from '../storage/database.js';
@@ -10,7 +16,21 @@ const TENANT_TABLES = new Set([
   'core_values', 'memory_nodes', 'memory_edges', 'memory_embeddings',
   'working_memory', 'persona_versions', 'conflicts', 'snapshots',
   'evolution_records', 'survival_anchors', 'audit_log', 'pending_updates',
+  'identities', 'devices',
+  'organizations', 'workspaces', 'organization_memberships', 'organization_role_bindings',
+  'tenant_enterprise_profiles',
+  'billing_invoices', 'usage_meters',
+  'settlement_reconciliation_runs',
   'avatar_autorun_config', 'avatar_autorun_runlog', 'knowledge_sources',
+  'persona_core', 'persona_wallets', 'persona_forks', 'persona_memories',
+  'persona_knowledge_items', 'marketplace_tasks', 'persona_growth_events',
+  'persona_governance_events', 'persona_memory_nodes', 'persona_memory_edges',
+  'persona_working_memory', 'persona_transfers', 'reputation_history',
+  'persona_daily_metrics', 'marketplace_daily_metrics',
+  'task_applications', 'task_assignments', 'runtime_sessions', 'task_results',
+  'governance_cases', 'governance_actions',
+  'wallet_transactions', 'wallet_payout_requests', 'wallet_settlements',
+  'platform_dlq_events',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */
@@ -23,14 +43,22 @@ const ALL_TENANT_TABLES = new Set([...TENANT_TABLES, ...SINGLETON_TABLES]);
 
 /**
  * 判断 SQL 是否涉及租户表
- * 简单匹配：检查 SQL 中是否包含任何租户表名
+ * 使用预编译正则匹配表名词边界，避免子串误匹配（如 "core_values_backup"）
  */
+const tableRegexCache = new Map<string, RegExp>();
+
+function getTableRegex(table: string): RegExp {
+  let re = tableRegexCache.get(table);
+  if (!re) {
+    re = new RegExp(`\\b${table}\\b`, 'i');
+    tableRegexCache.set(table, re);
+  }
+  return re;
+}
+
 function findTenantTable(sql: string): string | undefined {
-  const upper = sql.toUpperCase();
   for (const table of ALL_TENANT_TABLES) {
-    /* 匹配表名后跟空白或括号，避免子串误匹配 */
-    const re = new RegExp(`\\b${table.toUpperCase()}\\b`);
-    if (re.test(upper)) return table;
+    if (getTableRegex(table).test(sql)) return table;
   }
   return undefined;
 }
@@ -55,41 +83,177 @@ function insertAlreadyHasTenantId(sql: string): boolean {
 }
 
 /**
+ * 检测不安全的 SQL 模式，这些模式无法通过简单正则安全重写
+ * 检测到时抛异常，拒绝静默放行
+ */
+function assertSafeForRewrite(sql: string): void {
+  const upper = sql.toUpperCase().trim();
+  /* CTE（WITH ... AS） */
+  if (/^\s*WITH\b/i.test(sql)) {
+    throw new Error(`TenantDatabase: 不支持 CTE 语法的自动租户隔离，请手动管理 tenant_id: ${sql.slice(0, 80)}`);
+  }
+  /* INSERT ... SELECT（无 VALUES 关键字的 INSERT） */
+  if (upper.startsWith('INSERT') && !upper.includes('VALUES') && upper.includes('SELECT')) {
+    throw new Error(`TenantDatabase: 不支持 INSERT...SELECT 的自动租户隔离: ${sql.slice(0, 80)}`);
+  }
+  /* UNION */
+  if (/\bUNION\b/i.test(sql)) {
+    throw new Error(`TenantDatabase: 不支持 UNION 语法的自动租户隔离: ${sql.slice(0, 80)}`);
+  }
+}
+
+/**
  * 为 INSERT 语句注入 tenant_id 列和占位符
- * INSERT INTO table (col1, col2) VALUES (?, ?)
- * → INSERT INTO table (tenant_id, col1, col2) VALUES (?, ?, ?)
+ * INSERT [OR REPLACE|IGNORE] INTO table (col1, col2) VALUES (?, ?)
+ * → INSERT [OR ...] INTO table (tenant_id, col1, col2) VALUES (?, ?, ?)
  */
 function rewriteInsert(sql: string): string {
-  return sql.replace(
+  const result = sql.replace(
     /INSERT\s+(OR\s+\w+\s+)?INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i,
     (_match, orClause, table, cols, vals) => {
       const prefix = orClause ? `INSERT ${orClause.trim()} INTO` : 'INSERT INTO';
       return `${prefix} ${table} (tenant_id, ${cols.trim()}) VALUES (?, ${vals.trim()})`;
     },
   );
+  /* 验证重写成功：如果正则没匹配到任何内容，result === sql */
+  if (result === sql) {
+    throw new Error(`TenantDatabase: INSERT 重写失败，SQL 格式不符合预期: ${sql.slice(0, 120)}`);
+  }
+  return result;
+}
+
+interface RewriteResult {
+  sql: string;
+  tenantParamIndex: number;
+}
+
+const enum PlaceholderState {
+  Normal,
+  SingleQuote,
+  DoubleQuote,
+  LineComment,
+  BlockComment,
+}
+
+function countPlaceholders(sql: string): number {
+  let count = 0;
+  let state: PlaceholderState = PlaceholderState.Normal;
+
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    const next = i + 1 < sql.length ? sql[i + 1] : '';
+
+    switch (state) {
+      case PlaceholderState.Normal:
+        if (ch === "'") {
+          state = PlaceholderState.SingleQuote;
+        } else if (ch === '"') {
+          state = PlaceholderState.DoubleQuote;
+        } else if (ch === '-' && next === '-') {
+          state = PlaceholderState.LineComment;
+          i++;
+        } else if (ch === '/' && next === '*') {
+          state = PlaceholderState.BlockComment;
+          i++;
+        } else if (ch === '?') {
+          count++;
+        }
+        break;
+      case PlaceholderState.SingleQuote:
+        if (ch === "'" && next === "'") {
+          i++;
+        } else if (ch === "'") {
+          state = PlaceholderState.Normal;
+        }
+        break;
+      case PlaceholderState.DoubleQuote:
+        if (ch === '"' && next === '"') {
+          i++;
+        } else if (ch === '"') {
+          state = PlaceholderState.Normal;
+        }
+        break;
+      case PlaceholderState.LineComment:
+        if (ch === '\n') {
+          state = PlaceholderState.Normal;
+        }
+        break;
+      case PlaceholderState.BlockComment:
+        if (ch === '*' && next === '/') {
+          i++;
+          state = PlaceholderState.Normal;
+        }
+        break;
+    }
+  }
+
+  return count;
 }
 
 /**
  * 为 SELECT/UPDATE/DELETE 语句注入 WHERE tenant_id = ? 条件
+ * - 已有 WHERE：改写为 `WHERE tenant_id = ? AND (<原条件>)`
+ * - 无 WHERE：在尾部子句之前插入 `WHERE tenant_id = ?`
+ * - 返回 tenant 参数应插入到原参数数组中的索引
  */
-function injectWhereClause(sql: string): string {
+function injectWhereClause(sql: string): RewriteResult {
+  /* 移除末尾分号和空白 */
+  const hasSemicolon = sql.trimEnd().endsWith(';');
+  const cleaned = hasSemicolon ? sql.trimEnd().slice(0, -1) : sql;
+
   const whereRe = /\bWHERE\b/i;
-  if (whereRe.test(sql)) {
-    /* 已有 WHERE：在末尾追加 AND tenant_id = ?（tenant_id 参数附在原始参数之后） */
-    const tailRe = /\b(ORDER\s+BY|LIMIT|GROUP\s+BY|HAVING)\b/i;
-    const tailMatch = tailRe.exec(sql);
-    if (tailMatch) {
-      return sql.slice(0, tailMatch.index) + ' AND tenant_id = ? ' + sql.slice(tailMatch.index);
-    }
-    return sql + ' AND tenant_id = ?';
-  }
-  /* 无 WHERE：在语句末尾的 ORDER BY / LIMIT / GROUP BY 之前插入 */
   const tailRe = /\b(ORDER\s+BY|LIMIT|GROUP\s+BY|HAVING)\b/i;
-  const tailMatch = tailRe.exec(sql);
-  if (tailMatch) {
-    return sql.slice(0, tailMatch.index) + ' WHERE tenant_id = ? ' + sql.slice(tailMatch.index);
+  let result: string;
+  let tenantParamIndex = 0;
+
+  if (whereRe.test(cleaned)) {
+    const whereMatch = whereRe.exec(cleaned);
+    if (!whereMatch) {
+      throw new Error(`TenantDatabase: WHERE 子句解析失败: ${sql.slice(0, 120)}`);
+    }
+    const whereIndex = whereMatch.index;
+    const afterWhere = cleaned.slice(whereIndex + whereMatch[0].length);
+    const tailMatch = tailRe.exec(afterWhere);
+    const prefix = cleaned.slice(0, whereIndex);
+    const originalPredicate = tailMatch
+      ? afterWhere.slice(0, tailMatch.index).trim()
+      : afterWhere.trim();
+    const suffix = tailMatch
+      ? ` ${afterWhere.slice(tailMatch.index).trimStart()}`
+      : '';
+
+    result = `${prefix}WHERE tenant_id = ? AND (${originalPredicate})${suffix}`;
+    tenantParamIndex = countPlaceholders(prefix);
+  } else {
+    /* 无 WHERE：在尾部子句之前插入 WHERE */
+    const tailMatch = tailRe.exec(cleaned);
+    if (tailMatch) {
+      result = cleaned.slice(0, tailMatch.index) + ' WHERE tenant_id = ? ' + cleaned.slice(tailMatch.index);
+      tenantParamIndex = countPlaceholders(cleaned.slice(0, tailMatch.index));
+    } else {
+      result = cleaned + ' WHERE tenant_id = ?';
+      tenantParamIndex = countPlaceholders(cleaned);
+    }
   }
-  return sql + ' WHERE tenant_id = ?';
+
+  return {
+    sql: hasSemicolon ? result + ';' : result,
+    tenantParamIndex,
+  };
+}
+
+/** 检测 exec() 中的 DML 是否涉及租户表，涉及则抛异常 */
+function assertExecSafe(sql: string): void {
+  const op = detectOp(sql);
+  if (op === 'OTHER') return; /* DDL（CREATE TABLE 等）放行 */
+
+  const table = findTenantTable(sql);
+  if (table) {
+    throw new Error(
+      `TenantDatabase: 禁止通过 exec() 对租户表 "${table}" 执行 ${op}，` +
+      `必须使用 prepare() 以确保 tenant_id 隔离: ${sql.slice(0, 80)}`,
+    );
+  }
 }
 
 /** 租户隔离的 PreparedStatement 包装器 */
@@ -97,8 +261,7 @@ class TenantStatement<T = unknown> implements IPreparedStatement<T> {
   constructor(
     private readonly inner: IPreparedStatement<T>,
     private readonly tenantId: string,
-    private readonly prependTenant: boolean,
-    private readonly appendTenant: boolean,
+    private readonly tenantParamIndex: number | null,
   ) {}
 
   run(...params: SqlValue[]): { changes: number; lastInsertRowid: number | bigint } {
@@ -114,11 +277,12 @@ class TenantStatement<T = unknown> implements IPreparedStatement<T> {
   }
 
   private buildParams(params: SqlValue[]): SqlValue[] {
-    const result: SqlValue[] = [];
-    if (this.prependTenant) result.push(this.tenantId);
-    result.push(...params);
-    if (this.appendTenant) result.push(this.tenantId);
-    return result;
+    if (this.tenantParamIndex === null) {
+      return [...params];
+    }
+    const prefix = params.slice(0, this.tenantParamIndex);
+    const suffix = params.slice(this.tenantParamIndex);
+    return [...prefix, this.tenantId, ...suffix];
   }
 }
 
@@ -133,6 +297,8 @@ export class TenantDatabase implements IDatabase {
   ) {}
 
   exec(sql: string): void {
+    /* 拦截对租户表的无参数 DML，防止跨租户数据泄漏 */
+    assertExecSafe(sql);
     this.inner.exec(sql);
   }
 
@@ -144,6 +310,9 @@ export class TenantDatabase implements IDatabase {
 
     const op = detectOp(sql);
 
+    /* 检测不支持的 SQL 模式 */
+    assertSafeForRewrite(sql);
+
     if (op === 'INSERT') {
       if (insertAlreadyHasTenantId(sql)) {
         /* SQL 已包含 tenant_id 列（租户感知 store），跳过重写 */
@@ -153,18 +322,16 @@ export class TenantDatabase implements IDatabase {
       return new TenantStatement<T>(
         this.inner.prepare<T>(rewritten),
         this.tenantId,
-        true,   /* prepend tenant_id 值 */
-        false,
+        0,
       );
     }
 
     if (op === 'SELECT' || op === 'UPDATE' || op === 'DELETE') {
       const rewritten = injectWhereClause(sql);
       return new TenantStatement<T>(
-        this.inner.prepare<T>(rewritten),
+        this.inner.prepare<T>(rewritten.sql),
         this.tenantId,
-        false,
-        true,   /* append tenant_id 值（WHERE 子句末尾的 ?） */
+        rewritten.tenantParamIndex,
       );
     }
 

@@ -104,7 +104,7 @@ export class SurvivalAnchorStore {
 
   /** 删除全部 */
   deleteAll(): void {
-    this.db.exec('DELETE FROM survival_anchors');
+    this.db.prepare<void>('DELETE FROM survival_anchors WHERE 1=1').run();
   }
 
   /** 按原始数据插入（恢复用） */

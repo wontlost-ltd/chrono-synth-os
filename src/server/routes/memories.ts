@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { AppConfig } from '../../config/schema.js';
+import { FieldEncryption } from '../../storage/encryption.js';
 import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 import { TokenBudget } from '../../intelligence/token-budget.js';
@@ -13,12 +14,16 @@ import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
-import { CreateMemorySchema, LinkMemorySchema, RelatedMemoryQuerySchema } from '../schemas/api-schemas.js';
+import type { JwtPayload } from '../../types/auth.js';
+import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
+import { CreateMemorySchema, CreatePersonaMemoryRecordSchema, LinkMemorySchema, RelatedMemoryQuerySchema } from '../schemas/api-schemas.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { parsePagination } from '../plugins/pagination.js';
 
 export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory, config?: AppConfig): void {
   const sharedDb = os.getDatabase();
+  const encryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
+  const personaCoreService = new PersonaCoreService(sharedDb, encryption);
   const tokenBudget = config ? new TokenBudget(config.intelligence.budget, sharedDb) : undefined;
   const costTracker = config ? new CostTracker(sharedDb) : undefined;
   const quotaManager = config ? new QuotaManager(sharedDb) : undefined;
@@ -29,6 +34,21 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
     const tid = request.tenantId;
     if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
     return os;
+  }
+
+  function getJwtUser(request: FastifyRequest): JwtPayload | undefined {
+    const user = request.user as JwtPayload | undefined;
+    if (!user || user.sub.startsWith('apikey:')) return undefined;
+    return user;
+  }
+
+  function mapMemoryRecordKind(memoryType: string, sourceType?: string): 'interaction' | 'task' | 'training' | 'knowledge' | 'governance' {
+    const normalized = `${memoryType} ${sourceType ?? ''}`.toLowerCase();
+    if (normalized.includes('task')) return 'task';
+    if (normalized.includes('train')) return 'training';
+    if (normalized.includes('knowledge')) return 'knowledge';
+    if (normalized.includes('governance') || normalized.includes('policy')) return 'governance';
+    return 'interaction';
   }
 
   /** 获取或创建租户的 EmbeddingIndex（懒加载，LRU 驱逐上限 64） */
@@ -75,6 +95,44 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
 
   /* POST /api/v1/memories — 创建记忆，限流: 30 次/分钟 */
   app.post('/api/v1/memories', { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const jwtUser = getJwtUser(request);
+    if (jwtUser && typeof request.body === 'object' && request.body !== null) {
+      const raw = request.body as Record<string, unknown>;
+      if ('personaId' in raw || 'persona_id' in raw || 'memoryType' in raw || 'memory_type' in raw) {
+        const body = CreatePersonaMemoryRecordSchema.parse(request.body);
+        const personaId = body.personaId ?? body.persona_id!;
+        const memoryType = body.memoryType ?? body.memory_type!;
+        const contentText = body.contentText ?? body.content_text!;
+        const sourceType = body.sourceType ?? body.source_type;
+        const sourceId = body.sourceId ?? body.source_id;
+        const memory = personaCoreService.addMemory({
+          tenantId: request.tenantId,
+          ownerUserId: jwtUser.sub,
+          personaId,
+          kind: mapMemoryRecordKind(memoryType, sourceType),
+          sensitivity: body.sensitivity,
+          summary: contentText,
+          content: {
+            memoryType,
+            sourceType: sourceType ?? null,
+            sourceId: sourceId ?? null,
+          },
+          importance: 0.6,
+        });
+        if (!memory) {
+          throw new NotFoundError(`Persona ${personaId} 不存在`, ErrorCode.NOT_FOUND_PERSONA);
+        }
+        return reply.status(201).send({
+          data: {
+            memoryId: memory.id,
+            personaId: memory.personaId,
+            memoryType,
+            createdAt: new Date(memory.createdAt).toISOString(),
+          },
+        });
+      }
+    }
+
     const body = CreateMemorySchema.parse(request.body);
     const tenantOS = getOS(request);
     const memory = tenantOS.core.addMemory(body.kind, body.content, body.valence, body.salience);

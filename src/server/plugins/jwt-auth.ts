@@ -28,6 +28,8 @@ const AUTH_PATHS = new Set([
   '/api/v1/auth/logout',
   '/api/v1/auth/sso/authorize',
   '/api/v1/auth/sso/callback',
+  '/api/v1/auth/oidc/login',
+  '/api/v1/auth/oidc/callback',
   '/api/v1/billing/plans',
 ]);
 
@@ -35,6 +37,7 @@ function isPublicPath(url: string): boolean {
   const path = url.split('?')[0];
   if (PUBLIC_PATHS.has(path)) return true;
   if (AUTH_PATHS.has(path)) return true;
+  if (path.startsWith('/scim/')) return true;
   /* Stripe webhook 豁免（由 Stripe 签名验证保护） */
   if (path === '/api/v1/billing/webhook') return true;
   return false;
@@ -63,6 +66,9 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
 
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
     if (isPublicPath(request.url) || request.method === 'OPTIONS') return;
+
+    /* 允许上游认证插件（如 metrics scrape key）提前完成认证 */
+    if (request.user) return;
 
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {

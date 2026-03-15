@@ -8,15 +8,25 @@
   "engines": {
     "node": ">=24.0.0"
   },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.src.json",
     "test:unit": "node --test dist/test/unit/**/*.test.js",
     "test:integration": "node --test dist/test/integration/**/*.test.js",
+    "test:contract": "node --test dist/test/contract/**/*.test.js",
+    "test:packages": "node --test packages/*/dist/**/*.test.js packages/*/dist-test/**/*.test.js",
+    "test:ops": "bash -n scripts/backup_db.sh && bash -n scripts/restore_db.sh && bash -n scripts/backup_storage.sh && bash -n scripts/test_disaster_recovery.sh && bash scripts/test_disaster_recovery.sh",
+    "check:forbidden-imports": "bash scripts/check-forbidden-imports.sh",
     "test": "npm run test:unit && npm run test:integration",
-    "test:golden": "npm run typecheck && npm run build && npm run test",
+    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run check:forbidden-imports",
     "start": "node dist/main.js",
-    "dev": "npm run build && node dist/main.js"
+    "start:observability-worker": "node dist/main-observability-worker.js",
+    "dev": "npm run build && node dist/main.js",
+    "dev:observability-worker": "npm run build && node dist/main-observability-worker.js"
   },
   "keywords": [
     "digital-persona",
@@ -44,6 +54,7 @@
     "dotenv": "^17.3.1",
     "fastify": "^5.7.4",
     "ioredis": "^5.9.3",
+    "kafkajs": "2.2.4",
     "pg": "^8.18.0",
     "pino": "^10.3.1",
     "stripe": "^20.3.1",

@@ -14,12 +14,15 @@ export interface CircuitBreakerOptions {
   readonly resetTimeoutMs: number;
   /** 半开状态下允许通过的探测请求数 */
   readonly halfOpenMaxRequests: number;
+  /** 单次操作超时毫秒数（0 = 不限制） */
+  readonly executionTimeoutMs: number;
 }
 
 const DEFAULTS: CircuitBreakerOptions = {
   failureThreshold: 5,
   resetTimeoutMs: 30_000,
   halfOpenMaxRequests: 1,
+  executionTimeoutMs: 30_000,
 };
 
 export class CircuitBreaker {
@@ -56,7 +59,24 @@ export class CircuitBreaker {
     }
 
     try {
-      const result = await fn();
+      let result: T;
+      if (this.opts.executionTimeoutMs > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          result = await Promise.race([
+            Promise.resolve(fn()),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new CircuitTimeoutError(
+                `操作超时（${this.opts.executionTimeoutMs}ms）`,
+              )), this.opts.executionTimeoutMs);
+            }),
+          ]);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
+      } else {
+        result = await fn();
+      }
       this.onSuccess();
       return result;
     } catch (err) {
@@ -110,5 +130,13 @@ export class CircuitOpenError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CircuitOpenError';
+  }
+}
+
+export class CircuitTimeoutError extends Error {
+  readonly code = 'CIRCUIT_TIMEOUT';
+  constructor(message: string) {
+    super(message);
+    this.name = 'CircuitTimeoutError';
   }
 }

@@ -62,6 +62,203 @@ export const UpdatePersonaStatusSchema = z.object({
   status: z.enum(['active', 'paused', 'completed', 'failed']),
 });
 
+/* Persona Core 2.0 */
+export const CreatePersonaCoreSchema = z.object({
+  displayName: z.string().min(1).max(120),
+  visibility: z.enum(['private', 'shared', 'marketplace']).default('private'),
+  profile: z.record(z.string(), z.unknown()).default({}),
+  initialKnowledge: z.array(z.object({
+    title: z.string().min(1).max(160),
+    content: z.string().min(1).max(10_000),
+    source: z.string().min(1).max(160).optional(),
+    tags: z.array(z.string().min(1).max(80)).max(20).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+  })).max(20).default([]),
+});
+
+export const CreatePersonaCoreForkSchema = z.object({
+  label: z.string().min(1).max(120),
+  forkType: z.enum(['experimental', 'task', 'social', 'research', 'operations']).default('experimental'),
+  syncMode: z.enum(['core', 'isolated']).default('core'),
+  experienceFactor: z.number().min(0).max(2).default(1),
+});
+
+export const AddPersonaMemorySchema = z.object({
+  forkId: z.string().min(1).optional(),
+  kind: z.enum(['interaction', 'task', 'training', 'knowledge', 'governance']),
+  sensitivity: z.enum(['private', 'encrypted', 'owner-restricted']).default('private'),
+  summary: z.string().min(1).max(500),
+  content: z.record(z.string(), z.unknown()).default({}),
+  importance: z.number().min(0).max(1).default(0.5),
+});
+
+export const CreatePersonaMemoryRecordSchema = z.object({
+  personaId: z.string().min(1).optional(),
+  persona_id: z.string().min(1).optional(),
+  memoryType: z.string().min(1).max(120).optional(),
+  memory_type: z.string().min(1).max(120).optional(),
+  contentText: z.string().min(1).max(10_000).optional(),
+  content_text: z.string().min(1).max(10_000).optional(),
+  sourceType: z.string().min(1).max(120).optional(),
+  source_type: z.string().min(1).max(120).optional(),
+  sourceId: z.string().min(1).max(160).optional(),
+  source_id: z.string().min(1).max(160).optional(),
+  sensitivity: z.enum(['private', 'encrypted', 'owner-restricted']).default('private'),
+}).refine((value) => Boolean(value.personaId ?? value.persona_id), {
+  message: 'personaId/persona_id 必填',
+  path: ['personaId'],
+}).refine((value) => Boolean(value.memoryType ?? value.memory_type), {
+  message: 'memoryType/memory_type 必填',
+  path: ['memoryType'],
+}).refine((value) => Boolean(value.contentText ?? value.content_text), {
+  message: 'contentText/content_text 必填',
+  path: ['contentText'],
+});
+
+export const PersonaMemoryListQuerySchema = z.object({
+  kind: z.enum(['interaction', 'task', 'training', 'knowledge', 'governance']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: z.coerce.number().int().positive().optional(),
+});
+
+export const PersonaMemorySearchSchema = z.object({
+  query: z.string().min(1).max(500),
+  limit: z.number().int().min(1).max(50).default(5),
+});
+
+export const PersonaGraphQuerySchema = z.object({
+  memoryId: z.string().min(1).optional(),
+  kind: z.enum(['episodic', 'semantic', 'procedural']).optional(),
+  relation: z.string().min(1).max(120).optional(),
+  limit: z.number().int().min(1).max(50).default(12),
+});
+
+export const AddPersonaKnowledgeSchema = z.object({
+  title: z.string().min(1).max(160),
+  content: z.string().min(1).max(10_000),
+  source: z.string().min(1).max(160).default('manual'),
+  tags: z.array(z.string().min(1).max(80)).max(20).default([]),
+  confidence: z.number().min(0).max(1).default(0.75),
+});
+
+export const AddGovernanceEventSchema = z.object({
+  eventType: z.enum(['warning', 'reward', 'restriction', 'review', 'transfer', 'death']),
+  severity: z.number().int().min(1).max(5).default(1),
+  summary: z.string().min(1).max(300),
+  payload: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const DeceasePersonaSchema = z.object({
+  reason: z.string().min(1).max(300).default('owner-request'),
+});
+
+export const EvaluatePersonaLifecycleSchema = z.object({
+  inactivityDays: z.number().int().min(30).max(3650).default(180),
+});
+
+export const TransferPersonaSchema = z.object({
+  toOwnerId: z.string().min(1),
+  reason: z.string().min(1).max(300).default('asset sale'),
+});
+
+export const ApprovePersonaTransferSchema = z.object({
+  transferId: z.string().min(1),
+});
+
+export const TopPersonasQuerySchema = z.object({
+  category: z.enum(['writing', 'coding', 'research', 'operations', 'general']).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(10),
+});
+
+export const PublishMarketplaceTaskSchema = z.object({
+  title: z.string().min(1).max(160),
+  description: z.string().min(1).max(5000),
+  category: z.enum(['writing', 'coding', 'research', 'operations', 'general']).default('general'),
+  reward: z.number().min(0),
+  currency: z.string().min(1).max(16).default('CRED'),
+});
+
+export const AcceptMarketplaceTaskSchema = z.object({
+  personaId: z.string().min(1),
+  forkId: z.string().min(1).optional(),
+});
+
+export const CompleteMarketplaceTaskSchema = z.object({
+  qualityScore: z.number().min(0).max(1),
+  ownerTrainingHours: z.number().min(0).max(10_000).default(0),
+});
+
+export const ApplyTaskSchema = z.object({
+  personaId: z.string().min(1),
+});
+
+export const AssignTaskSchema = z.object({
+  personaId: z.string().min(1),
+});
+
+export const CreateRuntimeSessionSchema = z.object({
+  personaId: z.string().min(1),
+  taskId: z.string().min(1),
+});
+
+export const SubmitTaskResultSchema = z.object({
+  assignmentId: z.string().min(1),
+  resultUri: z.string().min(1),
+  evaluation: z.object({
+    summary: z.string().min(1).max(1000).optional(),
+  }).catchall(z.unknown()).default({}),
+});
+
+export const AcceptSubmittedTaskSchema = z.object({
+  clientRating: z.number().int().min(1).max(5),
+  qualityScore: z.number().min(0).max(1),
+});
+
+export const RejectTaskSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+export const DisputeTaskSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+export const OpenGovernanceCaseSchema = z.object({
+  personaId: z.string().min(1),
+  taskId: z.string().min(1).optional(),
+  triggerType: z.string().min(1).max(120),
+  severity: z.enum(['low', 'medium', 'high', 'critical']),
+  details: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const ApplyGovernanceActionSchema = z.object({
+  actionType: z.enum(['warning', 'temporary_restriction', 'temporary_suspension', 'reinstate', 'termination']),
+  durationSeconds: z.number().int().min(1).max(10 * 365 * 24 * 60 * 60).optional(),
+  details: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const AppealGovernanceCaseSchema = z.object({
+  details: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const WalletPayoutSchema = z.object({
+  amountMinor: z.number().int().min(1),
+});
+
+export const WalletSettlementTaskSchema = z.object({
+  taskId: z.string().min(1),
+  assignmentId: z.string().min(1),
+  totalAmountMinor: z.number().int().min(1),
+  currency: z.string().min(1).max(16),
+  split: z.object({
+    ownerPct: z.number().int().min(0).max(100),
+    personaPct: z.number().int().min(0).max(100),
+    platformPct: z.number().int().min(0).max(100),
+  }),
+}).refine((value) => value.split.ownerPct + value.split.personaPct + value.split.platformPct === 100, {
+  message: 'split 百分比分配必须等于 100',
+  path: ['split'],
+});
+
 /* 快照管理 */
 export const CreateSnapshotSchema = z.object({
   reason: z.enum(['scheduled', 'manual', 'pre_evolution', 'shutdown']).default('manual'),
@@ -203,8 +400,31 @@ export const CheckoutSchema = z.object({
   cancelUrl: z.string().min(1),
 });
 
+export const SubscribeBillingSchema = z.object({
+  planId: z.string().min(1),
+});
+
 export const PortalSchema = z.object({
   returnUrl: z.string().min(1),
+});
+
+const organizationRoleSchema = z.enum(['org_admin', 'billing_admin', 'persona_operator', 'marketplace_manager', 'auditor', 'viewer']);
+
+export const CreateOrganizationSchema = z.object({
+  name: z.string().min(1).max(160),
+  slug: z.string().min(1).max(160).regex(/^[a-z0-9-]+$/).optional(),
+  defaultWorkspaceName: z.string().min(1).max(160).default('Default Workspace'),
+  defaultWorkspaceSlug: z.string().min(1).max(160).regex(/^[a-z0-9-]+$/).optional(),
+});
+
+export const UpsertOrganizationMemberSchema = z.object({
+  userId: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  workspaceId: z.string().min(1).optional(),
+  roles: z.array(organizationRoleSchema).min(1).max(6),
+}).refine((value) => Boolean(value.userId ?? value.email), {
+  message: 'userId 或 email 至少提供一个',
+  path: ['userId'],
 });
 
 /* 协作 */
@@ -242,6 +462,45 @@ export const CreateApiKeySchema = z.object({
 
 export const RevokeApiKeySchema = z.object({
   keyId: z.string().min(1),
+});
+
+/* 企业部署 */
+const deploymentModeSchema = z.enum(['shared_cluster', 'dedicated_db']);
+const databaseIsolationModeSchema = z.enum(['shared', 'dedicated']);
+const encryptionModeSchema = z.enum(['platform_managed', 'tenant_dedicated']);
+
+export const UpdateDeploymentProfileSchema = z.object({
+  deploymentMode: deploymentModeSchema.optional(),
+  databaseIsolationMode: databaseIsolationModeSchema.optional(),
+  kafkaNamespace: z.string().max(120).nullable().optional(),
+  encryptionMode: encryptionModeSchema.optional(),
+  kmsKeyRef: z.string().max(120).nullable().optional(),
+  oidc: z.object({
+    enabled: z.boolean().optional(),
+    issuerUrl: z.string().url().optional(),
+    clientId: z.string().min(1).max(300).optional(),
+    clientSecret: z.string().min(1).max(2000).optional(),
+    audience: z.string().max(300).optional(),
+    scope: z.string().max(300).optional(),
+    emailClaim: z.string().min(1).max(120).optional(),
+    nameClaim: z.string().min(1).max(120).optional(),
+  }).optional(),
+});
+
+/* SCIM */
+export const ScimCreateUserSchema = z.object({
+  userName: z.string().email(),
+  active: z.boolean().default(true),
+  externalId: z.string().max(200).optional(),
+  name: z.object({
+    givenName: z.string().max(120).optional(),
+    familyName: z.string().max(120).optional(),
+    formatted: z.string().max(240).optional(),
+  }).optional(),
+  emails: z.array(z.object({
+    value: z.string().email(),
+    primary: z.boolean().optional(),
+  })).optional(),
 });
 
 /* 移动端设备管理 */
@@ -347,6 +606,17 @@ export const SsoAuthorizeQuerySchema = z.object({
 });
 
 export const SsoCallbackQuerySchema = z.object({
+  code: z.string().optional(),
+  state: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const OidcAuthorizeQuerySchema = z.object({
+  redirect_uri: z.string().optional(),
+  tenant_id: z.string().optional(),
+});
+
+export const OidcCallbackQuerySchema = z.object({
   code: z.string().optional(),
   state: z.string().optional(),
   error: z.string().optional(),

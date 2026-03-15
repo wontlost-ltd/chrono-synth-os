@@ -7,15 +7,32 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
+import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase, SqlValue } from '../../storage/database.js';
+import { FieldEncryption } from '../../storage/encryption.js';
+import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
 import { compilePersonaState } from '../../intelligence/persona-state.js';
+import { countAuditLogs, queryAuditLog } from '../../audit/audit-log-store.js';
 import { PaginationQuerySchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 
 /** 直接按 tenant_id 查询的表（外键依赖顺序：子表在前） */
 const TENANT_TABLES = [
+  'tenant_enterprise_profiles',
+  'organization_role_bindings', 'organization_memberships', 'workspaces', 'organizations',
+  'usage_meters', 'billing_invoices',
+  'settlement_reconciliation_runs',
+  'persona_memory_edges', 'persona_working_memory', 'persona_memory_nodes',
+  'runtime_sessions', 'task_results', 'task_assignments', 'task_applications',
+  'governance_actions', 'governance_cases',
+  'wallet_transactions', 'wallet_payout_requests', 'wallet_settlements',
+  'persona_transfers', 'reputation_history',
+  'persona_daily_metrics', 'marketplace_daily_metrics',
+  'persona_governance_events', 'persona_growth_events',
+  'persona_memories', 'persona_knowledge_items',
+  'marketplace_tasks', 'persona_forks', 'persona_wallets', 'persona_core',
   'decision_feedbacks', 'decision_runs', 'decision_cases',
   'onboarding_sessions', 'llm_usage',
   'life_simulations',
@@ -26,6 +43,8 @@ const TENANT_TABLES = [
   'narrative', 'decision_style', 'cognitive_model',
   'tasks', 'quota_usage', 'quota_limits',
   'usage_records', 'subscriptions',
+  'idempotency_keys',
+  'platform_dlq_events',
   'avatar_autorun_runlog', 'avatar_autorun_config', 'knowledge_sources',
   'audit_log',
 ] as const;
@@ -59,6 +78,38 @@ const RELATED_TABLES: Array<{
     name: 'users',
     exportSql: 'SELECT id, email, role, tenant_id, created_at, updated_at FROM users WHERE tenant_id = ?',
     deleteSql: 'DELETE FROM users WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+];
+
+const POST_TENANT_RELATED_TABLES: Array<{
+  name: string;
+  exportSql: string;
+  deleteSql: string;
+  params: (tenantId: string) => SqlValue[];
+}> = [
+  {
+    name: 'device_avatars',
+    exportSql: 'SELECT da.* FROM device_avatars da INNER JOIN devices d ON d.id = da.device_id WHERE d.tenant_id = ?',
+    deleteSql: 'DELETE FROM device_avatars WHERE device_id IN (SELECT id FROM devices WHERE tenant_id = ?)',
+    params: (t) => [t],
+  },
+  {
+    name: 'avatars',
+    exportSql: 'SELECT a.* FROM avatars a INNER JOIN identities i ON i.id = a.identity_id WHERE i.tenant_id = ?',
+    deleteSql: 'DELETE FROM avatars WHERE identity_id IN (SELECT id FROM identities WHERE tenant_id = ?)',
+    params: (t) => [t],
+  },
+  {
+    name: 'identities',
+    exportSql: 'SELECT * FROM identities WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM identities WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    name: 'devices',
+    exportSql: 'SELECT * FROM devices WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM devices WHERE tenant_id = ?',
     params: (t) => [t],
   },
 ];
@@ -99,14 +150,60 @@ function exportQuery(db: IDatabase, sql: string, params: SqlValue[]): unknown[] 
   }
 }
 
+function decryptIfNeeded(encryption: FieldEncryption | undefined, value: unknown): unknown {
+  if (!encryption || typeof value !== 'string') return value;
+  try {
+    return encryption.decrypt(value);
+  } catch {
+    return value;
+  }
+}
+
+function transformExportRows(table: string, rows: unknown[], encryption: FieldEncryption | undefined): unknown[] {
+  if (!encryption) return rows;
+  if (table === 'memory_nodes') {
+    return rows.map((row) => {
+      const next = { ...(row as Record<string, unknown>) };
+      next.content = decryptIfNeeded(encryption, next.content);
+      return next;
+    });
+  }
+  if (table === 'persona_memory_nodes') {
+    return rows.map((row) => {
+      const next = { ...(row as Record<string, unknown>) };
+      next.content = decryptIfNeeded(encryption, next.content);
+      return next;
+    });
+  }
+  if (table === 'persona_memories') {
+    return rows.map((row) => {
+      const next = { ...(row as Record<string, unknown>) };
+      if (next.is_encrypted) {
+        next.summary = decryptIfNeeded(encryption, next.summary);
+        next.content_json = decryptIfNeeded(encryption, next.content_json);
+      }
+      return next;
+    });
+  }
+  return rows;
+}
+
 export function registerPrivacyRoutes(
   app: FastifyInstance,
   os: ChronoSynthOS,
   tenantFactory?: TenantOSFactory,
+  config?: AppConfig,
 ): void {
+  const profileService = config ? new TenantEnterpriseProfileService(os.getDatabase(), config) : undefined;
+  const fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
+
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
     return os;
+  }
+
+  function getEncryption(tenantId: string): FieldEncryption | undefined {
+    return profileService?.getTenantEncryption(tenantId) ?? fallbackEncryption;
   }
 
   /* POST /api/v1/privacy/export — 完整租户数据导出（仅 admin，限流: 3 次/分钟） */
@@ -116,14 +213,19 @@ export function registerPrivacyRoutes(
     const db = os.getDatabase();
     const tenantOS = getOS(tenantId);
     const persona = compilePersonaState(tenantOS.core);
+    const encryption = getEncryption(tenantId);
 
     const tables: Record<string, unknown[]> = {};
     for (const table of TENANT_TABLES) {
-      const rows = exportTable(db, table, tenantId);
+      const rows = transformExportRows(table, exportTable(db, table, tenantId), encryption);
       if (rows.length > 0) tables[table] = rows;
     }
     for (const rel of RELATED_TABLES) {
-      const rows = exportQuery(db, rel.exportSql, rel.params(tenantId));
+      const rows = transformExportRows(rel.name, exportQuery(db, rel.exportSql, rel.params(tenantId)), encryption);
+      if (rows.length > 0) tables[rel.name] = rows;
+    }
+    for (const rel of POST_TENANT_RELATED_TABLES) {
+      const rows = transformExportRows(rel.name, exportQuery(db, rel.exportSql, rel.params(tenantId)), encryption);
       if (rows.length > 0) tables[rel.name] = rows;
     }
 
@@ -171,6 +273,10 @@ export function registerPrivacyRoutes(
         const count = safeDelete(db, table, tenantId);
         if (count > 0) deletedCounts[table] = count;
       }
+      for (const rel of POST_TENANT_RELATED_TABLES) {
+        const count = safeDeleteQuery(db, rel.deleteSql, rel.params(tenantId));
+        if (count > 0) deletedCounts[rel.name] = count;
+      }
     });
 
     /* 驱逐缓存中的租户 OS 实例，防止内存残留 */
@@ -195,12 +301,13 @@ export function registerPrivacyRoutes(
     const offset = (p - 1) * ps;
 
     const db = os.getDatabase();
-    const total = db.prepare<{ count: number }>(
-      'SELECT COUNT(*) as count FROM audit_log WHERE tenant_id = ?',
-    ).get(tenantId)?.count ?? 0;
-    const rows = db.prepare<Record<string, unknown>>(
-      'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-    ).all(tenantId, ps, offset);
+    const total = countAuditLogs(db, { tenantId, eventKind: 'all' });
+    const rows = queryAuditLog(db, {
+      tenantId,
+      eventKind: 'all',
+      limit: ps,
+      offset,
+    });
     return {
       data: rows,
       pagination: { page: p, pageSize: ps, total, totalPages: Math.ceil(total / ps) || 1 },

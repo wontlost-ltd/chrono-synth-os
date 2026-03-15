@@ -68,32 +68,34 @@ export class EntitlementService {
     return limits;
   }
 
-  /** 同步租户权益到 entitlements 表 + QuotaManager */
+  /**
+   * 同步租户权益到 entitlements 表 + QuotaManager。
+   * 内部操作为多条独立 SQL，无需自行开启事务。
+   * 如需事务保护，由调用方在外层包裹 db.transaction()。
+   */
   syncTenantEntitlements(tenantId: string): EffectiveLimits {
     const limits = this.computeEffectiveLimits(tenantId);
     const now = Date.now();
     const qm = new QuotaManager(this.db);
     const monthMs = 30 * 24 * 60 * 60 * 1000;
 
-    this.db.transaction(() => {
-      for (const [resource, limit] of Object.entries(limits)) {
-        /* 更新 entitlements 表 */
-        this.db.prepare<void>(
-          `INSERT INTO entitlements (tenant_id, resource, effective_limit, source, updated_at)
-           VALUES (?, ?, ?, 'computed', ?)
-           ON CONFLICT(tenant_id, resource) DO UPDATE SET effective_limit=excluded.effective_limit, source=excluded.source, updated_at=excluded.updated_at`,
-        ).run(tenantId, resource, limit, now);
+    for (const [resource, limit] of Object.entries(limits)) {
+      /* 更新 entitlements 表 */
+      this.db.prepare<void>(
+        `INSERT INTO entitlements (tenant_id, resource, effective_limit, source, updated_at)
+         VALUES (?, ?, ?, 'computed', ?)
+         ON CONFLICT(tenant_id, resource) DO UPDATE SET effective_limit=excluded.effective_limit, source=excluded.source, updated_at=excluded.updated_at`,
+      ).run(tenantId, resource, limit, now);
 
-        /* 同步 QuotaManager */
-        if (RESOURCE_TO_LIMIT.has(resource)) {
-          if (limit < 0) {
-            qm.clearLimit(tenantId, resource);
-          } else {
-            qm.setLimit(tenantId, resource, limit, monthMs);
-          }
+      /* 同步 QuotaManager */
+      if (RESOURCE_TO_LIMIT.has(resource)) {
+        if (limit < 0) {
+          qm.clearLimit(tenantId, resource);
+        } else {
+          qm.setLimit(tenantId, resource, limit, monthMs);
         }
       }
-    });
+    }
 
     return limits;
   }

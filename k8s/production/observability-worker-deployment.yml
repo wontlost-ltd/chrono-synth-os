@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chrono-synth-observability-worker
+  namespace: chrono-synth-prod
+  labels:
+    app.kubernetes.io/name: chrono-synth-observability-worker
+    environment: production
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chrono-synth-observability-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: chrono-synth-observability-worker
+        environment: production
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: chrono-synth-observability-worker
+          image: chrono-synth-os:latest
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/main-observability-worker.js"]
+          ports:
+            - name: monitor
+              containerPort: 3100
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: CHRONO_OBSERVABILITY_WORKER_ENABLED
+              value: "true"
+            - name: CHRONO_OBSERVABILITY_WORKER_HTTP_ENABLED
+              value: "true"
+            - name: CHRONO_OBSERVABILITY_WORKER_HTTP_PORT
+              value: "3100"
+          envFrom:
+            - configMapRef:
+                name: chrono-synth-prod-config
+            - secretRef:
+                name: chrono-synth-prod-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: monitor
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: monitor
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}

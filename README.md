@@ -37,6 +37,73 @@ npm run build
 npm run test:golden
 ```
 
+## Observability Worker
+
+仓库现在支持独立 `observability-worker` 进程，用于异步消费 `observability_outbox` 并聚合租户级 rollup 指标。镜像构建阶段会安装 `kafkajs`，因此 `OBS_KAFKA_ENABLED=true` 时可直接进入 Kafka 模式。
+
+本地完整 Podman 拓扑已经收敛到同级仓库 `../chrono-synth-deploy` 的原生脚本入口，标准路径如下：
+
+```bash
+cd ../chrono-synth-deploy
+cp podman/.env.example podman/.env
+./deploy.sh podman build
+./deploy.sh podman up
+./scripts/e2e-test.sh
+```
+
+该路径会默认拉起：
+
+- 前端控制台
+- 后端 API
+- PostgreSQL / Redis
+- Redpanda
+- 独立 `observability-worker`
+- Prometheus / Grafana / Jaeger
+
+若只想在宿主机验证 `direct` worker 模式，则直接在本仓库内构建并运行进程即可，不再维护旧的容器编排入口：
+
+```bash
+npm install
+npm run build
+node dist/main.js
+# 新终端
+node dist/main-observability-worker.js
+```
+
+worker monitor 默认暴露在 `http://localhost:3100`，详细运维说明见 [docs/observability-worker-runbook.md](docs/observability-worker-runbook.md)。
+
+## Disaster Recovery
+
+仓库内置了基础灾备脚本：
+
+```bash
+bash scripts/backup_db.sh
+bash scripts/restore_db.sh ./backups/db/<file>
+bash scripts/backup_storage.sh
+```
+
+完整说明见 [docs/disaster-recovery-runbook.md](docs/disaster-recovery-runbook.md)。
+
+## Production Baseline
+
+企业生产部署不要直接套用根目录 `k8s/*.yml` 的示例清单。正式基线已经单独整理到：
+
+```bash
+k8s/production/
+```
+
+其中包含：
+
+- Postgres + Redis + Kafka 前提下的生产配置
+- `Secret` 分离
+- `PodDisruptionBudget`
+- `Ingress`
+- ingress/egress `NetworkPolicy`
+- `ServiceMonitor`
+- 独立 observability worker 部署模板
+
+上线前请先阅读 [docs/production-readiness.md](docs/production-readiness.md)。
+
 ## 核心概念
 
 ### 三层架构
@@ -198,9 +265,9 @@ chrono-synth-os/
 
 - **运行时**：Node.js >= 24.0.0
 - **语言**：TypeScript 5.9 (strict, ES2024)
-- **数据库**：`node:sqlite`（Node.js 内置）
+- **数据库**：SQLite（本地/测试） + PostgreSQL（生产/多副本）
 - **测试**：`node:test`（Node.js 内置）
-- **外部依赖**：零运行时依赖
+- **运行时依赖**：Fastify / PostgreSQL / Redis / Kafka / Stripe / OpenTelemetry
 
 ## 许可证
 

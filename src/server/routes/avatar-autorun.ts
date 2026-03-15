@@ -2,7 +2,7 @@
  * Avatar 自动运行路由
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AvatarAutorunService } from '../../identity/avatar-autorun-service.js';
 import { AvatarAutorunStore } from '../../storage/avatar-autorun-store.js';
@@ -29,7 +29,13 @@ export function registerAvatarAutorunRoutes(
     if (!avatar) throw new NotFoundError(`Avatar ${id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
 
     const config = store.getConfig(tenantId, id);
-    return { data: config };
+    if (!config) return { data: null };
+    return {
+      data: {
+        ...config,
+        intervalMinutes: Math.round(config.intervalMs / 60_000),
+      },
+    };
   });
 
   /* PUT /api/v1/avatars/:id/autorun — 创建/更新自动运行配置 */
@@ -54,10 +60,8 @@ export function registerAvatarAutorunRoutes(
     return { data: config };
   });
 
-  /* POST /api/v1/avatars/:id/autorun/run — 手动触发运行 */
-  app.post<{ Params: { id: string } }>('/api/v1/avatars/:id/autorun/run', {
-    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-  }, async (request) => {
+  /* POST /api/v1/avatars/:id/autorun/run 及 /trigger — 手动触发运行 */
+  const triggerHandler = async (request: FastifyRequest<{ Params: { id: string } }>) => {
     const { id } = request.params;
     const tenantId = request.tenantId;
     TriggerAutorunSchema.parse(request.body);
@@ -74,7 +78,10 @@ export function registerAvatarAutorunRoutes(
 
     const { runId, taskId } = autorunService.enqueueRun(config.id, tenantId, id);
     return { data: { runId, taskId } };
-  });
+  };
+  const triggerOpts = { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } };
+  app.post<{ Params: { id: string } }>('/api/v1/avatars/:id/autorun/run', triggerOpts, triggerHandler);
+  app.post<{ Params: { id: string } }>('/api/v1/avatars/:id/autorun/trigger', triggerOpts, triggerHandler);
 
   /* GET /api/v1/avatars/:id/autorun/runs — 运行历史 */
   app.get<{ Params: { id: string } }>('/api/v1/avatars/:id/autorun/runs', async (request) => {

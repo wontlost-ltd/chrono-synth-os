@@ -706,7 +706,7 @@ const v027_identity_avatar: Migration = {
     `CREATE TABLE IF NOT EXISTS identities (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL UNIQUE,
-      tenant_id TEXT NOT NULL UNIQUE,
+      tenant_id TEXT NOT NULL,
       display_name TEXT NOT NULL,
       bio TEXT,
       created_at BIGINT NOT NULL,
@@ -830,6 +830,755 @@ const v030_knowledge_source_llm: Migration = {
   ],
 };
 
+/** v031: 补充缺失的查询性能索引 */
+const v031_missing_indexes: Migration = {
+  version: 'v031',
+  description: '补充 audit_log、subscriptions、pending_updates 等表的查询索引',
+  sql: [
+    'CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_timestamp ON audit_log(tenant_id, timestamp)',
+    'CREATE INDEX IF NOT EXISTS idx_subscriptions_tenant_status ON subscriptions(tenant_id, status)',
+    'CREATE INDEX IF NOT EXISTS idx_pending_updates_status ON pending_updates(status, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_conflicts_resolved ON conflicts(resolved_at, detected_at)',
+    'CREATE INDEX IF NOT EXISTS idx_working_memory_score ON working_memory(score DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_autorun_config_next_run ON avatar_autorun_config(enabled, next_run_at)',
+    'CREATE INDEX IF NOT EXISTS idx_autorun_runlog_tenant_avatar ON avatar_autorun_runlog(tenant_id, avatar_id, created_at DESC)',
+  ],
+};
+
+/** v032: Persona Core / Marketplace / Governance 平台化切片（PostgreSQL） */
+const v032_persona_core_platform: Migration = {
+  version: 'v032',
+  description: 'Persona Core 2.0：核心人格、钱包、市场、治理与成长事件',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS persona_core (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL REFERENCES users(id),
+      display_name TEXT NOT NULL,
+      profile_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL CHECK(status IN ('active','restricted','deceased','transferred')),
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK(visibility IN ('private','shared','marketplace')),
+      growth_index DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK(growth_index >= 0),
+      reputation DOUBLE PRECISION NOT NULL DEFAULT 0,
+      training_investment DOUBLE PRECISION NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      deceased_at BIGINT,
+      transferred_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_core_owner ON persona_core(tenant_id, owner_user_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_persona_core_status ON persona_core(tenant_id, status)',
+
+    `CREATE TABLE IF NOT EXISTS persona_wallets (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL UNIQUE REFERENCES persona_core(id) ON DELETE CASCADE,
+      wallet_address TEXT NOT NULL UNIQUE,
+      balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+      token_balance DOUBLE PRECISION NOT NULL DEFAULT 0,
+      last_settled_at BIGINT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_wallets_persona ON persona_wallets(tenant_id, persona_id)',
+
+    `CREATE TABLE IF NOT EXISTS persona_forks (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      fork_type TEXT NOT NULL CHECK(fork_type IN ('experimental','task','social','research','operations')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','recycled','archived')),
+      sync_mode TEXT NOT NULL DEFAULT 'core' CHECK(sync_mode IN ('core','isolated')),
+      experience_factor DOUBLE PRECISION NOT NULL DEFAULT 1 CHECK(experience_factor >= 0 AND experience_factor <= 2),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      recycled_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_forks_persona ON persona_forks(tenant_id, persona_id, status)',
+
+    `CREATE TABLE IF NOT EXISTS persona_memories (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      fork_id TEXT REFERENCES persona_forks(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('interaction','task','training','knowledge','governance')),
+      summary TEXT NOT NULL,
+      content_json TEXT NOT NULL DEFAULT '{}',
+      importance DOUBLE PRECISION NOT NULL DEFAULT 0.5 CHECK(importance >= 0 AND importance <= 1),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_memories_persona ON persona_memories(tenant_id, persona_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS persona_knowledge_items (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5 CHECK(confidence >= 0 AND confidence <= 1),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_knowledge_persona ON persona_knowledge_items(tenant_id, persona_id, updated_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS marketplace_tasks (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      publisher_user_id TEXT NOT NULL REFERENCES users(id),
+      assignee_persona_id TEXT REFERENCES persona_core(id) ON DELETE SET NULL,
+      assignee_fork_id TEXT REFERENCES persona_forks(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      category TEXT NOT NULL CHECK(category IN ('writing','coding','research','operations','general')),
+      reward DOUBLE PRECISION NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'CRED',
+      status TEXT NOT NULL CHECK(status IN ('open','accepted','completed','cancelled')),
+      quality_score DOUBLE PRECISION,
+      growth_delta DOUBLE PRECISION,
+      published_at BIGINT NOT NULL,
+      accepted_at BIGINT,
+      completed_at BIGINT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_marketplace_tasks_status ON marketplace_tasks(tenant_id, status, updated_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_marketplace_tasks_assignee ON marketplace_tasks(tenant_id, assignee_persona_id, updated_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS persona_growth_events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      task_id TEXT REFERENCES marketplace_tasks(id) ON DELETE SET NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('task_completed','training','knowledge_sync','governance')),
+      growth_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+      reputation_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+      training_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_growth_events_persona ON persona_growth_events(tenant_id, persona_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS persona_governance_events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL CHECK(event_type IN ('warning','reward','restriction','review','transfer','death')),
+      severity INTEGER NOT NULL CHECK(severity >= 1 AND severity <= 5),
+      summary TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_governance_events_persona ON persona_governance_events(tenant_id, persona_id, created_at DESC)',
+  ],
+};
+
+/** v033: Persona OS 认知记忆层（PostgreSQL） */
+const v033_persona_cognitive_memory: Migration = {
+  version: 'v033',
+  description: 'Persona OS：persona 级认知记忆、关联边与工作记忆',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS persona_memory_nodes (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      fork_id TEXT REFERENCES persona_forks(id) ON DELETE SET NULL,
+      source_memory_id TEXT UNIQUE REFERENCES persona_memories(id) ON DELETE SET NULL,
+      knowledge_item_id TEXT UNIQUE REFERENCES persona_knowledge_items(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('episodic','semantic','procedural')),
+      content TEXT NOT NULL,
+      valence DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK(valence >= -1 AND valence <= 1),
+      salience DOUBLE PRECISION NOT NULL DEFAULT 0.5 CHECK(salience >= 0 AND salience <= 1),
+      access_count INTEGER NOT NULL DEFAULT 0,
+      decay_lambda DOUBLE PRECISION NOT NULL DEFAULT 0.0001,
+      last_accessed_at BIGINT NOT NULL,
+      last_decayed_at BIGINT NOT NULL,
+      consolidated_from TEXT REFERENCES persona_memory_nodes(id) ON DELETE SET NULL,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_memory_nodes_persona ON persona_memory_nodes(tenant_id, persona_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_persona_memory_nodes_kind ON persona_memory_nodes(tenant_id, persona_id, kind, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS persona_memory_edges (
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      source TEXT NOT NULL REFERENCES persona_memory_nodes(id) ON DELETE CASCADE,
+      target TEXT NOT NULL REFERENCES persona_memory_nodes(id) ON DELETE CASCADE,
+      strength DOUBLE PRECISION NOT NULL CHECK(strength >= 0 AND strength <= 1),
+      relation TEXT NOT NULL,
+      PRIMARY KEY (source, target)
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_memory_edges_target ON persona_memory_edges(tenant_id, persona_id, target)',
+
+    `CREATE TABLE IF NOT EXISTS persona_working_memory (
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      memory_id TEXT PRIMARY KEY REFERENCES persona_memory_nodes(id) ON DELETE CASCADE,
+      score DOUBLE PRECISION NOT NULL,
+      entered_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_working_memory_score ON persona_working_memory(tenant_id, persona_id, score DESC)',
+  ],
+};
+
+/** v034: Persona OS 生命周期、转移、声誉历史与分析支撑（PostgreSQL） */
+const v034_persona_operating_system_alignment: Migration = {
+  version: 'v034',
+  description: 'Persona OS v1 对齐：生命周期状态、转移记录、声誉历史与分析表',
+  sql: [
+    `ALTER TABLE persona_core ADD COLUMN IF NOT EXISTS lifecycle_status TEXT NOT NULL DEFAULT 'active'`,
+    `UPDATE persona_core SET lifecycle_status = status WHERE lifecycle_status = 'active'`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_core_lifecycle_status ON persona_core(tenant_id, lifecycle_status, updated_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS persona_transfers (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      from_owner_user_id TEXT NOT NULL REFERENCES users(id),
+      to_owner_user_id TEXT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK(status IN ('pending_review','approved','completed','rejected','cancelled')),
+      reason TEXT NOT NULL DEFAULT '',
+      requested_at BIGINT NOT NULL,
+      approved_at BIGINT,
+      completed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_transfers_persona ON persona_transfers(tenant_id, persona_id, requested_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_persona_transfers_target ON persona_transfers(tenant_id, to_owner_user_id, requested_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS reputation_history (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      old_score DOUBLE PRECISION NOT NULL,
+      new_score DOUBLE PRECISION NOT NULL,
+      reason TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_reputation_history_persona ON reputation_history(tenant_id, persona_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS persona_daily_metrics (
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      metric_date TEXT NOT NULL,
+      tasks_completed INTEGER NOT NULL DEFAULT 0,
+      revenue DOUBLE PRECISION NOT NULL DEFAULT 0,
+      reputation_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+      growth_index DOUBLE PRECISION NOT NULL DEFAULT 0,
+      PRIMARY KEY (tenant_id, persona_id, metric_date)
+    )`,
+    `CREATE TABLE IF NOT EXISTS marketplace_daily_metrics (
+      tenant_id TEXT NOT NULL,
+      metric_date TEXT NOT NULL,
+      open_tasks INTEGER NOT NULL DEFAULT 0,
+      completed_tasks INTEGER NOT NULL DEFAULT 0,
+      gross_volume DOUBLE PRECISION NOT NULL DEFAULT 0,
+      active_personas INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (tenant_id, metric_date)
+    )`,
+  ],
+};
+
+/** v035: Runtime / Marketplace workflow / Governance case-action（PostgreSQL） */
+const v035_persona_runtime_marketplace_governance: Migration = {
+  version: 'v035',
+  description: 'Persona OS v1：runtime session、任务工作流与治理 case/action',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS task_applications (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES marketplace_tasks(id) ON DELETE CASCADE,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      ranking_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+      status TEXT NOT NULL CHECK(status IN ('submitted','assigned','rejected','withdrawn')),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_task_applications_unique ON task_applications(tenant_id, task_id, persona_id)',
+    'CREATE INDEX IF NOT EXISTS idx_task_applications_task ON task_applications(tenant_id, task_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_task_applications_persona ON task_applications(tenant_id, persona_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS task_assignments (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES marketplace_tasks(id) ON DELETE CASCADE,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      application_id TEXT REFERENCES task_applications(id) ON DELETE SET NULL,
+      runtime_session_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('assigned','in_progress','submitted','accepted','rejected','disputed','completed')),
+      assigned_at BIGINT NOT NULL,
+      started_at BIGINT,
+      submitted_at BIGINT,
+      completed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_task_assignments_task ON task_assignments(tenant_id, task_id, assigned_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_task_assignments_persona ON task_assignments(tenant_id, persona_id, assigned_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_task_assignments_status ON task_assignments(tenant_id, status, assigned_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS runtime_sessions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES marketplace_tasks(id) ON DELETE CASCADE,
+      assignment_id TEXT REFERENCES task_assignments(id) ON DELETE SET NULL,
+      state TEXT NOT NULL CHECK(state IN ('PLAN','EXECUTE','EVALUATE','MEMORY_UPDATE','REPUTATION_UPDATE','COMPLETED','ERROR')),
+      plan_json TEXT,
+      artifacts_json TEXT NOT NULL DEFAULT '[]',
+      evaluation_json TEXT,
+      result_summary_json TEXT,
+      error_json TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      completed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_runtime_sessions_task ON runtime_sessions(tenant_id, task_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_runtime_sessions_persona ON runtime_sessions(tenant_id, persona_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_runtime_sessions_assignment ON runtime_sessions(tenant_id, assignment_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS task_results (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      task_id TEXT NOT NULL REFERENCES marketplace_tasks(id) ON DELETE CASCADE,
+      assignment_id TEXT NOT NULL REFERENCES task_assignments(id) ON DELETE CASCADE,
+      result_uri TEXT NOT NULL,
+      evaluation_json TEXT NOT NULL DEFAULT '{}',
+      quality_score DOUBLE PRECISION,
+      client_rating INTEGER,
+      status TEXT NOT NULL CHECK(status IN ('submitted','accepted','rejected','disputed')),
+      rejection_reason TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      accepted_at BIGINT,
+      rejected_at BIGINT,
+      disputed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_task_results_assignment ON task_results(tenant_id, assignment_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_task_results_task ON task_results(tenant_id, task_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS governance_cases (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL REFERENCES persona_core(id) ON DELETE CASCADE,
+      task_id TEXT REFERENCES marketplace_tasks(id) ON DELETE SET NULL,
+      trigger_type TEXT NOT NULL,
+      severity TEXT NOT NULL CHECK(severity IN ('low','medium','high','critical')),
+      status TEXT NOT NULL CHECK(status IN ('open','action_applied','appealed','resolved')),
+      details_json TEXT NOT NULL DEFAULT '{}',
+      appeal_json TEXT,
+      opened_at BIGINT NOT NULL,
+      resolved_at BIGINT,
+      appealed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_governance_cases_persona ON governance_cases(tenant_id, persona_id, opened_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_governance_cases_status ON governance_cases(tenant_id, status, opened_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS governance_actions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      case_id TEXT NOT NULL REFERENCES governance_cases(id) ON DELETE CASCADE,
+      action_type TEXT NOT NULL CHECK(action_type IN ('warning','temporary_restriction','temporary_suspension','reinstate','termination')),
+      duration_seconds INTEGER,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_governance_actions_case ON governance_actions(tenant_id, case_id, created_at DESC)',
+  ],
+};
+
+/** v036: Wallet ledger / payout / settlement（PostgreSQL） */
+const v036_persona_wallet_ledger: Migration = {
+  version: 'v036',
+  description: 'Persona OS v1：钱包账本、提现请求与任务结算',
+  sql: [
+    `ALTER TABLE persona_wallets ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'CRED'`,
+    `ALTER TABLE persona_wallets ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`,
+
+    `CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      wallet_id TEXT NOT NULL REFERENCES persona_wallets(id) ON DELETE CASCADE,
+      transaction_type TEXT NOT NULL CHECK(transaction_type IN ('task_payment','platform_fee','owner_payout','persona_reserve','refund')),
+      amount_minor BIGINT NOT NULL,
+      currency TEXT NOT NULL,
+      reference_type TEXT,
+      reference_id TEXT,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_wallet_transactions_wallet ON wallet_transactions(tenant_id, wallet_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_wallet_transactions_reference ON wallet_transactions(tenant_id, reference_type, reference_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS wallet_payout_requests (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      wallet_id TEXT NOT NULL REFERENCES persona_wallets(id) ON DELETE CASCADE,
+      amount_minor BIGINT NOT NULL CHECK(amount_minor > 0),
+      currency TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('completed','rejected')),
+      requested_by_user_id TEXT NOT NULL REFERENCES users(id),
+      created_at BIGINT NOT NULL,
+      completed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_wallet_payout_requests_wallet ON wallet_payout_requests(tenant_id, wallet_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS wallet_settlements (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      wallet_id TEXT NOT NULL REFERENCES persona_wallets(id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL REFERENCES marketplace_tasks(id) ON DELETE CASCADE,
+      assignment_id TEXT NOT NULL UNIQUE REFERENCES task_assignments(id) ON DELETE CASCADE,
+      total_amount_minor BIGINT NOT NULL CHECK(total_amount_minor > 0),
+      currency TEXT NOT NULL,
+      owner_pct INTEGER NOT NULL,
+      persona_pct INTEGER NOT NULL,
+      platform_pct INTEGER NOT NULL,
+      owner_amount_minor BIGINT NOT NULL,
+      persona_amount_minor BIGINT NOT NULL,
+      platform_amount_minor BIGINT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('completed')),
+      created_at BIGINT NOT NULL,
+      completed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_wallet_settlements_wallet ON wallet_settlements(tenant_id, wallet_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_wallet_settlements_task ON wallet_settlements(tenant_id, task_id, created_at DESC)',
+  ],
+};
+
+/** v037: Persona memory sensitivity / encryption（PostgreSQL） */
+const v037_persona_memory_security: Migration = {
+  version: 'v037',
+  description: 'Persona OS v1：敏感记忆分级与静态加密元数据',
+  sql: [
+    `ALTER TABLE persona_memories ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'private'`,
+    `ALTER TABLE persona_memories ADD COLUMN IF NOT EXISTS is_encrypted INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE persona_memories ADD COLUMN IF NOT EXISTS owner_restricted INTEGER NOT NULL DEFAULT 0`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_memories_sensitivity ON persona_memories(tenant_id, persona_id, sensitivity, created_at DESC)',
+  ],
+};
+
+/** v038: Async observability outbox / rollups（PostgreSQL） */
+const v038_observability_pipeline: Migration = {
+  version: 'v038',
+  description: '企业可观测性：异步观测发件箱与聚合滚动表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS observability_outbox (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      partition_key TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','processing','sent','failed')),
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      processed_at BIGINT,
+      last_error TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_observability_outbox_status ON observability_outbox(status, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_observability_outbox_tenant ON observability_outbox(tenant_id, status, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_observability_outbox_topic ON observability_outbox(topic, partition_key, created_at ASC)',
+
+    `CREATE TABLE IF NOT EXISTS observability_rollups (
+      tenant_id TEXT PRIMARY KEY,
+      runtime_completed_count BIGINT NOT NULL DEFAULT 0,
+      runtime_duration_total_ms BIGINT NOT NULL DEFAULT 0,
+      task_terminal_count BIGINT NOT NULL DEFAULT 0,
+      task_success_count BIGINT NOT NULL DEFAULT 0,
+      task_rejected_count BIGINT NOT NULL DEFAULT 0,
+      task_disputed_count BIGINT NOT NULL DEFAULT 0,
+      wallet_settlement_count BIGINT NOT NULL DEFAULT 0,
+      wallet_settlement_total_amount_minor BIGINT NOT NULL DEFAULT 0,
+      wallet_settlement_latency_total_ms BIGINT NOT NULL DEFAULT 0,
+      governance_case_opened_count BIGINT NOT NULL DEFAULT 0,
+      governance_case_active_count BIGINT NOT NULL DEFAULT 0,
+      governance_action_applied_count BIGINT NOT NULL DEFAULT 0,
+      persona_growth_total DOUBLE PRECISION NOT NULL DEFAULT 0,
+      persona_growth_event_count BIGINT NOT NULL DEFAULT 0,
+      persona_reputation_delta_total DOUBLE PRECISION NOT NULL DEFAULT 0,
+      updated_at BIGINT NOT NULL
+    )`,
+  ],
+};
+
+/** v039: 通用幂等键缓存（PostgreSQL） */
+const v039_idempotency_keys: Migration = {
+  version: 'v039',
+  description: '企业可靠性：通用 Idempotency-Key 响应缓存',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS idempotency_keys (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      request_hash TEXT NOT NULL,
+      request_method TEXT NOT NULL,
+      request_path TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('in_progress','completed')),
+      response_status INTEGER,
+      response_content_type TEXT,
+      response_headers_json TEXT,
+      response_body TEXT,
+      created_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_keys_scope ON idempotency_keys(tenant_id, scope_key, idempotency_key)',
+    'CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expiry ON idempotency_keys(expires_at)',
+  ],
+};
+
+/** v040: 审计日志扩展为请求审计 + 业务审计（PostgreSQL） */
+const v040_audit_log_extended: Migration = {
+  version: 'v040',
+  description: '企业审计：扩展 audit_log 支持业务级审计事件',
+  sql: [
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT 0',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS event_kind TEXT NOT NULL DEFAULT \'request\'',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_id TEXT',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS user_email TEXT',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS action_type TEXT DEFAULT \'other\'',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_type TEXT',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_id TEXT',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS target_type TEXT',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS target_id TEXT',
+    'ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS payload_json TEXT',
+    'UPDATE audit_log SET created_at = timestamp WHERE created_at = 0',
+    'CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_created_at ON audit_log(tenant_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(tenant_id, actor_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(tenant_id, target_type, target_id, created_at DESC)',
+  ],
+};
+
+/** v041: runtime session timeout / retry / terminal recovery（PostgreSQL） */
+const v041_runtime_failure_recovery: Migration = {
+  version: 'v041',
+  description: '企业可靠性：runtime session 超时、重试与终态恢复',
+  sql: [
+    'ALTER TABLE runtime_sessions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE runtime_sessions ADD COLUMN IF NOT EXISTS timeout_at BIGINT',
+    `UPDATE runtime_sessions
+     SET state = 'FAILED'
+     WHERE state = 'ERROR'`,
+    'ALTER TABLE runtime_sessions DROP CONSTRAINT IF EXISTS runtime_sessions_state_check',
+    `ALTER TABLE runtime_sessions
+     ADD CONSTRAINT runtime_sessions_state_check
+     CHECK (state IN ('PLAN','EXECUTE','EVALUATE','MEMORY_UPDATE','REPUTATION_UPDATE','COMPLETED','FAILED','TIMEOUT','ERROR'))`,
+    'CREATE INDEX IF NOT EXISTS idx_runtime_sessions_timeout ON runtime_sessions(tenant_id, state, timeout_at)',
+  ],
+};
+
+/** v042: 平台 DLQ 持久化与 replay 支撑（PostgreSQL） */
+const v042_platform_dlq: Migration = {
+  version: 'v042',
+  description: '企业可靠性：平台 DLQ 事件持久化与 replay',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS platform_dlq_events (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      source_component TEXT NOT NULL,
+      source_topic TEXT NOT NULL,
+      dlq_topic TEXT NOT NULL CHECK(dlq_topic IN ('runtime.dlq','wallet.dlq','governance.dlq')),
+      event_type TEXT NOT NULL,
+      partition_key TEXT,
+      payload_json TEXT NOT NULL,
+      error_message TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','replayed')),
+      created_at BIGINT NOT NULL,
+      replayed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_platform_dlq_status ON platform_dlq_events(status, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_platform_dlq_tenant ON platform_dlq_events(tenant_id, status, created_at ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_platform_dlq_topic ON platform_dlq_events(dlq_topic, status, created_at ASC)',
+  ],
+};
+
+/** v043: organization/workspace/membership/role_binding（PostgreSQL） */
+const v043_organizations: Migration = {
+  version: 'v043',
+  description: '企业协作：organization/workspace/membership/role_binding',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(tenant_id, slug)',
+    'CREATE INDEX IF NOT EXISTS idx_organizations_creator ON organizations(tenant_id, created_by_user_id, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_workspaces_slug ON workspaces(tenant_id, organization_id, slug)',
+    'CREATE INDEX IF NOT EXISTS idx_workspaces_default ON workspaces(tenant_id, organization_id, is_default)',
+
+    `CREATE TABLE IF NOT EXISTS organization_memberships (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL CHECK(status IN ('active','invited','suspended')),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_org_memberships_unique ON organization_memberships(tenant_id, organization_id, user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON organization_memberships(tenant_id, user_id, status, created_at DESC)',
+
+    `CREATE TABLE IF NOT EXISTS organization_role_bindings (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+      membership_id TEXT NOT NULL REFERENCES organization_memberships(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('org_admin','billing_admin','persona_operator','marketplace_manager','auditor','viewer')),
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_org_role_bindings_unique ON organization_role_bindings(tenant_id, organization_id, workspace_id, membership_id, role)',
+    'CREATE INDEX IF NOT EXISTS idx_org_role_bindings_membership ON organization_role_bindings(tenant_id, membership_id, role)',
+  ],
+};
+
+/** v044: billing catalog / invoices / usage meters（PostgreSQL） */
+const v044_enterprise_billing: Migration = {
+  version: 'v044',
+  description: '企业商用：billing catalog、invoice、usage meter',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS billing_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      stripe_price_id TEXT NOT NULL DEFAULT '',
+      price_minor INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      billing_interval TEXT NOT NULL DEFAULT 'month',
+      limits_json TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_billing_plans_active ON billing_plans(is_active, id)',
+
+    `CREATE TABLE IF NOT EXISTS billing_invoices (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      subscription_id TEXT NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+      plan_id TEXT NOT NULL REFERENCES billing_plans(id),
+      status TEXT NOT NULL CHECK(status IN ('draft','open','paid','void')),
+      amount_minor INTEGER NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      billing_interval TEXT NOT NULL DEFAULT 'month',
+      period_start BIGINT NOT NULL,
+      period_end BIGINT NOT NULL,
+      wallet_settlement_count INTEGER NOT NULL DEFAULT 0,
+      wallet_settlement_total_minor BIGINT NOT NULL DEFAULT 0,
+      reconciliation_status TEXT NOT NULL DEFAULT 'balanced' CHECK(reconciliation_status IN ('balanced','mismatch','repair_required')),
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      paid_at BIGINT
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_invoices_period ON billing_invoices(tenant_id, subscription_id, period_start)',
+    'CREATE INDEX IF NOT EXISTS idx_billing_invoices_tenant ON billing_invoices(tenant_id, status, period_start DESC)',
+
+    `CREATE TABLE IF NOT EXISTS usage_meters (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      period_start BIGINT NOT NULL,
+      period_end BIGINT NOT NULL,
+      total_quantity INTEGER NOT NULL DEFAULT 0,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_meters_period ON usage_meters(tenant_id, resource, period_start, period_end)',
+    'CREATE INDEX IF NOT EXISTS idx_usage_meters_tenant ON usage_meters(tenant_id, period_start DESC, resource)',
+  ],
+};
+
+/** v045: settlement reconciliation runs（PostgreSQL） */
+const v045_settlement_reconciliation: Migration = {
+  version: 'v045',
+  description: '企业财务：settlement reconciliation runs',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS settlement_reconciliation_runs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      checked_settlements INTEGER NOT NULL DEFAULT 0,
+      mismatched_settlements INTEGER NOT NULL DEFAULT 0,
+      repaired_settlements INTEGER NOT NULL DEFAULT 0,
+      deleted_transactions INTEGER NOT NULL DEFAULT 0,
+      inserted_transactions INTEGER NOT NULL DEFAULT 0,
+      orphan_transactions_removed INTEGER NOT NULL DEFAULT 0,
+      report_json TEXT NOT NULL,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_settlement_reconciliation_runs_tenant ON settlement_reconciliation_runs(tenant_id, created_at DESC)',
+  ],
+};
+
+/** v046: tenant enterprise profile / oidc / scim / dedicated deployment（PostgreSQL） */
+const v046_tenant_enterprise_profile: Migration = {
+  version: 'v046',
+  description: '企业集成：tenant enterprise profile / oidc / scim / dedicated deployment',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tenant_enterprise_profiles (
+      tenant_id TEXT PRIMARY KEY,
+      deployment_mode TEXT NOT NULL DEFAULT 'shared_cluster' CHECK(deployment_mode IN ('shared_cluster','dedicated_db')),
+      database_isolation_mode TEXT NOT NULL DEFAULT 'shared' CHECK(database_isolation_mode IN ('shared','dedicated')),
+      kafka_namespace TEXT NOT NULL DEFAULT '',
+      encryption_mode TEXT NOT NULL DEFAULT 'platform_managed' CHECK(encryption_mode IN ('platform_managed','tenant_dedicated')),
+      kms_key_ref TEXT,
+      scim_token_hash TEXT,
+      oidc_enabled INTEGER NOT NULL DEFAULT 0,
+      oidc_issuer_url TEXT NOT NULL DEFAULT '',
+      oidc_client_id TEXT NOT NULL DEFAULT '',
+      oidc_client_secret_encrypted TEXT NOT NULL DEFAULT '',
+      oidc_audience TEXT NOT NULL DEFAULT '',
+      oidc_scope TEXT NOT NULL DEFAULT 'openid profile email',
+      oidc_email_claim TEXT NOT NULL DEFAULT 'email',
+      oidc_name_claim TEXT NOT NULL DEFAULT 'name',
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_tenant_enterprise_profiles_scim_hash ON tenant_enterprise_profiles(scim_token_hash)',
+  ],
+};
+
+/** v047: tenant 可包含多个 identities（PostgreSQL） */
+const v047_multi_identity_per_tenant: Migration = {
+  version: 'v047',
+  description: '身份层重构：tenant 可包含多个 identities 与独立 avatar 生命周期',
+  sql: [
+    'ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_tenant_id_key',
+    'DROP INDEX IF EXISTS idx_identities_tenant_user',
+    'CREATE INDEX IF NOT EXISTS idx_identities_tenant_user ON identities(tenant_id, user_id)',
+  ],
+};
+
+/** v048: observability processed-event 去重表（PostgreSQL） */
+const v048_observability_processed_events: Migration = {
+  version: 'v048',
+  description: '观测链路：为 Kafka / DB 双路径增加 rollup 幂等去重',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS observability_processed_events (
+      event_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      processed_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_observability_processed_events_tenant ON observability_processed_events(tenant_id, processed_at DESC)',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -862,4 +1611,22 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v028_memory_eviction_indexes,
   v029_avatar_autorun,
   v030_knowledge_source_llm,
+  v031_missing_indexes,
+  v032_persona_core_platform,
+  v033_persona_cognitive_memory,
+  v034_persona_operating_system_alignment,
+  v035_persona_runtime_marketplace_governance,
+  v036_persona_wallet_ledger,
+  v037_persona_memory_security,
+  v038_observability_pipeline,
+  v039_idempotency_keys,
+  v040_audit_log_extended,
+  v041_runtime_failure_recovery,
+  v042_platform_dlq,
+  v043_organizations,
+  v044_enterprise_billing,
+  v045_settlement_reconciliation,
+  v046_tenant_enterprise_profile,
+  v047_multi_identity_per_tenant,
+  v048_observability_processed_events,
 ];

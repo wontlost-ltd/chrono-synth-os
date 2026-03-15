@@ -62,6 +62,13 @@ export class AvatarService {
     return row ? rowToAvatar(row) : null;
   }
 
+  getByIdForIdentity(avatarId: string, identityId: string): Avatar | null {
+    const row = this.db.prepare<AvatarRow>(
+      'SELECT * FROM avatars WHERE id = ? AND identity_id = ? AND is_active = 1',
+    ).get(avatarId, identityId);
+    return row ? rowToAvatar(row) : null;
+  }
+
   listByIdentity(identityId: string): Avatar[] {
     const rows = this.db.prepare<AvatarRow>(
       'SELECT * FROM avatars WHERE identity_id = ? AND is_active = 1 ORDER BY is_default DESC, created_at ASC',
@@ -89,10 +96,41 @@ export class AvatarService {
     return this.getById(avatarId);
   }
 
+  updateForIdentity(
+    avatarId: string,
+    identityId: string,
+    data: Partial<{ label: string; kind: AvatarKind; behaviorOverrides: BehaviorOverrides }>,
+  ): Avatar | null {
+    const now = Date.now();
+    const sets: string[] = ['updated_at = ?'];
+    const params: SqlValue[] = [now];
+
+    if (data.label !== undefined) { sets.push('label = ?'); params.push(data.label); }
+    if (data.kind !== undefined) { sets.push('kind = ?'); params.push(data.kind); }
+    if (data.behaviorOverrides !== undefined) {
+      sets.push('behavior_overrides = ?');
+      params.push(JSON.stringify(data.behaviorOverrides));
+    }
+    params.push(avatarId, identityId);
+
+    this.db.prepare<void>(
+      `UPDATE avatars SET ${sets.join(', ')} WHERE id = ? AND identity_id = ? AND is_active = 1`,
+    ).run(...params);
+
+    return this.getByIdForIdentity(avatarId, identityId);
+  }
+
   softDelete(avatarId: string): boolean {
     const result = this.db.prepare<void>(
       'UPDATE avatars SET is_active = 0, updated_at = ? WHERE id = ? AND is_default = 0 AND is_active = 1',
     ).run(Date.now(), avatarId);
+    return result.changes > 0;
+  }
+
+  softDeleteForIdentity(avatarId: string, identityId: string): boolean {
+    const result = this.db.prepare<void>(
+      'UPDATE avatars SET is_active = 0, updated_at = ? WHERE id = ? AND identity_id = ? AND is_default = 0 AND is_active = 1',
+    ).run(Date.now(), avatarId, identityId);
     return result.changes > 0;
   }
 

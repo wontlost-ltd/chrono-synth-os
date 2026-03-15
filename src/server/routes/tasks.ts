@@ -7,6 +7,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { TaskQueue } from '../../queue/task-queue.js';
 import type { TaskWorker } from '../../queue/task-worker.js';
+import type { IDatabase } from '../../storage/database.js';
+import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 
 function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
@@ -15,8 +17,31 @@ function safeJsonParse(json: string | null | undefined, fallback: unknown = null
   catch { return fallback; }
 }
 
-export function registerTaskRoutes(app: FastifyInstance, queue: TaskQueue, worker?: TaskWorker): void {
+function toIso(value: number | null): string | null {
+  return value === null ? null : new Date(Number(value)).toISOString();
+}
+
+export function registerTaskRoutes(app: FastifyInstance, queue: TaskQueue, worker?: TaskWorker, db?: IDatabase): void {
+  const personaCoreService = db ? new PersonaCoreService(db) : null;
+
   app.get<{ Params: { taskId: string } }>('/api/v1/tasks/:taskId', async (request) => {
+    if (request.params.taskId.startsWith('mkt_') && personaCoreService) {
+      const task = personaCoreService.getMarketplaceTaskById(request.tenantId, request.params.taskId);
+      if (!task) {
+        throw new NotFoundError(`任务 ${request.params.taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);
+      }
+      return {
+        data: {
+          ...task,
+          publishedAt: toIso(task.publishedAt),
+          acceptedAt: toIso(task.acceptedAt),
+          completedAt: toIso(task.completedAt),
+          createdAt: toIso(task.createdAt),
+          updatedAt: toIso(task.updatedAt),
+        },
+      };
+    }
+
     const task = queue.getTask(request.params.taskId);
     if (!task) {
       throw new NotFoundError(`任务 ${request.params.taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);

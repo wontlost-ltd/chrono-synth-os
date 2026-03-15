@@ -43,18 +43,18 @@ function configRowToRecord(r: ConfigRow): AvatarAutorunConfig {
     id: r.id,
     tenantId: r.tenant_id,
     avatarId: r.avatar_id,
-    enabled: r.enabled === 1,
-    intervalMs: r.interval_ms,
-    nextRunAt: r.next_run_at,
+    enabled: Number(r.enabled) === 1,
+    intervalMs: Number(r.interval_ms),
+    nextRunAt: Number(r.next_run_at),
     knowledgeSourceIds: JSON.parse(r.knowledge_source_ids_json) as string[],
-    driftCheckIntervalMs: r.drift_check_interval_ms,
-    driftThreshold: r.drift_threshold,
-    reviewRequired: r.review_required === 1,
-    lastRunAt: r.last_run_at,
-    lastDriftCheckAt: r.last_drift_check_at,
+    driftCheckIntervalMs: Number(r.drift_check_interval_ms),
+    driftThreshold: Number(r.drift_threshold),
+    reviewRequired: Number(r.review_required) === 1,
+    lastRunAt: r.last_run_at != null ? Number(r.last_run_at) : null,
+    lastDriftCheckAt: r.last_drift_check_at != null ? Number(r.last_drift_check_at) : null,
     lastError: r.last_error,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
   };
 }
 
@@ -68,9 +68,9 @@ function runLogRowToRecord(r: RunLogRow): AvatarAutorunRunLog {
     status: r.status as AutorunRunStatus,
     metrics: r.metrics_json ? JSON.parse(r.metrics_json) as AutorunRunMetrics : null,
     error: r.error,
-    startedAt: r.started_at,
-    completedAt: r.completed_at,
-    createdAt: r.created_at,
+    startedAt: r.started_at != null ? Number(r.started_at) : null,
+    completedAt: r.completed_at != null ? Number(r.completed_at) : null,
+    createdAt: Number(r.created_at),
   };
 }
 

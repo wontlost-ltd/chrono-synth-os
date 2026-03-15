@@ -22,6 +22,9 @@ export interface Plan {
   readonly id: string;
   readonly name: string;
   readonly stripePriceId: string;
+  readonly priceMinor: number;
+  readonly currency: string;
+  readonly billingInterval: 'month' | 'year' | 'custom';
   readonly limits: PlanLimits;
 }
 
@@ -31,18 +34,27 @@ export const PLANS: readonly Plan[] = [
     id: 'free',
     name: '免费版',
     stripePriceId: '',
+    priceMinor: 0,
+    currency: 'USD',
+    billingInterval: 'month',
     limits: { maxSimulations: 3, maxPaths: 2, llmTokensPerMonth: 10_000, rateLimitPerMinute: 60, maxAvatars: 2, maxMemoryNodes: 10_000 },
   },
   {
     id: 'pro',
     name: '专业版',
-    stripePriceId: 'price_pro_monthly',
+    stripePriceId: process.env.CHRONO_STRIPE_PRICE_PRO ?? 'price_1T9NMnDVwJxh7zGN9MgSA7I9',
+    priceMinor: 4900,
+    currency: 'USD',
+    billingInterval: 'month',
     limits: { maxSimulations: 50, maxPaths: 10, llmTokensPerMonth: 500_000, rateLimitPerMinute: 300, maxAvatars: 5, maxMemoryNodes: 100_000 },
   },
   {
     id: 'enterprise',
     name: '企业版',
-    stripePriceId: 'price_enterprise_monthly',
+    stripePriceId: process.env.CHRONO_STRIPE_PRICE_ENTERPRISE ?? 'price_1T9NMzDVwJxh7zGNZRWszFKH',
+    priceMinor: 0,
+    currency: 'USD',
+    billingInterval: 'custom',
     limits: { maxSimulations: -1, maxPaths: -1, llmTokensPerMonth: -1, rateLimitPerMinute: -1, maxAvatars: -1, maxMemoryNodes: -1 },
   },
 ];

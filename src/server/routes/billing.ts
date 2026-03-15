@@ -1,25 +1,33 @@
 /**
  * 计费路由
  * GET  /api/v1/billing/plans   — 获取所有计划
+ * POST /api/v1/billing/subscribe — 切换内部订阅计划
+ * GET  /api/v1/billing/invoices — 获取发票与对账摘要
+ * POST /api/v1/billing/reconciliation/run — 执行结算对账修复
+ * GET  /api/v1/billing/reconciliation/runs — 获取最近对账运行记录
  * POST /api/v1/billing/checkout — 创建 Stripe Checkout Session
  * POST /api/v1/billing/portal  — 创建 Stripe 客户门户
  * GET  /api/v1/billing/usage   — 获取当前用量
  * POST /api/v1/billing/webhook — Stripe Webhook 回调
  */
 
+import { Readable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
+import { BillingService } from '../../billing/billing-service.js';
+import { SettlementReconciliationService } from '../../billing/settlement-reconciliation-service.js';
 import { PLANS, getPlanLimits, syncPlanToQuota } from '../../billing/plans.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import {
   createCheckoutSession,
   createPortalSession,
   constructWebhookEvent,
+  createCustomer,
 } from '../../billing/stripe-client.js';
 import { listAddOns, getAddOnById, seedDefaultAddOns } from '../../billing/add-ons.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
-import { CheckoutSchema, PortalSchema } from '../schemas/api-schemas.js';
+import { CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 import { ValidationError, StateError, ErrorCode } from '../../errors/index.js';
 
@@ -38,29 +46,107 @@ interface SubscriptionRow {
 const PRICE_TO_PLAN = new Map(PLANS.filter(p => p.stripePriceId).map(p => [p.stripePriceId, p.id]));
 const VALID_PRICE_IDS = new Set(PLANS.filter(p => p.stripePriceId).map(p => p.stripePriceId));
 
-/** 校验 redirect URL：仅允许相对路径或同源地址 */
-function isSafeRedirectUrl(url: string, publicUrl?: string): boolean {
+/** 校验 redirect URL：仅允许相对路径、同源地址或 CORS 允许的源 */
+function isSafeRedirectUrl(url: string, allowedOriginSet: Set<string>): boolean {
   if (url.startsWith('/') && !url.startsWith('//')) return true;
-  if (!publicUrl) return false;
+  if (allowedOriginSet.size === 0) return false;
   try {
-    const parsed = new URL(url);
-    const base = new URL(publicUrl);
-    return parsed.origin === base.origin;
+    return allowedOriginSet.has(new URL(url).origin);
   } catch {
     return false;
   }
 }
 
+/** 懒创建 Stripe 客户：用于在 Stripe 启用前注册的用户。使用 inflight Map 防止并发重复创建 */
+const inflightCustomerCreation = new Map<string, Promise<string>>();
+
+async function ensureStripeCustomer(
+  db: IDatabase, config: AppConfig, tenantId: string, sub: SubscriptionRow | undefined,
+): Promise<string> {
+  const inflight = inflightCustomerCreation.get(tenantId);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const user = db.prepare<{ email: string }>('SELECT email FROM users WHERE tenant_id = ? LIMIT 1').get(tenantId);
+    if (!user) throw new StateError('租户无关联用户', ErrorCode.STATE_INVALID_TRANSITION);
+    const customer = await createCustomer(config, user.email, tenantId);
+    if (sub) {
+      db.prepare<void>('UPDATE subscriptions SET stripe_customer_id = ?, updated_at = ? WHERE id = ?')
+        .run(customer.id, Date.now(), sub.id);
+    }
+    return customer.id;
+  })();
+
+  inflightCustomerCreation.set(tenantId, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightCustomerCreation.delete(tenantId);
+  }
+}
+
 export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
+  const billingService = new BillingService(db);
+  const settlementReconciliationService = new SettlementReconciliationService(db);
   const usageTracker = new UsageTracker(db);
   const entitlementService = new EntitlementService(db);
 
+  /* 构建允许的重定向源集合：预解析 origin，避免每次请求重复 new URL() */
+  const rawOrigins: string[] = [];
+  if (config.server.publicUrl) rawOrigins.push(config.server.publicUrl);
+  const corsOrigin = config.cors.origin;
+  if (typeof corsOrigin === 'string' && corsOrigin !== '*') rawOrigins.push(corsOrigin);
+  else if (Array.isArray(corsOrigin)) rawOrigins.push(...corsOrigin.filter(o => typeof o === 'string' && o !== '*'));
+  const allowedOriginSet = new Set<string>();
+  for (const raw of rawOrigins) {
+    try { allowedOriginSet.add(new URL(raw).origin); } catch { /* 无效 URL 跳过 */ }
+  }
+
   /* 初始化默认附加组件（幂等） */
   seedDefaultAddOns(db);
+  billingService.seedBillingPlans();
 
   /* GET /api/v1/billing/plans — 所有可用计划 */
   app.get('/api/v1/billing/plans', async () => {
-    return { data: PLANS.map(p => ({ id: p.id, name: p.name, limits: p.limits })) };
+    return { data: billingService.listPlans() };
+  });
+
+  /* POST /api/v1/billing/subscribe — 本地/企业后台订阅切换 */
+  app.post('/api/v1/billing/subscribe', {
+    preHandler: requireRole('admin'),
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request) => {
+    const { planId } = SubscribeBillingSchema.parse(request.body);
+    const result = billingService.subscribeTenant(request.tenantId, planId);
+    return { data: result };
+  });
+
+  /* GET /api/v1/billing/invoices — 当前租户发票与账本对账视图 */
+  app.get('/api/v1/billing/invoices', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    return {
+      data: billingService.listInvoices(request.tenantId),
+    };
+  });
+
+  /* POST /api/v1/billing/reconciliation/run — 手动触发 tenant 级结算对账修复 */
+  app.post('/api/v1/billing/reconciliation/run', {
+    preHandler: requireRole('admin'),
+    config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+  }, async (request) => {
+    return {
+      data: settlementReconciliationService.reconcileTenant(request.tenantId),
+    };
+  });
+
+  /* GET /api/v1/billing/reconciliation/runs — 最近对账运行记录 */
+  app.get('/api/v1/billing/reconciliation/runs', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    return {
+      data: settlementReconciliationService.listRuns(request.tenantId),
+    };
   });
 
   /* GET /api/v1/billing/add-ons — 可购买的附加组件 */
@@ -89,13 +175,20 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
         effectiveLimits,
         addOns: activeAddOns,
         usage,
-        periodEnd: sub?.current_period_end,
+        periodEnd: sub?.current_period_end ? new Date(Number(sub.current_period_end)).toISOString() : undefined,
       },
     };
   });
 
   /* 以下路由需要 Stripe 启用 */
-  if (!config.stripe.enabled) return;
+  if (!config.stripe.enabled) {
+    const stripeDisabled = async () => {
+      throw new StateError('Stripe 计费未启用，本地开发环境无需配置', ErrorCode.STATE_INVALID_TRANSITION);
+    };
+    app.post('/api/v1/billing/checkout', stripeDisabled);
+    app.post('/api/v1/billing/portal', stripeDisabled);
+    return;
+  }
 
   /* POST /api/v1/billing/checkout — 创建 Checkout Session（限流: 5 次/分钟） */
   app.post('/api/v1/billing/checkout', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request) => {
@@ -105,7 +198,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       throw new ValidationError('无效的 priceId', ErrorCode.VALIDATION_FORMAT);
     }
 
-    if (!isSafeRedirectUrl(successUrl, config.server.publicUrl) || !isSafeRedirectUrl(cancelUrl, config.server.publicUrl)) {
+    if (!isSafeRedirectUrl(successUrl, allowedOriginSet) || !isSafeRedirectUrl(cancelUrl, allowedOriginSet)) {
       throw new ValidationError('重定向 URL 必须为相对路径或同源地址', ErrorCode.VALIDATION_FORMAT);
     }
 
@@ -114,13 +207,11 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get(tenantId);
 
-    if (!sub?.stripe_customer_id) {
-      throw new StateError('尚未关联 Stripe 客户，请先完成注册', ErrorCode.STATE_INVALID_TRANSITION);
-    }
+    const customerId = sub?.stripe_customer_id ?? await ensureStripeCustomer(db, config, tenantId, sub);
 
     let session;
     try {
-      session = await createCheckoutSession(config, sub.stripe_customer_id, priceId, successUrl, cancelUrl);
+      session = await createCheckoutSession(config, customerId, priceId, successUrl, cancelUrl);
     } catch (err) {
       throw new StateError(`支付会话创建失败: ${err instanceof Error ? err.message : String(err)}`, ErrorCode.STATE_INVALID_TRANSITION);
     }
@@ -131,7 +222,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
   app.post('/api/v1/billing/portal', async (request) => {
     const { returnUrl } = PortalSchema.parse(request.body);
 
-    if (!isSafeRedirectUrl(returnUrl, config.server.publicUrl)) {
+    if (!isSafeRedirectUrl(returnUrl, allowedOriginSet)) {
       throw new ValidationError('重定向 URL 必须为相对路径或同源地址', ErrorCode.VALIDATION_FORMAT);
     }
 
@@ -140,13 +231,11 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get(tenantId);
 
-    if (!sub?.stripe_customer_id) {
-      throw new StateError('尚未关联 Stripe 客户', ErrorCode.STATE_INVALID_TRANSITION);
-    }
+    const customerId = sub?.stripe_customer_id ?? await ensureStripeCustomer(db, config, tenantId, sub);
 
     let session;
     try {
-      session = await createPortalSession(config, sub.stripe_customer_id, returnUrl);
+      session = await createPortalSession(config, customerId, returnUrl);
     } catch (err) {
       throw new StateError(`客户门户创建失败: ${err instanceof Error ? err.message : String(err)}`, ErrorCode.STATE_INVALID_TRANSITION);
     }
@@ -162,7 +251,6 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       }
       const rawBody = Buffer.concat(chunks);
       (request as { rawBody?: Buffer }).rawBody = rawBody;
-      const { Readable } = await import('node:stream');
       return Readable.from(rawBody);
     },
   }, async (request, reply) => {
@@ -190,7 +278,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       db.transaction(() => {
         /* 幂等性：事件去重与处理在同一事务内 */
         const inserted = db.prepare<void>(
-          'INSERT OR IGNORE INTO webhook_events (event_id, event_type, processed_at) VALUES (?, ?, ?)',
+          'INSERT INTO webhook_events (event_id, event_type, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING',
         ).run(eventId, event.type, now);
         if (inserted.changes === 0) {
           duplicate = true;

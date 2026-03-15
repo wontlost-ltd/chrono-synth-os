@@ -1,13 +1,7 @@
-/**
- * 审计日志插件
- * 记录所有状态变更操作（POST/PUT/PATCH/DELETE）到 audit_log 表
- * 增强：用户身份 + 操作语义 + 请求来源
- */
-
-import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { JwtPayload } from '../../types/auth.js';
+import { ensureAuditLogColumns, recordRequestAuditLog } from '../../audit/audit-log-store.js';
 
 /** 只审计写操作 */
 const AUDITED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -41,39 +35,10 @@ function resolveActionType(path: string): string {
   return 'other';
 }
 
-export interface AuditEntry {
-  id: string;
-  timestamp: number;
-  method: string;
-  path: string;
-  request_id: string;
-  status_code: number;
-  latency_ms: number;
-  api_key_hash: string | null;
-  user_id: string | null;
-  user_email: string | null;
-  action_type: string;
-}
-
-/** 计算 API Key 的 SHA-256 前 16 位十六进制（用于审计追溯，不可逆） */
-function hashApiKey(apiKey: string | undefined): string | null {
-  if (!apiKey) return null;
-  return createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
-}
-
 export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined): void {
   if (!db) return;
 
-  /* 确保新增列存在（兼容升级迁移） */
-  try {
-    db.prepare<void>(`ALTER TABLE audit_log ADD COLUMN user_id TEXT`).run();
-  } catch { /* 列已存在 */ }
-  try {
-    db.prepare<void>(`ALTER TABLE audit_log ADD COLUMN user_email TEXT`).run();
-  } catch { /* 列已存在 */ }
-  try {
-    db.prepare<void>(`ALTER TABLE audit_log ADD COLUMN action_type TEXT DEFAULT 'other'`).run();
-  } catch { /* 列已存在 */ }
+  ensureAuditLogColumns(db);
 
   /* 记录请求开始时间，用于计算延迟 */
   app.addHook('onRequest', (request: FastifyRequest, _reply: FastifyReply, done) => {
@@ -95,7 +60,6 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
       /* 支持 header 和 query 两种 API Key 传递方式 */
       const apiKey = (request.headers['x-api-key'] as string | undefined)
         ?? (request.query as Record<string, string>)?.apiKey;
-      const apiKeyHash = hashApiKey(apiKey);
       const tenantId = request.tenantId ?? 'default';
 
       /* 提取 JWT 用户身份 */
@@ -104,36 +68,26 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
       /* JwtPayload 不包含 email，从请求装饰器获取（如有） */
       const userEmail = (request as unknown as { userEmail?: string }).userEmail ?? null;
       const actionType = resolveActionType(routePath);
+      const actorType = apiKey ? 'api_key' : userId ? 'user' : null;
 
-      db.prepare<void>(
-        `INSERT INTO audit_log (id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash, tenant_id, user_id, user_email, action_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        crypto.randomUUID(),
-        Date.now(),
-        request.method,
-        routePath,
-        requestId,
-        reply.statusCode,
-        Math.round(latency * 100) / 100,
-        apiKeyHash,
+      recordRequestAuditLog(db, {
         tenantId,
+        requestId,
+        method: request.method,
+        path: routePath,
+        statusCode: reply.statusCode,
+        latencyMs: latency,
+        apiKey,
         userId,
         userEmail,
+        actorType,
+        actorId: apiKey ? userId ?? 'apikey' : userId,
         actionType,
-      );
+      });
     } catch {
       /* 审计写入失败不应中断请求 */
     }
 
     done();
   });
-}
-
-/** 查询审计日志（按租户过滤，分页） */
-export function queryAuditLog(db: IDatabase, limit = 100, tenantId?: string, offset = 0): AuditEntry[] {
-  const tid = tenantId ?? 'default';
-  return db.prepare<AuditEntry>(
-    'SELECT id, timestamp, method, path, request_id, status_code, latency_ms, api_key_hash, user_id, user_email, action_type FROM audit_log WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?',
-  ).all(tid, limit, offset);
 }

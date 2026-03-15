@@ -1,0 +1,71 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: chrono-synth-observability
+  namespace: chrono-synth
+  labels:
+    app.kubernetes.io/name: chrono-synth
+    app.kubernetes.io/component: observability
+spec:
+  groups:
+    - name: chrono-synth-platform
+      rules:
+        - alert: ChronoSynthObservabilityWorkerNotReady
+          expr: min_over_time(chrono_observability_worker_ready[5m]) < 1
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: ChronoSynth observability worker is not ready
+            description: The dedicated observability worker has been unready for at least 5 minutes.
+
+        - alert: ChronoSynthObservabilityFailuresDetected
+          expr: increase(chrono_observability_events_total{status="failed"}[15m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: ChronoSynth observability pipeline is failing events
+            description: Observability events have failed during the last 15 minutes. Check worker logs and Kafka/DLQ health.
+
+        - alert: ChronoSynthObservabilityOutboxBacklogHigh
+          expr: chrono_observability_outbox_backlog{status="pending"} > 1000
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: ChronoSynth observability outbox backlog is high
+            description: Pending observability outbox rows have stayed above 1000 for 15 minutes.
+
+        - alert: ChronoSynthTaskSuccessRateLow
+          expr: chrono_task_terminal_total > 20 and chrono_task_success_rate < 0.85
+          for: 30m
+          labels:
+            severity: warning
+            team: operations
+          annotations:
+            summary: ChronoSynth task success rate is below target
+            description: Task success rate has stayed below 85 percent while the marketplace has meaningful throughput.
+
+        - alert: ChronoSynthWalletSettlementLatencyHigh
+          expr: chrono_wallet_settlement_latency_ms_avg > 900000
+          for: 15m
+          labels:
+            severity: warning
+            team: finance
+          annotations:
+            summary: ChronoSynth wallet settlements are delayed
+            description: Average wallet settlement latency is above 15 minutes.
+
+        - alert: ChronoSynthGovernanceBacklogHigh
+          expr: chrono_governance_cases_active > 25
+          for: 30m
+          labels:
+            severity: warning
+            team: governance
+          annotations:
+            summary: ChronoSynth governance backlog is growing
+            description: Active governance cases have stayed above 25 for at least 30 minutes.

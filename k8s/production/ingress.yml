@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chrono-synth-os
+  namespace: chrono-synth-prod
+  labels:
+    app.kubernetes.io/name: chrono-synth-os
+    environment: production
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.chrono-synth.example.com
+      secretName: chrono-synth-api-tls
+  rules:
+    - host: api.chrono-synth.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chrono-synth-os
+                port:
+                  name: http

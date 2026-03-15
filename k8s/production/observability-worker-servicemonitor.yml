@@ -1,0 +1,23 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: chrono-synth-observability-worker
+  namespace: chrono-synth-prod
+  labels:
+    app.kubernetes.io/name: chrono-synth-observability-worker
+    environment: production
+spec:
+  namespaceSelector:
+    matchNames:
+      - chrono-synth-prod
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: chrono-synth-observability-worker
+  endpoints:
+    - port: monitor
+      path: /metrics/prometheus
+      interval: 30s
+      scrapeTimeout: 10s
+      bearerTokenSecret:
+        name: chrono-synth-prod-secrets
+        key: PROMETHEUS_SCRAPE_BEARER_TOKEN

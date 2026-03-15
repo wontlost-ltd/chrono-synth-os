@@ -5,6 +5,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
+import type { JwtPayload } from '../../types/auth.js';
+import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import type { PersonaVersion, SimulationResult } from '../../types/index.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { ForkPersonaSchema, SimulatePersonaSchema, UpdatePersonaStatusSchema } from '../schemas/api-schemas.js';
@@ -27,10 +29,18 @@ function serializeResult(r: SimulationResult): Record<string, unknown> {
 }
 
 export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
+  const personaCoreService = new PersonaCoreService(os.getDatabase());
+
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
     if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
     return os;
+  }
+
+  function getJwtUser(request: FastifyRequest): JwtPayload | undefined {
+    const user = request.user as JwtPayload | undefined;
+    if (!user || user.sub.startsWith('apikey:')) return undefined;
+    return user;
   }
 
   /* POST /api/v1/personas/fork — 从核心价值分叉 */
@@ -89,6 +99,14 @@ export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, t
   /* GET /api/v1/personas/:id — 获取单个人格 */
   app.get<{ Params: { id: string } }>('/api/v1/personas/:id', async (request) => {
     const { id } = request.params;
+    const user = getJwtUser(request);
+    if (id.startsWith('pcore_') && user) {
+      const detail = personaCoreService.getPersonaDetail(request.tenantId, user.sub, id);
+      if (!detail) {
+        throw new NotFoundError(`人格 ${id} 不存在`, ErrorCode.NOT_FOUND_PERSONA);
+      }
+      return { data: detail };
+    }
     const tenantOS = getOS(request);
     const persona = tenantOS.accelerated.personas.getById(id);
     if (!persona) {

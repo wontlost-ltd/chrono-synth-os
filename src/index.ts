@@ -9,6 +9,8 @@ export type { LLMProvider, ChatMessage, ChatOptions, ChatResponse, LLMProviderNa
 export type { DecisionCase, DecisionResult, RankedOption, Explanation, EvidenceItem, Counterfactual, SimulationRollout, SimulationConfig } from './intelligence/index.js';
 export { OnboardingService, QuestionnaireEngine, DataIngestion } from './onboarding/index.js';
 export type { OnboardingSession, Question, QuestionResponse, InferredParameters, JournalEntry, DecisionRecord } from './onboarding/index.js';
+export { PersonaCoreService, PersonaCognitiveMemoryGraph } from './persona-core/index.js';
+export type * from './persona-core/index.js';
 export { ChronoClient } from './sdk/index.js';
 export type { ChronoClientOptions, ApiResponse } from './sdk/index.js';
 export { SnapshotStore, EvolutionMerger } from './recovery/index.js';
@@ -23,6 +25,14 @@ export type { ErrorCodeValue } from './errors/index.js';
 export { loadConfig } from './config/index.js';
 export type { AppConfig } from './config/index.js';
 export { PinoLogger } from './logging/index.js';
+export { ObservabilityWorker } from './observability/observability-worker.js';
+export { ObservabilityPipelineService } from './observability/observability-pipeline-service.js';
+export {
+  ObservabilityWorkerMonitorServer,
+  buildObservabilityWorkerMonitorSnapshot,
+  renderObservabilityWorkerPrometheusMetrics,
+} from './observability/observability-worker-monitor.js';
+export { loadKafkaModule, encodeKafkaObservabilityMessage, decodeKafkaObservabilityMessage } from './observability/kafka-transport.js';
 export { createApp, serverState } from './server/index.js';
 export type { CreateAppDeps } from './server/index.js';
 export { MetricsCollector, calculatePercentile, getMetricsSnapshot, getTotalRequests, resetMetrics } from './server/plugins/metrics.js';

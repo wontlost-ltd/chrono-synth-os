@@ -1,6 +1,7 @@
 /**
  * 身份管理服务
- * 维护 User ↔ Identity (1:1) 映射，创建时同时生成默认 Avatar
+ * 维护 User ↔ Identity (1:1) 映射；同一 tenant 可包含多个用户身份。
+ * 创建身份时同时生成默认 Avatar
  */
 
 import type { IDatabase } from '../storage/database.js';
@@ -33,11 +34,11 @@ function rowToIdentity(r: IdentityRow): Identity {
 export class IdentityService {
   constructor(private readonly db: IDatabase) {}
 
-  getByTenant(tenantId: string): Identity | null {
-    const row = this.db.prepare<IdentityRow>(
-      'SELECT * FROM identities WHERE tenant_id = ?',
-    ).get(tenantId);
-    return row ? rowToIdentity(row) : null;
+  listByTenant(tenantId: string): Identity[] {
+    const rows = this.db.prepare<IdentityRow>(
+      'SELECT * FROM identities WHERE tenant_id = ? ORDER BY created_at ASC',
+    ).all(tenantId);
+    return rows.map(rowToIdentity);
   }
 
   getByUser(userId: string): Identity | null {
@@ -45,6 +46,12 @@ export class IdentityService {
       'SELECT * FROM identities WHERE user_id = ?',
     ).get(userId);
     return row ? rowToIdentity(row) : null;
+  }
+
+  ensureForUser(userId: string, tenantId: string, displayName: string): Identity {
+    const existing = this.getByUser(userId);
+    if (existing) return existing;
+    return this.create(userId, tenantId, displayName);
   }
 
   /** 创建身份 + 默认分身（事务内） */

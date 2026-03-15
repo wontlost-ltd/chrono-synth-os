@@ -43,11 +43,33 @@ describe('配置系统', () => {
     setEnv('CHRONO_DB_PATH', '/tmp/env.db');
     setEnv('CHRONO_SERVER_PORT', '9090');
     setEnv('CHRONO_LOG_JSON', 'true');
+    setEnv('CHRONO_OBSERVABILITY_WORKER_HTTP_PORT', '3110');
+    setEnv('CHRONO_OBSERVABILITY_KAFKA_STARTUP_WAIT_MS', '45000');
+    setEnv('CHRONO_RUNTIME_SESSION_TIMEOUT_MS', '90000');
+    setEnv('CHRONO_BILLING_RECONCILIATION_ENABLED', 'true');
+    setEnv('CHRONO_BILLING_RECONCILIATION_BATCH_SIZE', '25');
+    setEnv('CHRONO_AUTH_METRICS_API_KEYS', 'scrape-a,scrape-b');
+    setEnv('CHRONO_ENCRYPTION_DEFAULT_KEY_REF', 'tenant-enterprise');
+    setEnv('CHRONO_ENCRYPTION_KEYRING_JSON', '{"tenant-enterprise":"dGVzdC10ZW5hbnQta2V5LXNob3VsZC1iZS0zMi1ieXRlcy0xMjM0NTY="}');
+    setEnv('CHRONO_OIDC_ENABLED', 'true');
+    setEnv('CHRONO_OIDC_ISSUER_URL', 'https://idp.example.test');
+    setEnv('CHRONO_OIDC_CLIENT_ID', 'tenant-client');
+    setEnv('CHRONO_OIDC_CLIENT_SECRET', 'tenant-secret');
+    setEnv('CHRONO_SERVER_PUBLIC_URL', 'https://api.example.test');
 
     const config = loadConfig();
     assert.equal(config.db.path, '/tmp/env.db');
     assert.equal(config.server.port, 9090);
     assert.equal(config.log.json, true);
+    assert.equal(config.observability.worker.http.port, 3110);
+    assert.equal(config.observability.kafka.startupWaitMs, 45000);
+    assert.equal(config.runtime.recovery.sessionTimeoutMs, 90000);
+    assert.equal(config.billing.reconciliation.enabled, true);
+    assert.equal(config.billing.reconciliation.batchSize, 25);
+    assert.deepEqual(config.auth.metricsApiKeys, ['scrape-a', 'scrape-b']);
+    assert.equal(config.encryption.defaultKeyRef, 'tenant-enterprise');
+    assert.equal(config.oidc.enabled, true);
+    assert.equal(config.oidc.issuerUrl, 'https://idp.example.test');
   });
 
   it('overrides 优先于环境变量', () => {
@@ -72,5 +94,18 @@ describe('配置系统', () => {
   it('不存在的配置文件不报错', () => {
     const config = loadConfig(undefined, '/nonexistent/config.json');
     assert.equal(config.db.path, ':memory:');
+  });
+
+  it('默认 key ref 不存在于 keyring 时拒绝加载', () => {
+    assert.throws(() => loadConfig({
+      server: { publicUrl: 'https://api.example.test' },
+      encryption: {
+        enabled: true,
+        masterKey: 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
+        defaultKeyRef: 'missing',
+        keyring: {},
+        keyRotationIntervalDays: 90,
+      },
+    }));
   });
 });

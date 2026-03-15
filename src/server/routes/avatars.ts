@@ -42,12 +42,29 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     return identity;
   }
 
+  function requireOwnedAvatar(user: JwtPayload, avatarId: string) {
+    const identity = requireIdentity(user);
+    const avatar = avatarService.getByIdForIdentity(avatarId, identity.id);
+    if (!avatar) throw new NotFoundError(`分身 ${avatarId} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
+    return { identity, avatar };
+  }
+
+  /** 将内部 Avatar 转换为前端 DTO（补充 status / ISO 时间） */
+  function toAvatarDto(a: NonNullable<ReturnType<typeof avatarService.getById>>) {
+    return {
+      ...a,
+      status: a.isActive ? 'active' : 'offline',
+      createdAt: new Date(Number(a.createdAt)).toISOString(),
+      updatedAt: new Date(Number(a.updatedAt)).toISOString(),
+    };
+  }
+
   /* GET /api/v1/avatars */
   app.get('/api/v1/avatars', async (request) => {
     const user = request.user as JwtPayload;
     const identity = requireIdentity(user);
     const avatars = avatarService.listByIdentity(identity.id);
-    return { data: avatars };
+    return { data: avatars.map(toAvatarDto) };
   });
 
   /* POST /api/v1/avatars */
@@ -69,40 +86,39 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     }
 
     const avatar = avatarService.create(identity.id, body);
-    return reply.status(201).send({ data: avatar });
+    return reply.status(201).send({ data: toAvatarDto(avatar) });
   });
 
   /* GET /api/v1/avatars/:id */
   app.get<{ Params: { id: string } }>('/api/v1/avatars/:id', async (request) => {
-    const { id } = request.params;
-    const avatar = avatarService.getById(id);
-    if (!avatar) throw new NotFoundError(`分身 ${id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
-    return { data: avatar };
+    const user = request.user as JwtPayload;
+    const { avatar } = requireOwnedAvatar(user, request.params.id);
+    return { data: toAvatarDto(avatar) };
   });
 
   /* PATCH /api/v1/avatars/:id */
   app.patch<{ Params: { id: string } }>('/api/v1/avatars/:id', async (request) => {
-    const { id } = request.params;
+    const user = request.user as JwtPayload;
+    const { identity } = requireOwnedAvatar(user, request.params.id);
     const body = UpdateAvatarSchema.parse(request.body);
-    const avatar = avatarService.update(id, body);
-    if (!avatar) throw new NotFoundError(`分身 ${id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
+    const avatar = avatarService.updateForIdentity(request.params.id, identity.id, body);
+    if (!avatar) throw new NotFoundError(`分身 ${request.params.id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
     return { data: avatar };
   });
 
   /* DELETE /api/v1/avatars/:id */
   app.delete<{ Params: { id: string } }>('/api/v1/avatars/:id', async (request, reply) => {
-    const { id } = request.params;
-    const deleted = avatarService.softDelete(id);
-    if (!deleted) throw new NotFoundError(`分身 ${id} 不存在或为默认分身`, ErrorCode.NOT_FOUND_AVATAR);
+    const user = request.user as JwtPayload;
+    const { identity } = requireOwnedAvatar(user, request.params.id);
+    const deleted = avatarService.softDeleteForIdentity(request.params.id, identity.id);
+    if (!deleted) throw new NotFoundError(`分身 ${request.params.id} 不存在或为默认分身`, ErrorCode.NOT_FOUND_AVATAR);
     return reply.status(204).send();
   });
 
-  /* GET /api/v1/avatars/:id/projection */
-  app.get<{ Params: { id: string } }>('/api/v1/avatars/:id/projection', async (request) => {
+  /* 投影计算共用逻辑 */
+  async function handleProjection(request: { user: unknown; tenantId?: string }, id: string) {
     const user = request.user as JwtPayload;
-    const { id } = request.params;
-    const avatar = avatarService.getById(id);
-    if (!avatar) throw new NotFoundError(`分身 ${id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
+    const { avatar } = requireOwnedAvatar(user, id);
 
     const tenantOS = getTenantOS(user.tenantId);
     const baseState = compilePersonaState(tenantOS.core);
@@ -129,14 +145,23 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
         },
       },
     };
+  }
+
+  /* GET /api/v1/avatars/:id/projection */
+  app.get<{ Params: { id: string } }>('/api/v1/avatars/:id/projection', async (request) => {
+    return handleProjection(request, request.params.id);
+  });
+
+  /* POST /api/v1/avatars/:id/project — 前端投影触发 */
+  app.post<{ Params: { id: string } }>('/api/v1/avatars/:id/project', async (request) => {
+    return handleProjection(request, request.params.id);
   });
 
   /* GET /api/v1/avatars/:id/snapshot — 跨设备快照 */
   app.get<{ Params: { id: string } }>('/api/v1/avatars/:id/snapshot', async (request) => {
     const user = request.user as JwtPayload;
     const { id } = request.params;
-    const avatar = avatarService.getById(id);
-    if (!avatar) throw new NotFoundError(`分身 ${id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
+    const { avatar } = requireOwnedAvatar(user, id);
 
     const tenantOS = getTenantOS(user.tenantId);
     const baseState = compilePersonaState(tenantOS.core);
@@ -146,7 +171,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     let autorun = { enabled: false, intervalMinutes: 0, lastRunAt: null as number | null };
     try {
       const configRow = db.prepare<{ enabled: number; interval_ms: number; last_run_at: number | null }>(
-        'SELECT enabled, interval_ms, last_run_at FROM avatar_autorun_configs WHERE tenant_id = ? AND avatar_id = ? LIMIT 1',
+        'SELECT enabled, interval_ms, last_run_at FROM avatar_autorun_config WHERE tenant_id = ? AND avatar_id = ? LIMIT 1',
       ).get(user.tenantId, id);
       if (configRow) {
         autorun = {
@@ -161,12 +186,12 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     let drift = { pendingReview: false, lastScore: 0, lastCheckAt: null as number | null };
     try {
       const driftRow = db.prepare<{ drift_threshold: number; last_drift_check_at: number | null; review_required: number }>(
-        'SELECT drift_threshold, last_drift_check_at, review_required FROM avatar_autorun_configs WHERE tenant_id = ? AND avatar_id = ? LIMIT 1',
+        'SELECT drift_threshold, last_drift_check_at, review_required FROM avatar_autorun_config WHERE tenant_id = ? AND avatar_id = ? LIMIT 1',
       ).get(user.tenantId, id);
       if (driftRow) {
         /* 最后一次运行的 drift_score */
         const lastRun = db.prepare<{ metrics_json: string | null }>(
-          'SELECT metrics_json FROM avatar_autorun_run_logs WHERE avatar_id = ? AND status = ? ORDER BY completed_at DESC LIMIT 1',
+          'SELECT metrics_json FROM avatar_autorun_runlog WHERE avatar_id = ? AND status = ? ORDER BY completed_at DESC LIMIT 1',
         ).get(id, 'completed');
         let lastScore = 0;
         if (lastRun?.metrics_json) {
@@ -227,8 +252,8 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   /* POST /api/v1/avatars/:id/handoff — 生成跨设备切换令牌 */
   app.post<{ Params: { id: string } }>('/api/v1/avatars/:id/handoff', async (request, reply) => {
     const { id } = request.params;
-    const avatar = avatarService.getById(id);
-    if (!avatar) throw new NotFoundError(`分身 ${id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
+    const user = request.user as JwtPayload;
+    requireOwnedAvatar(user, id);
 
     const body = request.body as { deviceId?: string } | undefined;
     const fromDeviceId = body?.deviceId ?? 'unknown';
@@ -255,6 +280,8 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   /* POST /api/v1/avatars/:id/resume — 消费切换令牌 */
   app.post<{ Params: { id: string } }>('/api/v1/avatars/:id/resume', async (request) => {
     const { id } = request.params;
+    const user = request.user as JwtPayload;
+    requireOwnedAvatar(user, id);
     const body = request.body as { token?: string } | undefined;
     if (!body?.token) throw new NotFoundError('缺少 handoff token', ErrorCode.VALIDATION_REQUIRED);
 

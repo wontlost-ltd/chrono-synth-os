@@ -42,11 +42,12 @@ describe('IdentityService', () => {
     assert.equal(result, null);
   });
 
-  it('getByTenant 返回正确身份', () => {
-    svc.create('user_3', 'tenant_3', '用户三');
-    const found = svc.getByTenant('tenant_3');
-    assert.ok(found);
-    assert.equal(found!.tenantId, 'tenant_3');
+  it('listByTenant 返回同租户的多个身份', () => {
+    svc.create('user_3a', 'tenant_3', '用户三A');
+    svc.create('user_3b', 'tenant_3', '用户三B');
+    const found = svc.listByTenant('tenant_3');
+    assert.equal(found.length, 2);
+    assert.deepEqual(found.map((item) => item.userId), ['user_3a', 'user_3b']);
   });
 
   it('更新身份元数据', () => {
@@ -60,5 +61,12 @@ describe('IdentityService', () => {
   it('更新不存在的身份返回 null', () => {
     const result = svc.update('nonexistent', { displayName: '名字' });
     assert.equal(result, null);
+  });
+
+  it('ensureForUser 对已存在用户返回原 identity', () => {
+    const created = svc.create('user_5', 'tenant_5', '用户五');
+    const ensured = svc.ensureForUser('user_5', 'tenant_5', '不会覆盖');
+    assert.equal(ensured.id, created.id);
+    assert.equal(ensured.displayName, '用户五');
   });
 });

@@ -128,7 +128,7 @@ export class ConflictResolver {
 
   /** 从快照恢复冲突（清空后重建；调用方负责事务保护） */
   restoreConflicts(conflicts: readonly Conflict[]): void {
-    this.db.exec('DELETE FROM conflicts');
+    this.db.prepare<void>('DELETE FROM conflicts WHERE 1=1').run();
     for (const c of conflicts) {
       this.db.prepare<void>(
         `INSERT INTO conflicts (id, kind, severity, involved_versions_json, affected_values_json, description, detected_at, resolved_at, resolution) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

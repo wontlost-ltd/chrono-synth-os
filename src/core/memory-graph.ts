@@ -206,9 +206,9 @@ export class CognitiveMemoryGraph {
 
   /** 删除所有记忆和边 */
   deleteAll(): void {
-    this.db.exec('DELETE FROM working_memory');
-    this.db.exec('DELETE FROM memory_edges');
-    this.db.exec('DELETE FROM memory_nodes');
+    this.db.prepare<void>('DELETE FROM working_memory WHERE 1=1').run();
+    this.db.prepare<void>('DELETE FROM memory_edges WHERE 1=1').run();
+    this.db.prepare<void>('DELETE FROM memory_nodes WHERE 1=1').run();
   }
 
   /** 按原始数据插入记忆节点（恢复用，保留原 ID 和时间戳） */

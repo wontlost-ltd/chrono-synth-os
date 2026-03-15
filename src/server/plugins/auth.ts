@@ -30,6 +30,10 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(hashA, hashB);
 }
 
+function isMetricsPath(path: string): boolean {
+  return path === '/metrics' || path === '/metrics/prometheus';
+}
+
 interface ApiKeyRow {
   readonly id: string;
   readonly tenant_id: string;
@@ -47,6 +51,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
   if (!config.auth.enabled) return;
 
   const validKeys = config.auth.apiKeys;
+  const metricsKeys = config.auth.metricsApiKeys;
 
   if (validKeys.length === 0 && !db) {
     app.log.warn('auth.enabled=true 但 apiKeys 为空且无 DB，所有需认证的端点将被拒绝访问');
@@ -58,28 +63,38 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
       return done();
     }
 
+    const path = request.url.split('?')[0];
+    const metricsRoute = isMetricsPath(path);
+
     /* 如果已经通过 JWT 认证（由 jwt-auth 插件设置），跳过 API Key 检查 */
     if (request.user) {
       return done();
     }
 
-    /* 携带 Bearer token 时交给 jwt-auth 插件处理，避免误拒 JWT 请求 */
     const authHeader = request.headers.authorization;
-    if (config.jwt.enabled && authHeader && authHeader.startsWith('Bearer ')) {
-      return done();
-    }
-
-    /* 认证路由自身豁免 */
-    const path = request.url.split('?')[0];
     if (path.startsWith('/api/v1/auth/')) {
       return done();
     }
+    if (path.startsWith('/scim/')) {
+      return done();
+    }
 
-    /* 支持 header 和 query 两种传递方式（WebSocket 客户端可能无法设置自定义 header） */
+    const bearerToken = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : undefined;
+
+    /* 支持 header、query，以及 metrics 路由上的 Bearer scrape token */
     const rawKey = request.headers['x-api-key']
-      ?? (request.query as Record<string, string>)?.apiKey;
+      ?? (request.query as Record<string, string>)?.apiKey
+      ?? (metricsRoute ? bearerToken : undefined);
     /* 拒绝多值 header（数组）或非字符串值，避免 createHash.update 抛异常导致 500 */
     const apiKey = typeof rawKey === 'string' ? rawKey : undefined;
+
+    /* 非 metrics 路由上的 Bearer token 交给 jwt-auth 插件处理，避免误拒 JWT 请求 */
+    if (!apiKey && config.jwt.enabled && bearerToken) {
+      return done();
+    }
+
     if (!apiKey) {
       return reply.status(401).send({
         error: 'AuthenticationError',
@@ -108,8 +123,10 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
       } catch { /* api_keys 表可能尚未创建，回退到静态 Key */ }
     }
 
+    const staticKeys = metricsRoute ? [...metricsKeys, ...validKeys] : validKeys;
+
     /* requireDbKeys 启用时禁止静态 Key 回退（生产环境强制 DB Key） */
-    if (config.auth.requireDbKeys) {
+    if (config.auth.requireDbKeys && !(metricsRoute && metricsKeys.length > 0)) {
       return reply.status(403).send({
         error: 'AuthorizationError',
         code: 'AUTH_INVALID_KEY',
@@ -117,15 +134,26 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
       });
     }
 
-    /* 回退到配置文件静态 Key（向后兼容，无租户绑定） */
-    const authorized = validKeys.some(k => safeCompare(apiKey, k));
+    /* 回退到配置文件静态 Key（向后兼容，固定绑定 default 租户） */
+    const authorized = staticKeys.some(k => safeCompare(apiKey, k));
     if (!authorized) {
+      if (metricsRoute && config.jwt.enabled && bearerToken) {
+        return done();
+      }
       return reply.status(403).send({
         error: 'AuthorizationError',
         code: 'AUTH_INVALID_KEY',
         message: 'API Key 无效',
       });
     }
+
+    /* 静态 Key 强制绑定 default 租户，防止 X-Tenant-Id 头伪造 */
+    (request as unknown as { user: { sub: string; tenantId: string; role: string; planId: string } }).user = {
+      sub: 'apikey:static',
+      tenantId: 'default',
+      role: 'member',
+      planId: 'free',
+    };
 
     done();
   });

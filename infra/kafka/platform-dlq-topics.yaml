@@ -1,0 +1,47 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: runtime.dlq
+  labels:
+    app.kubernetes.io/name: chrono-synth-os
+    chrono-synth.io/purpose: dlq
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    min.insync.replicas: 2
+    retention.ms: 1209600000
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: wallet.dlq
+  labels:
+    app.kubernetes.io/name: chrono-synth-os
+    chrono-synth.io/purpose: dlq
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    min.insync.replicas: 2
+    retention.ms: 1209600000
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: governance.dlq
+  labels:
+    app.kubernetes.io/name: chrono-synth-os
+    chrono-synth.io/purpose: dlq
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    min.insync.replicas: 2
+    retention.ms: 1209600000

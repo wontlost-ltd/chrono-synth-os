@@ -3,6 +3,7 @@
  * 创建并配置 Fastify 实例，注册所有路由和插件
  */
 
+import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { PinoLogger } from '../logging/pino-logger.js';
@@ -20,6 +21,7 @@ import { registerCors } from './plugins/cors.js';
 import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerJwtAuth } from './plugins/jwt-auth.js';
+import { registerIdempotency } from './plugins/idempotency.js';
 import { registerRedis } from './plugins/redis.js';
 import { registerTenantDecorator, registerTenantHook } from './plugins/tenant.js';
 import { registerAuditLog } from './plugins/audit-log.js';
@@ -49,20 +51,30 @@ import { registerTaskRoutes } from './routes/tasks.js';
 import { registerLifeSimulationRoutes } from './routes/life-simulations.js';
 import { registerLifeSimVizRoutes } from './routes/life-simulation-viz.js';
 import { registerSsoRoutes } from './routes/auth-sso.js';
+import { registerOidcRoutes } from './routes/auth-oidc.js';
 import { cleanupExpiredTokens } from './routes/auth.js';
 import { registerAuth0 } from './plugins/auth0.js';
 import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerAdminConfigRoutes } from './routes/admin-config.js';
+import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
+import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
 import { registerIdentityRoutes } from './routes/identity.js';
 import { registerAvatarRoutes } from './routes/avatars.js';
+import { registerUserRoutes } from './routes/users.js';
+import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerAvatarAutorunRoutes } from './routes/avatar-autorun.js';
 import { registerKnowledgeSourceRoutes } from './routes/knowledge-sources.js';
+import { registerPersonaCoreRoutes } from './routes/persona-core.js';
 import { registerSseRoutes } from './routes/sse.js';
+import { registerScimRoutes } from './routes/scim.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
+import { SettlementReconciliationWorker } from '../billing/settlement-reconciliation-worker.js';
+import { ObservabilityPipelineService } from '../observability/observability-pipeline-service.js';
+import { RuntimeRecoveryWorker } from '../persona-core/runtime-recovery-worker.js';
 import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import { AvatarService } from '../identity/avatar-service.js';
@@ -116,12 +128,24 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 异步插件 */
   await registerJwtAuth(app, config);
   registerTenantHook(app);  /* 在 JWT 之后注册，确保 request.user 已填充 */
+  registerIdempotency(app, deps.db ?? deps.os.getDatabase(), config);
   await registerAuth0(app, config);
   await registerRedis(app, config);
   await registerCors(app, config);
   await registerHelmet(app);
   await registerRateLimit(app, config);
   await registerWebSocket(app, deps.os, config);
+
+  /* 全局处理空 JSON body：前端 POST 可能不带 body 但设置了 Content-Type: application/json */
+  app.addHook('preParsing', async (request, _reply, payload) => {
+    const ct = request.headers['content-type'];
+    const cl = request.headers['content-length'];
+    if (ct && ct.includes('application/json') && (cl === '0' || (!cl && !request.headers['transfer-encoding']))) {
+      request.headers['content-length'] = '2';
+      return Readable.from(Buffer.from('{}'));
+    }
+    return payload;
+  });
 
   /* 错误处理（在路由之前注册，以捕获路由中的错误） */
   registerErrorHandler(app);
@@ -136,6 +160,47 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     deps.config?.encryption,
   );
   app.addHook('onClose', () => { tenantFactory.clear(); });
+
+  let observabilityWorker: ObservabilityPipelineService | undefined;
+  let runtimeRecoveryWorker: RuntimeRecoveryWorker | undefined;
+  let settlementReconciliationWorker: SettlementReconciliationWorker | undefined;
+  if (config.observability.worker.enabled) {
+    observabilityWorker = new ObservabilityPipelineService(
+      db,
+      deps.os.getLogger(),
+      config.observability,
+    );
+    await observabilityWorker.start();
+    app.addHook('onClose', async () => { await observabilityWorker!.stop(); });
+  }
+
+  if (config.runtime.recovery.enabled) {
+    runtimeRecoveryWorker = new RuntimeRecoveryWorker(
+      db,
+      deps.os.getLogger(),
+      {
+        pollIntervalMs: config.runtime.recovery.pollIntervalMs,
+        sessionTimeoutMs: config.runtime.recovery.sessionTimeoutMs,
+        maxRetries: config.runtime.recovery.maxRetries,
+        batchSize: config.runtime.recovery.batchSize,
+      },
+    );
+    runtimeRecoveryWorker.start();
+    app.addHook('onClose', async () => { await runtimeRecoveryWorker!.stop(); });
+  }
+
+  if (config.billing.reconciliation.enabled) {
+    settlementReconciliationWorker = new SettlementReconciliationWorker(
+      db,
+      deps.os.getLogger(),
+      {
+        pollIntervalMs: config.billing.reconciliation.pollIntervalMs,
+        batchSize: config.billing.reconciliation.batchSize,
+      },
+    );
+    settlementReconciliationWorker.start();
+    app.addHook('onClose', async () => { await settlementReconciliationWorker!.stop(); });
+  }
 
   /* 任务队列（提前创建以便注入健康路由） */
   let worker: TaskWorker | undefined;
@@ -153,7 +218,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       config.queue.maxConcurrent,
       config.queue.maxRetries,
     );
-    registerTaskRoutes(app, queue, worker);
+    registerTaskRoutes(app, queue, worker, queueDb);
     worker.register('life_simulation', async (task, _signal) => {
       let payload: { simulationId: string };
       try { payload = JSON.parse(task.payload) as { simulationId: string }; }
@@ -218,8 +283,19 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 路由 */
   registerAuthRoutes(app, db, config);
+  registerUserRoutes(app, db);
+  registerOrganizationRoutes(app, db);
   registerBillingRoutes(app, db, config);
-  registerHealthRoutes(app, { os: deps.os, db: deps.db, circuitBreaker: deps.circuitBreaker, worker });
+  registerPersonaCoreRoutes(app, db, config);
+  registerHealthRoutes(app, {
+    os: deps.os,
+    db: deps.db,
+    circuitBreaker: deps.circuitBreaker,
+    worker,
+    observabilityWorker,
+    runtimeRecoveryWorker,
+    settlementReconciliationWorker,
+  });
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
@@ -228,18 +304,22 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOperationRoutes(app, deps.os, tenantFactory);
   registerConflictRoutes(app, deps.os, tenantFactory);
   registerMetricsRoutes(app, deps.os, config);
-  registerAuditRoutes(app, deps.db);
+  registerAuditRoutes(app, db);
   registerPosRoutes(app, deps.os, tenantFactory);
   registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
   registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
   registerVisualizationRoutes(app, deps.os, tenantFactory);
-  registerPrivacyRoutes(app, deps.os, tenantFactory);
+  registerPrivacyRoutes(app, deps.os, tenantFactory, config);
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
+  registerOidcRoutes(app, db, config);
+  registerScimRoutes(app, db, config);
   registerCollaborationRoutes(app, db);
   registerApiKeyRoutes(app, db);
   registerAdminConfigRoutes(app, db, config);
+  registerAdminDeploymentRoutes(app, db, config);
+  registerAdminControlPlaneRoutes(app, db);
   registerMobileRoutes(app, db);
   registerIdentityRoutes(app, db);
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
@@ -291,6 +371,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     pruneTable('usage_records', 'id', 'recorded_at < ?', now - 90 * 24 * 60 * 60 * 1000);
     pruneTable('billing_outbox', 'id', 'status = ? AND processed_at < ?', 'sent', now - 30 * 24 * 60 * 60 * 1000);
     pruneTable('webhook_events', 'event_id', 'processed_at < ?', now - 7 * 24 * 60 * 60 * 1000);
+    pruneTable('idempotency_keys', 'id', 'expires_at < ?', now);
   }, DATA_RETENTION_INTERVAL);
   retentionTimer.unref();
   app.addHook('onClose', () => { clearInterval(retentionTimer); });

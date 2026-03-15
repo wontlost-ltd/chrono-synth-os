@@ -40,6 +40,9 @@ spec:
           envFrom:
             - configMapRef:
                 name: chrono-synth-config
+          env:
+            - name: CHRONO_OBSERVABILITY_WORKER_ENABLED
+              value: "false"
           volumeMounts:
             - name: data
               mountPath: /app/data

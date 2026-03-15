@@ -18,14 +18,19 @@ export const SECRET_MASK = '********';
 
 /** 显式元数据：针对特定 key 的精确匹配 */
 const EXPLICIT_METADATA: ReadonlyMap<string, Omit<ConfigMetadata, 'key'>> = new Map([
+  ['auth.apiKeys',         { category: 'secret',    requiresRestart: true,  groupKey: 'auth' }],
+  ['auth.metricsApiKeys',  { category: 'secret',    requiresRestart: true,  groupKey: 'auth' }],
   ['jwt.secret',          { category: 'secret',    requiresRestart: true,  groupKey: 'auth' }],
   ['stripe.secretKey',    { category: 'secret',    requiresRestart: false, groupKey: 'billing' }],
   ['stripe.webhookSecret',{ category: 'secret',    requiresRestart: false, groupKey: 'billing' }],
   ['encryption.masterKey',{ category: 'secret',    requiresRestart: true,  groupKey: 'security' }],
+  ['encryption.keyring',  { category: 'secret',    requiresRestart: true,  groupKey: 'security' }],
   ['sso.clientSecret',    { category: 'secret',    requiresRestart: true,  groupKey: 'auth' }],
+  ['oidc.clientSecret',   { category: 'secret',    requiresRestart: true,  groupKey: 'auth' }],
   ['db.connectionString', { category: 'secret',    requiresRestart: true,  groupKey: 'database' }],
   ['redis.url',           { category: 'admin',     requiresRestart: true,  groupKey: 'infra' }],
   ['intelligence.apiKey', { category: 'secret',    requiresRestart: false, groupKey: 'intelligence' }],
+  ['observability.kafka.password', { category: 'secret', requiresRestart: true, groupKey: 'observability' }],
 ]);
 
 /** 前缀规则：按最长匹配优先 */
@@ -43,12 +48,15 @@ const PREFIX_RULES: readonly PrefixRule[] = [
   { prefix: 'jwt.',          category: 'admin',     requiresRestart: true,  groupKey: 'auth' },
   { prefix: 'auth.',         category: 'admin',     requiresRestart: true,  groupKey: 'auth' },
   { prefix: 'sso.',          category: 'admin',     requiresRestart: true,  groupKey: 'auth' },
+  { prefix: 'oidc.',         category: 'admin',     requiresRestart: true,  groupKey: 'auth' },
   { prefix: 'redis.',        category: 'admin',     requiresRestart: true,  groupKey: 'infra' },
   { prefix: 'stripe.',       category: 'admin',     requiresRestart: false, groupKey: 'billing' },
+  { prefix: 'billing.',      category: 'admin',     requiresRestart: true,  groupKey: 'billing' },
   { prefix: 'encryption.',   category: 'admin',     requiresRestart: true,  groupKey: 'security' },
   { prefix: 'intelligence.', category: 'protected', requiresRestart: false, groupKey: 'intelligence' },
   { prefix: 'cognition.',    category: 'protected', requiresRestart: false, groupKey: 'cognition' },
   { prefix: 'queue.',        category: 'admin',     requiresRestart: true,  groupKey: 'queue' },
+  { prefix: 'idempotency.',  category: 'admin',     requiresRestart: false, groupKey: 'server' },
   { prefix: 'observability.',category: 'admin',     requiresRestart: true,  groupKey: 'observability' },
   { prefix: 'cors.',         category: 'admin',     requiresRestart: true,  groupKey: 'server' },
   { prefix: 'rateLimit.',    category: 'admin',     requiresRestart: false, groupKey: 'server' },

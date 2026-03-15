@@ -27,6 +27,20 @@ services:
       - CHRONO_QUEUE_ENABLED=true
       - CHRONO_OTEL_ENABLED=${OTEL_ENABLED:-false}
       - CHRONO_OTEL_ENDPOINT=http://jaeger:4318
+      - CHRONO_OBSERVABILITY_WORKER_ENABLED=false
+      - CHRONO_OBSERVABILITY_WORKER_POLL_INTERVAL_MS=${OBS_WORKER_POLL_INTERVAL_MS:-1000}
+      - CHRONO_OBSERVABILITY_WORKER_BATCH_SIZE=${OBS_WORKER_BATCH_SIZE:-100}
+      - CHRONO_OBSERVABILITY_WORKER_MAX_ATTEMPTS=${OBS_WORKER_MAX_ATTEMPTS:-5}
+      - CHRONO_OBSERVABILITY_KAFKA_ENABLED=${OBS_KAFKA_ENABLED:-false}
+      - CHRONO_OBSERVABILITY_KAFKA_BROKERS=${OBS_KAFKA_BROKERS:-redpanda:9092}
+      - CHRONO_OBSERVABILITY_KAFKA_CLIENT_ID=${OBS_KAFKA_CLIENT_ID:-chrono-synth-os}
+      - CHRONO_OBSERVABILITY_KAFKA_TOPIC=${OBS_KAFKA_TOPIC:-observability.events}
+      - CHRONO_OBSERVABILITY_KAFKA_CONSUMER_GROUP_ID=${OBS_KAFKA_GROUP_ID:-chrono-synth-observability}
+      - CHRONO_OBSERVABILITY_KAFKA_STARTUP_WAIT_MS=${OBS_KAFKA_STARTUP_WAIT_MS:-30000}
+      - CHRONO_OBSERVABILITY_KAFKA_SSL=${OBS_KAFKA_SSL:-false}
+      - CHRONO_OBSERVABILITY_KAFKA_SASL_MECHANISM=${OBS_KAFKA_SASL_MECHANISM:-}
+      - CHRONO_OBSERVABILITY_KAFKA_USERNAME=${OBS_KAFKA_USERNAME:-}
+      - CHRONO_OBSERVABILITY_KAFKA_PASSWORD=${OBS_KAFKA_PASSWORD:-}
       - CHRONO_INTELLIGENCE_PROVIDER=rightcode
       - CHRONO_INTELLIGENCE_MODEL=gpt-5.2
       - CHRONO_INTELLIGENCE_API_KEY=${INTELLIGENCE_API_KEY:-}
@@ -65,6 +79,52 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - chrono-net
+
+  observability-worker:
+    build:
+      context: .
+      args:
+        - VERSION=${VERSION:-latest}
+    command: ["node", "dist/main-observability-worker.js"]
+    ports:
+      - "${OBS_WORKER_HTTP_PORT:-3100}:${OBS_WORKER_HTTP_PORT:-3100}"
+    environment:
+      - CHRONO_DB_DRIVER=postgres
+      - CHRONO_DB_CONNECTION_STRING=postgresql://chrono:chrono@postgres:5432/chrono_synth
+      - CHRONO_LOG_LEVEL=info
+      - CHRONO_LOG_JSON=true
+      - CHRONO_REDIS_ENABLED=false
+      - CHRONO_OBSERVABILITY_WORKER_ENABLED=true
+      - CHRONO_OBSERVABILITY_WORKER_POLL_INTERVAL_MS=${OBS_WORKER_POLL_INTERVAL_MS:-1000}
+      - CHRONO_OBSERVABILITY_WORKER_BATCH_SIZE=${OBS_WORKER_BATCH_SIZE:-100}
+      - CHRONO_OBSERVABILITY_WORKER_MAX_ATTEMPTS=${OBS_WORKER_MAX_ATTEMPTS:-5}
+      - CHRONO_OBSERVABILITY_WORKER_HTTP_ENABLED=true
+      - CHRONO_OBSERVABILITY_WORKER_HTTP_HOST=0.0.0.0
+      - CHRONO_OBSERVABILITY_WORKER_HTTP_PORT=${OBS_WORKER_HTTP_PORT:-3100}
+      - CHRONO_OBSERVABILITY_KAFKA_ENABLED=${OBS_KAFKA_ENABLED:-false}
+      - CHRONO_OBSERVABILITY_KAFKA_BROKERS=${OBS_KAFKA_BROKERS:-redpanda:9092}
+      - CHRONO_OBSERVABILITY_KAFKA_CLIENT_ID=${OBS_KAFKA_CLIENT_ID:-chrono-synth-os}
+      - CHRONO_OBSERVABILITY_KAFKA_TOPIC=${OBS_KAFKA_TOPIC:-observability.events}
+      - CHRONO_OBSERVABILITY_KAFKA_CONSUMER_GROUP_ID=${OBS_KAFKA_GROUP_ID:-chrono-synth-observability}
+      - CHRONO_OBSERVABILITY_KAFKA_STARTUP_WAIT_MS=${OBS_KAFKA_STARTUP_WAIT_MS:-30000}
+      - CHRONO_OBSERVABILITY_KAFKA_SSL=${OBS_KAFKA_SSL:-false}
+      - CHRONO_OBSERVABILITY_KAFKA_SASL_MECHANISM=${OBS_KAFKA_SASL_MECHANISM:-}
+      - CHRONO_OBSERVABILITY_KAFKA_USERNAME=${OBS_KAFKA_USERNAME:-}
+      - CHRONO_OBSERVABILITY_KAFKA_PASSWORD=${OBS_KAFKA_PASSWORD:-}
+      - CHRONO_OTEL_ENABLED=${OTEL_ENABLED:-false}
+      - CHRONO_OTEL_ENDPOINT=http://jaeger:4318
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${OBS_WORKER_HTTP_PORT:-3100}/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - chrono-net
 
@@ -115,6 +175,65 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
+    networks:
+      - chrono-net
+
+  redpanda:
+    image: redpandadata/redpanda:v24.3.6
+    profiles: ["kafka"]
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=redpanda:8082
+    ports:
+      - "9092:9092"
+      - "8082:8082"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - chrono-net
+
+  kafka-native:
+    image: apache/kafka-native:4.2.0
+    profiles: ["kafka-native"]
+    hostname: kafka-native
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-native:9092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka-native:9093
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - CLUSTER_ID=5L6g3nShT-eMCtK--X86sw
+    ports:
+      - "9092:9092"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/9092'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     networks:
       - chrono-net
 

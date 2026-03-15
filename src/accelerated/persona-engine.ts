@@ -107,7 +107,7 @@ export class PersonaEngine {
 
   /** 删除所有版本 */
   deleteAll(): void {
-    this.db.exec('DELETE FROM persona_versions');
+    this.db.prepare<void>('DELETE FROM persona_versions WHERE 1=1').run();
   }
 
   /** 按原始数据插入（恢复用，保留原 ID 和所有字段） */

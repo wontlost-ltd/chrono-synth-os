@@ -6,6 +6,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { TenantDatabase } from '../../multi-tenant/tenant-database.js';
 
 const TEST_URL = process.env.TEST_POSTGRES_URL;
 
@@ -92,6 +93,35 @@ describe('PostgreSQL 集成测试', { skip: !TEST_URL }, () => {
 
     const row = db.prepare<{ id: string }>('SELECT id FROM core_values WHERE id = ?').get('tx-val-rollback');
     assert.equal(row, undefined, '回滚后数据不应存在');
+  });
+
+  it('TenantDatabase 可正确处理带 LIMIT/OFFSET 的分页查询', () => {
+    const now = Date.now();
+    db.prepare<void>(
+      `INSERT INTO memory_nodes (
+        id, tenant_id, kind, content, valence, salience,
+        created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem_pg_a1', 'tenant-a', 'episodic', 'tenant a memory 1', 0.2, 0.9, now - 1000, now - 1000, 0, 0.0001, now - 1000, null);
+    db.prepare<void>(
+      `INSERT INTO memory_nodes (
+        id, tenant_id, kind, content, valence, salience,
+        created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem_pg_a2', 'tenant-a', 'episodic', 'tenant a memory 2', 0.1, 0.8, now, now, 0, 0.0001, now, null);
+    db.prepare<void>(
+      `INSERT INTO memory_nodes (
+        id, tenant_id, kind, content, valence, salience,
+        created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem_pg_b1', 'tenant-b', 'episodic', 'tenant b memory', 0.3, 0.7, now + 1000, now + 1000, 0, 0.0001, now + 1000, null);
+
+    const tenantDb = new TenantDatabase(db, 'tenant-a');
+    const rows = tenantDb.prepare<{ id: string }>(
+      'SELECT id FROM memory_nodes ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    ).all(1, 0);
+
+    assert.deepEqual(rows.map((row) => row.id), ['mem_pg_a2']);
   });
 
   it('占位符转换正确', async () => {

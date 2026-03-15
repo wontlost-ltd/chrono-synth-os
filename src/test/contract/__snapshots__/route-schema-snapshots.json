@@ -1,0 +1,426 @@
+{
+  "admin-config.ts": [],
+  "admin-control-plane.ts": [
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    }
+  ],
+  "admin-deployment.ts": [
+    {
+      "name": "UpdateDeploymentProfileSchema",
+      "hash": "708022d11c9a0628edef77e47372b34730474526375096bff6f3c28cdaf7cc59"
+    }
+  ],
+  "api-keys.ts": [
+    {
+      "name": "CreateApiKeySchema",
+      "hash": "05f0fa8cca8595b0e61cf2eca90174d2cf36e2dc06ecba17f5028e10b3cc64ee"
+    }
+  ],
+  "audit.ts": [
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    }
+  ],
+  "auth-oidc.ts": [
+    {
+      "name": "OidcAuthorizeQuerySchema",
+      "hash": "d62388f8cd1dd50a3b47d215a78e3716601e8a2b10d58d327daf286bccc57285"
+    },
+    {
+      "name": "OidcCallbackQuerySchema",
+      "hash": "421461fa6eeee420f666b67ad6d013e199f88348a029e0f20efe8a76ce3f88db"
+    }
+  ],
+  "auth-sso.ts": [
+    {
+      "name": "SsoAuthorizeQuerySchema",
+      "hash": "d83e06c93c2f2f31f7bfe16f27a14f18053a793480ed1f0aaccd699146794564"
+    },
+    {
+      "name": "SsoCallbackQuerySchema",
+      "hash": "421461fa6eeee420f666b67ad6d013e199f88348a029e0f20efe8a76ce3f88db"
+    }
+  ],
+  "auth.ts": [
+    {
+      "name": "LoginSchema",
+      "hash": "2c7a12523fa05046a99e7a9ab56a5558bce73dcc7efe25abba97929e90c170b2"
+    },
+    {
+      "name": "LogoutSchema",
+      "hash": "46582d028447b79e7c3b06f45aeba8814b29b119cd7444fe60314c779ad72ba8"
+    },
+    {
+      "name": "RegisterSchema",
+      "hash": "d898c3976eea77d909627d2e3eb128687ed9f0c27d77511870fa264e4c0dfd56"
+    }
+  ],
+  "avatar-autorun.ts": [
+    {
+      "name": "DriftReviewSchema",
+      "hash": "942e0e22468c18634b8ad354bebfba95ec6a1eae3a4d8da808804102e8d1827e"
+    },
+    {
+      "name": "TriggerAutorunSchema",
+      "hash": "fe9e700f7b85be9402ae8de7044eb7178111a8a48d8482267cbc9b8f63245c64"
+    },
+    {
+      "name": "UpsertAutorunConfigSchema",
+      "hash": "745371b25c09aec41b73f99391ef014f8291ab5d2787525a2faa15384b84ba81"
+    }
+  ],
+  "avatars.ts": [
+    {
+      "name": "CreateAvatarSchema",
+      "hash": "57700322100d8d79189df7fb209015e4a13b544b2ad269f2643443a4bdc2a23f"
+    },
+    {
+      "name": "UpdateAvatarSchema",
+      "hash": "7d1b789ec145cec3877a78f65e6b4437af51b320a87d612ff74dd85b00f39b5f"
+    }
+  ],
+  "billing.ts": [
+    {
+      "name": "CheckoutSchema",
+      "hash": "894529adbc0ae581513abfb943a1adb06f0bea901408c62cdb8b64bb8dd80721"
+    },
+    {
+      "name": "PortalSchema",
+      "hash": "1b5b5c5c91be1d58cab4262dbe7b56f386f702a62631a16f3f31c9af15109f9d"
+    },
+    {
+      "name": "SubscribeBillingSchema",
+      "hash": "f2a3d9fa778e3ddbcc8c41f8e246bae89a1983676421a1d293a13e649d835027"
+    }
+  ],
+  "collaboration.ts": [
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    },
+    {
+      "name": "ShareSimulationSchema",
+      "hash": "738a08b4341133197641e87f84d30880d8986afaf7597ca2796076ebbb3169ff"
+    }
+  ],
+  "conflicts.ts": [
+    {
+      "name": "ResolveConflictSchema",
+      "hash": "24f222a204319b11d6af464060a3d6eeccf577f4074168519be70e926d7e55e1"
+    }
+  ],
+  "decisions.ts": [
+    {
+      "name": "CreateDecisionSchema",
+      "hash": "581fe95b17d1f423624d306e516337915c2bd0beed8dbceaf4185aea18d55eba"
+    },
+    {
+      "name": "DecisionFeedbackSchema",
+      "hash": "c3683ecd22cd747bc6968f3da8fe1bd024d76a14bd94061dea9eba14b34d4c34"
+    },
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    }
+  ],
+  "docs.ts": [],
+  "health.ts": [],
+  "identity.ts": [
+    {
+      "name": "UpdateIdentitySchema",
+      "hash": "f2accf5ce55b5f2162006d47220242d83955d0b3fb1988cdfcb317a83408dbc4"
+    }
+  ],
+  "knowledge-sources.ts": [
+    {
+      "name": "CreateKnowledgeSourceSchema",
+      "hash": "6f0bf85e7fd16c07aaf52005e808be79127398a0ebda83f05f4ad7eba1e3ab26"
+    },
+    {
+      "name": "UpdateKnowledgeSourceSchema",
+      "hash": "a67b8a9476da8110928498b7a6544a68d3b9ec33f04157387b8ef190cc79c76a"
+    }
+  ],
+  "life-simulation-viz.ts": [
+    {
+      "name": "VisualizationQuerySchema",
+      "hash": "a1ec312e11d948219229347e855b0f1a68c530469529a785dca041de5bf692d1"
+    }
+  ],
+  "life-simulations.ts": [
+    {
+      "name": "CreateLifeSimulationSchema",
+      "hash": "dd9a730473328fbccfab7cb454fa385ef1072ecf63c827b6538b28c5131019a8"
+    },
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    },
+    {
+      "name": "StressTestRequestSchema",
+      "hash": "79da6bd1168c5e2cbe977d607a8983cda24bb2b840d39ad6717f11151f9829bc"
+    }
+  ],
+  "memories.ts": [
+    {
+      "name": "CreateMemorySchema",
+      "hash": "1a34727b0b594f961a7f685490c7d6aa411919d1366f39fb2539a96917770dd7"
+    },
+    {
+      "name": "CreatePersonaMemoryRecordSchema",
+      "hash": "57f7a3c820915977ae759a52b83e0981d71cb3a183fdc1b996542ef79f23ca77"
+    },
+    {
+      "name": "LinkMemorySchema",
+      "hash": "6549d2d8ae9290b80cb40d0a34bffd91059a448a4f26ef6e5fcd1a8fd34a2efa"
+    },
+    {
+      "name": "RelatedMemoryQuerySchema",
+      "hash": "9df470a9909a540b3758dc92d9e857b7f45105929afa5b542f3dda0078eaddea"
+    }
+  ],
+  "metrics.ts": [],
+  "mobile.ts": [
+    {
+      "name": "InstallAvatarSchema",
+      "hash": "77c9768153d29ce1287f534fde33dc59eef5d168d5232fe656b329e87352eb9d"
+    },
+    {
+      "name": "RegisterDeviceSchema",
+      "hash": "5ccc45ae891b3af6c64406b371cac5b2e72189a58cd7d7e8932f86d9a70d5515"
+    },
+    {
+      "name": "UpdatePushTokenSchema",
+      "hash": "e7d796e9c73b70ece36728682a6e23e14079415376cbb22637999d18484d2828"
+    }
+  ],
+  "narrative.ts": [
+    {
+      "name": "UpdateNarrativeSchema",
+      "hash": "76cbd8f918211ea79b025086d6e0f8d8bcd75a128315d4663da6fca2b9ee8411"
+    }
+  ],
+  "onboarding.ts": [
+    {
+      "name": "OnboardingImportSchema",
+      "hash": "0662f0e51a29b5d25913942f20c365ab0fe8aa747d6638f0cff26a38567dbb32"
+    },
+    {
+      "name": "OnboardingQuestionnaireSchema",
+      "hash": "9232321c51cd2e79afd965080724578a1ccfd9cf55d35963f37e54a957e7e5e5"
+    },
+    {
+      "name": "OnboardingStep1Schema",
+      "hash": "98fecd7b576635b18124843543b08305cb74dc40016ce961525fd0161d43d49e"
+    },
+    {
+      "name": "OnboardingStep2Schema",
+      "hash": "e63f862cdb4ca75bd2676c62a7a4d54bd7932af35994cab4424ffc655e3f8523"
+    },
+    {
+      "name": "OnboardingStep3Schema",
+      "hash": "8cfe005effc7fbbaa9d071adc915dd626f22f49d77278c4cabfeeedd7666fa29"
+    }
+  ],
+  "operations.ts": [
+    {
+      "name": "RunRegulationSchema",
+      "hash": "cf68fb14d4377937bb5f63224595f440424f86fcd75a8c819b03a051e2ad16f3"
+    }
+  ],
+  "organizations.ts": [
+    {
+      "name": "CreateOrganizationSchema",
+      "hash": "5d6fcee82218875b0feb85a2a1d4690eb12c4b2a3aa22b17e1f477ebbbe0fa89"
+    },
+    {
+      "name": "UpsertOrganizationMemberSchema",
+      "hash": "ad9a3885b0b4b1ae7bb76ac453e0d7af6be8d4cd0ad812e496ea913ca4e6316b"
+    }
+  ],
+  "persona-core.ts": [
+    {
+      "name": "AcceptMarketplaceTaskSchema",
+      "hash": "d85248cf8fc364aea5fd601fad1f05eecc89e0d69d5852bc337e9f8d7dbff073"
+    },
+    {
+      "name": "AcceptSubmittedTaskSchema",
+      "hash": "29fc88d7e1f8a0ecbb10048524f2ed18788da223b401e80551c3829d1551f25d"
+    },
+    {
+      "name": "AddGovernanceEventSchema",
+      "hash": "dcc18f097c8f52112dfdb5055e0f8b4de4e330c94494df767f132c472b9e0dc7"
+    },
+    {
+      "name": "AddPersonaKnowledgeSchema",
+      "hash": "4c905f6c4357b58e0343a39cc8bc8fb6d7ba04b7dbcf491e0316d9844a1546f5"
+    },
+    {
+      "name": "AddPersonaMemorySchema",
+      "hash": "65536766878f54190b3abcb84d14ac15a9a166538e8d17e083748b66e143609b"
+    },
+    {
+      "name": "AppealGovernanceCaseSchema",
+      "hash": "445e719a5aca57eb98ce84264c319ef6470e98371c020c67e4b1a82b19419ecb"
+    },
+    {
+      "name": "ApplyGovernanceActionSchema",
+      "hash": "31a6a078f33098e16118bf399520e7fa1fba01196a89709ef18a52b20a6daee8"
+    },
+    {
+      "name": "ApplyTaskSchema",
+      "hash": "c18ac5380859bb346c047237f5ce170da2805c57766d4b8a70d10d2145c10353"
+    },
+    {
+      "name": "ApprovePersonaTransferSchema",
+      "hash": "22f05d0de1658bf603d7c0809373e305c3f3b1731d68e01f8e196f99fcee5cea"
+    },
+    {
+      "name": "AssignTaskSchema",
+      "hash": "c18ac5380859bb346c047237f5ce170da2805c57766d4b8a70d10d2145c10353"
+    },
+    {
+      "name": "CompleteMarketplaceTaskSchema",
+      "hash": "8e7f709f378756ac8200aaa0652ee14e77e7a75186ee7f5be8c4d3a92875e36c"
+    },
+    {
+      "name": "CreatePersonaCoreForkSchema",
+      "hash": "d3a5272070f1b467698e46996c4fcb079680e877c780ce7f27e08332bb72e63d"
+    },
+    {
+      "name": "CreatePersonaCoreSchema",
+      "hash": "9ea5aa79b1d13235288b925aa3bae04773c501ab3e89b8b7e5ecd48a906ba954"
+    },
+    {
+      "name": "CreateRuntimeSessionSchema",
+      "hash": "f2170abab01ac885b0d5fe86cbb83f02991e525818d7eaf658865fe0e7128ab4"
+    },
+    {
+      "name": "DeceasePersonaSchema",
+      "hash": "5575c385e82fe07580c614e8fe0c490ba3079a0d13dad29e878244e6c5cfeebd"
+    },
+    {
+      "name": "DisputeTaskSchema",
+      "hash": "6c82d8f7bedf2c79c75abf173edf2fe5407f1caed60cf1f8d7d6235246823dd9"
+    },
+    {
+      "name": "EvaluatePersonaLifecycleSchema",
+      "hash": "6e2659a0150ea90e5a98d745a2b63275df57b30d9f509ee3e2c1dfb4817fd44a"
+    },
+    {
+      "name": "OpenGovernanceCaseSchema",
+      "hash": "7bc1cd26e95841b9ebe882d87f4e0e2669a16a557960400de88b94df9ca5d274"
+    },
+    {
+      "name": "PersonaGraphQuerySchema",
+      "hash": "5aa024f2e3d8b7f40bd10a61dbfb0171ab507aefb1444cbd7e123bdfa099943e"
+    },
+    {
+      "name": "PersonaMemoryListQuerySchema",
+      "hash": "6dc8ef5d8c6675a52d07bb397a7546079ae0ec9bdce788e7f1da3123ec53917e"
+    },
+    {
+      "name": "PersonaMemorySearchSchema",
+      "hash": "fe271ab60ecc3b971a20b52daa77d7d38c4defe9133b9cbe5d4c0fbde2ef1f1b"
+    },
+    {
+      "name": "PublishMarketplaceTaskSchema",
+      "hash": "494ef1c0195e94a8b4535a1ebd0aabb0a4c495c23b9a01086b40b31ecc9b2d8c"
+    },
+    {
+      "name": "RejectTaskSchema",
+      "hash": "6c82d8f7bedf2c79c75abf173edf2fe5407f1caed60cf1f8d7d6235246823dd9"
+    },
+    {
+      "name": "SubmitTaskResultSchema",
+      "hash": "0b623493db0ec300e84dee6fa555a0fdfe62b1a1a203aaa443e7c4becc8baf54"
+    },
+    {
+      "name": "TopPersonasQuerySchema",
+      "hash": "8914c65a11782519fc0efa687e0611dcc75eb13f0dd32800468dedcd5a1cfe1a"
+    },
+    {
+      "name": "TransferPersonaSchema",
+      "hash": "e7f1ec8c57c8a7e75c49c0220d4fa7f7721a5e915d1c73891826c1e83a4ff7af"
+    },
+    {
+      "name": "WalletPayoutSchema",
+      "hash": "2ffd621b45396af017feddf7622094f474db222d2031b632f619cda00c6fc8db"
+    },
+    {
+      "name": "WalletSettlementTaskSchema",
+      "hash": "25257ed64bb5797c9996ee4bcea6b10f6b3076b925f94751f9cadc53a9a7284b"
+    }
+  ],
+  "personas.ts": [
+    {
+      "name": "ForkPersonaSchema",
+      "hash": "02ea03eef1adcb378ec4c7af51bab98f7648f41e434de64152f48aea640272e4"
+    },
+    {
+      "name": "SimulatePersonaSchema",
+      "hash": "9ef789c791ed167239baf13bfa1d84bf2141a1d87491b2576cf4ecb8700d950c"
+    },
+    {
+      "name": "UpdatePersonaStatusSchema",
+      "hash": "ec9c82c5a64d6724d7e5f628be068e1c7294d06309e96346cf67f85156187473"
+    }
+  ],
+  "pos.ts": [
+    {
+      "name": "CreateSurvivalAnchorSchema",
+      "hash": "0973900e78585c7fee16bf17b7057cf10acba88bd4d6afe0e9e47fe66e1b8f35"
+    },
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    },
+    {
+      "name": "UpdateCognitiveModelSchema",
+      "hash": "c543d0b24acd70bc4318ea947384b353816aa639ffdb5a8f053a4543fc64a76e"
+    },
+    {
+      "name": "UpdateDecisionStyleSchema",
+      "hash": "fb5b7cac80061b0ea3f4e0e1dfcd975025bac5bad6d0fe3a0c014341ca63418f"
+    },
+    {
+      "name": "UpdateSurvivalAnchorSchema",
+      "hash": "5dbeb1778905fa1f08b84eed6ca6ea30de650b77a2352a5fe54fc62c6d2706d4"
+    }
+  ],
+  "privacy.ts": [
+    {
+      "name": "PaginationQuerySchema",
+      "hash": "ae9cd524f105d54b1caa9dd5fc0ee2f7fdf83fcc765d225866268c124531f335"
+    }
+  ],
+  "scim.ts": [
+    {
+      "name": "ScimCreateUserSchema",
+      "hash": "b5062488d442ebed147d8d8a4f145585db622d4ab4a201fa96021a57dc65677a"
+    }
+  ],
+  "snapshots.ts": [
+    {
+      "name": "CreateSnapshotSchema",
+      "hash": "12ae1d96d504da0406be14fd96734eb37a687b75a303dd449964aa14e915cc07"
+    }
+  ],
+  "sse.ts": [],
+  "tasks.ts": [],
+  "users.ts": [],
+  "values.ts": [
+    {
+      "name": "CreateValueSchema",
+      "hash": "75510c4ca53da66ccc6f58c11f8c89fb2d165bf914e233eeec3cc2af8986a38b"
+    },
+    {
+      "name": "UpdateValueSchema",
+      "hash": "1cb787be092698c2027d15e3db50d6a26158fe20becfbefc83d77ddfd9b91b70"
+    }
+  ],
+  "visualization.ts": []
+}

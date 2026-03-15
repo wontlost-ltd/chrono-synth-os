@@ -85,7 +85,7 @@ export class AvatarAutorunService {
     const taskId = this.queue.enqueue(
       tenantId,
       'avatar_autorun',
-      JSON.stringify({ runId: run.id, configId }),
+      { runId: run.id, configId },
     );
 
     this.autorunStore.updateRunTaskId(run.id, taskId);

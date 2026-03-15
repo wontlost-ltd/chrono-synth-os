@@ -2,9 +2,11 @@
 .claude/
 node_modules/
 dist/
+dist-test/
 *.tsbuildinfo
 .DS_Store
 .idea/
 *.iml
 .env
 *.db
+backups/

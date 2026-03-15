@@ -11,6 +11,8 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
 import type { JwtPayload } from '../../types/auth.js';
+import { IdentityService } from '../../identity/identity-service.js';
+import { AvatarService } from '../../identity/avatar-service.js';
 import { RegisterDeviceSchema, UpdatePushTokenSchema, InstallAvatarSchema } from '../schemas/api-schemas.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { DeviceAvatarService } from '../../identity/device-avatar-service.js';
@@ -30,6 +32,16 @@ interface DeviceRow {
 
 export function registerMobileRoutes(app: FastifyInstance, db: IDatabase): void {
   const deviceAvatarService = new DeviceAvatarService(db);
+  const identityService = new IdentityService(db);
+  const avatarService = new AvatarService(db);
+
+  function requireOwnedAvatar(user: JwtPayload, avatarId: string) {
+    const identity = identityService.getByUser(user.sub);
+    if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
+    const avatar = avatarService.getByIdForIdentity(avatarId, identity.id);
+    if (!avatar) throw new NotFoundError('分身不存在', ErrorCode.NOT_FOUND_AVATAR);
+    return avatar;
+  }
 
   /* POST /api/v1/devices — 注册设备（幂等：同一 device_uid 更新而非新增） */
   app.post('/api/v1/devices', async (request) => {
@@ -127,6 +139,7 @@ export function registerMobileRoutes(app: FastifyInstance, db: IDatabase): void 
       'SELECT * FROM devices WHERE id = ? AND user_id = ?',
     ).get(id, user.sub);
     if (!device) throw new NotFoundError('设备不存在', ErrorCode.NOT_FOUND_DEVICE);
+    requireOwnedAvatar(user, avatarId);
 
     const da = deviceAvatarService.install(id, avatarId);
     return reply.status(201).send({ data: da });
@@ -141,6 +154,7 @@ export function registerMobileRoutes(app: FastifyInstance, db: IDatabase): void 
       'SELECT * FROM devices WHERE id = ? AND user_id = ?',
     ).get(id, user.sub);
     if (!device) throw new NotFoundError('设备不存在', ErrorCode.NOT_FOUND_DEVICE);
+    requireOwnedAvatar(user, avatarId);
 
     const ok = deviceAvatarService.uninstall(id, avatarId);
     if (!ok) throw new NotFoundError('该分身未安装在此设备', ErrorCode.NOT_FOUND_AVATAR);
@@ -156,6 +170,7 @@ export function registerMobileRoutes(app: FastifyInstance, db: IDatabase): void 
       'SELECT * FROM devices WHERE id = ? AND user_id = ?',
     ).get(id, user.sub);
     if (!device) throw new NotFoundError('设备不存在', ErrorCode.NOT_FOUND_DEVICE);
+    requireOwnedAvatar(user, avatarId);
 
     const ok = deviceAvatarService.activate(id, avatarId);
     if (!ok) throw new NotFoundError('该分身未安装在此设备', ErrorCode.NOT_FOUND_AVATAR);
@@ -172,8 +187,10 @@ export function registerMobileRoutes(app: FastifyInstance, db: IDatabase): void 
     ).get(id, user.sub);
     if (!device) throw new NotFoundError('设备不存在', ErrorCode.NOT_FOUND_DEVICE);
 
+    const identity = identityService.getByUser(user.sub);
+    if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     const avatars = deviceAvatarService.listByDevice(id);
-    return { data: avatars };
+    return { data: avatars.filter((avatar) => avatar.identityId === identity.id) };
   });
 
   /* POST /api/v1/devices/:id/push-test — 发送测试推送（开发调试用） */

@@ -1,0 +1,32 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: observability.events
+  labels:
+    app.kubernetes.io/name: chrono-synth-os
+    chrono-synth.io/purpose: observability
+spec:
+  partitions: 12
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    min.insync.replicas: 2
+    retention.ms: 604800000
+    segment.ms: 3600000
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: observability.events.dlq
+  labels:
+    app.kubernetes.io/name: chrono-synth-os
+    chrono-synth.io/purpose: observability
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    cleanup.policy: delete
+    compression.type: lz4
+    min.insync.replicas: 2
+    retention.ms: 1209600000

@@ -5,6 +5,7 @@ import { createApp, serverState } from '../../server/index.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { loadConfig } from '../../config/schema.js';
+import { IdentityService } from '../../identity/identity-service.js';
 import type { FastifyInstance } from 'fastify';
 
 describe('API 集成测试', () => {
@@ -535,6 +536,7 @@ describe('身份与分身 API', () => {
   });
 
   let accessToken: string;
+  let tenantId: string;
 
   beforeEach(async () => {
     const clock = new TestClock(1000);
@@ -551,9 +553,32 @@ describe('身份与分身 API', () => {
     });
     const regBody = JSON.parse(regRes.body);
     accessToken = regBody.data.accessToken;
+    tenantId = regBody.data.tenantId;
   });
 
   afterEach(() => { os.close(); });
+
+  function signUserToken(userId: string, role = 'member'): string {
+    return (app as FastifyInstance & {
+      jwt: { sign: (payload: Record<string, unknown>) => string };
+    }).jwt.sign({
+      sub: userId,
+      tenantId,
+      role,
+      planId: 'free',
+    });
+  }
+
+  function seedTenantUser(userId: string, email: string): string {
+    const now = Date.now();
+    os.getDatabase().prepare<void>(
+      `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+       VALUES (?, ?, ?, 'member', ?, ?, ?)`,
+    ).run(userId, email, 'hash', tenantId, now, now);
+    const identityService = new IdentityService(os.getDatabase());
+    identityService.ensureForUser(userId, tenantId, email.split('@')[0]!);
+    return signUserToken(userId);
+  }
 
   it('GET /api/v1/identity 返回注册时创建的身份', async () => {
     const res = await app.inject({
@@ -694,6 +719,107 @@ describe('身份与分身 API', () => {
     assert.ok(body.data.L3);
     assert.ok(body.data.L4);
   });
+
+  it('同租户其他成员拥有独立 identity/avatar 生命周期，且不能访问彼此 avatar', async () => {
+    const otherToken = seedTenantUser('user_same_tenant_2', 'other@example.com');
+
+    const ownListRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    const otherListRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+
+    assert.equal(ownListRes.statusCode, 200);
+    assert.equal(otherListRes.statusCode, 200);
+    const ownAvatarId = JSON.parse(ownListRes.body).data[0].id as string;
+    const otherAvatarId = JSON.parse(otherListRes.body).data[0].id as string;
+    assert.notEqual(ownAvatarId, otherAvatarId);
+
+    const identities = os.getDatabase().prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM identities WHERE tenant_id = ?',
+    ).get(tenantId);
+    assert.equal(identities?.count, 2);
+
+    const forbiddenGet = await app.inject({
+      method: 'GET',
+      url: `/api/v1/avatars/${otherAvatarId}`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(forbiddenGet.statusCode, 404);
+
+    const forbiddenPatch = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/avatars/${otherAvatarId}`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { label: 'should-fail' },
+    });
+    assert.equal(forbiddenPatch.statusCode, 404);
+
+    const forbiddenProjection = await app.inject({
+      method: 'GET',
+      url: `/api/v1/avatars/${otherAvatarId}/projection`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(forbiddenProjection.statusCode, 404);
+  });
+
+  it('设备绑定同样按 identity 隔离，不能安装其他成员的 avatar', async () => {
+    const otherToken = seedTenantUser('user_same_tenant_device', 'device-other@example.com');
+
+    const deviceRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { deviceUid: 'device-uid-1', platform: 'web', pushToken: 'push-1', appVersion: '1.0.0' },
+    });
+    assert.equal(deviceRes.statusCode, 200);
+    const deviceId = JSON.parse(deviceRes.body).data.id as string;
+
+    const ownListRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    const otherListRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/avatars',
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    const ownAvatarId = JSON.parse(ownListRes.body).data[0].id as string;
+    const otherAvatarId = JSON.parse(otherListRes.body).data[0].id as string;
+
+    const installOtherRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/devices/${deviceId}/avatars`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { avatarId: otherAvatarId },
+    });
+    assert.equal(installOtherRes.statusCode, 404);
+
+    const installOwnRes = await app.inject({
+      method: 'POST',
+      url: `/api/v1/devices/${deviceId}/avatars`,
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { avatarId: ownAvatarId },
+    });
+    assert.equal(installOwnRes.statusCode, 201);
+
+    const listInstalledRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/devices/${deviceId}/avatars`,
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    assert.equal(listInstalledRes.statusCode, 200);
+    assert.deepEqual(
+      JSON.parse(listInstalledRes.body).data.map((item: { id: string }) => item.id),
+      [ownAvatarId],
+    );
+  });
 });
 
 describe('API Key 认证', () => {
@@ -751,6 +877,27 @@ describe('API Key 认证', () => {
     assert.equal(res.statusCode, 200);
   });
 
+  it('API Key 不能访问 Persona Core 用户路由', async () => {
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/persona-core',
+      headers: { 'x-api-key': 'test-key-123' },
+    });
+    assert.equal(listRes.statusCode, 403);
+    const listBody = JSON.parse(listRes.body);
+    assert.equal(listBody.code, 'AUTH_INSUFFICIENT_ROLE');
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/persona-core',
+      headers: { 'x-api-key': 'test-key-123' },
+      payload: { displayName: 'API Key Persona' },
+    });
+    assert.equal(createRes.statusCode, 403);
+    const createBody = JSON.parse(createRes.body);
+    assert.equal(createBody.code, 'AUTH_INSUFFICIENT_ROLE');
+  });
+
   it('公共路径不需要 API Key', async () => {
     const healthRes = await app.inject({ method: 'GET', url: '/healthz' });
     assert.equal(healthRes.statusCode, 200);
@@ -769,5 +916,39 @@ describe('API Key 认证', () => {
       headers: { 'x-api-key': 'test-key-123' },
     });
     assert.equal(withKeyRes.statusCode, 200);
+  });
+
+  it('/metrics 支持 Bearer scrape key 且不放宽普通 Bearer API 访问', async () => {
+    await app.close();
+    const bearerMetricsConfig = loadConfig({
+      rateLimit: { max: 10_000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      auth: {
+        enabled: true,
+        apiKeys: [],
+        metricsApiKeys: ['metrics-scrape-key'],
+        requireDbKeys: true,
+      },
+      jwt: {
+        enabled: true,
+        secret: 'metrics-bearer-secret-at-least-32-chars',
+        issuer: 'test',
+      },
+    });
+    app = await createApp({ os, config: bearerMetricsConfig });
+
+    const metricsRes = await app.inject({
+      method: 'GET',
+      url: '/metrics',
+      headers: { authorization: 'Bearer metrics-scrape-key' },
+    });
+    assert.equal(metricsRes.statusCode, 200);
+
+    const apiRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/values',
+      headers: { authorization: 'Bearer metrics-scrape-key' },
+    });
+    assert.equal(apiRes.statusCode, 401);
   });
 });

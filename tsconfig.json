@@ -1,25 +1,14 @@
 {
-  "compilerOptions": {
-    "target": "ES2024",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2024"],
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "exactOptionalPropertyTypes": false
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.src.json" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/contracts/tsconfig.test.json" },
+    { "path": "./packages/kernel" },
+    { "path": "./packages/data-plane" },
+    { "path": "./packages/sync-engine" },
+    { "path": "./packages/sync-engine/tsconfig.test.json" },
+    { "path": "./packages/design-tokens" },
+    { "path": "./packages/kernel-testkit" }
+  ]
 }

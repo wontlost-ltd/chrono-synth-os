@@ -14,6 +14,11 @@ import type { FastifyInstance } from 'fastify';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
+function normalizeSetCookieHeader(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) return value;
+  return typeof value === 'string' ? [value] : [];
+}
+
 describe('认证 API 集成测试', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
@@ -53,6 +58,68 @@ describe('认证 API 集成测试', () => {
       assert.ok(body.data.expiresIn);
     });
 
+    it('跨站前端来源时 refresh cookie 使用 SameSite=None', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          origin: 'https://app.other-site.test',
+          host: 'api.example.test',
+          'x-forwarded-proto': 'https',
+        },
+        payload: { email: 'cross-site@example.com', password: 'password123' },
+      });
+
+      assert.equal(res.statusCode, 201);
+      const setCookie = Array.isArray(res.headers['set-cookie']) ? res.headers['set-cookie'][0] : res.headers['set-cookie'];
+      if (typeof setCookie !== 'string') {
+        assert.fail('expected Set-Cookie header');
+      }
+      assert.match(setCookie, /SameSite=None/);
+      assert.match(setCookie, /; Secure/);
+    });
+
+    it('localhost 不同端口调试时 refresh cookie 保持 SameSite=Lax', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          origin: 'http://localhost:5173',
+          host: 'localhost:3000',
+        },
+        payload: { email: 'localhost@example.com', password: 'password123' },
+      });
+
+      assert.equal(res.statusCode, 201);
+      const setCookie = Array.isArray(res.headers['set-cookie']) ? res.headers['set-cookie'][0] : res.headers['set-cookie'];
+      if (typeof setCookie !== 'string') {
+        assert.fail('expected Set-Cookie header');
+      }
+      assert.match(setCookie, /SameSite=Lax/);
+      assert.doesNotMatch(setCookie, /; Secure/);
+    });
+
+    it('同站点子域名在 HTTP 下仍使用 SameSite=Lax', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          origin: 'http://app.example.test:5173',
+          host: 'api.example.test:3000',
+          'x-forwarded-proto': 'http',
+        },
+        payload: { email: 'same-site-subdomain@example.com', password: 'password123' },
+      });
+
+      assert.equal(res.statusCode, 201);
+      const setCookie = Array.isArray(res.headers['set-cookie']) ? res.headers['set-cookie'][0] : res.headers['set-cookie'];
+      if (typeof setCookie !== 'string') {
+        assert.fail('expected Set-Cookie header');
+      }
+      assert.match(setCookie, /SameSite=Lax/);
+      assert.doesNotMatch(setCookie, /; Secure/);
+    });
+
     it('重复邮箱返回 409', async () => {
       await app.inject({
         method: 'POST',
@@ -83,6 +150,60 @@ describe('认证 API 集成测试', () => {
         payload: { email: 'short@example.com', password: '123' },
       });
       assert.equal(res.statusCode, 400);
+    });
+
+    it('相同 Idempotency-Key 的重复注册返回缓存响应并重放 refresh cookie', async () => {
+      const first = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          'idempotency-key': 'register-idem-1',
+        },
+        payload: { email: 'idem@example.com', password: 'password123' },
+      });
+      const second = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          'idempotency-key': 'register-idem-1',
+        },
+        payload: { email: 'idem@example.com', password: 'password123' },
+      });
+
+      assert.equal(first.statusCode, 201);
+      assert.equal(second.statusCode, 201);
+      assert.equal(second.headers['x-idempotent-replayed'], 'true');
+      assert.equal(second.body, first.body);
+      assert.deepEqual(
+        normalizeSetCookieHeader(second.headers['set-cookie'] as string | string[] | undefined),
+        normalizeSetCookieHeader(first.headers['set-cookie'] as string | string[] | undefined),
+      );
+    });
+
+    it('同一个 Idempotency-Key 不能复用到不同请求', async () => {
+      const first = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          'idempotency-key': 'register-idem-2',
+        },
+        payload: { email: 'idem-mismatch@example.com', password: 'password123' },
+      });
+      assert.equal(first.statusCode, 201);
+
+      const second = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        headers: {
+          'idempotency-key': 'register-idem-2',
+        },
+        payload: { email: 'idem-other@example.com', password: 'password123' },
+      });
+
+      assert.equal(second.statusCode, 409);
+      const body = JSON.parse(second.body);
+      assert.equal(body.error, 'StateError');
+      assert.match(body.message, /Idempotency-Key/);
     });
   });
 
