@@ -2,17 +2,9 @@ import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastif
 import type { IDatabase } from '../../storage/database.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
+import { ORGANIZATION_ROLES, type OrganizationRole } from '../../enterprise/organization-roles.js';
 
-export const ORGANIZATION_ROLES = [
-  'org_admin',
-  'billing_admin',
-  'persona_operator',
-  'marketplace_manager',
-  'auditor',
-  'viewer',
-] as const;
-
-export type OrganizationRole = typeof ORGANIZATION_ROLES[number];
+export { ORGANIZATION_ROLES, type OrganizationRole };
 
 export interface OrganizationMembershipContext {
   membershipId: string;
