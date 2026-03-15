@@ -14,6 +14,24 @@ export const chronoDesignTokens = {
     focusRing: '#7a3419',
     success: '#2f6b3b',
     danger: '#9f2621',
+    /** 同步状态色 — 映射 RuntimeSyncStateV1 的每个状态 */
+    status: {
+      idle: '#2f6b3b',
+      pulling: '#0369A1',
+      merging: '#0369A1',
+      pushing: '#0369A1',
+      paused: '#6B7280',
+      offline: '#6B7280',
+      conflicted: '#C2410C',
+      error: '#9f2621',
+      unconfigured: '#6B7280',
+      disabled: '#6B7280',
+    },
+    surface: {
+      default: '#FFFDF8',
+      subdued: '#F7F7F2',
+      critical: '#FEF2F2',
+    },
   },
   space: {
     xs: 4,
@@ -34,11 +52,30 @@ export const chronoDesignTokens = {
     sm: 1,
     md: 2,
   },
+  border: {
+    focusRing: {
+      width: 2,
+      offset: 2,
+      color: '#7a3419',
+    },
+  },
   motion: {
     fast: 120,
     normal: 180,
     slow: 280,
     reduced: 0,
+    syncPulseMs: 1200,
+    conflictAttentionMs: 300,
+  },
+  icon: {
+    syncSpinner: 'sync-spinner',
+    offlineCloud: 'cloud-offline',
+    conflictWarning: 'alert-triangle',
+    errorAlert: 'alert-circle',
+    pausedClock: 'clock-pause',
+    checkCircle: 'check-circle',
+    settingsGear: 'settings',
+    disabledSlash: 'slash',
   },
   typography: {
     family: {
