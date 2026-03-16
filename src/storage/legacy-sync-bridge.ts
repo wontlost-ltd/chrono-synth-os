@@ -81,6 +81,16 @@ export function clearRegistries(): void {
   commandRegistry.clear();
 }
 
+/** 查找已注册的查询执行器 */
+export function resolveQueryExecutor(kind: string): QueryExecutor | undefined {
+  return queryRegistry.get(kind);
+}
+
+/** 查找已注册的命令执行器 */
+export function resolveCommandExecutor(kind: string): CommandExecutor | undefined {
+  return commandRegistry.get(kind);
+}
+
 /** 事务已提交但事件发布失败的专用错误 — 消费方据此判断不应重试写入 */
 export class WriteCommittedPublishError extends Error {
   readonly committed = true as const;

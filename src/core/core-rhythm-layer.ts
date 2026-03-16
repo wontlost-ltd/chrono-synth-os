@@ -20,6 +20,7 @@ import { DecisionStyleStore } from './decision-style-store.js';
 import { NarrativeStore } from './narrative-store.js';
 import { SurvivalAnchorStore, type SurvivalAnchorUpdate } from './survival-anchor-store.js';
 import { ValueStore } from './value-store.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 const LAYER = 'CoreRhythm';
 
@@ -40,6 +41,7 @@ export class CoreRhythmLayer {
     encryption?: FieldEncryption,
     private readonly tenantId?: string,
   ) {
+    registerCoreSelfExecutors();
     this.values = new ValueStore(db, clock);
     this.memories = new CognitiveMemoryGraph(db, clock, cognitionConfig, encryption);
     this.narrative = new NarrativeStore(db, clock, tenantId);

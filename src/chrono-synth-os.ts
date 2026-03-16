@@ -16,6 +16,7 @@ import { LifeSimulationEngine, type LifeSimEngineConfig } from './simulation/lif
 import { LifeSimulationService } from './simulation/life-simulation-service.js';
 import { LifeSimulationStore } from './storage/life-simulation-store.js';
 import { type IDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';
+import { registerCoreSelfExecutors } from './storage/executors/index.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
 import type { AllocationStrategy, ResourceAllocation } from './types/meta-regulation.js';
@@ -94,6 +95,9 @@ export class ChronoSynthOS {
     const encryption = config.encryptionConfig?.enabled
       ? new FieldEncryption(config.encryptionConfig)
       : undefined;
+
+    /* 注册内核 SQL 执行器 */
+    registerCoreSelfExecutors();
 
     /* 初始化三层 */
     this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig, encryption, this.tenantId);

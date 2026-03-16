@@ -6,6 +6,7 @@ import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
 import { SurvivalAnchorStore } from '../../core/survival-anchor-store.js';
+import { ValueStore } from '../../core/value-store.js';
 import { DecisionStyleStore, DEFAULT_DECISION_STYLE } from '../../core/decision-style-store.js';
 import { CognitiveModelStore } from '../../core/cognitive-model-store.js';
 import { compilePersonaState, summarizeForPrompt } from '../../intelligence/persona-state.js';
@@ -18,6 +19,18 @@ describe('P-OS v0.1 五层人格模型', () => {
     db = createMemoryDatabase();
     runMigrations(db);
     clock = new TestClock(1000);
+  });
+
+  describe('ValueStore 直接构造自注册', () => {
+    it('无需外部注册即可直接创建和查询', () => {
+      const store = new ValueStore(db, clock);
+      const val = store.create('诚实', 0.8);
+      assert.ok(val.id.startsWith('val_'));
+      assert.equal(val.label, '诚实');
+      assert.equal(val.weight, 0.8);
+      const found = store.getById(val.id);
+      assert.deepEqual(found, val);
+    });
   });
 
   describe('SurvivalAnchorStore (L0)', () => {

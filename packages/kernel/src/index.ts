@@ -38,6 +38,7 @@ export type {
   EventPublisher,
 } from './ports/host-adapters.js';
 export type { KeyHandle, KeyRotationResult, KeyResolver } from './ports/key-resolver.js';
+export type { SyncReadUnitOfWork, SyncWriteUnitOfWork } from './ports/sync-unit-of-work.js';
 
 export * from './domain/identity/index.js';
 export * from './domain/persona/index.js';
