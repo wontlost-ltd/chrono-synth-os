@@ -1,43 +1,37 @@
 /**
- * 叙事存储：维护核心自我的叙事摘要
+ * 叙事存储 — 薄适配器，委托 kernel 领域服务
  */
 
 import type { IDatabase } from '../storage/database.js';
 import type { Clock } from '../utils/clock.js';
-
-interface NarrativeRow {
-  tenant_id: string;
-  content: string;
-  updated_at: number;
-}
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { getNarrative, setNarrative } from '@chrono/kernel';
+import type { KernelClock } from '@chrono/kernel';
 
 export class NarrativeStore {
   private readonly tenantId: string;
+  private readonly kernelClock: KernelClock;
 
   constructor(
     private readonly db: IDatabase,
-    private readonly clock: Clock,
+    clock: Clock,
     tenantId = 'default',
   ) {
+    registerCoreSelfExecutors();
     this.tenantId = tenantId;
+    this.kernelClock = { now: () => clock.now() };
   }
 
   /** 获取当前叙事 */
   get(): string {
-    const row = this.db.prepare<NarrativeRow>(
-      'SELECT content FROM narrative WHERE tenant_id = ?',
-    ).get(this.tenantId);
-    return row?.content ?? '';
+    const tx = directUnitOfWork(this.db);
+    return getNarrative(tx, this.tenantId);
   }
 
   /** 设置叙事内容；返回旧叙事 */
   set(content: string): string {
-    const previous = this.get();
-    const now = this.clock.now();
-    this.db.prepare<void>(
-      `INSERT INTO narrative (tenant_id, content, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(tenant_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-    ).run(this.tenantId, content, now);
-    return previous;
+    const tx = directUnitOfWork(this.db);
+    return setNarrative(tx, this.kernelClock, this.tenantId, content);
   }
 }

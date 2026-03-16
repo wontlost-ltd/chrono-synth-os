@@ -1,97 +1,38 @@
 /**
- * 认知模型存储：维护 L3 认知结构（单例）
+ * 认知模型存储 — 薄适配器，委托 kernel 领域服务
  */
 
 import type { IDatabase } from '../storage/database.js';
-import { mapToJson, jsonToMap } from '../storage/serialization.js';
 import type { CognitiveModel } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
-
-interface ModelRow {
-  tenant_id: string;
-  model_json: string;
-  updated_at: number;
-}
-
-interface ModelPayload {
-  beliefs: string;
-  biasWeights: string;
-  attributionStyle: number;
-  growthMindset: number;
-}
-
-function buildDefault(): CognitiveModel {
-  return {
-    beliefs: new Map<string, number>(),
-    biasWeights: new Map<string, number>(),
-    attributionStyle: 0.5,
-    growthMindset: 0.5,
-    updatedAt: 0,
-  };
-}
-
-function validate(model: CognitiveModel): void {
-  const checks: Array<[string, number]> = [
-    ['attributionStyle', model.attributionStyle],
-    ['growthMindset', model.growthMindset],
-  ];
-  for (const [name, val] of checks) {
-    if (!Number.isFinite(val) || val < 0 || val > 1) {
-      throw new RangeError(`${name} 必须在 0-1 之间，收到 ${val}`);
-    }
-  }
-}
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { getCognitiveModel, setCognitiveModel } from '@chrono/kernel';
+import type { KernelClock } from '@chrono/kernel';
 
 export class CognitiveModelStore {
   private readonly tenantId: string;
+  private readonly kernelClock: KernelClock;
 
   constructor(
     private readonly db: IDatabase,
-    private readonly clock: Clock,
+    clock: Clock,
     tenantId = 'default',
   ) {
+    registerCoreSelfExecutors();
     this.tenantId = tenantId;
+    this.kernelClock = { now: () => clock.now() };
   }
 
   /** 获取认知模型（未设置时返回默认值） */
   get(): CognitiveModel {
-    const row = this.db.prepare<ModelRow>(
-      'SELECT model_json, updated_at FROM cognitive_model WHERE tenant_id = ?',
-    ).get(this.tenantId);
-    if (!row) return buildDefault();
-    const payload = JSON.parse(row.model_json) as Partial<ModelPayload>;
-    const defaults = buildDefault();
-    return {
-      beliefs: payload.beliefs ? jsonToMap<number>(payload.beliefs) : defaults.beliefs,
-      biasWeights: payload.biasWeights ? jsonToMap<number>(payload.biasWeights) : defaults.biasWeights,
-      attributionStyle: payload.attributionStyle ?? defaults.attributionStyle,
-      growthMindset: payload.growthMindset ?? defaults.growthMindset,
-      updatedAt: row.updated_at,
-    };
+    const tx = directUnitOfWork(this.db);
+    return getCognitiveModel(tx, this.tenantId);
   }
 
   /** 设置认知模型（合并更新） */
   set(patch: Partial<CognitiveModel>): CognitiveModel {
-    const current = this.get();
-    const now = this.clock.now();
-    const next: CognitiveModel = {
-      beliefs: patch.beliefs ?? current.beliefs,
-      biasWeights: patch.biasWeights ?? current.biasWeights,
-      attributionStyle: patch.attributionStyle ?? current.attributionStyle,
-      growthMindset: patch.growthMindset ?? current.growthMindset,
-      updatedAt: now,
-    };
-    validate(next);
-    const payload: ModelPayload = {
-      beliefs: mapToJson(next.beliefs),
-      biasWeights: mapToJson(next.biasWeights),
-      attributionStyle: next.attributionStyle,
-      growthMindset: next.growthMindset,
-    };
-    this.db.prepare<void>(
-      `INSERT INTO cognitive_model (tenant_id, model_json, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(tenant_id) DO UPDATE SET model_json = excluded.model_json, updated_at = excluded.updated_at`,
-    ).run(this.tenantId, JSON.stringify(payload), now);
-    return next;
+    const tx = directUnitOfWork(this.db);
+    return setCognitiveModel(tx, this.kernelClock, this.tenantId, patch);
   }
 }
