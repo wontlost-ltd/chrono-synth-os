@@ -5,6 +5,7 @@
     { "path": "./packages/contracts" },
     { "path": "./packages/contracts/tsconfig.test.json" },
     { "path": "./packages/kernel" },
+    { "path": "./packages/kernel/tsconfig.test.json" },
     { "path": "./packages/data-plane" },
     { "path": "./packages/sync-engine" },
     { "path": "./packages/sync-engine/tsconfig.test.json" },
