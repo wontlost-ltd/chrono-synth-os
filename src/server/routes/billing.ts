@@ -17,7 +17,7 @@ import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import { BillingService } from '../../billing/billing-service.js';
 import { SettlementReconciliationService } from '../../billing/settlement-reconciliation-service.js';
-import { PLANS, getPlanLimits, syncPlanToQuota } from '../../billing/plans.js';
+import { PLANS, getPlanLimits } from '../../billing/plans.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import {
   createCheckoutSession,
@@ -27,23 +27,11 @@ import {
 } from '../../billing/stripe-client.js';
 import { listAddOns, getAddOnById, seedDefaultAddOns } from '../../billing/add-ons.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
+import { StripeWebhookService } from '../../billing/stripe-webhook-service.js';
 import { CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 import { ValidationError, StateError, ErrorCode } from '../../errors/index.js';
 
-interface SubscriptionRow {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly stripe_customer_id: string | null;
-  readonly stripe_subscription_id: string | null;
-  readonly plan_id: string;
-  readonly status: string;
-  readonly current_period_start: number;
-  readonly current_period_end: number;
-}
-
-/** Stripe price ID → 内部 plan ID 映射 */
-const PRICE_TO_PLAN = new Map(PLANS.filter(p => p.stripePriceId).map(p => [p.stripePriceId, p.id]));
 const VALID_PRICE_IDS = new Set(PLANS.filter(p => p.stripePriceId).map(p => p.stripePriceId));
 
 /** 校验 redirect URL：仅允许相对路径、同源地址或 CORS 允许的源 */
@@ -61,8 +49,11 @@ function isSafeRedirectUrl(url: string, allowedOriginSet: Set<string>): boolean 
 const inflightCustomerCreation = new Map<string, Promise<string>>();
 
 async function ensureStripeCustomer(
-  db: IDatabase, config: AppConfig, tenantId: string, sub: SubscriptionRow | undefined,
+  db: IDatabase, config: AppConfig, webhookService: StripeWebhookService, tenantId: string,
 ): Promise<string> {
+  const sub = webhookService.getLatestSubscription(tenantId);
+  if (sub?.stripe_customer_id) return sub.stripe_customer_id;
+
   const inflight = inflightCustomerCreation.get(tenantId);
   if (inflight) return inflight;
 
@@ -70,10 +61,7 @@ async function ensureStripeCustomer(
     const user = db.prepare<{ email: string }>('SELECT email FROM users WHERE tenant_id = ? LIMIT 1').get(tenantId);
     if (!user) throw new StateError('租户无关联用户', ErrorCode.STATE_INVALID_TRANSITION);
     const customer = await createCustomer(config, user.email, tenantId);
-    if (sub) {
-      db.prepare<void>('UPDATE subscriptions SET stripe_customer_id = ?, updated_at = ? WHERE id = ?')
-        .run(customer.id, Date.now(), sub.id);
-    }
+    webhookService.persistStripeCustomerId(customer.id, sub?.id);
     return customer.id;
   })();
 
@@ -90,6 +78,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
   const settlementReconciliationService = new SettlementReconciliationService(db);
   const usageTracker = new UsageTracker(db);
   const entitlementService = new EntitlementService(db);
+  const webhookService = new StripeWebhookService(db, entitlementService);
 
   /* 构建允许的重定向源集合：预解析 origin，避免每次请求重复 new URL() */
   const rawOrigins: string[] = [];
@@ -157,9 +146,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
   /* GET /api/v1/billing/usage — 当前租户用量（含附加组件权益） */
   app.get('/api/v1/billing/usage', async (request) => {
     const tenantId = request.tenantId;
-    const sub = db.prepare<SubscriptionRow>(
-      'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-    ).get(tenantId);
+    const sub = webhookService.getLatestSubscription(tenantId);
 
     const planId = sub?.plan_id ?? 'free';
     const baseLimits = getPlanLimits(planId);
@@ -203,11 +190,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     }
 
     const tenantId = request.tenantId;
-    const sub = db.prepare<SubscriptionRow>(
-      'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-    ).get(tenantId);
-
-    const customerId = sub?.stripe_customer_id ?? await ensureStripeCustomer(db, config, tenantId, sub);
+    const customerId = await ensureStripeCustomer(db, config, webhookService, tenantId);
 
     let session;
     try {
@@ -227,11 +210,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     }
 
     const tenantId = request.tenantId;
-    const sub = db.prepare<SubscriptionRow>(
-      'SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-    ).get(tenantId);
-
-    const customerId = sub?.stripe_customer_id ?? await ensureStripeCustomer(db, config, tenantId, sub);
+    const customerId = await ensureStripeCustomer(db, config, webhookService, tenantId);
 
     let session;
     try {
@@ -267,102 +246,22 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
       throw new ValidationError('Webhook 签名验证失败', ErrorCode.VALIDATION_FORMAT);
     }
 
-    const now = Date.now();
     const eventId = (event as { id?: string }).id;
     if (!eventId) {
       throw new ValidationError('Webhook 事件缺少 id 字段', ErrorCode.VALIDATION_REQUIRED);
     }
-    let duplicate = false;
 
     try {
-      db.transaction(() => {
-        /* 幂等性：事件去重与处理在同一事务内 */
-        const inserted = db.prepare<void>(
-          'INSERT INTO webhook_events (event_id, event_type, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING',
-        ).run(eventId, event.type, now);
-        if (inserted.changes === 0) {
-          duplicate = true;
-          return;
-        }
-
-        switch (event.type) {
-          case 'customer.subscription.created':
-          case 'customer.subscription.updated': {
-            const subscription = event.data.object as unknown as Record<string, unknown>;
-            const customerId = typeof subscription.customer === 'string'
-              ? subscription.customer
-              : (subscription.customer as { id: string })?.id ?? '';
-            const tenantSub = db.prepare<SubscriptionRow>(
-              'SELECT * FROM subscriptions WHERE stripe_customer_id = ?',
-            ).get(customerId);
-            if (tenantSub) {
-              const rawStatus = typeof subscription.status === 'string' ? subscription.status : 'active';
-              const status = rawStatus === 'active' ? 'active'
-                : rawStatus === 'trialing' ? 'trialing'
-                : rawStatus === 'canceled' ? 'canceled'
-                : 'past_due';
-              const periodStart = typeof subscription.current_period_start === 'number'
-                ? subscription.current_period_start * 1000 : now;
-              const periodEnd = typeof subscription.current_period_end === 'number'
-                ? subscription.current_period_end * 1000 : now;
-
-              const items = subscription.items as { data?: Array<{ price?: { id?: string } }> } | undefined;
-              const priceId = items?.data?.[0]?.price?.id;
-              const resolvedPlanId = (priceId && PRICE_TO_PLAN.get(priceId)) ?? tenantSub.plan_id;
-
-              db.prepare<void>(
-                `UPDATE subscriptions SET stripe_subscription_id = ?, status = ?, plan_id = ?, current_period_start = ?, current_period_end = ?, updated_at = ? WHERE id = ?`,
-              ).run(
-                subscription.id as string,
-                status,
-                resolvedPlanId,
-                periodStart,
-                periodEnd,
-                now,
-                tenantSub.id,
-              );
-
-              /* 计划变更时同步配额限制与权益 */
-              if (resolvedPlanId !== tenantSub.plan_id) {
-                syncPlanToQuota(db, tenantSub.tenant_id, resolvedPlanId);
-                entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
-              }
-            }
-            break;
-          }
-          case 'customer.subscription.deleted': {
-            const subscription = event.data.object as unknown as Record<string, unknown>;
-            const customerId = typeof subscription.customer === 'string'
-              ? subscription.customer
-              : (subscription.customer as { id: string })?.id ?? '';
-            const canceledSub = db.prepare<SubscriptionRow>(
-              'SELECT * FROM subscriptions WHERE stripe_customer_id = ?',
-            ).get(customerId);
-            db.prepare<void>(
-              `UPDATE subscriptions SET status = 'canceled', plan_id = 'free', updated_at = ? WHERE stripe_customer_id = ?`,
-            ).run(now, customerId);
-            if (canceledSub) {
-              syncPlanToQuota(db, canceledSub.tenant_id, 'free');
-              /* 取消订阅时取消所有附加组件并重新同步权益 */
-              db.prepare<void>(
-                `UPDATE tenant_add_ons SET status = 'canceled', canceled_at = ? WHERE tenant_id = ? AND status = 'active'`,
-              ).run(Date.now(), canceledSub.tenant_id);
-              entitlementService.syncTenantEntitlements(canceledSub.tenant_id);
-            }
-            break;
-          }
-        }
-      });
+      const result = webhookService.processEvent(
+        eventId,
+        event.type,
+        event.data.object as unknown as Record<string, unknown>,
+      );
+      return reply.status(200).send(result);
     } catch (err) {
       app.log.error({ err }, 'Stripe webhook 处理失败');
       throw err;
     }
-
-    if (duplicate) {
-      return reply.status(200).send({ received: true, duplicate: true });
-    }
-
-    return reply.status(200).send({ received: true });
   });
 
   /* ── 附加组件管理路由（admin） ── */
@@ -413,12 +312,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     if (!addon || !addon.isActive) {
       throw new ValidationError('附加组件不存在或已停用', ErrorCode.VALIDATION_FORMAT);
     }
-    const { randomUUID } = await import('node:crypto');
-    const now = Date.now();
-    db.prepare<void>(
-      `INSERT INTO tenant_add_ons (id, tenant_id, add_on_id, status, purchased_at) VALUES (?, ?, ?, 'active', ?)`,
-    ).run(`ta_${randomUUID()}`, tenantId, id, now);
-    entitlementService.syncTenantEntitlements(tenantId);
+    webhookService.purchaseAddOn(tenantId, id);
     return { data: { purchased: true, addOnId: id } };
   });
 
