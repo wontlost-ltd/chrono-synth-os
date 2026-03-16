@@ -20,6 +20,7 @@ import type { JwtPayload } from '../../types/auth.js';
 import type { AvatarSnapshot, HandoffToken } from '../../types/avatar-session.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { AvatarSnapshotService } from '../../identity/avatar-snapshot-service.js';
 import { computeProjection } from '../../identity/avatar-projection-engine.js';
 import { compilePersonaState } from '../../intelligence/persona-state.js';
 import { getPlanLimits } from '../../billing/plans.js';
@@ -30,6 +31,7 @@ import { currentGlobalSeq } from '../plugins/websocket.js';
 export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
   const identityService = new IdentityService(db);
   const avatarService = new AvatarService(db);
+  const snapshotService = new AvatarSnapshotService(db, app.log);
 
   function getTenantOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
@@ -167,55 +169,9 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     const baseState = compilePersonaState(tenantOS.core);
     const projected = computeProjection(baseState, avatar);
 
-    /* autorun 配置 */
-    let autorun = { enabled: false, intervalMinutes: 0, lastRunAt: null as number | null };
-    try {
-      const configRow = db.prepare<{ enabled: number; interval_ms: number; last_run_at: number | null }>(
-        'SELECT enabled, interval_ms, last_run_at FROM avatar_autorun_config WHERE tenant_id = ? AND avatar_id = ? LIMIT 1',
-      ).get(user.tenantId, id);
-      if (configRow) {
-        autorun = {
-          enabled: configRow.enabled === 1,
-          intervalMinutes: Math.round(configRow.interval_ms / 60_000),
-          lastRunAt: configRow.last_run_at,
-        };
-      }
-    } catch { /* 表可能不存在 */ }
-
-    /* drift 状态 */
-    let drift = { pendingReview: false, lastScore: 0, lastCheckAt: null as number | null };
-    try {
-      const driftRow = db.prepare<{ drift_threshold: number; last_drift_check_at: number | null; review_required: number }>(
-        'SELECT drift_threshold, last_drift_check_at, review_required FROM avatar_autorun_config WHERE tenant_id = ? AND avatar_id = ? LIMIT 1',
-      ).get(user.tenantId, id);
-      if (driftRow) {
-        /* 最后一次运行的 drift_score */
-        const lastRun = db.prepare<{ metrics_json: string | null }>(
-          'SELECT metrics_json FROM avatar_autorun_runlog WHERE avatar_id = ? AND status = ? ORDER BY completed_at DESC LIMIT 1',
-        ).get(id, 'completed');
-        let lastScore = 0;
-        if (lastRun?.metrics_json) {
-          try {
-            const metrics = JSON.parse(lastRun.metrics_json) as { driftScore?: number };
-            lastScore = metrics.driftScore ?? 0;
-          } catch { /* 忽略 */ }
-        }
-        drift = {
-          pendingReview: driftRow.review_required === 1 && lastScore >= driftRow.drift_threshold,
-          lastScore,
-          lastCheckAt: driftRow.last_drift_check_at,
-        };
-      }
-    } catch { /* 表可能不存在 */ }
-
-    /* 已安装设备列表 */
-    let installedDevices: string[] = [];
-    try {
-      const deviceRows = db.prepare<{ device_id: string }>(
-        'SELECT device_id FROM device_avatars WHERE avatar_id = ?',
-      ).all(id);
-      installedDevices = deviceRows.map(r => r.device_id);
-    } catch { /* 表可能不存在 */ }
+    const autorun = snapshotService.getAutorunState(user.tenantId, id);
+    const drift = snapshotService.getDriftState(user.tenantId, id);
+    const installedDevices = snapshotService.getInstalledDevices(id);
 
     const snapshot: AvatarSnapshot = {
       avatarId: id,

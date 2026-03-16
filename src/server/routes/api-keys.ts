@@ -6,30 +6,14 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import { randomUUID, createHash, randomBytes } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
 import { CreateApiKeySchema } from '../schemas/api-schemas.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
-
-interface ApiKeyRow {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly key_hash: string;
-  readonly plan_id: string;
-  readonly is_revoked: number;
-  readonly created_at: number;
-}
-
-/** 生成 48 字节随机 API Key（base64url 编码，64 字符） */
-function generateApiKey(): string {
-  return `csk_${randomBytes(36).toString('base64url')}`;
-}
-
-function hashKey(key: string): string {
-  return createHash('sha256').update(key).digest('hex');
-}
+import { ApiKeyService } from '../../billing/api-key-service.js';
 
 export function registerApiKeyRoutes(app: FastifyInstance, db: IDatabase): void {
+  const apiKeyService = new ApiKeyService(db);
+
   /* POST /api/v1/api-keys — 创建 */
   app.post('/api/v1/api-keys', async (request, reply) => {
     const user = (request as unknown as { user?: { sub?: string; tenantId?: string; role?: string } }).user;
@@ -48,38 +32,16 @@ export function registerApiKeyRoutes(app: FastifyInstance, db: IDatabase): void 
     const body = CreateApiKeySchema.parse(request.body);
     const tenantId = user.tenantId ?? 'default';
 
-    /* API Key 计划必须与租户当前订阅一致，防止越权 */
-    const activeSub = db.prepare<{ plan_id: string }>(
-      `SELECT plan_id FROM subscriptions WHERE tenant_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
-    ).get(tenantId);
-    const tenantPlanId = activeSub?.plan_id ?? 'free';
-    const planId = body.planId === 'free' ? tenantPlanId : body.planId;
-    if (planId !== tenantPlanId) {
+    const outcome = apiKeyService.create(tenantId, body.planId);
+    if (!outcome.ok) {
       return reply.status(403).send({
         error: 'AuthorizationError',
         code: 'PLAN_MISMATCH',
-        message: `API Key 计划必须与当前订阅一致（当前: ${tenantPlanId}）`,
+        message: `API Key 计划必须与当前订阅一致（当前: ${outcome.tenantPlanId}）`,
       });
     }
 
-    const apiKey = generateApiKey();
-    const keyHash = hashKey(apiKey);
-    const id = `ak_${randomUUID()}`;
-    const now = Date.now();
-
-    db.prepare<void>(
-      'INSERT INTO api_keys (id, tenant_id, key_hash, plan_id, is_revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)',
-    ).run(id, tenantId, keyHash, planId, now);
-
-    return reply.status(201).send({
-      data: {
-        id,
-        tenantId,
-        planId,
-        apiKey, /* 明文仅在创建时返回 */
-        createdAt: now,
-      },
-    });
+    return reply.status(201).send({ data: outcome.data });
   });
 
   /* GET /api/v1/api-keys — 列出（仅管理员） */
@@ -97,19 +59,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, db: IDatabase): void 
     }
 
     const tenantId = user.tenantId ?? 'default';
-    const rows = db.prepare<ApiKeyRow>(
-      'SELECT id, tenant_id, plan_id, is_revoked, created_at FROM api_keys WHERE tenant_id = ? ORDER BY created_at DESC',
-    ).all(tenantId);
-
-    return {
-      data: rows.map(r => ({
-        id: r.id,
-        tenantId: r.tenant_id,
-        planId: r.plan_id,
-        isRevoked: r.is_revoked === 1,
-        createdAt: r.created_at,
-      })),
-    };
+    return { data: apiKeyService.list(tenantId) };
   });
 
   /* DELETE /api/v1/api-keys/:id — 吊销 */
@@ -129,11 +79,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, db: IDatabase): void 
     const tenantId = user.tenantId ?? 'default';
     const { id } = request.params;
 
-    const result = db.prepare<void>(
-      'UPDATE api_keys SET is_revoked = 1 WHERE id = ? AND tenant_id = ? AND is_revoked = 0',
-    ).run(id, tenantId);
-
-    if (result.changes === 0) {
+    if (!apiKeyService.revoke(id, tenantId)) {
       return reply.status(404).send({
         error: 'NotFoundError',
         code: 'API_KEY_NOT_FOUND',

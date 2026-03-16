@@ -12,6 +12,7 @@ import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { getPlanLimits } from '../../billing/plans.js';
 import { BillingOutbox, billingMetrics } from '../../billing/billing-outbox.js';
+import { SubscriptionQueryService } from '../../billing/subscription-query-service.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import {
   CreateLifeSimulationSchema,
@@ -37,6 +38,7 @@ export function registerLifeSimulationRoutes(
   const quotaManager = options?.db ? new QuotaManager(options.db) : undefined;
   const usageTracker = options?.db ? new UsageTracker(options.db) : undefined;
   const billingOutbox = options?.db && options?.config ? new BillingOutbox(options.db, options.config) : undefined;
+  const subscriptionQuery = options?.db ? new SubscriptionQueryService(options.db) : undefined;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */
   app.get('/api/v1/simulations', async (request) => {
@@ -64,11 +66,9 @@ export function registerLifeSimulationRoutes(
     const tenantId = request.tenantId;
 
     /* maxPaths 计划限制检查 */
-    if (options?.db) {
-      const sub = options.db.prepare<{ plan_id: string }>(
-        'SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-      ).get(tenantId);
-      const limits = getPlanLimits(sub?.plan_id ?? 'free');
+    if (subscriptionQuery) {
+      const planId = subscriptionQuery.getLatestPlanId(tenantId);
+      const limits = getPlanLimits(planId);
       const pathCount = Array.isArray((body as Record<string, unknown>).paths)
         ? ((body as Record<string, unknown>).paths as unknown[]).length
         : 0;
@@ -84,13 +84,11 @@ export function registerLifeSimulationRoutes(
     const { simulationId, taskId } = service.enqueue(body, tenantId);
     usageTracker?.record(tenantId, 'simulation', 1);
 
-    if (billingOutbox && options?.db && options?.config?.stripe.enabled) {
-      const sub = options.db.prepare<{ stripe_customer_id: string | null }>(
-        'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-      ).get(tenantId);
-      if (sub?.stripe_customer_id) {
+    if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
+      const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
+      if (stripeCustomerId) {
         billingMetrics.meterEventsEnqueued++;
-        billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1);
+        billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1);
       }
     }
 
@@ -167,11 +165,9 @@ export function registerLifeSimulationRoutes(
       const baseConfig = safeJsonParse(baseRecord.configJson, {}) as LifeSimulationConfig;
 
       /* maxPaths 计划限制检查（压力测试沿用原始路径数） */
-      if (options?.db) {
-        const sub = options.db.prepare<{ plan_id: string }>(
-          'SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-        ).get(tenantId);
-        const limits = getPlanLimits(sub?.plan_id ?? 'free');
+      if (subscriptionQuery) {
+        const planId = subscriptionQuery.getLatestPlanId(tenantId);
+        const limits = getPlanLimits(planId);
         const pathCount = Array.isArray(baseConfig.paths) ? baseConfig.paths.length : 0;
         if (limits.maxPaths > 0 && pathCount > limits.maxPaths) {
           throw new QuotaExceededError(`路径数 ${pathCount} 超出计划限制 ${limits.maxPaths}`);
@@ -198,13 +194,11 @@ export function registerLifeSimulationRoutes(
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);
       usageTracker?.record(tenantId, 'simulation', 1);
 
-      if (billingOutbox && options?.db) {
-        const sub2 = options.db.prepare<{ stripe_customer_id: string | null }>(
-          'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-        ).get(tenantId);
-        if (sub2?.stripe_customer_id) {
+      if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
+        const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
+        if (stripeCustomerId) {
           billingMetrics.meterEventsEnqueued++;
-          billingOutbox.enqueue(tenantId, sub2.stripe_customer_id, 'simulation', 1);
+          billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1);
         }
       }
 
