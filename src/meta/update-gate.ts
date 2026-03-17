@@ -1,40 +1,21 @@
 /**
- * 更新闸门：L0/L1 更新确认机制
+ * 更新闸门 — 薄适配器，委托 kernel 领域逻辑
+ * 纯决策逻辑（requiresConfirmation）在 kernel，SQL 留在此处
  */
 
 import type { IDatabase } from '../storage/database.js';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import {
+  DEFAULT_UPDATE_GATE_CONFIG,
+  requiresConfirmation as kernelRequiresConfirmation,
+} from '@chrono/kernel';
+import type {
+  UpdateGateConfig, UpdateTrigger, PendingUpdate,
+} from '@chrono/kernel';
 
-export type UpdateTrigger = 'emotional_event' | 'statistical_drift' | 'user_confirmation' | 'system_integration';
-
-export interface UpdateGateConfig {
-  l0RequiresConfirmation: boolean;
-  l1ConfirmationThreshold: number;
-  driftWindowMs: number;
-  driftSignificanceThreshold: number;
-}
-
-export interface PendingUpdate {
-  readonly id: string;
-  readonly layer: 'L0' | 'L1';
-  readonly trigger: UpdateTrigger;
-  readonly targetId: string;
-  readonly currentValue: string;
-  readonly proposedValue: string;
-  readonly delta: number;
-  readonly reason: string;
-  readonly createdAt: number;
-  status: 'pending' | 'approved' | 'rejected';
-}
-
-const DEFAULT_CONFIG: UpdateGateConfig = {
-  l0RequiresConfirmation: true,
-  l1ConfirmationThreshold: 0.15,
-  driftWindowMs: 86_400_000,
-  driftSignificanceThreshold: 0.3,
-};
+export type { UpdateGateConfig, UpdateTrigger, PendingUpdate };
 
 interface PendingUpdateRow {
   id: string;
@@ -60,12 +41,11 @@ export class UpdateGate {
     config?: Partial<UpdateGateConfig>,
     private readonly logger?: Logger,
   ) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...DEFAULT_UPDATE_GATE_CONFIG, ...config };
   }
 
   requiresConfirmation(layer: 'L0' | 'L1', delta: number): boolean {
-    if (layer === 'L0') return this.config.l0RequiresConfirmation;
-    return Math.abs(delta) > this.config.l1ConfirmationThreshold;
+    return kernelRequiresConfirmation(this.config, layer, delta);
   }
 
   propose(update: Omit<PendingUpdate, 'id' | 'createdAt' | 'status'>): PendingUpdate {
@@ -126,8 +106,6 @@ export class UpdateGate {
 
   /**
    * 便捷方法：评估变更是否需要确认，自动应用或挂起
-   * - 不需要确认 → 直接调用 applyFn → { applied: true }
-   * - 需要确认 → 创建 pending_update → { applied: false, pendingUpdate }
    */
   tryApply(
     layer: 'L0' | 'L1',

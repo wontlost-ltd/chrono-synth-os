@@ -1,5 +1,6 @@
 /**
- * 冲突解决器：检测和解决人格版本间的冲突
+ * 冲突解决器 — 薄适配器，委托 kernel 领域逻辑
+ * 纯计算（分歧检测、严重性分类）在 kernel，SQL 留在此处
  */
 
 import type { IDatabase } from '../storage/database.js';
@@ -8,6 +9,10 @@ import type { Conflict, ConflictKind, ConflictSeverity } from '../types/meta-reg
 import type { PersonaVersion } from '../types/persona-version.js';
 import type { Clock } from '../utils/clock.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import {
+  detectValueDivergences, detectResourceContention, pairKey,
+} from '@chrono/kernel';
+import type { PersonaVersionSnapshot } from '@chrono/kernel';
 
 interface ConflictRow {
   id: string;
@@ -24,11 +29,6 @@ interface ConflictRow {
 const VALID_KINDS = new Set<string>(['value_divergence', 'resource_contention', 'narrative_inconsistency']);
 const VALID_SEVERITIES = new Set<string>(['low', 'medium', 'high', 'critical']);
 
-/** 分歧数量 → 严重等级阈值 */
-const SEVERITY_CRITICAL_THRESHOLD = 5;
-const SEVERITY_HIGH_THRESHOLD = 3;
-const SEVERITY_MEDIUM_THRESHOLD = 2;
-
 export class ConflictResolver {
   constructor(
     private readonly db: IDatabase,
@@ -41,40 +41,29 @@ export class ConflictResolver {
     const existingPairs = new Set(
       existing
         .filter(c => c.kind === 'value_divergence')
-        .map(c => this.pairKey(c.involvedVersions)),
+        .map(c => pairKey(c.involvedVersions)),
     );
 
+    const snapshots: PersonaVersionSnapshot[] = personas.map(p => ({
+      id: p.id,
+      label: p.label,
+      values: p.values,
+      status: p.status,
+      resourceQuota: p.resourceQuota,
+    }));
+
+    const divergences = detectValueDivergences(snapshots, threshold, existingPairs);
     const conflicts: Conflict[] = [];
 
-    for (let i = 0; i < personas.length; i++) {
-      for (let j = i + 1; j < personas.length; j++) {
-        const a = personas[i];
-        const b = personas[j];
-
-        /* 跳过已有未解决冲突的版本对 */
-        if (existingPairs.has(this.pairKey([a.id, b.id]))) continue;
-
-        const affectedValues: string[] = [];
-
-        for (const [key, weightA] of a.values) {
-          const weightB = b.values.get(key);
-          if (weightB !== undefined && Math.abs(weightA - weightB) > threshold) {
-            affectedValues.push(key);
-          }
-        }
-
-        if (affectedValues.length > 0) {
-          const severity = this.classifySeverity(affectedValues.length);
-          const conflict = this.record({
-            kind: 'value_divergence',
-            severity,
-            involvedVersions: [a.id, b.id],
-            affectedValues,
-            description: `人格 ${a.label} 与 ${b.label} 在 ${affectedValues.length} 个价值维度上存在分歧`,
-          });
-          conflicts.push(conflict);
-        }
-      }
+    for (const d of divergences) {
+      const conflict = this.record({
+        kind: 'value_divergence',
+        severity: d.severity,
+        involvedVersions: [...d.involvedVersions],
+        affectedValues: d.affectedValues,
+        description: d.description,
+      });
+      conflicts.push(conflict);
     }
 
     return conflicts;
@@ -85,20 +74,24 @@ export class ConflictResolver {
     const existing = this.getUnresolved();
     if (existing.some(c => c.kind === 'resource_contention')) return undefined;
 
-    const totalQuota = personas
-      .filter(p => p.status === 'active')
-      .reduce((sum, p) => sum + p.resourceQuota, 0);
+    const snapshots: PersonaVersionSnapshot[] = personas.map(p => ({
+      id: p.id,
+      label: p.label,
+      values: p.values,
+      status: p.status,
+      resourceQuota: p.resourceQuota,
+    }));
 
-    if (totalQuota > 1.0) {
-      return this.record({
-        kind: 'resource_contention',
-        severity: totalQuota > 1.5 ? 'critical' : 'high',
-        involvedVersions: personas.filter(p => p.status === 'active').map(p => p.id),
-        affectedValues: [],
-        description: `活跃人格总资源配额 ${totalQuota.toFixed(2)} 超过 1.0`,
-      });
-    }
-    return undefined;
+    const result = detectResourceContention(snapshots);
+    if (!result) return undefined;
+
+    return this.record({
+      kind: 'resource_contention',
+      severity: result.severity,
+      involvedVersions: result.involvedVersions,
+      affectedValues: [],
+      description: result.description,
+    });
   }
 
   /** 解决冲突 */
@@ -170,18 +163,6 @@ export class ConflictResolver {
       description: params.description,
       detectedAt: now,
     };
-  }
-
-  /** 生成版本对的规范化键（用于去重） */
-  private pairKey(versions: readonly string[]): string {
-    return [...versions].sort().join('|');
-  }
-
-  private classifySeverity(divergenceCount: number): ConflictSeverity {
-    if (divergenceCount >= SEVERITY_CRITICAL_THRESHOLD) return 'critical';
-    if (divergenceCount >= SEVERITY_HIGH_THRESHOLD) return 'high';
-    if (divergenceCount >= SEVERITY_MEDIUM_THRESHOLD) return 'medium';
-    return 'low';
   }
 
   private toConflict(row: ConflictRow): Conflict {
