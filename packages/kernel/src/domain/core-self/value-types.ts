@@ -5,10 +5,10 @@ export type ValueId = string;
 export interface CoreValue {
   readonly id: ValueId;
   readonly label: string;
-  readonly weight: number;
-  readonly timeDiscount: number;
-  readonly emotionAmplifier: number;
-  readonly updatedAt: number;
+  weight: number;
+  timeDiscount: number;
+  emotionAmplifier: number;
+  updatedAt: number;
 }
 
 /** 价值更新补丁 */

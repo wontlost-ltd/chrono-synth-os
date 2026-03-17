@@ -1,10 +1,14 @@
 /**
- * 附加组件管理
- * 提供 add_ons 表的 CRUD 以及默认组件种子数据
+ * 附加组件管理 — 薄适配器，委托 kernel 领域类型
+ * SQL CRUD 留在宿主层，种子数据来自 kernel
  */
 
 import { randomUUID } from 'node:crypto';
 import type { IDatabase, SqlValue } from '../storage/database.js';
+import { DEFAULT_ADD_ONS as KERNEL_DEFAULT_ADD_ONS } from '@chrono/kernel';
+import type { KernelAddOn } from '@chrono/kernel';
+
+export type { KernelAddOn };
 
 export interface AddOn {
   readonly id: string;
@@ -47,18 +51,10 @@ function rowToAddOn(row: AddOnRow): AddOn {
   };
 }
 
-/** 默认附加组件定义 */
-const DEFAULT_ADD_ONS: ReadonlyArray<Pick<AddOn, 'code' | 'name' | 'description' | 'resource' | 'quotaAmount'>> = [
-  { code: 'extra_simulations_10',  name: '额外模拟 ×10',     description: '增加 10 次/月模拟配额',   resource: 'simulation',   quotaAmount: 10 },
-  { code: 'extra_tokens_100k',     name: '额外 Token 10 万',  description: '增加 100K LLM Token 配额', resource: 'llm_tokens',   quotaAmount: 100_000 },
-  { code: 'advanced_models',       name: '高级模型',           description: '解锁高级 LLM 模型访问',    resource: 'advanced_models', quotaAmount: 1 },
-  { code: 'priority_queue',        name: '优先队列',           description: '模拟任务优先执行',         resource: 'priority_queue',  quotaAmount: 1 },
-];
-
-/** 初始化默认附加组件（幂等） */
+/** 初始化默认附加组件（幂等），种子数据来自 kernel */
 export function seedDefaultAddOns(db: IDatabase): void {
   const now = Date.now();
-  for (const def of DEFAULT_ADD_ONS) {
+  for (const def of KERNEL_DEFAULT_ADD_ONS) {
     const existing = db.prepare<{ id: string }>(
       'SELECT id FROM add_ons WHERE code = ?',
     ).get(def.code);

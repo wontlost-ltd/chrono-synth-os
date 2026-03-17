@@ -7,3 +7,4 @@ export * from './resource-allocator.js';
 export * from './evolution-logic.js';
 export * from './persona-version-types.js';
 export * from './simulation-runner.js';
+export * from './integration-types.js';

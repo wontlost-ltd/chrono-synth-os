@@ -1,49 +1,52 @@
 /** 认知记忆图领域类型 */
 
+/** 记忆节点唯一标识 */
+export type MemoryId = string;
+
 export type MemoryKind = 'episodic' | 'semantic' | 'procedural';
 
 export interface MemoryNode {
-  readonly id: string;
+  readonly id: MemoryId;
   readonly kind: MemoryKind;
   readonly content: string;
-  readonly valence: number;
-  readonly salience: number;
+  valence: number;
+  salience: number;
   readonly createdAt: number;
-  readonly lastAccessedAt: number;
-  readonly accessCount: number;
-  readonly decayLambda: number;
-  readonly lastDecayedAt: number;
-  readonly consolidatedFrom: string | null;
+  lastAccessedAt: number;
+  accessCount: number;
+  decayLambda: number;
+  lastDecayedAt: number;
+  consolidatedFrom: MemoryId | null;
 }
 
 export interface MemoryEdge {
-  readonly source: string;
-  readonly target: string;
-  readonly strength: number;
+  readonly source: MemoryId;
+  readonly target: MemoryId;
+  strength: number;
   readonly relation: string;
 }
 
 export interface WorkingMemorySlot {
-  readonly memoryId: string;
-  readonly score: number;
-  readonly enteredAt: number;
+  readonly memoryId: MemoryId;
+  score: number;
+  enteredAt: number;
 }
 
 export interface ActivationResult {
-  readonly memoryId: string;
+  readonly memoryId: MemoryId;
   readonly delta: number;
-  readonly path: string[];
+  readonly path: readonly MemoryId[];
 }
 
 export interface ConsolidationResult {
-  readonly originalId: string;
-  readonly consolidatedId: string;
+  readonly originalId: MemoryId;
+  readonly consolidatedId: MemoryId;
   readonly newKind: 'semantic';
 }
 
 export interface EvictionResult {
-  readonly memoryId: string;
-  readonly reason: 'salience_floor' | 'capacity_overflow';
+  readonly memoryId: MemoryId;
+  readonly reason: 'salience_floor' | 'capacity_overflow' | 'consolidation_cleanup';
   readonly salience: number;
 }
 

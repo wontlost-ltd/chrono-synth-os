@@ -21,3 +21,5 @@ export * from './memory-service.js';
 export * from './memory-pattern-extractor.js';
 export * from './plan-types.js';
 export * from './entitlement-logic.js';
+export * from './persona-os-types.js';
+export * from './add-on-types.js';
