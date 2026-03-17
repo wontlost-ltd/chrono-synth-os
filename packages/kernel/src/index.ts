@@ -47,3 +47,5 @@ export * from './events/index.js';
 export * from './domain/errors.js';
 export * from './domain/config-metadata.js';
 export * from './domain/circuit-breaker.js';
+export * from './domain/math.js';
+export * from './domain/simulation/index.js';

@@ -1,29 +1,11 @@
 /**
  * 人生模拟引擎类型定义
- * 支持多路径、多年时间序列、家庭系统耦合、概率分支、压力测试
+ * 核心状态类型 re-export 自 kernel，其余为应用层类型
  */
 
-/** 情绪状态 */
-export interface EmotionalState {
-  readonly valence: number;     // -1..1
-  readonly stress: number;      // 0..1
-  readonly fulfillment: number; // 0..1
-  readonly regret: number;      // 0..1
-}
+export type { EmotionalState, FamilyState, FinanceState } from '@chrono/kernel';
 
-/** 家庭状态 */
-export interface FamilyState {
-  readonly spouseSecurity: number;  // 0..1
-  readonly childCost: number;       // 绝对值（年支出）
-  readonly familyPressure: number;  // 0..1
-}
-
-/** 财务状态 */
-export interface FinanceState {
-  readonly income: number;
-  readonly savings: number;
-  readonly wealth: number;
-}
+import type { EmotionalState, FamilyState } from '@chrono/kernel';
 
 /** 年度状态快照 */
 export interface YearState {
