@@ -1,14 +1,6 @@
 /**
- * 决策引擎
- * 结合五层人格状态、语义记忆检索和 LLM 蒙特卡洛模拟进行决策评估
- *
- * 核心流程：
- * 1. 编译 PersonaOSState → prompt 摘要
- * 2. 检索相关记忆
- * 3. 生成/确认备选方案
- * 4. 每个方案运行 N 次蒙特卡洛模拟
- * 5. 基于 L0-L3 结构化评分
- * 6. 排序并生成解释
+ * 决策引擎 — 薄适配器
+ * 编排 LLM 调用与检索，纯计算逻辑委托 kernel
  */
 
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
@@ -20,7 +12,6 @@ import type { CoreValue } from '../types/core-self.js';
 import type { LLMProvider } from './llm-provider.js';
 import type { ContextMemory, RetrievalService } from './retrieval-service.js';
 import { computeStructuralScore } from './structural-scorer.js';
-import type { ScoreBreakdown } from './structural-scorer.js';
 import { compilePersonaState, summarizeForPrompt } from './persona-state.js';
 import type { RuleEngine } from './rule-engine.js';
 import {
@@ -28,47 +19,24 @@ import {
   type DecisionCase, type DecisionResult, type Explanation, type RankedOption,
   type SimulationConfig, type SimulationRollout,
 } from './types.js';
+import {
+  safeParseJson,
+  formatMemories,
+  aggregateRollouts,
+  CONTEXT_MEMORY_COUNT,
+  MIN_ALTERNATIVES,
+  DEFAULT_RISK_SCORE,
+  DEFAULT_CONFIDENCE,
+  type DecisionProgress,
+} from '@chrono/kernel';
 
-export interface DecisionProgress {
-  readonly progress: number;
-  readonly stage: string;
-}
+export type { DecisionProgress };
 
 export interface DecisionEngineOptions {
   readonly onProgress?: (progress: DecisionProgress) => void;
 }
 
 const LAYER = 'DecisionEngine';
-
-/** 记忆检索数量 */
-const CONTEXT_MEMORY_COUNT = 5;
-/** 最低备选方案数量 */
-const MIN_ALTERNATIVES = 2;
-/** 结构化评分缺失时的默认风险值 */
-const DEFAULT_RISK_SCORE = 0.5;
-/** 结构化评分缺失时的默认置信度 */
-const DEFAULT_CONFIDENCE = 0.5;
-/** 无 rollout 数据时的降级置信度 */
-const EMPTY_ROLLOUT_CONFIDENCE = 0.3;
-
-function safeParseJson<T>(content: string): T | undefined {
-  try {
-    return JSON.parse(content) as T;
-  } catch {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) return undefined;
-    try {
-      return JSON.parse(match[0]) as T;
-    } catch {
-      return undefined;
-    }
-  }
-}
-
-function formatMemories(memories: readonly ContextMemory[]): string {
-  if (memories.length === 0) return '无';
-  return memories.map(m => `- (${m.score.toFixed(2)}) [${m.kind}] ${m.content}`).join('\n');
-}
 
 export class DecisionEngine {
   constructor(
@@ -130,7 +98,7 @@ export class DecisionEngine {
         valueWeights, state.L1, state.L0, state.L2, state.L3, timeHorizonMonths,
       );
 
-      const aggregate = this.aggregateRollouts(rollouts);
+      const aggregate = aggregateRollouts(rollouts);
       const explanation = await this.explainAlternative(decisionCase, alternative, rollouts, contextMemories);
 
       const regretProbability = Math.max(0, Math.min(1, state.L2.regretSensitivity * (1 - aggregate.overallScore)));
@@ -311,67 +279,6 @@ export class DecisionEngine {
       confidence,
       overallScore: structural.overallScore,
       scoreBreakdown: structural.breakdown,
-    };
-  }
-
-  private aggregateRollouts(rollouts: readonly SimulationRollout[]): {
-    alignmentScore: number; riskScore: number; confidence: number; overallScore: number; scoreBreakdown?: ScoreBreakdown;
-  } {
-    if (rollouts.length === 0) {
-      return { alignmentScore: 0, riskScore: DEFAULT_RISK_SCORE, confidence: EMPTY_ROLLOUT_CONFIDENCE, overallScore: 0 };
-    }
-    const avg = (list: readonly number[]) => list.reduce((s, v) => s + v, 0) / list.length;
-    const overallScore = avg(rollouts.map(r => r.overallScore));
-    const scoreBreakdown = this.aggregateScoreBreakdown(rollouts);
-    return {
-      alignmentScore: avg(rollouts.map(r => r.alignmentScore)),
-      riskScore: avg(rollouts.map(r => r.riskScore)),
-      confidence: avg(rollouts.map(r => r.confidence)),
-      overallScore,
-      scoreBreakdown,
-    };
-  }
-
-  private aggregateScoreBreakdown(rollouts: readonly SimulationRollout[]): ScoreBreakdown | undefined {
-    let count = 0;
-    const valueTotals: Record<string, number> = {};
-    const biasTotals: Record<string, number> = {};
-    const anchorSet = new Set<string>();
-    let timeTotal = 0;
-    let biasTotal = 0;
-
-    for (const rollout of rollouts) {
-      const breakdown = rollout.scoreBreakdown;
-      if (!breakdown) continue;
-      count += 1;
-      for (const [key, value] of Object.entries(breakdown.valueContributions)) {
-        valueTotals[key] = (valueTotals[key] ?? 0) + value;
-      }
-      for (const [key, value] of Object.entries(breakdown.biasAdjustments)) {
-        biasTotals[key] = (biasTotals[key] ?? 0) + value;
-      }
-      for (const violation of breakdown.anchorViolations) {
-        anchorSet.add(violation);
-      }
-      timeTotal += breakdown.timeHorizonEffect;
-      biasTotal += breakdown.cognitiveBiasTotal;
-    }
-
-    if (count === 0) return undefined;
-
-    for (const key of Object.keys(valueTotals)) {
-      valueTotals[key] /= count;
-    }
-    for (const key of Object.keys(biasTotals)) {
-      biasTotals[key] /= count;
-    }
-
-    return {
-      valueContributions: valueTotals,
-      anchorViolations: [...anchorSet],
-      biasAdjustments: biasTotals,
-      timeHorizonEffect: timeTotal / count,
-      cognitiveBiasTotal: biasTotal / count,
     };
   }
 

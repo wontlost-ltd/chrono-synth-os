@@ -3,3 +3,6 @@ export * from './questionnaire-engine.js';
 export * from './decision-types.js';
 export * from './rule-engine.js';
 export * from './persona-state.js';
+export * from './llm-provider-types.js';
+export * from './llm-safety.js';
+export * from './decision-engine-helpers.js';
