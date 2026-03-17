@@ -18,3 +18,4 @@ export * from './memory-types.js';
 export * from './memory-cognition.js';
 export * from './memory-queries.js';
 export * from './memory-service.js';
+export * from './memory-pattern-extractor.js';
