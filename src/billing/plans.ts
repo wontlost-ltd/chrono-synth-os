@@ -1,63 +1,30 @@
 /**
- * 计费计划定义
- * 定义所有可用的订阅计划及其资源限制
+ * 计费计划定义 — 薄适配器，委托 kernel 领域逻辑
+ * Stripe price ID 由 process.env 注入
  */
 
 import type { IDatabase } from '../storage/database.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
+import {
+  KERNEL_PLANS, getKernelPlanLimits,
+} from '@chrono/kernel';
+import type { PlanLimits, KernelPlan } from '@chrono/kernel';
 
-export interface PlanLimits {
-  readonly maxSimulations: number;
-  readonly maxPaths: number;
-  readonly llmTokensPerMonth: number;
-  /** API 请求限流（每分钟最大请求数），-1 表示无限制 */
-  readonly rateLimitPerMinute: number;
-  /** 最大分身数量，-1 表示无限制 */
-  readonly maxAvatars: number;
-  /** 最大记忆节点数量，-1 表示无限制 */
-  readonly maxMemoryNodes: number;
-}
+export type { PlanLimits };
 
-export interface Plan {
-  readonly id: string;
-  readonly name: string;
+export interface Plan extends KernelPlan {
   readonly stripePriceId: string;
-  readonly priceMinor: number;
-  readonly currency: string;
-  readonly billingInterval: 'month' | 'year' | 'custom';
-  readonly limits: PlanLimits;
 }
 
-/** 预定义计划列表 */
-export const PLANS: readonly Plan[] = [
-  {
-    id: 'free',
-    name: '免费版',
-    stripePriceId: '',
-    priceMinor: 0,
-    currency: 'USD',
-    billingInterval: 'month',
-    limits: { maxSimulations: 3, maxPaths: 2, llmTokensPerMonth: 10_000, rateLimitPerMinute: 60, maxAvatars: 2, maxMemoryNodes: 10_000 },
-  },
-  {
-    id: 'pro',
-    name: '专业版',
-    stripePriceId: process.env.CHRONO_STRIPE_PRICE_PRO ?? 'price_1T9NMnDVwJxh7zGN9MgSA7I9',
-    priceMinor: 4900,
-    currency: 'USD',
-    billingInterval: 'month',
-    limits: { maxSimulations: 50, maxPaths: 10, llmTokensPerMonth: 500_000, rateLimitPerMinute: 300, maxAvatars: 5, maxMemoryNodes: 100_000 },
-  },
-  {
-    id: 'enterprise',
-    name: '企业版',
-    stripePriceId: process.env.CHRONO_STRIPE_PRICE_ENTERPRISE ?? 'price_1T9NMzDVwJxh7zGNZRWszFKH',
-    priceMinor: 0,
-    currency: 'USD',
-    billingInterval: 'custom',
-    limits: { maxSimulations: -1, maxPaths: -1, llmTokensPerMonth: -1, rateLimitPerMinute: -1, maxAvatars: -1, maxMemoryNodes: -1 },
-  },
-];
+/** 预定义计划列表（注入 Stripe price ID） */
+export const PLANS: readonly Plan[] = KERNEL_PLANS.map(kp => ({
+  ...kp,
+  stripePriceId: kp.id === 'pro'
+    ? (process.env.CHRONO_STRIPE_PRICE_PRO ?? 'price_1T9NMnDVwJxh7zGN9MgSA7I9')
+    : kp.id === 'enterprise'
+      ? (process.env.CHRONO_STRIPE_PRICE_ENTERPRISE ?? 'price_1T9NMzDVwJxh7zGNZRWszFKH')
+      : '',
+}));
 
 /** 通过 ID 查找计划 */
 export function getPlan(planId: string): Plan | undefined {
@@ -66,8 +33,7 @@ export function getPlan(planId: string): Plan | undefined {
 
 /** 获取计划限制，不存在时返回 free 计划限制 */
 export function getPlanLimits(planId: string): PlanLimits {
-  const plan = getPlan(planId);
-  return plan?.limits ?? PLANS[0].limits;
+  return getKernelPlanLimits(planId);
 }
 
 /** 将计划限制同步到 QuotaManager（设置 simulation/llm_tokens 配额） */
@@ -77,7 +43,6 @@ export function syncPlanToQuota(db: IDatabase, tenantId: string, planId: string)
   const monthMs = 30 * 24 * 60 * 60 * 1000;
 
   if (limits.maxSimulations < 0) {
-    /* 无限计划：清除配额限制 */
     qm.clearLimit(tenantId, 'simulation');
   } else if (limits.maxSimulations > 0) {
     qm.setLimit(tenantId, 'simulation', limits.maxSimulations, monthMs);

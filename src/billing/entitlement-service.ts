@@ -1,11 +1,17 @@
 /**
- * 权益服务
- * 合并基础计划配额与已购附加组件，计算租户有效配额限制
+ * 权益服务 — 薄适配器，委托 kernel 领域逻辑
+ * SQL 查询留在宿主层，纯计算委托 mergeEffectiveLimits
  */
 
 import type { IDatabase } from '../storage/database.js';
-import { getPlanLimits, type PlanLimits } from './plans.js';
+import { getPlanLimits } from './plans.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
+import {
+  mergeEffectiveLimits, RESOURCE_TO_LIMIT,
+} from '@chrono/kernel';
+import type { EffectiveLimits, AddOnQuota } from '@chrono/kernel';
+
+export type { EffectiveLimits };
 
 interface TenantAddOnRow {
   readonly resource: string;
@@ -14,17 +20,6 @@ interface TenantAddOnRow {
 
 interface SubscriptionRow {
   readonly plan_id: string;
-}
-
-/** 资源 → PlanLimits 字段映射 */
-const RESOURCE_TO_LIMIT: ReadonlyMap<string, keyof PlanLimits> = new Map([
-  ['simulation', 'maxSimulations'],
-  ['llm_tokens', 'llmTokensPerMonth'],
-  ['memory_nodes', 'maxMemoryNodes'],
-]);
-
-export interface EffectiveLimits {
-  readonly [resource: string]: number;
 }
 
 export class EntitlementService {
@@ -39,33 +34,20 @@ export class EntitlementService {
     const planId = sub?.plan_id ?? 'free';
     const planLimits = getPlanLimits(planId);
 
-    /* 初始化基础配额 */
-    const limits: Record<string, number> = {};
-    for (const [resource, field] of RESOURCE_TO_LIMIT) {
-      limits[resource] = planLimits[field];
-    }
-
     /* 查询活跃附加组件的配额叠加 */
-    const addOns = this.db.prepare<TenantAddOnRow>(
+    const addOnRows = this.db.prepare<TenantAddOnRow>(
       `SELECT a.resource, a.quota_amount
        FROM tenant_add_ons ta
        JOIN add_ons a ON a.id = ta.add_on_id
        WHERE ta.tenant_id = ? AND ta.status = 'active'`,
     ).all(tenantId);
 
-    for (const addon of addOns) {
-      if (addon.resource in limits) {
-        const base = limits[addon.resource];
-        /* -1 表示无限制，叠加后仍无限 */
-        if (base < 0) continue;
-        limits[addon.resource] = base + addon.quota_amount;
-      } else {
-        /* 非标准资源（如 advanced_models, priority_queue）直接写入 */
-        limits[addon.resource] = (limits[addon.resource] ?? 0) + addon.quota_amount;
-      }
-    }
+    const addOns: AddOnQuota[] = addOnRows.map(r => ({
+      resource: r.resource,
+      quotaAmount: r.quota_amount,
+    }));
 
-    return limits;
+    return mergeEffectiveLimits(planLimits, addOns);
   }
 
   /**
