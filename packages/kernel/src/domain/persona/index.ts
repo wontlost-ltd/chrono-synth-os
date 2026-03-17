@@ -5,3 +5,5 @@ export * from './update-gate-logic.js';
 export * from './integration-logic.js';
 export * from './resource-allocator.js';
 export * from './evolution-logic.js';
+export * from './persona-version-types.js';
+export * from './simulation-runner.js';
