@@ -1,30 +1,12 @@
 /**
- * LLM 成本追踪器
- * 按租户记录 LLM 调用次数、token 用量和估算成本
- * 支持 DB 持久化（优先）和内存回退
+ * LLM 成本追踪器 — 薄适配器
+ * 成本计算委托 kernel 纯函数，DB 持久化留在此层
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { estimateCost, type CostRecord } from '@chrono/kernel';
 
-export interface CostRecord {
-  tenantId: string;
-  provider: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  estimatedCostUsd: number;
-  timestamp: number;
-}
-
-/** 每 1K token 的美元价格（近似值） */
-const TOKEN_PRICES: Record<string, { input: number; output: number }> = {
-  'gpt-4o': { input: 0.0025, output: 0.01 },
-  'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
-  'claude-sonnet-4-5-20250929': { input: 0.003, output: 0.015 },
-  'claude-haiku-4-5-20251001': { input: 0.0008, output: 0.004 },
-  'mock': { input: 0, output: 0 },
-};
+export type { CostRecord };
 
 interface LlmUsageRow {
   readonly tenant_id: string;
@@ -46,28 +28,24 @@ export class CostTracker {
 
   /** 记录一次 LLM 调用 */
   record(tenantId: string, provider: string, model: string, inputTokens: number, outputTokens: number): CostRecord {
-    const safeInput = Math.max(0, Math.trunc(inputTokens) || 0);
-    const safeOutput = Math.max(0, Math.trunc(outputTokens) || 0);
-    const prices = TOKEN_PRICES[model] ?? { input: 0.001, output: 0.005 };
-    const estimatedCostUsd = (safeInput / 1000) * prices.input + (safeOutput / 1000) * prices.output;
-    const totalTokens = safeInput + safeOutput;
+    const cost = estimateCost(model, inputTokens, outputTokens);
     const now = Date.now();
 
     const rec: CostRecord = {
       tenantId,
       provider,
       model,
-      inputTokens: safeInput,
-      outputTokens: safeOutput,
-      totalTokens,
-      estimatedCostUsd,
+      inputTokens: cost.inputTokens,
+      outputTokens: cost.outputTokens,
+      totalTokens: cost.totalTokens,
+      estimatedCostUsd: cost.estimatedCostUsd,
       timestamp: now,
     };
 
     if (this.db) {
       this.db.prepare<void>(
         'INSERT INTO llm_usage (tenant_id, provider, model, input_tokens, output_tokens, total_tokens, estimated_cost_usd, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(tenantId, provider, model, safeInput, safeOutput, totalTokens, estimatedCostUsd, now);
+      ).run(tenantId, provider, model, cost.inputTokens, cost.outputTokens, cost.totalTokens, cost.estimatedCostUsd, now);
     }
 
     return rec;
