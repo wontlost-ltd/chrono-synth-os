@@ -1,62 +1,55 @@
 /**
- * 断路器插件
- * 保护依赖调用（如数据库操作）在连续失败后自动断开，避免雪崩
- *
- * 状态机：CLOSED → OPEN（达到失败阈值）→ HALF_OPEN（超时后探测）→ CLOSED/OPEN
+ * 断路器插件 — 薄适配器，委托 kernel 纯函数
+ * 保持原有 CircuitBreaker 类接口不变
  */
 
-export type CircuitState = 'closed' | 'open' | 'half_open';
+import {
+  evaluateCircuitState,
+  canExecute,
+  recordHalfOpenAttempt,
+  recordSuccess,
+  recordFailure,
+  INITIAL_CIRCUIT_SNAPSHOT,
+  DEFAULT_CIRCUIT_BREAKER_OPTIONS,
+  CircuitOpenError,
+  CircuitTimeoutError,
+} from '@chrono/kernel';
+import type {
+  CircuitState,
+  CircuitBreakerOptions,
+  CircuitBreakerSnapshot,
+} from '@chrono/kernel';
 
-export interface CircuitBreakerOptions {
-  /** 触发断开的连续失败次数阈值 */
-  readonly failureThreshold: number;
-  /** 从 OPEN 进入 HALF_OPEN 的等待毫秒数 */
-  readonly resetTimeoutMs: number;
-  /** 半开状态下允许通过的探测请求数 */
-  readonly halfOpenMaxRequests: number;
-  /** 单次操作超时毫秒数（0 = 不限制） */
-  readonly executionTimeoutMs: number;
-}
-
-const DEFAULTS: CircuitBreakerOptions = {
-  failureThreshold: 5,
-  resetTimeoutMs: 30_000,
-  halfOpenMaxRequests: 1,
-  executionTimeoutMs: 30_000,
-};
+export type { CircuitState, CircuitBreakerOptions };
+export { CircuitOpenError, CircuitTimeoutError };
 
 export class CircuitBreaker {
-  private state: CircuitState = 'closed';
-  private consecutiveFailures = 0;
-  private lastFailureTime = 0;
-  private halfOpenRequests = 0;
+  private snapshot: CircuitBreakerSnapshot = { ...INITIAL_CIRCUIT_SNAPSHOT };
   private readonly opts: CircuitBreakerOptions;
 
   constructor(opts?: Partial<CircuitBreakerOptions>) {
-    this.opts = { ...DEFAULTS, ...opts };
+    this.opts = { ...DEFAULT_CIRCUIT_BREAKER_OPTIONS, ...opts };
   }
 
   /** 当前状态 */
   getState(): CircuitState {
-    this.evaluateState();
-    return this.state;
+    this.snapshot = evaluateCircuitState(this.snapshot, this.opts, Date.now());
+    return this.snapshot.state;
   }
 
   /** 通过断路器执行操作 */
   async execute<T>(fn: () => T | Promise<T>): Promise<T> {
-    this.evaluateState();
+    this.snapshot = evaluateCircuitState(this.snapshot, this.opts, Date.now());
 
-    if (this.state === 'open') {
-      throw new CircuitOpenError('断路器已打开，请求被拒绝');
+    if (!canExecute(this.snapshot, this.opts)) {
+      throw new CircuitOpenError(
+        this.snapshot.state === 'open'
+          ? '断路器已打开，请求被拒绝'
+          : '断路器半开状态，探测请求已满',
+      );
     }
 
-    if (this.state === 'half_open' && this.halfOpenRequests >= this.opts.halfOpenMaxRequests) {
-      throw new CircuitOpenError('断路器半开状态，探测请求已满');
-    }
-
-    if (this.state === 'half_open') {
-      this.halfOpenRequests++;
-    }
+    this.snapshot = recordHalfOpenAttempt(this.snapshot);
 
     try {
       let result: T;
@@ -77,66 +70,16 @@ export class CircuitBreaker {
       } else {
         result = await fn();
       }
-      this.onSuccess();
+      this.snapshot = recordSuccess(this.snapshot);
       return result;
     } catch (err) {
-      this.onFailure();
+      this.snapshot = recordFailure(this.snapshot, this.opts, Date.now());
       throw err;
     }
   }
 
   /** 重置断路器到初始状态 */
   reset(): void {
-    this.state = 'closed';
-    this.consecutiveFailures = 0;
-    this.lastFailureTime = 0;
-    this.halfOpenRequests = 0;
-  }
-
-  private evaluateState(): void {
-    if (this.state === 'open') {
-      const elapsed = Date.now() - this.lastFailureTime;
-      if (elapsed >= this.opts.resetTimeoutMs) {
-        this.state = 'half_open';
-        this.halfOpenRequests = 0;
-      }
-    }
-  }
-
-  private onSuccess(): void {
-    if (this.state === 'half_open') {
-      this.state = 'closed';
-      this.consecutiveFailures = 0;
-      this.halfOpenRequests = 0;
-    } else {
-      this.consecutiveFailures = 0;
-    }
-  }
-
-  private onFailure(): void {
-    this.consecutiveFailures++;
-    this.lastFailureTime = Date.now();
-
-    if (this.state === 'half_open') {
-      this.state = 'open';
-    } else if (this.consecutiveFailures >= this.opts.failureThreshold) {
-      this.state = 'open';
-    }
-  }
-}
-
-export class CircuitOpenError extends Error {
-  readonly code = 'CIRCUIT_OPEN';
-  constructor(message: string) {
-    super(message);
-    this.name = 'CircuitOpenError';
-  }
-}
-
-export class CircuitTimeoutError extends Error {
-  readonly code = 'CIRCUIT_TIMEOUT';
-  constructor(message: string) {
-    super(message);
-    this.name = 'CircuitTimeoutError';
+    this.snapshot = { ...INITIAL_CIRCUIT_SNAPSHOT };
   }
 }
