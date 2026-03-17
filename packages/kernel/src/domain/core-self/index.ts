@@ -14,3 +14,7 @@ export * from './decision-style-service.js';
 export * from './cognitive-model-types.js';
 export * from './cognitive-model-queries.js';
 export * from './cognitive-model-service.js';
+export * from './memory-types.js';
+export * from './memory-cognition.js';
+export * from './memory-queries.js';
+export * from './memory-service.js';

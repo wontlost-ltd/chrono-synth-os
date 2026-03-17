@@ -85,7 +85,7 @@ export interface MemoryCognitionConfig {
     readonly baseLambda: number;
     readonly valenceWeight: number;
     readonly accessBoost: number;
-    readonly kindFactors: Readonly<Record<MemoryKind, number>>;
+    readonly kindFactors: Readonly<Record<string, number>>;
   };
   readonly activation: {
     readonly baseActivation: number;
