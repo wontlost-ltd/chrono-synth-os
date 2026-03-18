@@ -1,9 +1,19 @@
 /**
  * 数据库驱动的任务队列
- * 无外部依赖（不依赖 BullMQ/Redis），直接使用 IDatabase 存储
+ * 通过 SyncWriteUnitOfWork 的 Query/Command 契约访问数据，
+ * 不直接调用 db.prepare()
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { TaskRow } from '@chrono/kernel';
+import {
+  taskQueryById, taskQueryDequeueCandidate, taskQueryExpiredIds,
+  taskCmdEnqueue, taskCmdClaim, taskCmdComplete, taskCmdFail,
+  taskCmdReschedule, taskCmdDeleteBatch, taskCmdReapRetryable, taskCmdReapExhausted,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { QuotaExceededError } from '../errors/index.js';
 
@@ -24,23 +34,6 @@ export interface TaskRecord {
   readonly availableAt: number;
   readonly claimedBy: string | null;
   readonly claimedAt: number | null;
-}
-
-interface TaskRow {
-  id: string;
-  tenant_id: string;
-  type: string;
-  payload: string;
-  status: string;
-  result: string | null;
-  error: string | null;
-  retry_count: number;
-  max_retries: number;
-  created_at: number;
-  updated_at: number;
-  available_at: number;
-  claimed_by: string | null;
-  claimed_at: number | null;
 }
 
 function rowToRecord(row: TaskRow): TaskRecord {
@@ -77,27 +70,29 @@ const DEFAULT_QUEUE_CONFIG: TaskQueueConfig = {
 export class TaskQueue {
   private readonly workerId: string;
   private readonly config: TaskQueueConfig;
+  private readonly db: IDatabase;
+  private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(private readonly db: IDatabase, workerId?: string, config?: Partial<TaskQueueConfig>) {
+  constructor(db: IDatabase, workerId?: string, config?: Partial<TaskQueueConfig>) {
+    this.db = db;
     this.workerId = workerId ?? generatePrefixedId('worker');
     this.config = { ...DEFAULT_QUEUE_CONFIG, ...config };
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
   }
 
   /** 入队新任务（priority: 0=普通, 1=高优先, 2=紧急） */
   enqueue(tenantId: string, type: string, payload: unknown, maxRetries = 3, priority = 0): string {
     const id = generatePrefixedId('task');
     const now = Date.now();
-    const maxPending = this.config.maxPendingPerTenant;
 
-    /* 原子化 INSERT...SELECT：在单条 SQL 中完成深度检查 + 插入，避免竞态 */
-    const result = this.db.prepare<void>(
-      `INSERT INTO tasks (id, tenant_id, type, payload, status, retry_count, max_retries, created_at, updated_at, available_at, priority)
-       SELECT ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?
-       WHERE ? = 0 OR (SELECT COUNT(*) FROM tasks WHERE tenant_id = ? AND status IN ('pending', 'running')) < ?`,
-    ).run(id, tenantId, type, JSON.stringify(payload), maxRetries, now, now, now, priority, maxPending, tenantId, maxPending);
+    const result = this.tx.execute(taskCmdEnqueue({
+      id, tenantId, type, payload: JSON.stringify(payload),
+      maxRetries, now, priority, maxPending: this.config.maxPendingPerTenant,
+    }));
 
-    if (result.changes === 0) {
-      throw new QuotaExceededError(`租户 ${tenantId} 待处理任务已达上限 (${maxPending})`);
+    if (result.rowsAffected === 0) {
+      throw new QuotaExceededError(`租户 ${tenantId} 待处理任务已达上限 (${this.config.maxPendingPerTenant})`);
     }
     return id;
   }
@@ -106,21 +101,11 @@ export class TaskQueue {
   dequeue(now?: number): TaskRecord | undefined {
     const ts = now ?? Date.now();
     return this.db.transaction(() => {
-      /* 按优先级降序、创建时间升序选取，同时统计各租户正在运行的任务数实现公平调度 */
-      const row = this.db.prepare<TaskRow>(
-        `SELECT t.* FROM tasks t
-         LEFT JOIN (SELECT tenant_id, COUNT(*) as running_count FROM tasks WHERE status = 'running' GROUP BY tenant_id) r
-         ON t.tenant_id = r.tenant_id
-         WHERE t.status = 'pending' AND t.available_at <= ?
-         ORDER BY t.priority DESC, COALESCE(r.running_count, 0) ASC, t.created_at ASC
-         LIMIT 1`,
-      ).get(ts);
+      const row = this.tx.queryOne(taskQueryDequeueCandidate(ts));
       if (!row) return undefined;
 
-      const updated = this.db.prepare<void>(
-        `UPDATE tasks SET status = 'running', claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
-      ).run(this.workerId, ts, ts, row.id);
-      if (updated.changes === 0) return undefined;
+      const claimed = this.tx.execute(taskCmdClaim({ taskId: row.id, workerId: this.workerId, now: ts }));
+      if (claimed.rowsAffected === 0) return undefined;
 
       return rowToRecord({ ...row, status: 'running', claimed_by: this.workerId, claimed_at: ts, updated_at: ts });
     });
@@ -128,30 +113,22 @@ export class TaskQueue {
 
   /** 标记任务完成 */
   complete(taskId: string, result: unknown): void {
-    this.db.prepare<void>(
-      `UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?`,
-    ).run(JSON.stringify(result), Date.now(), taskId);
+    this.tx.execute(taskCmdComplete({ taskId, result: JSON.stringify(result), now: Date.now() }));
   }
 
   /** 标记任务失败 */
   fail(taskId: string, error: string): void {
-    this.db.prepare<void>(
-      `UPDATE tasks SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`,
-    ).run(error, Date.now(), taskId);
+    this.tx.execute(taskCmdFail({ taskId, error, now: Date.now() }));
   }
 
   /** 重新调度任务（指数退避） */
   reschedule(taskId: string, retryCount: number, availableAt: number, error: string): void {
-    this.db.prepare<void>(
-      `UPDATE tasks SET status = 'pending', retry_count = ?, available_at = ?, error = ?, updated_at = ? WHERE id = ?`,
-    ).run(retryCount, availableAt, error, Date.now(), taskId);
+    this.tx.execute(taskCmdReschedule({ taskId, retryCount, availableAt, error, now: Date.now() }));
   }
 
   /** 查询任务状态 */
   getTask(taskId: string): TaskRecord | undefined {
-    const row = this.db.prepare<TaskRow>(
-      'SELECT * FROM tasks WHERE id = ?',
-    ).get(taskId);
+    const row = this.tx.queryOne(taskQueryById(taskId));
     return row ? rowToRecord(row) : undefined;
   }
 
@@ -163,14 +140,9 @@ export class TaskQueue {
     const cutoff = Date.now() - this.config.completedRetentionMs;
     let total = 0;
     while (true) {
-      const ids = this.db.prepare<{ id: string }>(
-        `SELECT id FROM tasks WHERE status IN ('completed', 'failed') AND updated_at < ? LIMIT ?`,
-      ).all(cutoff, batchSize);
+      const ids = this.tx.queryMany(taskQueryExpiredIds(cutoff, batchSize));
       if (ids.length === 0) break;
-      const placeholders = ids.map(() => '?').join(',');
-      this.db.prepare<void>(
-        `DELETE FROM tasks WHERE id IN (${placeholders})`,
-      ).run(...ids.map(r => r.id));
+      this.tx.execute(taskCmdDeleteBatch(ids.map(r => r.id)));
       total += ids.length;
       if (ids.length < batchSize) break;
     }
@@ -185,20 +157,10 @@ export class TaskQueue {
   reapStaleTasks(staleThresholdMs = 300_000): number {
     const now = Date.now();
     const cutoff = now - staleThresholdMs;
-    const staleCondition = `status = 'running' AND ((claimed_at IS NOT NULL AND claimed_at < ?) OR (claimed_at IS NULL AND updated_at < ?))`;
 
-    /* 可重试的任务：重置为 pending */
-    const requeued = this.db.prepare<void>(
-      `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL, available_at = ?, updated_at = ?, retry_count = retry_count + 1
-       WHERE ${staleCondition} AND retry_count < max_retries`,
-    ).run(now, now, cutoff, cutoff);
+    const requeued = this.tx.execute(taskCmdReapRetryable({ now, cutoff }));
+    const failed = this.tx.execute(taskCmdReapExhausted({ now, cutoff, errorMessage: '任务超时且已达到最大重试次数' }));
 
-    /* 已耗尽重试的任务：标记为 failed */
-    const failed = this.db.prepare<void>(
-      `UPDATE tasks SET status = 'failed', error = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ?
-       WHERE ${staleCondition} AND retry_count >= max_retries`,
-    ).run('任务超时且已达到最大重试次数', now, cutoff, cutoff);
-
-    return requeued.changes + failed.changes;
+    return requeued.rowsAffected + failed.rowsAffected;
   }
 }

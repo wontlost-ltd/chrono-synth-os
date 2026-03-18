@@ -50,3 +50,4 @@ export * from './domain/circuit-breaker.js';
 export * from './domain/math.js';
 export * from './domain/simulation/index.js';
 export * from './domain/intelligence/index.js';
+export * from './domain/queue/index.js';
