@@ -26,6 +26,8 @@ import { registerAddOnExecutors } from './add-on-executors.js';
 import { registerEntitlementExecutors } from './entitlement-executors.js';
 import { registerSubscriptionQueryExecutors } from './subscription-query-executors.js';
 import { registerApiKeyExecutors } from './api-key-executors.js';
+import { registerStripeWebhookExecutors } from './stripe-webhook-executors.js';
+import { registerAuthExecutors } from './auth-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -38,6 +40,7 @@ import {
   SNAP_QUERY_BY_ID, UGATE_QUERY_BY_ID, CONFLICT_QUERY_UNRESOLVED,
   ADDON_QUERY_BY_CODE, ENTL_QUERY_PLAN_ID,
   SUBQ_QUERY_LATEST_PLAN, APIKEY_QUERY_LIST,
+  SWHS_QUERY_LATEST_SUBSCRIPTION, AUTH_QUERY_USER_BY_EMAIL,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -70,6 +73,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(ENTL_QUERY_PLAN_ID)) registerEntitlementExecutors();
   if (!resolveQueryExecutor(SUBQ_QUERY_LATEST_PLAN)) registerSubscriptionQueryExecutors();
   if (!resolveQueryExecutor(APIKEY_QUERY_LIST)) registerApiKeyExecutors();
+  if (!resolveQueryExecutor(SWHS_QUERY_LATEST_SUBSCRIPTION)) registerStripeWebhookExecutors();
+  if (!resolveQueryExecutor(AUTH_QUERY_USER_BY_EMAIL)) registerAuthExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

@@ -7,12 +7,23 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { AppConfig } from '../config/schema.js';
-import type { JwtPayload, UserRow, RefreshTokenRow } from '../types/auth.js';
+import type { JwtPayload } from '../types/auth.js';
 import { ErrorCode, StateError, AuthenticationError } from '../errors/index.js';
 import { createCustomer } from '../billing/stripe-client.js';
 import { syncPlanToQuota } from '../billing/plans.js';
 import { IdentityService } from './identity-service.js';
+import {
+  authQueryUserByEmail, authQueryUserById, authQueryRefreshToken,
+  authCmdCreateUser, authCmdCreateSubscription,
+  authCmdCreateRefreshToken, authCmdRevokeTokenById,
+  authCmdRevokeTokenByHash, authCmdRevokeTokensByUser,
+  authCmdCleanupExpiredTokens,
+  subqQueryActivePlan,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -46,13 +57,18 @@ export interface RefreshResult {
 }
 
 export class AuthService {
+  private readonly tx: SyncWriteUnitOfWork;
+
   constructor(
     private readonly db: IDatabase,
     private readonly config: AppConfig,
-  ) {}
+  ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   async register(app: FastifyInstance, email: string, password: string): Promise<RegisterResult> {
-    const existing = this.db.prepare<UserRow>('SELECT id FROM users WHERE email = ?').get(email);
+    const existing = this.tx.queryOne(authQueryUserByEmail(email));
     if (existing) {
       throw new StateError('该邮箱已注册', ErrorCode.AUTH_EMAIL_EXISTS);
     }
@@ -62,9 +78,9 @@ export class AuthService {
     const passwordHash = await hash(password);
     const tenantId = `tenant_${randomUUID()}`;
 
-    this.db.prepare<void>(
-      'INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(userId, email, passwordHash, 'admin', tenantId, now, now);
+    this.tx.execute(authCmdCreateUser({
+      id: userId, email, passwordHash, role: 'admin', tenantId, now,
+    }));
 
     let stripeCustomerId: string | null = null;
     if (this.config.stripe.enabled) {
@@ -76,10 +92,9 @@ export class AuthService {
 
     const subId = `sub_${randomUUID()}`;
     const periodEnd = now + 365 * 24 * 60 * 60 * 1000;
-    this.db.prepare<void>(
-      `INSERT INTO subscriptions (id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
-       VALUES (?, ?, ?, 'free', 'active', ?, ?, ?, ?)`,
-    ).run(subId, tenantId, stripeCustomerId, now, periodEnd, now, now);
+    this.tx.execute(authCmdCreateSubscription({
+      id: subId, tenantId, stripeCustomerId, periodStart: now, periodEnd, now,
+    }));
 
     syncPlanToQuota(this.db, tenantId, 'free');
 
@@ -91,7 +106,7 @@ export class AuthService {
   }
 
   async login(app: FastifyInstance, email: string, password: string): Promise<LoginResult> {
-    const user = this.db.prepare<UserRow>('SELECT * FROM users WHERE email = ?').get(email);
+    const user = this.tx.queryOne(authQueryUserByEmail(email));
     if (!user) {
       throw new AuthenticationError('邮箱或密码错误', ErrorCode.AUTH_INVALID_CREDENTIALS);
     }
@@ -107,17 +122,15 @@ export class AuthService {
 
   async refresh(app: FastifyInstance, refreshToken: string): Promise<RefreshResult> {
     const tokenHash = hashToken(refreshToken);
-    const row = this.db.prepare<RefreshTokenRow>(
-      'SELECT * FROM refresh_tokens WHERE token_hash = ? AND is_revoked = 0',
-    ).get(tokenHash);
+    const row = this.tx.queryOne(authQueryRefreshToken(tokenHash));
 
     if (!row || row.expires_at < Date.now()) {
       throw new AuthenticationError('刷新令牌无效或已过期', ErrorCode.AUTH_EXPIRED);
     }
 
-    this.db.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE id = ?').run(row.id);
+    this.tx.execute(authCmdRevokeTokenById(row.id));
 
-    const user = this.db.prepare<UserRow>('SELECT * FROM users WHERE id = ?').get(row.user_id);
+    const user = this.tx.queryOne(authQueryUserById(row.user_id));
     if (!user) {
       throw new AuthenticationError('用户不存在', ErrorCode.AUTH_INVALID_TOKEN);
     }
@@ -129,15 +142,15 @@ export class AuthService {
   logout(refreshToken: string | undefined, jwtUser: JwtPayload | undefined): void {
     if (refreshToken) {
       const tokenHash = hashToken(refreshToken);
-      this.db.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE token_hash = ?').run(tokenHash);
+      this.tx.execute(authCmdRevokeTokenByHash(tokenHash));
     }
     if (jwtUser) {
-      this.db.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE user_id = ?').run(jwtUser.sub);
+      this.tx.execute(authCmdRevokeTokensByUser(jwtUser.sub));
     }
   }
 
   revokeByTokenHash(tokenHash: string): void {
-    this.db.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE token_hash = ?').run(tokenHash);
+    this.tx.execute(authCmdRevokeTokenByHash(tokenHash));
   }
 
   revokeByRawToken(rawToken: string): void {
@@ -151,9 +164,7 @@ export class AuthService {
     tenantId: string,
     role: string,
   ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
-    const sub = this.db.prepare<{ plan_id: string }>(
-      'SELECT plan_id FROM subscriptions WHERE tenant_id = ? AND status = \'active\' ORDER BY created_at DESC LIMIT 1',
-    ).get(tenantId);
+    const sub = this.tx.queryOne(subqQueryActivePlan(tenantId));
     const planId = sub?.plan_id ?? 'free';
     const signPayload = { sub: userId, tenantId, role, planId } as unknown as JwtPayload;
     const accessToken = app.jwt.sign(signPayload);
@@ -163,9 +174,9 @@ export class AuthService {
     const now = Date.now();
     const expiresAt = now + this.config.jwt.refreshTtlMs;
 
-    this.db.prepare<void>(
-      'INSERT INTO refresh_tokens (id, user_id, token_hash, is_revoked, expires_at, created_at) VALUES (?, ?, ?, 0, ?, ?)',
-    ).run(`rt_${randomUUID()}`, userId, tokenHash, expiresAt, now);
+    this.tx.execute(authCmdCreateRefreshToken({
+      id: `rt_${randomUUID()}`, userId, tokenHash, expiresAt, now,
+    }));
 
     return {
       accessToken,
@@ -179,12 +190,12 @@ export class AuthService {
   }
 
   static cleanupExpired(db: IDatabase): number {
+    registerCoreSelfExecutors();
+    const tx = directUnitOfWork(db);
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     let changes = 0;
     db.transaction(() => {
-      changes = db.prepare<void>(
-        'DELETE FROM refresh_tokens WHERE (is_revoked = 1 AND created_at < ?) OR (expires_at < ?)',
-      ).run(cutoff, cutoff).changes;
+      changes = tx.execute(authCmdCleanupExpiredTokens({ cutoff })).rowsAffected;
     });
     return changes;
   }

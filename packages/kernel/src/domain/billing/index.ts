@@ -6,3 +6,4 @@ export * from './add-on-queries.js';
 export * from './entitlement-queries.js';
 export * from './subscription-query-queries.js';
 export * from './api-key-queries.js';
+export * from './stripe-webhook-queries.js';

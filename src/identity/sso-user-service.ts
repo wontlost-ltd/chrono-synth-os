@@ -5,16 +5,19 @@
 
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { UserRole } from '../types/auth.js';
 import { AuthenticationError, ErrorCode } from '../errors/index.js';
 import { syncPlanToQuota } from '../billing/plans.js';
 import { IdentityService } from './identity-service.js';
-
-interface ExistingUser {
-  id: string;
-  tenant_id: string;
-  role: string;
-}
+import {
+  authQueryUserBriefByEmail, authQuerySubExists,
+  authQueryUserCountByTenant,
+  authCmdCreateUser, authCmdCreateSubscription,
+  authCmdUpdateDisplayName,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface SsoUserResult {
   userId: string;
@@ -24,9 +27,12 @@ export interface SsoUserResult {
 }
 
 export class SsoUserService {
+  private readonly tx: SyncWriteUnitOfWork;
   private readonly identityService: IdentityService;
 
   constructor(private readonly db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
     this.identityService = new IdentityService(db);
   }
 
@@ -34,9 +40,7 @@ export class SsoUserService {
    * OIDC 用户查找或创建：要求 email 所属 tenant 与 expectedTenantId 一致
    */
   findOrCreateForOidc(email: string, expectedTenantId: string, displayName?: string): SsoUserResult {
-    const existing = this.db.prepare<ExistingUser>(
-      'SELECT id, tenant_id, role FROM users WHERE email = ? LIMIT 1',
-    ).get(email);
+    const existing = this.tx.queryOne(authQueryUserBriefByEmail(email));
 
     if (existing) {
       if (existing.tenant_id !== expectedTenantId) {
@@ -48,21 +52,18 @@ export class SsoUserService {
 
     const userId = `user_${randomUUID()}`;
     const now = Date.now();
-    const userCount = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?',
-    ).get(expectedTenantId)?.count ?? 0;
+    const countRow = this.tx.queryOne(authQueryUserCountByTenant(expectedTenantId));
+    const userCount = Number(countRow?.count ?? 0);
     const role: UserRole = userCount === 0 ? 'admin' : 'member';
 
-    this.db.prepare<void>(
-      `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(userId, email, 'oidc-managed', role, expectedTenantId, now, now);
+    this.tx.execute(authCmdCreateUser({
+      id: userId, email, passwordHash: 'oidc-managed', role, tenantId: expectedTenantId, now,
+    }));
 
     this.bootstrapTenant(expectedTenantId, userId, email);
 
     if (displayName) {
-      this.db.prepare<void>('UPDATE identities SET display_name = ?, updated_at = ? WHERE user_id = ?')
-        .run(displayName, now, userId);
+      this.tx.execute(authCmdUpdateDisplayName({ userId, displayName, now }));
     }
 
     return { userId, tenantId: expectedTenantId, role, isNew: true };
@@ -72,9 +73,7 @@ export class SsoUserService {
    * SSO (Auth0) 用户查找或创建：自动分配新 tenant
    */
   findOrCreateForSso(email: string): SsoUserResult {
-    const existing = this.db.prepare<ExistingUser>(
-      'SELECT id, tenant_id, role FROM users WHERE email = ?',
-    ).get(email);
+    const existing = this.tx.queryOne(authQueryUserBriefByEmail(email));
 
     if (existing) {
       this.ensureTenantBootstrap(existing.tenant_id, existing.id, email);
@@ -85,9 +84,9 @@ export class SsoUserService {
     const tenantId = `tenant_${randomUUID()}`;
     const now = Date.now();
 
-    this.db.prepare<void>(
-      'INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(userId, email, 'sso-managed', 'admin', tenantId, now, now);
+    this.tx.execute(authCmdCreateUser({
+      id: userId, email, passwordHash: 'sso-managed', role: 'admin', tenantId, now,
+    }));
 
     this.bootstrapTenant(tenantId, userId, email);
 
@@ -107,16 +106,17 @@ export class SsoUserService {
   }
 
   private ensureSubscription(tenantId: string): void {
-    const sub = this.db.prepare<{ id: string }>(
-      'SELECT id FROM subscriptions WHERE tenant_id = ? LIMIT 1',
-    ).get(tenantId);
+    const sub = this.tx.queryOne(authQuerySubExists(tenantId));
     if (!sub) {
       const now = Date.now();
-      this.db.prepare<void>(
-        `INSERT INTO subscriptions (
-          id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at
-        ) VALUES (?, ?, NULL, 'free', 'active', ?, ?, ?, ?)`,
-      ).run(`sub_${randomUUID()}`, tenantId, now, now + 365 * 24 * 60 * 60 * 1000, now, now);
+      this.tx.execute(authCmdCreateSubscription({
+        id: `sub_${randomUUID()}`,
+        tenantId,
+        stripeCustomerId: null,
+        periodStart: now,
+        periodEnd: now + 365 * 24 * 60 * 60 * 1000,
+        now,
+      }));
       syncPlanToQuota(this.db, tenantId, 'free');
     }
   }
