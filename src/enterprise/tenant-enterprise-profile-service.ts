@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
+import type { SyncWriteUnitOfWork, TprofRow } from '@chrono/kernel';
+import {
+  tprofQueryByTenant, tprofQueryByScimToken,
+  tprofCmdUpdate, tprofCmdInsert,
+  tprofCmdUpdateScimToken, tprofCmdInsertWithScimToken,
+} from '@chrono/kernel';
 import type { AppConfig } from '../config/schema.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { FieldEncryption } from '../storage/encryption.js';
 import {
   assertValidKafkaNamespace,
@@ -12,26 +20,6 @@ import {
 type DeploymentMode = 'shared_cluster' | 'dedicated_db';
 type DatabaseIsolationMode = 'shared' | 'dedicated';
 type EncryptionMode = 'platform_managed' | 'tenant_dedicated';
-
-interface TenantEnterpriseProfileRow {
-  tenant_id: string;
-  deployment_mode: DeploymentMode;
-  database_isolation_mode: DatabaseIsolationMode;
-  kafka_namespace: string;
-  encryption_mode: EncryptionMode;
-  kms_key_ref: string | null;
-  scim_token_hash: string | null;
-  oidc_enabled: number;
-  oidc_issuer_url: string;
-  oidc_client_id: string;
-  oidc_client_secret_encrypted: string;
-  oidc_audience: string;
-  oidc_scope: string;
-  oidc_email_claim: string;
-  oidc_name_claim: string;
-  created_at: number;
-  updated_at: number;
-}
 
 export interface EffectiveOidcConfig {
   issuerUrl: string;
@@ -112,7 +100,7 @@ function normalizeOptionalString(value: string | null | undefined): string | nul
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function toProfile(row: TenantEnterpriseProfileRow | undefined): TenantEnterpriseProfile {
+function toProfile(row: TprofRow | null | undefined): TenantEnterpriseProfile {
   if (!row) {
     return {
       tenantId: 'default',
@@ -124,10 +112,10 @@ function toProfile(row: TenantEnterpriseProfileRow | undefined): TenantEnterpris
 
   return {
     tenantId: row.tenant_id,
-    deploymentMode: row.deployment_mode,
-    databaseIsolationMode: row.database_isolation_mode,
+    deploymentMode: row.deployment_mode as DeploymentMode,
+    databaseIsolationMode: row.database_isolation_mode as DatabaseIsolationMode,
     kafkaNamespace: normalizeOptionalString(row.kafka_namespace),
-    encryptionMode: row.encryption_mode,
+    encryptionMode: row.encryption_mode as EncryptionMode,
     kmsKeyRef: normalizeOptionalString(row.kms_key_ref),
     scimTokenConfigured: Boolean(row.scim_token_hash),
     oidc: {
@@ -146,10 +134,15 @@ function toProfile(row: TenantEnterpriseProfileRow | undefined): TenantEnterpris
 }
 
 export class TenantEnterpriseProfileService {
+  private readonly tx: SyncWriteUnitOfWork;
+
   constructor(
-    private readonly db: IDatabase,
+    db: IDatabase,
     private readonly config: AppConfig,
-  ) {}
+  ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   getProfile(tenantId: string): TenantEnterpriseProfile {
     const row = this.getRow(tenantId);
@@ -204,68 +197,28 @@ export class TenantEnterpriseProfileService {
       ? this.encryptSecret(oidcSecret, kmsKeyRef)
       : '';
 
+    const cmdParams = {
+      tenantId,
+      deploymentMode,
+      databaseIsolationMode,
+      kafkaNamespace: kafkaNamespace ?? '',
+      encryptionMode,
+      kmsKeyRef,
+      oidcEnabled: oidcEnabled ? 1 : 0,
+      oidcIssuerUrl,
+      oidcClientId,
+      oidcClientSecretEncrypted,
+      oidcAudience,
+      oidcScope,
+      oidcEmailClaim,
+      oidcNameClaim,
+      now,
+    };
+
     if (existing) {
-      this.db.prepare<void>(
-        `UPDATE tenant_enterprise_profiles
-         SET deployment_mode = ?,
-             database_isolation_mode = ?,
-             kafka_namespace = ?,
-             encryption_mode = ?,
-             kms_key_ref = ?,
-             oidc_enabled = ?,
-             oidc_issuer_url = ?,
-             oidc_client_id = ?,
-             oidc_client_secret_encrypted = ?,
-             oidc_audience = ?,
-             oidc_scope = ?,
-             oidc_email_claim = ?,
-             oidc_name_claim = ?,
-             updated_at = ?
-         WHERE tenant_id = ?`,
-      ).run(
-        deploymentMode,
-        databaseIsolationMode,
-        kafkaNamespace ?? '',
-        encryptionMode,
-        kmsKeyRef,
-        oidcEnabled ? 1 : 0,
-        oidcIssuerUrl,
-        oidcClientId,
-        oidcClientSecretEncrypted,
-        oidcAudience,
-        oidcScope,
-        oidcEmailClaim,
-        oidcNameClaim,
-        now,
-        tenantId,
-      );
+      this.tx.execute(tprofCmdUpdate(cmdParams));
     } else {
-      this.db.prepare<void>(
-        `INSERT INTO tenant_enterprise_profiles (
-          tenant_id, deployment_mode, database_isolation_mode, kafka_namespace,
-          encryption_mode, kms_key_ref, scim_token_hash,
-          oidc_enabled, oidc_issuer_url, oidc_client_id, oidc_client_secret_encrypted,
-          oidc_audience, oidc_scope, oidc_email_claim, oidc_name_claim,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        tenantId,
-        deploymentMode,
-        databaseIsolationMode,
-        kafkaNamespace ?? '',
-        encryptionMode,
-        kmsKeyRef,
-        oidcEnabled ? 1 : 0,
-        oidcIssuerUrl,
-        oidcClientId,
-        oidcClientSecretEncrypted,
-        oidcAudience,
-        oidcScope,
-        oidcEmailClaim,
-        oidcNameClaim,
-        now,
-        now,
-      );
+      this.tx.execute(tprofCmdInsert(cmdParams));
     }
 
     return this.getProfile(tenantId);
@@ -276,27 +229,15 @@ export class TenantEnterpriseProfileService {
     const now = Date.now();
     const tokenHash = hashToken(token);
     if (existing) {
-      this.db.prepare<void>(
-        'UPDATE tenant_enterprise_profiles SET scim_token_hash = ?, updated_at = ? WHERE tenant_id = ?',
-      ).run(tokenHash, now, tenantId);
+      this.tx.execute(tprofCmdUpdateScimToken({ tenantId, tokenHash, now }));
       return;
     }
 
-    this.db.prepare<void>(
-      `INSERT INTO tenant_enterprise_profiles (
-        tenant_id, deployment_mode, database_isolation_mode, kafka_namespace,
-        encryption_mode, kms_key_ref, scim_token_hash,
-        oidc_enabled, oidc_issuer_url, oidc_client_id, oidc_client_secret_encrypted,
-        oidc_audience, oidc_scope, oidc_email_claim, oidc_name_claim,
-        created_at, updated_at
-      ) VALUES (?, 'shared_cluster', 'shared', '', 'platform_managed', NULL, ?, 0, '', '', '', '', 'openid profile email', 'email', 'name', ?, ?)`,
-    ).run(tenantId, tokenHash, now, now);
+    this.tx.execute(tprofCmdInsertWithScimToken({ tenantId, tokenHash, now }));
   }
 
   resolveScimTenant(token: string): { tenantId: string } | null {
-    const row = this.db.prepare<{ tenant_id: string }>(
-      'SELECT tenant_id FROM tenant_enterprise_profiles WHERE scim_token_hash = ? LIMIT 1',
-    ).get(hashToken(token));
+    const row = this.tx.queryOne(tprofQueryByScimToken(hashToken(token)));
     if (!row) return null;
     return { tenantId: row.tenant_id };
   }
@@ -340,10 +281,8 @@ export class TenantEnterpriseProfileService {
     });
   }
 
-  private getRow(tenantId: string): TenantEnterpriseProfileRow | undefined {
-    return this.db.prepare<TenantEnterpriseProfileRow>(
-      'SELECT * FROM tenant_enterprise_profiles WHERE tenant_id = ? LIMIT 1',
-    ).get(tenantId);
+  private getRow(tenantId: string): TprofRow | null {
+    return this.tx.queryOne(tprofQueryByTenant(tenantId));
   }
 
   private encryptSecret(secret: string, keyRef: string | null): string {

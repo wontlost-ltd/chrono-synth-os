@@ -2,40 +2,42 @@
  * 人格引擎：管理人格版本的创建、状态转换和持久化
  */
 
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  pengQueryById, pengQueryActive, pengQueryAll,
+  pengCmdCreate, pengCmdSetStatus, pengCmdSetResults,
+  pengCmdSetQuota, pengCmdDelete, pengCmdDeleteAll, pengCmdInsertRaw,
+} from '@chrono/kernel';
+import type { PengRow } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
 import { mapToJson, jsonToMap, deepStringify, deepParse } from '../storage/serialization.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { PersonaVersion, PersonaVersionId, PersonaStatus, SimulationResult } from '../types/persona-version.js';
 import type { Clock } from '../utils/clock.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
-interface PersonaRow {
-  id: string;
-  label: string;
-  values_json: string;
-  status: string;
-  results_json: string;
-  resource_quota: number;
-  created_at: number;
-  updated_at: number;
-}
-
 const VALID_STATUSES = new Set<string>(['active', 'paused', 'completed', 'failed']);
 
 export class PersonaEngine {
+  private readonly tx: SyncWriteUnitOfWork;
+
   constructor(
-    private readonly db: IDatabase,
+    db: IDatabase,
     private readonly clock: Clock,
-  ) {}
+  ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 从核心价值分叉创建新人格版本 */
   create(label: string, values: ReadonlyMap<string, number>, resourceQuota: number): PersonaVersion {
     this.validateQuota(resourceQuota);
     const id = generatePrefixedId('persona');
     const now = this.clock.now();
-    this.db.prepare<void>(
-      `INSERT INTO persona_versions (id, label, values_json, status, results_json, resource_quota, created_at, updated_at)
-       VALUES (?, ?, ?, 'active', '[]', ?, ?, ?)`,
-    ).run(id, label, mapToJson(values), resourceQuota, now, now);
+    this.tx.execute(pengCmdCreate({
+      id, label, valuesJson: mapToJson(values), resourceQuota, now,
+    }));
     return {
       id, label, values, status: 'active',
       results: [], resourceQuota, createdAt: now, updatedAt: now,
@@ -45,10 +47,8 @@ export class PersonaEngine {
   /** 更新人格状态 */
   setStatus(id: PersonaVersionId, status: PersonaStatus): boolean {
     const now = this.clock.now();
-    const result = this.db.prepare<void>(
-      'UPDATE persona_versions SET status = ?, updated_at = ? WHERE id = ?',
-    ).run(status, now, id);
-    return result.changes > 0;
+    const result = this.tx.execute(pengCmdSetStatus({ id, status, now }));
+    return result.rowsAffected > 0;
   }
 
   /** 追加模拟结果 */
@@ -57,9 +57,7 @@ export class PersonaEngine {
     if (!persona) return false;
     const results = [...persona.results, simResult];
     const now = this.clock.now();
-    this.db.prepare<void>(
-      'UPDATE persona_versions SET results_json = ?, updated_at = ? WHERE id = ?',
-    ).run(deepStringify(results), now, id);
+    this.tx.execute(pengCmdSetResults({ id, resultsJson: deepStringify(results), now }));
     return true;
   }
 
@@ -67,59 +65,51 @@ export class PersonaEngine {
   setQuota(id: PersonaVersionId, quota: number): boolean {
     this.validateQuota(quota);
     const now = this.clock.now();
-    const result = this.db.prepare<void>(
-      'UPDATE persona_versions SET resource_quota = ?, updated_at = ? WHERE id = ?',
-    ).run(quota, now, id);
-    return result.changes > 0;
+    const result = this.tx.execute(pengCmdSetQuota({ id, quota, now }));
+    return result.rowsAffected > 0;
   }
 
   /** 按 ID 获取 */
   getById(id: PersonaVersionId): PersonaVersion | undefined {
-    const row = this.db.prepare<PersonaRow>(
-      'SELECT * FROM persona_versions WHERE id = ?',
-    ).get(id);
+    const row = this.tx.queryOne(pengQueryById(id));
     return row ? this.toPersona(row) : undefined;
   }
 
   /** 获取所有活跃版本 */
   getActive(): PersonaVersion[] {
-    const rows = this.db.prepare<PersonaRow>(
-      "SELECT * FROM persona_versions WHERE status = 'active'",
-    ).all();
+    const rows = this.tx.queryMany(pengQueryActive()) as unknown as PengRow[];
     return rows.map(r => this.toPersona(r));
   }
 
   /** 获取全部版本 */
   getAll(): PersonaVersion[] {
-    const rows = this.db.prepare<PersonaRow>(
-      'SELECT * FROM persona_versions',
-    ).all();
+    const rows = this.tx.queryMany(pengQueryAll()) as unknown as PengRow[];
     return rows.map(r => this.toPersona(r));
   }
 
   /** 删除版本 */
   delete(id: PersonaVersionId): boolean {
-    const result = this.db.prepare<void>(
-      'DELETE FROM persona_versions WHERE id = ?',
-    ).run(id);
-    return result.changes > 0;
+    const result = this.tx.execute(pengCmdDelete(id));
+    return result.rowsAffected > 0;
   }
 
   /** 删除所有版本 */
   deleteAll(): void {
-    this.db.prepare<void>('DELETE FROM persona_versions WHERE 1=1').run();
+    this.tx.execute(pengCmdDeleteAll());
   }
 
   /** 按原始数据插入（恢复用，保留原 ID 和所有字段） */
   insertRaw(persona: PersonaVersion): void {
-    this.db.prepare<void>(
-      `INSERT INTO persona_versions (id, label, values_json, status, results_json, resource_quota, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET label=excluded.label, values_json=excluded.values_json, status=excluded.status, results_json=excluded.results_json, resource_quota=excluded.resource_quota, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-    ).run(
-      persona.id, persona.label, mapToJson(persona.values),
-      persona.status, deepStringify(persona.results),
-      persona.resourceQuota, persona.createdAt, persona.updatedAt,
-    );
+    this.tx.execute(pengCmdInsertRaw({
+      id: persona.id,
+      label: persona.label,
+      valuesJson: mapToJson(persona.values),
+      status: persona.status,
+      resultsJson: deepStringify(persona.results),
+      resourceQuota: persona.resourceQuota,
+      createdAt: persona.createdAt,
+      updatedAt: persona.updatedAt,
+    }));
   }
 
   private validateQuota(value: number): void {
@@ -128,7 +118,7 @@ export class PersonaEngine {
     }
   }
 
-  private toPersona(row: PersonaRow): PersonaVersion {
+  private toPersona(row: PengRow): PersonaVersion {
     const status = VALID_STATUSES.has(row.status) ? row.status as PersonaStatus : 'failed';
     return {
       id: row.id,

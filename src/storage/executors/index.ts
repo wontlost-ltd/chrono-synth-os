@@ -34,6 +34,9 @@ import { registerDeviceAvatarExecutors } from './device-avatar-executors.js';
 import { registerAvatarSnapshotExecutors } from './avatar-snapshot-executors.js';
 import { registerOrganizationExecutors } from './organization-executors.js';
 import { registerScimExecutors } from './scim-executors.js';
+import { registerAdminControlPlaneExecutors } from './admin-control-plane-executors.js';
+import { registerTenantProfileExecutors } from './tenant-profile-executors.js';
+import { registerPersonaEngineExecutors } from './persona-engine-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -50,6 +53,7 @@ import {
   COLLAB_QUERY_SIMULATION_TENANT, MDEV_QUERY_BY_UID,
   DAVT_QUERY_ACTIVE, ASNAP_QUERY_AUTORUN_CONFIG,
   ORG_QUERY_LIST_BY_USER, SCIM_QUERY_USERS,
+  ACP_QUERY_PERSONA_COUNT, TPROF_QUERY_BY_TENANT, PENG_QUERY_BY_ID,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -90,6 +94,9 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(ASNAP_QUERY_AUTORUN_CONFIG)) registerAvatarSnapshotExecutors();
   if (!resolveQueryExecutor(ORG_QUERY_LIST_BY_USER)) registerOrganizationExecutors();
   if (!resolveQueryExecutor(SCIM_QUERY_USERS)) registerScimExecutors();
+  if (!resolveQueryExecutor(ACP_QUERY_PERSONA_COUNT)) registerAdminControlPlaneExecutors();
+  if (!resolveQueryExecutor(TPROF_QUERY_BY_TENANT)) registerTenantProfileExecutors();
+  if (!resolveQueryExecutor(PENG_QUERY_BY_ID)) registerPersonaEngineExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

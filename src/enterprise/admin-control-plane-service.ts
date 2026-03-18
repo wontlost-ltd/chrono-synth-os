@@ -3,7 +3,19 @@
  * 封装管理后台的分页查询与聚合逻辑
  */
 
-import type { IDatabase, SqlValue } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type {
+  AcpPersonaRow, AcpTaskRow, AcpWalletRow, AcpGovRow,
+} from '@chrono/kernel';
+import {
+  acpQueryPersonaCount, acpQueryPersonaList, acpQueryPersonaSummary,
+  acpQueryTaskCount, acpQueryTaskList, acpQueryTaskSummary,
+  acpQueryWalletCount, acpQueryWalletList, acpQueryWalletSummary,
+  acpQueryGovCount, acpQueryGovList, acpQueryGovSummary,
+} from '@chrono/kernel';
+import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function toIso(value: number | null): string | null {
   return value === null ? null : new Date(Number(value)).toISOString();
@@ -31,55 +43,20 @@ function buildPagination(total: number, page: number, pageSize: number): Paginat
 }
 
 export class AdminControlPlaneService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   listPersonas(tenantId: string, pagination: PaginationInput, status?: string) {
     const offset = (pagination.page - 1) * pagination.pageSize;
-    const where = status ? 'WHERE pc.tenant_id = ? AND pc.status = ?' : 'WHERE pc.tenant_id = ?';
-    const params: SqlValue[] = status ? [tenantId, status] : [tenantId];
+    const filterStatus = status ?? null;
 
-    const total = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM persona_core pc ${where}`,
-    ).get(...params)?.count ?? 0;
-
-    const rows = this.db.prepare<{
-      id: string;
-      owner_user_id: string;
-      owner_email: string | null;
-      display_name: string;
-      status: string;
-      visibility: string;
-      growth_index: number;
-      reputation: number;
-      wallet_id: string | null;
-      wallet_balance: number | null;
-      wallet_token_balance: number | null;
-      created_at: number;
-      updated_at: number;
-    }>(
-      `SELECT
-         pc.id, pc.owner_user_id, u.email AS owner_email, pc.display_name,
-         pc.status, pc.visibility, pc.growth_index, pc.reputation,
-         pw.id AS wallet_id, pw.balance AS wallet_balance,
-         pw.token_balance AS wallet_token_balance,
-         pc.created_at, pc.updated_at
-       FROM persona_core pc
-       LEFT JOIN users u ON u.id = pc.owner_user_id
-       LEFT JOIN persona_wallets pw ON pw.tenant_id = pc.tenant_id AND pw.persona_id = pc.id
-       ${where}
-       ORDER BY pc.created_at DESC
-       LIMIT ? OFFSET ?`,
-    ).all(...params, pagination.pageSize, offset);
-
-    const summary = this.db.prepare<{
-      total: number; active_count: number; restricted_count: number; deceased_count: number;
-    }>(
-      `SELECT COUNT(*) AS total,
-         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
-         SUM(CASE WHEN status = 'restricted' THEN 1 ELSE 0 END) AS restricted_count,
-         SUM(CASE WHEN status = 'deceased' THEN 1 ELSE 0 END) AS deceased_count
-       FROM persona_core WHERE tenant_id = ?`,
-    ).get(tenantId);
+    const total = this.tx.queryOne(acpQueryPersonaCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = this.tx.queryMany(acpQueryPersonaList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpPersonaRow[];
+    const summary = this.tx.queryOne(acpQueryPersonaSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
@@ -109,40 +86,11 @@ export class AdminControlPlaneService {
 
   listTasks(tenantId: string, pagination: PaginationInput, status?: string) {
     const offset = (pagination.page - 1) * pagination.pageSize;
-    const where = status ? 'WHERE mt.tenant_id = ? AND mt.status = ?' : 'WHERE mt.tenant_id = ?';
-    const params: SqlValue[] = status ? [tenantId, status] : [tenantId];
+    const filterStatus = status ?? null;
 
-    const total = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM marketplace_tasks mt ${where}`,
-    ).get(...params)?.count ?? 0;
-
-    const rows = this.db.prepare<{
-      id: string; publisher_user_id: string; publisher_email: string | null;
-      assignee_persona_id: string | null; title: string; category: string;
-      reward: number; status: string; quality_score: number | null;
-      created_at: number; updated_at: number; completed_at: number | null;
-    }>(
-      `SELECT mt.id, mt.publisher_user_id, u.email AS publisher_email,
-         mt.assignee_persona_id, mt.title, mt.category, mt.reward,
-         mt.status, mt.quality_score, mt.created_at, mt.updated_at, mt.completed_at
-       FROM marketplace_tasks mt
-       LEFT JOIN users u ON u.id = mt.publisher_user_id
-       ${where}
-       ORDER BY mt.created_at DESC
-       LIMIT ? OFFSET ?`,
-    ).all(...params, pagination.pageSize, offset);
-
-    const summary = this.db.prepare<{
-      total: number; open_count: number; accepted_count: number;
-      completed_count: number; disputed_count: number;
-    }>(
-      `SELECT COUNT(*) AS total,
-         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
-         SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) AS accepted_count,
-         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
-         SUM(CASE WHEN status = 'disputed' THEN 1 ELSE 0 END) AS disputed_count
-       FROM marketplace_tasks WHERE tenant_id = ?`,
-    ).get(tenantId);
+    const total = this.tx.queryOne(acpQueryTaskCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = this.tx.queryMany(acpQueryTaskList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpTaskRow[];
+    const summary = this.tx.queryOne(acpQueryTaskSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
@@ -172,37 +120,11 @@ export class AdminControlPlaneService {
 
   listWallets(tenantId: string, pagination: PaginationInput, status?: string) {
     const offset = (pagination.page - 1) * pagination.pageSize;
-    const where = status ? 'WHERE pw.tenant_id = ? AND pw.status = ?' : 'WHERE pw.tenant_id = ?';
-    const params: SqlValue[] = status ? [tenantId, status] : [tenantId];
+    const filterStatus = status ?? null;
 
-    const total = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM persona_wallets pw ${where}`,
-    ).get(...params)?.count ?? 0;
-
-    const rows = this.db.prepare<{
-      id: string; persona_id: string; display_name: string | null;
-      balance: number; token_balance: number; currency: string;
-      status: string; last_settled_at: number | null;
-      created_at: number; updated_at: number;
-    }>(
-      `SELECT pw.id, pw.persona_id, pc.display_name, pw.balance, pw.token_balance,
-         pw.currency, pw.status, pw.last_settled_at, pw.created_at, pw.updated_at
-       FROM persona_wallets pw
-       LEFT JOIN persona_core pc ON pc.tenant_id = pw.tenant_id AND pc.id = pw.persona_id
-       ${where}
-       ORDER BY pw.created_at DESC
-       LIMIT ? OFFSET ?`,
-    ).all(...params, pagination.pageSize, offset);
-
-    const summary = this.db.prepare<{
-      total: number; active_count: number; total_balance: number; total_token_balance: number;
-    }>(
-      `SELECT COUNT(*) AS total,
-         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count,
-         COALESCE(SUM(balance), 0) AS total_balance,
-         COALESCE(SUM(token_balance), 0) AS total_token_balance
-       FROM persona_wallets WHERE tenant_id = ?`,
-    ).get(tenantId);
+    const total = this.tx.queryOne(acpQueryWalletCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = this.tx.queryMany(acpQueryWalletList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpWalletRow[];
+    const summary = this.tx.queryOne(acpQueryWalletSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
@@ -229,38 +151,11 @@ export class AdminControlPlaneService {
 
   listGovernanceCases(tenantId: string, pagination: PaginationInput, status?: string) {
     const offset = (pagination.page - 1) * pagination.pageSize;
-    const where = status ? 'WHERE gc.tenant_id = ? AND gc.status = ?' : 'WHERE gc.tenant_id = ?';
-    const params: SqlValue[] = status ? [tenantId, status] : [tenantId];
+    const filterStatus = status ?? null;
 
-    const total = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count FROM governance_cases gc ${where}`,
-    ).get(...params)?.count ?? 0;
-
-    const rows = this.db.prepare<{
-      id: string; persona_id: string; display_name: string | null;
-      task_id: string | null; trigger_type: string; severity: string;
-      status: string; opened_at: number; resolved_at: number | null; appealed_at: number | null;
-    }>(
-      `SELECT gc.id, gc.persona_id, pc.display_name, gc.task_id, gc.trigger_type,
-         gc.severity, gc.status, gc.opened_at, gc.resolved_at, gc.appealed_at
-       FROM governance_cases gc
-       LEFT JOIN persona_core pc ON pc.tenant_id = gc.tenant_id AND pc.id = gc.persona_id
-       ${where}
-       ORDER BY gc.opened_at DESC
-       LIMIT ? OFFSET ?`,
-    ).all(...params, pagination.pageSize, offset);
-
-    const summary = this.db.prepare<{
-      total: number; open_count: number; action_applied_count: number;
-      appealed_count: number; resolved_count: number;
-    }>(
-      `SELECT COUNT(*) AS total,
-         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
-         SUM(CASE WHEN status = 'action_applied' THEN 1 ELSE 0 END) AS action_applied_count,
-         SUM(CASE WHEN status = 'appealed' THEN 1 ELSE 0 END) AS appealed_count,
-         SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved_count
-       FROM governance_cases WHERE tenant_id = ?`,
-    ).get(tenantId);
+    const total = this.tx.queryOne(acpQueryGovCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = this.tx.queryMany(acpQueryGovList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpGovRow[];
+    const summary = this.tx.queryOne(acpQueryGovSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
