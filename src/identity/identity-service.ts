@@ -5,19 +5,15 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, IdentityRow } from '@chrono/kernel';
+import {
+  identQueryByUser, identQueryById, identQueryByTenant,
+  identCmdCreate, identCmdCreateDefaultAvatar, identCmdUpdate,
+} from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Identity } from './types.js';
-import type { SqlValue } from '../storage/database.js';
-
-interface IdentityRow {
-  readonly id: string;
-  readonly user_id: string;
-  readonly tenant_id: string;
-  readonly display_name: string;
-  readonly bio: string | null;
-  readonly created_at: number;
-  readonly updated_at: number;
-}
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function rowToIdentity(r: IdentityRow): Identity {
   return {
@@ -32,19 +28,22 @@ function rowToIdentity(r: IdentityRow): Identity {
 }
 
 export class IdentityService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly db: IDatabase;
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    this.db = db;
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   listByTenant(tenantId: string): Identity[] {
-    const rows = this.db.prepare<IdentityRow>(
-      'SELECT * FROM identities WHERE tenant_id = ? ORDER BY created_at ASC',
-    ).all(tenantId);
+    const rows = [...this.tx.queryMany(identQueryByTenant(tenantId))] as unknown as IdentityRow[];
     return rows.map(rowToIdentity);
   }
 
   getByUser(userId: string): Identity | null {
-    const row = this.db.prepare<IdentityRow>(
-      'SELECT * FROM identities WHERE user_id = ?',
-    ).get(userId);
+    const row = this.tx.queryOne(identQueryByUser(userId));
     return row ? rowToIdentity(row) : null;
   }
 
@@ -61,15 +60,8 @@ export class IdentityService {
     const now = Date.now();
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO identities (id, user_id, tenant_id, display_name, bio, created_at, updated_at)
-         VALUES (?, ?, ?, ?, NULL, ?, ?)`,
-      ).run(identityId, userId, tenantId, displayName, now, now);
-
-      this.db.prepare<void>(
-        `INSERT INTO avatars (id, identity_id, label, kind, behavior_overrides, is_default, is_active, created_at, updated_at)
-         VALUES (?, ?, '默认', 'general', NULL, 1, 1, ?, ?)`,
-      ).run(avatarId, identityId, now, now);
+      this.tx.execute(identCmdCreate({ identityId, userId, tenantId, displayName, now }));
+      this.tx.execute(identCmdCreateDefaultAvatar({ avatarId, identityId, now }));
     });
 
     return { id: identityId, userId, tenantId, displayName, bio: null, createdAt: now, updatedAt: now };
@@ -77,26 +69,14 @@ export class IdentityService {
 
   update(identityId: string, data: { displayName?: string; bio?: string }): Identity | null {
     const now = Date.now();
-    const sets: string[] = ['updated_at = ?'];
-    const params: SqlValue[] = [now];
+    this.tx.execute(identCmdUpdate({
+      identityId,
+      displayName: data.displayName,
+      bio: data.bio,
+      now,
+    }));
 
-    if (data.displayName !== undefined) {
-      sets.push('display_name = ?');
-      params.push(data.displayName);
-    }
-    if (data.bio !== undefined) {
-      sets.push('bio = ?');
-      params.push(data.bio);
-    }
-    params.push(identityId);
-
-    this.db.prepare<void>(
-      `UPDATE identities SET ${sets.join(', ')} WHERE id = ?`,
-    ).run(...params);
-
-    const row = this.db.prepare<IdentityRow>(
-      'SELECT * FROM identities WHERE id = ?',
-    ).get(identityId);
+    const row = this.tx.queryOne(identQueryById(identityId));
     return row ? rowToIdentity(row) : null;
   }
 }

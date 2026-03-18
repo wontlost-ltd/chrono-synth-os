@@ -17,6 +17,8 @@ import { registerBillingServiceExecutors } from './billing-service-executors.js'
 import { registerAuditLogExecutors } from './audit-log-executors.js';
 import { registerAvatarExecutors } from './avatar-executors.js';
 import { registerQuotaExecutors } from './quota-executors.js';
+import { registerIdentityExecutors } from './identity-executors.js';
+import { registerUserProfileExecutors } from './user-profile-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -25,6 +27,7 @@ import {
   DLQ_QUERY_BY_TENANT, USAGE_QUERY_GET, BOUTBOX_QUERY_PENDING,
   LSIM_QUERY_BY_ID, CFG_QUERY_ALL, BSVC_QUERY_LIST_PLANS, AUDIT_QUERY_BY_ID,
   AVT_QUERY_BY_ID, QUOTA_QUERY_LIMIT,
+  IDENT_QUERY_BY_USER, UPROF_QUERY_BY_ID,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -48,6 +51,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(AUDIT_QUERY_BY_ID)) registerAuditLogExecutors();
   if (!resolveQueryExecutor(AVT_QUERY_BY_ID)) registerAvatarExecutors();
   if (!resolveQueryExecutor(QUOTA_QUERY_LIMIT)) registerQuotaExecutors();
+  if (!resolveQueryExecutor(IDENT_QUERY_BY_USER)) registerIdentityExecutors();
+  if (!resolveQueryExecutor(UPROF_QUERY_BY_ID)) registerUserProfileExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
