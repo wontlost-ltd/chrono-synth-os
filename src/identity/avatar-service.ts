@@ -4,21 +4,17 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, AvatarRow } from '@chrono/kernel';
+import {
+  avtQueryById, avtQueryByIdIdentity, avtQueryByIdentity,
+  avtQueryDefault, avtQueryCountActive,
+  avtCmdCreate, avtCmdUpdate, avtCmdUpdateForIdentity,
+  avtCmdSoftDelete, avtCmdSoftDeleteForIdentity,
+} from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Avatar, AvatarKind, BehaviorOverrides } from './types.js';
-import type { SqlValue } from '../storage/database.js';
-
-interface AvatarRow {
-  readonly id: string;
-  readonly identity_id: string;
-  readonly label: string;
-  readonly kind: string;
-  readonly behavior_overrides: string | null;
-  readonly is_default: number;
-  readonly is_active: number;
-  readonly created_at: number;
-  readonly updated_at: number;
-}
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function rowToAvatar(r: AvatarRow): Avatar {
   return {
@@ -35,7 +31,12 @@ function rowToAvatar(r: AvatarRow): Avatar {
 }
 
 export class AvatarService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   create(identityId: string, data: { label: string; kind?: AvatarKind; behaviorOverrides?: BehaviorOverrides }): Avatar {
     const id = generatePrefixedId('avt');
@@ -43,10 +44,7 @@ export class AvatarService {
     const kind = data.kind ?? 'general';
     const overrides = data.behaviorOverrides ? JSON.stringify(data.behaviorOverrides) : null;
 
-    this.db.prepare<void>(
-      `INSERT INTO avatars (id, identity_id, label, kind, behavior_overrides, is_default, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)`,
-    ).run(id, identityId, data.label, kind, overrides, now, now);
+    this.tx.execute(avtCmdCreate({ id, identityId, label: data.label, kind, behaviorOverrides: overrides, now }));
 
     return {
       id, identityId, label: data.label, kind,
@@ -56,43 +54,29 @@ export class AvatarService {
   }
 
   getById(avatarId: string): Avatar | null {
-    const row = this.db.prepare<AvatarRow>(
-      'SELECT * FROM avatars WHERE id = ? AND is_active = 1',
-    ).get(avatarId);
+    const row = this.tx.queryOne(avtQueryById(avatarId));
     return row ? rowToAvatar(row) : null;
   }
 
   getByIdForIdentity(avatarId: string, identityId: string): Avatar | null {
-    const row = this.db.prepare<AvatarRow>(
-      'SELECT * FROM avatars WHERE id = ? AND identity_id = ? AND is_active = 1',
-    ).get(avatarId, identityId);
+    const row = this.tx.queryOne(avtQueryByIdIdentity(avatarId, identityId));
     return row ? rowToAvatar(row) : null;
   }
 
   listByIdentity(identityId: string): Avatar[] {
-    const rows = this.db.prepare<AvatarRow>(
-      'SELECT * FROM avatars WHERE identity_id = ? AND is_active = 1 ORDER BY is_default DESC, created_at ASC',
-    ).all(identityId);
+    const rows = [...this.tx.queryMany(avtQueryByIdentity(identityId))] as unknown as AvatarRow[];
     return rows.map(rowToAvatar);
   }
 
   update(avatarId: string, data: Partial<{ label: string; kind: AvatarKind; behaviorOverrides: BehaviorOverrides }>): Avatar | null {
     const now = Date.now();
-    const sets: string[] = ['updated_at = ?'];
-    const params: SqlValue[] = [now];
-
-    if (data.label !== undefined) { sets.push('label = ?'); params.push(data.label); }
-    if (data.kind !== undefined) { sets.push('kind = ?'); params.push(data.kind); }
-    if (data.behaviorOverrides !== undefined) {
-      sets.push('behavior_overrides = ?');
-      params.push(JSON.stringify(data.behaviorOverrides));
-    }
-    params.push(avatarId);
-
-    this.db.prepare<void>(
-      `UPDATE avatars SET ${sets.join(', ')} WHERE id = ? AND is_active = 1`,
-    ).run(...params);
-
+    this.tx.execute(avtCmdUpdate({
+      avatarId,
+      label: data.label,
+      kind: data.kind,
+      behaviorOverrides: data.behaviorOverrides !== undefined ? JSON.stringify(data.behaviorOverrides) : undefined,
+      now,
+    }));
     return this.getById(avatarId);
   }
 
@@ -102,49 +86,34 @@ export class AvatarService {
     data: Partial<{ label: string; kind: AvatarKind; behaviorOverrides: BehaviorOverrides }>,
   ): Avatar | null {
     const now = Date.now();
-    const sets: string[] = ['updated_at = ?'];
-    const params: SqlValue[] = [now];
-
-    if (data.label !== undefined) { sets.push('label = ?'); params.push(data.label); }
-    if (data.kind !== undefined) { sets.push('kind = ?'); params.push(data.kind); }
-    if (data.behaviorOverrides !== undefined) {
-      sets.push('behavior_overrides = ?');
-      params.push(JSON.stringify(data.behaviorOverrides));
-    }
-    params.push(avatarId, identityId);
-
-    this.db.prepare<void>(
-      `UPDATE avatars SET ${sets.join(', ')} WHERE id = ? AND identity_id = ? AND is_active = 1`,
-    ).run(...params);
-
+    this.tx.execute(avtCmdUpdateForIdentity({
+      avatarId,
+      identityId,
+      label: data.label,
+      kind: data.kind,
+      behaviorOverrides: data.behaviorOverrides !== undefined ? JSON.stringify(data.behaviorOverrides) : undefined,
+      now,
+    }));
     return this.getByIdForIdentity(avatarId, identityId);
   }
 
   softDelete(avatarId: string): boolean {
-    const result = this.db.prepare<void>(
-      'UPDATE avatars SET is_active = 0, updated_at = ? WHERE id = ? AND is_default = 0 AND is_active = 1',
-    ).run(Date.now(), avatarId);
-    return result.changes > 0;
+    const result = this.tx.execute(avtCmdSoftDelete({ avatarId, now: Date.now() }));
+    return result.rowsAffected > 0;
   }
 
   softDeleteForIdentity(avatarId: string, identityId: string): boolean {
-    const result = this.db.prepare<void>(
-      'UPDATE avatars SET is_active = 0, updated_at = ? WHERE id = ? AND identity_id = ? AND is_default = 0 AND is_active = 1',
-    ).run(Date.now(), avatarId, identityId);
-    return result.changes > 0;
+    const result = this.tx.execute(avtCmdSoftDeleteForIdentity({ avatarId, identityId, now: Date.now() }));
+    return result.rowsAffected > 0;
   }
 
   getDefault(identityId: string): Avatar | null {
-    const row = this.db.prepare<AvatarRow>(
-      'SELECT * FROM avatars WHERE identity_id = ? AND is_default = 1 AND is_active = 1',
-    ).get(identityId);
+    const row = this.tx.queryOne(avtQueryDefault(identityId));
     return row ? rowToAvatar(row) : null;
   }
 
   countActive(identityId: string): number {
-    const row = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) as count FROM avatars WHERE identity_id = ? AND is_active = 1',
-    ).get(identityId);
-    return row?.count ?? 0;
+    const row = this.tx.queryOne(avtQueryCountActive(identityId));
+    return Number(row?.count ?? 0);
   }
 }

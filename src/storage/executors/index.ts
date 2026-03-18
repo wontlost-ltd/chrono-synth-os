@@ -15,6 +15,8 @@ import { registerLifeSimExecutors } from './life-sim-executors.js';
 import { registerConfigStoreExecutors } from './config-store-executors.js';
 import { registerBillingServiceExecutors } from './billing-service-executors.js';
 import { registerAuditLogExecutors } from './audit-log-executors.js';
+import { registerAvatarExecutors } from './avatar-executors.js';
+import { registerQuotaExecutors } from './quota-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -22,6 +24,7 @@ import {
   SETTLE_QUERY_SETTLEMENTS_BY_TENANT, OBS_QUERY_PENDING_EVENTS,
   DLQ_QUERY_BY_TENANT, USAGE_QUERY_GET, BOUTBOX_QUERY_PENDING,
   LSIM_QUERY_BY_ID, CFG_QUERY_ALL, BSVC_QUERY_LIST_PLANS, AUDIT_QUERY_BY_ID,
+  AVT_QUERY_BY_ID, QUOTA_QUERY_LIMIT,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -43,6 +46,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(CFG_QUERY_ALL)) registerConfigStoreExecutors();
   if (!resolveQueryExecutor(BSVC_QUERY_LIST_PLANS)) registerBillingServiceExecutors();
   if (!resolveQueryExecutor(AUDIT_QUERY_BY_ID)) registerAuditLogExecutors();
+  if (!resolveQueryExecutor(AVT_QUERY_BY_ID)) registerAvatarExecutors();
+  if (!resolveQueryExecutor(QUOTA_QUERY_LIMIT)) registerQuotaExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
