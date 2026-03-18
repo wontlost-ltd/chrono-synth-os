@@ -152,6 +152,26 @@ describe('AvatarAutorunStore', () => {
     });
   });
 
+  describe('配置辅助操作', () => {
+    it('updateDriftCheckTime 和 updateLastError 持久化配置字段', () => {
+      const config = store.upsertConfig('tenant_1', avatarId, {
+        enabled: true, intervalMs: 60000, driftThreshold: 0.3, reviewRequired: false, knowledgeSourceIds: [],
+      });
+      const driftCheckedAt = Date.now() + 1_000;
+
+      store.updateDriftCheckTime(config.id, driftCheckedAt);
+      store.updateLastError(config.id, 'ingest_failed');
+
+      const updated = store.getConfigById(config.id)!;
+      assert.equal(updated.lastDriftCheckAt, driftCheckedAt);
+      assert.equal(updated.lastError, 'ingest_failed');
+
+      store.updateLastError(config.id, null);
+      const cleared = store.getConfigById(config.id)!;
+      assert.equal(cleared.lastError, null);
+    });
+  });
+
   describe('运行日志', () => {
     it('创建和查询运行日志', () => {
       const config = store.upsertConfig('tenant_1', avatarId, {
@@ -201,6 +221,32 @@ describe('AvatarAutorunStore', () => {
       assert.equal(completed.status, 'completed');
       assert.ok(completed.metrics);
       assert.equal(completed.metrics!.memoriesCreated, 5);
+    });
+
+    it('updateRunTaskId 和非指标状态更新路径生效', () => {
+      const config = store.upsertConfig('tenant_1', avatarId, {
+        enabled: true, intervalMs: 60000, driftThreshold: 0.3, reviewRequired: false, knowledgeSourceIds: [],
+      });
+
+      const run = store.createRunLog({
+        tenantId: 'tenant_1',
+        avatarId,
+        configId: config.id,
+        taskId: '',
+        status: 'pending',
+      });
+
+      store.updateRunTaskId(run.id, 'task_42');
+      store.setRunStatus(run.id, 'pending');
+      const pending = store.getRun(run.id)!;
+      assert.equal(pending.taskId, 'task_42');
+      assert.equal(pending.status, 'pending');
+
+      store.setRunStatus(run.id, 'skipped', undefined, 'quota_exceeded');
+      const skipped = store.getRun(run.id)!;
+      assert.equal(skipped.status, 'skipped');
+      assert.equal(skipped.error, 'quota_exceeded');
+      assert.ok(skipped.completedAt);
     });
 
     it('listRunsByAvatar 分页', () => {
