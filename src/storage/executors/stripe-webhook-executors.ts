@@ -27,7 +27,7 @@ export function registerStripeWebhookExecutors(): void {
 
   registerQuery<SwhsSubscriptionRow | null, string>(SWHS_QUERY_SUB_BY_STRIPE_CUSTOMER, (db, customerId) => {
     return db.prepare<SwhsSubscriptionRow>(
-      'SELECT * FROM subscriptions WHERE stripe_customer_id = ?',
+      'SELECT * FROM subscriptions WHERE stripe_customer_id = ? ORDER BY created_at DESC LIMIT 1',
     ).get(customerId) ?? null;
   });
 

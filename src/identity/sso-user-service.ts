@@ -53,7 +53,7 @@ export class SsoUserService {
     const userId = `user_${randomUUID()}`;
     const now = Date.now();
     const countRow = this.tx.queryOne(authQueryUserCountByTenant(expectedTenantId));
-    const userCount = Number(countRow?.count ?? 0);
+    const userCount = countRow?.count ?? 0;
     const role: UserRole = userCount === 0 ? 'admin' : 'member';
 
     this.tx.execute(authCmdCreateUser({

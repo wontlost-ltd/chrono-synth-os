@@ -44,9 +44,11 @@ export function registerAuthExecutors(): void {
   });
 
   registerQuery<AuthUserCountRow | null, string>(AUTH_QUERY_USER_COUNT_BY_TENANT, (db, tenantId) => {
-    return db.prepare<AuthUserCountRow>(
+    const row = db.prepare<{ count: number | bigint }>(
       'SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?',
-    ).get(tenantId) ?? null;
+    ).get(tenantId);
+    if (!row) return null;
+    return { count: Number(row.count) };
   });
 
   registerQuery<AuthSubExistsRow | null, string>(AUTH_QUERY_SUB_EXISTS, (db, tenantId) => {
