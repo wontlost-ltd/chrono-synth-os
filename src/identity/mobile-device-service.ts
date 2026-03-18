@@ -4,20 +4,15 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { SyncWriteUnitOfWork, MdevDeviceRow } from '@chrono/kernel';
+import {
+  mdevQueryByUid, mdevQueryListByUser, mdevQueryOwned,
+  mdevCmdCreate, mdevCmdUpdateOnRegister, mdevCmdUpdatePushToken, mdevCmdDelete,
+} from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
-
-interface DeviceRow {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly user_id: string;
-  readonly device_uid: string;
-  readonly platform: string;
-  readonly push_token: string | null;
-  readonly app_version: string | null;
-  readonly last_seen_at: number;
-  readonly created_at: number;
-}
 
 export interface RegisterDeviceInput {
   deviceUid: string;
@@ -27,33 +22,42 @@ export interface RegisterDeviceInput {
 }
 
 export class MobileDeviceService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   register(tenantId: string, userId: string, input: RegisterDeviceInput) {
     const now = Date.now();
-    const existing = this.db.prepare<DeviceRow>(
-      'SELECT * FROM devices WHERE tenant_id = ? AND user_id = ? AND device_uid = ?',
-    ).get(tenantId, userId, input.deviceUid);
+    const existing = this.tx.queryOne(mdevQueryByUid({ tenantId, userId, deviceUid: input.deviceUid }));
 
     if (existing) {
-      this.db.prepare<void>(
-        'UPDATE devices SET platform = ?, push_token = ?, app_version = ?, last_seen_at = ? WHERE id = ?',
-      ).run(input.platform, input.pushToken ?? null, input.appVersion ?? null, now, existing.id);
+      this.tx.execute(mdevCmdUpdateOnRegister({
+        deviceId: existing.id,
+        platform: input.platform,
+        pushToken: input.pushToken ?? null,
+        appVersion: input.appVersion ?? null,
+        now,
+      }));
       return { id: existing.id, deviceUid: input.deviceUid, platform: input.platform, updated: true };
     }
 
     const id = `dev_${randomUUID()}`;
-    this.db.prepare<void>(
-      `INSERT INTO devices (id, tenant_id, user_id, device_uid, platform, push_token, app_version, last_seen_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, tenantId, userId, input.deviceUid, input.platform, input.pushToken ?? null, input.appVersion ?? null, now, now);
+    this.tx.execute(mdevCmdCreate({
+      id, tenantId, userId,
+      deviceUid: input.deviceUid,
+      platform: input.platform,
+      pushToken: input.pushToken ?? null,
+      appVersion: input.appVersion ?? null,
+      now,
+    }));
     return { id, deviceUid: input.deviceUid, platform: input.platform, updated: false };
   }
 
   listByUser(userId: string) {
-    const rows = this.db.prepare<DeviceRow>(
-      'SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen_at DESC',
-    ).all(userId);
+    const rows = this.tx.queryMany(mdevQueryListByUser(userId)) as unknown as MdevDeviceRow[];
 
     return rows.map(r => ({
       id: r.id,
@@ -68,21 +72,17 @@ export class MobileDeviceService {
 
   updatePushToken(deviceId: string, userId: string, pushToken: string) {
     this.requireOwnedDevice(deviceId, userId);
-    this.db.prepare<void>(
-      'UPDATE devices SET push_token = ?, last_seen_at = ? WHERE id = ?',
-    ).run(pushToken, Date.now(), deviceId);
+    this.tx.execute(mdevCmdUpdatePushToken({ deviceId, pushToken, now: Date.now() }));
     return { id: deviceId, pushToken, updated: true };
   }
 
   delete(deviceId: string, userId: string) {
     this.requireOwnedDevice(deviceId, userId);
-    this.db.prepare<void>('DELETE FROM devices WHERE id = ?').run(deviceId);
+    this.tx.execute(mdevCmdDelete(deviceId));
   }
 
-  requireOwnedDevice(deviceId: string, userId: string): DeviceRow {
-    const device = this.db.prepare<DeviceRow>(
-      'SELECT * FROM devices WHERE id = ? AND user_id = ?',
-    ).get(deviceId, userId);
+  requireOwnedDevice(deviceId: string, userId: string): MdevDeviceRow {
+    const device = this.tx.queryOne(mdevQueryOwned({ deviceId, userId }));
     if (!device) {
       throw new NotFoundError('设备不存在', ErrorCode.NOT_FOUND_DEVICE);
     }

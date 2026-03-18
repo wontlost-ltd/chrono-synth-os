@@ -28,6 +28,10 @@ import { registerSubscriptionQueryExecutors } from './subscription-query-executo
 import { registerApiKeyExecutors } from './api-key-executors.js';
 import { registerStripeWebhookExecutors } from './stripe-webhook-executors.js';
 import { registerAuthExecutors } from './auth-executors.js';
+import { registerCollaborationExecutors } from './collaboration-executors.js';
+import { registerMobileDeviceExecutors } from './mobile-device-executors.js';
+import { registerDeviceAvatarExecutors } from './device-avatar-executors.js';
+import { registerAvatarSnapshotExecutors } from './avatar-snapshot-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -41,6 +45,8 @@ import {
   ADDON_QUERY_BY_CODE, ENTL_QUERY_PLAN_ID,
   SUBQ_QUERY_LATEST_PLAN, APIKEY_QUERY_LIST,
   SWHS_QUERY_LATEST_SUBSCRIPTION, AUTH_QUERY_USER_BY_EMAIL,
+  COLLAB_QUERY_SIMULATION_TENANT, MDEV_QUERY_BY_UID,
+  DAVT_QUERY_ACTIVE, ASNAP_QUERY_AUTORUN_CONFIG,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -75,6 +81,10 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(APIKEY_QUERY_LIST)) registerApiKeyExecutors();
   if (!resolveQueryExecutor(SWHS_QUERY_LATEST_SUBSCRIPTION)) registerStripeWebhookExecutors();
   if (!resolveQueryExecutor(AUTH_QUERY_USER_BY_EMAIL)) registerAuthExecutors();
+  if (!resolveQueryExecutor(COLLAB_QUERY_SIMULATION_TENANT)) registerCollaborationExecutors();
+  if (!resolveQueryExecutor(MDEV_QUERY_BY_UID)) registerMobileDeviceExecutors();
+  if (!resolveQueryExecutor(DAVT_QUERY_ACTIVE)) registerDeviceAvatarExecutors();
+  if (!resolveQueryExecutor(ASNAP_QUERY_AUTORUN_CONFIG)) registerAvatarSnapshotExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
