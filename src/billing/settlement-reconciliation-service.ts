@@ -1,36 +1,21 @@
+/**
+ * 结算对账服务
+ * 通过 SyncWriteUnitOfWork 的 Query/Command 契约访问数据，
+ * 不直接调用 db.prepare()
+ */
+
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
-
-interface SettlementRow {
-  id: string;
-  tenant_id: string;
-  wallet_id: string;
-  total_amount_minor: number;
-  currency: string;
-  persona_amount_minor: number;
-  platform_amount_minor: number;
-}
-
-interface WalletTransactionRow {
-  id: string;
-  wallet_id: string;
-  transaction_type: string;
-  amount_minor: number;
-  currency: string;
-}
-
-interface ReconciliationRunRow {
-  id: string;
-  tenant_id: string;
-  checked_settlements: number;
-  mismatched_settlements: number;
-  repaired_settlements: number;
-  deleted_transactions: number;
-  inserted_transactions: number;
-  orphan_transactions_removed: number;
-  report_json: string;
-  created_at: number;
-}
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { SettlementRow, WalletTransactionRow } from '@chrono/kernel';
+import {
+  settleQuerySettlementsByTenant, settleQueryTransactionsBySettlement,
+  settleQueryTenantsWithSettlements, settleQueryRunsByTenant,
+  settleCmdDeleteSettlementTransactions, settleCmdInsertTransaction,
+  settleCmdDeleteOrphanTransactions, settleCmdInsertRun,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 interface ExpectedLedgerEntry {
   transactionType: string;
@@ -88,7 +73,7 @@ function countLedgerEntries(entries: Array<{ transactionType: string; amountMino
   return counts;
 }
 
-function isLedgerConsistent(actual: WalletTransactionRow[], settlement: SettlementRow): boolean {
+function isLedgerConsistent(actual: readonly WalletTransactionRow[], settlement: SettlementRow): boolean {
   if (actual.length !== 3) return false;
 
   const actualCounts = countLedgerEntries(actual.map((row) => ({
@@ -106,15 +91,17 @@ function isLedgerConsistent(actual: WalletTransactionRow[], settlement: Settleme
 }
 
 export class SettlementReconciliationService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly db: IDatabase;
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    this.db = db;
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   reconcileTenant(tenantId: string): SettlementReconciliationRun {
-    const settlements = this.db.prepare<SettlementRow>(
-      `SELECT id, tenant_id, wallet_id, total_amount_minor, currency, persona_amount_minor, platform_amount_minor
-       FROM wallet_settlements
-       WHERE tenant_id = ?
-       ORDER BY created_at ASC`,
-    ).all(tenantId);
+    const settlements = this.tx.queryMany(settleQuerySettlementsByTenant(tenantId));
 
     let mismatchedSettlements = 0;
     let repairedSettlements = 0;
@@ -123,12 +110,7 @@ export class SettlementReconciliationService {
     const mismatchedSettlementIds: string[] = [];
 
     for (const settlement of settlements) {
-      const actual = this.db.prepare<WalletTransactionRow>(
-        `SELECT id, wallet_id, transaction_type, amount_minor, currency
-         FROM wallet_transactions
-         WHERE tenant_id = ? AND reference_type = 'wallet_settlement' AND reference_id = ?
-         ORDER BY created_at ASC, id ASC`,
-      ).all(tenantId, settlement.id);
+      const actual = this.tx.queryMany(settleQueryTransactionsBySettlement(tenantId, settlement.id));
 
       if (isLedgerConsistent(actual, settlement)) {
         continue;
@@ -138,27 +120,22 @@ export class SettlementReconciliationService {
       mismatchedSettlementIds.push(settlement.id);
 
       this.db.transaction(() => {
-        const deleted = this.db.prepare<void>(
-          `DELETE FROM wallet_transactions
-           WHERE tenant_id = ? AND reference_type = 'wallet_settlement' AND reference_id = ?`,
-        ).run(tenantId, settlement.id).changes;
-        deletedTransactions += deleted;
+        const deleted = this.tx.execute(settleCmdDeleteSettlementTransactions({
+          tenantId, settlementId: settlement.id,
+        }));
+        deletedTransactions += deleted.rowsAffected;
 
         for (const expected of buildExpectedLedger(settlement)) {
-          this.db.prepare<void>(
-            `INSERT INTO wallet_transactions (
-              id, tenant_id, wallet_id, transaction_type, amount_minor, currency, reference_type, reference_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'wallet_settlement', ?, ?)`,
-          ).run(
-            `wtx_${randomUUID()}`,
+          this.tx.execute(settleCmdInsertTransaction({
+            id: `wtx_${randomUUID()}`,
             tenantId,
-            settlement.wallet_id,
-            expected.transactionType,
-            expected.amountMinor,
-            expected.currency,
-            settlement.id,
-            Date.now(),
-          );
+            walletId: settlement.wallet_id,
+            transactionType: expected.transactionType,
+            amountMinor: expected.amountMinor,
+            currency: expected.currency,
+            settlementId: settlement.id,
+            now: Date.now(),
+          }));
           insertedTransactions += 1;
         }
       });
@@ -166,39 +143,24 @@ export class SettlementReconciliationService {
       repairedSettlements += 1;
     }
 
-    const orphanTransactionsRemoved = this.db.prepare<void>(
-      `DELETE FROM wallet_transactions
-       WHERE tenant_id = ?
-         AND reference_type = 'wallet_settlement'
-         AND reference_id NOT IN (
-           SELECT id FROM wallet_settlements WHERE tenant_id = ?
-         )`,
-    ).run(tenantId, tenantId).changes;
+    const orphanResult = this.tx.execute(settleCmdDeleteOrphanTransactions({ tenantId }));
+    const orphanTransactionsRemoved = orphanResult.rowsAffected;
 
     const now = Date.now();
-    const report = {
-      mismatchedSettlementIds,
-    };
     const runId = `recon_${randomUUID()}`;
 
-    this.db.prepare<void>(
-      `INSERT INTO settlement_reconciliation_runs (
-        id, tenant_id, checked_settlements, mismatched_settlements, repaired_settlements,
-        deleted_transactions, inserted_transactions, orphan_transactions_removed,
-        report_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      runId,
+    this.tx.execute(settleCmdInsertRun({
+      id: runId,
       tenantId,
-      settlements.length,
+      checkedSettlements: settlements.length,
       mismatchedSettlements,
       repairedSettlements,
       deletedTransactions,
       insertedTransactions,
       orphanTransactionsRemoved,
-      JSON.stringify(report),
+      reportJson: JSON.stringify({ mismatchedSettlementIds }),
       now,
-    );
+    }));
 
     return {
       runId,
@@ -215,27 +177,12 @@ export class SettlementReconciliationService {
   }
 
   reconcileTenants(limit = 100): SettlementReconciliationRun[] {
-    const tenantRows = this.db.prepare<{ tenant_id: string }>(
-      `SELECT tenant_id
-       FROM (
-         SELECT tenant_id FROM wallet_settlements
-         UNION
-         SELECT tenant_id FROM wallet_transactions WHERE reference_type = 'wallet_settlement'
-       )
-       ORDER BY tenant_id ASC
-       LIMIT ?`,
-    ).all(limit);
+    const tenantRows = this.tx.queryMany(settleQueryTenantsWithSettlements(limit));
     return tenantRows.map((row) => this.reconcileTenant(row.tenant_id));
   }
 
   listRuns(tenantId: string, limit = 20): SettlementReconciliationRun[] {
-    const rows = this.db.prepare<ReconciliationRunRow>(
-      `SELECT *
-       FROM settlement_reconciliation_runs
-       WHERE tenant_id = ?
-       ORDER BY created_at DESC
-       LIMIT ?`,
-    ).all(tenantId, limit);
+    const rows = this.tx.queryMany(settleQueryRunsByTenant(tenantId, limit));
 
     return rows.map((row) => {
       const report = JSON.parse(row.report_json) as { mismatchedSettlementIds?: string[] };
