@@ -7,11 +7,12 @@ import { registerMemoryExecutors } from './memory-executors.js';
 import { registerTaskQueueExecutors } from './task-queue-executors.js';
 import { registerAutorunExecutors } from './autorun-executors.js';
 import { registerSettlementExecutors } from './settlement-executors.js';
+import { registerObservabilityOutboxExecutors } from './observability-outbox-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
   MEM_QUERY_BY_ID, TASK_QUERY_BY_ID, AUTORUN_QUERY_CONFIG,
-  SETTLE_QUERY_SETTLEMENTS_BY_TENANT,
+  SETTLE_QUERY_SETTLEMENTS_BY_TENANT, OBS_QUERY_PENDING_EVENTS,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -25,6 +26,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(TASK_QUERY_BY_ID)) registerTaskQueueExecutors();
   if (!resolveQueryExecutor(AUTORUN_QUERY_CONFIG)) registerAutorunExecutors();
   if (!resolveQueryExecutor(SETTLE_QUERY_SETTLEMENTS_BY_TENANT)) registerSettlementExecutors();
+  if (!resolveQueryExecutor(OBS_QUERY_PENDING_EVENTS)) registerObservabilityOutboxExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

@@ -1,4 +1,19 @@
+/**
+ * 可观测性 Outbox — 事件发布、状态管理、Rollup 聚合
+ * 通过 SyncWriteUnitOfWork 的 Query/Command 契约访问数据，
+ * 不直接调用 db.prepare()
+ */
+
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  obsQueryPendingEvents, obsQueryBacklogPending, obsQueryBacklogProcessing,
+  obsQueryBacklogFailed, obsQueryRollup,
+  obsCmdPublishEvent, obsCmdRequeueStale, obsCmdMarkProcessing,
+  obsCmdMarkSent, obsCmdMarkFailed, obsCmdApplyRollupDelta,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
 export const OBSERVABILITY_TOPIC = 'observability.events';
@@ -36,12 +51,6 @@ export interface ObservabilityOutboxRow {
   last_error: string | null;
 }
 
-export interface ObservabilityOutboxBacklog {
-  pending: number;
-  processing: number;
-  failed: number;
-}
-
 export interface ObservabilityRollupRow {
   tenant_id: string;
   runtime_completed_count: number;
@@ -60,6 +69,12 @@ export interface ObservabilityRollupRow {
   persona_growth_event_count: number;
   persona_reputation_delta_total: number;
   updated_at: number;
+}
+
+export interface ObservabilityOutboxBacklog {
+  pending: number;
+  processing: number;
+  failed: number;
 }
 
 export interface ObservabilityRollupDelta {
@@ -95,42 +110,36 @@ export function resetObservabilityPipelineMetrics(): void {
   observabilityPipelineMetrics.eventsRecovered = 0;
 }
 
+function getTx(db: IDatabase): SyncWriteUnitOfWork {
+  registerCoreSelfExecutors();
+  return directUnitOfWork(db);
+}
+
 export function publishObservabilityEvent(db: IDatabase, event: ObservabilityEventEnvelope): string {
+  const tx = getTx(db);
   const id = generatePrefixedId('obevt');
-  db.prepare<void>(
-    `INSERT INTO observability_outbox (
-      id, tenant_id, topic, event_type, partition_key, payload_json,
-      status, attempts, created_at, processed_at, last_error
-    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, NULL)`,
-  ).run(
+  tx.execute(obsCmdPublishEvent({
     id,
-    event.tenantId,
-    event.topic,
-    event.eventType,
-    event.partitionKey,
-    JSON.stringify(event.payload),
-    Date.now(),
-  );
+    tenantId: event.tenantId,
+    topic: event.topic,
+    eventType: event.eventType,
+    partitionKey: event.partitionKey,
+    payloadJson: JSON.stringify(event.payload),
+    now: Date.now(),
+  }));
   observabilityPipelineMetrics.eventsEnqueued++;
   return id;
 }
 
 export function listPendingObservabilityEvents(db: IDatabase, limit: number): ObservabilityOutboxRow[] {
-  return db.prepare<ObservabilityOutboxRow>(
-    `SELECT * FROM observability_outbox
-     WHERE status = 'pending'
-     ORDER BY created_at ASC
-     LIMIT ?`,
-  ).all(limit);
+  const tx = getTx(db);
+  return [...tx.queryMany(obsQueryPendingEvents(limit))] as ObservabilityOutboxRow[];
 }
 
 export function requeueStaleObservabilityEvents(db: IDatabase, staleBefore: number): number {
-  const result = db.prepare<void>(
-    `UPDATE observability_outbox
-     SET status = 'pending', processed_at = NULL
-     WHERE status = 'processing' AND processed_at IS NOT NULL AND processed_at < ?`,
-  ).run(staleBefore);
-  const count = result.changes;
+  const tx = getTx(db);
+  const result = tx.execute(obsCmdRequeueStale({ staleBefore }));
+  const count = result.rowsAffected;
   if (count > 0) {
     observabilityPipelineMetrics.eventsRecovered += count;
   }
@@ -138,20 +147,14 @@ export function requeueStaleObservabilityEvents(db: IDatabase, staleBefore: numb
 }
 
 export function markObservabilityEventProcessing(db: IDatabase, id: string): boolean {
-  const result = db.prepare<void>(
-    `UPDATE observability_outbox
-     SET status = 'processing', processed_at = ?
-     WHERE id = ? AND status = 'pending'`,
-  ).run(Date.now(), id);
-  return result.changes > 0;
+  const tx = getTx(db);
+  const result = tx.execute(obsCmdMarkProcessing({ id, now: Date.now() }));
+  return result.rowsAffected > 0;
 }
 
 export function markObservabilityEventSent(db: IDatabase, id: string): void {
-  db.prepare<void>(
-    `UPDATE observability_outbox
-     SET status = 'sent', processed_at = ?, last_error = NULL
-     WHERE id = ?`,
-  ).run(Date.now(), id);
+  const tx = getTx(db);
+  tx.execute(obsCmdMarkSent({ id, now: Date.now() }));
   observabilityPipelineMetrics.eventsProcessed++;
 }
 
@@ -161,39 +164,30 @@ export function markObservabilityEventFailed(
   error: string,
   maxAttempts: number,
 ): void {
+  const tx = getTx(db);
   const nextAttempts = row.attempts + 1;
-  db.prepare<void>(
-    `UPDATE observability_outbox
-     SET attempts = ?, last_error = ?, processed_at = ?, status = ?
-     WHERE id = ?`,
-  ).run(
-    nextAttempts,
+  tx.execute(obsCmdMarkFailed({
+    id: row.id,
+    attempts: nextAttempts,
     error,
-    Date.now(),
-    nextAttempts >= maxAttempts ? 'failed' : 'pending',
-    row.id,
-  );
+    now: Date.now(),
+    status: nextAttempts >= maxAttempts ? 'failed' : 'pending',
+  }));
   observabilityPipelineMetrics.eventsFailed++;
 }
 
 export function getObservabilityOutboxBacklog(db: IDatabase): ObservabilityOutboxBacklog {
-  const pending = db.prepare<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM observability_outbox WHERE status = 'pending'`,
-  ).get()?.count ?? 0;
-  const processing = db.prepare<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM observability_outbox WHERE status = 'processing'`,
-  ).get()?.count ?? 0;
-  const failed = db.prepare<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM observability_outbox WHERE status = 'failed'`,
-  ).get()?.count ?? 0;
+  const tx = getTx(db);
+  const pending = tx.queryOne(obsQueryBacklogPending())?.count ?? 0;
+  const processing = tx.queryOne(obsQueryBacklogProcessing())?.count ?? 0;
+  const failed = tx.queryOne(obsQueryBacklogFailed())?.count ?? 0;
   return { pending, processing, failed };
 }
 
 export function getObservabilityRollup(db: IDatabase, tenantId: string): ObservabilityRollupRow {
-  const row = db.prepare<ObservabilityRollupRow>(
-    'SELECT * FROM observability_rollups WHERE tenant_id = ? LIMIT 1',
-  ).get(tenantId);
-  return row ?? emptyObservabilityRollup(tenantId);
+  const tx = getTx(db);
+  const row = tx.queryOne(obsQueryRollup(tenantId));
+  return (row ?? emptyObservabilityRollup(tenantId)) as ObservabilityRollupRow;
 }
 
 export function applyObservabilityRollupDelta(
@@ -201,82 +195,26 @@ export function applyObservabilityRollupDelta(
   tenantId: string,
   delta: ObservabilityRollupDelta,
 ): void {
-  const updatedAt = delta.updatedAt ?? Date.now();
-  const runtimeCompletedCount = delta.runtimeCompletedCount ?? 0;
-  const runtimeDurationTotalMs = delta.runtimeDurationTotalMs ?? 0;
-  const taskTerminalCount = delta.taskTerminalCount ?? 0;
-  const taskSuccessCount = delta.taskSuccessCount ?? 0;
-  const taskRejectedCount = delta.taskRejectedCount ?? 0;
-  const taskDisputedCount = delta.taskDisputedCount ?? 0;
-  const walletSettlementCount = delta.walletSettlementCount ?? 0;
-  const walletSettlementTotalAmountMinor = delta.walletSettlementTotalAmountMinor ?? 0;
-  const walletSettlementLatencyTotalMs = delta.walletSettlementLatencyTotalMs ?? 0;
-  const governanceCaseOpenedCount = delta.governanceCaseOpenedCount ?? 0;
-  const governanceCaseActiveCount = delta.governanceCaseActiveCount ?? 0;
-  const governanceActionAppliedCount = delta.governanceActionAppliedCount ?? 0;
-  const personaGrowthTotal = delta.personaGrowthTotal ?? 0;
-  const personaGrowthEventCount = delta.personaGrowthEventCount ?? 0;
-  const personaReputationDeltaTotal = delta.personaReputationDeltaTotal ?? 0;
-
-  db.prepare<void>(
-    `INSERT INTO observability_rollups (
-      tenant_id,
-      runtime_completed_count,
-      runtime_duration_total_ms,
-      task_terminal_count,
-      task_success_count,
-      task_rejected_count,
-      task_disputed_count,
-      wallet_settlement_count,
-      wallet_settlement_total_amount_minor,
-      wallet_settlement_latency_total_ms,
-      governance_case_opened_count,
-      governance_case_active_count,
-      governance_action_applied_count,
-      persona_growth_total,
-      persona_growth_event_count,
-      persona_reputation_delta_total,
-      updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(tenant_id) DO UPDATE SET
-      runtime_completed_count = observability_rollups.runtime_completed_count + excluded.runtime_completed_count,
-      runtime_duration_total_ms = observability_rollups.runtime_duration_total_ms + excluded.runtime_duration_total_ms,
-      task_terminal_count = observability_rollups.task_terminal_count + excluded.task_terminal_count,
-      task_success_count = observability_rollups.task_success_count + excluded.task_success_count,
-      task_rejected_count = observability_rollups.task_rejected_count + excluded.task_rejected_count,
-      task_disputed_count = observability_rollups.task_disputed_count + excluded.task_disputed_count,
-      wallet_settlement_count = observability_rollups.wallet_settlement_count + excluded.wallet_settlement_count,
-      wallet_settlement_total_amount_minor = observability_rollups.wallet_settlement_total_amount_minor + excluded.wallet_settlement_total_amount_minor,
-      wallet_settlement_latency_total_ms = observability_rollups.wallet_settlement_latency_total_ms + excluded.wallet_settlement_latency_total_ms,
-      governance_case_opened_count = observability_rollups.governance_case_opened_count + excluded.governance_case_opened_count,
-      governance_case_active_count = CASE
-        WHEN observability_rollups.governance_case_active_count + excluded.governance_case_active_count < 0 THEN 0
-        ELSE observability_rollups.governance_case_active_count + excluded.governance_case_active_count
-      END,
-      governance_action_applied_count = observability_rollups.governance_action_applied_count + excluded.governance_action_applied_count,
-      persona_growth_total = observability_rollups.persona_growth_total + excluded.persona_growth_total,
-      persona_growth_event_count = observability_rollups.persona_growth_event_count + excluded.persona_growth_event_count,
-      persona_reputation_delta_total = observability_rollups.persona_reputation_delta_total + excluded.persona_reputation_delta_total,
-      updated_at = excluded.updated_at`,
-  ).run(
+  const tx = getTx(db);
+  tx.execute(obsCmdApplyRollupDelta({
     tenantId,
-    runtimeCompletedCount,
-    runtimeDurationTotalMs,
-    taskTerminalCount,
-    taskSuccessCount,
-    taskRejectedCount,
-    taskDisputedCount,
-    walletSettlementCount,
-    walletSettlementTotalAmountMinor,
-    walletSettlementLatencyTotalMs,
-    governanceCaseOpenedCount,
-    governanceCaseActiveCount,
-    governanceActionAppliedCount,
-    personaGrowthTotal,
-    personaGrowthEventCount,
-    personaReputationDeltaTotal,
-    updatedAt,
-  );
+    runtimeCompletedCount: delta.runtimeCompletedCount ?? 0,
+    runtimeDurationTotalMs: delta.runtimeDurationTotalMs ?? 0,
+    taskTerminalCount: delta.taskTerminalCount ?? 0,
+    taskSuccessCount: delta.taskSuccessCount ?? 0,
+    taskRejectedCount: delta.taskRejectedCount ?? 0,
+    taskDisputedCount: delta.taskDisputedCount ?? 0,
+    walletSettlementCount: delta.walletSettlementCount ?? 0,
+    walletSettlementTotalAmountMinor: delta.walletSettlementTotalAmountMinor ?? 0,
+    walletSettlementLatencyTotalMs: delta.walletSettlementLatencyTotalMs ?? 0,
+    governanceCaseOpenedCount: delta.governanceCaseOpenedCount ?? 0,
+    governanceCaseActiveCount: delta.governanceCaseActiveCount ?? 0,
+    governanceActionAppliedCount: delta.governanceActionAppliedCount ?? 0,
+    personaGrowthTotal: delta.personaGrowthTotal ?? 0,
+    personaGrowthEventCount: delta.personaGrowthEventCount ?? 0,
+    personaReputationDeltaTotal: delta.personaReputationDeltaTotal ?? 0,
+    updatedAt: delta.updatedAt ?? Date.now(),
+  }));
 }
 
 function emptyObservabilityRollup(tenantId: string): ObservabilityRollupRow {
