@@ -5,15 +5,11 @@
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, ApiKeyRow } from '@chrono/kernel';
+import { apikeyQueryList, apikeyCmdCreate, apikeyCmdRevoke } from '@chrono/kernel';
 import { SubscriptionQueryService } from './subscription-query-service.js';
-
-interface ApiKeyRow {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly plan_id: string;
-  readonly is_revoked: number;
-  readonly created_at: number;
-}
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface ApiKeyDto {
   id: string;
@@ -36,9 +32,12 @@ export type CreateApiKeyOutcome =
   | { ok: false; tenantPlanId: string };
 
 export class ApiKeyService {
+  private readonly tx: SyncWriteUnitOfWork;
   private readonly subscriptionQuery: SubscriptionQueryService;
 
-  constructor(private readonly db: IDatabase) {
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
     this.subscriptionQuery = new SubscriptionQueryService(db);
   }
 
@@ -56,18 +55,14 @@ export class ApiKeyService {
     const id = `ak_${randomUUID()}`;
     const now = Date.now();
 
-    this.db.prepare<void>(
-      'INSERT INTO api_keys (id, tenant_id, key_hash, plan_id, is_revoked, created_at) VALUES (?, ?, ?, ?, 0, ?)',
-    ).run(id, tenantId, keyHash, planId, now);
+    this.tx.execute(apikeyCmdCreate({ id, tenantId, keyHash, planId, now }));
 
     return { ok: true, data: { id, tenantId, planId, apiKey, createdAt: now } };
   }
 
   /** 列出租户所有 API Key（不含明文） */
   list(tenantId: string): ApiKeyDto[] {
-    const rows = this.db.prepare<ApiKeyRow>(
-      'SELECT id, tenant_id, plan_id, is_revoked, created_at FROM api_keys WHERE tenant_id = ? ORDER BY created_at DESC',
-    ).all(tenantId);
+    const rows = this.tx.queryMany(apikeyQueryList(tenantId)) as unknown as ApiKeyRow[];
 
     return rows.map(r => ({
       id: r.id,
@@ -80,9 +75,7 @@ export class ApiKeyService {
 
   /** 吊销 API Key，返回是否成功 */
   revoke(id: string, tenantId: string): boolean {
-    const result = this.db.prepare<void>(
-      'UPDATE api_keys SET is_revoked = 1 WHERE id = ? AND tenant_id = ? AND is_revoked = 0',
-    ).run(id, tenantId);
-    return result.changes > 0;
+    const result = this.tx.execute(apikeyCmdRevoke({ id, tenantId }));
+    return result.rowsAffected > 0;
   }
 }

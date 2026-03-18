@@ -1,46 +1,40 @@
 /**
  * 权益服务 — 薄适配器，委托 kernel 领域逻辑
- * SQL 查询留在宿主层，纯计算委托 mergeEffectiveLimits
+ * SQL 由执行器层实现，纯计算委托 mergeEffectiveLimits
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, AddOnQuota } from '@chrono/kernel';
 import { getPlanLimits } from './plans.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import {
   mergeEffectiveLimits, RESOURCE_TO_LIMIT,
+  entlQueryPlanId, entlQueryAddOnQuotas, entlQueryActiveTenantAddons,
+  entlCmdUpsert,
 } from '@chrono/kernel';
-import type { EffectiveLimits, AddOnQuota } from '@chrono/kernel';
+import type { EffectiveLimits, EntlAddOnQuotaRow } from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { EffectiveLimits };
 
-interface TenantAddOnRow {
-  readonly resource: string;
-  readonly quota_amount: number;
-}
-
-interface SubscriptionRow {
-  readonly plan_id: string;
-}
-
 export class EntitlementService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(private readonly db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 计算租户的有效配额限制（基础计划 + 附加组件叠加） */
   computeEffectiveLimits(tenantId: string): EffectiveLimits {
     /* 获取当前计划 */
-    const sub = this.db.prepare<SubscriptionRow>(
-      'SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-    ).get(tenantId);
+    const sub = this.tx.queryOne(entlQueryPlanId(tenantId));
     const planId = sub?.plan_id ?? 'free';
     const planLimits = getPlanLimits(planId);
 
     /* 查询活跃附加组件的配额叠加 */
-    const addOnRows = this.db.prepare<TenantAddOnRow>(
-      `SELECT a.resource, a.quota_amount
-       FROM tenant_add_ons ta
-       JOIN add_ons a ON a.id = ta.add_on_id
-       WHERE ta.tenant_id = ? AND ta.status = 'active'`,
-    ).all(tenantId);
+    const addOnRows = this.tx.queryMany(entlQueryAddOnQuotas(tenantId)) as unknown as EntlAddOnQuotaRow[];
 
     const addOns: AddOnQuota[] = addOnRows.map(r => ({
       resource: r.resource,
@@ -63,11 +57,12 @@ export class EntitlementService {
 
     for (const [resource, limit] of Object.entries(limits)) {
       /* 更新 entitlements 表 */
-      this.db.prepare<void>(
-        `INSERT INTO entitlements (tenant_id, resource, effective_limit, source, updated_at)
-         VALUES (?, ?, ?, 'computed', ?)
-         ON CONFLICT(tenant_id, resource) DO UPDATE SET effective_limit=excluded.effective_limit, source=excluded.source, updated_at=excluded.updated_at`,
-      ).run(tenantId, resource, limit, now);
+      this.tx.execute(entlCmdUpsert({
+        tenantId,
+        resource,
+        effectiveLimit: limit,
+        now,
+      }));
 
       /* 同步 QuotaManager */
       if (RESOURCE_TO_LIMIT.has(resource)) {
@@ -84,12 +79,8 @@ export class EntitlementService {
 
   /** 获取租户的活跃附加组件列表 */
   getActiveTenantAddOns(tenantId: string): Array<{ addOnId: string; resource: string; quotaAmount: number }> {
-    return this.db.prepare<{ add_on_id: string; resource: string; quota_amount: number }>(
-      `SELECT ta.add_on_id, a.resource, a.quota_amount
-       FROM tenant_add_ons ta
-       JOIN add_ons a ON a.id = ta.add_on_id
-       WHERE ta.tenant_id = ? AND ta.status = 'active'`,
-    ).all(tenantId).map(r => ({
+    const rows = this.tx.queryMany(entlQueryActiveTenantAddons(tenantId)) as unknown as Array<{ add_on_id: string; resource: string; quota_amount: number }>;
+    return rows.map(r => ({
       addOnId: r.add_on_id,
       resource: r.resource,
       quotaAmount: r.quota_amount,

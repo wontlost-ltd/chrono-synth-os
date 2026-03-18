@@ -4,31 +4,36 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  subqQueryLatestPlan, subqQueryActiveStripeCustomer, subqQueryActivePlan,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export class SubscriptionQueryService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 获取租户最近一条订阅的 plan_id（不过滤 status），无订阅时返回 'free' */
   getLatestPlanId(tenantId: string): string {
-    const row = this.db.prepare<{ plan_id: string }>(
-      'SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
-    ).get(tenantId);
+    const row = this.tx.queryOne(subqQueryLatestPlan(tenantId));
     return row?.plan_id ?? 'free';
   }
 
   /** 获取租户当前活跃订阅的 stripe_customer_id，无活跃订阅时返回 null */
   getActiveStripeCustomerId(tenantId: string): string | null {
-    const row = this.db.prepare<{ stripe_customer_id: string | null }>(
-      `SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
-    ).get(tenantId);
+    const row = this.tx.queryOne(subqQueryActiveStripeCustomer(tenantId));
     return row?.stripe_customer_id ?? null;
   }
 
   /** 获取租户当前活跃订阅的 plan_id（仅 status='active'），无活跃订阅时返回 'free' */
   getActiveSubscriptionPlanId(tenantId: string): string {
-    const row = this.db.prepare<{ plan_id: string }>(
-      `SELECT plan_id FROM subscriptions WHERE tenant_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
-    ).get(tenantId);
+    const row = this.tx.queryOne(subqQueryActivePlan(tenantId));
     return row?.plan_id ?? 'free';
   }
 }
