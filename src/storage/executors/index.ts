@@ -13,13 +13,15 @@ import { registerUsageExecutors } from './usage-executors.js';
 import { registerBillingOutboxExecutors } from './billing-outbox-executors.js';
 import { registerLifeSimExecutors } from './life-sim-executors.js';
 import { registerConfigStoreExecutors } from './config-store-executors.js';
+import { registerBillingServiceExecutors } from './billing-service-executors.js';
+import { registerAuditLogExecutors } from './audit-log-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
   MEM_QUERY_BY_ID, TASK_QUERY_BY_ID, AUTORUN_QUERY_CONFIG,
   SETTLE_QUERY_SETTLEMENTS_BY_TENANT, OBS_QUERY_PENDING_EVENTS,
   DLQ_QUERY_BY_TENANT, USAGE_QUERY_GET, BOUTBOX_QUERY_PENDING,
-  LSIM_QUERY_BY_ID, CFG_QUERY_ALL,
+  LSIM_QUERY_BY_ID, CFG_QUERY_ALL, BSVC_QUERY_LIST_PLANS, AUDIT_QUERY_BY_ID,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -39,6 +41,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(BOUTBOX_QUERY_PENDING)) registerBillingOutboxExecutors();
   if (!resolveQueryExecutor(LSIM_QUERY_BY_ID)) registerLifeSimExecutors();
   if (!resolveQueryExecutor(CFG_QUERY_ALL)) registerConfigStoreExecutors();
+  if (!resolveQueryExecutor(BSVC_QUERY_LIST_PLANS)) registerBillingServiceExecutors();
+  if (!resolveQueryExecutor(AUDIT_QUERY_BY_ID)) registerAuditLogExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

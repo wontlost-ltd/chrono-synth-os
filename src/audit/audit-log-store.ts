@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { IDatabase, SqlValue } from '../storage/database.js';
+import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, AuditLogRow as KernelAuditLogRow } from '@chrono/kernel';
+import {
+  auditQueryById, auditQueryList, auditQueryCount,
+  auditCmdRecordRequest, auditCmdRecordBusiness,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type AuditEventKind = 'request' | 'business';
 export type AuditActorType = 'user' | 'api_key' | 'system';
@@ -24,28 +31,6 @@ export interface AuditLogRecord {
   targetType: string | null;
   targetId: string | null;
   payload: Record<string, unknown> | null;
-}
-
-interface AuditLogRow {
-  id: string;
-  tenant_id: string;
-  event_kind: AuditEventKind;
-  timestamp: number;
-  created_at: number;
-  method: string;
-  path: string;
-  request_id: string;
-  status_code: number;
-  latency_ms: number;
-  api_key_hash: string | null;
-  user_id: string | null;
-  user_email: string | null;
-  actor_type: AuditActorType | null;
-  actor_id: string | null;
-  action_type: string;
-  target_type: string | null;
-  target_id: string | null;
-  payload_json: string | null;
 }
 
 export interface RequestAuditInput {
@@ -88,30 +73,6 @@ export interface QueryAuditLogOptions {
   targetId?: string;
 }
 
-const AUDIT_SELECT = `
-  SELECT
-    id,
-    tenant_id,
-    event_kind,
-    timestamp,
-    created_at,
-    method,
-    path,
-    request_id,
-    status_code,
-    latency_ms,
-    api_key_hash,
-    user_id,
-    user_email,
-    actor_type,
-    actor_id,
-    action_type,
-    target_type,
-    target_id,
-    payload_json
-  FROM audit_log
-`;
-
 export function ensureAuditLogColumns(db: IDatabase): void {
   const statements = [
     'ALTER TABLE audit_log ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0',
@@ -136,9 +97,7 @@ export function ensureAuditLogColumns(db: IDatabase): void {
 
   try {
     db.prepare<void>(
-      `UPDATE audit_log
-       SET created_at = timestamp
-       WHERE created_at = 0`,
+      `UPDATE audit_log SET created_at = timestamp WHERE created_at = 0`,
     ).run();
   } catch {
     /* 忽略兼容性失败 */
@@ -150,147 +109,95 @@ export function hashApiKey(apiKey: string | undefined): string | null {
   return createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
 }
 
+function getTx(db: IDatabase): SyncWriteUnitOfWork {
+  registerCoreSelfExecutors();
+  return directUnitOfWork(db);
+}
+
 export function recordRequestAuditLog(db: IDatabase, input: RequestAuditInput): void {
+  const tx = getTx(db);
   const createdAt = input.createdAt ?? Date.now();
-  db.prepare<void>(
-    `INSERT INTO audit_log (
-      id, tenant_id, event_kind, timestamp, created_at,
-      method, path, request_id, status_code, latency_ms,
-      api_key_hash, user_id, user_email,
-      actor_type, actor_id, action_type, target_type, target_id, payload_json
-    ) VALUES (?, ?, 'request', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`,
-  ).run(
-    randomUUID(),
-    input.tenantId,
+  tx.execute(auditCmdRecordRequest({
+    id: randomUUID(),
+    tenantId: input.tenantId,
     createdAt,
-    createdAt,
-    input.method,
-    input.path,
-    input.requestId,
-    input.statusCode,
-    Math.round(input.latencyMs * 100) / 100,
-    hashApiKey(input.apiKey),
-    input.userId ?? null,
-    input.userEmail ?? null,
-    input.actorType ?? null,
-    input.actorId ?? null,
-    input.actionType,
-    input.payload ? JSON.stringify(input.payload) : null,
-  );
+    method: input.method,
+    path: input.path,
+    requestId: input.requestId,
+    statusCode: input.statusCode,
+    latencyMs: Math.round(input.latencyMs * 100) / 100,
+    apiKeyHash: hashApiKey(input.apiKey),
+    userId: input.userId ?? null,
+    userEmail: input.userEmail ?? null,
+    actorType: input.actorType ?? null,
+    actorId: input.actorId ?? null,
+    actionType: input.actionType,
+    payloadJson: input.payload ? JSON.stringify(input.payload) : null,
+  }));
 }
 
 export function recordBusinessAuditLog(db: IDatabase, input: BusinessAuditInput): string {
+  const tx = getTx(db);
   const createdAt = input.createdAt ?? Date.now();
   const id = randomUUID();
-  db.prepare<void>(
-    `INSERT INTO audit_log (
-      id, tenant_id, event_kind, timestamp, created_at,
-      method, path, request_id, status_code, latency_ms,
-      api_key_hash, user_id, user_email,
-      actor_type, actor_id, action_type, target_type, target_id, payload_json
-    ) VALUES (?, ?, 'business', ?, ?, 'EVENT', ?, ?, 200, 0, NULL, ?, NULL, ?, ?, ?, ?, ?, ?)`,
-  ).run(
+  tx.execute(auditCmdRecordBusiness({
     id,
-    input.tenantId,
+    tenantId: input.tenantId,
     createdAt,
-    createdAt,
-    `/audit/business/${input.actionType}`,
-    input.requestId ?? `audit:${id}`,
-    input.actorType === 'user' ? input.actorId : null,
-    input.actorType,
-    input.actorId,
-    input.actionType,
-    input.targetType,
-    input.targetId,
-    input.payload ? JSON.stringify(input.payload) : null,
-  );
+    path: `/audit/business/${input.actionType}`,
+    requestId: input.requestId ?? `audit:${id}`,
+    userId: input.actorType === 'user' ? input.actorId : null,
+    actorType: input.actorType,
+    actorId: input.actorId,
+    actionType: input.actionType,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    payloadJson: input.payload ? JSON.stringify(input.payload) : null,
+  }));
   return id;
 }
 
 export function queryAuditLog(db: IDatabase, options: QueryAuditLogOptions): AuditLogRecord[] {
-  const where: string[] = ['tenant_id = ?'];
-  const params: SqlValue[] = [options.tenantId];
-
-  if (options.eventKind && options.eventKind !== 'all') {
-    where.push('event_kind = ?');
-    params.push(options.eventKind);
-  }
-  if (options.actorId) {
-    where.push('actor_id = ?');
-    params.push(options.actorId);
-  }
-  if (options.actionType) {
-    where.push('action_type = ?');
-    params.push(options.actionType);
-  }
-  if (options.targetType) {
-    where.push('target_type = ?');
-    params.push(options.targetType);
-  }
-  if (options.targetId) {
-    where.push('target_id = ?');
-    params.push(options.targetId);
-  }
-
+  const tx = getTx(db);
   const limit = options.limit ?? 100;
   const offset = options.offset ?? 0;
-  params.push(limit, offset);
-
-  const rows = db.prepare<AuditLogRow>(
-    `${AUDIT_SELECT}
-     WHERE ${where.join(' AND ')}
-     ORDER BY created_at DESC, timestamp DESC
-     LIMIT ? OFFSET ?`,
-  ).all(...params);
+  const rows = [...tx.queryMany(auditQueryList({
+    tenantId: options.tenantId,
+    limit,
+    offset,
+    eventKind: options.eventKind && options.eventKind !== 'all' ? options.eventKind : null,
+    actorId: options.actorId ?? null,
+    actionType: options.actionType ?? null,
+    targetType: options.targetType ?? null,
+    targetId: options.targetId ?? null,
+  }))] as unknown as KernelAuditLogRow[];
   return rows.map(auditLogFromRow);
 }
 
 export function countAuditLogs(db: IDatabase, options: Omit<QueryAuditLogOptions, 'limit' | 'offset'>): number {
-  const where: string[] = ['tenant_id = ?'];
-  const params: SqlValue[] = [options.tenantId];
-
-  if (options.eventKind && options.eventKind !== 'all') {
-    where.push('event_kind = ?');
-    params.push(options.eventKind);
-  }
-  if (options.actorId) {
-    where.push('actor_id = ?');
-    params.push(options.actorId);
-  }
-  if (options.actionType) {
-    where.push('action_type = ?');
-    params.push(options.actionType);
-  }
-  if (options.targetType) {
-    where.push('target_type = ?');
-    params.push(options.targetType);
-  }
-  if (options.targetId) {
-    where.push('target_id = ?');
-    params.push(options.targetId);
-  }
-
-  return db.prepare<{ count: number }>(
-    `SELECT COUNT(*) as count
-     FROM audit_log
-     WHERE ${where.join(' AND ')}`,
-  ).get(...params)?.count ?? 0;
+  const tx = getTx(db);
+  const result = tx.queryOne(auditQueryCount({
+    tenantId: options.tenantId,
+    eventKind: options.eventKind && options.eventKind !== 'all' ? options.eventKind : null,
+    actorId: options.actorId ?? null,
+    actionType: options.actionType ?? null,
+    targetType: options.targetType ?? null,
+    targetId: options.targetId ?? null,
+  }));
+  return Number(result?.count ?? 0);
 }
 
 export function getAuditLogById(db: IDatabase, tenantId: string, id: string): AuditLogRecord | null {
-  const row = db.prepare<AuditLogRow>(
-    `${AUDIT_SELECT}
-     WHERE tenant_id = ? AND id = ?
-     LIMIT 1`,
-  ).get(tenantId, id);
+  const tx = getTx(db);
+  const row = tx.queryOne(auditQueryById(tenantId, id));
   return row ? auditLogFromRow(row) : null;
 }
 
-function auditLogFromRow(row: AuditLogRow): AuditLogRecord {
+function auditLogFromRow(row: KernelAuditLogRow): AuditLogRecord {
   return {
     id: row.id,
     tenantId: row.tenant_id,
-    eventKind: row.event_kind,
+    eventKind: row.event_kind as AuditEventKind,
     timestamp: Number(row.timestamp),
     createdAt: Number(row.created_at),
     method: row.method,
@@ -301,7 +208,7 @@ function auditLogFromRow(row: AuditLogRow): AuditLogRecord {
     apiKeyHash: row.api_key_hash,
     userId: row.user_id,
     userEmail: row.user_email,
-    actorType: row.actor_type,
+    actorType: row.actor_type as AuditActorType | null,
     actorId: row.actor_id,
     actionType: row.action_type,
     targetType: row.target_type,
