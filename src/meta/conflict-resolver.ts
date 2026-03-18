@@ -4,6 +4,11 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, ConflictRow } from '@chrono/kernel';
+import {
+  conflictQueryUnresolved, conflictQueryAll,
+  conflictCmdRecord, conflictCmdResolve, conflictCmdDeleteAll, conflictCmdRestore,
+} from '@chrono/kernel';
 import { arrayToJson, jsonToArray } from '../storage/serialization.js';
 import type { Conflict, ConflictKind, ConflictSeverity } from '../types/meta-regulation.js';
 import type { PersonaVersion } from '../types/persona-version.js';
@@ -13,27 +18,22 @@ import {
   detectValueDivergences, detectResourceContention, pairKey,
 } from '@chrono/kernel';
 import type { PersonaVersionSnapshot } from '@chrono/kernel';
-
-interface ConflictRow {
-  id: string;
-  kind: string;
-  severity: string;
-  involved_versions_json: string;
-  affected_values_json: string;
-  description: string;
-  detected_at: number;
-  resolved_at: number | null;
-  resolution: string | null;
-}
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 const VALID_KINDS = new Set<string>(['value_divergence', 'resource_contention', 'narrative_inconsistency']);
 const VALID_SEVERITIES = new Set<string>(['low', 'medium', 'high', 'critical']);
 
 export class ConflictResolver {
+  private readonly tx: SyncWriteUnitOfWork;
+
   constructor(
-    private readonly db: IDatabase,
+    db: IDatabase,
     private readonly clock: Clock,
-  ) {}
+  ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 检测价值分歧冲突（跳过已存在未解决冲突的版本对） */
   detectValueDivergence(personas: readonly PersonaVersion[], threshold = 0.3): Conflict[] {
@@ -97,42 +97,37 @@ export class ConflictResolver {
   /** 解决冲突 */
   resolve(conflictId: string, resolution: string): boolean {
     const now = this.clock.now();
-    const result = this.db.prepare<void>(
-      'UPDATE conflicts SET resolved_at = ?, resolution = ? WHERE id = ? AND resolved_at IS NULL',
-    ).run(now, resolution, conflictId);
-    return result.changes > 0;
+    const result = this.tx.execute(conflictCmdResolve({ id: conflictId, resolvedAt: now, resolution }));
+    return result.rowsAffected > 0;
   }
 
   /** 获取未解决的冲突 */
   getUnresolved(): Conflict[] {
-    const rows = this.db.prepare<ConflictRow>(
-      'SELECT * FROM conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC',
-    ).all();
+    const rows = [...this.tx.queryMany(conflictQueryUnresolved())] as unknown as ConflictRow[];
     return rows.map(r => this.toConflict(r));
   }
 
   /** 获取所有冲突 */
   getAll(): Conflict[] {
-    const rows = this.db.prepare<ConflictRow>(
-      'SELECT * FROM conflicts ORDER BY detected_at DESC',
-    ).all();
+    const rows = [...this.tx.queryMany(conflictQueryAll())] as unknown as ConflictRow[];
     return rows.map(r => this.toConflict(r));
   }
 
   /** 从快照恢复冲突（清空后重建；调用方负责事务保护） */
   restoreConflicts(conflicts: readonly Conflict[]): void {
-    this.db.prepare<void>('DELETE FROM conflicts WHERE 1=1').run();
+    this.tx.execute(conflictCmdDeleteAll());
     for (const c of conflicts) {
-      this.db.prepare<void>(
-        `INSERT INTO conflicts (id, kind, severity, involved_versions_json, affected_values_json, description, detected_at, resolved_at, resolution) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, severity=excluded.severity, involved_versions_json=excluded.involved_versions_json, affected_values_json=excluded.affected_values_json, description=excluded.description, detected_at=excluded.detected_at, resolved_at=excluded.resolved_at, resolution=excluded.resolution`,
-      ).run(
-        c.id, c.kind, c.severity,
-        arrayToJson(c.involvedVersions as string[]),
-        arrayToJson(c.affectedValues as string[]),
-        c.description, c.detectedAt,
-        c.resolvedAt ?? null, c.resolution ?? null,
-      );
+      this.tx.execute(conflictCmdRestore({
+        id: c.id,
+        kind: c.kind,
+        severity: c.severity,
+        involvedVersionsJson: arrayToJson(c.involvedVersions as string[]),
+        affectedValuesJson: arrayToJson(c.affectedValues as string[]),
+        description: c.description,
+        detectedAt: c.detectedAt,
+        resolvedAt: c.resolvedAt ?? null,
+        resolution: c.resolution ?? null,
+      }));
     }
   }
 
@@ -145,15 +140,15 @@ export class ConflictResolver {
   }): Conflict {
     const id = generatePrefixedId('conflict');
     const now = this.clock.now();
-    this.db.prepare<void>(
-      `INSERT INTO conflicts (id, kind, severity, involved_versions_json, affected_values_json, description, detected_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      id, params.kind, params.severity,
-      arrayToJson(params.involvedVersions),
-      arrayToJson(params.affectedValues),
-      params.description, now,
-    );
+    this.tx.execute(conflictCmdRecord({
+      id,
+      kind: params.kind,
+      severity: params.severity,
+      involvedVersionsJson: arrayToJson(params.involvedVersions),
+      affectedValuesJson: arrayToJson(params.affectedValues),
+      description: params.description,
+      detectedAt: now,
+    }));
     return {
       id,
       kind: params.kind,

@@ -7,6 +7,8 @@
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { MetaRegulationLayer } from '../meta/meta-regulation-layer.js';
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import { evoCmdPersist } from '@chrono/kernel';
 import { arrayToJson, deepStringify } from '../storage/serialization.js';
 import type { EvolutionRecord, EvolutionDiffReport } from '../types/snapshot.js';
 import type { PersonaVersion } from '../types/persona-version.js';
@@ -17,15 +19,22 @@ import {
   selectBestResult, buildEvolutionDiffReport,
 } from '@chrono/kernel';
 import type { ValueSnapshot } from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 const LAYER = 'Evolution';
 
 export class EvolutionMerger {
+  private readonly tx: SyncWriteUnitOfWork;
+
   constructor(
-    private readonly db: IDatabase,
+    db: IDatabase,
     private readonly clock: Clock,
     private readonly logger: Logger,
-  ) {}
+  ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /**
    * 从已完成的人格版本中提取最佳成果，合并到核心层
@@ -99,16 +108,15 @@ export class EvolutionMerger {
       evolvedAt: this.clock.now(),
     };
 
-    this.db.prepare<void>(
-      `INSERT INTO evolution_records (id, before_snapshot_id, after_snapshot_id, merged_version_ids_json, value_delta_json, evolved_at, diff_report_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      record.id, record.beforeSnapshotId, record.afterSnapshotId,
-      arrayToJson(record.mergedVersionIds),
-      deepStringify(record.valueDelta),
-      record.evolvedAt,
-      diffReport ? JSON.stringify(diffReport) : null,
-    );
+    this.tx.execute(evoCmdPersist({
+      id: record.id,
+      beforeSnapshotId: record.beforeSnapshotId,
+      afterSnapshotId: record.afterSnapshotId,
+      mergedVersionIdsJson: arrayToJson(record.mergedVersionIds),
+      valueDeltaJson: deepStringify(record.valueDelta),
+      evolvedAt: record.evolvedAt,
+      diffReportJson: diffReport ? JSON.stringify(diffReport) : null,
+    }));
 
     this.logger.info(LAYER, `演化记录已持久化: ${record.id}`);
     return record;

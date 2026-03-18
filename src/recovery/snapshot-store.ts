@@ -3,31 +3,34 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, SnapshotSummaryRow } from '@chrono/kernel';
+import { snapQueryById, snapQueryLatest, snapQueryList, snapCmdSave, snapCmdDelete } from '@chrono/kernel';
 import { deepStringify, deepParse } from '../storage/serialization.js';
 import type { SystemSnapshot, SnapshotId } from '../types/snapshot.js';
-
-interface SnapshotRow {
-  id: string;
-  data_json: string;
-  reason: string;
-  created_at: number;
-}
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export class SnapshotStore {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 保存快照 */
   save(snapshot: SystemSnapshot): void {
-    this.db.prepare<void>(
-      'INSERT INTO snapshots (id, data_json, reason, created_at) VALUES (?, ?, ?, ?)',
-    ).run(snapshot.id, deepStringify(snapshot), snapshot.reason, snapshot.createdAt);
+    this.tx.execute(snapCmdSave({
+      id: snapshot.id,
+      dataJson: deepStringify(snapshot),
+      reason: snapshot.reason,
+      createdAt: snapshot.createdAt,
+    }));
   }
 
   /** 按 ID 加载快照 */
   load(id: SnapshotId): SystemSnapshot | undefined {
-    const row = this.db.prepare<SnapshotRow>(
-      'SELECT * FROM snapshots WHERE id = ?',
-    ).get(id);
+    const row = this.tx.queryOne(snapQueryById(id));
     if (!row) return undefined;
     const parsed = deepParse<SystemSnapshot>(row.data_json);
     if (!parsed) throw new Error(`快照 ${id} JSON 解析失败`);
@@ -36,9 +39,7 @@ export class SnapshotStore {
 
   /** 获取最新快照 */
   getLatest(): SystemSnapshot | undefined {
-    const row = this.db.prepare<SnapshotRow>(
-      'SELECT * FROM snapshots ORDER BY created_at DESC LIMIT 1',
-    ).get();
+    const row = this.tx.queryOne(snapQueryLatest());
     if (!row) return undefined;
     const parsed = deepParse<SystemSnapshot>(row.data_json);
     if (!parsed) throw new Error(`快照 ${row.id} JSON 解析失败`);
@@ -47,15 +48,13 @@ export class SnapshotStore {
 
   /** 列出所有快照的元数据 */
   list(): Array<{ id: string; reason: string; createdAt: number }> {
-    const rows = this.db.prepare<SnapshotRow>(
-      'SELECT id, reason, created_at FROM snapshots ORDER BY created_at DESC',
-    ).all();
+    const rows = [...this.tx.queryMany(snapQueryList())] as unknown as SnapshotSummaryRow[];
     return rows.map(r => ({ id: r.id, reason: r.reason, createdAt: r.created_at }));
   }
 
   /** 删除快照 */
   delete(id: SnapshotId): boolean {
-    const result = this.db.prepare<void>('DELETE FROM snapshots WHERE id = ?').run(id);
-    return result.changes > 0;
+    const result = this.tx.execute(snapCmdDelete(id));
+    return result.rowsAffected > 0;
   }
 }

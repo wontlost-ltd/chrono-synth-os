@@ -4,6 +4,12 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { PendingUpdateRow as KernelPendingUpdateRow } from '@chrono/kernel';
+import {
+  ugateQueryById, ugateQueryPending,
+  ugateCmdPropose, ugateCmdSetStatus,
+} from '@chrono/kernel';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -14,34 +20,26 @@ import {
 import type {
   UpdateGateConfig, UpdateTrigger, PendingUpdate,
 } from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { UpdateGateConfig, UpdateTrigger, PendingUpdate };
-
-interface PendingUpdateRow {
-  id: string;
-  layer: 'L0' | 'L1';
-  trigger_type: UpdateTrigger;
-  target_id: string;
-  current_value: string | null;
-  proposed_value: string | null;
-  delta: number;
-  reason: string | null;
-  created_at: number;
-  status: 'pending' | 'approved' | 'rejected';
-}
 
 const LAYER = 'UpdateGate';
 
 export class UpdateGate {
   private readonly config: UpdateGateConfig;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
-    private readonly db: IDatabase,
+    db: IDatabase,
     private readonly clock: Clock,
     config?: Partial<UpdateGateConfig>,
     private readonly logger?: Logger,
   ) {
     this.config = { ...DEFAULT_UPDATE_GATE_CONFIG, ...config };
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
   }
 
   requiresConfirmation(layer: 'L0' | 'L1', delta: number): boolean {
@@ -58,49 +56,39 @@ export class UpdateGate {
       status: 'pending',
     };
 
-    this.db.prepare<void>(
-      `INSERT INTO pending_updates
-      (id, layer, trigger_type, target_id, current_value, proposed_value, delta, reason, created_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      pending.id,
-      pending.layer,
-      pending.trigger,
-      pending.targetId,
-      pending.currentValue,
-      pending.proposedValue,
-      pending.delta,
-      pending.reason,
-      pending.createdAt,
-      pending.status,
-    );
+    this.tx.execute(ugateCmdPropose({
+      id: pending.id,
+      layer: pending.layer,
+      triggerType: pending.trigger,
+      targetId: pending.targetId,
+      currentValue: pending.currentValue,
+      proposedValue: pending.proposedValue,
+      delta: pending.delta,
+      reason: pending.reason,
+      createdAt: pending.createdAt,
+      status: pending.status,
+    }));
 
     this.logger?.info(LAYER, `提案已创建: ${pending.id} [${pending.layer}] ${pending.targetId} delta=${pending.delta.toFixed(4)}`);
     return pending;
   }
 
   approve(id: string): PendingUpdate | undefined {
-    const result = this.db.prepare<void>(
-      "UPDATE pending_updates SET status = ? WHERE id = ? AND status = 'pending'",
-    ).run('approved', id);
-    if (result.changes === 0) return undefined;
+    const result = this.tx.execute(ugateCmdSetStatus({ id, status: 'approved' }));
+    if (result.rowsAffected === 0) return undefined;
     this.logger?.info(LAYER, `提案已批准: ${id}`);
     return this.getById(id);
   }
 
   reject(id: string): PendingUpdate | undefined {
-    const result = this.db.prepare<void>(
-      "UPDATE pending_updates SET status = ? WHERE id = ? AND status = 'pending'",
-    ).run('rejected', id);
-    if (result.changes === 0) return undefined;
+    const result = this.tx.execute(ugateCmdSetStatus({ id, status: 'rejected' }));
+    if (result.rowsAffected === 0) return undefined;
     this.logger?.info(LAYER, `提案已拒绝: ${id}`);
     return this.getById(id);
   }
 
   getPending(): PendingUpdate[] {
-    const rows = this.db.prepare<PendingUpdateRow>(
-      'SELECT * FROM pending_updates WHERE status = ? ORDER BY created_at',
-    ).all('pending');
+    const rows = [...this.tx.queryMany(ugateQueryPending())] as unknown as KernelPendingUpdateRow[];
     return rows.map(row => this.toPending(row));
   }
 
@@ -133,24 +121,22 @@ export class UpdateGate {
   }
 
   getById(id: string): PendingUpdate | undefined {
-    const row = this.db.prepare<PendingUpdateRow>(
-      'SELECT * FROM pending_updates WHERE id = ?',
-    ).get(id);
+    const row = this.tx.queryOne(ugateQueryById(id));
     return row ? this.toPending(row) : undefined;
   }
 
-  private toPending(row: PendingUpdateRow): PendingUpdate {
+  private toPending(row: KernelPendingUpdateRow): PendingUpdate {
     return {
       id: row.id,
-      layer: row.layer,
-      trigger: row.trigger_type,
+      layer: row.layer as 'L0' | 'L1',
+      trigger: row.trigger_type as UpdateTrigger,
       targetId: row.target_id,
       currentValue: row.current_value ?? '',
       proposedValue: row.proposed_value ?? '',
       delta: row.delta,
       reason: row.reason ?? '',
       createdAt: row.created_at,
-      status: row.status,
+      status: row.status as 'pending' | 'approved' | 'rejected',
     };
   }
 }
