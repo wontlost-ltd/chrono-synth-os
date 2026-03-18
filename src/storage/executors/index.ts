@@ -32,6 +32,8 @@ import { registerCollaborationExecutors } from './collaboration-executors.js';
 import { registerMobileDeviceExecutors } from './mobile-device-executors.js';
 import { registerDeviceAvatarExecutors } from './device-avatar-executors.js';
 import { registerAvatarSnapshotExecutors } from './avatar-snapshot-executors.js';
+import { registerOrganizationExecutors } from './organization-executors.js';
+import { registerScimExecutors } from './scim-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -47,6 +49,7 @@ import {
   SWHS_QUERY_LATEST_SUBSCRIPTION, AUTH_QUERY_USER_BY_EMAIL,
   COLLAB_QUERY_SIMULATION_TENANT, MDEV_QUERY_BY_UID,
   DAVT_QUERY_ACTIVE, ASNAP_QUERY_AUTORUN_CONFIG,
+  ORG_QUERY_LIST_BY_USER, SCIM_QUERY_USERS,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -85,6 +88,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(MDEV_QUERY_BY_UID)) registerMobileDeviceExecutors();
   if (!resolveQueryExecutor(DAVT_QUERY_ACTIVE)) registerDeviceAvatarExecutors();
   if (!resolveQueryExecutor(ASNAP_QUERY_AUTORUN_CONFIG)) registerAvatarSnapshotExecutors();
+  if (!resolveQueryExecutor(ORG_QUERY_LIST_BY_USER)) registerOrganizationExecutors();
+  if (!resolveQueryExecutor(SCIM_QUERY_USERS)) registerScimExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

@@ -1,0 +1,265 @@
+/**
+ * 组织管理 Query/Command kind 常量与参数类型
+ */
+
+import type { Query, Command } from '../../ports/query.js';
+
+/* ── Query Kinds ── */
+
+export const ORG_QUERY_LIST_BY_USER = 'org.listByUser' as const;
+export const ORG_QUERY_BY_SLUG = 'org.bySlug' as const;
+export const ORG_QUERY_BY_ID = 'org.byId' as const;
+export const ORG_QUERY_MEMBERS = 'org.members' as const;
+export const ORG_QUERY_ROLE_BINDINGS = 'org.roleBindings' as const;
+export const ORG_QUERY_USER_BY_ID = 'org.userById' as const;
+export const ORG_QUERY_USER_BY_EMAIL = 'org.userByEmail' as const;
+export const ORG_QUERY_WORKSPACE_BY_ID = 'org.workspaceById' as const;
+export const ORG_QUERY_MEMBERSHIP = 'org.membership' as const;
+export const ORG_QUERY_ROLE_BINDING_EXISTS = 'org.roleBindingExists' as const;
+export const ORG_QUERY_ROLE_BINDING_EXISTS_WS = 'org.roleBindingExistsWs' as const;
+export const ORG_QUERY_ORG_ROW = 'org.orgRow' as const;
+export const ORG_QUERY_WORKSPACE_ROW = 'org.workspaceRow' as const;
+
+/* ── Command Kinds ── */
+
+export const ORG_CMD_CREATE_ORG = 'org.createOrg' as const;
+export const ORG_CMD_CREATE_WORKSPACE = 'org.createWorkspace' as const;
+export const ORG_CMD_CREATE_MEMBERSHIP = 'org.createMembership' as const;
+export const ORG_CMD_CREATE_ROLE_BINDING = 'org.createRoleBinding' as const;
+export const ORG_CMD_UPDATE_MEMBERSHIP_ACTIVE = 'org.updateMembershipActive' as const;
+
+/* ── 行类型 ── */
+
+export interface OrgListByUserRow {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly created_by_user_id: string;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly workspace_id: string | null;
+  readonly workspace_name: string | null;
+  readonly workspace_slug: string | null;
+  readonly workspace_is_default: number | null;
+  readonly workspace_created_at: number | null;
+  readonly workspace_updated_at: number | null;
+}
+
+export interface OrgIdRow {
+  readonly id: string;
+}
+
+export interface OrgRow {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly created_by_user_id: string;
+  readonly created_at: number;
+  readonly updated_at: number;
+}
+
+export interface OrgWorkspaceRow {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly organization_id: string;
+  readonly name: string;
+  readonly slug: string;
+  readonly is_default: number;
+  readonly created_at: number;
+  readonly updated_at: number;
+}
+
+export interface OrgMemberRow {
+  readonly membership_id: string;
+  readonly user_id: string;
+  readonly email: string;
+  readonly status: string;
+  readonly created_at: number;
+}
+
+export interface OrgRoleBindingRow {
+  readonly role: string;
+  readonly workspace_id: string | null;
+  readonly workspace_name: string | null;
+}
+
+export interface OrgUserRow {
+  readonly id: string;
+  readonly email: string;
+}
+
+/* ── 参数类型 ── */
+
+export interface OrgTenantUserParams {
+  tenantId: string;
+  userId: string;
+}
+
+export interface OrgTenantSlugParams {
+  tenantId: string;
+  slug: string;
+}
+
+export interface OrgTenantIdParams {
+  tenantId: string;
+  id: string;
+}
+
+export interface OrgMembersParams {
+  tenantId: string;
+  organizationId: string;
+}
+
+export interface OrgRoleBindingsParams {
+  tenantId: string;
+  organizationId: string;
+  membershipId: string;
+}
+
+export interface OrgWorkspaceByIdParams {
+  tenantId: string;
+  organizationId: string;
+  workspaceId: string;
+}
+
+export interface OrgMembershipParams {
+  tenantId: string;
+  organizationId: string;
+  userId: string;
+}
+
+export interface OrgRoleBindingExistsParams {
+  tenantId: string;
+  organizationId: string;
+  membershipId: string;
+  role: string;
+}
+
+export interface OrgRoleBindingExistsWsParams {
+  tenantId: string;
+  organizationId: string;
+  membershipId: string;
+  role: string;
+  workspaceId: string;
+}
+
+export interface OrgCreateOrgParams {
+  id: string;
+  tenantId: string;
+  name: string;
+  slug: string;
+  createdByUserId: string;
+  now: number;
+}
+
+export interface OrgCreateWorkspaceParams {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  name: string;
+  slug: string;
+  now: number;
+}
+
+export interface OrgCreateMembershipParams {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  userId: string;
+  now: number;
+}
+
+export interface OrgCreateRoleBindingParams {
+  id: string;
+  tenantId: string;
+  organizationId: string;
+  workspaceId: string | null;
+  membershipId: string;
+  role: string;
+  now: number;
+}
+
+export interface OrgUpdateMembershipActiveParams {
+  tenantId: string;
+  organizationId: string;
+  userId: string;
+  now: number;
+}
+
+/* ── Query 工厂 ── */
+
+export function orgQueryListByUser(params: OrgTenantUserParams): Query<readonly OrgListByUserRow[], OrgTenantUserParams> {
+  return { kind: ORG_QUERY_LIST_BY_USER, params };
+}
+
+export function orgQueryBySlug(params: OrgTenantSlugParams): Query<OrgIdRow | null, OrgTenantSlugParams> {
+  return { kind: ORG_QUERY_BY_SLUG, params };
+}
+
+export function orgQueryById(params: OrgTenantIdParams): Query<OrgIdRow | null, OrgTenantIdParams> {
+  return { kind: ORG_QUERY_BY_ID, params };
+}
+
+export function orgQueryMembers(params: OrgMembersParams): Query<readonly OrgMemberRow[], OrgMembersParams> {
+  return { kind: ORG_QUERY_MEMBERS, params };
+}
+
+export function orgQueryRoleBindings(params: OrgRoleBindingsParams): Query<readonly OrgRoleBindingRow[], OrgRoleBindingsParams> {
+  return { kind: ORG_QUERY_ROLE_BINDINGS, params };
+}
+
+export function orgQueryUserById(params: OrgTenantIdParams): Query<OrgUserRow | null, OrgTenantIdParams> {
+  return { kind: ORG_QUERY_USER_BY_ID, params };
+}
+
+export function orgQueryUserByEmail(params: OrgTenantSlugParams): Query<OrgUserRow | null, OrgTenantSlugParams> {
+  return { kind: ORG_QUERY_USER_BY_EMAIL, params };
+}
+
+export function orgQueryWorkspaceById(params: OrgWorkspaceByIdParams): Query<OrgIdRow | null, OrgWorkspaceByIdParams> {
+  return { kind: ORG_QUERY_WORKSPACE_BY_ID, params };
+}
+
+export function orgQueryMembership(params: OrgMembershipParams): Query<OrgIdRow | null, OrgMembershipParams> {
+  return { kind: ORG_QUERY_MEMBERSHIP, params };
+}
+
+export function orgQueryRoleBindingExists(params: OrgRoleBindingExistsParams): Query<OrgIdRow | null, OrgRoleBindingExistsParams> {
+  return { kind: ORG_QUERY_ROLE_BINDING_EXISTS, params };
+}
+
+export function orgQueryRoleBindingExistsWs(params: OrgRoleBindingExistsWsParams): Query<OrgIdRow | null, OrgRoleBindingExistsWsParams> {
+  return { kind: ORG_QUERY_ROLE_BINDING_EXISTS_WS, params };
+}
+
+export function orgQueryOrgRow(params: OrgTenantIdParams): Query<OrgRow | null, OrgTenantIdParams> {
+  return { kind: ORG_QUERY_ORG_ROW, params };
+}
+
+export function orgQueryWorkspaceRow(params: OrgTenantIdParams): Query<OrgWorkspaceRow | null, OrgTenantIdParams> {
+  return { kind: ORG_QUERY_WORKSPACE_ROW, params };
+}
+
+/* ── Command 工厂 ── */
+
+export function orgCmdCreateOrg(params: OrgCreateOrgParams): Command<OrgCreateOrgParams> {
+  return { kind: ORG_CMD_CREATE_ORG, params };
+}
+
+export function orgCmdCreateWorkspace(params: OrgCreateWorkspaceParams): Command<OrgCreateWorkspaceParams> {
+  return { kind: ORG_CMD_CREATE_WORKSPACE, params };
+}
+
+export function orgCmdCreateMembership(params: OrgCreateMembershipParams): Command<OrgCreateMembershipParams> {
+  return { kind: ORG_CMD_CREATE_MEMBERSHIP, params };
+}
+
+export function orgCmdCreateRoleBinding(params: OrgCreateRoleBindingParams): Command<OrgCreateRoleBindingParams> {
+  return { kind: ORG_CMD_CREATE_ROLE_BINDING, params };
+}
+
+export function orgCmdUpdateMembershipActive(params: OrgUpdateMembershipActiveParams): Command<OrgUpdateMembershipActiveParams> {
+  return { kind: ORG_CMD_UPDATE_MEMBERSHIP_ACTIVE, params };
+}

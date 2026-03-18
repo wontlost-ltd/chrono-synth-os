@@ -4,12 +4,24 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import type { SyncWriteUnitOfWork, ScimUserRow, ScimAvatarIdRow } from '@chrono/kernel';
+import {
+  scimQueryUsers, scimQueryUsersByEmail,
+  scimQueryUserCount, scimQueryUserCountByEmail,
+  scimQueryUserByEmailGlobal, scimQueryUserById,
+  scimQueryUserExists, scimQueryAvatarIdsByUser,
+  scimCmdCreateUser, scimCmdDeleteDeviceAvatars,
+  scimCmdDeleteAutorunRunlog, scimCmdDeleteAutorunConfig,
+  scimCmdDeleteAvatarsByIdentity, scimCmdDeleteRefreshTokens,
+  scimCmdDeleteIdentities, scimCmdDeleteUser,
+} from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import type { UserRow } from '../types/auth.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { StateError, ErrorCode } from '../errors/index.js';
 import { IdentityService } from '../identity/identity-service.js';
 
-function toScimUser(row: Pick<UserRow, 'id' | 'email' | 'created_at' | 'updated_at'>) {
+function toScimUser(row: Pick<ScimUserRow, 'id' | 'email' | 'created_at' | 'updated_at'>) {
   return {
     schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
     id: row.id,
@@ -36,27 +48,24 @@ export interface ScimCreateInput {
 }
 
 export class ScimProvisioningService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(private readonly db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   listUsers(tenantId: string, input: ScimListInput) {
     const offset = input.startIndex - 1;
 
-    let rows: UserRow[];
+    let rows: ScimUserRow[];
     let total: number;
     if (input.userName) {
-      rows = this.db.prepare<UserRow>(
-        'SELECT * FROM users WHERE tenant_id = ? AND email = ? ORDER BY created_at ASC LIMIT ? OFFSET ?',
-      ).all(tenantId, input.userName, input.count, offset);
-      total = this.db.prepare<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM users WHERE tenant_id = ? AND email = ?',
-      ).get(tenantId, input.userName)?.count ?? 0;
+      rows = this.tx.queryMany(scimQueryUsersByEmail({ tenantId, email: input.userName, count: input.count, offset })) as unknown as ScimUserRow[];
+      total = this.tx.queryOne(scimQueryUserCountByEmail({ tenantId, email: input.userName }))?.count ?? 0;
     } else {
-      rows = this.db.prepare<UserRow>(
-        'SELECT * FROM users WHERE tenant_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?',
-      ).all(tenantId, input.count, offset);
-      total = this.db.prepare<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM users WHERE tenant_id = ?',
-      ).get(tenantId)?.count ?? 0;
+      rows = this.tx.queryMany(scimQueryUsers({ tenantId, count: input.count, offset })) as unknown as ScimUserRow[];
+      total = this.tx.queryOne(scimQueryUserCount(tenantId))?.count ?? 0;
     }
 
     return {
@@ -69,9 +78,7 @@ export class ScimProvisioningService {
   }
 
   createUser(tenantId: string, input: ScimCreateInput) {
-    const existing = this.db.prepare<{ id: string; tenant_id: string }>(
-      'SELECT id, tenant_id FROM users WHERE email = ? LIMIT 1',
-    ).get(input.email);
+    const existing = this.tx.queryOne(scimQueryUserByEmailGlobal(input.email));
     if (existing && existing.tenant_id !== tenantId) {
       throw new StateError('该邮箱已存在于其他 tenant，无法通过 SCIM 导入', ErrorCode.STATE_INVALID_TRANSITION);
     }
@@ -80,42 +87,30 @@ export class ScimProvisioningService {
     const userId = existing?.id ?? `user_${randomUUID()}`;
     const identityService = new IdentityService(this.db);
     if (!existing) {
-      this.db.prepare<void>(
-        `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
-         VALUES (?, ?, ?, 'member', ?, ?, ?)`,
-      ).run(userId, input.email, 'scim-managed', tenantId, now, now);
+      this.tx.execute(scimCmdCreateUser({ id: userId, email: input.email, tenantId, now }));
     }
     identityService.ensureForUser(userId, tenantId, input.displayName);
 
-    const row = this.db.prepare<UserRow>('SELECT * FROM users WHERE id = ? LIMIT 1').get(userId);
+    const row = this.tx.queryOne(scimQueryUserById(userId));
     return { user: toScimUser(row!), isNew: !existing };
   }
 
   deleteUser(tenantId: string, userId: string): boolean {
-    const row = this.db.prepare<{ id: string }>(
-      'SELECT id FROM users WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, userId);
+    const row = this.tx.queryOne(scimQueryUserExists({ tenantId, userId }));
     if (!row) return false;
 
     try {
       this.db.transaction(() => {
-        const avatarIds = this.db.prepare<{ id: string }>(
-          `SELECT a.id
-           FROM avatars a
-           INNER JOIN identities i ON i.id = a.identity_id
-           WHERE i.user_id = ?`,
-        ).all(userId).map((r) => r.id);
-        for (const avatarId of avatarIds) {
-          this.db.prepare<void>('DELETE FROM device_avatars WHERE avatar_id = ?').run(avatarId);
-          this.db.prepare<void>('DELETE FROM avatar_autorun_runlog WHERE avatar_id = ?').run(avatarId);
-          this.db.prepare<void>('DELETE FROM avatar_autorun_config WHERE avatar_id = ?').run(avatarId);
+        const avatarIds = this.tx.queryMany(scimQueryAvatarIdsByUser(userId)) as unknown as ScimAvatarIdRow[];
+        for (const avatar of avatarIds) {
+          this.tx.execute(scimCmdDeleteDeviceAvatars(avatar.id));
+          this.tx.execute(scimCmdDeleteAutorunRunlog(avatar.id));
+          this.tx.execute(scimCmdDeleteAutorunConfig(avatar.id));
         }
-        this.db.prepare<void>(
-          'DELETE FROM avatars WHERE identity_id IN (SELECT id FROM identities WHERE user_id = ?)',
-        ).run(userId);
-        this.db.prepare<void>('DELETE FROM refresh_tokens WHERE user_id = ?').run(userId);
-        this.db.prepare<void>('DELETE FROM identities WHERE user_id = ?').run(userId);
-        this.db.prepare<void>('DELETE FROM users WHERE id = ? AND tenant_id = ?').run(userId, tenantId);
+        this.tx.execute(scimCmdDeleteAvatarsByIdentity(userId));
+        this.tx.execute(scimCmdDeleteRefreshTokens(userId));
+        this.tx.execute(scimCmdDeleteIdentities(userId));
+        this.tx.execute(scimCmdDeleteUser({ userId, tenantId }));
       });
     } catch (error) {
       throw new StateError(
