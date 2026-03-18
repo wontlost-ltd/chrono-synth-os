@@ -10,3 +10,4 @@ export * from './simulation-runner.js';
 export * from './integration-types.js';
 export * from './snapshot-types.js';
 export * from './persona-engine-queries.js';
+export * from './cognitive-memory-queries.js';

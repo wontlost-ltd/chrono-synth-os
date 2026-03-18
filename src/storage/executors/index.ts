@@ -37,6 +37,7 @@ import { registerScimExecutors } from './scim-executors.js';
 import { registerAdminControlPlaneExecutors } from './admin-control-plane-executors.js';
 import { registerTenantProfileExecutors } from './tenant-profile-executors.js';
 import { registerPersonaEngineExecutors } from './persona-engine-executors.js';
+import { registerCognitiveMemoryExecutors } from './cognitive-memory-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -54,6 +55,7 @@ import {
   DAVT_QUERY_ACTIVE, ASNAP_QUERY_AUTORUN_CONFIG,
   ORG_QUERY_LIST_BY_USER, SCIM_QUERY_USERS,
   ACP_QUERY_PERSONA_COUNT, TPROF_QUERY_BY_TENANT, PENG_QUERY_BY_ID,
+  PCMEM_QUERY_NODE_BY_ID,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -97,6 +99,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(ACP_QUERY_PERSONA_COUNT)) registerAdminControlPlaneExecutors();
   if (!resolveQueryExecutor(TPROF_QUERY_BY_TENANT)) registerTenantProfileExecutors();
   if (!resolveQueryExecutor(PENG_QUERY_BY_ID)) registerPersonaEngineExecutors();
+  if (!resolveQueryExecutor(PCMEM_QUERY_NODE_BY_ID)) registerCognitiveMemoryExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

@@ -1,5 +1,19 @@
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { PcmemNodeRow, PcmemEdgeRow, PcmemWmRow } from '@chrono/kernel';
+import {
+  pcmemQueryNodeById, pcmemQueryNodeBySource, pcmemQueryNodeByKnowledge,
+  pcmemQueryRecentNodes, pcmemQueryListNodes, pcmemQueryListNodesByKinds,
+  pcmemQueryBatchNodes, pcmemQueryCountNodes, pcmemQueryCountEdges,
+  pcmemQueryEdgesByFrontier, pcmemQueryAllEdges,
+  pcmemQueryWmAllSlots, pcmemQueryWmSlotsOrdered,
+  pcmemQueryWmSlotByMem, pcmemQueryWmCount, pcmemQueryWmLowest,
+  pcmemCmdInsertNode, pcmemCmdUpsertEdge,
+  pcmemCmdWmDeleteSlot, pcmemCmdWmUpdateScore, pcmemCmdWmInsertSlot,
+} from '@chrono/kernel';
 import { DEFAULT_COGNITION_CONFIG } from '../core/memory-graph.js';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type { MemoryCognitionConfig } from '../types/core-self.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -10,42 +24,6 @@ import type {
   PersonaCognitiveState,
   PersonaWorkingMemoryEntry,
 } from './types.js';
-
-interface PersonaMemoryNodeRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  fork_id: string | null;
-  source_memory_id: string | null;
-  knowledge_item_id: string | null;
-  kind: PersonaCognitiveMemoryKind;
-  content: string;
-  valence: number;
-  salience: number;
-  access_count: number;
-  decay_lambda: number;
-  last_accessed_at: number;
-  last_decayed_at: number;
-  consolidated_from: string | null;
-  created_at: number;
-}
-
-interface PersonaMemoryEdgeRow {
-  tenant_id: string;
-  persona_id: string;
-  source: string;
-  target: string;
-  strength: number;
-  relation: string;
-}
-
-interface PersonaWorkingMemoryRow {
-  tenant_id: string;
-  persona_id: string;
-  memory_id: string;
-  score: number;
-  entered_at: number;
-}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -61,7 +39,7 @@ function mergeConfig(base: MemoryCognitionConfig, override: Partial<MemoryCognit
   };
 }
 
-function toMemory(row: PersonaMemoryNodeRow, decryptContent: (value: string) => string): PersonaCognitiveMemory {
+function toMemory(row: PcmemNodeRow, decryptContent: (value: string) => string): PersonaCognitiveMemory {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -69,7 +47,7 @@ function toMemory(row: PersonaMemoryNodeRow, decryptContent: (value: string) => 
     forkId: row.fork_id,
     sourceMemoryId: row.source_memory_id,
     knowledgeItemId: row.knowledge_item_id,
-    kind: row.kind,
+    kind: row.kind as PersonaCognitiveMemoryKind,
     content: decryptContent(row.content),
     valence: Number(row.valence),
     salience: Number(row.salience),
@@ -82,7 +60,7 @@ function toMemory(row: PersonaMemoryNodeRow, decryptContent: (value: string) => 
   };
 }
 
-function toEdge(row: PersonaMemoryEdgeRow): PersonaCognitiveEdge {
+function toEdge(row: PcmemEdgeRow): PersonaCognitiveEdge {
   return {
     tenantId: row.tenant_id,
     personaId: row.persona_id,
@@ -108,12 +86,15 @@ export interface ProjectPersonaCognitiveMemoryInput {
 export class PersonaCognitiveMemoryGraph {
   private readonly config: MemoryCognitionConfig;
   private readonly encryption?: FieldEncryption;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
     private readonly db: IDatabase,
     config?: Partial<MemoryCognitionConfig>,
     encryption?: FieldEncryption,
   ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
     this.config = config ? mergeConfig(DEFAULT_COGNITION_CONFIG, config) : DEFAULT_COGNITION_CONFIG;
     this.encryption = encryption?.isEnabled ? encryption : undefined;
   }
@@ -143,28 +124,20 @@ export class PersonaCognitiveMemoryGraph {
     const id = generatePrefixedId('pmnode');
     const decayLambda = this.computeLambda(input.kind, valence, 0);
 
-    this.db.prepare<void>(
-      `INSERT INTO persona_memory_nodes (
-        id, tenant_id, persona_id, fork_id, source_memory_id, knowledge_item_id,
-        kind, content, valence, salience, access_count, decay_lambda,
-        last_accessed_at, last_decayed_at, consolidated_from, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?)`,
-    ).run(
+    this.tx.execute(pcmemCmdInsertNode({
       id,
-      input.tenantId,
-      input.personaId,
-      input.forkId ?? null,
-      input.sourceMemoryId ?? null,
-      input.knowledgeItemId ?? null,
-      input.kind,
-      this.encryptContent(input.content),
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      forkId: input.forkId ?? null,
+      sourceMemoryId: input.sourceMemoryId ?? null,
+      knowledgeItemId: input.knowledgeItemId ?? null,
+      kind: input.kind,
+      content: this.encryptContent(input.content),
       valence,
       salience,
       decayLambda,
       now,
-      now,
-      now,
-    );
+    }));
 
     this.linkRecentContext(input.tenantId, input.personaId, id, input.kind, input.forkId ?? null);
     this.admitToWorkingMemory(input.tenantId, input.personaId, id);
@@ -173,11 +146,7 @@ export class PersonaCognitiveMemoryGraph {
   }
 
   getMemory(tenantId: string, personaId: string, memoryId: string): PersonaCognitiveMemory | null {
-    const row = this.db.prepare<PersonaMemoryNodeRow>(
-      `SELECT * FROM persona_memory_nodes
-       WHERE tenant_id = ? AND persona_id = ? AND id = ?
-       LIMIT 1`,
-    ).get(tenantId, personaId, memoryId);
+    const row = this.tx.queryOne(pcmemQueryNodeById({ tenantId, personaId, memoryId }));
     return row ? toMemory(row, this.decryptContent.bind(this)) : null;
   }
 
@@ -189,12 +158,7 @@ export class PersonaCognitiveMemoryGraph {
 
     for (let layer = 0; layer < boundedDepth; layer++) {
       if (frontier.length === 0) break;
-      const placeholders = frontier.map(() => '?').join(',');
-      const edges = this.db.prepare<PersonaMemoryEdgeRow>(
-        `SELECT * FROM persona_memory_edges
-         WHERE tenant_id = ? AND persona_id = ?
-           AND (source IN (${placeholders}) OR target IN (${placeholders}))`,
-      ).all(tenantId, personaId, ...frontier, ...frontier);
+      const edges = this.tx.queryMany(pcmemQueryEdgesByFrontier({ tenantId, personaId, frontier })) as unknown as PcmemEdgeRow[];
 
       const neighborIds: string[] = [];
       for (const edge of edges) {
@@ -229,20 +193,16 @@ export class PersonaCognitiveMemoryGraph {
 
   private findExistingProjection(input: ProjectPersonaCognitiveMemoryInput): PersonaCognitiveMemory | null {
     if (input.sourceMemoryId) {
-      const row = this.db.prepare<PersonaMemoryNodeRow>(
-        `SELECT * FROM persona_memory_nodes
-         WHERE tenant_id = ? AND persona_id = ? AND source_memory_id = ?
-         LIMIT 1`,
-      ).get(input.tenantId, input.personaId, input.sourceMemoryId);
+      const row = this.tx.queryOne(pcmemQueryNodeBySource({
+        tenantId: input.tenantId, personaId: input.personaId, sourceMemoryId: input.sourceMemoryId,
+      }));
       if (row) return toMemory(row, this.decryptContent.bind(this));
     }
 
     if (input.knowledgeItemId) {
-      const row = this.db.prepare<PersonaMemoryNodeRow>(
-        `SELECT * FROM persona_memory_nodes
-         WHERE tenant_id = ? AND persona_id = ? AND knowledge_item_id = ?
-         LIMIT 1`,
-      ).get(input.tenantId, input.personaId, input.knowledgeItemId);
+      const row = this.tx.queryOne(pcmemQueryNodeByKnowledge({
+        tenantId: input.tenantId, personaId: input.personaId, knowledgeItemId: input.knowledgeItemId,
+      }));
       if (row) return toMemory(row, this.decryptContent.bind(this));
     }
 
@@ -256,23 +216,14 @@ export class PersonaCognitiveMemoryGraph {
     kind: PersonaCognitiveMemoryKind,
     forkId: string | null,
   ): void {
-    const rows = this.db.prepare<PersonaMemoryNodeRow>(
-      `SELECT * FROM persona_memory_nodes
-       WHERE tenant_id = ? AND persona_id = ? AND id != ?
-       ORDER BY created_at DESC
-       LIMIT 4`,
-    ).all(tenantId, personaId, memoryId);
+    const rows = this.tx.queryMany(pcmemQueryRecentNodes({ tenantId, personaId, excludeId: memoryId })) as unknown as PcmemNodeRow[];
 
     for (const row of rows) {
       const sameKind = row.kind === kind;
       const sameFork = Boolean(forkId && row.fork_id && forkId === row.fork_id);
       const strength = clamp((sameKind ? 0.32 : 0.18) + (sameFork ? 0.22 : 0) + (row.source_memory_id ? 0.05 : 0), 0.05, 0.9);
       const relation = sameFork ? 'fork_context' : sameKind ? 'memory_affinity' : 'chronology';
-      this.db.prepare<void>(
-        `INSERT INTO persona_memory_edges (tenant_id, persona_id, source, target, strength, relation)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(source, target) DO UPDATE SET strength = excluded.strength, relation = excluded.relation`,
-      ).run(tenantId, personaId, memoryId, row.id, strength, relation);
+      this.tx.execute(pcmemCmdUpsertEdge({ tenantId, personaId, source: memoryId, target: row.id, strength, relation }));
     }
   }
 
@@ -282,42 +233,26 @@ export class PersonaCognitiveMemoryGraph {
     options: { kinds?: PersonaCognitiveMemoryKind[]; limit: number },
   ): PersonaCognitiveMemory[] {
     if (!options.kinds?.length) {
-      const rows = this.db.prepare<PersonaMemoryNodeRow>(
-        `SELECT * FROM persona_memory_nodes
-         WHERE tenant_id = ? AND persona_id = ?
-         ORDER BY created_at DESC
-         LIMIT ?`,
-      ).all(tenantId, personaId, options.limit);
+      const rows = this.tx.queryMany(pcmemQueryListNodes({ tenantId, personaId, limit: options.limit })) as unknown as PcmemNodeRow[];
       return rows.map((row) => toMemory(row, this.decryptContent.bind(this)));
     }
 
-    const placeholders = options.kinds.map(() => '?').join(',');
-    const rows = this.db.prepare<PersonaMemoryNodeRow>(
-      `SELECT * FROM persona_memory_nodes
-       WHERE tenant_id = ? AND persona_id = ? AND kind IN (${placeholders})
-       ORDER BY created_at DESC
-       LIMIT ?`,
-    ).all(tenantId, personaId, ...options.kinds, options.limit);
+    const rows = this.tx.queryMany(pcmemQueryListNodesByKinds({
+      tenantId, personaId, kinds: options.kinds, limit: options.limit,
+    })) as unknown as PcmemNodeRow[];
     return rows.map((row) => toMemory(row, this.decryptContent.bind(this)));
   }
 
   private getMemoryBatch(tenantId: string, personaId: string, memoryIds: string[]): PersonaCognitiveMemory[] {
     if (memoryIds.length === 0) return [];
-    const placeholders = memoryIds.map(() => '?').join(',');
-    const rows = this.db.prepare<PersonaMemoryNodeRow>(
-      `SELECT * FROM persona_memory_nodes
-       WHERE tenant_id = ? AND persona_id = ? AND id IN (${placeholders})`,
-    ).all(tenantId, personaId, ...memoryIds);
+    const rows = this.tx.queryMany(pcmemQueryBatchNodes({ tenantId, personaId, ids: memoryIds })) as unknown as PcmemNodeRow[];
     const byId = new Map(rows.map((row) => [row.id, toMemory(row, this.decryptContent.bind(this))]));
     return memoryIds.map((id) => byId.get(id)).filter((value): value is PersonaCognitiveMemory => Boolean(value));
   }
 
   private refreshAndLoadWorkingMemory(tenantId: string, personaId: string): PersonaWorkingMemoryEntry[] {
     this.db.transaction(() => {
-      const slots = this.db.prepare<PersonaWorkingMemoryRow>(
-        `SELECT * FROM persona_working_memory
-         WHERE tenant_id = ? AND persona_id = ?`,
-      ).all(tenantId, personaId);
+      const slots = this.tx.queryMany(pcmemQueryWmAllSlots({ tenantId, personaId })) as unknown as PcmemWmRow[];
 
       const memoryIds = slots.map((slot) => slot.memory_id);
       const memories = new Map(this.getMemoryBatch(tenantId, personaId, memoryIds).map((memory) => [memory.id, memory]));
@@ -325,27 +260,16 @@ export class PersonaCognitiveMemoryGraph {
       for (const slot of slots) {
         const memory = memories.get(slot.memory_id);
         if (!memory) {
-          this.db.prepare<void>(
-            `DELETE FROM persona_working_memory
-             WHERE tenant_id = ? AND persona_id = ? AND memory_id = ?`,
-          ).run(tenantId, personaId, slot.memory_id);
+          this.tx.execute(pcmemCmdWmDeleteSlot({ tenantId, personaId, memoryId: slot.memory_id }));
           continue;
         }
 
         const nextScore = this.computeWorkingMemoryScore(memory);
-        this.db.prepare<void>(
-          `UPDATE persona_working_memory
-           SET score = ?
-           WHERE tenant_id = ? AND persona_id = ? AND memory_id = ?`,
-        ).run(nextScore, tenantId, personaId, slot.memory_id);
+        this.tx.execute(pcmemCmdWmUpdateScore({ tenantId, personaId, memoryId: slot.memory_id, score: nextScore }));
       }
     });
 
-    const slots = this.db.prepare<PersonaWorkingMemoryRow>(
-      `SELECT * FROM persona_working_memory
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY score DESC`,
-    ).all(tenantId, personaId);
+    const slots = this.tx.queryMany(pcmemQueryWmSlotsOrdered({ tenantId, personaId })) as unknown as PcmemWmRow[];
     const memories = new Map(
       this.getMemoryBatch(tenantId, personaId, slots.map((slot) => slot.memory_id)).map((memory) => [memory.id, memory]),
     );
@@ -367,65 +291,32 @@ export class PersonaCognitiveMemoryGraph {
     const score = this.computeWorkingMemoryScore(memory);
     const capacity = this.config.workingMemory.capacity;
 
-    const existing = this.db.prepare<PersonaWorkingMemoryRow>(
-      `SELECT * FROM persona_working_memory
-       WHERE tenant_id = ? AND persona_id = ? AND memory_id = ?`,
-    ).get(tenantId, personaId, memoryId);
+    const existing = this.tx.queryOne(pcmemQueryWmSlotByMem({ tenantId, personaId, memoryId }));
     if (existing) {
-      this.db.prepare<void>(
-        `UPDATE persona_working_memory
-         SET score = ?
-         WHERE tenant_id = ? AND persona_id = ? AND memory_id = ?`,
-      ).run(score, tenantId, personaId, memoryId);
+      this.tx.execute(pcmemCmdWmUpdateScore({ tenantId, personaId, memoryId, score }));
       return;
     }
 
-    const count = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM persona_working_memory
-       WHERE tenant_id = ? AND persona_id = ?`,
-    ).get(tenantId, personaId)?.count ?? 0;
+    const count = this.tx.queryOne(pcmemQueryWmCount({ tenantId, personaId }))?.count ?? 0;
 
     if (count < capacity) {
-      this.db.prepare<void>(
-        `INSERT INTO persona_working_memory (tenant_id, persona_id, memory_id, score, entered_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(tenantId, personaId, memoryId, score, Date.now());
+      this.tx.execute(pcmemCmdWmInsertSlot({ tenantId, personaId, memoryId, score, enteredAt: Date.now() }));
       return;
     }
 
-    const lowest = this.db.prepare<PersonaWorkingMemoryRow>(
-      `SELECT * FROM persona_working_memory
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY score ASC
-       LIMIT 1`,
-    ).get(tenantId, personaId);
+    const lowest = this.tx.queryOne(pcmemQueryWmLowest({ tenantId, personaId }));
     if (!lowest || score <= Number(lowest.score)) return;
 
-    this.db.prepare<void>(
-      `DELETE FROM persona_working_memory
-       WHERE tenant_id = ? AND persona_id = ? AND memory_id = ?`,
-    ).run(tenantId, personaId, lowest.memory_id);
-    this.db.prepare<void>(
-      `INSERT INTO persona_working_memory (tenant_id, persona_id, memory_id, score, entered_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(tenantId, personaId, memoryId, score, Date.now());
+    this.tx.execute(pcmemCmdWmDeleteSlot({ tenantId, personaId, memoryId: lowest.memory_id }));
+    this.tx.execute(pcmemCmdWmInsertSlot({ tenantId, personaId, memoryId, score, enteredAt: Date.now() }));
   }
 
   private countMemories(tenantId: string, personaId: string): number {
-    return this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM persona_memory_nodes
-       WHERE tenant_id = ? AND persona_id = ?`,
-    ).get(tenantId, personaId)?.count ?? 0;
+    return this.tx.queryOne(pcmemQueryCountNodes({ tenantId, personaId }))?.count ?? 0;
   }
 
   private countEdges(tenantId: string, personaId: string): number {
-    return this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM persona_memory_edges
-       WHERE tenant_id = ? AND persona_id = ?`,
-    ).get(tenantId, personaId)?.count ?? 0;
+    return this.tx.queryOne(pcmemQueryCountEdges({ tenantId, personaId }))?.count ?? 0;
   }
 
   private computeLambda(kind: PersonaCognitiveMemoryKind, valence: number, accessCount: number): number {
@@ -442,9 +333,7 @@ export class PersonaCognitiveMemoryGraph {
   }
 
   getEdges(tenantId: string, personaId: string): PersonaCognitiveEdge[] {
-    return this.db.prepare<PersonaMemoryEdgeRow>(
-      `SELECT * FROM persona_memory_edges
-       WHERE tenant_id = ? AND persona_id = ?`,
-    ).all(tenantId, personaId).map(toEdge);
+    const rows = this.tx.queryMany(pcmemQueryAllEdges({ tenantId, personaId })) as unknown as PcmemEdgeRow[];
+    return rows.map(toEdge);
   }
 }
