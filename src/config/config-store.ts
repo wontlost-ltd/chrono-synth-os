@@ -4,49 +4,42 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { ConfigItemRow, ConfigAuditRow } from '@chrono/kernel';
+import {
+  cfgQueryAll, cfgQueryByCategory, cfgQueryByKey,
+  cfgQueryAudit, cfgQueryAuditByKey,
+  cfgCmdUpsert, cfgCmdAuditLog,
+} from '@chrono/kernel';
 import { resolveConfigMetadata, type ConfigCategory } from './config-metadata.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
-export interface ConfigItemRow {
-  readonly key: string;
-  readonly value_json: string;
-  readonly category: ConfigCategory;
-  readonly requires_restart: number;
-  readonly group_key: string;
-  readonly updated_at: number;
-  readonly updated_by: string;
-}
-
-export interface ConfigAuditRow {
-  readonly id: number;
-  readonly config_key: string;
-  readonly old_value: string | null;
-  readonly new_value: string | null;
-  readonly changed_by: string;
-  readonly changed_at: number;
-}
+export type { ConfigItemRow, ConfigAuditRow };
 
 export class ConfigStore {
-  constructor(private readonly db: IDatabase) {}
+  private readonly db: IDatabase;
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    this.db = db;
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 获取所有配置项（按 key 排序） */
   getAll(): ConfigItemRow[] {
-    return this.db.prepare<ConfigItemRow>(
-      'SELECT * FROM config_items ORDER BY key',
-    ).all();
+    return [...this.tx.queryMany(cfgQueryAll())] as unknown as ConfigItemRow[];
   }
 
   /** 获取指定分类的配置项 */
   getByCategory(category: ConfigCategory): ConfigItemRow[] {
-    return this.db.prepare<ConfigItemRow>(
-      'SELECT * FROM config_items WHERE category = ? ORDER BY key',
-    ).all(category);
+    return [...this.tx.queryMany(cfgQueryByCategory(category))] as unknown as ConfigItemRow[];
   }
 
   /** 获取单个配置项 */
   get(key: string): ConfigItemRow | undefined {
-    return this.db.prepare<ConfigItemRow>(
-      'SELECT * FROM config_items WHERE key = ?',
-    ).get(key);
+    return this.tx.queryOne(cfgQueryByKey(key)) ?? undefined;
   }
 
   /** 批量应用配置变更（原子性事务，包含审计日志） */
@@ -61,16 +54,24 @@ export class ConfigStore {
         const existing = this.get(key);
 
         /* 审计日志 */
-        this.db.prepare<void>(
-          'INSERT INTO config_audit (config_key, old_value, new_value, changed_by, changed_at) VALUES (?, ?, ?, ?, ?)',
-        ).run(key, existing?.value_json ?? null, valueJson, changedBy, now);
+        this.tx.execute(cfgCmdAuditLog({
+          configKey: key,
+          oldValue: existing?.value_json ?? null,
+          newValue: valueJson,
+          changedBy,
+          now,
+        }));
 
         /* 写入或更新配置项 */
-        this.db.prepare<void>(
-          `INSERT INTO config_items (key, value_json, category, requires_restart, group_key, updated_at, updated_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at, updated_by=excluded.updated_by`,
-        ).run(key, valueJson, meta.category, meta.requiresRestart ? 1 : 0, meta.groupKey, now, changedBy);
+        this.tx.execute(cfgCmdUpsert({
+          key,
+          valueJson,
+          category: meta.category,
+          requiresRestart: meta.requiresRestart ? 1 : 0,
+          groupKey: meta.groupKey,
+          now,
+          changedBy,
+        }));
 
         if (meta.requiresRestart) {
           requiresRestart.push(key);
@@ -83,15 +84,11 @@ export class ConfigStore {
 
   /** 查询审计日志 */
   getAudit(limit = 50, offset = 0): ConfigAuditRow[] {
-    return this.db.prepare<ConfigAuditRow>(
-      'SELECT * FROM config_audit ORDER BY changed_at DESC LIMIT ? OFFSET ?',
-    ).all(limit, offset);
+    return [...this.tx.queryMany(cfgQueryAudit(limit, offset))] as unknown as ConfigAuditRow[];
   }
 
   /** 按 key 查询审计日志 */
   getAuditByKey(key: string, limit = 50): ConfigAuditRow[] {
-    return this.db.prepare<ConfigAuditRow>(
-      'SELECT * FROM config_audit WHERE config_key = ? ORDER BY changed_at DESC LIMIT ?',
-    ).all(key, limit);
+    return [...this.tx.queryMany(cfgQueryAuditByKey(key, limit))] as unknown as ConfigAuditRow[];
   }
 }

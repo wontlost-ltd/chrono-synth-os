@@ -11,38 +11,20 @@ import type {
   LifeSimulationRecord,
   LifeSimulationPathRecord,
 } from '../types/life-simulation.js';
+import type { SyncWriteUnitOfWork, LifeSimRow, LifeSimPathRow } from '@chrono/kernel';
+import {
+  lsimQueryById, lsimQueryByIdTenant, lsimQueryByTenant,
+  lsimQueryCountByTenant, lsimQueryPaginated,
+  lsimQueryPathDetail, lsimQueryPathDetailTenant,
+  lsimQueryVariants, lsimQueryVariantsTenant, lsimQueryPathsBySim,
+  lsimCmdCreate, lsimCmdSetStatus, lsimCmdSetStatusCompleted,
+  lsimCmdUpdateProgress, lsimCmdSaveSummary, lsimCmdSavePath,
+} from '@chrono/kernel';
+import { directUnitOfWork } from './direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from './executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
-interface SimRow {
-  id: string;
-  tenant_id: string;
-  task_id: string;
-  base_simulation_id: string | null;
-  config_json: string;
-  status: string;
-  summary_json: string | null;
-  progress_json: string | null;
-  error: string | null;
-  created_at: number;
-  updated_at: number;
-  completed_at: number | null;
-}
-
-interface PathRow {
-  id: string;
-  simulation_id: string;
-  path_id: string;
-  label: string;
-  status: string;
-  summary_json: string | null;
-  timeline_json: string | null;
-  branches_json: string | null;
-  retrospective_json: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-function rowToSimRecord(row: SimRow): LifeSimulationRecord {
+function rowToSimRecord(row: LifeSimRow): LifeSimulationRecord {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -59,7 +41,7 @@ function rowToSimRecord(row: SimRow): LifeSimulationRecord {
   };
 }
 
-function rowToPathRecord(row: PathRow): LifeSimulationPathRecord {
+function rowToPathRecord(row: LifeSimPathRow): LifeSimulationPathRecord {
   return {
     id: row.id,
     simulationId: row.simulation_id,
@@ -76,43 +58,42 @@ function rowToPathRecord(row: PathRow): LifeSimulationPathRecord {
 }
 
 export class LifeSimulationStore {
-  constructor(private readonly db: IDatabase) {}
+  private readonly tx: SyncWriteUnitOfWork;
+
+  constructor(db: IDatabase) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
+  }
 
   /** 创建模拟记录 */
   create(id: string, tenantId: string, taskId: string, config: LifeSimulationConfig, baseSimulationId?: string): void {
     const now = Date.now();
-    this.db.prepare<void>(
-      `INSERT INTO life_simulations (id, tenant_id, task_id, base_simulation_id, config_json, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    ).run(id, tenantId, taskId, baseSimulationId ?? null, JSON.stringify(config), now, now);
+    this.tx.execute(lsimCmdCreate({
+      id, tenantId, taskId,
+      baseSimulationId: baseSimulationId ?? null,
+      configJson: JSON.stringify(config),
+      now,
+    }));
   }
 
   /** 更新状态 */
   setStatus(id: string, status: string, error?: string): void {
     const now = Date.now();
     if (status === 'completed') {
-      this.db.prepare<void>(
-        'UPDATE life_simulations SET status = ?, error = ?, updated_at = ?, completed_at = ? WHERE id = ?',
-      ).run(status, error ?? null, now, now, id);
+      this.tx.execute(lsimCmdSetStatusCompleted({ id, status, error: error ?? null, now }));
     } else {
-      this.db.prepare<void>(
-        'UPDATE life_simulations SET status = ?, error = ?, updated_at = ? WHERE id = ?',
-      ).run(status, error ?? null, now, id);
+      this.tx.execute(lsimCmdSetStatus({ id, status, error: error ?? null, now }));
     }
   }
 
   /** 更新进度 */
   updateProgress(id: string, progress: object): void {
-    this.db.prepare<void>(
-      'UPDATE life_simulations SET progress_json = ?, updated_at = ? WHERE id = ?',
-    ).run(JSON.stringify(progress), Date.now(), id);
+    this.tx.execute(lsimCmdUpdateProgress({ id, progressJson: JSON.stringify(progress), now: Date.now() }));
   }
 
   /** 保存摘要（完整结果的精简版） */
   saveSummary(id: string, summary: object): void {
-    this.db.prepare<void>(
-      'UPDATE life_simulations SET summary_json = ?, updated_at = ? WHERE id = ?',
-    ).run(JSON.stringify(summary), Date.now(), id);
+    this.tx.execute(lsimCmdSaveSummary({ id, summaryJson: JSON.stringify(summary), now: Date.now() }));
   }
 
   /** 保存单路径结果 */
@@ -126,18 +107,16 @@ export class LifeSimulationStore {
       timelineYears: pathResult.timeline.length,
     };
 
-    this.db.prepare<void>(
-      `INSERT INTO life_simulation_paths (id, simulation_id, path_id, label, status, summary_json, timeline_json, branches_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         status = 'completed', summary_json = excluded.summary_json,
-         timeline_json = excluded.timeline_json, branches_json = excluded.branches_json,
-         updated_at = excluded.updated_at`,
-    ).run(
-      pathRecordId, simId, pathResult.pathId, pathResult.label,
-      JSON.stringify(summary), JSON.stringify(pathResult.timeline),
-      JSON.stringify(pathResult.branches), now, now,
-    );
+    this.tx.execute(lsimCmdSavePath({
+      id: pathRecordId,
+      simulationId: simId,
+      pathId: pathResult.pathId,
+      label: pathResult.label,
+      summaryJson: JSON.stringify(summary),
+      timelineJson: JSON.stringify(pathResult.timeline),
+      branchesJson: JSON.stringify(pathResult.branches),
+      now,
+    }));
   }
 
   /** 保存完整结果摘要 */
@@ -159,63 +138,44 @@ export class LifeSimulationStore {
   /** 按 ID 查询（可选租户隔离） */
   getById(id: string, tenantId?: string): LifeSimulationRecord | undefined {
     const row = tenantId
-      ? this.db.prepare<SimRow>(
-        'SELECT * FROM life_simulations WHERE id = ? AND tenant_id = ?',
-      ).get(id, tenantId)
-      : this.db.prepare<SimRow>(
-        'SELECT * FROM life_simulations WHERE id = ?',
-      ).get(id);
+      ? this.tx.queryOne(lsimQueryByIdTenant(id, tenantId))
+      : this.tx.queryOne(lsimQueryById(id));
     return row ? rowToSimRecord(row) : undefined;
   }
 
   /** 按租户查询 */
   getByTenant(tenantId: string, limit = 20): LifeSimulationRecord[] {
-    return this.db.prepare<SimRow>(
-      'SELECT * FROM life_simulations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?',
-    ).all(tenantId, limit).map(rowToSimRecord);
+    const rows = this.tx.queryMany(lsimQueryByTenant(tenantId, limit));
+    return [...rows].map(r => rowToSimRecord(r as unknown as LifeSimRow));
   }
 
   /** 按租户分页查询（SQL 级 OFFSET） */
   getByTenantPaginated(tenantId: string, limit: number, offset: number): { records: LifeSimulationRecord[]; total: number } {
-    const total = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) as count FROM life_simulations WHERE tenant_id = ?',
-    ).get(tenantId)?.count ?? 0;
-    const records = this.db.prepare<SimRow>(
-      'SELECT * FROM life_simulations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-    ).all(tenantId, limit, offset).map(rowToSimRecord);
+    const total = Number(this.tx.queryOne(lsimQueryCountByTenant(tenantId))?.count ?? 0);
+    const rows = this.tx.queryMany(lsimQueryPaginated(tenantId, limit, offset));
+    const records = [...rows].map(r => rowToSimRecord(r as unknown as LifeSimRow));
     return { records, total };
   }
 
   /** 查询路径详情（可选租户隔离） */
   getPathDetail(simId: string, pathId: string, tenantId?: string): LifeSimulationPathRecord | undefined {
     const row = tenantId
-      ? this.db.prepare<PathRow>(
-        `SELECT p.* FROM life_simulation_paths p
-         JOIN life_simulations s ON s.id = p.simulation_id
-         WHERE p.simulation_id = ? AND p.path_id = ? AND s.tenant_id = ?`,
-      ).get(simId, pathId, tenantId)
-      : this.db.prepare<PathRow>(
-        'SELECT * FROM life_simulation_paths WHERE simulation_id = ? AND path_id = ?',
-      ).get(simId, pathId);
+      ? this.tx.queryOne(lsimQueryPathDetailTenant(simId, pathId, tenantId))
+      : this.tx.queryOne(lsimQueryPathDetail(simId, pathId));
     return row ? rowToPathRecord(row) : undefined;
   }
 
   /** 查询基于某模拟的压力测试变体列表 */
   getVariants(baseSimulationId: string, tenantId?: string): LifeSimulationRecord[] {
     const rows = tenantId
-      ? this.db.prepare<SimRow>(
-        'SELECT * FROM life_simulations WHERE base_simulation_id = ? AND tenant_id = ? ORDER BY created_at ASC',
-      ).all(baseSimulationId, tenantId)
-      : this.db.prepare<SimRow>(
-        'SELECT * FROM life_simulations WHERE base_simulation_id = ? ORDER BY created_at ASC',
-      ).all(baseSimulationId);
-    return rows.map(rowToSimRecord);
+      ? this.tx.queryMany(lsimQueryVariantsTenant(baseSimulationId, tenantId))
+      : this.tx.queryMany(lsimQueryVariants(baseSimulationId));
+    return [...rows].map(r => rowToSimRecord(r as unknown as LifeSimRow));
   }
 
   /** 查询模拟的所有路径摘要 */
   getPathsBySimulation(simId: string): LifeSimulationPathRecord[] {
-    return this.db.prepare<PathRow>(
-      'SELECT * FROM life_simulation_paths WHERE simulation_id = ? ORDER BY created_at ASC',
-    ).all(simId).map(rowToPathRecord);
+    const rows = this.tx.queryMany(lsimQueryPathsBySim(simId));
+    return [...rows].map(r => rowToPathRecord(r as unknown as LifeSimPathRow));
   }
 }

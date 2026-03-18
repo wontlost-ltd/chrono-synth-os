@@ -53,3 +53,4 @@ export * from './domain/intelligence/index.js';
 export * from './domain/queue/index.js';
 export * from './domain/billing/index.js';
 export * from './domain/observability/index.js';
+export * from './domain/config/index.js';

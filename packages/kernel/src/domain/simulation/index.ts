@@ -6,3 +6,4 @@ export * from './health-decay-model.js';
 export * from './emotional-trajectory-engine.js';
 export * from './life-simulation-engine.js';
 export * from './visualization-helpers.js';
+export * from './life-sim-store-queries.js';
