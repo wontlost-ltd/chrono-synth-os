@@ -1,4 +1,16 @@
+/**
+ * Platform DLQ — 死信队列记录与重放
+ * 通过 SyncWriteUnitOfWork 的 Query/Command 契约访问数据
+ */
+
 import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork, DlqEventRow } from '@chrono/kernel';
+import {
+  dlqQueryByTenant, dlqQueryBacklogPending, dlqQueryBacklogReplayed,
+  dlqQueryById, dlqCmdRecord, dlqCmdMarkReplayed,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent, type ObservabilityEventType } from '../observability/observability-outbox.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
@@ -61,55 +73,47 @@ export function resolvePlatformDlqTopic(eventType?: string | null): PlatformDlqT
   return 'runtime.dlq';
 }
 
+function getTx(db: IDatabase): SyncWriteUnitOfWork {
+  registerCoreSelfExecutors();
+  return directUnitOfWork(db);
+}
+
 export function recordPlatformDlqEvent(db: IDatabase, input: RecordPlatformDlqInput): string {
+  const tx = getTx(db);
   const id = generatePrefixedId('dlq');
   const createdAt = input.createdAt ?? Date.now();
   const eventType = input.eventType ?? 'unknown';
-  db.prepare<void>(
-    `INSERT INTO platform_dlq_events (
-      id, tenant_id, source_component, source_topic, dlq_topic, event_type,
-      partition_key, payload_json, error_message, status, created_at, replayed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)`,
-  ).run(
+  tx.execute(dlqCmdRecord({
     id,
-    input.tenantId,
-    input.sourceComponent,
-    input.sourceTopic,
-    resolvePlatformDlqTopic(eventType),
+    tenantId: input.tenantId,
+    sourceComponent: input.sourceComponent,
+    sourceTopic: input.sourceTopic,
+    dlqTopic: resolvePlatformDlqTopic(eventType),
     eventType,
-    input.partitionKey ?? null,
-    JSON.stringify(input.payload ?? null),
-    input.errorMessage,
+    partitionKey: input.partitionKey ?? null,
+    payloadJson: JSON.stringify(input.payload ?? null),
+    errorMessage: input.errorMessage,
     createdAt,
-  );
+  }));
   return id;
 }
 
 export function listPlatformDlqEvents(db: IDatabase, tenantId: string, limit = 100): PlatformDlqEvent[] {
-  return db.prepare<PlatformDlqRow>(
-    `SELECT * FROM platform_dlq_events
-     WHERE tenant_id = ?
-     ORDER BY created_at DESC
-     LIMIT ?`,
-  ).all(tenantId, limit).map(platformDlqFromRow);
+  const tx = getTx(db);
+  const rows = tx.queryMany(dlqQueryByTenant(tenantId, limit));
+  return rows.map(platformDlqFromRow);
 }
 
 export function getPlatformDlqBacklog(db: IDatabase): { pending: number; replayed: number } {
-  const pending = db.prepare<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM platform_dlq_events WHERE status = 'pending'`,
-  ).get()?.count ?? 0;
-  const replayed = db.prepare<{ count: number }>(
-    `SELECT COUNT(*) AS count FROM platform_dlq_events WHERE status = 'replayed'`,
-  ).get()?.count ?? 0;
+  const tx = getTx(db);
+  const pending = tx.queryOne(dlqQueryBacklogPending())?.count ?? 0;
+  const replayed = tx.queryOne(dlqQueryBacklogReplayed())?.count ?? 0;
   return { pending, replayed };
 }
 
 export function replayPlatformDlqEvent(db: IDatabase, id: string): boolean {
-  const row = db.prepare<PlatformDlqRow>(
-    `SELECT * FROM platform_dlq_events
-     WHERE id = ?
-     LIMIT 1`,
-  ).get(id);
+  const tx = getTx(db);
+  const row = tx.queryOne(dlqQueryById(id));
   if (!row || row.status !== 'pending') return false;
   if (row.source_topic !== OBSERVABILITY_TOPIC) {
     throw new Error(`暂不支持重放 source_topic=${row.source_topic} 的 DLQ 事件`);
@@ -131,26 +135,22 @@ export function replayPlatformDlqEvent(db: IDatabase, id: string): boolean {
     payload: payload as Record<string, unknown>,
   });
 
-  db.prepare<void>(
-    `UPDATE platform_dlq_events
-     SET status = 'replayed', replayed_at = ?
-     WHERE id = ?`,
-  ).run(Date.now(), id);
+  tx.execute(dlqCmdMarkReplayed({ id, now: Date.now() }));
   return true;
 }
 
-function platformDlqFromRow(row: PlatformDlqRow): PlatformDlqEvent {
+function platformDlqFromRow(row: DlqEventRow): PlatformDlqEvent {
   return {
     id: row.id,
     tenantId: row.tenant_id,
     sourceComponent: row.source_component,
     sourceTopic: row.source_topic,
-    dlqTopic: row.dlq_topic,
+    dlqTopic: row.dlq_topic as PlatformDlqTopic,
     eventType: row.event_type,
     partitionKey: row.partition_key,
     payload: safeParsePayload(row.payload_json),
     errorMessage: row.error_message,
-    status: row.status,
+    status: row.status as PlatformDlqStatus,
     createdAt: Number(row.created_at),
     replayedAt: row.replayed_at === null ? null : Number(row.replayed_at),
   };
