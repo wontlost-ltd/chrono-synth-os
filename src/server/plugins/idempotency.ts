@@ -1,31 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  idemQueryExisting, idemQueryIdByKey,
+  idemCmdCleanupExpired, idemCmdInsert, idemCmdComplete, idemCmdDelete,
+} from '@chrono/kernel';
+import type { IdemRow } from '@chrono/kernel';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { ErrorCode, StateError, ValidationError } from '../../errors/index.js';
 
 const IDEMPOTENT_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const IDEMPOTENCY_HEADER = 'idempotency-key';
 const REPLAY_HEADER = 'x-idempotent-replayed';
-
-type IdempotencyState = 'in_progress' | 'completed';
-
-interface IdempotencyRow {
-  id: string;
-  tenant_id: string;
-  scope_key: string;
-  idempotency_key: string;
-  request_hash: string;
-  request_method: string;
-  request_path: string;
-  state: IdempotencyState;
-  response_status: number | null;
-  response_content_type: string | null;
-  response_headers_json: string | null;
-  response_body: string | null;
-  created_at: number;
-  expires_at: number;
-}
 
 interface IdempotencyContext {
   id: string;
@@ -119,7 +108,7 @@ function normalizePayload(payload: unknown): string {
   return JSON.stringify(payload);
 }
 
-function replayResponse(reply: FastifyReply, row: IdempotencyRow): void {
+function replayResponse(reply: FastifyReply, row: IdemRow): void {
   reply.header(REPLAY_HEADER, 'true');
   applyReplayHeaders(reply, row.response_headers_json);
   reply.code(row.response_status ?? 200);
@@ -132,6 +121,9 @@ function replayResponse(reply: FastifyReply, row: IdempotencyRow): void {
 
 export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefined, config: AppConfig): void {
   if (!db || !config.idempotency.enabled) return;
+
+  registerCoreSelfExecutors();
+  const tx: SyncWriteUnitOfWork = directUnitOfWork(db);
 
   app.addHook('preHandler', (request, reply, done) => {
     if (!IDEMPOTENT_METHODS.has(request.method)) return done();
@@ -149,16 +141,12 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
     const now = Date.now();
 
     try {
-      db.prepare<void>('DELETE FROM idempotency_keys WHERE expires_at <= ?').run(now);
+      tx.execute(idemCmdCleanupExpired(now));
     } catch {
       /* 清理失败不阻断请求 */
     }
 
-    const existing = db.prepare<IdempotencyRow>(
-      `SELECT * FROM idempotency_keys
-       WHERE tenant_id = ? AND scope_key = ? AND idempotency_key = ? AND expires_at > ?
-       LIMIT 1`,
-    ).get(tenantId, scopeKey, idempotencyKey, now);
+    const existing = tx.queryOne(idemQueryExisting({ tenantId, scopeKey, idempotencyKey, now }));
 
     if (existing) {
       if (existing.request_hash !== requestHash) {
@@ -174,30 +162,21 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
       return;
     }
 
-    db.prepare<void>(
-      `INSERT INTO idempotency_keys (
-        id, tenant_id, scope_key, idempotency_key, request_hash, request_method, request_path,
-        state, response_status, response_content_type, response_headers_json, response_body,
-        created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_progress', NULL, NULL, NULL, NULL, ?, ?)`,
-    ).run(
-      randomUUID(),
+    const id = randomUUID();
+    tx.execute(idemCmdInsert({
+      id,
       tenantId,
       scopeKey,
       idempotencyKey,
       requestHash,
-      request.method,
-      request.routeOptions?.url ?? request.url.split('?')[0],
+      requestMethod: request.method,
+      requestPath: request.routeOptions?.url ?? request.url.split('?')[0],
       now,
-      now + config.idempotency.ttlMs,
-    );
+      expiresAt: now + config.idempotency.ttlMs,
+    }));
 
     (request as FastifyRequest & { idempotencyContext?: IdempotencyContext }).idempotencyContext = {
-      id: db.prepare<{ id: string }>(
-        `SELECT id FROM idempotency_keys
-         WHERE tenant_id = ? AND scope_key = ? AND idempotency_key = ?
-         LIMIT 1`,
-      ).get(tenantId, scopeKey, idempotencyKey)!.id,
+      id: tx.queryOne(idemQueryIdByKey({ tenantId, scopeKey, idempotencyKey }))!.id,
     };
     reply.header(REPLAY_HEADER, 'false');
     done();
@@ -215,23 +194,15 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
         const contentType = typeof reply.getHeader('content-type') === 'string'
           ? String(reply.getHeader('content-type'))
           : null;
-        db.prepare<void>(
-          `UPDATE idempotency_keys
-           SET state = 'completed',
-               response_status = ?,
-               response_content_type = ?,
-               response_headers_json = ?,
-               response_body = ?
-           WHERE id = ?`,
-        ).run(
-          reply.statusCode,
-          contentType,
-          serializeReplayHeaders(reply),
-          normalizePayload(payload),
-          context.id,
-        );
+        tx.execute(idemCmdComplete({
+          id: context.id,
+          responseStatus: reply.statusCode,
+          responseContentType: contentType,
+          responseHeadersJson: serializeReplayHeaders(reply),
+          responseBody: normalizePayload(payload),
+        }));
       } else {
-        db.prepare<void>('DELETE FROM idempotency_keys WHERE id = ?').run(context.id);
+        tx.execute(idemCmdDelete(context.id));
       }
     } catch {
       /* 中间件异常不应破坏主流程 */

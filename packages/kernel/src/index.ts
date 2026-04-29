@@ -59,3 +59,5 @@ export * from './domain/multi-tenant/index.js';
 export * from './domain/recovery/index.js';
 export * from './domain/meta/index.js';
 export * from './domain/enterprise/index.js';
+export * from './domain/knowledge/index.js';
+export * from './domain/server/index.js';
