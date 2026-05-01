@@ -8,3 +8,5 @@ export * from './llm-safety.js';
 export * from './decision-engine-helpers.js';
 export * from './cost-tracker-types.js';
 export * from './token-budget-types.js';
+export * from './llm-usage-queries.js';
+export * from './embedding-queries.js';

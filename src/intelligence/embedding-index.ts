@@ -7,7 +7,14 @@
  * 当向量数 < IVF_THRESHOLD 时退化为暴力搜索
  */
 
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  embCmdUpsert, embQueryByModel,
+  ivfCmdUpsert, ivfQueryByModel, ivfQueryMetaByModel,
+} from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { Clock } from '../utils/clock.js';
 import type { LLMProvider } from './llm-provider.js';
 
@@ -87,15 +94,18 @@ export class EmbeddingIndex {
   private partitions: IVFPartition[] = [];
   private ivfBuilt = false;
   private readonly maxCacheSize: number;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
-    private readonly db: IDatabase,
+    db: IDatabase,
     private readonly clock: Clock,
     private readonly llm: LLMProvider,
     private readonly model: string,
     maxCacheSize?: number,
   ) {
     this.maxCacheSize = maxCacheSize ?? DEFAULT_MAX_CACHE_SIZE;
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
   }
 
   /** 淘汰最久未访问的缓存条目直到容量合规（局部选择避免全量排序） */
@@ -136,10 +146,9 @@ export class EmbeddingIndex {
     if (!vector || vector.length === 0) return false;
 
     /* 先写 DB，成功后再更新缓存 */
-    this.db.prepare<void>(
-      `INSERT INTO memory_embeddings (memory_id, embedding_json, model, updated_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(memory_id) DO UPDATE SET embedding_json=excluded.embedding_json, model=excluded.model, updated_at=excluded.updated_at`,
-    ).run(memoryId, JSON.stringify(vector), this.model, this.clock.now());
+    this.tx.execute(embCmdUpsert({
+      memoryId, embeddingJson: JSON.stringify(vector), model: this.model, updatedAt: this.clock.now(),
+    }));
 
     const typed = Float64Array.from(vector);
     const norm = computeNorm(typed);
@@ -158,9 +167,7 @@ export class EmbeddingIndex {
     const now = Date.now();
     if (this.cacheLoadedAt > 0 && now - this.cacheLoadedAt < CACHE_TTL_MS) return;
 
-    const rows = this.db.prepare<EmbeddingRow>(
-      'SELECT memory_id, embedding_json FROM memory_embeddings WHERE model = ?',
-    ).all(this.model);
+    const rows = this.tx.queryMany(embQueryByModel({ model: this.model })) as unknown as EmbeddingRow[];
 
     const newCache = new Map<string, CachedVector>();
     for (const row of rows) {
@@ -183,9 +190,7 @@ export class EmbeddingIndex {
   /** 尝试从 DB 加载持久化的 IVF 质心（避免冷启动重建） */
   private loadPersistedCentroids(): Float64Array[] | null {
     try {
-      const row = this.db.prepare<{ centroids_json: string }>(
-        'SELECT centroids_json FROM ivf_centroids WHERE model = ? ORDER BY built_at DESC LIMIT 1',
-      ).get(this.model);
+      const row = this.tx.queryOne(ivfQueryByModel({ model: this.model }));
       if (!row) return null;
       const parsed = JSON.parse(row.centroids_json) as number[][];
       return parsed.map(arr => Float64Array.from(arr));
@@ -195,9 +200,7 @@ export class EmbeddingIndex {
   /** 加载持久化质心的元数据（向量数 + 构建时间） */
   private loadPersistedMeta(): { numVectors: number; builtAt: number } | null {
     try {
-      const row = this.db.prepare<{ num_vectors: number; built_at: number }>(
-        'SELECT num_vectors, built_at FROM ivf_centroids WHERE model = ?',
-      ).get(this.model);
+      const row = this.tx.queryOne(ivfQueryMetaByModel({ model: this.model }));
       return row ? { numVectors: row.num_vectors, builtAt: row.built_at } : null;
     } catch { return null; }
   }
@@ -205,12 +208,12 @@ export class EmbeddingIndex {
   /** 持久化 IVF 质心到 DB */
   private persistCentroids(centroids: Float64Array[]): void {
     try {
-      const json = JSON.stringify(centroids.map(c => Array.from(c)));
-      this.db.prepare<void>(
-        `INSERT INTO ivf_centroids (model, centroids_json, num_vectors, built_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(model) DO UPDATE SET centroids_json=excluded.centroids_json, num_vectors=excluded.num_vectors, built_at=excluded.built_at`,
-      ).run(this.model, json, this.vectorCache.size, Date.now());
+      this.tx.execute(ivfCmdUpsert({
+        model: this.model,
+        centroidsJson: JSON.stringify(centroids.map(c => Array.from(c))),
+        numVectors: this.vectorCache.size,
+        builtAt: Date.now(),
+      }));
     } catch { /* 持久化失败不阻塞检索 */ }
   }
 

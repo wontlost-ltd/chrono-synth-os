@@ -10,6 +10,7 @@ import {
   ORG_QUERY_WORKSPACE_BY_ID, ORG_QUERY_MEMBERSHIP,
   ORG_QUERY_ROLE_BINDING_EXISTS, ORG_QUERY_ROLE_BINDING_EXISTS_WS,
   ORG_QUERY_ORG_ROW, ORG_QUERY_WORKSPACE_ROW,
+  ORG_QUERY_ACTIVE_MEMBERSHIP, ORG_QUERY_MEMBERSHIP_ROLES,
   ORG_CMD_CREATE_ORG, ORG_CMD_CREATE_WORKSPACE,
   ORG_CMD_CREATE_MEMBERSHIP, ORG_CMD_CREATE_ROLE_BINDING,
   ORG_CMD_UPDATE_MEMBERSHIP_ACTIVE,
@@ -17,6 +18,7 @@ import {
 import type {
   OrgListByUserRow, OrgIdRow, OrgRow, OrgWorkspaceRow,
   OrgMemberRow, OrgRoleBindingRow, OrgUserRow,
+  OrgActiveMembershipRow, OrgMembershipRoleRow,
   OrgTenantUserParams, OrgTenantSlugParams, OrgTenantIdParams,
   OrgMembersParams, OrgRoleBindingsParams, OrgWorkspaceByIdParams,
   OrgMembershipParams, OrgRoleBindingExistsParams, OrgRoleBindingExistsWsParams,
@@ -132,6 +134,24 @@ export function registerOrganizationExecutors(): void {
     return db.prepare<OrgWorkspaceRow>(
       'SELECT * FROM workspaces WHERE tenant_id = ? AND id = ? LIMIT 1',
     ).get(p.tenantId, p.id) ?? null;
+  });
+
+  registerQuery<OrgActiveMembershipRow | null, OrgMembershipParams>(ORG_QUERY_ACTIVE_MEMBERSHIP, (db, p) => {
+    return db.prepare<OrgActiveMembershipRow>(
+      `SELECT m.id AS membership_id, m.organization_id, m.user_id
+       FROM organization_memberships m
+       WHERE m.tenant_id = ? AND m.organization_id = ? AND m.user_id = ? AND m.status = 'active'
+       LIMIT 1`,
+    ).get(p.tenantId, p.organizationId, p.userId) ?? null;
+  });
+
+  registerQuery<readonly OrgMembershipRoleRow[], OrgRoleBindingsParams>(ORG_QUERY_MEMBERSHIP_ROLES, (db, p) => {
+    return db.prepare<OrgMembershipRoleRow>(
+      `SELECT DISTINCT rb.role
+       FROM organization_role_bindings rb
+       WHERE rb.tenant_id = ? AND rb.organization_id = ? AND rb.membership_id = ?
+       ORDER BY rb.role ASC`,
+    ).all(p.tenantId, p.organizationId, p.membershipId);
   });
 
   registerCommand<OrgCreateOrgParams>(ORG_CMD_CREATE_ORG, (db, p) => {

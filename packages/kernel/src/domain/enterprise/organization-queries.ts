@@ -19,6 +19,8 @@ export const ORG_QUERY_ROLE_BINDING_EXISTS = 'org.roleBindingExists' as const;
 export const ORG_QUERY_ROLE_BINDING_EXISTS_WS = 'org.roleBindingExistsWs' as const;
 export const ORG_QUERY_ORG_ROW = 'org.orgRow' as const;
 export const ORG_QUERY_WORKSPACE_ROW = 'org.workspaceRow' as const;
+export const ORG_QUERY_ACTIVE_MEMBERSHIP = 'org.activeMembership' as const;
+export const ORG_QUERY_MEMBERSHIP_ROLES = 'org.membershipRoles' as const;
 
 /* ── Command Kinds ── */
 
@@ -88,6 +90,16 @@ export interface OrgRoleBindingRow {
 export interface OrgUserRow {
   readonly id: string;
   readonly email: string;
+}
+
+export interface OrgActiveMembershipRow {
+  readonly membership_id: string;
+  readonly organization_id: string;
+  readonly user_id: string;
+}
+
+export interface OrgMembershipRoleRow {
+  readonly role: string;
 }
 
 /* ── 参数类型 ── */
@@ -240,6 +252,14 @@ export function orgQueryOrgRow(params: OrgTenantIdParams): Query<OrgRow | null, 
 
 export function orgQueryWorkspaceRow(params: OrgTenantIdParams): Query<OrgWorkspaceRow | null, OrgTenantIdParams> {
   return { kind: ORG_QUERY_WORKSPACE_ROW, params };
+}
+
+export function orgQueryActiveMembership(params: OrgMembershipParams): Query<OrgActiveMembershipRow | null, OrgMembershipParams> {
+  return { kind: ORG_QUERY_ACTIVE_MEMBERSHIP, params };
+}
+
+export function orgQueryMembershipRoles(params: OrgRoleBindingsParams): Query<readonly OrgMembershipRoleRow[], OrgRoleBindingsParams> {
+  return { kind: ORG_QUERY_MEMBERSHIP_ROLES, params };
 }
 
 /* ── Command 工厂 ── */

@@ -3,27 +3,27 @@
  * 成本计算委托 kernel 纯函数，DB 持久化留在此层
  */
 
-import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { estimateCost, type CostRecord } from '@chrono/kernel';
+import {
+  llmCmdRecord, llmQueryMonthlySummary, llmQueryRecent,
+} from '@chrono/kernel';
+import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { CostRecord };
 
-interface LlmUsageRow {
-  readonly tenant_id: string;
-  readonly provider: string;
-  readonly model: string;
-  readonly input_tokens: number;
-  readonly output_tokens: number;
-  readonly total_tokens: number;
-  readonly estimated_cost_usd: number;
-  readonly recorded_at: number;
-}
-
 export class CostTracker {
-  private readonly db: IDatabase | null;
+  private readonly tx: SyncWriteUnitOfWork | null;
 
   constructor(db?: IDatabase) {
-    this.db = db ?? null;
+    if (db) {
+      registerCoreSelfExecutors();
+      this.tx = directUnitOfWork(db);
+    } else {
+      this.tx = null;
+    }
   }
 
   /** 记录一次 LLM 调用 */
@@ -42,11 +42,14 @@ export class CostTracker {
       timestamp: now,
     };
 
-    if (this.db) {
-      this.db.prepare<void>(
-        'INSERT INTO llm_usage (tenant_id, provider, model, input_tokens, output_tokens, total_tokens, estimated_cost_usd, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(tenantId, provider, model, cost.inputTokens, cost.outputTokens, cost.totalTokens, cost.estimatedCostUsd, now);
-    }
+    this.tx?.execute(llmCmdRecord({
+      tenantId, provider, model,
+      inputTokens: cost.inputTokens,
+      outputTokens: cost.outputTokens,
+      totalTokens: cost.totalTokens,
+      estimatedCostUsd: cost.estimatedCostUsd,
+      now,
+    }));
 
     return rec;
   }
@@ -59,25 +62,11 @@ export class CostTracker {
     totalOutputTokens: number;
     estimatedCostUsd: number;
   } {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const monthStartMs = monthStart.getTime();
-
-    if (this.db) {
-      const row = this.db.prepare<{
-        total_calls: number;
-        total_tokens: number;
-        total_input: number;
-        total_output: number;
-        total_cost: number;
-      }>(
-        `SELECT COUNT(*) AS total_calls, COALESCE(SUM(total_tokens), 0) AS total_tokens,
-         COALESCE(SUM(input_tokens), 0) AS total_input, COALESCE(SUM(output_tokens), 0) AS total_output,
-         COALESCE(SUM(estimated_cost_usd), 0) AS total_cost
-         FROM llm_usage WHERE tenant_id = ? AND recorded_at >= ?`,
-      ).get(tenantId, monthStartMs);
-
+    if (this.tx) {
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+      const row = this.tx.queryOne(llmQueryMonthlySummary({ tenantId, monthStartMs: monthStart.getTime() }));
       return {
         totalCalls: row?.total_calls ?? 0,
         totalTokens: row?.total_tokens ?? 0,
@@ -92,11 +81,12 @@ export class CostTracker {
 
   /** 获取最近 N 条记录 */
   getRecent(tenantId: string, limit = 20): readonly CostRecord[] {
-    if (this.db) {
-      const rows = this.db.prepare<LlmUsageRow>(
-        'SELECT * FROM llm_usage WHERE tenant_id = ? ORDER BY recorded_at DESC LIMIT ?',
-      ).all(tenantId, limit);
-
+    if (this.tx) {
+      const rows = this.tx.queryMany(llmQueryRecent({ tenantId, limit })) as unknown as Array<{
+        tenant_id: string; provider: string; model: string;
+        input_tokens: number; output_tokens: number; total_tokens: number;
+        estimated_cost_usd: number; recorded_at: number;
+      }>;
       return rows.map(r => ({
         tenantId: r.tenant_id,
         provider: r.provider,

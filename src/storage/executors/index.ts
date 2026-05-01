@@ -41,6 +41,9 @@ import { registerCognitiveMemoryExecutors } from './cognitive-memory-executors.j
 import { registerKnowledgeSourceExecutors } from './knowledge-source-executors.js';
 import { registerMetricsQueryExecutors } from './metrics-query-executors.js';
 import { registerIdempotencyExecutors } from './idempotency-executors.js';
+import { registerLlmUsageExecutors } from './llm-usage-executors.js';
+import { registerEmbeddingExecutors } from './embedding-executors.js';
+import { registerKafkaNamespaceExecutors } from './kafka-namespace-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -60,6 +63,7 @@ import {
   ACP_QUERY_PERSONA_COUNT, TPROF_QUERY_BY_TENANT, PENG_QUERY_BY_ID,
   PCMEM_QUERY_NODE_BY_ID,
   KSRC_QUERY_BY_ID, MTRX_QUERY_QUEUE_COUNT, IDEM_QUERY_EXISTING,
+  LLM_QUERY_MONTHLY_SUMMARY, EMB_QUERY_BY_MODEL, KAFKA_QUERY_TENANT_NAMESPACE,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -107,6 +111,9 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(KSRC_QUERY_BY_ID)) registerKnowledgeSourceExecutors();
   if (!resolveQueryExecutor(MTRX_QUERY_QUEUE_COUNT)) registerMetricsQueryExecutors();
   if (!resolveQueryExecutor(IDEM_QUERY_EXISTING)) registerIdempotencyExecutors();
+  if (!resolveQueryExecutor(LLM_QUERY_MONTHLY_SUMMARY)) registerLlmUsageExecutors();
+  if (!resolveQueryExecutor(EMB_QUERY_BY_MODEL)) registerEmbeddingExecutors();
+  if (!resolveQueryExecutor(KAFKA_QUERY_TENANT_NAMESPACE)) registerKafkaNamespaceExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

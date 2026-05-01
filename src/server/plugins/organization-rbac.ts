@@ -1,5 +1,10 @@
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
+import {
+  orgQueryActiveMembership, orgQueryMembershipRoles,
+} from '@chrono/kernel';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
 import { ORGANIZATION_ROLES, type OrganizationRole } from '../../enterprise/organization-roles.js';
@@ -25,30 +30,21 @@ export function getOrganizationMembershipContext(
   organizationId: string,
   userId: string,
 ): OrganizationMembershipContext | null {
-  const membership = db.prepare<{
-    membership_id: string;
-    organization_id: string;
-    user_id: string;
-  }>(
-    `SELECT m.id AS membership_id, m.organization_id, m.user_id
-     FROM organization_memberships m
-     WHERE m.tenant_id = ? AND m.organization_id = ? AND m.user_id = ? AND m.status = 'active'
-     LIMIT 1`,
-  ).get(tenantId, organizationId, userId);
+  registerCoreSelfExecutors();
+  const tx = directUnitOfWork(db);
+
+  const membership = tx.queryOne(orgQueryActiveMembership({ tenantId, organizationId, userId }));
   if (!membership) return null;
 
-  const roles = db.prepare<{ role: OrganizationRole }>(
-    `SELECT DISTINCT rb.role
-     FROM organization_role_bindings rb
-     WHERE rb.tenant_id = ? AND rb.organization_id = ? AND rb.membership_id = ?
-     ORDER BY rb.role ASC`,
-  ).all(tenantId, organizationId, membership.membership_id).map((row) => row.role);
+  const roleRows = tx.queryMany(orgQueryMembershipRoles({
+    tenantId, organizationId, membershipId: membership.membership_id,
+  })) as unknown as Array<{ role: OrganizationRole }>;
 
   return {
     membershipId: membership.membership_id,
     organizationId: membership.organization_id,
     userId: membership.user_id,
-    roles,
+    roles: roleRows.map((row) => row.role),
   };
 }
 

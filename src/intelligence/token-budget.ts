@@ -3,15 +3,19 @@
  * 预算计算委托 kernel 纯函数，DB/Date 操作留在此层
  */
 
-import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   DEFAULT_TOKEN_BUDGET_CONFIG,
   checkBudget,
   checkAlert,
   computeUsageSummary,
+  llmQueryPeriodTotal,
   type TokenBudgetConfig,
   type UsageSnapshot,
 } from '@chrono/kernel';
+import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { TokenBudgetConfig };
 
@@ -26,12 +30,17 @@ interface UsageCache {
 
 export class TokenBudget {
   private readonly config: TokenBudgetConfig;
-  private readonly db: IDatabase | null;
+  private readonly tx: SyncWriteUnitOfWork | null;
   private readonly cache = new Map<string, UsageCache>();
 
   constructor(config?: Partial<TokenBudgetConfig>, db?: IDatabase) {
     this.config = { ...DEFAULT_TOKEN_BUDGET_CONFIG, ...config };
-    this.db = db ?? null;
+    if (db) {
+      registerCoreSelfExecutors();
+      this.tx = directUnitOfWork(db);
+    } else {
+      this.tx = null;
+    }
   }
 
   private getToday(): string {
@@ -54,18 +63,14 @@ export class TokenBudget {
     let dailyUsed = 0;
     let monthlyUsed = 0;
 
-    if (this.db) {
+    if (this.tx) {
       const dayStart = new Date(today + 'T00:00:00Z').getTime();
       const monthStart = new Date(month + '-01T00:00:00Z').getTime();
 
-      const monthRow = this.db.prepare<{ total: number }>(
-        'SELECT COALESCE(SUM(total_tokens), 0) AS total FROM llm_usage WHERE tenant_id = ? AND recorded_at >= ?',
-      ).get(tenantId, monthStart);
+      const monthRow = this.tx.queryOne(llmQueryPeriodTotal({ tenantId, sinceMs: monthStart }));
       monthlyUsed = monthRow?.total ?? 0;
 
-      const dayRow = this.db.prepare<{ total: number }>(
-        'SELECT COALESCE(SUM(total_tokens), 0) AS total FROM llm_usage WHERE tenant_id = ? AND recorded_at >= ?',
-      ).get(tenantId, dayStart);
+      const dayRow = this.tx.queryOne(llmQueryPeriodTotal({ tenantId, sinceMs: dayStart }));
       dailyUsed = dayRow?.total ?? 0;
     }
 
