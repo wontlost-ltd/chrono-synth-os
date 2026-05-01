@@ -5,6 +5,8 @@ import {
   tprofCmdUpdate, tprofCmdInsert,
   tprofCmdUpdateScimToken, tprofCmdInsertWithScimToken,
 } from '@chrono/kernel';
+import { TenantManifestV1Schema } from '@chrono/contracts';
+import type { TenantManifestV1 } from '@chrono/contracts';
 import type { AppConfig } from '../config/schema.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
 import type { IDatabase } from '../storage/database.js';
@@ -89,6 +91,51 @@ const DEFAULT_PROFILE: Omit<TenantEnterpriseProfile, 'tenantId' | 'createdAt' | 
     nameClaim: 'name',
   },
 };
+
+type KmsProvider = 'platform' | 'aws_kms' | 'gcp_kms' | 'azure_kv' | 'vault';
+
+function inferKmsProvider(keyRef: string | null): KmsProvider {
+  if (!keyRef) return 'platform';
+  if (keyRef.startsWith('arn:aws:kms:')) return 'aws_kms';
+  if (keyRef.startsWith('projects/') && keyRef.includes('/cryptoKeyVersions/')) return 'gcp_kms';
+  if (keyRef.startsWith('https://') && keyRef.includes('.vault.azure.net/')) return 'azure_kv';
+  if (keyRef.startsWith('vault:')) return 'vault';
+  return 'platform';
+}
+
+function profileToManifestV1(
+  tenantId: string,
+  profile: TenantEnterpriseProfile,
+  config: AppConfig,
+): TenantManifestV1 {
+  const deploymentMode =
+    profile.deploymentMode === 'dedicated_db' ? 'dedicated_db' : 'shared_cluster';
+
+  const encryptionMode = profile.encryptionMode;
+  const kmsProvider: KmsProvider =
+    encryptionMode === 'tenant_dedicated'
+      ? inferKmsProvider(profile.kmsKeyRef)
+      : 'platform';
+
+  const storage = config.db.connectionString
+    ? { primary: config.db.connectionString }
+    : { primary: config.db.path };
+
+  return TenantManifestV1Schema.parse({
+    schemaVersion: 'tenant-manifest.v1',
+    tenantId,
+    region: config.region,
+    deploymentMode,
+    encryptionMode,
+    storage,
+    kms: {
+      provider: kmsProvider,
+      ...(profile.kmsKeyRef ? { keyRef: profile.kmsKeyRef } : {}),
+    },
+    sync: {},
+    retention: {},
+  });
+}
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -270,10 +317,15 @@ export class TenantEnterpriseProfileService {
     return effective;
   }
 
+  getManifest(tenantId: string): TenantManifestV1 {
+    const profile = this.getProfile(tenantId);
+    return profileToManifestV1(tenantId, profile, this.config);
+  }
+
   getTenantEncryption(tenantId: string): FieldEncryption | undefined {
     if (!this.config.encryption.enabled) return undefined;
-    const profile = this.getProfile(tenantId);
-    const keyRef = profile.kmsKeyRef ?? this.config.encryption.defaultKeyRef;
+    const manifest = this.getManifest(tenantId);
+    const keyRef = manifest.kms.keyRef ?? this.config.encryption.defaultKeyRef;
     this.assertKnownKeyRef(keyRef);
     return new FieldEncryption({
       ...this.config.encryption,

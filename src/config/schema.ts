@@ -330,6 +330,7 @@ const runtimeSchema = z.object({
 });
 
 export const AppConfigSchema = z.object({
+  region: z.string().min(1).default('local'),
   db: dbSchema.default({ driver: 'sqlite', path: ':memory:', pool: { max: 10, idleTimeoutMs: 30_000 } }),
   log: logSchema.default({ level: 'info', json: false }),
   server: serverSchema.default({ host: '0.0.0.0', port: 3000 }),
@@ -426,6 +427,7 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 function fromEnv(): Record<string, unknown> {
   const env: Record<string, unknown> = {};
   const mapping: Record<string, (val: string) => void> = {
+    CHRONO_REGION:                  (v) => { deepSet(env, 'region', v); },
     CHRONO_DB_DRIVER:               (v) => { deepSet(env, 'db.driver', v); },
     CHRONO_DB_PATH:                 (v) => { deepSet(env, 'db.path', v); },
     CHRONO_DB_CONNECTION_STRING:    (v) => { deepSet(env, 'db.connectionString', v); },
