@@ -1,5 +1,123 @@
-import type { IDatabase, SqlValue } from '../storage/database.js';
+import type { IDatabase } from '../storage/database.js';
 import type { FieldEncryption } from '../storage/encryption.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  pcoreCmdActivatePersona,
+  pcoreCmdApproveTransfer,
+  pcoreCmdCompleteTransfer,
+  pcoreCmdAcceptMarketplaceTaskAssignment,
+  pcoreCmdAcceptTaskAssignment,
+  pcoreCmdAcceptTaskResult,
+  pcoreCmdApplyGovernanceEvent,
+  pcoreCmdCompleteMarketplaceTask,
+  pcoreCmdCompleteRuntimeSession,
+  pcoreCmdAppealGovernanceCase,
+  pcoreCmdApplyGovernanceActionToPersona,
+  pcoreCmdCreateFork,
+  pcoreCmdCreateGovernanceAction,
+  pcoreCmdCreateGovernanceCase,
+  pcoreCmdCreateRuntimeSession,
+  pcoreCmdCreateTaskApplication,
+  pcoreCmdCreateTaskAssignment,
+  pcoreCmdCreateTaskResult,
+  pcoreCmdCreateWalletPayoutRequest,
+  pcoreCmdCreateWalletSettlement,
+  pcoreCmdDisputeTaskAssignment,
+  pcoreCmdDisputeTaskResult,
+  pcoreCmdEvaluateRuntimeSession,
+  pcoreCmdExecuteRuntimeSession,
+  pcoreCmdLinkTaskAssignmentRuntimeSession,
+  pcoreCmdMarkTaskApplicationsAssigned,
+  pcoreCmdPlanRuntimeSession,
+  pcoreCmdRetryRuntimeSession,
+  pcoreCmdRejectTaskApplication,
+  pcoreCmdRejectTaskAssignment,
+  pcoreCmdRejectTaskResult,
+  pcoreCmdReopenMarketplaceTask,
+  pcoreCmdSettlePersonaWallet,
+  pcoreCmdStartTaskAssignment,
+  pcoreCmdSubmitTaskAssignment,
+  pcoreCmdTimeoutRuntimeSession,
+  pcoreCmdTouchMarketplaceTask,
+  pcoreCmdUpdatePersonaKnowledgeSync,
+  pcoreCmdUpdatePersonaTaskAccepted,
+  pcoreCmdUpdateGovernanceCaseAction,
+  pcoreCmdUpdateWalletBalance,
+  pcoreCmdCreateKnowledgeItem,
+  pcoreCmdCreatePersona,
+  pcoreCmdCreateTransfer,
+  pcoreCmdCreateWallet,
+  pcoreCmdDeactivatePersona,
+  pcoreCmdTransferPersonaOwner,
+  pcoreCmdUpsertMarketplaceDailyMetric,
+  pcoreCmdUpsertPersonaDailyMetric,
+  pcoreQueryActivePersonasForRanking,
+  pcoreQueryCompletedTaskCount,
+  pcoreQueryDailyCompletedTaskCount,
+  pcoreQueryDailyMarketplaceAnalytics,
+  pcoreQueryDailyPersonaRevenue,
+  pcoreQueryDailyPersonas,
+  pcoreQueryEconomyAnalytics,
+  pcoreQueryForksByPersona,
+  pcoreQueryGovernanceEventCount,
+  pcoreQueryGovernancePenaltyCount,
+  pcoreQueryGovernanceCasesByPersona,
+  pcoreQueryMarketplaceAnalytics,
+  pcoreQueryMemoryCount,
+  pcoreQueryMemoryEdges,
+  pcoreQueryMemoryKindCounts,
+  pcoreQueryMemoryNodeIds,
+  pcoreQueryMemoryRelationCounts,
+  pcoreQueryPendingTransfer,
+  pcoreQueryPersonaMemories,
+  pcoreQueryRecentGovernanceEvents,
+  pcoreQueryRecentGrowthEvents,
+  pcoreQueryRecentKnowledge,
+  pcoreQueryRecentMarketplaceTasks,
+  pcoreQueryRecentMemories,
+  pcoreQueryReputationHistory,
+  pcoreQueryRuntimeSession,
+  pcoreQuerySummariesByOwner,
+  pcoreQueryTaskApplication,
+  pcoreQueryTimedOutRuntimeSessions,
+  pcoreQuerySummaryByOwner,
+  pcoreQueryTransferById,
+  pcoreQueryTransferByPersonaId,
+  pcoreQueryTransfersByPersona,
+  pcoreQueryWalletByIdForOwner,
+  pcoreQueryWalletByPersona,
+  pcoreQueryWalletTransactions,
+  pcoreQueryMarketplaceTasksByTenant,
+  pcoreQueryMarketplaceTaskById,
+  pcoreQueryPersonaExists,
+  pcoreQueryForkExists,
+  pcoreQueryTaskAssignmentById,
+  pcoreQueryLatestTaskAssignmentByTask,
+  pcoreQueryLatestTaskAssignmentForPersonaTask,
+  pcoreQueryLatestTaskResultByAssignment,
+  pcoreQueryGovernanceCaseById,
+  pcoreQueryGovernanceActionById,
+  pcoreQueryPersonaById,
+  pcoreQueryWalletByPersonaId,
+  pcoreQueryWalletPayoutRequestById,
+  pcoreQueryWalletSettlementByAssignmentId,
+  pcoreQueryTransferAccess,
+  pcoreQueryUserExists,
+  pcoreQueryRankingTaskStats,
+  pcoreQueryRankingTaskStatsUncategorized,
+  pcoreQueryLastActiveAt,
+  pcoreCmdPublishMarketplaceTask,
+  pcoreCmdAcceptMarketplaceTaskLegacy,
+  pcoreCmdCompleteTaskWalletUpdate,
+  pcoreCmdCompleteTaskPersonaUpdate,
+  pcoreCmdInsertWalletTransaction,
+  pcoreCmdInsertReputationHistory,
+  pcoreCmdInsertGrowthEvent,
+  pcoreCmdInsertGovernanceEvent,
+  pcoreCmdInsertMemory,
+} from '@chrono/kernel';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { ensureAuditLogColumns, recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -699,6 +817,7 @@ function walletSettlementFromRow(row: WalletSettlementRow): TaskWalletSettlement
 }
 
 export class PersonaCoreService {
+  private readonly tx: SyncWriteUnitOfWork;
   private readonly encryption?: FieldEncryption;
   private readonly runtimeSessionTimeoutMs: number;
 
@@ -708,6 +827,8 @@ export class PersonaCoreService {
     runtimeSessionTimeoutMs = 60_000,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
   ) {
+    registerCoreSelfExecutors();
+    this.tx = directUnitOfWork(db);
     this.encryption = encryption?.isEnabled ? encryption : undefined;
     this.runtimeSessionTimeoutMs = runtimeSessionTimeoutMs;
     ensureAuditLogColumns(db);
@@ -753,40 +874,41 @@ export class PersonaCoreService {
     const initialReputation = 50;
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO persona_core (
-          id, tenant_id, owner_user_id, display_name, profile_json, status, visibility,
-          growth_index, reputation, training_investment, created_at, updated_at, deceased_at, transferred_at, lifecycle_status
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, 0, ?, 0, ?, ?, NULL, NULL, 'active')`,
-      ).run(personaId, input.tenantId, input.ownerUserId, input.displayName, profileJson, visibility, initialReputation, now, now);
+      this.tx.execute(pcoreCmdCreatePersona({
+        id: personaId,
+        tenantId: input.tenantId,
+        ownerUserId: input.ownerUserId,
+        displayName: input.displayName,
+        profileJson,
+        visibility,
+        reputation: initialReputation,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `INSERT INTO persona_wallets (
-          id, tenant_id, persona_id, wallet_address, balance, token_balance, last_settled_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 0, 0, NULL, ?, ?)`,
-      ).run(walletId, input.tenantId, personaId, walletAddress, now, now);
+      this.tx.execute(pcoreCmdCreateWallet({
+        id: walletId,
+        tenantId: input.tenantId,
+        personaId,
+        walletAddress,
+        now,
+      }));
 
       for (const item of input.initialKnowledge ?? []) {
         const knowledgeId = generatePrefixedId('pknow');
         const confidence = clamp(item.confidence ?? 0.7, 0, 1);
         const tagsJson = JSON.stringify(item.tags ?? []);
 
-        this.db.prepare<void>(
-          `INSERT INTO persona_knowledge_items (
-            id, tenant_id, persona_id, title, content, source, tags_json, confidence, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(
-          knowledgeId,
-          input.tenantId,
+        this.tx.execute(pcoreCmdCreateKnowledgeItem({
+          id: knowledgeId,
+          tenantId: input.tenantId,
           personaId,
-          item.title,
-          item.content,
-          item.source ?? 'seed',
+          title: item.title,
+          content: item.content,
+          source: item.source ?? 'seed',
           tagsJson,
           confidence,
           now,
-          now,
-        );
+        }));
 
         this.insertMemory({
           tenantId: input.tenantId,
@@ -827,41 +949,7 @@ export class PersonaCoreService {
   }
 
   listPersonas(tenantId: string, ownerUserId: string): PersonaCoreSummary[] {
-    const rows = this.db.prepare<PersonaSummaryRow>(
-      `SELECT
-        pc.*,
-        pw.id AS wallet_id,
-        pw.wallet_address,
-        pw.balance,
-        pw.token_balance,
-        pw.last_settled_at,
-        pw.created_at AS wallet_created_at,
-        pw.updated_at AS wallet_updated_at,
-        (
-          SELECT COUNT(*)
-          FROM persona_forks pf
-          WHERE pf.persona_id = pc.id AND pf.status = 'active'
-        ) AS active_fork_count,
-        (
-          SELECT COUNT(*)
-          FROM persona_memories pm
-          WHERE pm.persona_id = pc.id
-        ) AS memory_count,
-        (
-          SELECT COUNT(*)
-          FROM persona_knowledge_items pk
-          WHERE pk.persona_id = pc.id
-        ) AS knowledge_count,
-        (
-          SELECT COUNT(*)
-          FROM marketplace_tasks mt
-          WHERE mt.assignee_persona_id = pc.id AND mt.status = 'accepted'
-        ) AS active_task_count
-      FROM persona_core pc
-      INNER JOIN persona_wallets pw ON pw.persona_id = pc.id
-      WHERE pc.tenant_id = ? AND pc.owner_user_id = ?
-      ORDER BY pc.created_at DESC`,
-    ).all(tenantId, ownerUserId);
+    const rows = this.tx.queryMany(pcoreQuerySummariesByOwner({ tenantId, ownerUserId })) as unknown as PersonaSummaryRow[];
 
     return rows.map((row) => ({
       ...personaFromRow(row),
@@ -886,88 +974,21 @@ export class PersonaCoreService {
   }
 
   getPersonaDetail(tenantId: string, ownerUserId: string, personaId: string): PersonaCoreDetail | null {
-    const base = this.db.prepare<PersonaSummaryRow>(
-      `SELECT
-        pc.*,
-        pw.id AS wallet_id,
-        pw.wallet_address,
-        pw.balance,
-        pw.token_balance,
-        pw.last_settled_at,
-        pw.created_at AS wallet_created_at,
-        pw.updated_at AS wallet_updated_at,
-        (
-          SELECT COUNT(*)
-          FROM persona_forks pf
-          WHERE pf.persona_id = pc.id AND pf.status = 'active'
-        ) AS active_fork_count,
-        (
-          SELECT COUNT(*)
-          FROM persona_memories pm
-          WHERE pm.persona_id = pc.id
-        ) AS memory_count,
-        (
-          SELECT COUNT(*)
-          FROM persona_knowledge_items pk
-          WHERE pk.persona_id = pc.id
-        ) AS knowledge_count,
-        (
-          SELECT COUNT(*)
-          FROM marketplace_tasks mt
-          WHERE mt.assignee_persona_id = pc.id AND mt.status = 'accepted'
-        ) AS active_task_count
-      FROM persona_core pc
-      INNER JOIN persona_wallets pw ON pw.persona_id = pc.id
-      WHERE pc.tenant_id = ? AND pc.owner_user_id = ? AND pc.id = ?
-      LIMIT 1`,
-    ).get(tenantId, ownerUserId, personaId);
+    const base = this.tx.queryOne(pcoreQuerySummaryByOwner({ tenantId, ownerUserId, personaId })) as unknown as PersonaSummaryRow | null;
 
     if (!base) return null;
 
-    const forks = this.db.prepare<PersonaForkRow>(
-      `SELECT * FROM persona_forks
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY created_at DESC`,
-    ).all(tenantId, personaId).map(forkFromRow);
+    const forks = (this.tx.queryMany(pcoreQueryForksByPersona({ tenantId, personaId })) as unknown as PersonaForkRow[]).map(forkFromRow);
 
-    const recentMemories = this.db.prepare<PersonaMemoryRow>(
-      `SELECT * FROM persona_memories
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY created_at DESC
-       LIMIT 8`,
-    ).all(tenantId, personaId).map((row) => this.memoryFromRow(row));
+    const recentMemories = (this.tx.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })) as unknown as PersonaMemoryRow[]).map((row) => this.memoryFromRow(row));
 
-    const knowledgeItems = this.db.prepare<PersonaKnowledgeRow>(
-      `SELECT * FROM persona_knowledge_items
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY updated_at DESC
-       LIMIT 8`,
-    ).all(tenantId, personaId).map(knowledgeFromRow);
+    const knowledgeItems = (this.tx.queryMany(pcoreQueryRecentKnowledge({ tenantId, personaId })) as unknown as PersonaKnowledgeRow[]).map(knowledgeFromRow);
 
-    const growthEvents = this.db.prepare<PersonaGrowthEventRow>(
-      `SELECT * FROM persona_growth_events
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY created_at DESC
-       LIMIT 8`,
-    ).all(tenantId, personaId).map(growthEventFromRow);
+    const growthEvents = (this.tx.queryMany(pcoreQueryRecentGrowthEvents({ tenantId, personaId })) as unknown as PersonaGrowthEventRow[]).map(growthEventFromRow);
 
-    const governanceEvents = this.db.prepare<PersonaGovernanceEventRow>(
-      `SELECT * FROM persona_governance_events
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY created_at DESC
-       LIMIT 8`,
-    ).all(tenantId, personaId).map(governanceEventFromRow);
+    const governanceEvents = (this.tx.queryMany(pcoreQueryRecentGovernanceEvents({ tenantId, personaId })) as unknown as PersonaGovernanceEventRow[]).map(governanceEventFromRow);
 
-    const marketplaceTasks = this.db.prepare<MarketplaceTaskRow>(
-      `SELECT
-        mt.*,
-        pc.display_name AS assignee_persona_name
-      FROM marketplace_tasks mt
-      LEFT JOIN persona_core pc ON pc.id = mt.assignee_persona_id
-      WHERE mt.tenant_id = ? AND (mt.publisher_user_id = ? OR mt.assignee_persona_id = ?)
-      ORDER BY mt.updated_at DESC
-      LIMIT 12`,
-    ).all(tenantId, ownerUserId, personaId).map(taskFromRow);
+    const marketplaceTasks = (this.tx.queryMany(pcoreQueryRecentMarketplaceTasks({ tenantId, ownerUserId, personaId })) as unknown as MarketplaceTaskRow[]).map(taskFromRow);
 
     return {
       ...personaFromRow(base),
@@ -1014,11 +1035,7 @@ export class PersonaCoreService {
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE persona_core
-         SET lifecycle_status = 'active', status = CASE WHEN status = 'transferred' THEN 'active' ELSE status END, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, input.personaId);
+      this.tx.execute(pcoreCmdActivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
       this.insertMemory({
         tenantId: input.tenantId,
@@ -1040,11 +1057,7 @@ export class PersonaCoreService {
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE persona_core
-         SET lifecycle_status = 'dormant', updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, input.personaId);
+      this.tx.execute(pcoreCmdDeactivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
       this.insertMemory({
         tenantId: input.tenantId,
@@ -1065,30 +1078,24 @@ export class PersonaCoreService {
     if (input.toOwnerUserId === input.ownerUserId) return null;
     if (!this.userExists(input.tenantId, input.toOwnerUserId)) return null;
 
-    const pending = this.db.prepare<PersonaTransferRow>(
-      `SELECT * FROM persona_transfers
-       WHERE tenant_id = ? AND persona_id = ? AND status = 'pending_review'
-       ORDER BY requested_at DESC
-       LIMIT 1`,
-    ).get(input.tenantId, input.personaId);
+    const pending = this.tx.queryOne(pcoreQueryPendingTransfer({
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+    })) as unknown as PersonaTransferRow | null;
     if (pending) return transferFromRow(pending);
 
     const now = Date.now();
     const transferId = generatePrefixedId('ptransfer');
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO persona_transfers (
-          id, tenant_id, persona_id, from_owner_user_id, to_owner_user_id, status, reason, requested_at, approved_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending_review', ?, ?, NULL, NULL)`,
-      ).run(
-        transferId,
-        input.tenantId,
-        input.personaId,
-        input.ownerUserId,
-        input.toOwnerUserId,
-        input.reason ?? 'asset sale',
+      this.tx.execute(pcoreCmdCreateTransfer({
+        id: transferId,
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        fromOwnerUserId: input.ownerUserId,
+        toOwnerUserId: input.toOwnerUserId,
+        reason: input.reason ?? 'asset sale',
         now,
-      );
+      }));
 
       this.insertMemory({
         tenantId: input.tenantId,
@@ -1124,34 +1131,27 @@ export class PersonaCoreService {
   }
 
   approveTransfer(input: ApprovePersonaTransferInput): { transfer: PersonaTransfer; persona: PersonaCoreDetail } | null {
-    const transfer = this.db.prepare<PersonaTransferRow>(
-      `SELECT * FROM persona_transfers
-       WHERE tenant_id = ? AND persona_id = ? AND id = ?
-       LIMIT 1`,
-    ).get(input.tenantId, input.personaId, input.transferId);
+    const transfer = this.tx.queryOne(pcoreQueryTransferByPersonaId({
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      transferId: input.transferId,
+    })) as unknown as PersonaTransferRow | null;
     if (!transfer || transfer.status !== 'pending_review' || transfer.to_owner_user_id !== input.approverUserId) {
       return null;
     }
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE persona_transfers
-         SET status = 'approved', approved_at = ?
-         WHERE tenant_id = ? AND id = ? AND status = 'pending_review'`,
-      ).run(now, input.tenantId, input.transferId);
+      this.tx.execute(pcoreCmdApproveTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_core
-         SET owner_user_id = ?, status = 'active', lifecycle_status = 'active', transferred_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(input.approverUserId, now, now, input.tenantId, input.personaId);
+      this.tx.execute(pcoreCmdTransferPersonaOwner({
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        ownerUserId: input.approverUserId,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_transfers
-         SET status = 'completed', completed_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, input.transferId);
+      this.tx.execute(pcoreCmdCompleteTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
       this.insertGovernanceEvent({
         tenantId: input.tenantId,
@@ -1196,9 +1196,10 @@ export class PersonaCoreService {
       });
     });
 
-    const completedTransfer = this.db.prepare<PersonaTransferRow>(
-      'SELECT * FROM persona_transfers WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(input.tenantId, input.transferId);
+    const completedTransfer = this.tx.queryOne(pcoreQueryTransferById({
+      tenantId: input.tenantId,
+      transferId: input.transferId,
+    })) as unknown as PersonaTransferRow | null;
     const persona = this.getPersonaDetail(input.tenantId, input.approverUserId, input.personaId);
     if (!completedTransfer || !persona) return null;
     return {
@@ -1209,27 +1210,15 @@ export class PersonaCoreService {
 
   listTransfers(tenantId: string, requesterUserId: string, personaId: string): PersonaTransfer[] | null {
     if (!this.canAccessTransferHistory(tenantId, requesterUserId, personaId)) return null;
-    return this.db.prepare<PersonaTransferRow>(
-      `SELECT * FROM persona_transfers
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY requested_at DESC`,
-    ).all(tenantId, personaId).map(transferFromRow);
+    return (this.tx.queryMany(pcoreQueryTransfersByPersona({ tenantId, personaId })) as unknown as PersonaTransferRow[]).map(transferFromRow);
   }
 
   getReputationSummary(tenantId: string, ownerUserId: string, personaId: string): PersonaReputationSummary | null {
     const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
-    const successfulTasks = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM marketplace_tasks
-       WHERE tenant_id = ? AND assignee_persona_id = ? AND status = 'completed'`,
-    ).get(tenantId, personaId)?.count ?? 0;
-    const governancePenalties = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM persona_governance_events
-       WHERE tenant_id = ? AND persona_id = ? AND event_type IN ('warning','restriction','death')`,
-    ).get(tenantId, personaId)?.count ?? 0;
+    const successfulTasks = this.tx.queryOne(pcoreQueryCompletedTaskCount({ tenantId, personaId }))?.count ?? 0;
+    const governancePenalties = this.tx.queryOne(pcoreQueryGovernancePenaltyCount({ tenantId, personaId }))?.count ?? 0;
 
     return {
       personaId,
@@ -1244,12 +1233,7 @@ export class PersonaCoreService {
 
   listReputationHistory(tenantId: string, ownerUserId: string, personaId: string): PersonaReputationHistoryEntry[] | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return this.db.prepare<ReputationHistoryRow>(
-      `SELECT * FROM reputation_history
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY created_at DESC
-       LIMIT 50`,
-    ).all(tenantId, personaId).map(reputationHistoryFromRow);
+    return (this.tx.queryMany(pcoreQueryReputationHistory({ tenantId, personaId })) as unknown as ReputationHistoryRow[]).map(reputationHistoryFromRow);
   }
 
   listTopPersonas(
@@ -1257,25 +1241,7 @@ export class PersonaCoreService {
     options?: { category?: MarketplaceTask['category']; limit?: number },
   ): PersonaRankingEntry[] {
     const limit = Math.max(1, Math.min(50, options?.limit ?? 10));
-    const personas = this.db.prepare<PersonaSummaryRow>(
-      `SELECT
-        pc.*,
-        pw.id AS wallet_id,
-        pw.wallet_address,
-        pw.balance,
-        pw.token_balance,
-        pw.last_settled_at,
-        pw.created_at AS wallet_created_at,
-        pw.updated_at AS wallet_updated_at,
-        0 AS active_fork_count,
-        0 AS memory_count,
-        0 AS knowledge_count,
-        0 AS active_task_count
-      FROM persona_core pc
-      INNER JOIN persona_wallets pw ON pw.persona_id = pc.id
-      WHERE pc.tenant_id = ? AND COALESCE(pc.lifecycle_status, pc.status) = 'active'
-      ORDER BY pc.updated_at DESC`,
-    ).all(tenantId);
+    const personas = this.tx.queryMany(pcoreQueryActivePersonasForRanking(tenantId)) as unknown as PersonaSummaryRow[];
 
     return personas
       .map((row) => {
@@ -1297,17 +1263,9 @@ export class PersonaCoreService {
     const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
-    const tasksCompleted = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM marketplace_tasks
-       WHERE tenant_id = ? AND assignee_persona_id = ? AND status = 'completed'`,
-    ).get(tenantId, personaId)?.count ?? 0;
-    const memoryCount = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM persona_memories WHERE tenant_id = ? AND persona_id = ?',
-    ).get(tenantId, personaId)?.count ?? 0;
-    const governanceEvents = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM persona_governance_events WHERE tenant_id = ? AND persona_id = ?',
-    ).get(tenantId, personaId)?.count ?? 0;
+    const tasksCompleted = this.tx.queryOne(pcoreQueryCompletedTaskCount({ tenantId, personaId }))?.count ?? 0;
+    const memoryCount = this.tx.queryOne(pcoreQueryMemoryCount({ tenantId, personaId }))?.count ?? 0;
+    const governanceEvents = this.tx.queryOne(pcoreQueryGovernanceEventCount({ tenantId, personaId }))?.count ?? 0;
 
     return {
       personaId,
@@ -1322,116 +1280,57 @@ export class PersonaCoreService {
   }
 
   getMarketplaceAnalytics(tenantId: string): MarketplaceAnalytics {
-    const openTasks = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM marketplace_tasks
-       WHERE tenant_id = ? AND status = 'open'`,
-    ).get(tenantId)?.count ?? 0;
-    const activePersonas = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM persona_core
-       WHERE tenant_id = ? AND COALESCE(lifecycle_status, status) = 'active'`,
-    ).get(tenantId)?.count ?? 0;
-    const completedTasks7d = this.db.prepare<{ count: number }>(
-      `SELECT COUNT(*) AS count
-       FROM marketplace_tasks
-       WHERE tenant_id = ? AND status = 'completed' AND completed_at >= ?`,
-    ).get(tenantId, Date.now() - 7 * 24 * 60 * 60 * 1000)?.count ?? 0;
-    const grossVolume = this.db.prepare<{ total: number | null }>(
-      `SELECT SUM(reward) AS total
-       FROM marketplace_tasks
-       WHERE tenant_id = ? AND status = 'completed'`,
-    ).get(tenantId)?.total ?? 0;
+    const row = this.tx.queryOne(pcoreQueryMarketplaceAnalytics(tenantId));
 
     return {
-      openTasks: Number(openTasks),
-      activePersonas: Number(activePersonas),
-      completedTasks7d: Number(completedTasks7d),
-      grossVolume: round(Number(grossVolume), 2),
+      openTasks: Number(row?.open_tasks ?? 0),
+      activePersonas: Number(row?.active_personas ?? 0),
+      completedTasks7d: Number(row?.completed_tasks_7d ?? 0),
+      grossVolume: round(Number(row?.gross_volume ?? 0), 2),
     };
   }
 
   materializeDailyAnalytics(tenantId: string, metricDate = this.currentMetricDate()): DailyAnalyticsMaterialization {
     const { startMs, endMs } = this.metricDateRange(metricDate);
-    const personas = this.db.prepare<{ id: string; reputation: number; growth_index: number }>(
-      `SELECT id, reputation, growth_index
-       FROM persona_core
-       WHERE tenant_id = ?`,
-    ).all(tenantId);
+    const personas = this.tx.queryMany(pcoreQueryDailyPersonas(tenantId)) as unknown as { id: string; reputation: number; growth_index: number }[];
 
     this.db.transaction(() => {
       for (const persona of personas) {
-        const completedTasks = this.db.prepare<{ count: number }>(
-          `SELECT COUNT(*) AS count
-           FROM marketplace_tasks
-           WHERE tenant_id = ? AND assignee_persona_id = ? AND status = 'completed' AND completed_at >= ? AND completed_at < ?`,
-        ).get(tenantId, persona.id, startMs, endMs)?.count ?? 0;
-
-        const revenue = this.db.prepare<{ total: number | null }>(
-          `SELECT SUM(ws.owner_amount_minor) AS total
-           FROM wallet_settlements ws
-           INNER JOIN persona_wallets pw ON pw.id = ws.wallet_id
-           WHERE ws.tenant_id = ? AND pw.persona_id = ? AND ws.completed_at >= ? AND ws.completed_at < ?`,
-        ).get(tenantId, persona.id, startMs, endMs)?.total ?? 0;
-
-        this.db.prepare<void>(
-          `INSERT INTO persona_daily_metrics (
-            tenant_id, persona_id, metric_date, tasks_completed, revenue, reputation_score, growth_index
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(tenant_id, persona_id, metric_date) DO UPDATE SET
-            tasks_completed = excluded.tasks_completed,
-            revenue = excluded.revenue,
-            reputation_score = excluded.reputation_score,
-            growth_index = excluded.growth_index`,
-        ).run(
+        const completedTasks = this.tx.queryOne(pcoreQueryDailyCompletedTaskCount({
           tenantId,
-          persona.id,
+          personaId: persona.id,
+          startMs,
+          endMs,
+        }))?.count ?? 0;
+
+        const revenue = this.tx.queryOne(pcoreQueryDailyPersonaRevenue({
+          tenantId,
+          personaId: persona.id,
+          startMs,
+          endMs,
+        }))?.total ?? 0;
+
+        this.tx.execute(pcoreCmdUpsertPersonaDailyMetric({
+          tenantId,
+          personaId: persona.id,
           metricDate,
-          Number(completedTasks),
-          fromMinor(Number(revenue ?? 0)),
-          round(Number(persona.reputation), 2),
-          round(Number(persona.growth_index), 4),
-        );
+          tasksCompleted: Number(completedTasks),
+          revenue: fromMinor(Number(revenue ?? 0)),
+          reputationScore: round(Number(persona.reputation), 2),
+          growthIndex: round(Number(persona.growth_index), 4),
+        }));
       }
 
-      const openTasks = this.db.prepare<{ count: number }>(
-        `SELECT COUNT(*) AS count
-         FROM marketplace_tasks
-         WHERE tenant_id = ? AND status = 'open'`,
-      ).get(tenantId)?.count ?? 0;
-      const completedTasks = this.db.prepare<{ count: number }>(
-        `SELECT COUNT(*) AS count
-         FROM marketplace_tasks
-         WHERE tenant_id = ? AND status = 'completed' AND completed_at >= ? AND completed_at < ?`,
-      ).get(tenantId, startMs, endMs)?.count ?? 0;
-      const grossVolume = this.db.prepare<{ total: number | null }>(
-        `SELECT SUM(total_amount_minor) AS total
-         FROM wallet_settlements
-         WHERE tenant_id = ? AND completed_at >= ? AND completed_at < ?`,
-      ).get(tenantId, startMs, endMs)?.total ?? 0;
-      const activePersonas = this.db.prepare<{ count: number }>(
-        `SELECT COUNT(*) AS count
-         FROM persona_core
-         WHERE tenant_id = ? AND COALESCE(lifecycle_status, status) = 'active'`,
-      ).get(tenantId)?.count ?? 0;
+      const dailyMarketplace = this.tx.queryOne(pcoreQueryDailyMarketplaceAnalytics({ tenantId, startMs, endMs }));
 
-      this.db.prepare<void>(
-        `INSERT INTO marketplace_daily_metrics (
-          tenant_id, metric_date, open_tasks, completed_tasks, gross_volume, active_personas
-        ) VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(tenant_id, metric_date) DO UPDATE SET
-          open_tasks = excluded.open_tasks,
-          completed_tasks = excluded.completed_tasks,
-          gross_volume = excluded.gross_volume,
-          active_personas = excluded.active_personas`,
-      ).run(
+      this.tx.execute(pcoreCmdUpsertMarketplaceDailyMetric({
         tenantId,
         metricDate,
-        Number(openTasks),
-        Number(completedTasks),
-        fromMinor(Number(grossVolume ?? 0)),
-        Number(activePersonas),
-      );
+        openTasks: Number(dailyMarketplace?.open_tasks ?? 0),
+        completedTasks: Number(dailyMarketplace?.completed_tasks ?? 0),
+        grossVolume: fromMinor(Number(dailyMarketplace?.gross_volume ?? 0)),
+        activePersonas: Number(dailyMarketplace?.active_personas ?? 0),
+      }));
     });
 
     return {
@@ -1457,42 +1356,16 @@ export class PersonaCoreService {
   }
 
   getEconomyAnalytics(tenantId: string): EconomyAnalytics {
-    const grossRevenueMinor = this.db.prepare<{ total: number | null }>(
-      'SELECT SUM(total_amount_minor) AS total FROM wallet_settlements WHERE tenant_id = ?',
-    ).get(tenantId)?.total ?? 0;
-    const ownerPayoutsMinor = this.db.prepare<{ total: number | null }>(
-      `SELECT ABS(SUM(amount_minor)) AS total
-       FROM wallet_transactions
-       WHERE tenant_id = ? AND transaction_type = 'owner_payout'`,
-    ).get(tenantId)?.total ?? 0;
-    const platformFeesMinor = this.db.prepare<{ total: number | null }>(
-      `SELECT ABS(SUM(amount_minor)) AS total
-       FROM wallet_transactions
-       WHERE tenant_id = ? AND transaction_type = 'platform_fee'`,
-    ).get(tenantId)?.total ?? 0;
-    const personaReservesMinor = this.db.prepare<{ total: number | null }>(
-      `SELECT ABS(SUM(amount_minor)) AS total
-       FROM wallet_transactions
-       WHERE tenant_id = ? AND transaction_type = 'persona_reserve'`,
-    ).get(tenantId)?.total ?? 0;
-    const payoutRequests = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM wallet_payout_requests WHERE tenant_id = ?',
-    ).get(tenantId)?.count ?? 0;
-    const settlementCount = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM wallet_settlements WHERE tenant_id = ?',
-    ).get(tenantId)?.count ?? 0;
-    const transactionCount = this.db.prepare<{ count: number }>(
-      'SELECT COUNT(*) AS count FROM wallet_transactions WHERE tenant_id = ?',
-    ).get(tenantId)?.count ?? 0;
+    const row = this.tx.queryOne(pcoreQueryEconomyAnalytics(tenantId));
 
     return {
-      grossRevenueMinor: Number(grossRevenueMinor ?? 0),
-      ownerPayoutsMinor: Number(ownerPayoutsMinor ?? 0),
-      platformFeesMinor: Number(platformFeesMinor ?? 0),
-      personaReservesMinor: Number(personaReservesMinor ?? 0),
-      payoutRequests: Number(payoutRequests),
-      settlementCount: Number(settlementCount),
-      transactionCount: Number(transactionCount),
+      grossRevenueMinor: Number(row?.gross_revenue_minor ?? 0),
+      ownerPayoutsMinor: Number(row?.owner_payouts_minor ?? 0),
+      platformFeesMinor: Number(row?.platform_fees_minor ?? 0),
+      personaReservesMinor: Number(row?.persona_reserves_minor ?? 0),
+      payoutRequests: Number(row?.payout_requests ?? 0),
+      settlementCount: Number(row?.settlement_count ?? 0),
+      transactionCount: Number(row?.transaction_count ?? 0),
     };
   }
 
@@ -1502,21 +1375,16 @@ export class PersonaCoreService {
 
     const now = Date.now();
     const forkId = generatePrefixedId('pfork');
-    this.db.prepare<void>(
-      `INSERT INTO persona_forks (
-        id, tenant_id, persona_id, label, fork_type, status, sync_mode, experience_factor, created_at, updated_at, recycled_at
-      ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL)`,
-    ).run(
-      forkId,
-      input.tenantId,
-      input.personaId,
-      input.label,
-      input.forkType ?? 'experimental',
-      input.syncMode ?? 'core',
-      clamp(input.experienceFactor ?? 1, 0, 2),
+    this.tx.execute(pcoreCmdCreateFork({
+      id: forkId,
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      label: input.label,
+      forkType: input.forkType ?? 'experimental',
+      syncMode: input.syncMode ?? 'core',
+      experienceFactor: clamp(input.experienceFactor ?? 1, 0, 2),
       now,
-      now,
-    );
+    }));
 
     this.insertMemory({
       tenantId: input.tenantId,
@@ -1565,25 +1433,13 @@ export class PersonaCoreService {
     if (!persona) return null;
 
     const limit = Math.max(1, Math.min(100, options?.limit ?? 20));
-    const whereParts = ['tenant_id = ?', 'persona_id = ?'];
-    const params: SqlValue[] = [tenantId, personaId];
-
-    if (options?.kind) {
-      whereParts.push('kind = ?');
-      params.push(options.kind);
-    }
-    if (options?.cursor) {
-      whereParts.push('created_at < ?');
-      params.push(options.cursor);
-    }
-    params.push(limit);
-
-    const rows = this.db.prepare<PersonaMemoryRow>(
-      `SELECT * FROM persona_memories
-       WHERE ${whereParts.join(' AND ')}
-       ORDER BY created_at DESC
-       LIMIT ?`,
-    ).all(...params);
+    const rows = this.tx.queryMany(pcoreQueryPersonaMemories({
+      tenantId,
+      personaId,
+      kind: options?.kind,
+      cursor: options?.cursor,
+      limit,
+    })) as unknown as PersonaMemoryRow[];
     return rows.map((row) => this.memoryFromRow(row));
   }
 
@@ -1623,18 +1479,8 @@ export class PersonaCoreService {
     if (!persona) return null;
 
     const state = this.getCognitive(tenantId).buildState(tenantId, personaId);
-    const kindRows = this.db.prepare<{ kind: PersonaCognitiveMemoryKind; count: number }>(
-      `SELECT kind, COUNT(*) AS count
-       FROM persona_memory_nodes
-       WHERE tenant_id = ? AND persona_id = ?
-       GROUP BY kind`,
-    ).all(tenantId, personaId);
-    const relationRows = this.db.prepare<{ relation: string; count: number }>(
-      `SELECT relation, COUNT(*) AS count
-       FROM persona_memory_edges
-       WHERE tenant_id = ? AND persona_id = ?
-       GROUP BY relation`,
-    ).all(tenantId, personaId);
+    const kindRows = this.tx.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId })) as unknown as { kind: PersonaCognitiveMemoryKind; count: number }[];
+    const relationRows = this.tx.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId })) as unknown as { relation: string; count: number }[];
 
     const memoryKindCounts: Record<PersonaCognitiveMemoryKind, number> = {
       episodic: 0,
@@ -1664,25 +1510,13 @@ export class PersonaCoreService {
     if (!persona) return null;
 
     const limit = Math.max(1, Math.min(50, input.limit ?? 12));
-    const nodeWhere = ['tenant_id = ?', 'persona_id = ?'];
-    const nodeParams: SqlValue[] = [tenantId, personaId];
-
-    if (input.memoryId) {
-      nodeWhere.push('id = ?');
-      nodeParams.push(input.memoryId);
-    }
-    if (input.kind) {
-      nodeWhere.push('kind = ?');
-      nodeParams.push(input.kind);
-    }
-    nodeParams.push(limit);
-
-    const nodeRows = this.db.prepare<{ id: string }>(
-      `SELECT id FROM persona_memory_nodes
-       WHERE ${nodeWhere.join(' AND ')}
-       ORDER BY created_at DESC
-       LIMIT ?`,
-    ).all(...nodeParams);
+    const nodeRows = this.tx.queryMany(pcoreQueryMemoryNodeIds({
+      tenantId,
+      personaId,
+      memoryId: input.memoryId,
+      kind: input.kind,
+      limit,
+    })) as unknown as { id: string }[];
     const nodes = nodeRows
       .map((row) => this.getCognitive(tenantId).getMemory(tenantId, personaId, row.id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
@@ -1691,31 +1525,19 @@ export class PersonaCoreService {
       return { nodes: [], edges: [] };
     }
 
-    const nodeIds = nodes.map((node) => node.id);
-    const placeholders = nodeIds.map(() => '?').join(',');
-    const edgeWhere = [
-      'tenant_id = ?',
-      'persona_id = ?',
-      `(source IN (${placeholders}) OR target IN (${placeholders}))`,
-    ];
-    const edgeParams: SqlValue[] = [tenantId, personaId, ...nodeIds, ...nodeIds];
-    if (input.relation) {
-      edgeWhere.push('relation = ?');
-      edgeParams.push(input.relation);
-    }
-
-    const edges = this.db.prepare<{
+    const edges = (this.tx.queryMany(pcoreQueryMemoryEdges({
+      tenantId,
+      personaId,
+      nodeIds: nodes.map((node) => node.id),
+      relation: input.relation,
+    })) as unknown as {
       tenant_id: string;
       persona_id: string;
       source: string;
       target: string;
       strength: number;
       relation: string;
-    }>(
-      `SELECT * FROM persona_memory_edges
-       WHERE ${edgeWhere.join(' AND ')}
-       ORDER BY strength DESC`,
-    ).all(...edgeParams).map((row) => ({
+    }[]).map((row) => ({
       tenantId: row.tenant_id,
       personaId: row.persona_id,
       source: row.source,
@@ -1739,22 +1561,17 @@ export class PersonaCoreService {
     const currentReputation = persona.reputation;
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO persona_knowledge_items (
-          id, tenant_id, persona_id, title, content, source, tags_json, confidence, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        knowledgeId,
-        input.tenantId,
-        input.personaId,
-        input.title,
-        input.content,
-        input.source ?? 'manual',
-        JSON.stringify(input.tags ?? []),
+      this.tx.execute(pcoreCmdCreateKnowledgeItem({
+        id: knowledgeId,
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        title: input.title,
+        content: input.content,
+        source: input.source ?? 'manual',
+        tagsJson: JSON.stringify(input.tags ?? []),
         confidence,
         now,
-        now,
-      );
+      }));
 
       this.insertMemory({
         tenantId: input.tenantId,
@@ -1785,11 +1602,13 @@ export class PersonaCoreService {
         payload: { title: input.title, source: input.source ?? 'manual' },
       });
 
-      this.db.prepare<void>(
-        `UPDATE persona_core
-         SET growth_index = growth_index + ?, reputation = reputation + ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(growthDelta, reputationDelta, now, input.tenantId, input.personaId);
+      this.tx.execute(pcoreCmdUpdatePersonaKnowledgeSync({
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        growthDelta,
+        reputationDelta,
+        now,
+      }));
 
       this.insertReputationHistory(
         input.tenantId,
@@ -1877,26 +1696,15 @@ export class PersonaCoreService {
         });
       }
 
-      const sets = ['reputation = reputation + ?', 'growth_index = growth_index + ?', 'updated_at = ?'];
-      const params: Array<string | number | bigint | null> = [reputationDelta, growthDelta, now];
-
-      if (nextStatus) {
-        sets.push('lifecycle_status = ?', 'status = ?');
-        params.push(nextStatus, this.toLegacyStatus(nextStatus));
-        if (nextStatus === 'deceased') {
-          sets.push('deceased_at = ?');
-          params.push(now);
-        }
-        if (nextStatus === 'transferred') {
-          sets.push('transferred_at = ?');
-          params.push(now);
-        }
-      }
-
-      params.push(input.tenantId, input.personaId);
-      this.db.prepare<void>(
-        `UPDATE persona_core SET ${sets.join(', ')} WHERE tenant_id = ? AND id = ?`,
-      ).run(...params);
+      this.tx.execute(pcoreCmdApplyGovernanceEvent({
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        reputationDelta,
+        growthDelta,
+        now,
+        nextStatus,
+        legacyStatus: nextStatus ? this.toLegacyStatus(nextStatus) : null,
+      }));
 
       if (reputationDelta !== 0) {
         this.insertReputationHistory(
@@ -1992,20 +1800,12 @@ export class PersonaCoreService {
 
   getWallet(tenantId: string, ownerUserId: string, personaId: string): PersonaWallet | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    const row = this.db.prepare<PersonaWalletRow>(
-      `SELECT * FROM persona_wallets WHERE tenant_id = ? AND persona_id = ? LIMIT 1`,
-    ).get(tenantId, personaId);
+    const row = this.tx.queryOne(pcoreQueryWalletByPersona({ tenantId, personaId })) as unknown as PersonaWalletRow | null;
     return row ? walletFromRow(row) : null;
   }
 
   getWalletByIdForOwner(tenantId: string, ownerUserId: string, walletId: string): PersonaWallet | null {
-    const row = this.db.prepare<PersonaWalletRow & { owner_user_id: string }>(
-      `SELECT pw.*, pc.owner_user_id
-       FROM persona_wallets pw
-       INNER JOIN persona_core pc ON pc.id = pw.persona_id
-       WHERE pw.tenant_id = ? AND pw.id = ?
-       LIMIT 1`,
-    ).get(tenantId, walletId);
+    const row = this.tx.queryOne(pcoreQueryWalletByIdForOwner({ tenantId, walletId })) as unknown as PersonaWalletRow & { owner_user_id: string } | null;
     if (!row || row.owner_user_id !== ownerUserId) return null;
     return walletFromRow(row);
   }
@@ -2013,11 +1813,7 @@ export class PersonaCoreService {
   listWalletTransactions(tenantId: string, ownerUserId: string, walletId: string): WalletTransaction[] | null {
     const wallet = this.getWalletByIdForOwner(tenantId, ownerUserId, walletId);
     if (!wallet) return null;
-    return this.db.prepare<WalletTransactionRow>(
-      `SELECT * FROM wallet_transactions
-       WHERE tenant_id = ? AND wallet_id = ?
-       ORDER BY created_at DESC`,
-    ).all(tenantId, walletId).map(walletTransactionFromRow);
+    return (this.tx.queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })) as unknown as WalletTransactionRow[]).map(walletTransactionFromRow);
   }
 
   requestWalletPayout(input: RequestWalletPayoutInput): WalletPayoutRequest | null {
@@ -2032,18 +1828,22 @@ export class PersonaCoreService {
     const nextBalanceMinor = toMinor(wallet.balance) - amountMinor;
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO wallet_payout_requests (
-          id, tenant_id, wallet_id, amount_minor, currency, status,
-          requested_by_user_id, created_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?)`,
-      ).run(payoutId, input.tenantId, input.walletId, amountMinor, wallet.currency, input.ownerUserId, now, now);
+      this.tx.execute(pcoreCmdCreateWalletPayoutRequest({
+        id: payoutId,
+        tenantId: input.tenantId,
+        walletId: input.walletId,
+        amountMinor,
+        currency: wallet.currency,
+        requestedByUserId: input.ownerUserId,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_wallets
-         SET balance = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(fromMinor(nextBalanceMinor), now, input.tenantId, input.walletId);
+      this.tx.execute(pcoreCmdUpdateWalletBalance({
+        tenantId: input.tenantId,
+        walletId: input.walletId,
+        balance: fromMinor(nextBalanceMinor),
+        now,
+      }));
 
       this.insertWalletTransaction({
         tenantId: input.tenantId,
@@ -2090,21 +1890,14 @@ export class PersonaCoreService {
     const settlementLatencyMs = Math.max(0, now - (assignment.submittedAt ?? assignment.assignedAt));
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO wallet_settlements (
-          id, tenant_id, wallet_id, task_id, assignment_id, total_amount_minor, currency,
-          owner_pct, persona_pct, platform_pct,
-          owner_amount_minor, persona_amount_minor, platform_amount_minor,
-          status, created_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)`,
-      ).run(
-        settlementId,
-        input.tenantId,
-        wallet.id,
-        input.taskId,
-        input.assignmentId,
+      this.tx.execute(pcoreCmdCreateWalletSettlement({
+        id: settlementId,
+        tenantId: input.tenantId,
+        walletId: wallet.id,
+        taskId: input.taskId,
+        assignmentId: input.assignmentId,
         totalAmountMinor,
-        input.currency,
+        currency: input.currency,
         ownerPct,
         personaPct,
         platformPct,
@@ -2112,22 +1905,16 @@ export class PersonaCoreService {
         personaAmountMinor,
         platformAmountMinor,
         now,
-        now,
-      );
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_wallets
-         SET balance = balance + ?, token_balance = token_balance + ?, currency = ?, last_settled_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(
-        fromMinor(ownerAmountMinor),
-        fromMinor(personaAmountMinor),
-        input.currency,
+      this.tx.execute(pcoreCmdSettlePersonaWallet({
+        tenantId: input.tenantId,
+        walletId: wallet.id,
+        ownerAmount: fromMinor(ownerAmountMinor),
+        personaAmount: fromMinor(personaAmountMinor),
+        currency: input.currency,
         now,
-        now,
-        input.tenantId,
-        wallet.id,
-      );
+      }));
 
       this.insertWalletTransaction({
         tenantId: input.tenantId,
@@ -2199,11 +1986,7 @@ export class PersonaCoreService {
   }
 
   findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
-    const row = this.db.prepare<TaskApplicationRow>(
-      `SELECT * FROM task_applications
-       WHERE tenant_id = ? AND task_id = ? AND persona_id = ?
-       LIMIT 1`,
-    ).get(tenantId, taskId, personaId);
+    const row = this.tx.queryOne(pcoreQueryTaskApplication({ tenantId, taskId, personaId })) as unknown as TaskApplicationRow | null;
     return row ? taskApplicationFromRow(row) : null;
   }
 
@@ -2222,11 +2005,14 @@ export class PersonaCoreService {
     const applicationId = generatePrefixedId('tapp');
     const rankingScore = this.computePersonaTaskRanking(persona, task);
 
-    this.db.prepare<void>(
-      `INSERT INTO task_applications (
-        id, tenant_id, task_id, persona_id, ranking_score, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?)`,
-    ).run(applicationId, input.tenantId, input.taskId, input.personaId, rankingScore, now, now);
+    this.tx.execute(pcoreCmdCreateTaskApplication({
+      id: applicationId,
+      tenantId: input.tenantId,
+      taskId: input.taskId,
+      personaId: input.personaId,
+      rankingScore,
+      now,
+    }));
 
     this.insertMemory({
       tenantId: input.tenantId,
@@ -2260,25 +2046,28 @@ export class PersonaCoreService {
     const assignmentId = generatePrefixedId('tas');
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO task_assignments (
-          id, tenant_id, task_id, persona_id, application_id, runtime_session_id, status,
-          assigned_at, started_at, submitted_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, NULL, 'assigned', ?, NULL, NULL, NULL)`,
-      ).run(assignmentId, input.tenantId, input.taskId, input.personaId, application.id, now);
+      this.tx.execute(pcoreCmdCreateTaskAssignment({
+        id: assignmentId,
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        personaId: input.personaId,
+        applicationId: application.id,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE task_applications
-         SET status = CASE WHEN id = ? THEN 'assigned' ELSE status END,
-             updated_at = ?
-         WHERE tenant_id = ? AND task_id = ?`,
-      ).run(application.id, now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdMarkTaskApplicationsAssigned({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        applicationId: application.id,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET status = 'accepted', assignee_persona_id = ?, accepted_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ? AND status = 'open'`,
-      ).run(input.personaId, now, now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdAcceptMarketplaceTaskAssignment({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        personaId: input.personaId,
+        now,
+      }));
 
       this.insertMemory({
         tenantId: input.tenantId,
@@ -2326,28 +2115,28 @@ export class PersonaCoreService {
     const timeoutAt = computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs);
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO runtime_sessions (
-          id, tenant_id, persona_id, task_id, assignment_id, state, retry_count, timeout_at,
-          plan_json, artifacts_json, evaluation_json, result_summary_json, error_json,
-          created_at, updated_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, 'PLAN', 0, ?, NULL, '[]', NULL, NULL, NULL, ?, ?, NULL)`,
-      ).run(sessionId, input.tenantId, input.personaId, input.taskId, assignment.id, timeoutAt, now, now);
+      this.tx.execute(pcoreCmdCreateRuntimeSession({
+        id: sessionId,
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        taskId: input.taskId,
+        assignmentId: assignment.id,
+        timeoutAt,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE task_assignments
-         SET runtime_session_id = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(sessionId, input.tenantId, assignment.id);
+      this.tx.execute(pcoreCmdLinkTaskAssignmentRuntimeSession({
+        tenantId: input.tenantId,
+        assignmentId: assignment.id,
+        sessionId,
+      }));
     });
 
     return this.getRuntimeSession(input.tenantId, input.ownerUserId, sessionId);
   }
 
   getRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const row = this.db.prepare<RuntimeSessionRow>(
-      'SELECT * FROM runtime_sessions WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, sessionId);
+    const row = this.tx.queryOne(pcoreQueryRuntimeSession({ tenantId, sessionId })) as unknown as RuntimeSessionRow | null;
     if (!row || !this.personaExists(tenantId, ownerUserId, row.persona_id)) return null;
     return runtimeSessionFromRow(row);
   }
@@ -2369,11 +2158,13 @@ export class PersonaCoreService {
     };
 
     const now = Date.now();
-    this.db.prepare<void>(
-      `UPDATE runtime_sessions
-       SET state = 'EXECUTE', plan_json = ?, updated_at = ?, timeout_at = ?
-       WHERE tenant_id = ? AND id = ?`,
-    ).run(JSON.stringify(plan), now, computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs), tenantId, sessionId);
+    this.tx.execute(pcoreCmdPlanRuntimeSession({
+      tenantId,
+      sessionId,
+      planJson: JSON.stringify(plan),
+      now,
+      timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
+    }));
 
     return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
   }
@@ -2391,19 +2182,20 @@ export class PersonaCoreService {
     ];
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE runtime_sessions
-         SET state = 'EVALUATE', artifacts_json = ?, updated_at = ?, timeout_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(JSON.stringify(artifacts), now, computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs), tenantId, sessionId);
+      this.tx.execute(pcoreCmdExecuteRuntimeSession({
+        tenantId,
+        sessionId,
+        artifactsJson: JSON.stringify(artifacts),
+        now,
+        timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
+      }));
 
       if (session.assignmentId) {
-        this.db.prepare<void>(
-          `UPDATE task_assignments
-           SET status = 'in_progress',
-               started_at = COALESCE(started_at, ?)
-           WHERE tenant_id = ? AND id = ? AND status IN ('assigned','in_progress')`,
-        ).run(now, tenantId, session.assignmentId);
+        this.tx.execute(pcoreCmdStartTaskAssignment({
+          tenantId,
+          assignmentId: session.assignmentId,
+          now,
+        }));
       }
     });
 
@@ -2434,11 +2226,13 @@ export class PersonaCoreService {
     };
 
     const now = Date.now();
-    this.db.prepare<void>(
-      `UPDATE runtime_sessions
-       SET state = 'MEMORY_UPDATE', evaluation_json = ?, updated_at = ?, timeout_at = ?
-       WHERE tenant_id = ? AND id = ?`,
-    ).run(JSON.stringify(evaluation), now, computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs), tenantId, sessionId);
+    this.tx.execute(pcoreCmdEvaluateRuntimeSession({
+      tenantId,
+      sessionId,
+      evaluationJson: JSON.stringify(evaluation),
+      now,
+      timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
+    }));
 
     return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
   }
@@ -2471,11 +2265,12 @@ export class PersonaCoreService {
         importance: 0.63,
       });
 
-      this.db.prepare<void>(
-        `UPDATE runtime_sessions
-         SET state = 'COMPLETED', result_summary_json = ?, updated_at = ?, completed_at = ?, timeout_at = NULL
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(JSON.stringify(resultSummary), now, now, tenantId, sessionId);
+      this.tx.execute(pcoreCmdCompleteRuntimeSession({
+        tenantId,
+        sessionId,
+        resultSummaryJson: JSON.stringify(resultSummary),
+        now,
+      }));
 
       publishObservabilityEvent(this.db, {
         tenantId,
@@ -2501,14 +2296,10 @@ export class PersonaCoreService {
     maxRetries: number;
     limit?: number;
   }): { scanned: number; recovered: number; timedOut: number } {
-    const rows = this.db.prepare<RuntimeSessionRow>(
-      `SELECT * FROM runtime_sessions
-       WHERE timeout_at IS NOT NULL
-         AND timeout_at <= ?
-         AND completed_at IS NULL
-       ORDER BY timeout_at ASC
-       LIMIT ?`,
-    ).all(input.now, input.limit ?? 100);
+    const rows = this.tx.queryMany(pcoreQueryTimedOutRuntimeSessions({
+      now: input.now,
+      limit: input.limit ?? 100,
+    })) as unknown as RuntimeSessionRow[];
 
     let recovered = 0;
     let timedOut = 0;
@@ -2524,33 +2315,24 @@ export class PersonaCoreService {
       };
 
       if (shouldRetryRuntimeSession(Number(row.retry_count), input.maxRetries)) {
-        this.db.prepare<void>(
-          `UPDATE runtime_sessions
-           SET state = ?, retry_count = retry_count + 1, timeout_at = ?, updated_at = ?, error_json = ?
-           WHERE tenant_id = ? AND id = ?`,
-        ).run(
-          nextRuntimeRetryState(row.state),
-          computeRuntimeTimeoutAt(input.now, input.sessionTimeoutMs),
-          input.now,
-          JSON.stringify(errorPayload),
-          row.tenant_id,
-          row.id,
-        );
+        this.tx.execute(pcoreCmdRetryRuntimeSession({
+          tenantId: row.tenant_id,
+          sessionId: row.id,
+          state: nextRuntimeRetryState(row.state),
+          timeoutAt: computeRuntimeTimeoutAt(input.now, input.sessionTimeoutMs),
+          now: input.now,
+          errorJson: JSON.stringify(errorPayload),
+        }));
         recovered++;
         continue;
       }
 
-      this.db.prepare<void>(
-        `UPDATE runtime_sessions
-         SET state = 'TIMEOUT', timeout_at = NULL, updated_at = ?, completed_at = ?, error_json = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(
-        input.now,
-        input.now,
-        JSON.stringify(errorPayload),
-        row.tenant_id,
-        row.id,
-      );
+      this.tx.execute(pcoreCmdTimeoutRuntimeSession({
+        tenantId: row.tenant_id,
+        sessionId: row.id,
+        now: input.now,
+        errorJson: JSON.stringify(errorPayload),
+      }));
       timedOut++;
     }
 
@@ -2575,25 +2357,27 @@ export class PersonaCoreService {
     const evaluation = input.evaluation ?? {};
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO task_results (
-          id, tenant_id, task_id, assignment_id, result_uri, evaluation_json,
-          quality_score, client_rating, status, rejection_reason,
-          created_at, updated_at, accepted_at, rejected_at, disputed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 'submitted', NULL, ?, ?, NULL, NULL, NULL)`,
-      ).run(resultId, input.tenantId, input.taskId, input.assignmentId, input.resultUri, JSON.stringify(evaluation), now, now);
+      this.tx.execute(pcoreCmdCreateTaskResult({
+        id: resultId,
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        assignmentId: input.assignmentId,
+        resultUri: input.resultUri,
+        evaluationJson: JSON.stringify(evaluation),
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE task_assignments
-         SET status = 'submitted', submitted_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, input.assignmentId);
+      this.tx.execute(pcoreCmdSubmitTaskAssignment({
+        tenantId: input.tenantId,
+        assignmentId: input.assignmentId,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdTouchMarketplaceTask({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        now,
+      }));
 
       this.recordBusinessAudit({
         tenantId: input.tenantId,
@@ -2655,29 +2439,35 @@ export class PersonaCoreService {
     } = this.computeSettlementSplit(totalAmountMinor, split.ownerPct, split.personaPct, split.platformPct);
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE task_results
-         SET status = 'accepted', quality_score = ?, client_rating = ?, accepted_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(qualityScore, clientRating, now, now, input.tenantId, result.id);
+      this.tx.execute(pcoreCmdAcceptTaskResult({
+        tenantId: input.tenantId,
+        resultId: result.id,
+        qualityScore,
+        clientRating,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE task_assignments
-         SET status = 'accepted', completed_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, assignment.id);
+      this.tx.execute(pcoreCmdAcceptTaskAssignment({
+        tenantId: input.tenantId,
+        assignmentId: assignment.id,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET status = 'completed', quality_score = ?, growth_delta = ?, completed_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(qualityScore, growthDelta, now, now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdCompleteMarketplaceTask({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        qualityScore,
+        growthDelta,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_core
-         SET growth_index = growth_index + ?, reputation = reputation + ?, lifecycle_status = 'active', updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(growthDelta, reputationDelta, now, input.tenantId, assignment.personaId);
+      this.tx.execute(pcoreCmdUpdatePersonaTaskAccepted({
+        tenantId: input.tenantId,
+        personaId: assignment.personaId,
+        growthDelta,
+        reputationDelta,
+        now,
+      }));
 
       this.insertReputationHistory(
         input.tenantId,
@@ -2805,29 +2595,30 @@ export class PersonaCoreService {
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE task_results
-         SET status = 'rejected', rejection_reason = ?, rejected_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(input.reason, now, now, input.tenantId, result.id);
+      this.tx.execute(pcoreCmdRejectTaskResult({
+        tenantId: input.tenantId,
+        resultId: result.id,
+        reason: input.reason,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE task_assignments
-         SET status = 'rejected'
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(input.tenantId, assignment.id);
+      this.tx.execute(pcoreCmdRejectTaskAssignment({
+        tenantId: input.tenantId,
+        assignmentId: assignment.id,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE task_applications
-         SET status = 'rejected', updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, assignment.applicationId);
+      this.tx.execute(pcoreCmdRejectTaskApplication({
+        tenantId: input.tenantId,
+        applicationId: assignment.applicationId,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET status = 'open', assignee_persona_id = NULL, assignee_fork_id = NULL, accepted_at = NULL, updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdReopenMarketplaceTask({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        now,
+      }));
 
       publishObservabilityEvent(this.db, {
         tenantId: input.tenantId,
@@ -2893,25 +2684,25 @@ export class PersonaCoreService {
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE task_assignments
-         SET status = 'disputed'
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(input.tenantId, assignment.id);
+      this.tx.execute(pcoreCmdDisputeTaskAssignment({
+        tenantId: input.tenantId,
+        assignmentId: assignment.id,
+        now,
+      }));
 
       if (result) {
-        this.db.prepare<void>(
-          `UPDATE task_results
-           SET status = 'disputed', disputed_at = ?, updated_at = ?
-           WHERE tenant_id = ? AND id = ?`,
-        ).run(now, now, input.tenantId, result.id);
+        this.tx.execute(pcoreCmdDisputeTaskResult({
+          tenantId: input.tenantId,
+          resultId: result.id,
+          now,
+        }));
       }
 
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(now, input.tenantId, task.id);
+      this.tx.execute(pcoreCmdTouchMarketplaceTask({
+        tenantId: input.tenantId,
+        taskId: task.id,
+        now,
+      }));
 
       publishObservabilityEvent(this.db, {
         tenantId: input.tenantId,
@@ -2946,11 +2737,7 @@ export class PersonaCoreService {
 
   listGovernanceCases(tenantId: string, ownerUserId: string, personaId: string): GovernanceCase[] | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return this.db.prepare<GovernanceCaseRow>(
-      `SELECT * FROM governance_cases
-       WHERE tenant_id = ? AND persona_id = ?
-       ORDER BY opened_at DESC`,
-    ).all(tenantId, personaId).map(governanceCaseFromRow);
+    return (this.tx.queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })) as unknown as GovernanceCaseRow[]).map(governanceCaseFromRow);
   }
 
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null {
@@ -2962,12 +2749,16 @@ export class PersonaCoreService {
     const details = input.details ?? {};
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO governance_cases (
-          id, tenant_id, persona_id, task_id, trigger_type, severity, status,
-          details_json, appeal_json, opened_at, resolved_at, appealed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, NULL, ?, NULL, NULL)`,
-      ).run(caseId, input.tenantId, input.personaId, input.taskId ?? null, input.triggerType, input.severity, JSON.stringify(details), now);
+      this.tx.execute(pcoreCmdCreateGovernanceCase({
+        id: caseId,
+        tenantId: input.tenantId,
+        personaId: input.personaId,
+        taskId: input.taskId ?? null,
+        triggerType: input.triggerType,
+        severity: input.severity,
+        detailsJson: JSON.stringify(details),
+        now,
+      }));
 
       this.insertGovernanceEvent({
         tenantId: input.tenantId,
@@ -3045,43 +2836,32 @@ export class PersonaCoreService {
     const reputationDelta = this.reputationDeltaForAction(input.actionType, severityLevel);
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `INSERT INTO governance_actions (
-          id, tenant_id, case_id, action_type, duration_seconds, details_json, actor_user_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        actionId,
-        input.tenantId,
-        input.caseId,
-        input.actionType,
-        input.durationSeconds ?? null,
-        JSON.stringify(input.details ?? {}),
-        input.actorUserId,
+      this.tx.execute(pcoreCmdCreateGovernanceAction({
+        id: actionId,
+        tenantId: input.tenantId,
+        caseId: input.caseId,
+        actionType: input.actionType,
+        durationSeconds: input.durationSeconds ?? null,
+        detailsJson: JSON.stringify(input.details ?? {}),
+        actorUserId: input.actorUserId,
         now,
-      );
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE governance_cases
-         SET status = ?, resolved_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(caseStatus, caseStatus === 'resolved' ? now : null, input.tenantId, input.caseId);
+      this.tx.execute(pcoreCmdUpdateGovernanceCaseAction({
+        tenantId: input.tenantId,
+        caseId: input.caseId,
+        status: caseStatus,
+        resolvedAt: caseStatus === 'resolved' ? now : null,
+      }));
 
-      const sets = ['reputation = reputation + ?', 'updated_at = ?', 'lifecycle_status = ?', 'status = ?'];
-      const params: Array<string | number | null> = [
+      this.tx.execute(pcoreCmdApplyGovernanceActionToPersona({
+        tenantId: input.tenantId,
+        personaId: governanceCase.personaId,
         reputationDelta,
-        now,
         nextStatus,
-        this.toLegacyStatus(nextStatus),
-      ];
-      if (nextStatus === 'deceased') {
-        sets.push('deceased_at = ?');
-        params.push(now);
-      }
-      params.push(input.tenantId, governanceCase.personaId);
-
-      this.db.prepare<void>(
-        `UPDATE persona_core SET ${sets.join(', ')} WHERE tenant_id = ? AND id = ?`,
-      ).run(...params);
+        legacyStatus: this.toLegacyStatus(nextStatus),
+        now,
+      }));
 
       this.insertGovernanceEvent({
         tenantId: input.tenantId,
@@ -3187,11 +2967,12 @@ export class PersonaCoreService {
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE governance_cases
-         SET status = 'appealed', appeal_json = ?, appealed_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(JSON.stringify(input.details ?? {}), now, input.tenantId, input.caseId);
+      this.tx.execute(pcoreCmdAppealGovernanceCase({
+        tenantId: input.tenantId,
+        caseId: input.caseId,
+        appealJson: JSON.stringify(input.details ?? {}),
+        now,
+      }));
 
       this.insertGovernanceEvent({
         tenantId: input.tenantId,
@@ -3213,51 +2994,22 @@ export class PersonaCoreService {
   publishTask(input: PublishMarketplaceTaskInput): MarketplaceTask {
     const now = Date.now();
     const taskId = generatePrefixedId('mkt');
-    this.db.prepare<void>(
-      `INSERT INTO marketplace_tasks (
-        id, tenant_id, publisher_user_id, assignee_persona_id, assignee_fork_id,
-        title, description, category, reward, currency, status, quality_score, growth_delta,
-        published_at, accepted_at, completed_at, created_at, updated_at
-      ) VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, NULL, NULL, ?, ?)`,
-    ).run(
-      taskId,
-      input.tenantId,
-      input.publisherUserId,
-      input.title,
-      input.description,
-      input.category ?? 'general',
-      input.reward,
-      input.currency ?? 'CRED',
+    this.tx.execute(pcoreCmdPublishMarketplaceTask({
+      id: taskId,
+      tenantId: input.tenantId,
+      publisherUserId: input.publisherUserId,
+      title: input.title,
+      description: input.description,
+      category: input.category ?? 'general',
+      reward: input.reward,
+      currency: input.currency ?? 'CRED',
       now,
-      now,
-      now,
-    );
+    }));
     return this.getMarketplaceTask(input.tenantId, taskId)!;
   }
 
   listMarketplaceTasks(tenantId: string, status?: MarketplaceTask['status']): MarketplaceTask[] {
-    const where = status ? 'WHERE mt.tenant_id = ? AND mt.status = ?' : 'WHERE mt.tenant_id = ?';
-    const rows = status
-      ? this.db.prepare<MarketplaceTaskRow>(
-        `SELECT
-          mt.*,
-          pc.display_name AS assignee_persona_name
-        FROM marketplace_tasks mt
-        LEFT JOIN persona_core pc ON pc.id = mt.assignee_persona_id
-        ${where}
-        ORDER BY mt.updated_at DESC, mt.created_at DESC`,
-      ).all(tenantId, status)
-      : this.db.prepare<MarketplaceTaskRow>(
-        `SELECT
-          mt.*,
-          pc.display_name AS assignee_persona_name
-        FROM marketplace_tasks mt
-        LEFT JOIN persona_core pc ON pc.id = mt.assignee_persona_id
-        ${where}
-        ORDER BY mt.updated_at DESC, mt.created_at DESC`,
-      ).all(tenantId);
-
-    return rows.map(taskFromRow);
+    return (this.tx.queryMany(pcoreQueryMarketplaceTasksByTenant({ tenantId, status })) as unknown as MarketplaceTaskRow[]).map(taskFromRow);
   }
 
   getMarketplaceTaskById(tenantId: string, taskId: string): MarketplaceTask | null {
@@ -3274,11 +3026,13 @@ export class PersonaCoreService {
 
     const now = Date.now();
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET status = 'accepted', assignee_persona_id = ?, assignee_fork_id = ?, accepted_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ? AND status = 'open'`,
-      ).run(input.personaId, input.forkId ?? null, now, now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdAcceptMarketplaceTaskLegacy({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        personaId: input.personaId,
+        forkId: input.forkId ?? null,
+        now,
+      }));
 
       this.insertMemory({
         tenantId: input.tenantId,
@@ -3311,23 +3065,30 @@ export class PersonaCoreService {
     const tokenReward = round(growthDelta * 8, 2);
 
     this.db.transaction(() => {
-      this.db.prepare<void>(
-        `UPDATE marketplace_tasks
-         SET status = 'completed', quality_score = ?, growth_delta = ?, completed_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND id = ? AND status = 'accepted'`,
-      ).run(qualityScore, growthDelta, now, now, input.tenantId, input.taskId);
+      this.tx.execute(pcoreCmdCompleteMarketplaceTask({
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        qualityScore,
+        growthDelta,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_wallets
-         SET balance = balance + ?, token_balance = token_balance + ?, last_settled_at = ?, updated_at = ?
-         WHERE tenant_id = ? AND persona_id = ?`,
-      ).run(payout, tokenReward, now, now, input.tenantId, personaId);
+      this.tx.execute(pcoreCmdCompleteTaskWalletUpdate({
+        tenantId: input.tenantId,
+        personaId,
+        payout,
+        tokenReward,
+        now,
+      }));
 
-      this.db.prepare<void>(
-        `UPDATE persona_core
-         SET growth_index = growth_index + ?, reputation = reputation + ?, training_investment = training_investment + ?, lifecycle_status = 'active', updated_at = ?
-         WHERE tenant_id = ? AND id = ?`,
-      ).run(growthDelta, reputationDelta, ownerTrainingHours, now, input.tenantId, personaId);
+      this.tx.execute(pcoreCmdCompleteTaskPersonaUpdate({
+        tenantId: input.tenantId,
+        personaId,
+        growthDelta,
+        reputationDelta,
+        ownerTrainingHours,
+        now,
+      }));
 
       this.insertReputationHistory(
         input.tenantId,
@@ -3412,109 +3173,66 @@ export class PersonaCoreService {
   }
 
   private personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean {
-    const row = this.db.prepare<{ id: string }>(
-      `SELECT id FROM persona_core WHERE tenant_id = ? AND owner_user_id = ? AND id = ? LIMIT 1`,
-    ).get(tenantId, ownerUserId, personaId);
-    return Boolean(row);
+    return Boolean(this.tx.queryOne(pcoreQueryPersonaExists({ tenantId, ownerUserId, personaId })));
   }
 
   private forkBelongsToPersona(tenantId: string, personaId: string, forkId: string): boolean {
-    const row = this.db.prepare<{ id: string }>(
-      `SELECT id FROM persona_forks WHERE tenant_id = ? AND persona_id = ? AND id = ? LIMIT 1`,
-    ).get(tenantId, personaId, forkId);
-    return Boolean(row);
+    return Boolean(this.tx.queryOne(pcoreQueryForkExists({ tenantId, personaId, forkId })));
   }
 
   private getMarketplaceTask(tenantId: string, taskId: string): MarketplaceTask | null {
-    const row = this.db.prepare<MarketplaceTaskRow>(
-      `SELECT
-        mt.*,
-        pc.display_name AS assignee_persona_name
-      FROM marketplace_tasks mt
-      LEFT JOIN persona_core pc ON pc.id = mt.assignee_persona_id
-      WHERE mt.tenant_id = ? AND mt.id = ?
-      LIMIT 1`,
-    ).get(tenantId, taskId);
-    return row ? taskFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryMarketplaceTaskById({ tenantId, taskId }));
+    return row ? taskFromRow(row as MarketplaceTaskRow) : null;
   }
 
   private getTaskAssignmentById(tenantId: string, assignmentId: string): TaskAssignment | null {
-    const row = this.db.prepare<TaskAssignmentRow>(
-      'SELECT * FROM task_assignments WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, assignmentId);
-    return row ? taskAssignmentFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryTaskAssignmentById({ tenantId, assignmentId }));
+    return row ? taskAssignmentFromRow(row as TaskAssignmentRow) : null;
   }
 
   private getLatestTaskAssignmentByTask(tenantId: string, taskId: string): TaskAssignment | null {
-    const row = this.db.prepare<TaskAssignmentRow>(
-      `SELECT * FROM task_assignments
-       WHERE tenant_id = ? AND task_id = ?
-       ORDER BY assigned_at DESC
-       LIMIT 1`,
-    ).get(tenantId, taskId);
-    return row ? taskAssignmentFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryLatestTaskAssignmentByTask({ tenantId, taskId }));
+    return row ? taskAssignmentFromRow(row as TaskAssignmentRow) : null;
   }
 
   private getLatestTaskAssignmentForPersonaAndTask(tenantId: string, personaId: string, taskId: string): TaskAssignment | null {
-    const row = this.db.prepare<TaskAssignmentRow>(
-      `SELECT * FROM task_assignments
-       WHERE tenant_id = ? AND persona_id = ? AND task_id = ?
-       ORDER BY assigned_at DESC
-       LIMIT 1`,
-    ).get(tenantId, personaId, taskId);
-    return row ? taskAssignmentFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryLatestTaskAssignmentForPersonaTask({ tenantId, personaId, taskId }));
+    return row ? taskAssignmentFromRow(row as TaskAssignmentRow) : null;
   }
 
   private getLatestTaskResultByAssignment(tenantId: string, assignmentId: string): TaskResult | null {
-    const row = this.db.prepare<TaskResultRow>(
-      `SELECT * FROM task_results
-       WHERE tenant_id = ? AND assignment_id = ?
-       ORDER BY created_at DESC
-       LIMIT 1`,
-    ).get(tenantId, assignmentId);
-    return row ? taskResultFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryLatestTaskResultByAssignment({ tenantId, assignmentId }));
+    return row ? taskResultFromRow(row as TaskResultRow) : null;
   }
 
   private getGovernanceCaseById(tenantId: string, caseId: string): GovernanceCase | null {
-    const row = this.db.prepare<GovernanceCaseRow>(
-      'SELECT * FROM governance_cases WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, caseId);
-    return row ? governanceCaseFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryGovernanceCaseById({ tenantId, caseId }));
+    return row ? governanceCaseFromRow(row as GovernanceCaseRow) : null;
   }
 
   private getGovernanceActionById(tenantId: string, actionId: string): GovernanceAction | null {
-    const row = this.db.prepare<GovernanceActionRow>(
-      'SELECT * FROM governance_actions WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, actionId);
-    return row ? governanceActionFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryGovernanceActionById({ tenantId, actionId }));
+    return row ? governanceActionFromRow(row as GovernanceActionRow) : null;
   }
 
   private getPersonaById(tenantId: string, personaId: string): PersonaCore | null {
-    const row = this.db.prepare<PersonaCoreRow>(
-      `SELECT * FROM persona_core WHERE tenant_id = ? AND id = ? LIMIT 1`,
-    ).get(tenantId, personaId);
-    return row ? personaFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryPersonaById({ tenantId, personaId }));
+    return row ? personaFromRow(row as PersonaCoreRow) : null;
   }
 
   private getWalletByPersonaId(tenantId: string, personaId: string): PersonaWallet | null {
-    const row = this.db.prepare<PersonaWalletRow>(
-      `SELECT * FROM persona_wallets WHERE tenant_id = ? AND persona_id = ? LIMIT 1`,
-    ).get(tenantId, personaId);
-    return row ? walletFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryWalletByPersonaId({ tenantId, personaId }));
+    return row ? walletFromRow(row as PersonaWalletRow) : null;
   }
 
   private getWalletPayoutRequestById(tenantId: string, payoutId: string): WalletPayoutRequest | null {
-    const row = this.db.prepare<WalletPayoutRequestRow>(
-      'SELECT * FROM wallet_payout_requests WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, payoutId);
-    return row ? walletPayoutRequestFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryWalletPayoutRequestById({ tenantId, payoutId }));
+    return row ? walletPayoutRequestFromRow(row as WalletPayoutRequestRow) : null;
   }
 
   private getWalletSettlementByAssignmentId(tenantId: string, assignmentId: string): TaskWalletSettlement | null {
-    const row = this.db.prepare<WalletSettlementRow>(
-      'SELECT * FROM wallet_settlements WHERE tenant_id = ? AND assignment_id = ? LIMIT 1',
-    ).get(tenantId, assignmentId);
-    return row ? walletSettlementFromRow(row) : null;
+    const row = this.tx.queryOne(pcoreQueryWalletSettlementByAssignmentId({ tenantId, assignmentId }));
+    return row ? walletSettlementFromRow(row as WalletSettlementRow) : null;
   }
 
   private insertWalletTransaction(input: {
@@ -3528,21 +3246,17 @@ export class PersonaCoreService {
   }): WalletTransaction {
     const now = Date.now();
     const id = generatePrefixedId('wtx');
-    this.db.prepare<void>(
-      `INSERT INTO wallet_transactions (
-        id, tenant_id, wallet_id, transaction_type, amount_minor, currency, reference_type, reference_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
+    this.tx.execute(pcoreCmdInsertWalletTransaction({
       id,
-      input.tenantId,
-      input.walletId,
-      input.transactionType,
-      Math.round(input.amountMinor),
-      input.currency,
-      input.referenceType ?? null,
-      input.referenceId ?? null,
+      tenantId: input.tenantId,
+      walletId: input.walletId,
+      transactionType: input.transactionType,
+      amountMinor: Math.round(input.amountMinor),
+      currency: input.currency,
+      referenceType: input.referenceType ?? null,
+      referenceId: input.referenceId ?? null,
       now,
-    );
+    }));
     return {
       id,
       tenantId: input.tenantId,
@@ -3557,27 +3271,16 @@ export class PersonaCoreService {
   }
 
   private getTransferById(tenantId: string, transferId: string): PersonaTransferRow | null {
-    const row = this.db.prepare<PersonaTransferRow>(
-      'SELECT * FROM persona_transfers WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, transferId);
-    return row ?? null;
+    return this.tx.queryOne(pcoreQueryTransferById({ tenantId, transferId })) as PersonaTransferRow | null;
   }
 
   private canAccessTransferHistory(tenantId: string, userId: string, personaId: string): boolean {
     if (this.personaExists(tenantId, userId, personaId)) return true;
-    const row = this.db.prepare<{ id: string }>(
-      `SELECT id FROM persona_transfers
-       WHERE tenant_id = ? AND persona_id = ? AND (from_owner_user_id = ? OR to_owner_user_id = ?)
-       LIMIT 1`,
-    ).get(tenantId, personaId, userId, userId);
-    return Boolean(row);
+    return Boolean(this.tx.queryOne(pcoreQueryTransferAccess({ tenantId, userId, personaId })));
   }
 
   private userExists(tenantId: string, userId: string): boolean {
-    const row = this.db.prepare<{ id: string }>(
-      'SELECT id FROM users WHERE tenant_id = ? AND id = ? LIMIT 1',
-    ).get(tenantId, userId);
-    return Boolean(row);
+    return Boolean(this.tx.queryOne(pcoreQueryUserExists({ tenantId, userId })));
   }
 
   private isTerminalStatus(status: PersonaCore['status']): boolean {
@@ -3607,19 +3310,15 @@ export class PersonaCoreService {
     newScore: number,
     reason: string,
   ): void {
-    this.db.prepare<void>(
-      `INSERT INTO reputation_history (
-        id, tenant_id, persona_id, old_score, new_score, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      generatePrefixedId('rep'),
+    this.tx.execute(pcoreCmdInsertReputationHistory({
+      id: generatePrefixedId('rep'),
       tenantId,
       personaId,
-      round(clamp(oldScore, 0, 100), 4),
-      round(clamp(newScore, 0, 100), 4),
+      oldScore: round(clamp(oldScore, 0, 100), 4),
+      newScore: round(clamp(newScore, 0, 100), 4),
       reason,
-      Date.now(),
-    );
+      now: Date.now(),
+    }));
   }
 
   private getRankingTaskStats(
@@ -3627,42 +3326,15 @@ export class PersonaCoreService {
     personaId: string,
     category?: MarketplaceTask['category'],
   ): { completedTasks: number; avgQuality: number; responseSpeed: number } {
-    const categoryFilter = category ? 'AND category = ?' : '';
     const row = category
-      ? this.db.prepare<{ completed_tasks: number; avg_quality: number | null; avg_hours: number | null }>(
-        `SELECT
-          COUNT(*) AS completed_tasks,
-          AVG(COALESCE(quality_score, 0)) AS avg_quality,
-          AVG(
-            CASE
-              WHEN accepted_at IS NOT NULL AND completed_at IS NOT NULL AND completed_at > accepted_at
-              THEN (completed_at - accepted_at) / 3600000.0
-              ELSE NULL
-            END
-          ) AS avg_hours
-         FROM marketplace_tasks
-         WHERE tenant_id = ? AND assignee_persona_id = ? AND status = 'completed' ${categoryFilter}`,
-      ).get(tenantId, personaId, category)
-      : this.db.prepare<{ completed_tasks: number; avg_quality: number | null; avg_hours: number | null }>(
-        `SELECT
-          COUNT(*) AS completed_tasks,
-          AVG(COALESCE(quality_score, 0)) AS avg_quality,
-          AVG(
-            CASE
-              WHEN accepted_at IS NOT NULL AND completed_at IS NOT NULL AND completed_at > accepted_at
-              THEN (completed_at - accepted_at) / 3600000.0
-              ELSE NULL
-            END
-          ) AS avg_hours
-         FROM marketplace_tasks
-         WHERE tenant_id = ? AND assignee_persona_id = ? AND status = 'completed'`,
-      ).get(tenantId, personaId);
+      ? this.tx.queryOne(pcoreQueryRankingTaskStats({ tenantId, personaId, category }))
+      : this.tx.queryOne(pcoreQueryRankingTaskStatsUncategorized({ tenantId, personaId }));
 
-    const avgHours = Number(row?.avg_hours ?? 24);
+    const avgHours = Number((row as { avg_hours?: number | null } | null)?.avg_hours ?? 24);
     const responseSpeed = clamp(1 - avgHours / 72, 0.2, 1);
     return {
-      completedTasks: Number(row?.completed_tasks ?? 0),
-      avgQuality: Number(row?.avg_quality ?? 0),
+      completedTasks: Number((row as { completed_tasks?: number } | null)?.completed_tasks ?? 0),
+      avgQuality: Number((row as { avg_quality?: number | null } | null)?.avg_quality ?? 0),
       responseSpeed,
     };
   }
@@ -3792,29 +3464,16 @@ export class PersonaCoreService {
   }
 
   private resolveLastActiveAt(tenantId: string, personaId: string, fallback: number): number {
-    const walletActivity = this.db.prepare<{ value: number | null }>(
-      `SELECT MAX(COALESCE(last_settled_at, created_at)) AS value
-       FROM persona_wallets
-       WHERE tenant_id = ? AND persona_id = ?`,
-    ).get(tenantId, personaId)?.value;
-
-    const memoryActivity = this.db.prepare<{ value: number | null }>(
-      `SELECT MAX(created_at) AS value
-       FROM persona_memories
-       WHERE tenant_id = ? AND persona_id = ?`,
-    ).get(tenantId, personaId)?.value;
-
-    const taskActivity = this.db.prepare<{ value: number | null }>(
-      `SELECT MAX(COALESCE(completed_at, updated_at, accepted_at, published_at)) AS value
-       FROM marketplace_tasks
-       WHERE tenant_id = ? AND assignee_persona_id = ?`,
-    ).get(tenantId, personaId)?.value;
-
+    const row = this.tx.queryOne(pcoreQueryLastActiveAt({ tenantId, personaId })) as {
+      wallet_value: number | null;
+      memory_value: number | null;
+      task_value: number | null;
+    } | null;
     return Math.max(
       fallback,
-      Number(walletActivity ?? 0),
-      Number(memoryActivity ?? 0),
-      Number(taskActivity ?? 0),
+      Number(row?.wallet_value ?? 0),
+      Number(row?.memory_value ?? 0),
+      Number(row?.task_value ?? 0),
     );
   }
 
@@ -3837,26 +3496,20 @@ export class PersonaCoreService {
     const storedSummary = isEncrypted ? this.encryptString(input.summary, input.tenantId) : input.summary;
     const storedContent = JSON.stringify(input.content);
     const storedContentJson = isEncrypted ? this.encryptString(storedContent, input.tenantId) : storedContent;
-    this.db.prepare<void>(
-      `INSERT INTO persona_memories (
-        id, tenant_id, persona_id, fork_id, kind, sensitivity, is_encrypted, owner_restricted,
-        summary, content_json, importance, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      memoryId,
-      input.tenantId,
-      input.personaId,
-      input.forkId ?? null,
-      input.kind,
+    this.tx.execute(pcoreCmdInsertMemory({
+      id: memoryId,
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      forkId: input.forkId ?? null,
+      kind: input.kind,
       sensitivity,
-      isEncrypted ? 1 : 0,
-      ownerRestricted ? 1 : 0,
-      storedSummary,
-      storedContentJson,
-      clamp(input.importance, 0, 1),
+      isEncrypted: isEncrypted ? 1 : 0,
+      ownerRestricted: ownerRestricted ? 1 : 0,
+      summary: storedSummary,
+      contentJson: storedContentJson,
+      importance: clamp(input.importance, 0, 1),
       now,
-      now,
-    );
+    }));
 
     const memory: PersonaMemory = {
       id: memoryId,
@@ -4024,22 +3677,18 @@ export class PersonaCoreService {
     payload: Record<string, unknown>;
   }): void {
     const now = Date.now();
-    this.db.prepare<void>(
-      `INSERT INTO persona_growth_events (
-        id, tenant_id, persona_id, task_id, event_type, growth_delta, reputation_delta, training_delta, payload_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      generatePrefixedId('pgrow'),
-      input.tenantId,
-      input.personaId,
-      input.taskId ?? null,
-      input.eventType,
-      input.growthDelta,
-      input.reputationDelta,
-      input.trainingDelta,
-      JSON.stringify(input.payload),
+    this.tx.execute(pcoreCmdInsertGrowthEvent({
+      id: generatePrefixedId('pgrow'),
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      taskId: input.taskId ?? null,
+      eventType: input.eventType,
+      growthDelta: input.growthDelta,
+      reputationDelta: input.reputationDelta,
+      trainingDelta: input.trainingDelta,
+      payloadJson: JSON.stringify(input.payload),
       now,
-    );
+    }));
 
     publishObservabilityEvent(this.db, {
       tenantId: input.tenantId,
@@ -4068,20 +3717,16 @@ export class PersonaCoreService {
     actorUserId: string | null;
   }): void {
     const now = Date.now();
-    this.db.prepare<void>(
-      `INSERT INTO persona_governance_events (
-        id, tenant_id, persona_id, event_type, severity, summary, payload_json, actor_user_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      generatePrefixedId('pgov'),
-      input.tenantId,
-      input.personaId,
-      input.eventType,
-      input.severity,
-      input.summary,
-      JSON.stringify(input.payload),
-      input.actorUserId,
+    this.tx.execute(pcoreCmdInsertGovernanceEvent({
+      id: generatePrefixedId('pgov'),
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      eventType: input.eventType,
+      severity: input.severity,
+      summary: input.summary,
+      payloadJson: JSON.stringify(input.payload),
+      actorUserId: input.actorUserId,
       now,
-    );
+    }));
   }
 }

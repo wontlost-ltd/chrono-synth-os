@@ -38,6 +38,7 @@ import { registerAdminControlPlaneExecutors } from './admin-control-plane-execut
 import { registerTenantProfileExecutors } from './tenant-profile-executors.js';
 import { registerPersonaEngineExecutors } from './persona-engine-executors.js';
 import { registerCognitiveMemoryExecutors } from './cognitive-memory-executors.js';
+import { registerPersonaCoreExecutors } from './persona-core-executors.js';
 import { registerKnowledgeSourceExecutors } from './knowledge-source-executors.js';
 import { registerMetricsQueryExecutors } from './metrics-query-executors.js';
 import { registerIdempotencyExecutors } from './idempotency-executors.js';
@@ -61,7 +62,7 @@ import {
   DAVT_QUERY_ACTIVE, ASNAP_QUERY_AUTORUN_CONFIG,
   ORG_QUERY_LIST_BY_USER, SCIM_QUERY_USERS,
   ACP_QUERY_PERSONA_COUNT, TPROF_QUERY_BY_TENANT, PENG_QUERY_BY_ID,
-  PCMEM_QUERY_NODE_BY_ID,
+  PCMEM_QUERY_NODE_BY_ID, PCORE_QUERY_SUMMARIES_BY_OWNER,
   KSRC_QUERY_BY_ID, MTRX_QUERY_QUEUE_COUNT, IDEM_QUERY_EXISTING,
   LLM_QUERY_MONTHLY_SUMMARY, EMB_QUERY_BY_MODEL, KAFKA_QUERY_TENANT_NAMESPACE,
 } from '@chrono/kernel';
@@ -108,6 +109,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(TPROF_QUERY_BY_TENANT)) registerTenantProfileExecutors();
   if (!resolveQueryExecutor(PENG_QUERY_BY_ID)) registerPersonaEngineExecutors();
   if (!resolveQueryExecutor(PCMEM_QUERY_NODE_BY_ID)) registerCognitiveMemoryExecutors();
+  if (!resolveQueryExecutor(PCORE_QUERY_SUMMARIES_BY_OWNER)) registerPersonaCoreExecutors();
   if (!resolveQueryExecutor(KSRC_QUERY_BY_ID)) registerKnowledgeSourceExecutors();
   if (!resolveQueryExecutor(MTRX_QUERY_QUEUE_COUNT)) registerMetricsQueryExecutors();
   if (!resolveQueryExecutor(IDEM_QUERY_EXISTING)) registerIdempotencyExecutors();
