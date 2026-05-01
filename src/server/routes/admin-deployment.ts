@@ -42,6 +42,18 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
   }, async (request) => {
     const patch = UpdateDeploymentProfileSchema.parse(request.body);
     const profile = profileService.upsertProfile(request.tenantId, patch);
+
+    /* 切换到 dedicated_db 时自动创建租户专属 Kafka topic（幂等，异步，不阻塞响应） */
+    if (profile.deploymentMode === 'dedicated_db') {
+      profileService.provisionKafkaNamespace(request.tenantId).then((result) => {
+        if (result.status === 'error') {
+          app.log.error({ tenantId: request.tenantId, error: result.error }, 'Kafka namespace 创建失败');
+        }
+      }).catch((err: unknown) => {
+        app.log.error({ err, tenantId: request.tenantId }, 'Kafka namespace 创建异常');
+      });
+    }
+
     return {
       data: serializeProfile(profile),
     };

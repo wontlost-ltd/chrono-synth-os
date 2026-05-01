@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Logger } from '../utils/logger.js';
 import type { SyncWriteUnitOfWork, TprofRow } from '@chrono/kernel';
 import {
   tprofQueryByTenant, tprofQueryByScimToken,
@@ -18,6 +19,10 @@ import {
   defaultKafkaNamespaceForTenant,
   normalizeKafkaNamespace,
 } from './tenant-kafka-topics.js';
+import {
+  provisionTenantKafkaNamespace,
+  type ProvisionResult,
+} from './kafka-namespace-provisioner.js';
 
 type DeploymentMode = 'shared_cluster' | 'dedicated_db';
 type DatabaseIsolationMode = 'shared' | 'dedicated';
@@ -186,6 +191,7 @@ export class TenantEnterpriseProfileService {
   constructor(
     db: IDatabase,
     private readonly config: AppConfig,
+    private readonly logger?: Logger,
   ) {
     registerCoreSelfExecutors();
     this.tx = directUnitOfWork(db);
@@ -269,6 +275,16 @@ export class TenantEnterpriseProfileService {
     }
 
     return this.getProfile(tenantId);
+  }
+
+  /**
+   * 为已切换到 dedicated_db 模式的租户在 Kafka broker 上创建专属 topic。
+   * 幂等：若 topic 已存在则跳过。仅在 kafka.enabled 时实际连接 broker。
+   */
+  async provisionKafkaNamespace(tenantId: string): Promise<ProvisionResult> {
+    const profile = this.getProfile(tenantId);
+    const logger = this.logger ?? { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as Logger;
+    return provisionTenantKafkaNamespace(tenantId, profile.kafkaNamespace, this.config, logger);
   }
 
   storeScimToken(tenantId: string, token: string): void {
