@@ -37,8 +37,9 @@ export function registerIdempotencyExecutors(): void {
   });
 
   registerCommand<IdemInsertParams>(IDEM_CMD_INSERT, (db, p) => {
+    // INSERT OR IGNORE 保证并发下的原子性声明：rowsAffected=0 表示已被其他请求捷足先登
     const result = db.prepare<void>(
-      `INSERT INTO idempotency_keys (
+      `INSERT OR IGNORE INTO idempotency_keys (
         id, tenant_id, scope_key, idempotency_key, request_hash, request_method, request_path,
         state, response_status, response_content_type, response_headers_json, response_body,
         created_at, expires_at

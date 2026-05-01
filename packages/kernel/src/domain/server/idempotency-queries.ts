@@ -26,7 +26,7 @@ export interface IdemRow {
   readonly request_hash: string;
   readonly request_method: string;
   readonly request_path: string;
-  readonly state: string;
+  readonly state: 'in_progress' | 'completed';
   readonly response_status: number | null;
   readonly response_content_type: string | null;
   readonly response_headers_json: string | null;

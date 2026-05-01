@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
-  idemQueryExisting, idemQueryIdByKey,
+  idemQueryExisting,
   idemCmdCleanupExpired, idemCmdInsert, idemCmdComplete, idemCmdDelete,
 } from '@chrono/kernel';
 import type { IdemRow } from '@chrono/kernel';
@@ -163,7 +163,7 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
     }
 
     const id = randomUUID();
-    tx.execute(idemCmdInsert({
+    const claimed = tx.execute(idemCmdInsert({
       id,
       tenantId,
       scopeKey,
@@ -175,9 +175,25 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
       expiresAt: now + config.idempotency.ttlMs,
     }));
 
-    (request as FastifyRequest & { idempotencyContext?: IdempotencyContext }).idempotencyContext = {
-      id: tx.queryOne(idemQueryIdByKey({ tenantId, scopeKey, idempotencyKey }))!.id,
-    };
+    if (claimed.rowsAffected === 0) {
+      // 并发请求已抢先声明同一 key，重新查询并按现有行逻辑处理
+      const concurrent = tx.queryOne(idemQueryExisting({ tenantId, scopeKey, idempotencyKey, now }));
+      if (concurrent) {
+        if (concurrent.request_hash !== requestHash) {
+          done(new StateError('同一个 Idempotency-Key 不能用于不同请求', ErrorCode.STATE_ALREADY_EXISTS));
+          return;
+        }
+        if (concurrent.state === 'completed' && concurrent.response_status !== null) {
+          replayResponse(reply, concurrent);
+          done();
+          return;
+        }
+      }
+      done(new StateError('相同 Idempotency-Key 的请求正在处理中', ErrorCode.STATE_ALREADY_EXISTS));
+      return;
+    }
+
+    (request as FastifyRequest & { idempotencyContext?: IdempotencyContext }).idempotencyContext = { id };
     reply.header(REPLAY_HEADER, 'false');
     done();
   });
