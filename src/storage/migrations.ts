@@ -1794,6 +1794,25 @@ const v049_export_jobs: Migration = {
   ],
 };
 
+/** v050: KMS 密钥审计日志 */
+const v050_kms_key_audit: Migration = {
+  version: 'v050',
+  description: 'KMS 密钥操作审计日志',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS kms_key_audit (
+      event_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      key_ref TEXT NOT NULL,
+      performed_at TEXT NOT NULL,
+      success INTEGER NOT NULL DEFAULT 1,
+      error_code TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_kms_key_audit_tenant ON kms_key_audit(tenant_id, performed_at DESC)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -1845,6 +1864,7 @@ const MIGRATIONS: readonly Migration[] = [
   v047_multi_identity_per_tenant,
   v048_observability_processed_events,
   v049_export_jobs,
+  v050_kms_key_audit,
 ];
 
 interface MigrationRow {
