@@ -1772,6 +1772,28 @@ const v048_observability_processed_events: Migration = {
   ],
 };
 
+/** v049: 导出任务追踪表 */
+const v049_export_jobs: Migration = {
+  version: 'v049',
+  description: '可移植性：异步导出任务状态追踪',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS export_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued',
+      percent INTEGER NOT NULL DEFAULT 0,
+      eta_ms INTEGER,
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      download_url TEXT,
+      error_code TEXT,
+      warnings TEXT NOT NULL DEFAULT '[]',
+      pack_json TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_export_jobs_tenant ON export_jobs(tenant_id, created_at DESC)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -1822,6 +1844,7 @@ const MIGRATIONS: readonly Migration[] = [
   v046_tenant_enterprise_profile,
   v047_multi_identity_per_tenant,
   v048_observability_processed_events,
+  v049_export_jobs,
 ];
 
 interface MigrationRow {

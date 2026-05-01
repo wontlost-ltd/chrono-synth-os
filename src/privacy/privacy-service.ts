@@ -3,6 +3,7 @@
  * 封装 GDPR 数据导出与擦除的业务逻辑
  */
 
+import { randomBytes } from 'node:crypto';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { AppConfig } from '../config/schema.js';
 import type { IDatabase, SqlValue } from '../storage/database.js';
@@ -12,6 +13,18 @@ import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { compilePersonaState } from '../intelligence/persona-state.js';
 import { countAuditLogs, queryAuditLog } from '../audit/audit-log-store.js';
+import {
+  PortabilityPackManifestV1Schema,
+  ExportJobStatusV1Schema,
+} from '@chrono/contracts';
+import type { ExportJobStatusV1, ImportDryRunReportV1 } from '@chrono/contracts';
+import { buildPortabilityPack } from './export-pack-builder.js';
+import {
+  createExportJob,
+  updateExportJob,
+  getExportJob,
+  listExportJobs as listExportJobRows,
+} from './export-job-store.js';
 
 /** 直接按 tenant_id 查询的表（外键依赖顺序：子表在前） */
 const TENANT_TABLES = [
@@ -186,6 +199,8 @@ function transformExportRows(table: string, rows: unknown[], encryption: FieldEn
 export class PrivacyService {
   private readonly profileService: TenantEnterpriseProfileService | undefined;
   private readonly fallbackEncryption: FieldEncryption | undefined;
+  /** 平台签名密钥，用于 HMAC-SHA256 包签名 */
+  private readonly signingKey: string;
 
   constructor(
     private readonly os: ChronoSynthOS,
@@ -195,6 +210,7 @@ export class PrivacyService {
     const db = os.getDatabase();
     this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
+    this.signingKey = config?.encryption.masterKey ?? 'change-me-in-production-32chars!';
   }
 
   private getOS(tenantId: string): ChronoSynthOS {
@@ -298,5 +314,182 @@ export class PrivacyService {
       data: rows,
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) || 1 },
     };
+  }
+
+  /**
+   * 启动异步导出任务，立即返回 queued 状态；实际导出在 setImmediate 中执行
+   */
+  startExportJob(tenantId: string): ExportJobStatusV1 {
+    const db = this.os.getDatabase();
+    const now = this.os.getClock().now();
+    const jobId = createExportJob(db, tenantId, now);
+
+    // 异步执行实际导出逻辑
+    setImmediate(() => {
+      try {
+        updateExportJob(db, jobId, { state: 'running', percent: 10 });
+
+        const exportResult = this.exportData(tenantId);
+        const { rawManifestJson } = buildPortabilityPack(exportResult, this.signingKey);
+
+        const completedAt = this.os.getClock().now();
+        updateExportJob(db, jobId, {
+          state: 'completed',
+          percent: 100,
+          completed_at: completedAt,
+          download_url: `/api/v1/privacy/export/${jobId}/download`,
+          pack_json: rawManifestJson,
+        });
+      } catch {
+        const completedAt = this.os.getClock().now();
+        updateExportJob(db, jobId, {
+          state: 'failed',
+          completed_at: completedAt,
+          error_code: 'EXPORT_FAILED',
+        });
+      }
+    });
+
+    const createdAtIso = new Date(now).toISOString();
+    return ExportJobStatusV1Schema.parse({
+      schemaVersion: 'export-job-status.v1',
+      exportId: jobId,
+      state: 'queued',
+      percent: 0,
+      createdAt: createdAtIso,
+      warnings: [],
+    });
+  }
+
+  /**
+   * 查询指定导出任务的当前状态
+   */
+  getExportJobStatus(tenantId: string, exportId: string): ExportJobStatusV1 | null {
+    const db = this.os.getDatabase();
+    const row = getExportJob(db, exportId);
+    if (!row || row.tenant_id !== tenantId) return null;
+    return this.rowToJobStatus(row);
+  }
+
+  /**
+   * 列出租户的全部导出任务
+   */
+  listExportJobs(tenantId: string): ExportJobStatusV1[] {
+    const db = this.os.getDatabase();
+    const rows = listExportJobRows(db, tenantId);
+    return rows.map((row) => this.rowToJobStatus(row));
+  }
+
+  /**
+   * 对导入包清单执行 dry-run 验证，返回报告（不写入任何数据）
+   */
+  dryRunImport(tenantId: string, packManifestJson: string): ImportDryRunReportV1 {
+    const importId = generatePrefixedId('dryrun');
+
+    const parseResult = PortabilityPackManifestV1Schema.safeParse(
+      (() => {
+        try { return JSON.parse(packManifestJson) as unknown; } catch { return null; }
+      })(),
+    );
+
+    if (!parseResult.success) {
+      return {
+        schemaVersion: 'import-dryrun.v1',
+        importId,
+        packSchemaVersion: 'unknown',
+        signatureValid: false,
+        blockers: [{ code: 'INVALID_MANIFEST', messageId: 'import.error.invalidManifest' }],
+        warnings: [],
+        deltaSummary: {},
+        estimatedDurationMs: 0,
+        canCommit: false,
+      };
+    }
+
+    const manifest = parseResult.data;
+    const blockers: Array<{ code: string; messageId: string; entity?: string }> = [];
+    const warnings: Array<{ code: string; messageId: string; entity?: string }> = [];
+
+    // 验证 tenantId 匹配
+    if (manifest.tenant.tenantId !== tenantId) {
+      blockers.push({
+        code: 'TENANT_MISMATCH',
+        messageId: 'import.error.tenantMismatch',
+        entity: manifest.tenant.tenantId,
+      });
+    }
+
+    // 检查签名算法
+    if (manifest.integrity.signatureAlgorithm !== 'hmac-sha256') {
+      warnings.push({
+        code: 'UNSUPPORTED_SIGNATURE_ALG',
+        messageId: 'import.warning.unsupportedSignatureAlg',
+        entity: manifest.integrity.signatureAlgorithm,
+      });
+    }
+
+    // 构建 deltaSummary（每个 required payload 条目视为待创建）
+    const deltaSummary: Record<string, { create: number; update: number; skip: number }> = {};
+    for (const entry of manifest.payloads) {
+      if (entry.required) {
+        deltaSummary[entry.logicalName] = { create: 1, update: 0, skip: 0 };
+      }
+    }
+
+    const canCommit = blockers.length === 0;
+    const commitToken = canCommit ? randomBytes(16).toString('hex') : undefined;
+
+    return {
+      schemaVersion: 'import-dryrun.v1',
+      importId,
+      packSchemaVersion: manifest.schemaVersion,
+      signatureValid: manifest.integrity.signatureAlgorithm === 'hmac-sha256',
+      blockers,
+      warnings,
+      deltaSummary,
+      estimatedDurationMs: manifest.payloads.length * 100,
+      canCommit,
+      ...(commitToken !== undefined ? { commitToken } : {}),
+    };
+  }
+
+  /** 将 ExportJobRow 转为 ExportJobStatusV1 契约对象 */
+  private rowToJobStatus(row: import('./export-job-store.js').ExportJobRow): ExportJobStatusV1 {
+    const base = {
+      schemaVersion: 'export-job-status.v1' as const,
+      exportId: row.id,
+      state: row.state,
+      percent: row.percent,
+      createdAt: new Date(row.created_at).toISOString(),
+      warnings: (() => {
+        try { return JSON.parse(row.warnings) as Array<{ code: string; messageId: string }>; } catch { return []; }
+      })(),
+    };
+
+    if (row.state === 'completed') {
+      return ExportJobStatusV1Schema.parse({
+        ...base,
+        completedAt: new Date(row.completed_at!).toISOString(),
+        downloadUrl: row.download_url ?? undefined,
+      });
+    }
+
+    if (row.state === 'failed') {
+      return ExportJobStatusV1Schema.parse({
+        ...base,
+        completedAt: new Date(row.completed_at!).toISOString(),
+        errorCode: row.error_code ?? 'EXPORT_FAILED',
+      });
+    }
+
+    if (row.state === 'partial') {
+      return ExportJobStatusV1Schema.parse({
+        ...base,
+        completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : undefined,
+        downloadUrl: row.download_url ?? undefined,
+      });
+    }
+
+    return ExportJobStatusV1Schema.parse(base);
   }
 }

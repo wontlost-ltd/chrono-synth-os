@@ -621,3 +621,8 @@ export const OidcCallbackQuerySchema = z.object({
   state: z.string().optional(),
   error: z.string().optional(),
 });
+
+/* 数据可移植性：导入 dry-run 请求体 */
+export const DryRunImportBodySchema = z.object({
+  manifestJson: z.string().min(1),
+});

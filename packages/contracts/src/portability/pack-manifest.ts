@@ -42,7 +42,7 @@ const CompatibilitySchema = z.object({
 const IntegritySchema = z.object({
   algorithm: z.enum(['sha256', 'sha384']),
   manifestChecksum: z.string().min(1),
-  signatureAlgorithm: z.enum(['ed25519', 'rsa-pss']),
+  signatureAlgorithm: z.enum(['ed25519', 'rsa-pss', 'hmac-sha256']),
   signaturePublicKey: z.string().min(1),
   detachedSignaturePath: z.string().min(1),
 }).strict();
