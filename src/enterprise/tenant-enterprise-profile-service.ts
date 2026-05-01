@@ -56,6 +56,9 @@ export interface TenantEnterpriseProfile {
     emailClaim: string;
     nameClaim: string;
   };
+  byosProvider?: 'platform' | 's3' | 'gcs' | 'azure_blob';
+  byosBucket?: string;
+  byosKeyPrefix?: string;
   createdAt: number | null;
   updatedAt: number | null;
 }
@@ -76,6 +79,9 @@ export interface TenantEnterpriseProfilePatch {
     emailClaim?: string;
     nameClaim?: string;
   };
+  byosProvider?: 'platform' | 's3' | 'gcs' | 'azure_blob';
+  byosBucket?: string;
+  byosKeyPrefix?: string;
 }
 
 const DEFAULT_PROFILE: Omit<TenantEnterpriseProfile, 'tenantId' | 'createdAt' | 'updatedAt'> = {
@@ -95,6 +101,9 @@ const DEFAULT_PROFILE: Omit<TenantEnterpriseProfile, 'tenantId' | 'createdAt' | 
     emailClaim: 'email',
     nameClaim: 'name',
   },
+  byosProvider: 'platform',
+  byosBucket: '',
+  byosKeyPrefix: '',
 };
 
 type KmsProvider = 'platform' | 'aws_kms' | 'gcp_kms' | 'azure_kv' | 'vault';
@@ -162,6 +171,7 @@ function toProfile(row: TprofRow | null | undefined): TenantEnterpriseProfile {
     };
   }
 
+  const rowExtra = row as unknown as Record<string, unknown>;
   return {
     tenantId: row.tenant_id,
     deploymentMode: row.deployment_mode as DeploymentMode,
@@ -180,6 +190,9 @@ function toProfile(row: TprofRow | null | undefined): TenantEnterpriseProfile {
       emailClaim: row.oidc_email_claim,
       nameClaim: row.oidc_name_claim,
     },
+    byosProvider: ((rowExtra.byos_provider ?? 'platform') as 'platform' | 's3' | 'gcs' | 'azure_blob'),
+    byosBucket: String(rowExtra.byos_bucket ?? ''),
+    byosKeyPrefix: String(rowExtra.byos_key_prefix ?? ''),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -189,7 +202,7 @@ export class TenantEnterpriseProfileService {
   private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
-    db: IDatabase,
+    private readonly db: IDatabase,
     private readonly config: AppConfig,
     private readonly logger?: Logger,
   ) {
@@ -273,6 +286,16 @@ export class TenantEnterpriseProfileService {
     } else {
       this.tx.execute(tprofCmdInsert(cmdParams));
     }
+
+    // 持久化 BYOS 配置字段（内核命令不含这些列，直接更新）
+    const byosProvider = patch.byosProvider ?? current.byosProvider ?? 'platform';
+    const byosBucket = patch.byosBucket ?? current.byosBucket ?? '';
+    const byosKeyPrefix = patch.byosKeyPrefix ?? current.byosKeyPrefix ?? '';
+    this.db.prepare<void>(
+      `UPDATE tenant_enterprise_profiles
+       SET byos_provider = ?, byos_bucket = ?, byos_key_prefix = ?
+       WHERE tenant_id = ?`,
+    ).run(byosProvider, byosBucket, byosKeyPrefix, tenantId);
 
     return this.getProfile(tenantId);
   }

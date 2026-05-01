@@ -25,6 +25,8 @@ import {
   getExportJob,
   listExportJobs as listExportJobRows,
 } from './export-job-store.js';
+import { createObjectStorageClient } from './object-storage-client.js';
+import type { ObjectStorageClient } from './object-storage-client.js';
 
 /** 直接按 tenant_id 查询的表（外键依赖顺序：子表在前） */
 const TENANT_TABLES = [
@@ -201,16 +203,37 @@ export class PrivacyService {
   private readonly fallbackEncryption: FieldEncryption | undefined;
   /** 平台签名密钥，用于 HMAC-SHA256 包签名 */
   private readonly signingKey: string;
+  private readonly objectStorage: ObjectStorageClient;
+  private readonly presignTtlSeconds: number;
 
   constructor(
     private readonly os: ChronoSynthOS,
     private readonly tenantFactory: TenantOSFactory | undefined,
     config?: AppConfig,
+    objectStorage?: ObjectStorageClient,
   ) {
     const db = os.getDatabase();
     this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.signingKey = config?.encryption.masterKey ?? 'change-me-in-production-32chars!';
+    this.presignTtlSeconds = config?.objectStorage.presignTtlSeconds ?? 3600;
+    // 允许注入自定义客户端（用于测试），否则从配置创建；无配置时退回 local 默认
+    if (objectStorage) {
+      this.objectStorage = objectStorage;
+    } else if (config) {
+      this.objectStorage = createObjectStorageClient(config);
+    } else {
+      this.objectStorage = createObjectStorageClient({
+        objectStorage: {
+          provider: 'local',
+          localPath: '/tmp/chrono-exports',
+          presignTtlSeconds: 3600,
+          s3Bucket: '', s3Region: '', s3Endpoint: '', s3AccessKeyId: '', s3SecretAccessKey: '',
+          gcsBucket: '', gcsProjectId: '', gcsKeyFile: '',
+          azureConnectionString: '', azureContainer: '',
+        },
+      } as unknown as AppConfig);
+    }
   }
 
   private getOS(tenantId: string): ChronoSynthOS {
@@ -325,19 +348,25 @@ export class PrivacyService {
     const jobId = createExportJob(db, tenantId, now);
 
     // 异步执行实际导出逻辑
-    setImmediate(() => {
+    void (async () => {
       try {
         updateExportJob(db, jobId, { state: 'running', percent: 10 });
 
         const exportResult = this.exportData(tenantId);
         const { rawManifestJson } = buildPortabilityPack(exportResult, this.signingKey);
 
+        // 序列化并上传至对象存储
+        const packBuffer = Buffer.from(rawManifestJson, 'utf-8');
+        const objectKey = `exports/${tenantId}/${jobId}.pack.json`;
+        await this.objectStorage.upload(objectKey, packBuffer, 'application/json');
+        const downloadUrl = await this.objectStorage.presignUrl(objectKey, this.presignTtlSeconds);
+
         const completedAt = this.os.getClock().now();
         updateExportJob(db, jobId, {
           state: 'completed',
           percent: 100,
           completed_at: completedAt,
-          download_url: `/api/v1/privacy/export/${jobId}/download`,
+          download_url: downloadUrl,
           pack_json: rawManifestJson,
         });
       } catch {
@@ -348,7 +377,7 @@ export class PrivacyService {
           error_code: 'EXPORT_FAILED',
         });
       }
-    });
+    })();
 
     const createdAtIso = new Date(now).toISOString();
     return ExportJobStatusV1Schema.parse({

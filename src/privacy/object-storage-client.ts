@@ -1,0 +1,239 @@
+/**
+ * 对象存储客户端抽象层
+ * 支持 local（开发用）、S3/MinIO、GCS、Azure Blob 四种后端
+ * 云 SDK 均通过动态导入加载，未安装时给出明确错误提示
+ */
+
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { AppConfig } from '../config/schema.js';
+
+/** 对象存储客户端接口 */
+export interface ObjectStorageClient {
+  /** 上传 Buffer 到指定 key，返回实际存储的 key */
+  upload(key: string, data: Buffer, contentType: string): Promise<string>;
+  /** 生成预签名/限时下载 URL */
+  presignUrl(key: string, ttlSeconds: number): Promise<string>;
+}
+
+// ---------------------------------------------------------------------------
+// Local 实现
+// ---------------------------------------------------------------------------
+
+/** 本地磁盘存储（开发/测试用途） */
+export class LocalObjectStorageClient implements ObjectStorageClient {
+  constructor(private readonly localPath: string) {}
+
+  async upload(key: string, data: Buffer, _contentType: string): Promise<string> {
+    const filePath = join(this.localPath, key);
+    const dir = filePath.substring(0, filePath.lastIndexOf('/'));
+    if (dir) {
+      await mkdir(dir, { recursive: true });
+    }
+    await writeFile(filePath, data);
+    return key;
+  }
+
+  async presignUrl(key: string, _ttlSeconds: number): Promise<string> {
+    return `file://${join(this.localPath, key)}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// S3 实现
+// ---------------------------------------------------------------------------
+
+/** AWS S3 / S3 兼容（MinIO 等）存储 */
+export class S3ObjectStorageClient implements ObjectStorageClient {
+  constructor(
+    private readonly bucket: string,
+    private readonly region: string,
+    private readonly endpoint: string,
+    private readonly accessKeyId: string,
+    private readonly secretAccessKey: string,
+  ) {}
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getS3(): Promise<any> {
+    try {
+      return await (new Function('m', 'return import(m)'))('@aws-sdk/client-s3');
+    } catch {
+      throw new Error('@aws-sdk/client-s3 is not installed');
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getPresigner(): Promise<any> {
+    try {
+      return await (new Function('m', 'return import(m)'))('@aws-sdk/s3-request-presigner');
+    } catch {
+      throw new Error('@aws-sdk/s3-request-presigner is not installed');
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildClient(mod: any): any {
+    const clientConfig: Record<string, unknown> = {
+      region: this.region || 'us-east-1',
+      credentials: {
+        accessKeyId: this.accessKeyId,
+        secretAccessKey: this.secretAccessKey,
+      },
+    };
+    if (this.endpoint) {
+      clientConfig.endpoint = this.endpoint;
+      clientConfig.forcePathStyle = true;
+    }
+    return new mod.S3Client(clientConfig);
+  }
+
+  async upload(key: string, data: Buffer, contentType: string): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getS3();
+    const client = this.buildClient(mod);
+    await client.send(new mod.PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: data,
+      ContentType: contentType,
+    }));
+    return key;
+  }
+
+  async presignUrl(key: string, ttlSeconds: number): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getS3();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const presignerMod: any = await this.getPresigner();
+    const client = this.buildClient(mod);
+    const command = new mod.GetObjectCommand({ Bucket: this.bucket, Key: key });
+    return presignerMod.getSignedUrl(client, command, { expiresIn: ttlSeconds });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GCS 实现
+// ---------------------------------------------------------------------------
+
+/** Google Cloud Storage */
+export class GcsObjectStorageClient implements ObjectStorageClient {
+  constructor(
+    private readonly bucket: string,
+    private readonly projectId: string,
+    private readonly keyFile: string,
+  ) {}
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getStorage(): Promise<any> {
+    try {
+      return await (new Function('m', 'return import(m)'))('@google-cloud/storage');
+    } catch {
+      throw new Error('@google-cloud/storage is not installed');
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async buildBucket(): Promise<any> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getStorage();
+    const opts: Record<string, unknown> = {};
+    if (this.projectId) opts.projectId = this.projectId;
+    if (this.keyFile) opts.keyFilename = this.keyFile;
+    const storage = new mod.Storage(opts);
+    return storage.bucket(this.bucket);
+  }
+
+  async upload(key: string, data: Buffer, contentType: string): Promise<string> {
+    const bucket = await this.buildBucket();
+    const file = bucket.file(key);
+    await file.save(data, { contentType });
+    return key;
+  }
+
+  async presignUrl(key: string, ttlSeconds: number): Promise<string> {
+    const bucket = await this.buildBucket();
+    const file = bucket.file(key);
+    const [url] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + ttlSeconds * 1000,
+    }) as [string];
+    return url;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Azure Blob 实现
+// ---------------------------------------------------------------------------
+
+/** Azure Blob Storage */
+export class AzureBlobObjectStorageClient implements ObjectStorageClient {
+  constructor(
+    private readonly connectionString: string,
+    private readonly container: string,
+  ) {}
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async getBlobMod(): Promise<any> {
+    try {
+      return await (new Function('m', 'return import(m)'))('@azure/storage-blob');
+    } catch {
+      throw new Error('@azure/storage-blob is not installed');
+    }
+  }
+
+  async upload(key: string, data: Buffer, contentType: string): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getBlobMod();
+    const serviceClient = mod.BlobServiceClient.fromConnectionString(this.connectionString);
+    const containerClient = serviceClient.getContainerClient(this.container);
+    const blockBlobClient = containerClient.getBlockBlobClient(key);
+    await blockBlobClient.upload(data, data.length, {
+      blobHTTPHeaders: { blobContentType: contentType },
+    });
+    return key;
+  }
+
+  async presignUrl(key: string, ttlSeconds: number): Promise<string> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getBlobMod();
+    const serviceClient = mod.BlobServiceClient.fromConnectionString(this.connectionString);
+    const containerClient = serviceClient.getContainerClient(this.container);
+    const blockBlobClient = containerClient.getBlockBlobClient(key);
+
+    const expiresOn = new Date(Date.now() + ttlSeconds * 1000);
+    const sasUrl = await blockBlobClient.generateSasUrl({
+      permissions: mod.BlobSASPermissions.parse('r'),
+      expiresOn,
+    });
+    return sasUrl;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 工厂函数
+// ---------------------------------------------------------------------------
+
+/**
+ * 根据 AppConfig.objectStorage.provider 创建对应的存储客户端
+ */
+export function createObjectStorageClient(config: AppConfig): ObjectStorageClient {
+  const cfg = config.objectStorage;
+
+  switch (cfg.provider) {
+    case 's3':
+      return new S3ObjectStorageClient(
+        cfg.s3Bucket,
+        cfg.s3Region,
+        cfg.s3Endpoint,
+        cfg.s3AccessKeyId,
+        cfg.s3SecretAccessKey,
+      );
+    case 'gcs':
+      return new GcsObjectStorageClient(cfg.gcsBucket, cfg.gcsProjectId, cfg.gcsKeyFile);
+    case 'azure_blob':
+      return new AzureBlobObjectStorageClient(cfg.azureConnectionString, cfg.azureContainer);
+    case 'local':
+    default:
+      return new LocalObjectStorageClient(cfg.localPath);
+  }
+}

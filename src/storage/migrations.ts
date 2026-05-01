@@ -1813,6 +1813,17 @@ const v050_kms_key_audit: Migration = {
   ],
 };
 
+/** v051: 租户自带对象存储（BYOS）配置列 */
+const v051_tenant_byos_object_storage: Migration = {
+  version: 'v051',
+  description: '租户自带对象存储（BYOS）配置',
+  sql: [
+    `/* safe:add-column:tenant_enterprise_profiles:byos_provider */ ALTER TABLE tenant_enterprise_profiles ADD COLUMN byos_provider TEXT NOT NULL DEFAULT 'platform'`,
+    `/* safe:add-column:tenant_enterprise_profiles:byos_bucket */ ALTER TABLE tenant_enterprise_profiles ADD COLUMN byos_bucket TEXT NOT NULL DEFAULT ''`,
+    `/* safe:add-column:tenant_enterprise_profiles:byos_key_prefix */ ALTER TABLE tenant_enterprise_profiles ADD COLUMN byos_key_prefix TEXT NOT NULL DEFAULT ''`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -1865,6 +1876,7 @@ const MIGRATIONS: readonly Migration[] = [
   v048_observability_processed_events,
   v049_export_jobs,
   v050_kms_key_audit,
+  v051_tenant_byos_object_storage,
 ];
 
 interface MigrationRow {
@@ -1889,6 +1901,14 @@ function getAppliedVersions(db: IDatabase): Set<string> {
   return new Set(rows.map(r => r.version));
 }
 
+/** 检查 SQLite 表是否存在 */
+function hasTable(db: IDatabase, table: string): boolean {
+  const row = db.prepare<{ name: string }>(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+  ).get(table);
+  return row !== undefined;
+}
+
 /** 检查 SQLite 表是否已有指定列 */
 function hasColumn(db: IDatabase, table: string, column: string): boolean {
   const rows = db.prepare<{ name: string }>(`PRAGMA table_info(${table})`).all();
@@ -1908,11 +1928,11 @@ export function runMigrations(db: IDatabase): void {
 
     db.transaction(() => {
       for (const sql of migration.sql) {
-        /* 处理 safe:add-column 标记：跳过已存在的列 */
+        /* 处理 safe:add-column 标记：表不存在或列已存在时跳过 */
         const match = ADD_COLUMN_RE.exec(sql);
         if (match) {
           const [, table, column] = match;
-          if (hasColumn(db, table, column)) continue;
+          if (!hasTable(db, table) || hasColumn(db, table, column)) continue;
           db.exec(sql.replace(ADD_COLUMN_RE, ''));
         } else {
           db.exec(sql);

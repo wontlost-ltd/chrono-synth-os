@@ -60,20 +60,30 @@ export function registerPrivacyRoutes(
   app.get('/api/v1/privacy/export/:exportId/download', { preHandler: requireRole('admin') }, async (request, reply) => {
     const { exportId } = request.params as { exportId: string };
     const db = os.getDatabase();
-    const row = db.prepare<{ pack_json: string | null; state: string; tenant_id: string }>(
-      'SELECT pack_json, state, tenant_id FROM export_jobs WHERE id = ?',
+    const row = db.prepare<{ pack_json: string | null; download_url: string | null; state: string; tenant_id: string }>(
+      'SELECT pack_json, download_url, state, tenant_id FROM export_jobs WHERE id = ?',
     ).get(exportId);
 
     if (!row || row.tenant_id !== request.tenantId) {
       return reply.code(404).send({ error: 'Export job not found' });
     }
-    if (row.state !== 'completed' || !row.pack_json) {
+    if (row.state !== 'completed') {
       return reply.code(409).send({ error: 'Export not yet completed' });
     }
 
-    return reply
-      .header('Content-Type', 'application/json')
-      .send(row.pack_json);
+    // 优先重定向到预签名 URL
+    if (row.download_url) {
+      return reply.code(302).redirect(row.download_url);
+    }
+
+    // 回退：直接返回内联 JSON（向后兼容旧记录）
+    if (row.pack_json) {
+      return reply
+        .header('Content-Type', 'application/json')
+        .send(row.pack_json);
+    }
+
+    return reply.code(404).send({ error: 'Export data not available' });
   });
 
   /* POST /api/v1/privacy/import/dry-run — 导入 dry-run 验证 */

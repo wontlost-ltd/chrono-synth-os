@@ -313,6 +313,28 @@ const requestSchema = z.object({
   maxBodyBytes: z.coerce.number().int().min(1024).default(1_048_576),
 });
 
+/** 对象存储（导出包上传）配置 */
+const objectStorageSchema = z.object({
+  provider: z.enum(['local', 's3', 'gcs', 'azure_blob']).default('local'),
+  // S3 / S3 兼容（MinIO 等）
+  s3Bucket: z.string().default(''),
+  s3Region: z.string().default(''),
+  s3Endpoint: z.string().default(''),
+  s3AccessKeyId: z.string().default(''),
+  s3SecretAccessKey: z.string().default(''),
+  // Google Cloud Storage
+  gcsBucket: z.string().default(''),
+  gcsProjectId: z.string().default(''),
+  gcsKeyFile: z.string().default(''),
+  // Azure Blob Storage
+  azureConnectionString: z.string().default(''),
+  azureContainer: z.string().default(''),
+  // 本地磁盘回退（provider=local）
+  localPath: z.string().default('/tmp/chrono-exports'),
+  // 预签名 URL 有效期（秒）
+  presignTtlSeconds: z.coerce.number().int().min(60).default(3600),
+});
+
 const runtimeSchema = z.object({
   recovery: z.object({
     enabled: z.boolean().default(true),
@@ -419,6 +441,14 @@ export const AppConfigSchema = z.object({
   cognition: cognitionSchema,
   avatarAutorun: avatarAutorunSchema,
   sse: sseSchema,
+  objectStorage: objectStorageSchema.default({
+    provider: 'local',
+    s3Bucket: '', s3Region: '', s3Endpoint: '', s3AccessKeyId: '', s3SecretAccessKey: '',
+    gcsBucket: '', gcsProjectId: '', gcsKeyFile: '',
+    azureConnectionString: '', azureContainer: '',
+    localPath: '/tmp/chrono-exports',
+    presignTtlSeconds: 3600,
+  }),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -558,6 +588,16 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_AUTORUN_MAX_ITEMS:        (v) => { deepSet(env, 'avatarAutorun.maxItemsPerRun', parseInt(v, 10)); },
     CHRONO_AUTORUN_DRIFT_THRESHOLD:  (v) => { deepSet(env, 'avatarAutorun.defaultDriftThreshold', parseFloat(v)); },
     CHRONO_AUTORUN_SOURCE_TIMEOUT_MS: (v) => { deepSet(env, 'avatarAutorun.sourceTimeoutMs', parseInt(v, 10)); },
+    CHRONO_OBJECT_STORAGE_PROVIDER:       (v) => { deepSet(env, 'objectStorage.provider', v); },
+    CHRONO_S3_BUCKET:                     (v) => { deepSet(env, 'objectStorage.s3Bucket', v); },
+    CHRONO_S3_REGION:                     (v) => { deepSet(env, 'objectStorage.s3Region', v); },
+    CHRONO_S3_ENDPOINT:                   (v) => { deepSet(env, 'objectStorage.s3Endpoint', v); },
+    CHRONO_S3_ACCESS_KEY_ID:              (v) => { deepSet(env, 'objectStorage.s3AccessKeyId', v); },
+    CHRONO_S3_SECRET_ACCESS_KEY:          (v) => { deepSet(env, 'objectStorage.s3SecretAccessKey', v); },
+    CHRONO_GCS_BUCKET:                    (v) => { deepSet(env, 'objectStorage.gcsBucket', v); },
+    CHRONO_GCS_PROJECT_ID:                (v) => { deepSet(env, 'objectStorage.gcsProjectId', v); },
+    CHRONO_AZURE_CONNECTION_STRING:       (v) => { deepSet(env, 'objectStorage.azureConnectionString', v); },
+    CHRONO_AZURE_CONTAINER:               (v) => { deepSet(env, 'objectStorage.azureContainer', v); },
   };
 
   for (const [key, setter] of Object.entries(mapping)) {
