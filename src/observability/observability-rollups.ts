@@ -1,4 +1,7 @@
+import { obsCmdClaimEvent } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { applyObservabilityRollupDelta, type ObservabilityEventType, type ObservabilityRollupDelta } from './observability-outbox.js';
 
 export interface ObservabilityStoredEvent {
@@ -96,16 +99,13 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function claimObservabilityEvent(db: IDatabase, event: ObservabilityStoredEvent): boolean {
-  const result = db.prepare<void>(
-    `INSERT INTO observability_processed_events (
-      event_id, tenant_id, event_type, processed_at
-    ) VALUES (?, ?, ?, ?)
-    ON CONFLICT(event_id) DO NOTHING`,
-  ).run(
-    event.id!,
-    event.tenantId,
-    event.eventType,
-    Date.now(),
-  );
-  return result.changes > 0;
+  registerCoreSelfExecutors();
+  const tx = directUnitOfWork(db);
+  const result = tx.execute(obsCmdClaimEvent({
+    eventId: event.id!,
+    tenantId: event.tenantId,
+    eventType: event.eventType,
+    processedAt: Date.now(),
+  }));
+  return result.rowsAffected > 0;
 }

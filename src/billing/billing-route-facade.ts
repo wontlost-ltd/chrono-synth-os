@@ -3,7 +3,10 @@
  * 封装计费路由的业务逻辑：计划管理、订阅、用量、Stripe 集成、附加组件
  */
 
+import { orgQueryTenantUserEmail } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { AppConfig } from '../config/schema.js';
 import { BillingService } from './billing-service.js';
 import { SettlementReconciliationService } from './settlement-reconciliation-service.js';
@@ -44,7 +47,9 @@ async function ensureStripeCustomer(
   if (inflight) return inflight;
 
   const promise = (async () => {
-    const user = db.prepare<{ email: string }>('SELECT email FROM users WHERE tenant_id = ? LIMIT 1').get(tenantId);
+    registerCoreSelfExecutors();
+    const tx = directUnitOfWork(db);
+    const user = tx.queryOne(orgQueryTenantUserEmail(tenantId));
     if (!user) throw new StateError('租户无关联用户', ErrorCode.STATE_INVALID_TRANSITION);
     const customer = await createCustomer(config, user.email, tenantId);
     webhookService.persistStripeCustomerId(customer.id, sub?.id);

@@ -9,8 +9,11 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { apikeyQueryByHash } from '@chrono/kernel';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
+import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
 /** 不需要认证的路径前缀（仅健康检查端点豁免，指标端点需认证） */
@@ -34,14 +37,6 @@ function isMetricsPath(path: string): boolean {
   return path === '/metrics' || path === '/metrics/prometheus';
 }
 
-interface ApiKeyRow {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly key_hash: string;
-  readonly plan_id: string;
-  readonly is_revoked: number;
-}
-
 /** API Key 的 SHA-256 哈希（与数据库存储格式一致） */
 function hashKey(key: string): string {
   return createHash('sha256').update(key).digest('hex');
@@ -56,6 +51,9 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
   if (validKeys.length === 0 && !db) {
     app.log.warn('auth.enabled=true 但 apiKeys 为空且无 DB，所有需认证的端点将被拒绝访问');
   }
+
+  if (db) registerCoreSelfExecutors();
+  const tx = db ? directUnitOfWork(db) : null;
 
   app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
     /* 运维端点和 CORS 预检请求豁免 */
@@ -104,12 +102,10 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
     }
 
     /* 优先从 DB 查找 API Key（绑定租户和计划） */
-    if (db) {
+    if (tx) {
       try {
         const keyHash = hashKey(apiKey);
-        const row = db.prepare<ApiKeyRow>(
-          'SELECT id, tenant_id, key_hash, plan_id, is_revoked FROM api_keys WHERE key_hash = ? AND is_revoked = 0',
-        ).get(keyHash);
+        const row = tx.queryOne(apikeyQueryByHash(keyHash));
         if (row) {
           /* 注入伪 JWT user 以便下游计划感知限流和租户解析 */
           (request as unknown as { user: { sub: string; tenantId: string; role: string; planId: string } }).user = {

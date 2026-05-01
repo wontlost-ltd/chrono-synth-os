@@ -20,6 +20,7 @@ export const OBS_CMD_MARK_PROCESSING = 'obs-outbox.mark-processing' as const;
 export const OBS_CMD_MARK_SENT = 'obs-outbox.mark-sent' as const;
 export const OBS_CMD_MARK_FAILED = 'obs-outbox.mark-failed' as const;
 export const OBS_CMD_APPLY_ROLLUP_DELTA = 'obs-outbox.apply-rollup-delta' as const;
+export const OBS_CMD_CLAIM_EVENT = 'obs-outbox.claim-event' as const;
 
 /* ── 行类型 ── */
 
@@ -91,6 +92,13 @@ export interface ObsMarkFailedParams {
   status: string;
 }
 
+export interface ObsClaimEventParams {
+  eventId: string;
+  tenantId: string;
+  eventType: string;
+  processedAt: number;
+}
+
 export interface ObsApplyRollupDeltaParams {
   tenantId: string;
   runtimeCompletedCount: number;
@@ -157,4 +165,8 @@ export function obsCmdMarkFailed(params: ObsMarkFailedParams): Command<ObsMarkFa
 
 export function obsCmdApplyRollupDelta(params: ObsApplyRollupDeltaParams): Command<ObsApplyRollupDeltaParams> {
   return { kind: OBS_CMD_APPLY_ROLLUP_DELTA, params };
+}
+
+export function obsCmdClaimEvent(params: ObsClaimEventParams): Command<ObsClaimEventParams> {
+  return { kind: OBS_CMD_CLAIM_EVENT, params };
 }

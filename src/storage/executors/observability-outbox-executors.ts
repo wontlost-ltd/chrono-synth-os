@@ -7,14 +7,14 @@ import type {
   ObsOutboxRow, ObsRollupRow,
   ObsPublishEventParams, ObsRequeueStaleParams,
   ObsMarkProcessingParams, ObsMarkSentParams, ObsMarkFailedParams,
-  ObsApplyRollupDeltaParams,
+  ObsApplyRollupDeltaParams, ObsClaimEventParams,
 } from '@chrono/kernel';
 import {
   OBS_QUERY_PENDING_EVENTS, OBS_QUERY_BACKLOG_PENDING,
   OBS_QUERY_BACKLOG_PROCESSING, OBS_QUERY_BACKLOG_FAILED, OBS_QUERY_ROLLUP,
   OBS_CMD_PUBLISH_EVENT, OBS_CMD_REQUEUE_STALE,
   OBS_CMD_MARK_PROCESSING, OBS_CMD_MARK_SENT, OBS_CMD_MARK_FAILED,
-  OBS_CMD_APPLY_ROLLUP_DELTA,
+  OBS_CMD_APPLY_ROLLUP_DELTA, OBS_CMD_CLAIM_EVENT,
 } from '@chrono/kernel';
 
 export function registerObservabilityOutboxExecutors(): void {
@@ -141,6 +141,16 @@ export function registerObservabilityOutboxExecutors(): void {
       p.personaGrowthTotal, p.personaGrowthEventCount, p.personaReputationDeltaTotal,
       p.updatedAt,
     );
+    return { rowsAffected: result.changes };
+  });
+
+  registerCommand<ObsClaimEventParams>(OBS_CMD_CLAIM_EVENT, (db, p) => {
+    const result = db.prepare<void>(
+      `INSERT INTO observability_processed_events (
+        event_id, tenant_id, event_type, processed_at
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(event_id) DO NOTHING`,
+    ).run(p.eventId, p.tenantId, p.eventType, p.processedAt);
     return { rowsAffected: result.changes };
   });
 }

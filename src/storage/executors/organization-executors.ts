@@ -10,7 +10,7 @@ import {
   ORG_QUERY_WORKSPACE_BY_ID, ORG_QUERY_MEMBERSHIP,
   ORG_QUERY_ROLE_BINDING_EXISTS, ORG_QUERY_ROLE_BINDING_EXISTS_WS,
   ORG_QUERY_ORG_ROW, ORG_QUERY_WORKSPACE_ROW,
-  ORG_QUERY_ACTIVE_MEMBERSHIP, ORG_QUERY_MEMBERSHIP_ROLES,
+  ORG_QUERY_ACTIVE_MEMBERSHIP, ORG_QUERY_MEMBERSHIP_ROLES, ORG_QUERY_TENANT_USER_EMAIL,
   ORG_CMD_CREATE_ORG, ORG_CMD_CREATE_WORKSPACE,
   ORG_CMD_CREATE_MEMBERSHIP, ORG_CMD_CREATE_ROLE_BINDING,
   ORG_CMD_UPDATE_MEMBERSHIP_ACTIVE,
@@ -18,7 +18,7 @@ import {
 import type {
   OrgListByUserRow, OrgIdRow, OrgRow, OrgWorkspaceRow,
   OrgMemberRow, OrgRoleBindingRow, OrgUserRow,
-  OrgActiveMembershipRow, OrgMembershipRoleRow,
+  OrgActiveMembershipRow, OrgMembershipRoleRow, OrgTenantUserEmailRow,
   OrgTenantUserParams, OrgTenantSlugParams, OrgTenantIdParams,
   OrgMembersParams, OrgRoleBindingsParams, OrgWorkspaceByIdParams,
   OrgMembershipParams, OrgRoleBindingExistsParams, OrgRoleBindingExistsWsParams,
@@ -152,6 +152,12 @@ export function registerOrganizationExecutors(): void {
        WHERE rb.tenant_id = ? AND rb.organization_id = ? AND rb.membership_id = ?
        ORDER BY rb.role ASC`,
     ).all(p.tenantId, p.organizationId, p.membershipId);
+  });
+
+  registerQuery<OrgTenantUserEmailRow | null, string>(ORG_QUERY_TENANT_USER_EMAIL, (db, tenantId) => {
+    return db.prepare<OrgTenantUserEmailRow>(
+      'SELECT email FROM users WHERE tenant_id = ? LIMIT 1',
+    ).get(tenantId) ?? null;
   });
 
   registerCommand<OrgCreateOrgParams>(ORG_CMD_CREATE_ORG, (db, p) => {

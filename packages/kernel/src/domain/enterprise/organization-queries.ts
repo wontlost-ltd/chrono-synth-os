@@ -21,6 +21,7 @@ export const ORG_QUERY_ORG_ROW = 'org.orgRow' as const;
 export const ORG_QUERY_WORKSPACE_ROW = 'org.workspaceRow' as const;
 export const ORG_QUERY_ACTIVE_MEMBERSHIP = 'org.activeMembership' as const;
 export const ORG_QUERY_MEMBERSHIP_ROLES = 'org.membershipRoles' as const;
+export const ORG_QUERY_TENANT_USER_EMAIL = 'org.tenantUserEmail' as const;
 
 /* ── Command Kinds ── */
 
@@ -100,6 +101,10 @@ export interface OrgActiveMembershipRow {
 
 export interface OrgMembershipRoleRow {
   readonly role: string;
+}
+
+export interface OrgTenantUserEmailRow {
+  readonly email: string;
 }
 
 /* ── 参数类型 ── */
@@ -260,6 +265,10 @@ export function orgQueryActiveMembership(params: OrgMembershipParams): Query<Org
 
 export function orgQueryMembershipRoles(params: OrgRoleBindingsParams): Query<readonly OrgMembershipRoleRow[], OrgRoleBindingsParams> {
   return { kind: ORG_QUERY_MEMBERSHIP_ROLES, params };
+}
+
+export function orgQueryTenantUserEmail(tenantId: string): Query<OrgTenantUserEmailRow | null, string> {
+  return { kind: ORG_QUERY_TENANT_USER_EMAIL, params: tenantId };
 }
 
 /* ── Command 工厂 ── */
