@@ -86,21 +86,17 @@ bash scripts/backup_storage.sh
 
 ## Production Baseline
 
-企业生产部署不要直接套用根目录 `k8s/*.yml` 的示例清单。正式基线已经单独整理到：
+根目录 `k8s/` 中的清单已废弃，仅供本地参考（详见 [k8s/README.md](k8s/README.md)）。生产 K8s / Podman 编排统一由同级仓库 `../chrono-synth-deploy` 维护：
 
 ```bash
-k8s/production/
+cd ../chrono-synth-deploy
+# K8s
+./deploy.sh secrets && ./deploy.sh build --push && ./deploy.sh k3s dev
+
+# Podman
+cp podman/.env.example podman/.env
+./deploy.sh podman build && ./deploy.sh podman up
 ```
-
-其中包含：
-
-- Postgres + Redis + Kafka 前提下的生产配置
-- `Secret` 分离
-- `PodDisruptionBudget`
-- `Ingress`
-- ingress/egress `NetworkPolicy`
-- `ServiceMonitor`
-- 独立 observability worker 部署模板
 
 上线前请先阅读 [docs/production-readiness.md](docs/production-readiness.md)。
 
@@ -205,49 +201,42 @@ os.close();
 ## 项目结构
 
 ```
-chrono-synth-os/
-├── src/
-│   ├── core/                    # 慢层：核心价值、记忆图谱、叙事
-│   │   ├── core-rhythm-layer.ts
-│   │   ├── value-store.ts
-│   │   ├── memory-graph.ts
-│   │   └── narrative-store.ts
-│   ├── accelerated/             # 快层：并行人格、模拟引擎
-│   │   ├── accelerated-layer.ts
-│   │   ├── persona-engine.ts
-│   │   └── simulation-runner.ts
-│   ├── meta/                    # 元调控层：冲突、资源、集成
-│   │   ├── meta-regulation-layer.ts
-│   │   ├── conflict-resolver.ts
-│   │   ├── integration-engine.ts
-│   │   └── resource-allocator.ts
-│   ├── recovery/                # 快照恢复与演化合并
-│   │   ├── snapshot-store.ts
-│   │   └── evolution-merger.ts
-│   ├── events/                  # 类型化事件总线
-│   │   ├── event-bus.ts
-│   │   └── typed-event-emitter.ts
-│   ├── storage/                 # SQLite 存储与序列化
-│   │   ├── database.ts
-│   │   ├── migrations.ts
-│   │   └── serialization.ts
-│   ├── types/                   # 类型定义
-│   │   ├── core-self.ts
-│   │   ├── persona-version.ts
-│   │   ├── meta-regulation.ts
-│   │   ├── snapshot.ts
-│   │   └── events.ts
-│   ├── utils/                   # 工具函数
-│   │   ├── clock.ts
-│   │   ├── id-generator.ts
-│   │   └── logger.ts
+chrono-synth-os/               # monorepo 根
+├── packages/                  # 可移植跨运行时包
+│   ├── contracts/             # @chrono/contracts — 类型、Zod schema、文案字典、设计 token
+│   ├── kernel/                # @chrono/kernel — IDatabase 抽象、UnitOfWork、query executor
+│   ├── kernel-testkit/        # @chrono/kernel-testkit — 测试工具：内存 DB、迁移助手
+│   ├── data-plane/            # @chrono/data-plane — 平台密钥解析器等数据层接口
+│   ├── sync-engine/           # @chrono/sync-engine — deriveRuntimeSyncState 纯状态机
+│   └── design-tokens/         # @chrono/design-tokens — chronoDesignTokens（颜色/间距/字型）
+├── apps/
+│   ├── desktop/               # Electron/Tauri 桌面端（SyncStatusBadge、本地加密）
+│   └── mobile/                # React Native 移动端（RuntimeSyncBadge、离线队列）
+├── src/                       # 后端主服务
+│   ├── core/                  # 慢层：核心价值、记忆图谱、叙事
+│   ├── accelerated/           # 快层：并行人格、模拟引擎
+│   ├── meta/                  # 元调控层：冲突、资源、集成
+│   ├── recovery/              # 快照恢复与演化合并
+│   ├── server/                # Fastify HTTP 服务（路由、插件、API v1/v2）
+│   ├── data-plane/            # SQLite 事件账本、双写 flush worker
+│   ├── enterprise/            # KMS 客户端、信封加密、密钥审计
+│   ├── storage/               # 数据库抽象、迁移、字段级加密
 │   ├── test/
-│   │   ├── unit/                # 单元测试（7 个模块）
-│   │   └── integration/         # 集成测试（生命周期）
-│   ├── chrono-synth-os.ts       # 主编排器
-│   └── index.ts                 # 公开 API 入口
-├── package.json
-└── tsconfig.json
+│   │   ├── unit/              # 单元测试（79 个文件）
+│   │   ├── integration/       # 集成测试（25 个文件）
+│   │   └── contract/          # 路由 schema 快照测试
+│   ├── main.ts                # 后端主入口
+│   ├── main-observability-worker.ts
+│   └── index.ts               # 公开 API 入口
+├── scripts/
+│   ├── check-forbidden-imports.sh
+│   ├── rollback-dual-write.ts
+│   └── backup_db.sh / restore_db.sh / backup_storage.sh
+├── docs/
+│   ├── observability-worker-runbook.md
+│   ├── disaster-recovery-runbook.md
+│   └── production-readiness.md
+└── k8s/                       # ⚠️ 已废弃，见 k8s/README.md
 ```
 
 ## 脚本命令
@@ -256,10 +245,16 @@ chrono-synth-os/
 |------|------|
 | `npm run build` | TypeScript 编译 |
 | `npm run typecheck` | 类型检查（不生成产物） |
-| `npm run test:unit` | 运行单元测试 |
-| `npm run test:integration` | 运行集成测试 |
+| `npm run test:unit` | 运行单元测试（~756 个） |
+| `npm run test:integration` | 运行集成测试（~214 个） |
+| `npm run test:contract` | 运行路由 schema 快照测试 |
+| `npm run test:packages` | 运行所有 packages/ 包测试 |
+| `npm run test:ops` | 运行运维脚本 smoke 测试 |
 | `npm run test` | 运行全部测试 |
 | `npm run test:golden` | 完整验证（类型检查 + 编译 + 全部测试） |
+| `npm run check:forbidden-imports` | 扫描禁止的跨层导入（IDatabase 泄漏等） |
+| `npm run start` | 启动后端主服务 |
+| `npm run start:observability-worker` | 启动独立 observability worker |
 
 ## 技术栈
 
