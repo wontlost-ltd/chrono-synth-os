@@ -129,14 +129,13 @@ export function deriveRuntimeSyncState(
 
     case 'sync.merge.completed': {
       if (current.state !== 'merging') return finalize(current);
-      const hasPendingPush = ev.pendingPushCount > 0;
       return finalize({
         ...current,
-        state: hasPendingPush ? 'pushing' : resolveBaseState(current.syncEnabled, current.networkOnline),
+        state: 'pushing',
         pendingPullCount: 0,
         pendingPushCount: ev.pendingPushCount,
-        lastSyncCompletedAt: hasPendingPush ? current.lastSyncCompletedAt : ev.occurredAt,
-        activeRunId: hasPendingPush ? current.activeRunId : null,
+        lastSyncCompletedAt: current.lastSyncCompletedAt,
+        activeRunId: current.activeRunId,
       });
     }
 

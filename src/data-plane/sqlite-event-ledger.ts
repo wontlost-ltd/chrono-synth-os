@@ -64,8 +64,10 @@ export class SqliteEventLedger implements EventLedger {
 
     this.db.transaction(() => {
       const maxRow = this.db
-        .prepare<{ max_v: number | null }>('SELECT MAX(stream_version) AS max_v FROM event_ledger WHERE stream_id = ?')
-        .get(streamId);
+        .prepare<{ max_v: number | null }>(
+          'SELECT MAX(stream_version) AS max_v FROM event_ledger WHERE tenant_id = ? AND stream_id = ?',
+        )
+        .get(tenantId, streamId);
       const currentVersion = maxRow?.max_v ?? -1;
 
       if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
@@ -103,17 +105,17 @@ export class SqliteEventLedger implements EventLedger {
   }
 
   async loadStream(
-    _tenantId: string,
+    tenantId: string,
     streamId: string,
     sinceVersion = -1,
   ): Promise<readonly LedgerEvent[]> {
     const rows = this.db
       .prepare<EventLedgerRow>(
         `SELECT * FROM event_ledger
-         WHERE stream_id = ? AND stream_version > ?
+         WHERE tenant_id = ? AND stream_id = ? AND stream_version > ?
          ORDER BY stream_version ASC`,
       )
-      .all(streamId, sinceVersion);
+      .all(tenantId, streamId, sinceVersion);
     return rows.map(toEvent);
   }
 
@@ -136,11 +138,15 @@ export class SqliteEventLedger implements EventLedger {
       rows = this.db
         .prepare<EventLedgerRow>(
           `SELECT * FROM event_ledger
-           WHERE event_id > ?
+           WHERE occurred_at > (SELECT occurred_at FROM event_ledger WHERE event_id = ?)
+              OR (
+                occurred_at = (SELECT occurred_at FROM event_ledger WHERE event_id = ?)
+                AND event_id > ?
+              )
            ORDER BY occurred_at ASC, event_id ASC
            LIMIT ?`,
         )
-        .all(checkpoint.last_event_id, batchSize);
+        .all(checkpoint.last_event_id, checkpoint.last_event_id, checkpoint.last_event_id, batchSize);
     }
 
     const lastEventId = rows.length > 0 ? rows[rows.length - 1]!.event_id : (checkpoint?.last_event_id ?? '');

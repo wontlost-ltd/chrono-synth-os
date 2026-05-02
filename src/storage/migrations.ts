@@ -1840,9 +1840,9 @@ const v052_event_ledger: Migration = {
       command_id TEXT NOT NULL,
       payload_json TEXT NOT NULL,
       backfill_source_id TEXT,
-      UNIQUE(stream_id, stream_version)
+      UNIQUE(tenant_id, stream_id, stream_version)
     )`,
-    `CREATE INDEX IF NOT EXISTS idx_event_ledger_stream ON event_ledger(stream_id, stream_version)`,
+    `CREATE INDEX IF NOT EXISTS idx_event_ledger_stream ON event_ledger(tenant_id, stream_id, stream_version)`,
     `CREATE INDEX IF NOT EXISTS idx_event_ledger_tenant ON event_ledger(tenant_id, occurred_at)`,
     `CREATE TABLE IF NOT EXISTS event_ledger_consumer_checkpoints (
       consumer_id TEXT PRIMARY KEY,

@@ -23,7 +23,11 @@ function getApiVersion(): string {
 }
 
 export function registerApiVersion(app: FastifyInstance): void {
-  app.addHook('onSend', (_request: FastifyRequest, reply: FastifyReply, _payload, done) => {
+  app.addHook('onSend', (request: FastifyRequest, reply: FastifyReply, _payload, done) => {
+    if (request.url === '/healthz') {
+      done();
+      return;
+    }
     reply.header('X-API-Version', getApiVersion());
     done();
   });
