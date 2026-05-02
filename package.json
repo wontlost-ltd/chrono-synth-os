@@ -13,8 +13,8 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "tsc -b tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.src.json",
+    "build": "tsc -b tsconfig.json && tsc -p tsconfig.scripts.json",
+    "typecheck": "tsc --noEmit -p tsconfig.src.json && tsc --noEmit -p tsconfig.scripts.json",
     "test:unit": "node --test dist/test/unit/**/*.test.js",
     "test:integration": "node --test dist/test/integration/**/*.test.js",
     "test:contract": "node --test dist/test/contract/**/*.test.js",

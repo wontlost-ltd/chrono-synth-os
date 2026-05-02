@@ -69,6 +69,7 @@ import { registerKnowledgeSourceRoutes } from './routes/knowledge-sources.js';
 import { registerPersonaCoreRoutes } from './routes/persona-core.js';
 import { registerSseRoutes } from './routes/sse.js';
 import { registerScimRoutes } from './routes/scim.js';
+import { registerV2Routes } from './routes/v2/index.js';
 import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
@@ -325,6 +326,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
   registerKnowledgeSourceRoutes(app, db);
   registerSseRoutes(app, deps.os, config);
+  registerV2Routes(app, db, config);
 
   /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
   if (!config.queue.enabled) {
