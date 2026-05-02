@@ -10,6 +10,7 @@
     { "path": "./packages/sync-engine" },
     { "path": "./packages/sync-engine/tsconfig.test.json" },
     { "path": "./packages/design-tokens" },
-    { "path": "./packages/kernel-testkit" }
+    { "path": "./packages/kernel-testkit" },
+    { "path": "./apps/desktop" }
   ]
 }

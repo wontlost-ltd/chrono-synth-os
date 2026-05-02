@@ -1,0 +1,7 @@
+{
+  "productName": "Chrono Desktop",
+  "version": "0.1.0",
+  "identifier": "com.chrono.desktop",
+  "build": { "frontendDist": "../dist" },
+  "app": { "windows": [{ "title": "Chrono", "width": 1200, "height": 800 }] }
+}
