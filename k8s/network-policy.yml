@@ -1,3 +1,4 @@
+# DEPRECATED: use chrono-synth-deploy/k8s/ instead
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

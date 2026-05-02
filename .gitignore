@@ -10,3 +10,4 @@ dist-test/
 .env
 *.db
 backups/
+**/.DS_Store

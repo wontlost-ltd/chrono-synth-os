@@ -1,3 +1,4 @@
+# DEPRECATED: use chrono-synth-deploy/k8s/ instead
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

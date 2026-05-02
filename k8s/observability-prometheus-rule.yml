@@ -1,3 +1,4 @@
+# DEPRECATED: use chrono-synth-deploy/k8s/ instead
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
