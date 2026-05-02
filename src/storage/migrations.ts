@@ -1824,6 +1824,108 @@ const v051_tenant_byos_object_storage: Migration = {
   ],
 };
 
+/** v052: 事件账本核心表（event_ledger、消费者检查点、权威模式控制） */
+const v052_event_ledger: Migration = {
+  version: 'v052',
+  description: '事件账本：event_ledger 主表、消费者检查点与权威模式控制表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS event_ledger (
+      event_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      stream_id TEXT NOT NULL,
+      stream_version INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      occurred_at INTEGER NOT NULL,
+      command_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      backfill_source_id TEXT,
+      UNIQUE(stream_id, stream_version)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_event_ledger_stream ON event_ledger(stream_id, stream_version)`,
+    `CREATE INDEX IF NOT EXISTS idx_event_ledger_tenant ON event_ledger(tenant_id, occurred_at)`,
+    `CREATE TABLE IF NOT EXISTS event_ledger_consumer_checkpoints (
+      consumer_id TEXT PRIMARY KEY,
+      last_event_id TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS event_ledger_authority (
+      singleton INTEGER PRIMARY KEY DEFAULT 1 CHECK(singleton = 1),
+      mode TEXT NOT NULL DEFAULT 'tables_primary',
+      changed_at INTEGER NOT NULL,
+      changed_reason TEXT NOT NULL DEFAULT ''
+    )`,
+    `INSERT OR IGNORE INTO event_ledger_authority(singleton, mode, changed_at) VALUES(1, 'tables_primary', 0)`,
+  ],
+};
+
+/** v053: persona_core 双写发件箱（用于 dual_write / ledger_primary 模式） */
+const v053_persona_core_ledger_outbox: Migration = {
+  version: 'v053',
+  description: 'persona_core 双写发件箱：暂存待追加至 event_ledger 的事件',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS persona_core_ledger_outbox (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      stream_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      command_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_attempted_at INTEGER,
+      error TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_persona_outbox_pending ON persona_core_ledger_outbox(tenant_id, created_at) WHERE attempts < 3`,
+  ],
+};
+
+/** v054: 投影存储表 */
+const v054_projection_store: Migration = {
+  version: 'v054',
+  description: '投影存储：读模型持久化，支持按租户+投影名+ID读写',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS projection_store (
+      tenant_id TEXT NOT NULL,
+      projection TEXT NOT NULL,
+      id TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, projection, id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_projection_store_list ON projection_store(tenant_id, projection, id)`,
+  ],
+};
+
+/** v055: 平台密钥撤销记录表 */
+const v055_platform_key_revocations: Migration = {
+  version: 'v055',
+  description: '平台密钥撤销记录',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS platform_key_revocations (
+      key_ref TEXT PRIMARY KEY,
+      revoked_at INTEGER NOT NULL,
+      revoked_by TEXT
+    )`,
+  ],
+};
+
+/** v056: 平台运维操作日志表 */
+const v056_platform_ops_log: Migration = {
+  version: 'v056',
+  description: '平台运维操作日志（控制平面事件）',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS platform_ops_log (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      occurred_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_platform_ops_log_time ON platform_ops_log(occurred_at DESC)`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -1877,6 +1979,11 @@ const MIGRATIONS: readonly Migration[] = [
   v049_export_jobs,
   v050_kms_key_audit,
   v051_tenant_byos_object_storage,
+  v052_event_ledger,
+  v053_persona_core_ledger_outbox,
+  v054_projection_store,
+  v055_platform_key_revocations,
+  v056_platform_ops_log,
 ];
 
 interface MigrationRow {
