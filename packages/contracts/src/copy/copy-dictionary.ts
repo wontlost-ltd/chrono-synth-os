@@ -27,6 +27,30 @@ export type CopyMessageId =
   | 'conflict.blocking'
   | 'conflict.warning';
 
+export const enUSCatalog: Readonly<Record<CopyMessageId, string>> = Object.freeze({
+  'sync.unconfigured': 'Sync not configured',
+  'sync.disabled': 'Sync disabled',
+  'sync.idle': 'Synced',
+  'sync.pulling': 'Pulling remote changes...',
+  'sync.merging': 'Merging changes...',
+  'sync.pushing': 'Pushing {count} changes...',
+  'sync.paused': 'Sync paused',
+  'sync.offline': 'Offline — {count} changes queued',
+  'sync.conflicted': 'Sync paused — resolve {count} conflicts',
+  'sync.error': 'Sync error: {message}',
+  'portability.export_started': 'Export started, you will be notified when done',
+  'portability.export_completed': 'Export complete — ready to download',
+  'portability.export_failed': 'Export failed, please try again',
+  'portability.export_partial': 'Partial export succeeded — see details',
+  'portability.import_dryrun': 'Running import preflight…',
+  'portability.import_completed': 'Import complete',
+  'portability.import_failed': 'Import failed — see error details',
+  'portability.import_blocked': 'Import blocked by preflight issues — fix and retry',
+  'conflict.empty_state': 'No pending conflicts',
+  'conflict.blocking': '{count} blocking conflicts need attention',
+  'conflict.warning': '{count} non-blocking conflicts — recommended to resolve',
+});
+
 export const zhCNCatalog: Readonly<Record<CopyMessageId, string>> = Object.freeze({
   'sync.unconfigured': '同步未配置',
   'sync.disabled': '同步已关闭',

@@ -1,3 +1,4 @@
+import { syncStateLabelsEn } from '@chrono/contracts';
 import type { RuntimeSyncStateV1 } from '@chrono/contracts';
 import { chronoDesignTokens } from '@chrono/design-tokens';
 import { StyleSheet, Text, View } from 'react-native';
@@ -6,25 +7,12 @@ interface Props {
   state: RuntimeSyncStateV1;
 }
 
-const LABELS: Record<RuntimeSyncStateV1, string> = {
-  unconfigured: 'Unconfigured',
-  disabled: 'Disabled',
-  idle: 'Synced',
-  pulling: 'Pulling',
-  merging: 'Merging',
-  pushing: 'Pushing',
-  paused: 'Paused',
-  offline: 'Offline',
-  conflicted: 'Conflict inbox',
-  error: 'Sync error',
-};
-
 export function RuntimeSyncBadge({ state }: Props) {
   const color = chronoDesignTokens.color.status[state];
 
   return (
     <View
-      accessibilityLabel={`Sync status: ${LABELS[state]}`}
+      accessibilityLabel={`Sync status: ${syncStateLabelsEn[state]}`}
       accessibilityRole="text"
       style={[
         styles.badge,
@@ -34,7 +22,7 @@ export function RuntimeSyncBadge({ state }: Props) {
         },
       ]}
     >
-      <Text style={[styles.label, { color }]}>{LABELS[state]}</Text>
+      <Text style={[styles.label, { color }]}>{syncStateLabelsEn[state]}</Text>
     </View>
   );
 }

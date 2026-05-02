@@ -49,3 +49,17 @@ export const SyncStatusSnapshotV1Schema = z.object({
 }).strict();
 
 export type SyncStatusSnapshotV1 = z.infer<typeof SyncStatusSnapshotV1Schema>;
+
+/** 英文标签 — 供不使用 i18n 的运行时（desktop、mobile）直接消费 */
+export const syncStateLabelsEn: Readonly<Record<RuntimeSyncStateV1, string>> = Object.freeze({
+  unconfigured: 'Unconfigured',
+  disabled: 'Disabled',
+  idle: 'Synced',
+  pulling: 'Pulling',
+  merging: 'Merging',
+  pushing: 'Pushing',
+  paused: 'Paused',
+  offline: 'Offline',
+  conflicted: 'Conflict inbox',
+  error: 'Sync error',
+});
