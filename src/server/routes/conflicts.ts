@@ -20,6 +20,7 @@ import {
   ConflictResolveResultV1Schema,
 } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
+import { parsePagination, paginate } from '../plugins/pagination.js';
 
 function parseJsonRecord(value: string): Record<string, string | number> {
   const parsed = JSON.parse(value) as unknown;
@@ -78,8 +79,9 @@ export function registerConflictRoutes(
 ): void {
   /* GET /api/v1/conflicts — list unresolved conflicts for tenant */
   app.get('/api/v1/conflicts', { preHandler: requireRole('user') }, async (request) => {
+    const params = parsePagination(request.query as Record<string, unknown>);
     const conflicts = listConflicts(db, request.tenantId, true).map(toInboxItem);
-    return { data: conflicts };
+    return paginate(conflicts, params);
   });
 
   /* GET /api/v1/conflicts/:conflictId — get single conflict */
