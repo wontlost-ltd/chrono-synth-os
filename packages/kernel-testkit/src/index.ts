@@ -9,6 +9,8 @@ import {
   type SyncCapabilitiesV1,
   type SyncStatusSnapshotV1,
 } from '@chrono/contracts';
+import { createMemoryDatabase, type IDatabase } from '../../../src/storage/database.js';
+import { runMigrations } from '../../../src/storage/migrations.js';
 
 function buildCapabilities(
   state: RuntimeSyncStateV1,
@@ -53,4 +55,20 @@ export function createSyncStatusSnapshotFixture(
     capabilities: buildCapabilities(state, syncEnabled, networkOnline, conflictCount),
     ...overrides,
   });
+}
+
+export function createMigratedMemoryDb(): IDatabase {
+  const db = createMemoryDatabase();
+  runMigrations(db);
+  return db;
+}
+
+export function withMigratedDb<T>(fn: (db: IDatabase) => T): T {
+  return fn(createMigratedMemoryDb());
+}
+
+export async function withMigratedDbAsync<T>(
+  fn: (db: IDatabase) => Promise<T>,
+): Promise<T> {
+  return fn(createMigratedMemoryDb());
 }

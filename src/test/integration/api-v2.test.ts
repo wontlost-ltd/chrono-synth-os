@@ -49,4 +49,16 @@ describe('API v2 coexistence', () => {
       deprecationNotice: null,
     });
   });
+
+  it('v1 healthz route does not have X-API-Version header', async () => {
+    const res = await app.inject({ method: 'GET', url: '/healthz' });
+
+    assert.equal(res.headers['x-api-version'], undefined);
+  });
+
+  it('unknown v2 path returns 404', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/v2/does-not-exist' });
+
+    assert.equal(res.statusCode, 404);
+  });
 });

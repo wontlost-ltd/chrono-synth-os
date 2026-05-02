@@ -47,6 +47,23 @@ describe('SqliteEventLedger', () => {
     );
   });
 
+  it('append() accepts expectedVersion=0 exact match', async () => {
+    const first = await ledger.append('t1', 'stream-exact', [DRAFT]);
+    assert.equal(first.newVersion, 0);
+
+    const second = await ledger.append('t1', 'stream-exact', [DRAFT], 0);
+    assert.equal(second.newVersion, 1);
+  });
+
+  it('append() rejects expectedVersion mismatch when current is 0', async () => {
+    await ledger.append('t1', 'stream-current-zero', [DRAFT]);
+
+    await assert.rejects(
+      () => ledger.append('t1', 'stream-current-zero', [DRAFT], 1),
+      (err: unknown) => err instanceof VersionConflictError,
+    );
+  });
+
   it('loadStream() returns events in version order', async () => {
     await ledger.append('t1', 'stream-3', [
       { ...DRAFT, commandId: 'cmd-a' },
@@ -64,6 +81,17 @@ describe('SqliteEventLedger', () => {
     assert.equal(events[0]!.streamVersion, 2);
   });
 
+  it('loadStream() filters by tenantId when streamId collides', async () => {
+    await ledger.append('tenant-a', 'shared', [{ ...DRAFT, payloadJson: '{"tenant":"a"}' }]);
+    await ledger.append('tenant-b', 'shared', [{ ...DRAFT, payloadJson: '{"tenant":"b"}' }]);
+
+    const events = await ledger.loadStream('tenant-a', 'shared');
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0]!.tenantId, 'tenant-a');
+    assert.equal(events[0]!.payloadJson, '{"tenant":"a"}');
+  });
+
   it('nextBatch() + ackBatch() advances consumer checkpoint', async () => {
     await ledger.append('t1', 'stream-5', [DRAFT, DRAFT]);
     const batch1 = await ledger.nextBatch('consumer-1', 1);
@@ -79,6 +107,24 @@ describe('SqliteEventLedger', () => {
     const batch = await ledger.nextBatch('consumer-2', 10);
     assert.equal(batch.events.length, 0);
   });
+
+  it('consumer checkpoint persists across new SqliteEventLedger instances', async () => {
+    await ledger.append('t1', 'stream-checkpoint', [
+      { ...DRAFT, commandId: 'cmd-checkpoint-1' },
+      { ...DRAFT, commandId: 'cmd-checkpoint-2' },
+    ]);
+    const ledger1 = new SqliteEventLedger(db);
+    const batch1 = await ledger1.nextBatch('consumer-persisted', 1);
+    assert.equal(batch1.events.length, 1);
+    const ackedEventId = batch1.events[0]!.eventId;
+
+    await ledger1.ackBatch('consumer-persisted', batch1.batchHandle);
+
+    const ledger2 = new SqliteEventLedger(db);
+    const batch2 = await ledger2.nextBatch('consumer-persisted', 10);
+    assert.equal(batch2.events.length, 1);
+    assert.notEqual(batch2.events[0]!.eventId, ackedEventId);
+  });
 });
 
 describe('SqliteAuthoritySwitch', () => {
@@ -92,6 +138,15 @@ describe('SqliteAuthoritySwitch', () => {
     await sw.switchTo('dual_write', 'testing dual write');
     const updated = await sw.currentMode();
     assert.equal(updated, 'dual_write');
+  });
+
+  it('switchTo persists across new SqliteAuthoritySwitch instances', async () => {
+    const db = makeDb();
+    const sw1 = new SqliteAuthoritySwitch(db);
+    await sw1.switchTo('dual_write', 'testing persisted dual write');
+
+    const sw2 = new SqliteAuthoritySwitch(db);
+    assert.equal(await sw2.currentMode(), 'dual_write');
   });
 });
 

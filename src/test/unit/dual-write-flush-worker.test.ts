@@ -20,6 +20,16 @@ describe('DualWriteFlushWorker', () => {
     assert.doesNotThrow(() => worker.stop());
   });
 
+  it('stop() called twice does not throw', () => {
+    const db = makeDb();
+    const worker = new DualWriteFlushWorker({ db, intervalMs: 60_000 });
+
+    worker.start();
+
+    assert.doesNotThrow(() => worker.stop());
+    assert.doesNotThrow(() => worker.stop());
+  });
+
   it('flush() with empty outbox returns zero counts', async () => {
     const db = makeDb();
     const worker = new DualWriteFlushWorker({ db });
@@ -45,5 +55,27 @@ describe('DualWriteFlushWorker', () => {
     const result = await worker.flush();
 
     assert.deepEqual(result, { flushed: 1, failed: 0 });
+  });
+
+  it('flush() processes multiple outbox entries in one call', async () => {
+    const db = makeDb();
+    const worker = new DualWriteFlushWorker({ db });
+
+    for (let i = 1; i <= 3; i++) {
+      personaCoreDualWrite.enqueuePersonaEvent(
+        db,
+        'tenant-worker',
+        `persona:worker-${i}`,
+        'persona.created',
+        `cmd-worker-${i}`,
+        `{"id":"worker-${i}"}`,
+      );
+    }
+
+    const result = await worker.flush();
+    const remaining = db.prepare('SELECT * FROM persona_core_ledger_outbox').all();
+
+    assert.deepEqual(result, { flushed: 3, failed: 0 });
+    assert.equal(remaining.length, 0);
   });
 });

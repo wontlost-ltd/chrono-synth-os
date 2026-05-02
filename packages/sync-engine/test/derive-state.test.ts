@@ -124,6 +124,44 @@ describe('deriveRuntimeSyncState', () => {
     assert.equal(next.capabilities.canResolveConflict, false);
   });
 
+  it('sync.push.completed clears pendingPushCount and activeRunId', () => {
+    const initial = createSyncStatusSnapshotFixture({
+      state: 'pushing',
+      syncEnabled: true,
+      pendingPushCount: 3,
+      activeRunId: 'run_push',
+    });
+    const next = deriveRuntimeSyncState(initial, { type: 'sync.push.completed', occurredAt: 30 });
+    assert.equal(next.state, 'idle');
+    assert.equal(next.pendingPushCount, 0);
+    assert.equal(next.activeRunId, null);
+  });
+
+  it('sync.network.offline from conflicted keeps conflicted state', () => {
+    const initial = createSyncStatusSnapshotFixture({
+      state: 'conflicted',
+      syncEnabled: true,
+      conflictCount: 2,
+    });
+    const next = deriveRuntimeSyncState(initial, { type: 'sync.network.offline', occurredAt: 31 });
+    assert.equal(next.state, 'conflicted');
+    assert.equal(next.networkOnline, false);
+  });
+
+  it('sync.merge.completed with pendingPushCount=0 still transitions to pushing', () => {
+    const initial = createSyncStatusSnapshotFixture({
+      state: 'merging',
+      syncEnabled: true,
+      activeRunId: 'run_merge',
+    });
+    const next = deriveRuntimeSyncState(initial, {
+      type: 'sync.merge.completed',
+      pendingPushCount: 0,
+      occurredAt: 32,
+    });
+    assert.equal(next.state, 'pushing');
+  });
+
   it('ignores out-of-order completion events from unconfigured', () => {
     const initial = createSyncStatusSnapshotFixture();
     const next = runSequence(initial, [

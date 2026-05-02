@@ -53,6 +53,23 @@ describe('ConflictInboxStore', () => {
     });
   }));
 
+  it('createConflict() rejects duplicate conflict_id', () => withDb((db) => {
+    const item = baseConflict();
+    createConflict(db, item);
+
+    assert.throws(() => createConflict(db, item));
+  }));
+
+  it('listConflicts() is scoped to the requested tenant', () => withDb((db) => {
+    createConflict(db, baseConflict({ conflict_id: 'tenant_1_conflict', tenant_id: 'tenant_1' }));
+    createConflict(db, baseConflict({ conflict_id: 'tenant_2_conflict', tenant_id: 'tenant_2' }));
+
+    const rows = listConflicts(db, 'tenant_1');
+
+    assert.equal(rows.length, 1);
+    assert.ok(rows.every((row) => row.tenant_id === 'tenant_1'));
+  }));
+
   it('listConflicts returns only unresolved conflicts when requested', () => withDb((db) => {
     createConflict(db, baseConflict({ conflict_id: 'conflict_open' }));
     createConflict(db, baseConflict({ conflict_id: 'conflict_done' }));
@@ -64,6 +81,17 @@ describe('ConflictInboxStore', () => {
 
   it('resolveConflict returns false for an unknown conflictId', () => withDb((db) => {
     assert.equal(resolveConflict(db, 'missing', 'keep_server', '2026-05-02T02:00:00.000Z'), false);
+  }));
+
+  it('resolveConflict() returns false when already resolved', () => withDb((db) => {
+    createConflict(db, baseConflict());
+
+    assert.equal(resolveConflict(db, 'conflict_1', 'keep_server', '2026-05-02T02:00:00.000Z'), true);
+    assert.equal(resolveConflict(db, 'conflict_1', 'keep_server', '2026-05-02T03:00:00.000Z'), false);
+  }));
+
+  it('getConflict() returns null for missing id', () => withDb((db) => {
+    assert.equal(getConflict(db, 'nonexistent'), null);
   }));
 
   it('countBlockingConflicts counts only unresolved blocking conflicts', () => withDb((db) => {

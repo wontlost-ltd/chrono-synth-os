@@ -41,6 +41,14 @@ describe('SyncEnvelopeV1Schema', () => {
     assert.equal(result.success, true);
   });
 
+  it('accepts expectedVersion=0', () => {
+    const result = SyncEnvelopeV1Schema.safeParse({
+      ...validEnvelope,
+      expectedVersion: 0,
+    });
+    assert.equal(result.success, true);
+  });
+
   it('rejects expiresAt <= createdAt', () => {
     const result = SyncEnvelopeV1Schema.safeParse({
       ...validEnvelope,
@@ -97,10 +105,34 @@ describe('SyncEnvelopeV1Schema', () => {
     assert.equal(result.success, false);
   });
 
+  it('rejects fractional expectedVersion', () => {
+    const result = SyncEnvelopeV1Schema.safeParse({
+      ...validEnvelope,
+      expectedVersion: 1.5,
+    });
+    assert.equal(result.success, false);
+  });
+
   it('rejects whitespace-only nonce', () => {
     const result = SyncEnvelopeV1Schema.safeParse({
       ...validEnvelope,
       nonce: '        ',
+    });
+    assert.equal(result.success, false);
+  });
+
+  it('rejects whitespace-only idempotencyKey', () => {
+    const result = SyncEnvelopeV1Schema.safeParse({
+      ...validEnvelope,
+      idempotencyKey: '   ',
+    });
+    assert.equal(result.success, false);
+  });
+
+  it('rejects whitespace-only signatureKeyId', () => {
+    const result = SyncEnvelopeV1Schema.safeParse({
+      ...validEnvelope,
+      signatureKeyId: '   ',
     });
     assert.equal(result.success, false);
   });

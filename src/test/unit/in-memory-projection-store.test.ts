@@ -28,6 +28,32 @@ describe('InMemoryProjectionStore', () => {
     assert.equal(items.length, 3);
   });
 
+  it('list() returns items in ascending id order', async () => {
+    await store.write('t1', 'proj', 'c', { id: 'c' }, 1);
+    await store.write('t1', 'proj', 'a', { id: 'a' }, 1);
+    await store.write('t1', 'proj', 'b', { id: 'b' }, 1);
+
+    const { items } = await store.list<{ id: string }>('t1', 'proj', { direction: 'asc' });
+
+    assert.deepEqual(items.map((item) => item.id), ['a', 'b', 'c']);
+  });
+
+  it('tenant and projection scopes do not bleed', async () => {
+    await store.write('t1', 'proj', 'id-1', { v: 1 }, 1);
+    await store.write('t2', 'proj', 'id-1', { v: 2 }, 1);
+
+    assert.deepEqual(await store.read('t1', 'proj', 'id-1'), { v: 1 });
+    const { items } = await store.list('t1', 'proj');
+    assert.equal(items.length, 1);
+  });
+
+  it('write() overwrites previous value', async () => {
+    await store.write('t1', 'p', 'x', { n: 1 }, 1);
+    await store.write('t1', 'p', 'x', { n: 2 }, 2);
+
+    assert.deepEqual(await store.read('t1', 'p', 'x'), { n: 2 });
+  });
+
   it('list() with cursor skips correctly', async () => {
     for (let i = 1; i <= 5; i++) {
       await store.write('t1', 'proj', `id-${i}`, { n: i }, 1);

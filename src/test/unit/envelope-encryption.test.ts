@@ -36,6 +36,45 @@ describe('EnvelopeEncryption — PlatformKmsClient 端到端', () => {
     assert.ok(ciphertext.startsWith('env.v1.'), `密文应以 env.v1. 开头，实际: ${ciphertext.slice(0, 20)}`);
   });
 
+  it('decrypt() rejects tampered ciphertext', async () => {
+    const db = makeDb();
+    const kms = new PlatformKmsClient(TEST_MASTER_KEY);
+    const enc = new EnvelopeEncryption(kms, db, 'tenant-1', 'master');
+
+    const ciphertext = await enc.encrypt('secret');
+    const parts = ciphertext.split('.');
+    const last = parts[parts.length - 1]!;
+    parts[parts.length - 1] = `${last[0] === 'A' ? 'B' : 'A'}${last.slice(1)}`;
+
+    await assert.rejects(() => enc.decrypt(parts.join('.')));
+  });
+
+  it('decrypt() rejects too few segments', async () => {
+    const db = makeDb();
+    const kms = new PlatformKmsClient(TEST_MASTER_KEY);
+    const enc = new EnvelopeEncryption(kms, db, 'tenant-1', 'master');
+
+    await assert.rejects(() => enc.decrypt('env.v1.onlyone'));
+  });
+
+  it('decrypt() rejects non-env.v1 prefix', async () => {
+    const db = makeDb();
+    const kms = new PlatformKmsClient(TEST_MASTER_KEY);
+    const enc = new EnvelopeEncryption(kms, db, 'tenant-1', 'master');
+
+    await assert.rejects(() => enc.decrypt('plaintext'));
+  });
+
+  it('encrypts and decrypts empty string', async () => {
+    const db = makeDb();
+    const kms = new PlatformKmsClient(TEST_MASTER_KEY);
+    const enc = new EnvelopeEncryption(kms, db, 'tenant-1', 'master');
+
+    const ciphertext = await enc.encrypt('');
+
+    assert.equal(await enc.decrypt(ciphertext), '');
+  });
+
   it('加密写入 generate 审计记录', async () => {
     const db = makeDb();
     const kms = new PlatformKmsClient(TEST_MASTER_KEY);

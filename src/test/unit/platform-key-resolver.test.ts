@@ -29,6 +29,13 @@ describe('PlatformKeyResolver', () => {
     assert.equal(handle.algorithm, 'aes-256-gcm');
   });
 
+  it('resolve() with decrypt purpose returns valid KeyHandle', async () => {
+    const resolver = makeResolver(db);
+    const handle = await resolver.resolve('master', 'decrypt');
+    assert.equal(handle.keyRef, 'master');
+    assert.equal(handle.algorithm, 'aes-256-gcm');
+  });
+
   it('resolve() throws for unknown keyRef', async () => {
     const resolver = makeResolver(db);
     await assert.rejects(() => resolver.resolve('nonexistent', 'encrypt'));
@@ -40,6 +47,24 @@ describe('PlatformKeyResolver', () => {
     assert.equal(result.previousKeyRef, 'master');
     assert.ok(result.newKeyRef.startsWith('master.v'));
     assert.equal(result.algorithm, 'aes-256-gcm');
+  });
+
+  it('rotate() returns newKeyRef starting with master.v', async () => {
+    const resolver = makeResolver(db);
+    const result = await resolver.rotate('master');
+    assert.ok(result.newKeyRef.startsWith('master.v'));
+  });
+
+  it('revoke() is idempotent - second call does not throw', async () => {
+    const resolver = makeResolver(db);
+
+    await resolver.revoke('master');
+    await assert.doesNotReject(() => resolver.revoke('master'));
+
+    const row = db.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM platform_key_revocations WHERE key_ref = ?',
+    ).get('master');
+    assert.equal(row?.count, 1);
   });
 
   it('revoke() then resolve() throws revoked error', async () => {
