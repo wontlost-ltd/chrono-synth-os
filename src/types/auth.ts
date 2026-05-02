@@ -4,7 +4,7 @@
  */
 
 /** 用户角色枚举 */
-export type UserRole = 'admin' | 'member' | 'viewer';
+export type UserRole = 'admin' | 'member' | 'viewer' | 'service';
 
 /** JWT 令牌载荷 */
 export interface JwtPayload {

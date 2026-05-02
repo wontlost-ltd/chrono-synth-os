@@ -1926,6 +1926,34 @@ const v056_platform_ops_log: Migration = {
   ],
 };
 
+/** v057: 同步冲突收件箱 */
+const v057_conflict_inbox: Migration = {
+  version: 'v057',
+  description: '同步冲突收件箱',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS conflict_inbox (
+      conflict_id TEXT PRIMARY KEY,
+      conflict_version TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      command_id TEXT,
+      source_runtime TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      local_summary_id TEXT NOT NULL,
+      local_summary_params TEXT NOT NULL DEFAULT '{}',
+      server_summary_id TEXT NOT NULL,
+      server_summary_params TEXT NOT NULL DEFAULT '{}',
+      suggested_actions TEXT NOT NULL DEFAULT '["keep_server"]',
+      resolved_at TEXT,
+      resolution_action TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_conflict_inbox_tenant ON conflict_inbox(tenant_id, detected_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_conflict_inbox_blocking ON conflict_inbox(tenant_id, severity) WHERE resolved_at IS NULL',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -1984,6 +2012,7 @@ const MIGRATIONS: readonly Migration[] = [
   v054_projection_store,
   v055_platform_key_revocations,
   v056_platform_ops_log,
+  v057_conflict_inbox,
 ];
 
 interface MigrationRow {

@@ -3,6 +3,11 @@
  */
 
 import { z } from 'zod';
+export {
+  ConflictInboxItemV1Schema,
+  ConflictResolveRequestV1Schema,
+  ConflictResolveResultV1Schema,
+} from '@chrono/contracts';
 
 /* 价值管理 */
 export const CreateValueSchema = z.object({

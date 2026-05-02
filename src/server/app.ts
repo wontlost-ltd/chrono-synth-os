@@ -302,7 +302,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory);
-  registerConflictRoutes(app, deps.os, tenantFactory);
+  registerConflictRoutes(app, db, config);
   registerMetricsRoutes(app, deps.os, config);
   registerAuditRoutes(app, db);
   registerPosRoutes(app, deps.os, tenantFactory);

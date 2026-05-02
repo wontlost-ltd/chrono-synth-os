@@ -14,13 +14,19 @@ import type { UserRole, JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+type AccessRole = UserRole | 'user';
+
+function expandRole(role: AccessRole): UserRole[] {
+  if (role === 'user') return ['admin', 'member', 'viewer'];
+  return [role];
+}
 
 /**
  * 创建角色守卫 preHandler
  * @param allowedRoles 允许访问的角色列表
  */
-export function requireRole(...allowedRoles: UserRole[]): preHandlerHookHandler {
-  const allowed = new Set<string>(allowedRoles);
+export function requireRole(...allowedRoles: AccessRole[]): preHandlerHookHandler {
+  const allowed = new Set<string>(allowedRoles.flatMap(expandRole));
   return (request: FastifyRequest, _reply: FastifyReply, done) => {
     const jwtEnabled = (request.server as unknown as { jwtEnabled?: boolean }).jwtEnabled;
     if (!jwtEnabled) {

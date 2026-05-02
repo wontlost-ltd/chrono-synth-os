@@ -108,8 +108,16 @@
   ],
   "conflicts.ts": [
     {
-      "name": "ResolveConflictSchema",
-      "hash": "24f222a204319b11d6af464060a3d6eeccf577f4074168519be70e926d7e55e1"
+      "name": "ConflictInboxItemV1Schema",
+      "hash": "9b22972c13ff45110ea03e9c4c1fd44420542c48c2c960607598066a0dcb2858"
+    },
+    {
+      "name": "ConflictResolveRequestV1Schema",
+      "hash": "6992c05488c854867e884b6ae3cb1f3be57017b7afc96fde6d1f5822f0fc133c"
+    },
+    {
+      "name": "ConflictResolveResultV1Schema",
+      "hash": "60b88cd05cbf2d833fdaa15cd42fbc4fd06cd02c1b1cfa54f8cf2bf5d9fdafec"
     }
   ],
   "decisions.ts": [
