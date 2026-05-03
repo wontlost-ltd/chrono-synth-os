@@ -15,7 +15,7 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
-  const { state } = useMobileSyncState();
+  const { state, conflictCount } = useMobileSyncState();
 
   return (
     <SafeAreaProvider>
@@ -25,7 +25,7 @@ export default function App() {
             <RuntimeSyncBadge state={state} />
           </View>
           <NavigationContainer>
-            <TabNavigator />
+            <TabNavigator conflictCount={conflictCount} />
           </NavigationContainer>
         </View>
         <StatusBar style="light" />

@@ -1,5 +1,5 @@
-import type { RuntimeSyncStateV1 } from '@chrono/contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { RuntimeSyncStateV2 } from '@chrono/contracts';
 
 type NetInfoState = {
   isConnected: boolean | null;
@@ -28,33 +28,62 @@ function loadNetInfo(): NetInfoModule | null {
   }
 }
 
-function stateForOnline(isOnline: boolean): RuntimeSyncStateV1 {
-  return isOnline ? 'idle' : 'offline';
+function deriveState(
+  networkOnline: boolean,
+  pendingPushCount: number,
+  conflictCount: number,
+): RuntimeSyncStateV2 {
+  if (!networkOnline) return 'offline_queueing';
+  if (conflictCount > 0) return 'conflict_inbox';
+  if (pendingPushCount > 0) return 'online_dirty';
+  return 'online_synced';
 }
 
-export function useMobileSyncState(): {
-  state: RuntimeSyncStateV1;
-  pendingCount: number;
+export interface MobileSyncState {
+  state: RuntimeSyncStateV2;
+  networkOnline: boolean;
+  pendingPushCount: number;
+  conflictCount: number;
+  lastErrorCode: string | null;
   isOnline: boolean;
   setOnline(v: boolean): void;
-} {
+}
+
+export function useMobileSyncState(): MobileSyncState {
   const [isOnline, setOnline] = useState(true);
-  const [state, setState] = useState<RuntimeSyncStateV1>('idle');
-  const [pendingCount] = useState(0);
+  const [pendingPushCount] = useState(0);
+  const [conflictCount] = useState(0);
+  const [lastErrorCode] = useState<string | null>(null);
+  const initialized = useRef(false);
+
+  const [state, setState] = useState<RuntimeSyncStateV2>('initial_sync');
 
   useEffect(() => {
-    setState(stateForOnline(isOnline));
-  }, [isOnline]);
+    if (!initialized.current) {
+      initialized.current = true;
+      const derived = deriveState(isOnline, pendingPushCount, conflictCount);
+      setState(derived === 'online_synced' ? 'initial_sync' : derived);
+      return;
+    }
+    setState(deriveState(isOnline, pendingPushCount, conflictCount));
+  }, [conflictCount, isOnline, pendingPushCount]);
 
   useEffect(() => {
     const netInfo = loadNetInfo();
     if (!netInfo) return undefined;
 
-    return netInfo.addEventListener(next => {
-      const connected = next.isInternetReachable ?? next.isConnected ?? true;
-      setOnline(connected);
+    return netInfo.addEventListener((next) => {
+      setOnline(next.isInternetReachable ?? next.isConnected ?? true);
     });
   }, []);
 
-  return { state, pendingCount, isOnline, setOnline };
+  return {
+    state,
+    networkOnline: isOnline,
+    pendingPushCount,
+    conflictCount,
+    lastErrorCode,
+    isOnline,
+    setOnline,
+  };
 }
