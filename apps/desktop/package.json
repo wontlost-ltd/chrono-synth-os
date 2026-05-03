@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
-    "@chrono/contracts": "workspace:*",
-    "@chrono/kernel": "workspace:*"
+    "@chrono/contracts": "*",
+    "@chrono/kernel": "*"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
