@@ -81,6 +81,7 @@ import { BillingOutbox } from '../billing/billing-outbox.js';
 import { SettlementReconciliationWorker } from '../billing/settlement-reconciliation-worker.js';
 import { ObservabilityPipelineService } from '../observability/observability-pipeline-service.js';
 import { RuntimeRecoveryWorker } from '../persona-core/runtime-recovery-worker.js';
+import { DualWriteFlushWorker } from '../workers/dual-write-flush-worker.js';
 import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import { AvatarService } from '../identity/avatar-service.js';
@@ -214,6 +215,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', async () => { await settlementReconciliationWorker!.stop(); });
   }
 
+  /* dual-write outbox flush — drains persona_core_ledger_outbox into SqliteEventLedger */
+  const flushWorker = new DualWriteFlushWorker({ db, logger: deps.logger });
+  flushWorker.start();
+  app.addHook('onClose', () => { flushWorker.stop(); });
+
   /* 任务队列（提前创建以便注入健康路由） */
   let worker: TaskWorker | undefined;
   if (config.queue.enabled) {
@@ -337,7 +343,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
   registerKnowledgeSourceRoutes(app, services);
   registerSseRoutes(app, deps.os, config);
-  registerV2Routes(app, db, config, uowFactory);
+  registerV2Routes(app, db, config, uowFactory, flushWorker);
 
   /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
   if (!config.queue.enabled) {

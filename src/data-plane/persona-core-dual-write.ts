@@ -25,6 +25,7 @@ export interface PersonaCoreDualWriteService {
     payloadJson: string,
   ): void;
   flushOutbox(db: IDatabase, ledger: EventLedger): Promise<{ flushed: number; failed: number }>;
+  countPendingOutbox(db: IDatabase, tenantId: string): number;
 }
 
 function enqueuePersonaEvent(
@@ -105,7 +106,15 @@ async function flushOutbox(
   return { flushed, failed };
 }
 
+function countPendingOutbox(db: IDatabase, tenantId: string): number {
+  const row = db.prepare<{ count: number }>(
+    `SELECT COUNT(*) AS count FROM persona_core_ledger_outbox WHERE tenant_id = ? AND attempts < 3`,
+  ).get(tenantId);
+  return row?.count ?? 0;
+}
+
 export const personaCoreDualWrite: PersonaCoreDualWriteService = {
   enqueuePersonaEvent,
   flushOutbox,
+  countPendingOutbox,
 };

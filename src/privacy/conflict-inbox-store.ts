@@ -136,3 +136,12 @@ export function countBlockingConflicts(db: IDatabase, tenantId: string): number 
   ).get(tenantId);
   return row?.count ?? 0;
 }
+
+export function countPendingConflicts(db: IDatabase, tenantId: string): number {
+  const row = db.prepare<{ count: number }>(
+    `SELECT COUNT(*) AS count
+     FROM conflict_inbox
+     WHERE tenant_id = ? AND resolved_at IS NULL`,
+  ).get(tenantId);
+  return row?.count ?? 0;
+}
