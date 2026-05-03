@@ -9,8 +9,7 @@
     "node": ">=24.0.0"
   },
   "workspaces": [
-    "packages/*",
-    "apps/*"
+    "packages/*"
   ],
   "scripts": {
     "build": "tsc -b tsconfig.json && tsc -p tsconfig.scripts.json",
