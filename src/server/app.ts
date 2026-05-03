@@ -12,6 +12,7 @@ import type { AppConfig } from '../config/schema.js';
 import { NodeEventPublisher } from '../events/node-event-publisher.js';
 import { NodeUnitOfWorkFactory } from '../storage/node-unit-of-work.js';
 import type { UnitOfWorkFactory } from '@chrono/kernel';
+import type { FieldCrypto } from '@chrono/data-plane';
 import { loadConfig } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
@@ -102,6 +103,7 @@ export interface CreateAppDeps {
   circuitBreaker?: CircuitBreaker;
   /** 异步 UnitOfWorkFactory（P0-1 过渡）：新服务优先使用，旧服务继续使用 db */
   uowFactory?: UnitOfWorkFactory;
+  fieldCrypto?: FieldCrypto;
 }
 
 export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {

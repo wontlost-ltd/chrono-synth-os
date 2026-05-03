@@ -631,3 +631,9 @@ export const OidcCallbackQuerySchema = z.object({
 export const DryRunImportBodySchema = z.object({
   manifestJson: z.string().min(1),
 });
+
+/* 数据可移植性：导入 commit 请求体 */
+export const CommitImportBodySchema = z.object({
+  manifestJson: z.string().min(1),
+  commitToken: z.string().min(1),
+});

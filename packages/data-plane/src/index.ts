@@ -22,3 +22,7 @@ export interface DataPlaneBootstrapOptions {
 export * from './ledger/index.js';
 export * from './projection/index.js';
 export * from './crypto/index.js';
+export * from './contracts/field-crypto.js';
+export * from './contracts/authority-mode.js';
+export * from './write-coordinator.js';
+export * from './tables-primary-coordinator.js';

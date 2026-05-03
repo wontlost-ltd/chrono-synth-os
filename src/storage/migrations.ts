@@ -1954,6 +1954,77 @@ const v057_conflict_inbox: Migration = {
   ],
 };
 
+/** v058: 导入 commit token 与导入任务追踪表 */
+const v058_import_commit_tokens: Migration = {
+  version: 'v058',
+  description: '可移植性：导入 commit token 与导入任务追踪',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS import_commit_tokens (
+      token TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      import_id TEXT NOT NULL,
+      manifest_checksum TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_ict_tenant ON import_commit_tokens(tenant_id)',
+    `CREATE TABLE IF NOT EXISTS import_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      manifest_checksum TEXT NOT NULL,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      error_message TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_ij_tenant ON import_jobs(tenant_id)',
+  ],
+};
+
+/** v059: 租户 BYOK/BYOS 密钥版本、密钥操作审计与存储绑定 */
+const v059_tenant_byok_byos: Migration = {
+  version: 'v059',
+  description: '租户 BYOK/BYOS 密钥版本、密钥操作审计与存储绑定',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tenant_key_versions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      key_ref TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      revoked_at INTEGER,
+      UNIQUE(tenant_id, key_ref, provider, version)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tenant_key_versions_tenant_key
+      ON tenant_key_versions(tenant_id, key_ref, provider, version DESC)`,
+    `CREATE TABLE IF NOT EXISTS tenant_vault_audit (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      key_ref TEXT NOT NULL,
+      key_version INTEGER,
+      outcome TEXT NOT NULL,
+      error_message TEXT,
+      performed_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tenant_vault_audit_tenant_time
+      ON tenant_vault_audit(tenant_id, performed_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS tenant_storage_bindings (
+      tenant_id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      bucket_or_path TEXT NOT NULL,
+      region TEXT,
+      encryption_key_ref TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2013,6 +2084,8 @@ const MIGRATIONS: readonly Migration[] = [
   v055_platform_key_revocations,
   v056_platform_ops_log,
   v057_conflict_inbox,
+  v058_import_commit_tokens,
+  v059_tenant_byok_byos,
 ];
 
 interface MigrationRow {

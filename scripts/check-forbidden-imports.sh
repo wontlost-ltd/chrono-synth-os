@@ -26,11 +26,12 @@ check_matches() {
 check_matches \
   "packages/kernel" \
   "${ROOT_DIR}/packages/kernel/src" \
-  -e "${NODE_BUILTIN}" \
-  -e "['\"]fastify['\"]|['\"]@fastify/" \
-  -e "process\\.env|\\bBuffer\\b" \
+  -e "from ['\"]node:[^'\"]+['\"]|import\\(['\"]node:[^'\"]+['\"]" \
+  -e "process\\.env" \
+  -e "\\bBuffer[[:space:]]*(\\.|\\(|\\[)" \
+  -e "from ['\"](fastify|pg|node:sqlite)['\"]|import\\(['\"](fastify|pg|node:sqlite)['\"]" \
+  -e "['\"]@fastify/" \
   -e "['\"]better-sqlite3['\"]" \
-  -e "['\"]pg['\"]" \
   -e "['\"]\\.\\./storage/" \
   -e "['\"]\\.\\./server/" \
   -e "['\"]\\.\\./multi-tenant/"

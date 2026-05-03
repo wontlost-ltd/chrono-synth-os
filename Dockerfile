@@ -1,16 +1,64 @@
 FROM node:24-alpine AS builder
+RUN apk upgrade --no-cache
 WORKDIR /app
+
+# Install deps (workspace symlinks require packages/ to exist first)
 COPY package.json package-lock.json ./
+COPY packages/contracts/package.json packages/contracts/
+COPY packages/kernel/package.json packages/kernel/
+COPY packages/data-plane/package.json packages/data-plane/
+COPY packages/design-tokens/package.json packages/design-tokens/
+COPY packages/sync-engine/package.json packages/sync-engine/
+COPY packages/kernel-testkit/package.json packages/kernel-testkit/
+COPY packages/tsconfig.base.json packages/
+COPY tsconfig.src.json tsconfig.scripts.json ./
 RUN npm ci
-COPY tsconfig.json ./
+
+# Build workspace packages in dependency order
+COPY packages/contracts/src packages/contracts/src
+COPY packages/contracts/tsconfig.json packages/contracts/
+RUN npx tsc -p packages/contracts/tsconfig.json
+
+COPY packages/kernel/src packages/kernel/src
+COPY packages/kernel/tsconfig.json packages/kernel/
+RUN npx tsc -p packages/kernel/tsconfig.json
+
+COPY packages/data-plane/src packages/data-plane/src
+COPY packages/data-plane/tsconfig.json packages/data-plane/
+RUN npx tsc -p packages/data-plane/tsconfig.json
+
+COPY packages/design-tokens/src packages/design-tokens/src
+COPY packages/design-tokens/tsconfig.json packages/design-tokens/
+RUN npx tsc -p packages/design-tokens/tsconfig.json
+
 COPY src/ src/
-RUN npm run build
+COPY scripts/ scripts/
+RUN npx tsc -p tsconfig.src.json
+
+COPY packages/kernel-testkit/src packages/kernel-testkit/src
+COPY packages/kernel-testkit/tsconfig.json packages/kernel-testkit/
+RUN npx tsc -p packages/kernel-testkit/tsconfig.json
+
+COPY packages/sync-engine/src packages/sync-engine/src
+COPY packages/sync-engine/tsconfig.json packages/sync-engine/
+RUN npx tsc -p packages/sync-engine/tsconfig.json && npx tsc -p tsconfig.scripts.json
 
 FROM node:24-alpine
-RUN addgroup -S chrono && adduser -S chrono -G chrono
+RUN apk upgrade --no-cache && addgroup -S chrono && adduser -S chrono -G chrono
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY packages/contracts/package.json packages/contracts/
+COPY packages/kernel/package.json packages/kernel/
+COPY packages/data-plane/package.json packages/data-plane/
+COPY packages/design-tokens/package.json packages/design-tokens/
+COPY packages/sync-engine/package.json packages/sync-engine/
 RUN npm ci --omit=dev && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# Copy built package dists so workspace symlinks resolve at runtime
+COPY --from=builder /app/packages/contracts/dist packages/contracts/dist
+COPY --from=builder /app/packages/kernel/dist packages/kernel/dist
+COPY --from=builder /app/packages/data-plane/dist packages/data-plane/dist
+COPY --from=builder /app/packages/design-tokens/dist packages/design-tokens/dist
+COPY --from=builder /app/packages/sync-engine/dist packages/sync-engine/dist
 COPY --from=builder /app/dist/ dist/
 RUN mkdir -p /app/data && chown -R chrono:chrono /app
 VOLUME /app/data

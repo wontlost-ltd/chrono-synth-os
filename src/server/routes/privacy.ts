@@ -8,7 +8,7 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { PrivacyService } from '../../privacy/privacy-service.js';
-import { PaginationQuerySchema, DryRunImportBodySchema } from '../schemas/api-schemas.js';
+import { CommitImportBodySchema, DryRunImportBodySchema, PaginationQuerySchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 
 export function registerPrivacyRoutes(
@@ -94,5 +94,22 @@ export function registerPrivacyRoutes(
     }
     const report = service.dryRunImport(request.tenantId, body.data.manifestJson);
     return { data: report };
+  });
+
+  /* POST /api/v1/privacy/import/commit — 单次消费 token 执行真实导入（仅 admin，限流: 3次/分钟） */
+  app.post('/api/v1/privacy/import/commit', { preHandler: requireRole('admin'), config: { rateLimit: { max: 3, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const body = CommitImportBodySchema.safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: 'Invalid request body', details: body.error.issues });
+    }
+    try {
+      const result = service.commitImport(request.tenantId, body.data.manifestJson, body.data.commitToken);
+      return { data: result };
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('invalid or expired')) {
+        return reply.code(403).send({ error: err.message });
+      }
+      throw err;
+    }
   });
 }

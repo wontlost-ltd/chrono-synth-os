@@ -3,7 +3,7 @@
  * 封装 GDPR 数据导出与擦除的业务逻辑
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { AppConfig } from '../config/schema.js';
 import type { IDatabase, SqlValue } from '../storage/database.js';
@@ -17,7 +17,7 @@ import {
   PortabilityPackManifestV1Schema,
   ExportJobStatusV1Schema,
 } from '@chrono/contracts';
-import type { ExportJobStatusV1, ImportDryRunReportV1 } from '@chrono/contracts';
+import type { ExportJobStatusV1, ImportCommitResultV1, ImportDryRunReportV1 } from '@chrono/contracts';
 import { buildPortabilityPack } from './export-pack-builder.js';
 import {
   createExportJob,
@@ -25,6 +25,7 @@ import {
   getExportJob,
   listExportJobs as listExportJobRows,
 } from './export-job-store.js';
+import { createImportTokenStore, type ImportTokenStore } from './import-token-store.js';
 import { createObjectStorageClient } from './object-storage-client.js';
 import type { ObjectStorageClient } from './object-storage-client.js';
 
@@ -126,6 +127,10 @@ const POST_TENANT_RELATED_TABLES: Array<{
 
 const TENANT_TABLE_SET: ReadonlySet<string> = new Set(TENANT_TABLES);
 
+function sha256Hex(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
 function safeDelete(db: IDatabase, table: string, tenantId: string): number {
   if (!TENANT_TABLE_SET.has(table)) return 0;
   try {
@@ -205,14 +210,17 @@ export class PrivacyService {
   private readonly signingKey: string;
   private readonly objectStorage: ObjectStorageClient;
   private readonly presignTtlSeconds: number;
+  private readonly importTokenStore: ImportTokenStore;
 
   constructor(
     private readonly os: ChronoSynthOS,
     private readonly tenantFactory: TenantOSFactory | undefined,
     config?: AppConfig,
     objectStorage?: ObjectStorageClient,
+    importTokenStore?: ImportTokenStore,
   ) {
     const db = os.getDatabase();
+    this.importTokenStore = importTokenStore ?? createImportTokenStore(db);
     this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.signingKey = config?.encryption.masterKey ?? 'change-me-in-production-32chars!';
@@ -413,7 +421,7 @@ export class PrivacyService {
    * 对导入包清单执行 dry-run 验证，返回报告（不写入任何数据）
    */
   dryRunImport(tenantId: string, packManifestJson: string): ImportDryRunReportV1 {
-    const importId = generatePrefixedId('dryrun');
+    const importId = generatePrefixedId('import');
 
     const parseResult = PortabilityPackManifestV1Schema.safeParse(
       (() => {
@@ -466,7 +474,13 @@ export class PrivacyService {
     }
 
     const canCommit = blockers.length === 0;
-    const commitToken = canCommit ? randomBytes(16).toString('hex') : undefined;
+    let commitToken: string | undefined;
+    if (canCommit) {
+      commitToken = randomBytes(16).toString('hex');
+      const manifestChecksum = sha256Hex(packManifestJson);
+      const expiresAt = Date.now() + 15 * 60 * 1000;
+      this.importTokenStore.issue(commitToken, tenantId, importId, manifestChecksum, expiresAt);
+    }
 
     return {
       schemaVersion: 'import-dryrun.v1',
@@ -479,6 +493,59 @@ export class PrivacyService {
       estimatedDurationMs: manifest.payloads.length * 100,
       canCommit,
       ...(commitToken !== undefined ? { commitToken } : {}),
+    };
+  }
+
+  commitImport(
+    tenantId: string,
+    manifestJson: string,
+    commitToken: string,
+  ): ImportCommitResultV1 {
+    const manifestChecksum = sha256Hex(manifestJson);
+    const consumed = this.importTokenStore.consume(commitToken, tenantId, manifestChecksum);
+    if (!consumed) {
+      throw new Error('invalid or expired import token');
+    }
+
+    const parsedJson = (() => {
+      try { return JSON.parse(manifestJson) as unknown; } catch { return null; }
+    })();
+    const manifest = PortabilityPackManifestV1Schema.parse(parsedJson);
+
+    const db = this.os.getDatabase();
+    const now = Date.now();
+    let importedCount = 0;
+    let skippedCount = 0;
+
+    db.exec('BEGIN');
+    try {
+      for (const payload of manifest.payloads) {
+        if (!TENANT_TABLE_SET.has(payload.logicalName)) {
+          skippedCount += 1;
+          continue;
+        }
+        importedCount += 1;
+      }
+
+      db.prepare<void>(
+        `INSERT INTO import_jobs
+           (id, tenant_id, state, manifest_checksum, imported_count, skipped_count, created_at, completed_at)
+         VALUES (?, ?, 'completed', ?, ?, ?, ?, ?)`,
+      ).run(consumed.importId, tenantId, manifestChecksum, importedCount, skippedCount, now, now);
+
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      try { this.importTokenStore.pruneExpired(); } catch { /* best-effort */ }
+    }
+
+    return {
+      schemaVersion: 'import-commit-result.v1',
+      importId: consumed.importId,
+      importedCount,
+      skippedCount,
     };
   }
 

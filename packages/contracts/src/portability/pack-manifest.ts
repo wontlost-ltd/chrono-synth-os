@@ -233,6 +233,14 @@ export const ImportDryRunReportV1Schema = z.object({
   }
 });
 
+export const ImportCommitResultV1Schema = z.object({
+  schemaVersion: z.literal('import-commit-result.v1'),
+  importId: z.string().min(1),
+  importedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+}).strict();
+
 export type PortabilityPackManifestV1 = z.infer<typeof PortabilityPackManifestV1Schema>;
 export type ExportJobStatusV1 = z.infer<typeof ExportJobStatusV1Schema>;
 export type ImportDryRunReportV1 = z.infer<typeof ImportDryRunReportV1Schema>;
+export type ImportCommitResultV1 = z.infer<typeof ImportCommitResultV1Schema>;
