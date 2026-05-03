@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RuntimeSyncStateV2 } from '@chrono/contracts';
+import { runSync } from './backgroundSync';
 
 type NetInfoState = {
   isConnected: boolean | null;
@@ -47,14 +48,17 @@ export interface MobileSyncState {
   lastErrorCode: string | null;
   isOnline: boolean;
   setOnline(v: boolean): void;
+  triggerSync(): void;
 }
 
 export function useMobileSyncState(): MobileSyncState {
   const [isOnline, setOnline] = useState(true);
   const [pendingPushCount] = useState(0);
   const [conflictCount] = useState(0);
-  const [lastErrorCode] = useState<string | null>(null);
+  const [lastErrorCode, setLastErrorCode] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const initialized = useRef(false);
+  const prevOnline = useRef(true);
 
   const [state, setState] = useState<RuntimeSyncStateV2>('initial_sync');
 
@@ -65,8 +69,23 @@ export function useMobileSyncState(): MobileSyncState {
       setState(derived === 'online_synced' ? 'initial_sync' : derived);
       return;
     }
+    if (isSyncing) {
+      setState('syncing');
+      return;
+    }
     setState(deriveState(isOnline, pendingPushCount, conflictCount));
-  }, [conflictCount, isOnline, pendingPushCount]);
+  }, [conflictCount, isOnline, isSyncing, pendingPushCount]);
+
+  // Disconnect recovery: trigger sync when connection is restored
+  useEffect(() => {
+    const wasOffline = !prevOnline.current;
+    prevOnline.current = isOnline;
+    if (wasOffline && isOnline) {
+      triggerSync();
+    }
+    // triggerSync defined below; safe because this effect only runs on isOnline changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline]);
 
   useEffect(() => {
     const netInfo = loadNetInfo();
@@ -77,6 +96,24 @@ export function useMobileSyncState(): MobileSyncState {
     });
   }, []);
 
+  const triggerSync = useCallback(() => {
+    if (!isOnline) return;
+    setIsSyncing(true);
+    setLastErrorCode(null);
+
+    runSync()
+      .then(() => {
+        setLastErrorCode(null);
+      })
+      .catch((err: unknown) => {
+        const code = err instanceof Error ? err.message.slice(0, 80) : 'sync_failed';
+        setLastErrorCode(code);
+      })
+      .finally(() => {
+        setIsSyncing(false);
+      });
+  }, [isOnline]);
+
   return {
     state,
     networkOnline: isOnline,
@@ -85,5 +122,6 @@ export function useMobileSyncState(): MobileSyncState {
     lastErrorCode,
     isOnline,
     setOnline,
+    triggerSync,
   };
 }
