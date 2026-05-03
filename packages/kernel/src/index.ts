@@ -36,6 +36,8 @@ export type {
   KernelProjectionStore,
   KernelLogger,
   EventPublisher,
+  EventSubscriber,
+  Unsubscribe,
 } from './ports/host-adapters.js';
 export type { KeyHandle, KeyRotationResult, KeyResolver } from './ports/key-resolver.js';
 export type { SyncReadUnitOfWork, SyncWriteUnitOfWork } from './ports/sync-unit-of-work.js';

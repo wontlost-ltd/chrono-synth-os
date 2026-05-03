@@ -8,3 +8,4 @@ export { PG_MIGRATIONS } from './postgres-migrations.js';
 export { runPostgresMigrations } from './postgres-migrations-runner.js';
 export { createDatabase } from './factory.js';
 export { mapToJson, jsonToMap, arrayToJson, jsonToArray, mapReplacer, mapReviver, deepStringify, deepParse } from './serialization.js';
+export { NodeUnitOfWorkFactory } from './node-unit-of-work.js';

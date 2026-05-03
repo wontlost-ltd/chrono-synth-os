@@ -57,3 +57,14 @@ export interface KernelLogger {
 export interface EventPublisher {
   publish(events: readonly DomainEvent[]): Promise<void>;
 }
+
+/** 取消订阅函数 */
+export type Unsubscribe = () => void;
+
+/** 领域事件订阅器 — 运行时中性，不依赖 node:events */
+export interface EventSubscriber {
+  subscribe<T extends DomainEvent>(
+    type: T['type'],
+    listener: (event: T) => void,
+  ): Unsubscribe;
+}

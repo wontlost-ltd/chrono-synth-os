@@ -1,10 +1,17 @@
 import type { FastifyInstance } from 'fastify';
+import type { UnitOfWorkFactory } from '@chrono/kernel';
 import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 
-export function registerV2Routes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
+export function registerV2Routes(
+  app: FastifyInstance,
+  db: IDatabase,
+  config: AppConfig,
+  uowFactory: UnitOfWorkFactory,
+): void {
   void db;
   void config;
+  void uowFactory;
 
   app.register((v2, _opts, done) => {
     v2.addHook('onSend', async (_request, reply) => {

@@ -9,6 +9,9 @@ import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { PinoLogger } from '../logging/pino-logger.js';
 import type { IDatabase } from '../storage/database.js';
 import type { AppConfig } from '../config/schema.js';
+import { NodeEventPublisher } from '../events/node-event-publisher.js';
+import { NodeUnitOfWorkFactory } from '../storage/node-unit-of-work.js';
+import type { UnitOfWorkFactory } from '@chrono/kernel';
 import { loadConfig } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
@@ -97,6 +100,8 @@ export interface CreateAppDeps {
   config?: AppConfig;
   db?: IDatabase;
   circuitBreaker?: CircuitBreaker;
+  /** 异步 UnitOfWorkFactory（P0-1 过渡）：新服务优先使用，旧服务继续使用 db */
+  uowFactory?: UnitOfWorkFactory;
 }
 
 export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
@@ -153,6 +158,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 多租户 OS 工厂 */
   const db = deps.db ?? deps.os.getDatabase();
+  const uowFactory: UnitOfWorkFactory = deps.uowFactory
+    ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const tenantFactory = new TenantOSFactory(
     db,
     deps.os.getClock(),
@@ -326,7 +333,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
   registerKnowledgeSourceRoutes(app, db);
   registerSseRoutes(app, deps.os, config);
-  registerV2Routes(app, db, config);
+  registerV2Routes(app, db, config, uowFactory);
 
   /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
   if (!config.queue.enabled) {

@@ -1,13 +1,21 @@
-import type { EventPublisher, DomainEvent } from '@chrono/kernel';
-import type { EventBus } from './event-bus.js';
+import type { DomainEvent, EventPublisher, EventSubscriber, Unsubscribe } from '@chrono/kernel';
+import { MemoryEventBus } from '@chrono/kernel';
 
-export class NodeEventPublisher implements EventPublisher {
-  constructor(private readonly bus: EventBus) {}
+/**
+ * Node 运行时事件发布适配器
+ * 使用 kernel MemoryEventBus，不依赖 node:events，无 as any 类型转换
+ */
+export class NodeEventPublisher implements EventPublisher, EventSubscriber {
+  private readonly bus = new MemoryEventBus();
 
   async publish(events: readonly DomainEvent[]): Promise<void> {
-    for (const event of events) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.bus.emit(event.type as any, event.payload as any);
-    }
+    await this.bus.publish(events);
+  }
+
+  subscribe<T extends DomainEvent>(
+    type: T['type'],
+    listener: (event: T) => void,
+  ): Unsubscribe {
+    return this.bus.subscribe(type, listener);
   }
 }

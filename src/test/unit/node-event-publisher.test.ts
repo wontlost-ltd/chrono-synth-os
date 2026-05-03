@@ -1,6 +1,5 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { EventBus } from '../../events/event-bus.js';
 import { NodeEventPublisher } from '../../events/node-event-publisher.js';
 import type { DomainEvent } from '@chrono/kernel';
 
@@ -10,32 +9,41 @@ function makeEvent(type: string): DomainEvent {
 
 describe('NodeEventPublisher', () => {
   it('publish([]) does not throw', async () => {
-    const bus = new EventBus();
-    const pub = new NodeEventPublisher(bus);
+    const pub = new NodeEventPublisher();
     await assert.doesNotReject(() => pub.publish([]));
   });
 
-  it('publish([event]) calls bus.emit with correct type', async () => {
-    const bus = new EventBus();
-    let received: unknown = null;
-    bus.on('persona.drift_detected' as never, (payload: unknown) => { received = payload; });
+  it('subscribe receives published event', async () => {
+    const pub = new NodeEventPublisher();
+    let received: DomainEvent | undefined;
+    pub.subscribe('persona.drift_detected', (event) => { received = event; });
 
-    const pub = new NodeEventPublisher(bus);
     const event = makeEvent('persona.drift_detected');
     await pub.publish([event]);
 
-    assert.deepEqual(received, event.payload);
+    assert.deepEqual(received, event);
   });
 
-  it('publish multiple events emits each in order', async () => {
-    const bus = new EventBus();
+  it('publish multiple events dispatches each in order', async () => {
+    const pub = new NodeEventPublisher();
     const received: string[] = [];
-    bus.on('task.accepted' as never, () => received.push('task.accepted'));
-    bus.on('task.completed' as never, () => received.push('task.completed'));
+    pub.subscribe('task.accepted', () => received.push('task.accepted'));
+    pub.subscribe('task.completed', () => received.push('task.completed'));
 
-    const pub = new NodeEventPublisher(bus);
     await pub.publish([makeEvent('task.accepted'), makeEvent('task.completed')]);
 
     assert.deepEqual(received, ['task.accepted', 'task.completed']);
+  });
+
+  it('unsubscribe stops receiving events', async () => {
+    const pub = new NodeEventPublisher();
+    const received: string[] = [];
+    const unsub = pub.subscribe('task.accepted', () => received.push('received'));
+
+    await pub.publish([makeEvent('task.accepted')]);
+    unsub();
+    await pub.publish([makeEvent('task.accepted')]);
+
+    assert.equal(received.length, 1);
   });
 });
