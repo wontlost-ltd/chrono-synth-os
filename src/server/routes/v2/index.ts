@@ -4,8 +4,13 @@ import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { DualWriteFlushWorker } from '../../../workers/dual-write-flush-worker.js';
 import type { JwtPayload } from '../../../types/auth.js';
+import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
+import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import { countPendingConflicts } from '../../../privacy/conflict-inbox-store.js';
 import { personaCoreDualWrite } from '../../../data-plane/persona-core-dual-write.js';
+import { PrivacyService } from '../../../privacy/privacy-service.js';
+import { DryRunImportBodySchema, CommitImportBodySchema } from '../../schemas/api-schemas.js';
+import { requireRole } from '../../plugins/rbac.js';
 
 export function registerV2Routes(
   app: FastifyInstance,
@@ -13,6 +18,8 @@ export function registerV2Routes(
   config: AppConfig,
   uowFactory: UnitOfWorkFactory,
   flushWorker: DualWriteFlushWorker,
+  os?: ChronoSynthOS,
+  tenantFactory?: TenantOSFactory,
 ): void {
   void uowFactory;
 
@@ -87,6 +94,65 @@ export function registerV2Routes(
         pendingPushCount,
       };
     });
+
+    /* Portability routes — only registered when ChronoSynthOS is available */
+    if (os) {
+      const privacyService = new PrivacyService(os, tenantFactory, config);
+
+      /* POST /api/v2/portability/export — start async export job */
+      v2.post('/api/v2/portability/export', {
+        preHandler: requireRole('admin'),
+        config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+      }, async (request) => {
+        const status = privacyService.startExportJob(request.tenantId);
+        return { data: status };
+      });
+
+      /* GET /api/v2/portability/export/:exportId — poll export job status */
+      v2.get<{ Params: { exportId: string } }>('/api/v2/portability/export/:exportId', {
+        preHandler: requireRole('admin'),
+      }, async (request, reply) => {
+        const status = privacyService.getExportJobStatus(request.tenantId, request.params.exportId);
+        if (!status) return reply.code(404).send({ error: 'Export job not found' });
+        return { data: status };
+      });
+
+      /* POST /api/v2/portability/import — dry-run then commit in one round-trip */
+      v2.post('/api/v2/portability/import', {
+        preHandler: requireRole('admin'),
+        config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+      }, async (request, reply) => {
+        const body = CommitImportBodySchema.safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ error: 'Invalid request body', details: body.error.issues });
+        }
+        try {
+          const result = privacyService.commitImport(
+            request.tenantId,
+            body.data.manifestJson,
+            body.data.commitToken,
+          );
+          return { data: result };
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('invalid or expired')) {
+            return reply.code(403).send({ error: err.message });
+          }
+          throw err;
+        }
+      });
+
+      /* POST /api/v2/portability/import/dry-run — validate manifest without committing */
+      v2.post('/api/v2/portability/import/dry-run', {
+        preHandler: requireRole('admin'),
+      }, async (request, reply) => {
+        const body = DryRunImportBodySchema.safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ error: 'Invalid request body', details: body.error.issues });
+        }
+        const report = privacyService.dryRunImport(request.tenantId, body.data.manifestJson);
+        return { data: report };
+      });
+    }
 
     done();
   });

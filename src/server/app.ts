@@ -343,7 +343,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
   registerKnowledgeSourceRoutes(app, services);
   registerSseRoutes(app, deps.os, config);
-  registerV2Routes(app, db, config, uowFactory, flushWorker);
+  registerV2Routes(app, db, config, uowFactory, flushWorker, deps.os, tenantFactory);
 
   /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
   if (!config.queue.enabled) {

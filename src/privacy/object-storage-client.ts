@@ -237,3 +237,46 @@ export function createObjectStorageClient(config: AppConfig): ObjectStorageClien
       return new LocalObjectStorageClient(cfg.localPath);
   }
 }
+
+export interface TenantByosConfig {
+  provider: 'platform' | 's3' | 'gcs' | 'azure_blob';
+  bucket?: string;
+  keyPrefix?: string;
+}
+
+/**
+ * 若租户配置了 BYOS，返回租户专属客户端；否则回退到平台配置。
+ * 租户仅提供 provider + bucket，认证凭据来自平台 AppConfig（envelope delegation 模型）。
+ */
+export function createTenantObjectStorageClient(
+  tenantByos: TenantByosConfig,
+  platformConfig: AppConfig,
+): ObjectStorageClient {
+  if (!tenantByos.provider || tenantByos.provider === 'platform') {
+    return createObjectStorageClient(platformConfig);
+  }
+
+  const bucket = tenantByos.bucket?.trim();
+  if (!bucket) {
+    return createObjectStorageClient(platformConfig);
+  }
+
+  const cfg = platformConfig.objectStorage;
+
+  switch (tenantByos.provider) {
+    case 's3':
+      return new S3ObjectStorageClient(
+        bucket,
+        cfg.s3Region,
+        cfg.s3Endpoint,
+        cfg.s3AccessKeyId,
+        cfg.s3SecretAccessKey,
+      );
+    case 'gcs':
+      return new GcsObjectStorageClient(bucket, cfg.gcsProjectId, cfg.gcsKeyFile);
+    case 'azure_blob':
+      return new AzureBlobObjectStorageClient(cfg.azureConnectionString, bucket);
+    default:
+      return createObjectStorageClient(platformConfig);
+  }
+}

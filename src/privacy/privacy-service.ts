@@ -26,7 +26,7 @@ import {
   listExportJobs as listExportJobRows,
 } from './export-job-store.js';
 import { createImportTokenStore, type ImportTokenStore } from './import-token-store.js';
-import { createObjectStorageClient } from './object-storage-client.js';
+import { createObjectStorageClient, createTenantObjectStorageClient } from './object-storage-client.js';
 import type { ObjectStorageClient } from './object-storage-client.js';
 
 /** 直接按 tenant_id 查询的表（外键依赖顺序：子表在前） */
@@ -211,6 +211,7 @@ export class PrivacyService {
   private readonly objectStorage: ObjectStorageClient;
   private readonly presignTtlSeconds: number;
   private readonly importTokenStore: ImportTokenStore;
+  private readonly config: AppConfig | undefined;
 
   constructor(
     private readonly os: ChronoSynthOS,
@@ -220,6 +221,7 @@ export class PrivacyService {
     importTokenStore?: ImportTokenStore,
   ) {
     const db = os.getDatabase();
+    this.config = config;
     this.importTokenStore = importTokenStore ?? createImportTokenStore(db);
     this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
@@ -355,19 +357,32 @@ export class PrivacyService {
     const now = this.os.getClock().now();
     const jobId = createExportJob(db, tenantId, now);
 
+    // Resolve per-tenant BYOS storage client and BYOK signing key
+    const tenantProfile = this.profileService?.getProfile(tenantId);
+    const effectiveStorage = tenantProfile && this.config
+      ? createTenantObjectStorageClient(
+          { provider: tenantProfile.byosProvider ?? 'platform', bucket: tenantProfile.byosBucket, keyPrefix: tenantProfile.byosKeyPrefix },
+          this.config,
+        )
+      : this.objectStorage;
+    const effectiveSigningKey = tenantProfile?.encryptionMode === 'tenant_dedicated' && tenantProfile.kmsKeyRef
+      ? tenantProfile.kmsKeyRef
+      : this.signingKey;
+
     // 异步执行实际导出逻辑
     void (async () => {
       try {
         updateExportJob(db, jobId, { state: 'running', percent: 10 });
 
         const exportResult = this.exportData(tenantId);
-        const { rawManifestJson } = buildPortabilityPack(exportResult, this.signingKey);
+        const { rawManifestJson } = buildPortabilityPack(exportResult, effectiveSigningKey);
 
         // 序列化并上传至对象存储
         const packBuffer = Buffer.from(rawManifestJson, 'utf-8');
-        const objectKey = `exports/${tenantId}/${jobId}.pack.json`;
-        await this.objectStorage.upload(objectKey, packBuffer, 'application/json');
-        const downloadUrl = await this.objectStorage.presignUrl(objectKey, this.presignTtlSeconds);
+        const keyPrefix = tenantProfile?.byosKeyPrefix?.trim() ? `${tenantProfile.byosKeyPrefix.trim()}/` : '';
+        const objectKey = `${keyPrefix}exports/${tenantId}/${jobId}.pack.json`;
+        await effectiveStorage.upload(objectKey, packBuffer, 'application/json');
+        const downloadUrl = await effectiveStorage.presignUrl(objectKey, this.presignTtlSeconds);
 
         const completedAt = this.os.getClock().now();
         updateExportJob(db, jobId, {
