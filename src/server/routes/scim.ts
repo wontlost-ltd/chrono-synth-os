@@ -1,10 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
-import type { AppConfig } from '../../config/schema.js';
+import type { AppServices } from '../app-services.js';
 import { AuthenticationError, ErrorCode, ValidationError } from '../../errors/index.js';
 import { ScimCreateUserSchema } from '../schemas/api-schemas.js';
-import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
-import { ScimProvisioningService } from '../../enterprise/scim-provisioning-service.js';
 
 function getScimBearerToken(headers: { authorization?: string }): string {
   const value = headers.authorization;
@@ -20,9 +17,8 @@ function parseScimFilter(raw: string | undefined): string | undefined {
   return match?.[1];
 }
 
-export function registerScimRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
-  const profileService = new TenantEnterpriseProfileService(db, config);
-  const scimService = new ScimProvisioningService(db);
+export function registerScimRoutes(app: FastifyInstance, services: AppServices): void {
+  const { tenantProfile: profileService, scim: scimService } = services;
 
   async function resolveTenantId(authHeader: string | undefined): Promise<string> {
     const token = getScimBearerToken({ authorization: authHeader });

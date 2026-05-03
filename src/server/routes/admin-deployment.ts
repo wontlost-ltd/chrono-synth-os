@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
-import { TenantEnterpriseProfileService, type TenantEnterpriseProfile } from '../../enterprise/tenant-enterprise-profile-service.js';
+import type { TenantEnterpriseProfile } from '../../enterprise/tenant-enterprise-profile-service.js';
+import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { requireRole } from '../plugins/rbac.js';
 import { UpdateDeploymentProfileSchema } from '../schemas/api-schemas.js';
 
@@ -80,6 +81,15 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
 
     return {
       data: serializeProfile(profile),
+    };
+  });
+
+  /* GET /api/v1/admin/deployment/manifest — tenant data manifest (data plane contract) */
+  app.get('/api/v1/admin/deployment/manifest', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    return {
+      data: profileService.getManifest(request.tenantId),
     };
   });
 

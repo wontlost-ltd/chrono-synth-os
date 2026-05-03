@@ -332,7 +332,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerOidcRoutes(app, db, config);
-  registerScimRoutes(app, db, config);
+  registerScimRoutes(app, services);
   registerCollaborationRoutes(app, services);
   registerApiKeyRoutes(app, services);
   registerAdminConfigRoutes(app, db, config);
