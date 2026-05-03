@@ -4,13 +4,12 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
-import { KnowledgeSourceService } from '../../knowledge/knowledge-source-service.js';
+import type { AppServices } from '../app-services.js';
 import { CreateKnowledgeSourceSchema, UpdateKnowledgeSourceSchema } from '../schemas/api-schemas.js';
 import { parsePagination } from '../plugins/pagination.js';
 
-export function registerKnowledgeSourceRoutes(app: FastifyInstance, db: IDatabase): void {
-  const service = new KnowledgeSourceService(db);
+export function registerKnowledgeSourceRoutes(app: FastifyInstance, services: AppServices): void {
+  const { knowledgeSource: service } = services;
 
   /* GET /api/v1/knowledge-sources — 列表（租户级） */
   app.get('/api/v1/knowledge-sources', async (request) => {

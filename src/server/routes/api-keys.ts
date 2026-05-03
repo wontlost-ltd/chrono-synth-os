@@ -6,13 +6,12 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import { CreateApiKeySchema } from '../schemas/api-schemas.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
-import { ApiKeyService } from '../../billing/api-key-service.js';
 
-export function registerApiKeyRoutes(app: FastifyInstance, db: IDatabase): void {
-  const apiKeyService = new ApiKeyService(db);
+export function registerApiKeyRoutes(app: FastifyInstance, services: AppServices): void {
+  const { apiKey: apiKeyService } = services;
 
   /* POST /api/v1/api-keys — 创建 */
   app.post('/api/v1/api-keys', async (request, reply) => {

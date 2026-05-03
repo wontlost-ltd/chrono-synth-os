@@ -5,14 +5,13 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import type { JwtPayload } from '../../types/auth.js';
-import { IdentityService } from '../../identity/identity-service.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { UpdateIdentitySchema } from '../schemas/api-schemas.js';
 
-export function registerIdentityRoutes(app: FastifyInstance, db: IDatabase): void {
-  const identityService = new IdentityService(db);
+export function registerIdentityRoutes(app: FastifyInstance, services: AppServices): void {
+  const { identity: identityService } = services;
 
   /* GET /api/v1/identity */
   app.get('/api/v1/identity', async (request) => {

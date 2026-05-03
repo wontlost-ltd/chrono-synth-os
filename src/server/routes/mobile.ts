@@ -4,14 +4,12 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import type { JwtPayload } from '../../types/auth.js';
-import { MobileDeviceFacade } from '../../identity/mobile-device-facade.js';
-import { MockPushService } from '../services/push-service.js';
 import { RegisterDeviceSchema, UpdatePushTokenSchema, InstallAvatarSchema } from '../schemas/api-schemas.js';
 
-export function registerMobileRoutes(app: FastifyInstance, db: IDatabase): void {
-  const facade = new MobileDeviceFacade(db, new MockPushService());
+export function registerMobileRoutes(app: FastifyInstance, services: AppServices): void {
+  const { mobileDeviceFacade: facade } = services;
 
   app.post('/api/v1/devices', async (request) => {
     const user = request.user as JwtPayload;

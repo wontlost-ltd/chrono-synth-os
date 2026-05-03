@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
 import { requireOrganizationRole } from '../plugins/organization-rbac.js';
 import { CreateOrganizationSchema, UpsertOrganizationMemberSchema } from '../schemas/api-schemas.js';
-import { OrganizationService } from '../../enterprise/organization-service.js';
 
 function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
   const user = request.user;
@@ -14,8 +13,8 @@ function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
   return user;
 }
 
-export function registerOrganizationRoutes(app: FastifyInstance, db: IDatabase): void {
-  const service = new OrganizationService(db);
+export function registerOrganizationRoutes(app: FastifyInstance, services: AppServices): void {
+  const { db, organization: service } = services;
 
   app.get('/api/v1/organizations', async (request) => {
     const user = requireJwtUser(request);

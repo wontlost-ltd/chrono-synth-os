@@ -6,12 +6,11 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import type { JwtPayload } from '../../types/auth.js';
-import { UserProfileService } from '../../identity/user-profile-service.js';
 
-export function registerUserRoutes(app: FastifyInstance, db: IDatabase): void {
-  const service = new UserProfileService(db);
+export function registerUserRoutes(app: FastifyInstance, services: AppServices): void {
+  const { userProfile: service } = services;
 
   app.get('/api/v1/users/me', async (request) => {
     const user = request.user as JwtPayload;

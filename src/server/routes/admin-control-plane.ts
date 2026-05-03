@@ -1,16 +1,15 @@
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import { PaginationQuerySchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
-import { AdminControlPlaneService } from '../../enterprise/admin-control-plane-service.js';
 
 function parsePagination(query: unknown) {
   const parsed = PaginationQuerySchema.parse(query ?? {});
   return { page: parsed.page, pageSize: parsed.pageSize };
 }
 
-export function registerAdminControlPlaneRoutes(app: FastifyInstance, db: IDatabase): void {
-  const service = new AdminControlPlaneService(db);
+export function registerAdminControlPlaneRoutes(app: FastifyInstance, services: AppServices): void {
+  const { adminControlPlane: service } = services;
 
   app.get('/api/v1/admin/personas', {
     preHandler: requireRole('admin'),

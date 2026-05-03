@@ -6,13 +6,12 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../../storage/database.js';
+import type { AppServices } from '../app-services.js';
 import { ShareSimulationSchema, PaginationQuerySchema } from '../schemas/api-schemas.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
-import { CollaborationService } from '../../identity/collaboration-service.js';
 
-export function registerCollaborationRoutes(app: FastifyInstance, db: IDatabase): void {
-  const service = new CollaborationService(db);
+export function registerCollaborationRoutes(app: FastifyInstance, services: AppServices): void {
+  const { collaboration: service } = services;
 
   app.post<{ Params: { id: string } }>('/api/v1/simulations/:id/share', async (request, reply) => {
     const { id: simulationId } = request.params;

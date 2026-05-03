@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { PinoLogger } from '../logging/pino-logger.js';
 import type { IDatabase } from '../storage/database.js';
+import { buildAppServices } from './app-services.js';
 import type { AppConfig } from '../config/schema.js';
 import { NodeEventPublisher } from '../events/node-event-publisher.js';
 import { NodeUnitOfWorkFactory } from '../storage/node-unit-of-work.js';
@@ -162,6 +163,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const db = deps.db ?? deps.os.getDatabase();
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
+  const services = buildAppServices(db, config, deps.logger);
   const tenantFactory = new TenantOSFactory(
     db,
     deps.os.getClock(),
@@ -293,8 +295,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 路由 */
   registerAuthRoutes(app, db, config);
-  registerUserRoutes(app, db);
-  registerOrganizationRoutes(app, db);
+  registerUserRoutes(app, services);
+  registerOrganizationRoutes(app, services);
   registerBillingRoutes(app, db, config);
   registerPersonaCoreRoutes(app, db, config);
   registerHealthRoutes(app, {
@@ -325,15 +327,15 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerSsoRoutes(app, db, config);
   registerOidcRoutes(app, db, config);
   registerScimRoutes(app, db, config);
-  registerCollaborationRoutes(app, db);
-  registerApiKeyRoutes(app, db);
+  registerCollaborationRoutes(app, services);
+  registerApiKeyRoutes(app, services);
   registerAdminConfigRoutes(app, db, config);
   registerAdminDeploymentRoutes(app, db, config);
-  registerAdminControlPlaneRoutes(app, db);
-  registerMobileRoutes(app, db);
-  registerIdentityRoutes(app, db);
+  registerAdminControlPlaneRoutes(app, services);
+  registerMobileRoutes(app, services);
+  registerIdentityRoutes(app, services);
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
-  registerKnowledgeSourceRoutes(app, db);
+  registerKnowledgeSourceRoutes(app, services);
   registerSseRoutes(app, deps.os, config);
   registerV2Routes(app, db, config, uowFactory);
 
