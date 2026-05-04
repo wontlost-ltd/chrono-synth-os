@@ -14,7 +14,7 @@ import {
   settleCmdDeleteSettlementTransactions, settleCmdInsertTransaction,
   settleCmdDeleteOrphanTransactions, settleCmdInsertRun,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 interface ExpectedLedgerEntry {
@@ -91,13 +91,18 @@ function isLedgerConsistent(actual: readonly WalletTransactionRow[], settlement:
 }
 
 export class SettlementReconciliationService {
-  private readonly db: IDatabase;
+  private readonly db: IDatabase | null;
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase) {
-    this.db = db;
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   reconcileTenant(tenantId: string): SettlementReconciliationRun {
@@ -119,7 +124,7 @@ export class SettlementReconciliationService {
       mismatchedSettlements += 1;
       mismatchedSettlementIds.push(settlement.id);
 
-      this.db.transaction(() => {
+      this.runAtomic(() => {
         const deleted = this.tx.execute(settleCmdDeleteSettlementTransactions({
           tenantId, settlementId: settlement.id,
         }));

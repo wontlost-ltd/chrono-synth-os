@@ -3,7 +3,7 @@
  * Stripe price ID 由 process.env 注入
  */
 
-import type { IDatabase } from '../storage/database.js';
+import type { UowOrDb } from '../storage/uow-helpers.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import {
   KERNEL_PLANS, getKernelPlanLimits,
@@ -54,8 +54,8 @@ export function getPlanLimits(planId: string): PlanLimits {
  *
  *  -1 表示无限制 → clearLimit；> 0 → setLimit；0 不写入（保留旧值，避免误清）
  */
-export function syncPlanToQuota(db: IDatabase, tenantId: string, planId: string): void {
-  const qm = new QuotaManager(db);
+export function syncPlanToQuota(uowOrDb: UowOrDb, tenantId: string, planId: string): void {
+  const qm = new QuotaManager(uowOrDb);
   const limits = getPlanLimits(planId);
   const monthMs = 30 * 24 * 60 * 60 * 1000;
 

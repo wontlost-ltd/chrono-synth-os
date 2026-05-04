@@ -17,6 +17,9 @@ export const SWHS_CMD_PURCHASE_ADDON = 'stripeWebhook.purchaseAddon' as const;
 export const SWHS_CMD_UPDATE_SUBSCRIPTION = 'stripeWebhook.updateSubscription' as const;
 export const SWHS_CMD_CANCEL_BY_CUSTOMER = 'stripeWebhook.cancelByCustomer' as const;
 export const SWHS_CMD_CANCEL_TENANT_ADDONS = 'stripeWebhook.cancelTenantAddons' as const;
+export const SWHS_CMD_FINALIZE_TRIAL_PERIOD = 'stripeWebhook.finalizeTrialPeriod' as const;
+export const SWHS_CMD_REVIVE_INVOICE_PAID = 'stripeWebhook.reviveInvoicePaid' as const;
+export const SWHS_CMD_MARK_PAST_DUE = 'stripeWebhook.markPastDue' as const;
 
 /* ── 行类型 ── */
 
@@ -71,6 +74,26 @@ export interface SwhsCancelTenantAddonsParams {
   now: number;
 }
 
+export interface SwhsFinalizeTrialPeriodParams {
+  subscriptionRowId: string;
+  trialEnd: number | null;
+  cancelAtPeriodEnd: number;
+  now: number;
+}
+
+export interface SwhsReviveInvoicePaidParams {
+  subscriptionRowId: string;
+  invoiceId: string | null;
+  now: number;
+}
+
+export interface SwhsMarkPastDueParams {
+  subscriptionRowId: string;
+  graceEndsAt: number;
+  invoiceId: string | null;
+  now: number;
+}
+
 /* ── Query 工厂 ── */
 
 export function swhsQueryLatestSubscription(tenantId: string): Query<SwhsSubscriptionRow | null, string> {
@@ -105,4 +128,16 @@ export function swhsCmdCancelByCustomer(params: SwhsCancelByCustomerParams): Com
 
 export function swhsCmdCancelTenantAddons(params: SwhsCancelTenantAddonsParams): Command<SwhsCancelTenantAddonsParams> {
   return { kind: SWHS_CMD_CANCEL_TENANT_ADDONS, params };
+}
+
+export function swhsCmdFinalizeTrialPeriod(params: SwhsFinalizeTrialPeriodParams): Command<SwhsFinalizeTrialPeriodParams> {
+  return { kind: SWHS_CMD_FINALIZE_TRIAL_PERIOD, params };
+}
+
+export function swhsCmdReviveInvoicePaid(params: SwhsReviveInvoicePaidParams): Command<SwhsReviveInvoicePaidParams> {
+  return { kind: SWHS_CMD_REVIVE_INVOICE_PAID, params };
+}
+
+export function swhsCmdMarkPastDue(params: SwhsMarkPastDueParams): Command<SwhsMarkPastDueParams> {
+  return { kind: SWHS_CMD_MARK_PAST_DUE, params };
 }

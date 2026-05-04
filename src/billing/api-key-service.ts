@@ -4,11 +4,10 @@
  */
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, ApiKeyRow } from '@chrono/kernel';
 import { apikeyQueryList, apikeyCmdCreate, apikeyCmdRevoke } from '@chrono/kernel';
 import { SubscriptionQueryService } from './subscription-query-service.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface ApiKeyDto {
@@ -35,10 +34,10 @@ export class ApiKeyService {
   private readonly tx: SyncWriteUnitOfWork;
   private readonly subscriptionQuery: SubscriptionQueryService;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
-    this.subscriptionQuery = new SubscriptionQueryService(db);
+    this.tx = asUow(uowOrDb);
+    this.subscriptionQuery = new SubscriptionQueryService(uowOrDb);
   }
 
   /**

@@ -3,20 +3,19 @@
  * 封装订阅计划查询的数据访问，供路由与其他服务复用
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   subqQueryLatestPlan, subqQueryActiveStripeCustomer, subqQueryActivePlan,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export class SubscriptionQueryService {
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
   }
 
   /** 获取租户最近一条订阅的 plan_id（不过滤 status），无订阅时返回 'free' */

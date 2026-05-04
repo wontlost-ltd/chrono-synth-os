@@ -1,13 +1,13 @@
 import type { EntitlementContract, EntitlementResult, Entitlement, TenantScope, PlanLimits } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
+import type { UowOrDb } from '../storage/uow-helpers.js';
 import { EntitlementService } from './entitlement-service.js';
 import { RESOURCE_TO_LIMIT } from '@chrono/kernel';
 
 export class NodeEntitlementService implements EntitlementContract {
   private readonly inner: EntitlementService;
 
-  constructor(db: IDatabase) {
-    this.inner = new EntitlementService(db);
+  constructor(uowOrDb: UowOrDb) {
+    this.inner = new EntitlementService(uowOrDb);
   }
 
   async check(scope: TenantScope, resource: string): Promise<EntitlementResult> {

@@ -4,7 +4,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { DEFAULT_ADD_ONS as KERNEL_DEFAULT_ADD_ONS } from '@chrono/kernel';
 import type { KernelAddOn, AddOnRow } from '@chrono/kernel';
@@ -13,7 +12,7 @@ import {
   addonQueryCodeExists,
   addonCmdSeed, addonCmdCreate, addonCmdUpdate, addonCmdDeactivate,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { KernelAddOn };
@@ -46,14 +45,14 @@ function rowToAddOn(row: AddOnRow): AddOn {
   };
 }
 
-function getTx(db: IDatabase): SyncWriteUnitOfWork {
+function getTx(uowOrDb: UowOrDb): SyncWriteUnitOfWork {
   registerCoreSelfExecutors();
-  return directUnitOfWork(db);
+  return asUow(uowOrDb);
 }
 
 /** 初始化默认附加组件（幂等），种子数据来自 kernel */
-export function seedDefaultAddOns(db: IDatabase): void {
-  const tx = getTx(db);
+export function seedDefaultAddOns(uowOrDb: UowOrDb): void {
+  const tx = getTx(uowOrDb);
   const now = Date.now();
   for (const def of KERNEL_DEFAULT_ADD_ONS) {
     const existing = tx.queryOne(addonQueryCodeExists(def.code));
@@ -72,8 +71,8 @@ export function seedDefaultAddOns(db: IDatabase): void {
 }
 
 /** 列出所有附加组件（可选仅活跃） */
-export function listAddOns(db: IDatabase, activeOnly = true): AddOn[] {
-  const tx = getTx(db);
+export function listAddOns(uowOrDb: UowOrDb, activeOnly = true): AddOn[] {
+  const tx = getTx(uowOrDb);
   const rows = activeOnly
     ? tx.queryMany(addonQueryListActive()) as unknown as AddOnRow[]
     : tx.queryMany(addonQueryListAll()) as unknown as AddOnRow[];
@@ -81,22 +80,22 @@ export function listAddOns(db: IDatabase, activeOnly = true): AddOn[] {
 }
 
 /** 按 code 查找附加组件 */
-export function getAddOnByCode(db: IDatabase, code: string): AddOn | undefined {
-  const tx = getTx(db);
+export function getAddOnByCode(uowOrDb: UowOrDb, code: string): AddOn | undefined {
+  const tx = getTx(uowOrDb);
   const row = tx.queryOne(addonQueryByCode(code));
   return row ? rowToAddOn(row) : undefined;
 }
 
 /** 按 ID 查找附加组件 */
-export function getAddOnById(db: IDatabase, id: string): AddOn | undefined {
-  const tx = getTx(db);
+export function getAddOnById(uowOrDb: UowOrDb, id: string): AddOn | undefined {
+  const tx = getTx(uowOrDb);
   const row = tx.queryOne(addonQueryById(id));
   return row ? rowToAddOn(row) : undefined;
 }
 
 /** 创建附加组件 */
-export function createAddOn(db: IDatabase, data: Omit<AddOn, 'id' | 'isActive' | 'createdAt' | 'updatedAt'>): AddOn {
-  const tx = getTx(db);
+export function createAddOn(uowOrDb: UowOrDb, data: Omit<AddOn, 'id' | 'isActive' | 'createdAt' | 'updatedAt'>): AddOn {
+  const tx = getTx(uowOrDb);
   const id = `addon_${randomUUID()}`;
   const now = Date.now();
   tx.execute(addonCmdCreate({
@@ -113,14 +112,14 @@ export function createAddOn(db: IDatabase, data: Omit<AddOn, 'id' | 'isActive' |
 }
 
 /** 更新附加组件 */
-export function updateAddOn(db: IDatabase, id: string, data: Partial<Pick<AddOn, 'name' | 'description' | 'stripePriceId' | 'quotaAmount'>>): void {
+export function updateAddOn(uowOrDb: UowOrDb, id: string, data: Partial<Pick<AddOn, 'name' | 'description' | 'stripePriceId' | 'quotaAmount'>>): void {
   if (
     data.name === undefined &&
     data.description === undefined &&
     data.stripePriceId === undefined &&
     data.quotaAmount === undefined
   ) return;
-  const tx = getTx(db);
+  const tx = getTx(uowOrDb);
   tx.execute(addonCmdUpdate({
     id,
     name: data.name,
@@ -132,7 +131,7 @@ export function updateAddOn(db: IDatabase, id: string, data: Partial<Pick<AddOn,
 }
 
 /** 停用附加组件 */
-export function deactivateAddOn(db: IDatabase, id: string): void {
-  const tx = getTx(db);
+export function deactivateAddOn(uowOrDb: UowOrDb, id: string): void {
+  const tx = getTx(uowOrDb);
   tx.execute(addonCmdDeactivate({ id, now: Date.now() }));
 }

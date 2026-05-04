@@ -1,4 +1,4 @@
-import type { IDatabase } from '../storage/database.js';
+import type { UowOrDb } from '../storage/uow-helpers.js';
 import type { Logger } from '../utils/logger.js';
 import {
   SettlementReconciliationService,
@@ -23,7 +23,7 @@ export class SettlementReconciliationWorker {
   private currentRun: Promise<SettlementReconciliationRun[]> | undefined;
 
   constructor(
-    private readonly db: IDatabase,
+    private readonly uowOrDb: UowOrDb,
     private readonly logger: Logger,
     options: Partial<SettlementReconciliationWorkerOptions> = {},
   ) {
@@ -77,7 +77,7 @@ export class SettlementReconciliationWorker {
   }
 
   private flushInternal(): SettlementReconciliationRun[] {
-    const service = new SettlementReconciliationService(this.db);
+    const service = new SettlementReconciliationService(this.uowOrDb);
     const runs = service.reconcileTenants(this.options.batchSize);
     const repaired = runs.reduce((sum, item) => sum + item.repairedSettlements, 0);
 

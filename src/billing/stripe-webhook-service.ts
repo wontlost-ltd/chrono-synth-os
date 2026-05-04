@@ -13,8 +13,9 @@ import {
   swhsCmdRecordEvent, swhsCmdPersistStripeCustomer,
   swhsCmdPurchaseAddon, swhsCmdUpdateSubscription,
   swhsCmdCancelByCustomer, swhsCmdCancelTenantAddons,
+  swhsCmdFinalizeTrialPeriod, swhsCmdReviveInvoicePaid, swhsCmdMarkPastDue,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { SwhsSubscriptionRow as SubscriptionRow };
@@ -29,13 +30,22 @@ export interface WebhookProcessResult {
 
 export class StripeWebhookService {
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
+  private readonly uowOrDb: UowOrDb;
 
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly entitlementService: EntitlementService,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
+    this.uowOrDb = uowOrDb;
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   /**
@@ -45,7 +55,7 @@ export class StripeWebhookService {
   processEvent(eventId: string, eventType: string, dataObject: Record<string, unknown>): WebhookProcessResult {
     let duplicate = false;
 
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       const now = Date.now();
       const inserted = this.tx.execute(swhsCmdRecordEvent({ eventId, eventType, now }));
 
@@ -96,7 +106,7 @@ export class StripeWebhookService {
 
   /** 购买附加组件（插入 + 权益同步在同一事务内） */
   purchaseAddOn(tenantId: string, addOnId: string): void {
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       const now = Date.now();
       this.tx.execute(swhsCmdPurchaseAddon({
         id: `ta_${randomUUID()}`,
@@ -141,21 +151,19 @@ export class StripeWebhookService {
       now,
     }));
 
-    /* 同步 P1-D 新字段：trial_end / cancel_at_period_end（直接 SQL） */
+    /* 同步 P1-D 新字段：trial_end / cancel_at_period_end */
     const trialEnd = typeof subscription.trial_end === 'number' && subscription.trial_end > 0
       ? subscription.trial_end * 1000 : null;
     const cancelAtPeriodEnd = subscription.cancel_at_period_end === true ? 1 : 0;
-    this.db.prepare<void>(
-      `UPDATE subscriptions
-          SET trial_end = ?,
-              cancel_at_period_end = ?,
-              grace_period_ends_at = NULL,
-              updated_at = ?
-        WHERE id = ?`,
-    ).run(trialEnd, cancelAtPeriodEnd, now, tenantSub.id);
+    this.tx.execute(swhsCmdFinalizeTrialPeriod({
+      subscriptionRowId: tenantSub.id,
+      trialEnd,
+      cancelAtPeriodEnd,
+      now,
+    }));
 
     if (resolvedPlanId !== tenantSub.plan_id) {
-      syncPlanToQuota(this.db, tenantSub.tenant_id, resolvedPlanId);
+      syncPlanToQuota(this.uowOrDb, tenantSub.tenant_id, resolvedPlanId);
       this.entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
     }
   }
@@ -183,18 +191,15 @@ export class StripeWebhookService {
 
     const invoiceId = typeof invoice.id === 'string' ? invoice.id : null;
 
-    this.db.prepare<void>(
-      `UPDATE subscriptions
-          SET status = CASE WHEN status IN ('past_due', 'canceled') THEN 'active' ELSE status END,
-              grace_period_ends_at = NULL,
-              last_invoice_id = COALESCE(?, last_invoice_id),
-              updated_at = ?
-        WHERE id = ?`,
-    ).run(invoiceId, now, tenantSub.id);
+    this.tx.execute(swhsCmdReviveInvoicePaid({
+      subscriptionRowId: tenantSub.id,
+      invoiceId,
+      now,
+    }));
 
     if (tenantSub.status === 'past_due') {
       /* 复活：把配额恢复到当前 plan */
-      syncPlanToQuota(this.db, tenantSub.tenant_id, tenantSub.plan_id);
+      syncPlanToQuota(this.uowOrDb, tenantSub.tenant_id, tenantSub.plan_id);
       this.entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
     }
   }
@@ -211,14 +216,12 @@ export class StripeWebhookService {
     const invoiceId = typeof invoice.id === 'string' ? invoice.id : null;
     const graceMs = 3 * 24 * 60 * 60 * 1000;
 
-    this.db.prepare<void>(
-      `UPDATE subscriptions
-          SET status = 'past_due',
-              grace_period_ends_at = ?,
-              last_invoice_id = COALESCE(?, last_invoice_id),
-              updated_at = ?
-        WHERE id = ?`,
-    ).run(now + graceMs, invoiceId, now, tenantSub.id);
+    this.tx.execute(swhsCmdMarkPastDue({
+      subscriptionRowId: tenantSub.id,
+      graceEndsAt: now + graceMs,
+      invoiceId,
+      now,
+    }));
   }
 
   private handleSubscriptionDeleted(subscription: Record<string, unknown>, now: number): void {
@@ -231,7 +234,7 @@ export class StripeWebhookService {
     this.tx.execute(swhsCmdCancelByCustomer({ stripeCustomerId: customerId, now }));
 
     if (canceledSub) {
-      syncPlanToQuota(this.db, canceledSub.tenant_id, 'free');
+      syncPlanToQuota(this.uowOrDb, canceledSub.tenant_id, 'free');
       this.tx.execute(swhsCmdCancelTenantAddons({ tenantId: canceledSub.tenant_id, now }));
       this.entitlementService.syncTenantEntitlements(canceledSub.tenant_id);
     }

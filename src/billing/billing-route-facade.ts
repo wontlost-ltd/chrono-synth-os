@@ -4,8 +4,7 @@
  */
 
 import { orgQueryTenantUserEmail } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { AppConfig } from '../config/schema.js';
 import { BillingService } from './billing-service.js';
@@ -39,7 +38,7 @@ function isSafeRedirectUrl(url: string, allowedOriginSet: Set<string>): boolean 
 const inflightCustomerCreation = new Map<string, Promise<string>>();
 
 async function ensureStripeCustomer(
-  db: IDatabase, config: AppConfig, webhookService: StripeWebhookService, tenantId: string,
+  uowOrDb: UowOrDb, config: AppConfig, webhookService: StripeWebhookService, tenantId: string,
 ): Promise<string> {
   const sub = webhookService.getLatestSubscription(tenantId);
   if (sub?.stripe_customer_id) return sub.stripe_customer_id;
@@ -49,7 +48,7 @@ async function ensureStripeCustomer(
 
   const promise = (async () => {
     registerCoreSelfExecutors();
-    const tx = directUnitOfWork(db);
+    const tx = asUow(uowOrDb);
     const user = tx.queryOne(orgQueryTenantUserEmail(tenantId));
     if (!user) throw new StateError('租户无关联用户', ErrorCode.STATE_INVALID_TRANSITION);
     const customer = await createCustomer(config, user.email, tenantId);
@@ -73,12 +72,12 @@ export class BillingRouteFacade {
   readonly webhookService: StripeWebhookService;
   private readonly allowedOriginSet: Set<string>;
 
-  constructor(private readonly db: IDatabase, private readonly config: AppConfig) {
-    this.billingService = new BillingService(db);
-    this.settlementService = new SettlementReconciliationService(db);
-    this.usageTracker = new UsageTracker(db);
-    this.entitlementService = new EntitlementService(db);
-    this.webhookService = new StripeWebhookService(db, this.entitlementService);
+  constructor(private readonly uowOrDb: UowOrDb, private readonly config: AppConfig) {
+    this.billingService = new BillingService(uowOrDb);
+    this.settlementService = new SettlementReconciliationService(uowOrDb);
+    this.usageTracker = new UsageTracker(uowOrDb);
+    this.entitlementService = new EntitlementService(uowOrDb);
+    this.webhookService = new StripeWebhookService(uowOrDb, this.entitlementService);
 
     /* 构建允许的重定向源集合 */
     const rawOrigins: string[] = [];
@@ -92,7 +91,7 @@ export class BillingRouteFacade {
     }
 
     /* 初始化默认数据（幂等） */
-    seedDefaultAddOns(db);
+    seedDefaultAddOns(uowOrDb);
     this.billingService.seedBillingPlans();
   }
 
@@ -117,7 +116,7 @@ export class BillingRouteFacade {
   }
 
   listAddOns() {
-    return listAddOns(this.db);
+    return listAddOns(this.uowOrDb);
   }
 
   getUsage(tenantId: string) {
@@ -163,7 +162,7 @@ export class BillingRouteFacade {
       throw new ValidationError('重定向 URL 必须为相对路径或同源地址', ErrorCode.VALIDATION_FORMAT);
     }
 
-    const customerId = await ensureStripeCustomer(this.db, this.config, this.webhookService, tenantId);
+    const customerId = await ensureStripeCustomer(this.uowOrDb, this.config, this.webhookService, tenantId);
     try {
       const session = await createCheckoutSession(this.config, customerId, priceId, successUrl, cancelUrl, {
         trialDays: options.trialDays,
@@ -206,7 +205,7 @@ export class BillingRouteFacade {
       throw new ValidationError('重定向 URL 必须为相对路径或同源地址', ErrorCode.VALIDATION_FORMAT);
     }
 
-    const customerId = await ensureStripeCustomer(this.db, this.config, this.webhookService, tenantId);
+    const customerId = await ensureStripeCustomer(this.uowOrDb, this.config, this.webhookService, tenantId);
     try {
       const session = await createPortalSession(this.config, customerId, returnUrl);
       return { url: session.url };
@@ -240,7 +239,7 @@ export class BillingRouteFacade {
       throw new ValidationError('code/name/resource/quotaAmount 为必填', ErrorCode.VALIDATION_REQUIRED);
     }
     const { createAddOn } = await import('./add-ons.js');
-    return createAddOn(this.db, {
+    return createAddOn(this.uowOrDb, {
       code: data.code,
       name: data.name,
       description: data.description ?? '',
@@ -251,21 +250,21 @@ export class BillingRouteFacade {
   }
 
   async updateAddOn(id: string, data: Record<string, unknown>) {
-    const existing = getAddOnById(this.db, id);
+    const existing = getAddOnById(this.uowOrDb, id);
     if (!existing) throw new ValidationError('附加组件不存在', ErrorCode.VALIDATION_FORMAT);
     const { updateAddOn } = await import('./add-ons.js');
-    updateAddOn(this.db, id, data);
+    updateAddOn(this.uowOrDb, id, data);
     return { updated: true };
   }
 
   async deactivateAddOn(id: string) {
     const { deactivateAddOn } = await import('./add-ons.js');
-    deactivateAddOn(this.db, id);
+    deactivateAddOn(this.uowOrDb, id);
     return { deactivated: true };
   }
 
   purchaseAddOn(tenantId: string, addOnId: string) {
-    const addon = getAddOnById(this.db, addOnId);
+    const addon = getAddOnById(this.uowOrDb, addOnId);
     if (!addon || !addon.isActive) {
       throw new ValidationError('附加组件不存在或已停用', ErrorCode.VALIDATION_FORMAT);
     }

@@ -3,7 +3,6 @@
  * 将计量事件持久化到本地表，异步重试确保不丢失
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { AppConfig } from '../config/schema.js';
 import type { SyncWriteUnitOfWork, BillingOutboxRow } from '@chrono/kernel';
 import {
@@ -11,7 +10,7 @@ import {
   boutboxCmdEnqueue, boutboxCmdRequeueStale, boutboxCmdClaim,
   boutboxCmdMarkSent, boutboxCmdMarkFailed,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { reportUsage } from './stripe-client.js';
 
@@ -22,11 +21,11 @@ export class BillingOutbox {
   private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
-    db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly config: AppConfig,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
   }
 
   /** 入队一条计量事件 */

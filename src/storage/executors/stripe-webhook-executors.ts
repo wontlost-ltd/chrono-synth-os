@@ -8,12 +8,14 @@ import {
   SWHS_CMD_RECORD_EVENT, SWHS_CMD_PERSIST_STRIPE_CUSTOMER,
   SWHS_CMD_PURCHASE_ADDON, SWHS_CMD_UPDATE_SUBSCRIPTION,
   SWHS_CMD_CANCEL_BY_CUSTOMER, SWHS_CMD_CANCEL_TENANT_ADDONS,
+  SWHS_CMD_FINALIZE_TRIAL_PERIOD, SWHS_CMD_REVIVE_INVOICE_PAID, SWHS_CMD_MARK_PAST_DUE,
 } from '@chrono/kernel';
 import type {
   SwhsSubscriptionRow,
   SwhsRecordEventParams, SwhsPersistStripeCustomerParams,
   SwhsPurchaseAddonParams, SwhsUpdateSubscriptionParams,
   SwhsCancelByCustomerParams, SwhsCancelTenantAddonsParams,
+  SwhsFinalizeTrialPeriodParams, SwhsReviveInvoicePaidParams, SwhsMarkPastDueParams,
 } from '@chrono/kernel';
 
 export function registerStripeWebhookExecutors(): void {
@@ -72,6 +74,42 @@ export function registerStripeWebhookExecutors(): void {
     const result = db.prepare<void>(
       `UPDATE tenant_add_ons SET status = 'canceled', canceled_at = ? WHERE tenant_id = ? AND status = 'active'`,
     ).run(p.now, p.tenantId);
+    return { rowsAffected: result.changes };
+  });
+
+  registerCommand<SwhsFinalizeTrialPeriodParams>(SWHS_CMD_FINALIZE_TRIAL_PERIOD, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE subscriptions
+          SET trial_end = ?,
+              cancel_at_period_end = ?,
+              grace_period_ends_at = NULL,
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(p.trialEnd, p.cancelAtPeriodEnd, p.now, p.subscriptionRowId);
+    return { rowsAffected: result.changes };
+  });
+
+  registerCommand<SwhsReviveInvoicePaidParams>(SWHS_CMD_REVIVE_INVOICE_PAID, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE subscriptions
+          SET status = CASE WHEN status IN ('past_due', 'canceled') THEN 'active' ELSE status END,
+              grace_period_ends_at = NULL,
+              last_invoice_id = COALESCE(?, last_invoice_id),
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(p.invoiceId, p.now, p.subscriptionRowId);
+    return { rowsAffected: result.changes };
+  });
+
+  registerCommand<SwhsMarkPastDueParams>(SWHS_CMD_MARK_PAST_DUE, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE subscriptions
+          SET status = 'past_due',
+              grace_period_ends_at = ?,
+              last_invoice_id = COALESCE(?, last_invoice_id),
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(p.graceEndsAt, p.invoiceId, p.now, p.subscriptionRowId);
     return { rowsAffected: result.changes };
   });
 }

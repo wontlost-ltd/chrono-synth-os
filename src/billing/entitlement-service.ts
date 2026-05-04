@@ -3,7 +3,6 @@
  * SQL 由执行器层实现，纯计算委托 mergeEffectiveLimits
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, AddOnQuota } from '@chrono/kernel';
 import { getPlanLimits } from './plans.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
@@ -13,17 +12,19 @@ import {
   entlCmdUpsert,
 } from '@chrono/kernel';
 import type { EffectiveLimits, EntlAddOnQuotaRow } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { EffectiveLimits };
 
 export class EntitlementService {
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly uowOrDb: UowOrDb;
 
-  constructor(private readonly db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.uowOrDb = uowOrDb;
   }
 
   /** 计算租户的有效配额限制（基础计划 + 附加组件叠加） */
@@ -52,7 +53,7 @@ export class EntitlementService {
   syncTenantEntitlements(tenantId: string): EffectiveLimits {
     const limits = this.computeEffectiveLimits(tenantId);
     const now = Date.now();
-    const qm = new QuotaManager(this.db);
+    const qm = new QuotaManager(this.uowOrDb);
     const monthMs = 30 * 24 * 60 * 60 * 1000;
 
     for (const [resource, limit] of Object.entries(limits)) {

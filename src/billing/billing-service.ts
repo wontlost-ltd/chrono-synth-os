@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, BsvcSubscriptionRow, BsvcInvoiceRow, BsvcUsageMeterRow } from '@chrono/kernel';
 import {
   bsvcQueryListPlans, bsvcQueryLatestSub, bsvcQueryReconciliation,
@@ -9,7 +8,7 @@ import {
   bsvcCmdUpdateInvoice, bsvcCmdInsertInvoice,
   bsvcCmdDeleteUsageMeters, bsvcCmdInsertUsageMeter,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { EntitlementService } from './entitlement-service.js';
 import { PLANS, getPlan, syncPlanToQuota } from './plans.js';
@@ -54,15 +53,15 @@ function toIso(value: number | null): string | null {
 }
 
 export class BillingService {
-  private readonly db: IDatabase;
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly uowOrDb: UowOrDb;
   private readonly entitlementService: EntitlementService;
 
-  constructor(db: IDatabase) {
-    this.db = db;
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
-    this.entitlementService = new EntitlementService(db);
+    this.tx = asUow(uowOrDb);
+    this.uowOrDb = uowOrDb;
+    this.entitlementService = new EntitlementService(uowOrDb);
   }
 
   seedBillingPlans(): void {
@@ -132,7 +131,7 @@ export class BillingService {
       }));
     }
 
-    syncPlanToQuota(this.db, tenantId, plan.id);
+    syncPlanToQuota(this.uowOrDb, tenantId, plan.id);
     this.entitlementService.syncTenantEntitlements(tenantId);
 
     const subscription = this.getLatestSubscription(tenantId);
