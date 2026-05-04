@@ -13,8 +13,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
-import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import { krtvQueryByPersona } from '@chrono/kernel';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { Logger } from '../utils/logger.js';
 import type { RelevantKnowledge } from './conversation-types.js';
 
@@ -52,20 +54,14 @@ export class ConversationKnowledgeRetriever {
   /* 简单 LRU：fingerprint → embedding；命中跳过 provider 调用 */
   private readonly embeddingCache = new Map<string, number[]>();
   private readonly cacheCap = 1024;
-  private readonly db: IDatabase | null;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
     uowOrDb: UowOrDb,
     private readonly options: RetrieverOptions = {},
   ) {
-    this.db = unwrapDb(uowOrDb);
-  }
-
-  private requireDb(): IDatabase {
-    if (!this.db) {
-      throw new Error('ConversationKnowledgeRetriever.retrieve requires IDatabase entrance');
-    }
-    return this.db;
+    registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
   }
 
   async retrieve(input: {
@@ -77,11 +73,9 @@ export class ConversationKnowledgeRetriever {
     const tokens = tokenize(input.userInput);
     if (tokens.length === 0) return [];
 
-    const rows = this.requireDb().prepare<KnowledgeRow>(
-      `SELECT id, title, content, confidence, fingerprint
-         FROM persona_knowledge_items
-        WHERE tenant_id = ? AND persona_id = ?`,
-    ).all(input.tenantId, input.personaId);
+    const rows = this.tx.queryMany(krtvQueryByPersona({
+      tenantId: input.tenantId, personaId: input.personaId,
+    })) as unknown as KnowledgeRow[];
     if (rows.length === 0) return [];
 
     /* Step 1: 关键词层全量打分 */

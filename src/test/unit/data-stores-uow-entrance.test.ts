@@ -22,20 +22,19 @@ import { SubscriptionGateService } from '../../billing/subscription-gate-service
 import { ConsoleLogger } from '../../utils/logger.js';
 
 describe('Phase 2 批次 4：data stores 双入口', () => {
-  it('SubscriptionGateService 双入口：IDatabase 路径走原 SQL', () => {
+  it('SubscriptionGateService 双入口：IDatabase 与 UoW 等价（已下沉至 kernel）', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
       const fromDb = new SubscriptionGateService(db);
-      const decision = fromDb.canUseResource('default', 'conversation_message');
-      assert.equal(decision.allowed, true);
+      assert.equal(fromDb.canUseResource('default', 'conversation_message').allowed, true);
 
       const fromUow = new SubscriptionGateService(directUnitOfWork(db));
-      assert.throws(() => fromUow.canUseResource('default', 'conversation_message'), /requires IDatabase entrance/);
+      assert.equal(fromUow.canUseResource('default', 'conversation_message').allowed, true);
     } finally { db.close(); }
   });
 
-  it('ConfirmationTokenStore 双入口', () => {
+  it('ConfirmationTokenStore 双入口：已下沉至 kernel', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
@@ -47,43 +46,41 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
       assert.ok(issued.token.startsWith('cct_'));
 
       const fromUow = new ConfirmationTokenStore(directUnitOfWork(db));
-      assert.throws(() => fromUow.pruneExpired(), /requires IDatabase entrance/);
+      const result = fromUow.consume({
+        token: issued.token,
+        tenantId: 'default', personaId: 'p1', sessionId: 's1', externalUserId: 'u1',
+        userInput: 'hello',
+      });
+      assert.deepEqual(result, { ok: true });
+      assert.equal(fromUow.pruneExpired(), 0);
     } finally { db.close(); }
   });
 
-  it('ConversationKnowledgeRetriever 双入口', async () => {
+  it('ConversationKnowledgeRetriever 双入口：已下沉至 kernel', async () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
       const fromDb = new ConversationKnowledgeRetriever(db);
-      const result = await fromDb.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 });
-      assert.deepEqual(result, []);
+      assert.deepEqual(await fromDb.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }), []);
 
       const fromUow = new ConversationKnowledgeRetriever(directUnitOfWork(db));
-      await assert.rejects(
-        () => fromUow.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }),
-        /requires IDatabase entrance/,
-      );
+      assert.deepEqual(await fromUow.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }), []);
     } finally { db.close(); }
   });
 
-  it('ConversationStore 双入口', () => {
+  it('ConversationStore 双入口：已下沉至 kernel', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
       const fromDb = new ConversationStore(db);
-      const count = fromDb.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' });
-      assert.equal(count, 0);
+      assert.equal(fromDb.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }), 0);
 
       const fromUow = new ConversationStore(directUnitOfWork(db));
-      assert.throws(
-        () => fromUow.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }),
-        /requires IDatabase entrance/,
-      );
+      assert.equal(fromUow.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }), 0);
     } finally { db.close(); }
   });
 
-  it('BulkImportStore 双入口', () => {
+  it('BulkImportStore 双入口：已下沉至 kernel', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
@@ -91,7 +88,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
       assert.equal(fromDb.get('default', 'job_missing'), null);
 
       const fromUow = new BulkImportStore(directUnitOfWork(db));
-      assert.throws(() => fromUow.get('default', 'job_missing'), /requires IDatabase entrance/);
+      assert.equal(fromUow.get('default', 'job_missing'), null);
     } finally { db.close(); }
   });
 

@@ -1,12 +1,22 @@
 /**
  * 批量知识导入 job 持久化（P1-B）
  *
- * 直接通过 db.prepare 操作 bulk_knowledge_import_jobs 表；不进入 TenantDatabase 自动重写
- * （表非 TENANT_TABLES 成员，调用方需显式带 tenant_id 条件）。
+ * 直接通过 kernel command/query 操作 bulk_knowledge_import_jobs 表；不进入 TenantDatabase
+ * 自动重写（表非 TENANT_TABLES 成员，调用方需显式带 tenant_id 条件）。
  */
 
-import type { IDatabase } from '../storage/database.js';
-import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import type {
+  SyncWriteUnitOfWork, BimpJobRow, BulkImportCounterField,
+} from '@chrono/kernel';
+import {
+  bimpQueryByTenantAndId, bimpQueryListByPersona,
+  bimpQueryFailures, bimpQueryStuck,
+  bimpCmdCreate, bimpCmdMarkRunning, bimpCmdIncrementCounter,
+  bimpCmdUpdateFailures, bimpCmdSetMetadata,
+  bimpCmdMarkCompleted, bimpCmdMarkFailed,
+} from '@chrono/kernel';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type BulkImportJobState = 'queued' | 'running' | 'completed' | 'failed';
 export type BulkImportDeduplicateStrategy = 'skip' | 'overwrite';
@@ -45,38 +55,14 @@ export interface BulkImportJobRecord {
   completedAt: number | null;
 }
 
-interface JobRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  owner_user_id: string;
-  state: BulkImportJobState;
-  total_items: number;
-  imported_count: number;
-  skipped_count: number;
-  failed_count: number;
-  failures_json: string;
-  deduplicate_strategy: BulkImportDeduplicateStrategy;
-  metadata_json: string | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-}
-
 const MAX_FAILURE_DETAILS = 50;
 
 export class BulkImportStore {
-  private readonly db: IDatabase | null;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(uowOrDb: UowOrDb) {
-    this.db = unwrapDb(uowOrDb);
-  }
-
-  private requireDb(method: string): IDatabase {
-    if (!this.db) {
-      throw new Error(`BulkImportStore.${method} requires IDatabase entrance`);
-    }
-    return this.db;
+    registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
   }
 
   create(input: {
@@ -88,49 +74,34 @@ export class BulkImportStore {
     deduplicateStrategy: BulkImportDeduplicateStrategy;
   }): void {
     const now = Date.now();
-    this.requireDb('create').prepare<void>(
-      `INSERT INTO bulk_knowledge_import_jobs (
-        id, tenant_id, persona_id, owner_user_id, state, total_items,
-        imported_count, skipped_count, failed_count, failures_json,
-        deduplicate_strategy, created_at, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, 'queued', ?, 0, 0, 0, '[]', ?, ?, NULL, NULL)`,
-    ).run(
-      input.id,
-      input.tenantId,
-      input.personaId,
-      input.ownerUserId,
-      input.totalItems,
-      input.deduplicateStrategy,
+    this.tx.execute(bimpCmdCreate({
+      id: input.id,
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      ownerUserId: input.ownerUserId,
+      totalItems: input.totalItems,
+      deduplicateStrategy: input.deduplicateStrategy,
       now,
-    );
+    }));
   }
 
   markRunning(jobId: string): void {
-    this.requireDb('markRunning').prepare<void>(
-      `UPDATE bulk_knowledge_import_jobs
-          SET state = 'running', started_at = COALESCE(started_at, ?)
-        WHERE id = ?`,
-    ).run(Date.now(), jobId);
+    this.tx.execute(bimpCmdMarkRunning({ jobId, now: Date.now() }));
   }
 
   incrementCounter(
     jobId: string,
-    field: 'imported_count' | 'skipped_count' | 'failed_count',
+    field: BulkImportCounterField,
     delta = 1,
   ): void {
-    this.requireDb('incrementCounter').prepare<void>(
-      `UPDATE bulk_knowledge_import_jobs SET ${field} = ${field} + ? WHERE id = ?`,
-    ).run(delta, jobId);
+    this.tx.execute(bimpCmdIncrementCounter({ jobId, field, delta }));
   }
 
   /**
    * 追加失败详情；超过 MAX_FAILURE_DETAILS 后仅丢弃详情，failed_count 仍由 incrementCounter 累加
    */
   appendFailure(jobId: string, failure: BulkImportJobFailure): void {
-    const db = this.requireDb('appendFailure');
-    const row = db.prepare<{ failures_json: string }>(
-      'SELECT failures_json FROM bulk_knowledge_import_jobs WHERE id = ?',
-    ).get(jobId);
+    const row = this.tx.queryOne(bimpQueryFailures({ jobId }));
     if (!row) return;
 
     let failures: BulkImportJobFailure[];
@@ -142,31 +113,20 @@ export class BulkImportStore {
     }
     if (failures.length >= MAX_FAILURE_DETAILS) return;
     failures.push(failure);
-    db.prepare<void>(
-      'UPDATE bulk_knowledge_import_jobs SET failures_json = ? WHERE id = ?',
-    ).run(JSON.stringify(failures), jobId);
+    this.tx.execute(bimpCmdUpdateFailures({ jobId, failuresJson: JSON.stringify(failures) }));
   }
 
   /** 写入 metadata_json（覆盖式） */
   setMetadata(jobId: string, metadata: BulkImportJobMetadata): void {
-    this.requireDb('setMetadata').prepare<void>(
-      'UPDATE bulk_knowledge_import_jobs SET metadata_json = ? WHERE id = ?',
-    ).run(JSON.stringify(metadata), jobId);
+    this.tx.execute(bimpCmdSetMetadata({ jobId, metadataJson: JSON.stringify(metadata) }));
   }
 
   markCompleted(jobId: string): void {
-    this.requireDb('markCompleted').prepare<void>(
-      `UPDATE bulk_knowledge_import_jobs
-          SET state = 'completed', completed_at = ?
-        WHERE id = ?`,
-    ).run(Date.now(), jobId);
+    this.tx.execute(bimpCmdMarkCompleted({ jobId, now: Date.now() }));
   }
 
   markFailed(jobId: string, reason: string): void {
-    const db = this.requireDb('markFailed');
-    const row = db.prepare<{ failures_json: string; failed_count: number }>(
-      'SELECT failures_json, failed_count FROM bulk_knowledge_import_jobs WHERE id = ?',
-    ).get(jobId);
+    const row = this.tx.queryOne(bimpQueryFailures({ jobId }));
     if (!row) return;
 
     let failures: BulkImportJobFailure[];
@@ -179,39 +139,27 @@ export class BulkImportStore {
     if (failures.length < MAX_FAILURE_DETAILS) {
       failures.push({ index: -1, reason });
     }
-    db.prepare<void>(
-      `UPDATE bulk_knowledge_import_jobs
-          SET state = 'failed',
-              completed_at = ?,
-              failures_json = ?
-        WHERE id = ?`,
-    ).run(Date.now(), JSON.stringify(failures), jobId);
+    this.tx.execute(bimpCmdMarkFailed({
+      jobId,
+      failuresJson: JSON.stringify(failures),
+      now: Date.now(),
+    }));
   }
 
   get(tenantId: string, jobId: string): BulkImportJobRecord | null {
-    const row = this.requireDb('get').prepare<JobRow>(
-      'SELECT * FROM bulk_knowledge_import_jobs WHERE id = ? AND tenant_id = ?',
-    ).get(jobId, tenantId);
+    const row = this.tx.queryOne(bimpQueryByTenantAndId({ jobId, tenantId }));
     return row ? rowToRecord(row) : null;
   }
 
   listByPersona(tenantId: string, personaId: string, limit = 20): BulkImportJobRecord[] {
-    const rows = this.requireDb('listByPersona').prepare<JobRow>(
-      `SELECT * FROM bulk_knowledge_import_jobs
-        WHERE tenant_id = ? AND persona_id = ?
-        ORDER BY created_at DESC
-        LIMIT ?`,
-    ).all(tenantId, personaId, limit);
+    const rows = this.tx.queryMany(bimpQueryListByPersona({ tenantId, personaId, limit })) as unknown as BimpJobRow[];
     return rows.map(rowToRecord);
   }
 
   /** worker 启动期回收：所有处于 running 但 started_at 老于 cutoff 的 job 标记 failed */
   reapStuck(cutoffMs: number): number {
     const cutoff = Date.now() - cutoffMs;
-    const stuck = this.requireDb('reapStuck').prepare<{ id: string }>(
-      `SELECT id FROM bulk_knowledge_import_jobs
-        WHERE state = 'running' AND started_at < ?`,
-    ).all(cutoff);
+    const stuck = this.tx.queryMany(bimpQueryStuck({ cutoff })) as unknown as Array<{ id: string }>;
     for (const row of stuck) {
       this.markFailed(row.id, `worker timeout (>${cutoffMs}ms running)`);
     }
@@ -219,7 +167,7 @@ export class BulkImportStore {
   }
 }
 
-function rowToRecord(row: JobRow): BulkImportJobRecord {
+function rowToRecord(row: BimpJobRow): BulkImportJobRecord {
   let failures: BulkImportJobFailure[] = [];
   try {
     const parsed = JSON.parse(row.failures_json);

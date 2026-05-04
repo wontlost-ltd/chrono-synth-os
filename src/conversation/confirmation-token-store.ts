@@ -10,8 +10,12 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
-import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import {
+  ctokenQueryById, ctokenCmdInsert, ctokenCmdConsume, ctokenCmdPruneExpired,
+} from '@chrono/kernel';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 
 const TOKEN_BYTES = 24;
@@ -42,20 +46,14 @@ export interface VerifyTokenInput {
 }
 
 export class ConfirmationTokenStore {
-  private readonly db: IDatabase | null;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
     uowOrDb: UowOrDb,
     private readonly ttlMs: number = DEFAULT_TOKEN_TTL_MS,
   ) {
-    this.db = unwrapDb(uowOrDb);
-  }
-
-  private requireDb(method: string): IDatabase {
-    if (!this.db) {
-      throw new Error(`ConfirmationTokenStore.${method} requires IDatabase entrance`);
-    }
-    return this.db;
+    registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
   }
 
   issue(input: IssueTokenInput): IssuedToken {
@@ -64,23 +62,18 @@ export class ConfirmationTokenStore {
     const expiresAt = now + this.ttlMs;
     const inputHash = hashInput(input.userInput);
 
-    this.requireDb('issue').prepare<void>(
-      `INSERT INTO conversation_confirmation_tokens
-        (id, tenant_id, persona_id, session_id, external_user_id,
-         requested_topic, requested_rule, input_hash, issued_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
+    this.tx.execute(ctokenCmdInsert({
       id,
-      input.tenantId,
-      input.personaId,
-      input.sessionId,
-      input.externalUserId,
-      input.topic,
-      input.rule,
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      sessionId: input.sessionId,
+      externalUserId: input.externalUserId,
+      topic: input.topic,
+      rule: input.rule,
       inputHash,
-      now,
+      issuedAt: now,
       expiresAt,
-    );
+    }));
 
     return { token: id, expiresAt };
   }
@@ -90,19 +83,7 @@ export class ConfirmationTokenStore {
    * 失败原因记入返回值便于审计。
    */
   consume(input: VerifyTokenInput): { ok: true } | { ok: false; reason: string } {
-    const row = this.requireDb('consume').prepare<{
-      tenant_id: string;
-      persona_id: string;
-      session_id: string;
-      external_user_id: string;
-      input_hash: string;
-      expires_at: number;
-      consumed_at: number | null;
-    }>(
-      `SELECT tenant_id, persona_id, session_id, external_user_id, input_hash, expires_at, consumed_at
-         FROM conversation_confirmation_tokens
-        WHERE id = ?`,
-    ).get(input.token);
+    const row = this.tx.queryOne(ctokenQueryById(input.token));
 
     if (!row) return { ok: false, reason: 'token_not_found' };
     if (row.consumed_at !== null) return { ok: false, reason: 'token_already_consumed' };
@@ -120,23 +101,17 @@ export class ConfirmationTokenStore {
     }
 
     /* 原子标记为已消费；防止竞态 */
-    const result = this.requireDb('consume').prepare<void>(
-      `UPDATE conversation_confirmation_tokens
-          SET consumed_at = ?
-        WHERE id = ? AND consumed_at IS NULL`,
-    ).run(Date.now(), input.token);
+    const result = this.tx.execute(ctokenCmdConsume({ id: input.token, consumedAt: Date.now() }));
 
-    if ((result.changes ?? 0) === 0) {
+    if (result.rowsAffected === 0) {
       return { ok: false, reason: 'token_already_consumed' };
     }
     return { ok: true };
   }
 
   pruneExpired(now = Date.now()): number {
-    const result = this.requireDb('pruneExpired').prepare<void>(
-      'DELETE FROM conversation_confirmation_tokens WHERE expires_at < ?',
-    ).run(now);
-    return result.changes ?? 0;
+    const result = this.tx.execute(ctokenCmdPruneExpired({ before: now }));
+    return result.rowsAffected;
   }
 }
 

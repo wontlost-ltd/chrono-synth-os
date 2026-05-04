@@ -63,3 +63,4 @@ export * from './domain/meta/index.js';
 export * from './domain/enterprise/index.js';
 export * from './domain/knowledge/index.js';
 export * from './domain/server/index.js';
+export * from './domain/conversation/index.js';

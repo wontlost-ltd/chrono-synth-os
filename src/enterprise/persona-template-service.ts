@@ -11,8 +11,14 @@
  *      tenant_id 和内置哨兵 BUILTIN_TENANT_ID。
  */
 
+import type { SyncWriteUnitOfWork, PtplRow } from '@chrono/kernel';
+import {
+  ptplQueryList, ptplQueryById,
+  ptplCmdUpsertBuiltin, ptplCmdInsert, ptplCmdUpdate, ptplCmdDelete,
+} from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { PersonaCoreDetail } from '../persona-core/types.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -71,21 +77,6 @@ export interface InstantiateTemplateResult {
   instantiatedFromCategory: PersonaTemplateCategory;
 }
 
-interface TemplateRow {
-  id: string;
-  tenant_id: string;
-  category: string;
-  label: string;
-  description: string;
-  default_values_json: string;
-  default_narrative: string;
-  behavior_boundaries_json: string;
-  required_knowledge_categories_json: string;
-  is_builtin: number;
-  created_at: number;
-  updated_at: number;
-}
-
 /** 错误类型：模板不存在 */
 export class PersonaTemplateNotFoundError extends Error {
   constructor(templateId: string) {
@@ -103,67 +94,47 @@ export class BuiltInTemplateImmutableError extends Error {
 }
 
 export class PersonaTemplateService {
+  private readonly tx: SyncWriteUnitOfWork;
+  /** 仅用于审计日志（recordBusinessAuditLog 仍依赖 IDatabase）；UoW 模式下静默跳过 */
   private readonly db: IDatabase | null;
 
   constructor(
     uowOrDb: UowOrDb,
     private readonly personaCoreService: PersonaCoreService,
   ) {
+    registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
     this.db = unwrapDb(uowOrDb);
-  }
-
-  private requireDb(method: string): IDatabase {
-    if (!this.db) {
-      throw new Error(
-        `PersonaTemplateService.${method} requires IDatabase entrance (raw SQL not yet routed via kernel commands)`,
-      );
-    }
-    return this.db;
   }
 
   /** 启动期：把内置模板内容刷新到 DB（INSERT OR REPLACE） */
   syncBuiltins(): void {
     const now = Date.now();
-    const stmt = this.requireDb('syncBuiltins').prepare<void>(
-      `INSERT OR REPLACE INTO persona_templates
-        (id, tenant_id, category, label, description,
-         default_values_json, default_narrative, behavior_boundaries_json,
-         required_knowledge_categories_json, is_builtin, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    );
     for (const seed of BUILTIN_TEMPLATE_SEEDS) {
-      stmt.run(
-        seed.id,
-        seed.tenantId,
-        seed.category,
-        seed.label,
-        seed.description,
-        JSON.stringify(seed.defaultValues),
-        seed.defaultNarrative,
-        JSON.stringify(seed.behaviorBoundaries),
-        JSON.stringify(seed.requiredKnowledgeCategories),
+      this.tx.execute(ptplCmdUpsertBuiltin({
+        id: seed.id,
+        tenantId: seed.tenantId,
+        category: seed.category,
+        label: seed.label,
+        description: seed.description,
+        defaultValuesJson: JSON.stringify(seed.defaultValues),
+        defaultNarrative: seed.defaultNarrative,
+        behaviorBoundariesJson: JSON.stringify(seed.behaviorBoundaries),
+        requiredKnowledgeCategoriesJson: JSON.stringify(seed.requiredKnowledgeCategories),
         now,
-        now,
-      );
+      }));
     }
   }
 
   /** 列出当前租户可见的所有模板（内置 + 自定义） */
   list(tenantId: string): PersonaTemplate[] {
-    const rows = this.requireDb('list').prepare<TemplateRow>(
-      `SELECT * FROM persona_templates
-        WHERE tenant_id = ? OR tenant_id = ?
-        ORDER BY is_builtin DESC, category ASC, label ASC`,
-    ).all(tenantId, BUILTIN_TENANT_ID);
+    const rows = this.tx.queryMany(ptplQueryList({ tenantId, builtinTenantId: BUILTIN_TENANT_ID })) as unknown as PtplRow[];
     return rows.map(rowToTemplate);
   }
 
   /** 读取单个模板（必须属于调用者或内置） */
   get(tenantId: string, templateId: string): PersonaTemplate | null {
-    const row = this.requireDb('get').prepare<TemplateRow>(
-      `SELECT * FROM persona_templates
-        WHERE id = ? AND (tenant_id = ? OR tenant_id = ?)`,
-    ).get(templateId, tenantId, BUILTIN_TENANT_ID);
+    const row = this.tx.queryOne(ptplQueryById({ templateId, tenantId, builtinTenantId: BUILTIN_TENANT_ID }));
     return row ? rowToTemplate(row) : null;
   }
 
@@ -189,25 +160,19 @@ export class PersonaTemplateService {
       updatedAt: now,
     };
 
-    this.requireDb('create').prepare<void>(
-      `INSERT INTO persona_templates
-        (id, tenant_id, category, label, description,
-         default_values_json, default_narrative, behavior_boundaries_json,
-         required_knowledge_categories_json, is_builtin, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-    ).run(
-      template.id,
-      template.tenantId,
-      template.category,
-      template.label,
-      template.description,
-      JSON.stringify(template.defaultValues),
-      template.defaultNarrative,
-      JSON.stringify(template.behaviorBoundaries),
-      JSON.stringify(template.requiredKnowledgeCategories),
-      template.createdAt,
-      template.updatedAt,
-    );
+    this.tx.execute(ptplCmdInsert({
+      id: template.id,
+      tenantId: template.tenantId,
+      category: template.category,
+      label: template.label,
+      description: template.description,
+      defaultValuesJson: JSON.stringify(template.defaultValues),
+      defaultNarrative: template.defaultNarrative,
+      behaviorBoundariesJson: JSON.stringify(template.behaviorBoundaries),
+      requiredKnowledgeCategoriesJson: JSON.stringify(template.requiredKnowledgeCategories),
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt,
+    }));
 
     return template;
   }
@@ -229,24 +194,17 @@ export class PersonaTemplateService {
       updatedAt: Date.now(),
     };
 
-    this.requireDb('update').prepare<void>(
-      `UPDATE persona_templates
-          SET label = ?, description = ?,
-              default_values_json = ?, default_narrative = ?,
-              behavior_boundaries_json = ?, required_knowledge_categories_json = ?,
-              updated_at = ?
-        WHERE id = ? AND tenant_id = ?`,
-    ).run(
-      next.label,
-      next.description,
-      JSON.stringify(next.defaultValues),
-      next.defaultNarrative,
-      JSON.stringify(next.behaviorBoundaries),
-      JSON.stringify(next.requiredKnowledgeCategories),
-      next.updatedAt,
-      next.id,
+    this.tx.execute(ptplCmdUpdate({
+      id: next.id,
       tenantId,
-    );
+      label: next.label,
+      description: next.description,
+      defaultValuesJson: JSON.stringify(next.defaultValues),
+      defaultNarrative: next.defaultNarrative,
+      behaviorBoundariesJson: JSON.stringify(next.behaviorBoundaries),
+      requiredKnowledgeCategoriesJson: JSON.stringify(next.requiredKnowledgeCategories),
+      updatedAt: next.updatedAt,
+    }));
 
     return next;
   }
@@ -257,9 +215,7 @@ export class PersonaTemplateService {
     if (!existing) throw new PersonaTemplateNotFoundError(templateId);
     if (existing.isBuiltIn) throw new BuiltInTemplateImmutableError(templateId);
 
-    this.requireDb('delete').prepare<void>(
-      'DELETE FROM persona_templates WHERE id = ? AND tenant_id = ?',
-    ).run(templateId, tenantId);
+    this.tx.execute(ptplCmdDelete({ templateId, tenantId }));
   }
 
   /** 从模板实例化一个 persona_core */
@@ -334,7 +290,7 @@ export class PersonaTemplateService {
   }
 }
 
-function rowToTemplate(row: TemplateRow): PersonaTemplate {
+function rowToTemplate(row: PtplRow): PersonaTemplate {
   return {
     id: row.id,
     tenantId: row.tenant_id,

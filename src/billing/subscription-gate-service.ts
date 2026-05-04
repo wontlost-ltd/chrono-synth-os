@@ -11,22 +11,17 @@
  * 路由层据此返回 402 + actionable upgradeUrl，前端可引导到 /billing/checkout。
  */
 
-import type { IDatabase } from '../storage/database.js';
-import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import { subqQueryGateLatest, usageQueryGet, type SubqGateRow } from '@chrono/kernel';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { getPlanLimits } from './plans.js';
 
 export type GateDecision =
   | { allowed: true; reason: 'active' | 'trialing' | 'past_due_within_grace' | 'free_within_quota' }
   | { allowed: false; statusCode: 402 | 403; reason: string; upgradeUrl: string };
 
-interface SubscriptionRow {
-  id: string;
-  plan_id: string;
-  status: 'active' | 'trialing' | 'past_due' | 'canceled' | string;
-  grace_period_ends_at: number | null;
-  current_period_end: number | null;
-  trial_end: number | null;
-}
+type SubscriptionRow = SubqGateRow;
 
 const RESOURCE_KEYS = {
   conversation_message: 'conversationMessagesPerMonth',
@@ -36,17 +31,11 @@ const RESOURCE_KEYS = {
 export type GateResource = keyof typeof RESOURCE_KEYS;
 
 export class SubscriptionGateService {
-  private readonly db: IDatabase | null;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(uowOrDb: UowOrDb) {
-    this.db = unwrapDb(uowOrDb);
-  }
-
-  private requireDb(method: string): IDatabase {
-    if (!this.db) {
-      throw new Error(`SubscriptionGateService.${method} requires IDatabase entrance`);
-    }
-    return this.db;
+    registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
   }
 
   canUseResource(tenantId: string, resource: GateResource, now = Date.now()): GateDecision {
@@ -116,22 +105,12 @@ export class SubscriptionGateService {
   }
 
   private findLatestSubscription(tenantId: string): SubscriptionRow | null {
-    return this.requireDb('canUseResource').prepare<SubscriptionRow>(
-      `SELECT id, plan_id, status, grace_period_ends_at, current_period_end, trial_end
-         FROM subscriptions
-        WHERE tenant_id = ?
-        ORDER BY created_at DESC
-        LIMIT 1`,
-    ).get(tenantId) ?? null;
+    return this.tx.queryOne(subqQueryGateLatest(tenantId));
   }
 
   private countMonthlyUsage(tenantId: string, resource: GateResource, now: number): number {
     const monthStart = now - 30 * 24 * 60 * 60 * 1000;
-    const row = this.requireDb('canUseResource').prepare<{ total: number }>(
-      `SELECT COALESCE(SUM(quantity), 0) AS total
-         FROM usage_records
-        WHERE tenant_id = ? AND resource = ? AND recorded_at >= ?`,
-    ).get(tenantId, resource, monthStart);
-    return row?.total ?? 0;
+    const row = this.tx.queryOne(usageQueryGet(tenantId, resource, monthStart));
+    return Number(row?.total ?? 0);
   }
 }

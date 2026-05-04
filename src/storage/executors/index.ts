@@ -45,6 +45,11 @@ import { registerIdempotencyExecutors } from './idempotency-executors.js';
 import { registerLlmUsageExecutors } from './llm-usage-executors.js';
 import { registerEmbeddingExecutors } from './embedding-executors.js';
 import { registerKafkaNamespaceExecutors } from './kafka-namespace-executors.js';
+import { registerKnowledgeRetrieverExecutors } from './knowledge-retriever-executors.js';
+import { registerConfirmationTokenExecutors } from './confirmation-token-executors.js';
+import { registerConversationMessageExecutors } from './conversation-message-executors.js';
+import { registerPersonaTemplateExecutors } from './persona-template-executors.js';
+import { registerBulkImportExecutors } from './bulk-import-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -65,6 +70,11 @@ import {
   PCMEM_QUERY_NODE_BY_ID, PCORE_QUERY_SUMMARIES_BY_OWNER,
   KSRC_QUERY_BY_ID, MTRX_QUERY_QUEUE_COUNT, IDEM_QUERY_EXISTING,
   LLM_QUERY_MONTHLY_SUMMARY, EMB_QUERY_BY_MODEL, KAFKA_QUERY_TENANT_NAMESPACE,
+  KRTV_QUERY_BY_PERSONA,
+  CTOKEN_QUERY_BY_ID,
+  CMSG_QUERY_COUNT_BY_SESSION,
+  PTPL_QUERY_LIST,
+  BIMP_QUERY_BY_TENANT_AND_ID,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -116,6 +126,11 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(LLM_QUERY_MONTHLY_SUMMARY)) registerLlmUsageExecutors();
   if (!resolveQueryExecutor(EMB_QUERY_BY_MODEL)) registerEmbeddingExecutors();
   if (!resolveQueryExecutor(KAFKA_QUERY_TENANT_NAMESPACE)) registerKafkaNamespaceExecutors();
+  if (!resolveQueryExecutor(KRTV_QUERY_BY_PERSONA)) registerKnowledgeRetrieverExecutors();
+  if (!resolveQueryExecutor(CTOKEN_QUERY_BY_ID)) registerConfirmationTokenExecutors();
+  if (!resolveQueryExecutor(CMSG_QUERY_COUNT_BY_SESSION)) registerConversationMessageExecutors();
+  if (!resolveQueryExecutor(PTPL_QUERY_LIST)) registerPersonaTemplateExecutors();
+  if (!resolveQueryExecutor(BIMP_QUERY_BY_TENANT_AND_ID)) registerBulkImportExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
