@@ -12,7 +12,7 @@ import {
 } from '@chrono/kernel';
 import { DEFAULT_COGNITION_CONFIG } from '../core/memory-graph.js';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type { MemoryCognitionConfig } from '../types/core-self.js';
@@ -87,16 +87,23 @@ export class PersonaCognitiveMemoryGraph {
   private readonly config: MemoryCognitionConfig;
   private readonly encryption?: FieldEncryption;
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
 
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     config?: Partial<MemoryCognitionConfig>,
     encryption?: FieldEncryption,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
     this.config = config ? mergeConfig(DEFAULT_COGNITION_CONFIG, config) : DEFAULT_COGNITION_CONFIG;
     this.encryption = encryption?.isEnabled ? encryption : undefined;
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   private encryptContent(content: string): string {
@@ -251,7 +258,7 @@ export class PersonaCognitiveMemoryGraph {
   }
 
   private refreshAndLoadWorkingMemory(tenantId: string, personaId: string): PersonaWorkingMemoryEntry[] {
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       const slots = this.tx.queryMany(pcmemQueryWmAllSlots({ tenantId, personaId })) as unknown as PcmemWmRow[];
 
       const memoryIds = slots.map((slot) => slot.memory_id);

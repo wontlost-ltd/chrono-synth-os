@@ -42,16 +42,13 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
     } finally { db.close(); }
   });
 
-  it('UoW 入口：getCognitive 仍依赖 IDatabase（当前阶段）', () => {
+  it('UoW 入口：getCognitive 现已透传 UoW（Phase 3 解锁）', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
       const fromUow = new PersonaCoreService(directUnitOfWork(db));
-      assert.ok(fromUow);
-      assert.throws(
-        () => (fromUow as unknown as { getCognitive: (t: string) => unknown }).getCognitive('default'),
-        /requires IDatabase entrance/,
-      );
+      const graph = (fromUow as unknown as { getCognitive: (t: string) => unknown }).getCognitive('default');
+      assert.ok(graph);
     } finally { db.close(); }
   });
 

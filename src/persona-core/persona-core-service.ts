@@ -819,6 +819,7 @@ function walletSettlementFromRow(row: WalletSettlementRow): TaskWalletSettlement
 export class PersonaCoreService {
   private readonly tx: SyncWriteUnitOfWork;
   private readonly db: IDatabase | null;
+  private readonly uowOrDb: UowOrDb;
   private readonly encryption?: FieldEncryption;
   private readonly runtimeSessionTimeoutMs: number;
 
@@ -831,6 +832,7 @@ export class PersonaCoreService {
     registerCoreSelfExecutors();
     this.tx = asUow(uowOrDb);
     this.db = unwrapDb(uowOrDb);
+    this.uowOrDb = uowOrDb;
     this.encryption = encryption?.isEnabled ? encryption : undefined;
     this.runtimeSessionTimeoutMs = runtimeSessionTimeoutMs;
     if (this.db) ensureAuditLogColumns(this.db);
@@ -847,10 +849,7 @@ export class PersonaCoreService {
   }
 
   private getCognitive(tenantId: string): PersonaCognitiveMemoryGraph {
-    if (!this.db) {
-      throw new Error('PersonaCoreService.getCognitive requires IDatabase entrance (PersonaCognitiveMemoryGraph not yet UoW-aware)');
-    }
-    return new PersonaCognitiveMemoryGraph(this.db, undefined, this.getEncryption(tenantId));
+    return new PersonaCognitiveMemoryGraph(this.uowOrDb, undefined, this.getEncryption(tenantId));
   }
 
   private recordBusinessAudit(input: {

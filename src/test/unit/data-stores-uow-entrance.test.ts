@@ -114,14 +114,16 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     } finally { db.close(); }
   });
 
-  it('KnowledgeSourceService 双入口：UoW 模式拒绝实例化', () => {
+  it('KnowledgeSourceService 双入口：UoW 与 IDatabase 等价（Phase 3 解锁）', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
       const fromDb = new KnowledgeSourceService(db);
-      assert.ok(fromDb);
-
-      assert.throws(() => new KnowledgeSourceService(directUnitOfWork(db)), /requires IDatabase entrance/);
+      const fromUow = new KnowledgeSourceService(directUnitOfWork(db));
+      assert.deepEqual(
+        fromDb.list('default', 1, 10).pagination.total,
+        fromUow.list('default', 1, 10).pagination.total,
+      );
     } finally { db.close(); }
   });
 });
