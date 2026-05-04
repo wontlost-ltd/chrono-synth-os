@@ -40,7 +40,7 @@ describe('RBAC 集成测试', () => {
     app = await createApp({ os, config });
   });
 
-  afterEach(() => { os.close(); });
+  afterEach(async () => { await app.close(); os.close(); });
 
   describe('admin 端点需要 JWT + admin 角色', () => {
     const adminEndpoints = [

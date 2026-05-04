@@ -22,7 +22,8 @@ describe('API v2 coexistence', () => {
     app = await createApp({ os, config });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     os.close();
   });
 

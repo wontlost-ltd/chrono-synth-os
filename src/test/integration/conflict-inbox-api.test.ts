@@ -78,7 +78,8 @@ describe('冲突收件箱 API 集成测试', () => {
     tenantId = user.tenantId;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     os.close();
   });
 

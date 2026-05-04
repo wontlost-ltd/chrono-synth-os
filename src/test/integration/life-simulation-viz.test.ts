@@ -52,7 +52,7 @@ describe('人生模拟可视化 API', () => {
     simulationId = JSON.parse(res.body).data.simulationId;
   });
 
-  afterEach(() => { os.close(); });
+  afterEach(async () => { await app.close(); os.close(); });
 
   /* ── overview ── */
   describe('GET /visualization/overview', () => {

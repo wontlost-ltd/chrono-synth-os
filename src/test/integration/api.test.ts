@@ -25,7 +25,8 @@ describe('API 集成测试', () => {
     app = await createApp({ os, config });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     os.close();
   });
 
@@ -556,7 +557,7 @@ describe('身份与分身 API', () => {
     tenantId = regBody.data.tenantId;
   });
 
-  afterEach(() => { os.close(); });
+  afterEach(async () => { await app.close(); os.close(); });
 
   function signUserToken(userId: string, role = 'member'): string {
     return (app as FastifyInstance & {
@@ -841,7 +842,8 @@ describe('API Key 认证', () => {
     app = await createApp({ os, config: authConfig });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     os.close();
     serverState.ready = false;
     serverState.shuttingDown = false;

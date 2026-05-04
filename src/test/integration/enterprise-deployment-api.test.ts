@@ -64,7 +64,8 @@ describe('Enterprise deployment / OIDC / SCIM 集成测试', () => {
     app = await createApp({ os, config });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     globalThis.fetch = originalFetch;
     os.close();
   });

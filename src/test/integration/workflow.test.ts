@@ -24,7 +24,8 @@ describe('端到端工作流', () => {
     app = await createApp({ os, config });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     os.close();
   });
 
