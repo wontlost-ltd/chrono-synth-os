@@ -7,7 +7,7 @@
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 
 /** ValueGuard 决策动作 */
-export type GuardAction = 'pre_block' | 'post_redact' | 'escalate' | null;
+export type GuardAction = 'pre_block' | 'post_redact' | 'escalate' | 'needs_confirmation' | 'quota_exceeded' | 'llm_fallback' | null;
 
 /** 调用方提供的对话历史片段 */
 export interface ConversationHistoryEntry {
@@ -45,6 +45,23 @@ export interface PromptParts {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
+/** 置信度计算因子（来源解释，给前端展示给用户） */
+export interface ConfidenceFactor {
+  name: string;
+  weight: number;
+  contribution: number;  /* +/- 数值，加到 score 上 */
+  detail?: string;
+}
+
+export type ConfidenceLevel = 'high' | 'medium' | 'low';
+
+export interface CalibratedConfidence {
+  score: number;          /* 0..1 中心点 */
+  level: ConfidenceLevel;
+  interval: { lower: number; upper: number };  /* 95% 置信区间近似 */
+  factors: ConfidenceFactor[];
+}
+
 /** 对话消息（持久化形态） */
 export interface ConversationMessage {
   id: string;
@@ -57,12 +74,16 @@ export interface ConversationMessage {
   assistantOutput: string;
   memoriesUsed: Array<{ id: string; title: string; relevance: number }>;
   shouldEscalate: boolean;
-  confidenceScore: number;
+  confidence: CalibratedConfidence;
   guardAction: GuardAction;
   guardReason: string | null;
   durationMs: number;
   promptTokens: number;
   completionTokens: number;
+  encryptionKeyRef: string | null;
+  inputRedactedPiiCount: number;
+  outputRedactedPiiCount: number;
+  retentionClass: 'standard' | 'extended' | 'litigation_hold';
   createdAt: number;
 }
 
@@ -73,23 +94,34 @@ export interface ConversationResponse {
   response: string;
   memoriesUsed: Array<{ id: string; title: string; relevance: number }>;
   shouldEscalate: boolean;
+  confidence: CalibratedConfidence;
+  /** 兼容旧前端：等同 confidence.score */
   confidenceScore: number;
   guardAction: GuardAction;
   guardReason?: string;
+  /** 当 guardAction='needs_confirmation' 时返回；下次重发请携带 */
+  confirmationToken?: string;
+  confirmationExpiresAt?: number;
   durationMs: number;
   createdAt: number;
 }
 
-export function toConversationResponse(msg: ConversationMessage): ConversationResponse {
+export function toConversationResponse(
+  msg: ConversationMessage,
+  confirmation?: { token: string; expiresAt: number },
+): ConversationResponse {
   return {
     sessionId: msg.sessionId,
     messageId: msg.messageId,
     response: msg.assistantOutput,
     memoriesUsed: msg.memoriesUsed,
     shouldEscalate: msg.shouldEscalate,
-    confidenceScore: msg.confidenceScore,
+    confidence: msg.confidence,
+    confidenceScore: msg.confidence.score,
     guardAction: msg.guardAction,
     guardReason: msg.guardReason ?? undefined,
+    confirmationToken: confirmation?.token,
+    confirmationExpiresAt: confirmation?.expiresAt,
     durationMs: msg.durationMs,
     createdAt: msg.createdAt,
   };

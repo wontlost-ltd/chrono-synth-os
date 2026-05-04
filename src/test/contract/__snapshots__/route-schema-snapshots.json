@@ -143,7 +143,7 @@
   "conversation.ts": [
     {
       "name": "ConversationMessageRequestSchema",
-      "hash": "36435d34b3647a96cf92edbb653db58887c635cd7118006b80d1ec9dbbd211a9"
+      "hash": "5425988dcd7a023c7a12739eeb6df433de687cb79cf2e99abe5ef626ba0b8fee"
     }
   ],
   "decisions.ts": [

@@ -2126,10 +2126,16 @@ const v064_bulk_import_metadata: Migration = {
 /** v065: 对话接入层（P1-C）
  *  - conversation_messages 持久化每次对话用于审计、幂等回放、运营分析
  *  - 不存储完整对话历史（调用方负责），仅记审计需要的最小集合
+ *
+ * v065 已包含 P1-C 加固字段：
+ *   - encryption_key_ref：FieldEncryption keyref，密文格式时填充
+ *   - input_redacted_pii_count, output_redacted_pii_count：脱敏审计计数
+ *   - confidence_factors_json：confidence 计算来源解释
+ *   - retention_class：retention 策略类（standard / extended / litigation_hold）
  */
 const v065_conversation_messages: Migration = {
   version: 'v065',
-  description: 'P1-C 对话接入层：conversation_messages 表',
+  description: 'P1-C 对话接入层：conversation_messages + conversation_confirmation_tokens',
   sql: [
     `CREATE TABLE IF NOT EXISTS conversation_messages (
       id TEXT PRIMARY KEY,
@@ -2143,16 +2149,39 @@ const v065_conversation_messages: Migration = {
       memories_used_json TEXT NOT NULL DEFAULT '[]',
       should_escalate INTEGER NOT NULL DEFAULT 0,
       confidence_score REAL NOT NULL DEFAULT 0.5,
+      confidence_factors_json TEXT NOT NULL DEFAULT '[]',
       guard_action TEXT,
       guard_reason TEXT,
       duration_ms INTEGER NOT NULL DEFAULT 0,
       prompt_tokens INTEGER NOT NULL DEFAULT 0,
       completion_tokens INTEGER NOT NULL DEFAULT 0,
+      encryption_key_ref TEXT,
+      input_redacted_pii_count INTEGER NOT NULL DEFAULT 0,
+      output_redacted_pii_count INTEGER NOT NULL DEFAULT 0,
+      retention_class TEXT NOT NULL DEFAULT 'standard' CHECK(retention_class IN ('standard', 'extended', 'litigation_hold')),
       created_at INTEGER NOT NULL,
       UNIQUE(tenant_id, persona_id, session_id, message_id)
     )`,
     'CREATE INDEX IF NOT EXISTS idx_conv_msg_session ON conversation_messages(tenant_id, persona_id, session_id, created_at)',
     'CREATE INDEX IF NOT EXISTS idx_conv_msg_user ON conversation_messages(tenant_id, external_user_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_conv_msg_retention ON conversation_messages(tenant_id, retention_class, created_at)',
+
+    /* require_confirmation 服务端拦截 token 表 */
+    `CREATE TABLE IF NOT EXISTS conversation_confirmation_tokens (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      external_user_id TEXT NOT NULL,
+      requested_topic TEXT NOT NULL,
+      requested_rule TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      issued_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      consumed_at INTEGER
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_conv_conf_token_lookup ON conversation_confirmation_tokens(tenant_id, persona_id, session_id, expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_conv_conf_token_expiry ON conversation_confirmation_tokens(expires_at)',
   ],
 };
 

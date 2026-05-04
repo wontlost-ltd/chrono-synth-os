@@ -140,6 +140,8 @@ export const ConversationMessageRequestSchema = z.object({
   content: z.string().min(1).max(8000),
   history: z.array(ConversationHistoryEntrySchema).max(20).optional(),
   metadata: z.record(z.string().min(1).max(64), z.string().max(500)).optional(),
+  confirmationToken: z.string().min(1).max(120).optional(),
+  retentionClass: z.enum(['standard', 'extended', 'litigation_hold']).optional(),
 });
 
 export const SimulatePersonaSchema = z.object({

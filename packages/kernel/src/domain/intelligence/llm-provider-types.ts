@@ -25,7 +25,16 @@ export interface ChatResponse {
   };
 }
 
+/** 流式 chat 输出的单个事件 */
+export interface ChatStreamDelta {
+  readonly delta: string;
+  readonly done: boolean;
+  readonly usage?: ChatResponse['usage'];
+}
+
 export interface LLMProvider {
   chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse>;
   embed(texts: readonly string[]): Promise<number[][]>;
+  /** 可选：真流式输出。Provider 不支持时调用方应回退到 chat()。 */
+  chatStream?(messages: readonly ChatMessage[], options?: ChatOptions): AsyncIterable<ChatStreamDelta>;
 }

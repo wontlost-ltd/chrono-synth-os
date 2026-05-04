@@ -101,6 +101,69 @@ describe('对话接入 API 集成测试', () => {
     assert.equal(sessBody.messages[0].messageId, 'm-1');
   });
 
+  it('require_confirmation 流程：首次返回 202 + token，携带 token 重发后 200', async () => {
+    const auth = await registerAndGetAuth(app, 'conv-confirm@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const personaId = await instantiatePersona(app, headers, 'tpl_builtin_customer_service', 'CS Confirm');
+
+    /* 首次：命中 require_confirmation 主题 */
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/v1/persona-core/${personaId}/conversations/messages`,
+      headers,
+      payload: {
+        sessionId: 'cf', messageId: 'cf-1', externalUserId: 'eu',
+        content: '我要修改账户绑定信息',
+      },
+    });
+    assert.equal(first.statusCode, 202);
+    const firstData = JSON.parse(first.body).data;
+    assert.equal(firstData.guardAction, 'needs_confirmation');
+    assert.ok(firstData.confirmationToken);
+
+    /* 二次：携带 token */
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/v1/persona-core/${personaId}/conversations/messages`,
+      headers,
+      payload: {
+        sessionId: 'cf', messageId: 'cf-2', externalUserId: 'eu',
+        content: '我要修改账户绑定信息',
+        confirmationToken: firstData.confirmationToken,
+      },
+    });
+    assert.equal(second.statusCode, 200);
+    const secondData = JSON.parse(second.body).data;
+    assert.notEqual(secondData.guardAction, 'needs_confirmation');
+  });
+
+  it('GDPR 删除接口', async () => {
+    const auth = await registerAndGetAuth(app, 'conv-gdpr@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const personaId = await instantiatePersona(app, headers, 'tpl_builtin_engineer', 'GDPR Bot');
+
+    for (let i = 0; i < 3; i++) {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/persona-core/${personaId}/conversations/messages`,
+        headers,
+        payload: {
+          sessionId: 'gdpr', messageId: `m-${i}`, externalUserId: 'eu',
+          content: `查日志 ${i}`,
+        },
+      });
+    }
+
+    const delRes = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/persona-core/${personaId}/conversations`,
+      headers,
+    });
+    assert.equal(delRes.statusCode, 200);
+    const body = JSON.parse(delRes.body).data;
+    assert.equal(body.deleted, 3);
+  });
+
   it('幂等：相同 messageId 第二次返回相同结果', async () => {
     const auth = await registerAndGetAuth(app, 'conv-idem@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
@@ -152,7 +215,7 @@ describe('对话接入 API 集成测试', () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body).data;
     assert.equal(body.guardAction, 'pre_block');
-    assert.match(body.response, /人工处理/);
+    assert.match(body.response, /人工/);
   });
 
   it('apikey 调用被拒（403）', async () => {

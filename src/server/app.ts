@@ -70,7 +70,12 @@ import { registerBulkImportHandler } from '../knowledge/bulk-import-worker.js';
 import { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import { PersonaTemplateService } from '../enterprise/persona-template-service.js';
 import { ConversationService } from '../conversation/conversation-service.js';
+import { ConversationRetentionWorker } from '../conversation/conversation-retention-worker.js';
 import { registerConversationRoutes } from './routes/conversation.js';
+import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
+import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
+import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
+import { CostTracker as ConversationCostTracker } from '../intelligence/cost-tracker.js';
 import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
 import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
@@ -327,8 +332,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     registerBulkImportHandler(worker, bulkImportService, deps.os.getLogger());
   }
 
-  /* P1-C 对话接入层：复用 bulkImportPersonaCoreService；用独立 ModelRouter
-   * 与现有队列内 llmRouter 隔离，避免 token 预算/成本统计被对话流量污染 */
+  /* P1-C 对话接入层（生产级）：
+   * - 独立 ModelRouter（避免和后台知识摄入混用 token budget）
+   * - 字段加密、配额/预算/成本追踪、断路器、PII 脱敏全部接入 */
   const conversationLlmRouter = new ModelRouter({
     provider: config.intelligence.provider,
     model: config.intelligence.model,
@@ -338,12 +344,41 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     maxTokens: config.intelligence.maxTokens,
     temperature: config.intelligence.temperature,
   });
+  const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
+  const conversationTokenBudget = new ConversationTokenBudget(config.intelligence.budget, db);
+  const conversationCostTracker = new ConversationCostTracker(db);
+  const conversationQuotaManager = new QuotaManager(db);
+  const conversationCircuitBreaker = new ConversationCircuitBreaker({
+    failureThreshold: 5,
+    halfOpenMaxRequests: 1,
+    resetTimeoutMs: 60_000,
+    executionTimeoutMs: 30_000,
+  });
   const conversationService = new ConversationService({
     db,
     llm: conversationLlmRouter,
     personaCoreService: bulkImportPersonaCoreService,
     logger: deps.os.getLogger(),
+    encryption: conversationEncryption,
+    tokenBudget: conversationTokenBudget,
+    costTracker: conversationCostTracker,
+    quotaManager: conversationQuotaManager,
+    circuitBreaker: conversationCircuitBreaker,
+    guardOptions: {
+      embeddingProvider: config.intelligence.apiKey ? conversationLlmRouter : undefined,
+    },
+    retrieverOptions: {
+      embeddingProvider: config.intelligence.apiKey ? conversationLlmRouter : undefined,
+      logger: deps.os.getLogger(),
+    },
   });
+  const conversationRetentionWorker = new ConversationRetentionWorker(
+    conversationService,
+    conversationService.getConfirmationStore(),
+    deps.os.getLogger(),
+  );
+  conversationRetentionWorker.start();
+  app.addHook('onClose', async () => { await conversationRetentionWorker.stop(); });
 
   /* 路由 */
   registerAuthRoutes(app, db, config);
