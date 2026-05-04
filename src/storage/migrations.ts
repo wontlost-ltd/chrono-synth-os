@@ -2112,6 +2112,17 @@ const v063_bulk_knowledge_import: Migration = {
   ],
 };
 
+/** v064: 批量知识导入 job 元数据扩展（P1-B 模板联动）
+ *  - metadata_json 存放 expectedTemplateId / unmatchedCategoryCount 等可观测指标
+ */
+const v064_bulk_import_metadata: Migration = {
+  version: 'v064',
+  description: 'P1-B job 元数据：模板联动统计',
+  sql: [
+    '/* safe:add-column:bulk_knowledge_import_jobs:metadata_json */ ALTER TABLE bulk_knowledge_import_jobs ADD COLUMN metadata_json TEXT NOT NULL DEFAULT \'{}\'',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2177,6 +2188,7 @@ const MIGRATIONS: readonly Migration[] = [
   v061_drift_analysis_log,
   v062_persona_templates,
   v063_bulk_knowledge_import,
+  v064_bulk_import_metadata,
 ];
 
 interface MigrationRow {

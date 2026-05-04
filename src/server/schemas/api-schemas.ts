@@ -121,6 +121,10 @@ const BulkImportSourceSchema = z.object({
 export const BulkKnowledgeImportSchema = z.object({
   sources: z.array(BulkImportSourceSchema).min(1).max(500),
   deduplicateStrategy: z.enum(['skip', 'overwrite']).default('skip'),
+  /** 可选：关联到一个岗位人格模板。若提供，service 会用模板的
+   *  requiredKnowledgeCategories 校验每条 source.category 是否匹配，
+   *  不匹配仅累计计数（不阻断导入）。 */
+  expectedTemplateId: z.string().min(1).max(120).optional(),
 });
 
 export const SimulatePersonaSchema = z.object({

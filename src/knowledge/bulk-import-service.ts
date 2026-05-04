@@ -11,11 +11,13 @@ import { createHash } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
 import type { TaskQueue } from '../queue/task-queue.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
+import type { PersonaTemplateService } from '../enterprise/persona-template-service.js';
 import type { Logger } from '../utils/logger.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import {
   BulkImportStore,
   type BulkImportDeduplicateStrategy,
+  type BulkImportJobMetadata,
   type BulkImportJobRecord,
 } from './bulk-import-store.js';
 import { UrlContentFetcher } from './url-content-fetcher.js';
@@ -36,6 +38,9 @@ export interface BulkImportSubmitInput {
   ownerUserId: string;
   sources: BulkImportSource[];
   deduplicateStrategy: BulkImportDeduplicateStrategy;
+  /** 关联的岗位人格模板 ID。提供后 service 会校验 source.category 是否在
+   *  template.requiredKnowledgeCategories 列表内，仅累计统计不阻断。 */
+  expectedTemplateId?: string;
 }
 
 export interface BulkImportSubmitResult {
@@ -52,6 +57,7 @@ export interface BulkImportProcessInput {
   ownerUserId: string;
   sources: BulkImportSource[];
   deduplicateStrategy: BulkImportDeduplicateStrategy;
+  expectedTemplateId?: string;
 }
 
 export const BULK_IMPORT_TASK_TYPE = 'bulk_knowledge_import';
@@ -74,6 +80,7 @@ export class BulkImportService {
     private readonly taskQueue: TaskQueue | undefined,
     private readonly fetcher: UrlContentFetcher,
     private readonly logger: Logger,
+    private readonly templateService?: PersonaTemplateService,
   ) {
     this.store = new BulkImportStore(db);
   }
@@ -102,6 +109,7 @@ export class BulkImportService {
         ownerUserId: input.ownerUserId,
         sources: input.sources,
         deduplicateStrategy: input.deduplicateStrategy,
+        expectedTemplateId: input.expectedTemplateId,
       });
       const final = this.store.get(input.tenantId, jobId);
       return {
@@ -127,6 +135,7 @@ export class BulkImportService {
       ownerUserId: input.ownerUserId,
       sources: input.sources,
       deduplicateStrategy: input.deduplicateStrategy,
+      expectedTemplateId: input.expectedTemplateId,
     } satisfies BulkImportProcessInput, /* maxRetries */ 1, /* priority */ 0);
 
     return {
@@ -140,8 +149,26 @@ export class BulkImportService {
   async processBatch(input: BulkImportProcessInput): Promise<void> {
     try {
       this.store.markRunning(input.jobId);
+
+      /* 模板联动：解析 requiredKnowledgeCategories（缺失或加载失败 → 跳过校验） */
+      const requiredCategories = this.resolveRequiredCategories(input);
+      let matchedCategoryCount = 0;
+      let unmatchedCategoryCount = 0;
+      const unexpectedCategorySet = new Set<string>();
+
       for (let i = 0; i < input.sources.length; i++) {
         const source = input.sources[i];
+
+        /* 仅当模板提供了非空白名单时进行校验；source.category 缺失视为未分类不计入两侧 */
+        if (requiredCategories && source.category) {
+          if (requiredCategories.has(source.category)) {
+            matchedCategoryCount += 1;
+          } else {
+            unmatchedCategoryCount += 1;
+            unexpectedCategorySet.add(source.category);
+          }
+        }
+
         try {
           await this.processSingle(input, source, i);
         } catch (err) {
@@ -150,6 +177,17 @@ export class BulkImportService {
           this.store.appendFailure(input.jobId, { index: i, reason });
         }
       }
+
+      if (input.expectedTemplateId) {
+        const metadata: BulkImportJobMetadata = {
+          expectedTemplateId: input.expectedTemplateId,
+          matchedCategoryCount,
+          unmatchedCategoryCount,
+          unexpectedCategories: [...unexpectedCategorySet].sort(),
+        };
+        this.store.setMetadata(input.jobId, metadata);
+      }
+
       this.store.markCompleted(input.jobId);
     } catch (err) {
       this.logger.error(
@@ -158,6 +196,24 @@ export class BulkImportService {
       );
       this.store.markFailed(input.jobId, err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /**
+   * 解析模板的 requiredKnowledgeCategories；返回 Set 用于 O(1) 查询。
+   * 模板不存在 / 服务未注入 / 列表为空 → 返回 undefined（视为不校验）。
+   */
+  private resolveRequiredCategories(input: BulkImportProcessInput): Set<string> | undefined {
+    if (!input.expectedTemplateId || !this.templateService) return undefined;
+    const template = this.templateService.get(input.tenantId, input.expectedTemplateId);
+    if (!template) {
+      this.logger.warn(
+        'BulkImportService',
+        `expectedTemplateId=${input.expectedTemplateId} not found for tenant ${input.tenantId}; skipping category validation`,
+      );
+      return undefined;
+    }
+    if (template.requiredKnowledgeCategories.length === 0) return undefined;
+    return new Set(template.requiredKnowledgeCategories);
   }
 
   private async processSingle(

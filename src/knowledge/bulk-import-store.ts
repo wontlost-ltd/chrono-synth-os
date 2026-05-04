@@ -15,6 +15,17 @@ export interface BulkImportJobFailure {
   reason: string;
 }
 
+export interface BulkImportJobMetadata {
+  /** 关联的模板 ID（若调用方在 submit 时提供 expectedTemplateId） */
+  expectedTemplateId?: string;
+  /** source.category 不在 template.requiredKnowledgeCategories 列表中的条目数 */
+  unmatchedCategoryCount?: number;
+  /** source.category 已匹配的条目数 */
+  matchedCategoryCount?: number;
+  /** 模板未要求的额外 category（去重） */
+  unexpectedCategories?: string[];
+}
+
 export interface BulkImportJobRecord {
   id: string;
   tenantId: string;
@@ -27,6 +38,7 @@ export interface BulkImportJobRecord {
   failedCount: number;
   failures: BulkImportJobFailure[];
   deduplicateStrategy: BulkImportDeduplicateStrategy;
+  metadata: BulkImportJobMetadata;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
@@ -44,6 +56,7 @@ interface JobRow {
   failed_count: number;
   failures_json: string;
   deduplicate_strategy: BulkImportDeduplicateStrategy;
+  metadata_json: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -121,6 +134,13 @@ export class BulkImportStore {
     ).run(JSON.stringify(failures), jobId);
   }
 
+  /** 写入 metadata_json（覆盖式） */
+  setMetadata(jobId: string, metadata: BulkImportJobMetadata): void {
+    this.db.prepare<void>(
+      'UPDATE bulk_knowledge_import_jobs SET metadata_json = ? WHERE id = ?',
+    ).run(JSON.stringify(metadata), jobId);
+  }
+
   markCompleted(jobId: string): void {
     this.db.prepare<void>(
       `UPDATE bulk_knowledge_import_jobs
@@ -192,6 +212,16 @@ function rowToRecord(row: JobRow): BulkImportJobRecord {
     failures = Array.isArray(parsed) ? parsed : [];
   } catch { /* 默认空数组 */ }
 
+  let metadata: BulkImportJobMetadata = {};
+  if (row.metadata_json) {
+    try {
+      const parsed = JSON.parse(row.metadata_json);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        metadata = parsed as BulkImportJobMetadata;
+      }
+    } catch { /* 默认空对象 */ }
+  }
+
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -204,6 +234,7 @@ function rowToRecord(row: JobRow): BulkImportJobRecord {
     failedCount: row.failed_count,
     failures,
     deduplicateStrategy: row.deduplicate_strategy,
+    metadata,
     createdAt: row.created_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,

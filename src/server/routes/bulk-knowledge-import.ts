@@ -54,6 +54,7 @@ export function registerBulkKnowledgeImportRoutes(
         ownerUserId: user.sub,
         sources: body.sources,
         deduplicateStrategy: body.deduplicateStrategy,
+        expectedTemplateId: body.expectedTemplateId,
       });
 
       const status = result.mode === 'sync' ? 200 : 202;

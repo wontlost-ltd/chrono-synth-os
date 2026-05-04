@@ -161,6 +161,71 @@ describe('知识批量导入 API 集成测试', () => {
     assert.equal(body.job.failures[0].index, 1);
   });
 
+  it('expectedTemplateId 联动：模板 category 匹配率统计写入 metadata', async () => {
+    const auth = await registerAndGetAuth(app, 'bki-template-link@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    /* 用客服模板实例化 persona（其 requiredKnowledgeCategories =
+     *   product_faq, refund_policy, service_hours） */
+    const instRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/persona-templates/tpl_builtin_customer_service/instantiate',
+      headers,
+      payload: { displayName: 'Linked CS' },
+    });
+    assert.equal(instRes.statusCode, 201);
+    const personaId = (JSON.parse(instRes.body).data as { persona: { id: string } }).persona.id;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/persona-core/${personaId}/bulk-knowledge-imports`,
+      headers,
+      payload: {
+        expectedTemplateId: 'tpl_builtin_customer_service',
+        sources: [
+          { kind: 'text', content: 'how to refund', title: 'r1', category: 'refund_policy' },
+          { kind: 'text', content: 'product faq A', title: 'p1', category: 'product_faq' },
+          { kind: 'text', content: 'random', title: 'rand', category: 'random_unrelated' },
+          { kind: 'text', content: 'no cat', title: 'nocat' },
+        ],
+        deduplicateStrategy: 'skip',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const job = JSON.parse(res.body).data.job;
+    assert.equal(job.importedCount, 4);
+    assert.ok(job.metadata, 'metadata 应存在');
+    assert.equal(job.metadata.expectedTemplateId, 'tpl_builtin_customer_service');
+    assert.equal(job.metadata.matchedCategoryCount, 2);
+    assert.equal(job.metadata.unmatchedCategoryCount, 1);
+    assert.deepEqual(job.metadata.unexpectedCategories, ['random_unrelated']);
+  });
+
+  it('expectedTemplateId 不存在时静默跳过校验', async () => {
+    const auth = await registerAndGetAuth(app, 'bki-template-missing@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const personaId = await createPersona(app, headers, 'No-template Persona');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/persona-core/${personaId}/bulk-knowledge-imports`,
+      headers,
+      payload: {
+        expectedTemplateId: 'tpl_does_not_exist',
+        sources: [{ kind: 'text', content: 'x', title: 'x', category: 'whatever' }],
+        deduplicateStrategy: 'skip',
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const job = JSON.parse(res.body).data.job;
+    assert.equal(job.importedCount, 1);
+    /* metadata 仍写入但匹配数为 0（template 找不到 → requiredCategories=undefined 不计数） */
+    assert.ok(job.metadata);
+    assert.equal(job.metadata.expectedTemplateId, 'tpl_does_not_exist');
+    assert.equal(job.metadata.matchedCategoryCount, 0);
+    assert.equal(job.metadata.unmatchedCategoryCount, 0);
+  });
+
   it('GET /bulk-knowledge-imports 列出最近 job', async () => {
     const auth = await registerAndGetAuth(app, 'bki-list@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };

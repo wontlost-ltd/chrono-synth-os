@@ -25,19 +25,24 @@ export interface FetchResult {
 export interface UrlContentFetcherOptions {
   readonly maxBytes?: number;
   readonly timeoutMs?: number;
-  /** 注入用：测试时跳过 DNS 解析，直接信任 hostname 文本判定 */
+  /** 测试钩子：跳过 DNS 解析，直接信任 hostname 文本判定 */
   readonly skipDnsResolve?: boolean;
+  /** 测试钩子：允许 loopback（127.0.0.1 / ::1 / localhost）通过 SSRF 检查
+   *  生产环境绝对不允许设置为 true */
+  readonly allowLoopback?: boolean;
 }
 
 export class UrlContentFetcher {
   private readonly maxBytes: number;
   private readonly timeoutMs: number;
   private readonly skipDnsResolve: boolean;
+  private readonly allowLoopback: boolean;
 
   constructor(options: UrlContentFetcherOptions = {}) {
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.skipDnsResolve = options.skipDnsResolve ?? false;
+    this.allowLoopback = options.allowLoopback ?? false;
   }
 
   async fetch(url: string): Promise<FetchResult> {
@@ -47,12 +52,12 @@ export class UrlContentFetcher {
     }
 
     const hostname = parsed.hostname.toLowerCase();
-    if (isPrivateHostname(hostname)) {
+    if (this.isRestricted(hostname)) {
       throw new Error(`URL fetch rejected: ${hostname} is in restricted range (SSRF)`);
     }
     if (!this.skipDnsResolve && !isLiteralIp(hostname)) {
       const resolved = await this.resolveAddress(hostname);
-      if (isPrivateHostname(resolved)) {
+      if (this.isRestricted(resolved)) {
         throw new Error(`URL fetch rejected: ${hostname} resolved to ${resolved} (SSRF)`);
       }
     }
@@ -105,6 +110,14 @@ export class UrlContentFetcher {
     } catch (err) {
       throw new Error(`URL fetch rejected: DNS lookup failed for ${hostname}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  private isRestricted(host: string): boolean {
+    const h = host.toLowerCase();
+    if (this.allowLoopback && (h === 'localhost' || h.endsWith('.localhost') || h === '127.0.0.1' || h.startsWith('127.') || h === '::1' || h === '0:0:0:0:0:0:0:1')) {
+      return false;
+    }
+    return isPrivateHostname(h);
   }
 }
 

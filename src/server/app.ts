@@ -68,6 +68,7 @@ import { BulkImportService } from '../knowledge/bulk-import-service.js';
 import { UrlContentFetcher } from '../knowledge/url-content-fetcher.js';
 import { registerBulkImportHandler } from '../knowledge/bulk-import-worker.js';
 import { PersonaCoreService } from '../persona-core/persona-core-service.js';
+import { PersonaTemplateService } from '../enterprise/persona-template-service.js';
 import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
 import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
@@ -307,14 +308,18 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', async () => { await worker!.stop(); });
   }
 
-  /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径） */
+  /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
+   * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动） */
   const bulkImportPersonaCoreService = new PersonaCoreService(db);
+  const bulkImportTemplateService = new PersonaTemplateService(db, bulkImportPersonaCoreService);
+  bulkImportTemplateService.syncBuiltins();
   const bulkImportService = new BulkImportService(
     db,
     bulkImportPersonaCoreService,
     bulkImportTaskQueue,
     new UrlContentFetcher(),
     deps.os.getLogger(),
+    bulkImportTemplateService,
   );
   if (worker) {
     registerBulkImportHandler(worker, bulkImportService, deps.os.getLogger());
