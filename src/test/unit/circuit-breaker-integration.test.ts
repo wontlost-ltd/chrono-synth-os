@@ -37,7 +37,8 @@ describe('断路器集成 - /readyz', () => {
     app = await createApp({ os, config, circuitBreaker });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await app.close();
     os.close();
     serverState.ready = false;
     serverState.shuttingDown = false;
