@@ -69,6 +69,8 @@ import { UrlContentFetcher } from '../knowledge/url-content-fetcher.js';
 import { registerBulkImportHandler } from '../knowledge/bulk-import-worker.js';
 import { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import { PersonaTemplateService } from '../enterprise/persona-template-service.js';
+import { ConversationService } from '../conversation/conversation-service.js';
+import { registerConversationRoutes } from './routes/conversation.js';
 import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
 import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
@@ -325,6 +327,24 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     registerBulkImportHandler(worker, bulkImportService, deps.os.getLogger());
   }
 
+  /* P1-C 对话接入层：复用 bulkImportPersonaCoreService；用独立 ModelRouter
+   * 与现有队列内 llmRouter 隔离，避免 token 预算/成本统计被对话流量污染 */
+  const conversationLlmRouter = new ModelRouter({
+    provider: config.intelligence.provider,
+    model: config.intelligence.model,
+    embeddingModel: config.intelligence.embeddingModel,
+    apiKey: config.intelligence.apiKey,
+    baseUrl: config.intelligence.baseUrl,
+    maxTokens: config.intelligence.maxTokens,
+    temperature: config.intelligence.temperature,
+  });
+  const conversationService = new ConversationService({
+    db,
+    llm: conversationLlmRouter,
+    personaCoreService: bulkImportPersonaCoreService,
+    logger: deps.os.getLogger(),
+  });
+
   /* 路由 */
   registerAuthRoutes(app, db, config);
   registerUserRoutes(app, services);
@@ -365,6 +385,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAdminTemplateRoutes(app, deps.os);
   registerBulkKnowledgeImportRoutes(app, {
     bulkImport: bulkImportService,
+    personaCore: bulkImportPersonaCoreService,
+  });
+  registerConversationRoutes(app, {
+    conversation: conversationService,
     personaCore: bulkImportPersonaCoreService,
   });
   registerAdminDeploymentRoutes(app, db, config);

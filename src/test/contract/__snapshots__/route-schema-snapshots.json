@@ -140,6 +140,12 @@
       "hash": "60b88cd05cbf2d833fdaa15cd42fbc4fd06cd02c1b1cfa54f8cf2bf5d9fdafec"
     }
   ],
+  "conversation.ts": [
+    {
+      "name": "ConversationMessageRequestSchema",
+      "hash": "36435d34b3647a96cf92edbb653db58887c635cd7118006b80d1ec9dbbd211a9"
+    }
+  ],
   "decisions.ts": [
     {
       "name": "CreateDecisionSchema",

@@ -2123,6 +2123,39 @@ const v064_bulk_import_metadata: Migration = {
   ],
 };
 
+/** v065: 对话接入层（P1-C）
+ *  - conversation_messages 持久化每次对话用于审计、幂等回放、运营分析
+ *  - 不存储完整对话历史（调用方负责），仅记审计需要的最小集合
+ */
+const v065_conversation_messages: Migration = {
+  version: 'v065',
+  description: 'P1-C 对话接入层：conversation_messages 表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS conversation_messages (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      external_user_id TEXT NOT NULL,
+      user_input TEXT NOT NULL,
+      assistant_output TEXT NOT NULL,
+      memories_used_json TEXT NOT NULL DEFAULT '[]',
+      should_escalate INTEGER NOT NULL DEFAULT 0,
+      confidence_score REAL NOT NULL DEFAULT 0.5,
+      guard_action TEXT,
+      guard_reason TEXT,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      UNIQUE(tenant_id, persona_id, session_id, message_id)
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_conv_msg_session ON conversation_messages(tenant_id, persona_id, session_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_conv_msg_user ON conversation_messages(tenant_id, external_user_id, created_at DESC)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2189,6 +2222,7 @@ const MIGRATIONS: readonly Migration[] = [
   v062_persona_templates,
   v063_bulk_knowledge_import,
   v064_bulk_import_metadata,
+  v065_conversation_messages,
 ];
 
 interface MigrationRow {

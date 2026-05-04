@@ -127,6 +127,21 @@ export const BulkKnowledgeImportSchema = z.object({
   expectedTemplateId: z.string().min(1).max(120).optional(),
 });
 
+/* P1-C 对话接入 */
+const ConversationHistoryEntrySchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1).max(8000),
+});
+
+export const ConversationMessageRequestSchema = z.object({
+  sessionId: z.string().min(1).max(120),
+  messageId: z.string().min(1).max(120),
+  externalUserId: z.string().min(1).max(120),
+  content: z.string().min(1).max(8000),
+  history: z.array(ConversationHistoryEntrySchema).max(20).optional(),
+  metadata: z.record(z.string().min(1).max(64), z.string().max(500)).optional(),
+});
+
 export const SimulatePersonaSchema = z.object({
   personaId: z.string().min(1),
   scenario: z.object({
