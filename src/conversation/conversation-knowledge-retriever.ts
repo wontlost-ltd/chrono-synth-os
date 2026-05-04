@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { Logger } from '../utils/logger.js';
 import type { RelevantKnowledge } from './conversation-types.js';
 
@@ -51,11 +52,21 @@ export class ConversationKnowledgeRetriever {
   /* 简单 LRU：fingerprint → embedding；命中跳过 provider 调用 */
   private readonly embeddingCache = new Map<string, number[]>();
   private readonly cacheCap = 1024;
+  private readonly db: IDatabase | null;
 
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly options: RetrieverOptions = {},
-  ) {}
+  ) {
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private requireDb(): IDatabase {
+    if (!this.db) {
+      throw new Error('ConversationKnowledgeRetriever.retrieve requires IDatabase entrance');
+    }
+    return this.db;
+  }
 
   async retrieve(input: {
     tenantId: string;
@@ -66,7 +77,7 @@ export class ConversationKnowledgeRetriever {
     const tokens = tokenize(input.userInput);
     if (tokens.length === 0) return [];
 
-    const rows = this.db.prepare<KnowledgeRow>(
+    const rows = this.requireDb().prepare<KnowledgeRow>(
       `SELECT id, title, content, confidence, fingerprint
          FROM persona_knowledge_items
         WHERE tenant_id = ? AND persona_id = ?`,

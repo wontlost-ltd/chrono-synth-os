@@ -11,22 +11,34 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { Logger } from '../utils/logger.js';
 import { recordBusinessAuditLog, type BusinessAuditInput } from '../audit/audit-log-store.js';
 
 const PAYLOAD_VALUE_MAX = 1024;
 
 export class ConversationAuditPublisher {
+  private readonly db: IDatabase | null;
+
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly logger: Logger,
-  ) {}
+  ) {
+    this.db = unwrapDb(uowOrDb);
+  }
 
   publish(event: BusinessAuditInput): void {
     const safe: BusinessAuditInput = {
       ...event,
       payload: event.payload ? truncatePayloadValues(event.payload, PAYLOAD_VALUE_MAX) : event.payload,
     };
+    if (!this.db) {
+      this.logger.warn(
+        'ConversationAuditPublisher',
+        `[uow-mode] 跳过审计写入 actionType=${event.actionType} target=${event.targetId}`,
+      );
+      return;
+    }
     try {
       recordBusinessAuditLog(this.db, safe);
     } catch (err) {

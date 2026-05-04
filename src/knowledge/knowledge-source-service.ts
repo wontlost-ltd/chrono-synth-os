@@ -3,7 +3,7 @@
  * 封装知识源的业务逻辑，路由层只做请求解析和响应序列化
  */
 
-import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { KnowledgeSourceRecord, KnowledgeSourceType } from '../types/avatar-autorun.js';
 import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
@@ -34,7 +34,11 @@ export interface PaginatedResult<T> {
 export class KnowledgeSourceService {
   private readonly store: KnowledgeSourceStore;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
+    const db = unwrapDb(uowOrDb);
+    if (!db) {
+      throw new Error('KnowledgeSourceService requires IDatabase entrance (KnowledgeSourceStore not yet UoW-aware)');
+    }
     this.store = new KnowledgeSourceStore(db);
   }
 

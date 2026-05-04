@@ -6,6 +6,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 
 export type BulkImportJobState = 'queued' | 'running' | 'completed' | 'failed';
 export type BulkImportDeduplicateStrategy = 'skip' | 'overwrite';
@@ -65,7 +66,18 @@ interface JobRow {
 const MAX_FAILURE_DETAILS = 50;
 
 export class BulkImportStore {
-  constructor(private readonly db: IDatabase) {}
+  private readonly db: IDatabase | null;
+
+  constructor(uowOrDb: UowOrDb) {
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private requireDb(method: string): IDatabase {
+    if (!this.db) {
+      throw new Error(`BulkImportStore.${method} requires IDatabase entrance`);
+    }
+    return this.db;
+  }
 
   create(input: {
     id: string;
@@ -76,7 +88,7 @@ export class BulkImportStore {
     deduplicateStrategy: BulkImportDeduplicateStrategy;
   }): void {
     const now = Date.now();
-    this.db.prepare<void>(
+    this.requireDb('create').prepare<void>(
       `INSERT INTO bulk_knowledge_import_jobs (
         id, tenant_id, persona_id, owner_user_id, state, total_items,
         imported_count, skipped_count, failed_count, failures_json,
@@ -94,7 +106,7 @@ export class BulkImportStore {
   }
 
   markRunning(jobId: string): void {
-    this.db.prepare<void>(
+    this.requireDb('markRunning').prepare<void>(
       `UPDATE bulk_knowledge_import_jobs
           SET state = 'running', started_at = COALESCE(started_at, ?)
         WHERE id = ?`,
@@ -106,7 +118,7 @@ export class BulkImportStore {
     field: 'imported_count' | 'skipped_count' | 'failed_count',
     delta = 1,
   ): void {
-    this.db.prepare<void>(
+    this.requireDb('incrementCounter').prepare<void>(
       `UPDATE bulk_knowledge_import_jobs SET ${field} = ${field} + ? WHERE id = ?`,
     ).run(delta, jobId);
   }
@@ -115,7 +127,8 @@ export class BulkImportStore {
    * 追加失败详情；超过 MAX_FAILURE_DETAILS 后仅丢弃详情，failed_count 仍由 incrementCounter 累加
    */
   appendFailure(jobId: string, failure: BulkImportJobFailure): void {
-    const row = this.db.prepare<{ failures_json: string }>(
+    const db = this.requireDb('appendFailure');
+    const row = db.prepare<{ failures_json: string }>(
       'SELECT failures_json FROM bulk_knowledge_import_jobs WHERE id = ?',
     ).get(jobId);
     if (!row) return;
@@ -129,20 +142,20 @@ export class BulkImportStore {
     }
     if (failures.length >= MAX_FAILURE_DETAILS) return;
     failures.push(failure);
-    this.db.prepare<void>(
+    db.prepare<void>(
       'UPDATE bulk_knowledge_import_jobs SET failures_json = ? WHERE id = ?',
     ).run(JSON.stringify(failures), jobId);
   }
 
   /** 写入 metadata_json（覆盖式） */
   setMetadata(jobId: string, metadata: BulkImportJobMetadata): void {
-    this.db.prepare<void>(
+    this.requireDb('setMetadata').prepare<void>(
       'UPDATE bulk_knowledge_import_jobs SET metadata_json = ? WHERE id = ?',
     ).run(JSON.stringify(metadata), jobId);
   }
 
   markCompleted(jobId: string): void {
-    this.db.prepare<void>(
+    this.requireDb('markCompleted').prepare<void>(
       `UPDATE bulk_knowledge_import_jobs
           SET state = 'completed', completed_at = ?
         WHERE id = ?`,
@@ -150,7 +163,8 @@ export class BulkImportStore {
   }
 
   markFailed(jobId: string, reason: string): void {
-    const row = this.db.prepare<{ failures_json: string; failed_count: number }>(
+    const db = this.requireDb('markFailed');
+    const row = db.prepare<{ failures_json: string; failed_count: number }>(
       'SELECT failures_json, failed_count FROM bulk_knowledge_import_jobs WHERE id = ?',
     ).get(jobId);
     if (!row) return;
@@ -165,7 +179,7 @@ export class BulkImportStore {
     if (failures.length < MAX_FAILURE_DETAILS) {
       failures.push({ index: -1, reason });
     }
-    this.db.prepare<void>(
+    db.prepare<void>(
       `UPDATE bulk_knowledge_import_jobs
           SET state = 'failed',
               completed_at = ?,
@@ -175,14 +189,14 @@ export class BulkImportStore {
   }
 
   get(tenantId: string, jobId: string): BulkImportJobRecord | null {
-    const row = this.db.prepare<JobRow>(
+    const row = this.requireDb('get').prepare<JobRow>(
       'SELECT * FROM bulk_knowledge_import_jobs WHERE id = ? AND tenant_id = ?',
     ).get(jobId, tenantId);
     return row ? rowToRecord(row) : null;
   }
 
   listByPersona(tenantId: string, personaId: string, limit = 20): BulkImportJobRecord[] {
-    const rows = this.db.prepare<JobRow>(
+    const rows = this.requireDb('listByPersona').prepare<JobRow>(
       `SELECT * FROM bulk_knowledge_import_jobs
         WHERE tenant_id = ? AND persona_id = ?
         ORDER BY created_at DESC
@@ -194,7 +208,7 @@ export class BulkImportStore {
   /** worker 启动期回收：所有处于 running 但 started_at 老于 cutoff 的 job 标记 failed */
   reapStuck(cutoffMs: number): number {
     const cutoff = Date.now() - cutoffMs;
-    const stuck = this.db.prepare<{ id: string }>(
+    const stuck = this.requireDb('reapStuck').prepare<{ id: string }>(
       `SELECT id FROM bulk_knowledge_import_jobs
         WHERE state = 'running' AND started_at < ?`,
     ).all(cutoff);

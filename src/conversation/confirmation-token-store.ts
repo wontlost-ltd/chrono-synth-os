@@ -11,6 +11,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 
 const TOKEN_BYTES = 24;
@@ -41,10 +42,21 @@ export interface VerifyTokenInput {
 }
 
 export class ConfirmationTokenStore {
+  private readonly db: IDatabase | null;
+
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly ttlMs: number = DEFAULT_TOKEN_TTL_MS,
-  ) {}
+  ) {
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private requireDb(method: string): IDatabase {
+    if (!this.db) {
+      throw new Error(`ConfirmationTokenStore.${method} requires IDatabase entrance`);
+    }
+    return this.db;
+  }
 
   issue(input: IssueTokenInput): IssuedToken {
     const id = `cct_${randomBytes(TOKEN_BYTES).toString('base64url')}`;
@@ -52,7 +64,7 @@ export class ConfirmationTokenStore {
     const expiresAt = now + this.ttlMs;
     const inputHash = hashInput(input.userInput);
 
-    this.db.prepare<void>(
+    this.requireDb('issue').prepare<void>(
       `INSERT INTO conversation_confirmation_tokens
         (id, tenant_id, persona_id, session_id, external_user_id,
          requested_topic, requested_rule, input_hash, issued_at, expires_at)
@@ -78,7 +90,7 @@ export class ConfirmationTokenStore {
    * 失败原因记入返回值便于审计。
    */
   consume(input: VerifyTokenInput): { ok: true } | { ok: false; reason: string } {
-    const row = this.db.prepare<{
+    const row = this.requireDb('consume').prepare<{
       tenant_id: string;
       persona_id: string;
       session_id: string;
@@ -108,7 +120,7 @@ export class ConfirmationTokenStore {
     }
 
     /* 原子标记为已消费；防止竞态 */
-    const result = this.db.prepare<void>(
+    const result = this.requireDb('consume').prepare<void>(
       `UPDATE conversation_confirmation_tokens
           SET consumed_at = ?
         WHERE id = ? AND consumed_at IS NULL`,
@@ -121,7 +133,7 @@ export class ConfirmationTokenStore {
   }
 
   pruneExpired(now = Date.now()): number {
-    const result = this.db.prepare<void>(
+    const result = this.requireDb('pruneExpired').prepare<void>(
       'DELETE FROM conversation_confirmation_tokens WHERE expires_at < ?',
     ).run(now);
     return result.changes ?? 0;

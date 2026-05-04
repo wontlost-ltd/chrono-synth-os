@@ -6,6 +6,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type {
   CalibratedConfidence,
@@ -61,11 +62,22 @@ export interface InsertMessageInput {
 }
 
 export class ConversationStore {
+  private readonly db: IDatabase | null;
+
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly encryption?: FieldEncryption,
     private readonly encryptionKeyRef = 'master',
-  ) {}
+  ) {
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private requireDb(method: string): IDatabase {
+    if (!this.db) {
+      throw new Error(`ConversationStore.${method} requires IDatabase entrance`);
+    }
+    return this.db;
+  }
 
   insert(input: InsertMessageInput): ConversationMessage {
     const now = Date.now();
@@ -73,7 +85,7 @@ export class ConversationStore {
     const assistantOutputStored = this.encryption ? this.encryption.encrypt(input.assistantOutput, this.encryptionKeyRef) : input.assistantOutput;
     const keyRef = this.encryption ? this.encryptionKeyRef : null;
 
-    this.db.prepare<void>(
+    this.requireDb('insert').prepare<void>(
       `INSERT INTO conversation_messages (
         id, tenant_id, persona_id, session_id, message_id, external_user_id,
         user_input, assistant_output, memories_used_json,
@@ -148,7 +160,7 @@ export class ConversationStore {
     sessionId: string;
     messageId: string;
   }): ConversationMessage | null {
-    const row = this.db.prepare<MessageRow>(
+    const row = this.requireDb('findByIdempotencyKey').prepare<MessageRow>(
       `SELECT * FROM conversation_messages
         WHERE tenant_id = ? AND persona_id = ? AND session_id = ? AND message_id = ?
         LIMIT 1`,
@@ -163,7 +175,7 @@ export class ConversationStore {
     limit?: number;
   }): ConversationMessage[] {
     const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
-    const rows = this.db.prepare<MessageRow>(
+    const rows = this.requireDb('listBySession').prepare<MessageRow>(
       `SELECT * FROM conversation_messages
         WHERE tenant_id = ? AND persona_id = ? AND session_id = ?
         ORDER BY created_at ASC
@@ -173,7 +185,7 @@ export class ConversationStore {
   }
 
   countBySession(input: { tenantId: string; personaId: string; sessionId: string }): number {
-    const row = this.db.prepare<{ n: number }>(
+    const row = this.requireDb('countBySession').prepare<{ n: number }>(
       `SELECT COUNT(*) AS n FROM conversation_messages
         WHERE tenant_id = ? AND persona_id = ? AND session_id = ?`,
     ).get(input.tenantId, input.personaId, input.sessionId);
@@ -182,7 +194,7 @@ export class ConversationStore {
 
   /** GDPR：按 tenant + persona 删除全部对话（litigation_hold 受保护） */
   deleteByPersona(tenantId: string, personaId: string): number {
-    const result = this.db.prepare<void>(
+    const result = this.requireDb('deleteByPersona').prepare<void>(
       `DELETE FROM conversation_messages
         WHERE tenant_id = ? AND persona_id = ? AND retention_class != 'litigation_hold'`,
     ).run(tenantId, personaId);
@@ -193,7 +205,7 @@ export class ConversationStore {
   pruneByRetention(input: { now: number; standardCutoffMs: number; extendedCutoffMs: number }): number {
     const standardCutoff = input.now - input.standardCutoffMs;
     const extendedCutoff = input.now - input.extendedCutoffMs;
-    const result = this.db.prepare<void>(
+    const result = this.requireDb('pruneByRetention').prepare<void>(
       `DELETE FROM conversation_messages
         WHERE (retention_class = 'standard' AND created_at < ?)
            OR (retention_class = 'extended' AND created_at < ?)`,

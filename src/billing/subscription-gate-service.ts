@@ -12,6 +12,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { getPlanLimits } from './plans.js';
 
 export type GateDecision =
@@ -35,7 +36,18 @@ const RESOURCE_KEYS = {
 export type GateResource = keyof typeof RESOURCE_KEYS;
 
 export class SubscriptionGateService {
-  constructor(private readonly db: IDatabase) {}
+  private readonly db: IDatabase | null;
+
+  constructor(uowOrDb: UowOrDb) {
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private requireDb(method: string): IDatabase {
+    if (!this.db) {
+      throw new Error(`SubscriptionGateService.${method} requires IDatabase entrance`);
+    }
+    return this.db;
+  }
 
   canUseResource(tenantId: string, resource: GateResource, now = Date.now()): GateDecision {
     const sub = this.findLatestSubscription(tenantId);
@@ -104,7 +116,7 @@ export class SubscriptionGateService {
   }
 
   private findLatestSubscription(tenantId: string): SubscriptionRow | null {
-    return this.db.prepare<SubscriptionRow>(
+    return this.requireDb('canUseResource').prepare<SubscriptionRow>(
       `SELECT id, plan_id, status, grace_period_ends_at, current_period_end, trial_end
          FROM subscriptions
         WHERE tenant_id = ?
@@ -115,7 +127,7 @@ export class SubscriptionGateService {
 
   private countMonthlyUsage(tenantId: string, resource: GateResource, now: number): number {
     const monthStart = now - 30 * 24 * 60 * 60 * 1000;
-    const row = this.db.prepare<{ total: number }>(
+    const row = this.requireDb('canUseResource').prepare<{ total: number }>(
       `SELECT COALESCE(SUM(quantity), 0) AS total
          FROM usage_records
         WHERE tenant_id = ? AND resource = ? AND recorded_at >= ?`,
