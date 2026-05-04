@@ -33,6 +33,10 @@ export interface HealthRouteDeps {
   runtimeRecoveryWorker?: { isHealthy(): boolean; inflight: number };
   /** 可选 settlement reconciliation 工作者，用于报告账务对账健康状态 */
   settlementReconciliationWorker?: { isHealthy(): boolean; inflight: number };
+  /** P1-C 对话服务：暴露 LLM circuit breaker 状态 */
+  conversationService?: { getCircuitState(): 'closed' | 'open' | 'half_open' };
+  /** P1-C retention worker */
+  conversationRetentionWorker?: { isHealthy(): boolean };
 }
 
 export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps): void {
@@ -133,6 +137,40 @@ export function registerHealthRoutes(app: FastifyInstance, deps: HealthRouteDeps
         status: healthy ? 'ok' : 'stopped',
         inflight: deps.settlementReconciliationWorker.inflight,
       };
+    }
+
+    /* P1-C 对话 LLM circuit breaker 状态（生产 SLA 关键指标） */
+    if (deps.conversationService) {
+      const cb = deps.conversationService.getCircuitState();
+      components.conversation_llm_circuit = {
+        status: cb === 'closed' ? 'ok' : cb === 'half_open' ? 'recovering' : 'open',
+        state: cb,
+      };
+    }
+
+    if (deps.conversationRetentionWorker) {
+      const healthy = deps.conversationRetentionWorker.isHealthy();
+      components.conversation_retention_worker = {
+        status: healthy ? 'ok' : 'stopped',
+      };
+    }
+
+    /* P1-D 计费 outbox 积压（持久增长是 Stripe 上报失败信号） */
+    if (db) {
+      try {
+        const row = db.prepare<{ pending: number; processing: number }>(
+          `SELECT
+             SUM(CASE WHEN status = 'pending'    THEN 1 ELSE 0 END) AS pending,
+             SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing
+           FROM billing_outbox`,
+        ).get();
+        const pending = row?.pending ?? 0;
+        const processing = row?.processing ?? 0;
+        const status = pending > 5_000 ? 'degraded' : 'ok';
+        components.billing_outbox = { status, pending, processing };
+      } catch {
+        /* 表不存在或查询失败，不暴露此组件 */
+      }
     }
 
     const allOk = serverState.ready && dbOk && redisOk;

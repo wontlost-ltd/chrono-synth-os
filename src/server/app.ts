@@ -421,6 +421,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     observabilityWorker,
     runtimeRecoveryWorker,
     settlementReconciliationWorker,
+    conversationService,
+    conversationRetentionWorker,
   });
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
@@ -453,6 +455,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     conversation: conversationService,
     personaCore: bulkImportPersonaCoreService,
     subscriptionGate,
+    db,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);

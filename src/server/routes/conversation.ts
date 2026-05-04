@@ -16,6 +16,7 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { IDatabase } from '../../storage/database.js';
 import type { JwtPayload } from '../../types/auth.js';
 import type {
   ConversationService,
@@ -30,11 +31,14 @@ import {
   ErrorCode,
 } from '../../errors/index.js';
 import { PersonaNotFoundForConversationError } from '../../conversation/conversation-service.js';
+import { recordBusinessAuditLog } from '../../audit/audit-log-store.js';
 
 interface RouteServices {
   conversation: ConversationService;
   personaCore: PersonaCoreService;
   subscriptionGate?: SubscriptionGateService;
+  /** P1 部署 5：闸门拒绝时写 audit_log 用于销售跟进。db 缺失时跳过审计 */
+  db?: IDatabase;
 }
 
 const SSE_TOKEN_CHUNK_SIZE = 32;
@@ -79,13 +83,40 @@ function perPersonaUserKey(request: FastifyRequest): string {
 }
 
 export function registerConversationRoutes(app: FastifyInstance, services: RouteServices): void {
-  const { conversation, personaCore, subscriptionGate } = services;
+  const { conversation, personaCore, subscriptionGate, db } = services;
 
-  /** P1-D 闸门：preHandler 检查订阅可用性；402 时不进入业务流水线 */
-  function gate(reply: FastifyReply, tenantId: string, resource: 'conversation_message'): boolean {
+  /** P1-D 闸门：preHandler 检查订阅可用性；402 时不进入业务流水线
+   *  P1 部署 5：拒绝时写 'persona_conversation.payment_required' 业务审计，
+   *  便于销售/运营按 tenant 复盘转化漏斗。 */
+  function gate(
+    reply: FastifyReply,
+    tenantId: string,
+    ownerUserId: string,
+    personaId: string,
+    resource: 'conversation_message',
+  ): boolean {
     if (!subscriptionGate) return true;
     const decision = subscriptionGate.canUseResource(tenantId, resource);
     if (decision.allowed) return true;
+
+    if (db) {
+      try {
+        recordBusinessAuditLog(db, {
+          tenantId,
+          actorType: 'user',
+          actorId: ownerUserId,
+          actionType: 'persona_conversation.payment_required',
+          targetType: 'persona_core',
+          targetId: personaId,
+          payload: {
+            reason: decision.reason,
+            statusCode: decision.statusCode,
+            upgradeUrl: decision.upgradeUrl,
+          },
+        });
+      } catch { /* 审计失败不阻塞 402 返回 */ }
+    }
+
     reply.code(decision.statusCode).send({
       error: {
         code: decision.reason,
@@ -112,7 +143,7 @@ export function registerConversationRoutes(app: FastifyInstance, services: Route
       const user = requireJwtUser(request);
       const personaId = request.params.personaId;
       assertPersonaOwnership(personaCore, request.tenantId, user.sub, personaId);
-      if (!gate(reply, request.tenantId, 'conversation_message')) return reply;
+      if (!gate(reply, request.tenantId, user.sub, personaId, 'conversation_message')) return reply;
 
       const body = ConversationMessageRequestSchema.parse(request.body);
       const submitInput = buildSubmitInput(body, user, personaId, request.tenantId);
@@ -146,7 +177,7 @@ export function registerConversationRoutes(app: FastifyInstance, services: Route
       const user = requireJwtUser(request);
       const personaId = request.params.personaId;
       assertPersonaOwnership(personaCore, request.tenantId, user.sub, personaId);
-      if (!gate(reply, request.tenantId, 'conversation_message')) return reply;
+      if (!gate(reply, request.tenantId, user.sub, personaId, 'conversation_message')) return reply;
 
       const body = ConversationMessageRequestSchema.parse(request.body);
       const submitInput = buildSubmitInput(body, user, personaId, request.tenantId);

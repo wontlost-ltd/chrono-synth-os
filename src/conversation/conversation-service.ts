@@ -155,6 +155,11 @@ export class ConversationService {
     return this.confirmationStore;
   }
 
+  /** Health probe：当前 LLM 调用链 circuit breaker 状态 */
+  getCircuitState(): 'closed' | 'open' | 'half_open' {
+    return this.circuitBreaker.getState();
+  }
+
   async submit(input: SubmitMessageInput): Promise<ConversationResponse> {
     const startedAt = Date.now();
 

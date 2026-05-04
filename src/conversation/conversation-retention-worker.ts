@@ -60,6 +60,10 @@ export class ConversationRetentionWorker {
     this.logger.info(LAYER, `启动 retention worker（每 ${this.options.intervalMs}ms 运行一次）`);
   }
 
+  isHealthy(): boolean {
+    return this.timer !== undefined;
+  }
+
   async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
