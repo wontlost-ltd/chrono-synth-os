@@ -62,6 +62,7 @@ import { registerAuth0 } from './plugins/auth0.js';
 import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerAdminConfigRoutes } from './routes/admin-config.js';
+import { registerAdminTemplateRoutes } from './routes/admin-templates.js';
 import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
 import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
@@ -336,6 +337,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerCollaborationRoutes(app, services);
   registerApiKeyRoutes(app, services);
   registerAdminConfigRoutes(app, db, config);
+  registerAdminTemplateRoutes(app, deps.os);
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
   registerMobileRoutes(app, services);

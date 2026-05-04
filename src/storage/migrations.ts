@@ -2054,6 +2054,32 @@ const v061_drift_analysis_log: Migration = {
   ],
 };
 
+/** v062: 岗位人格模板系统（P1-A）
+ *  内置模板使用哨兵 tenant_id='__builtin__'；自定义模板使用真实 tenant_id。
+ *  模板表不参与 TenantDatabase 自动重写——查询时显式包含两者。
+ */
+const v062_persona_templates: Migration = {
+  version: 'v062',
+  description: 'P1-A 岗位人格模板：predefined builtin templates + custom CRUD',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS persona_templates (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      label TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      default_values_json TEXT NOT NULL DEFAULT '[]',
+      default_narrative TEXT NOT NULL DEFAULT '',
+      behavior_boundaries_json TEXT NOT NULL DEFAULT '[]',
+      required_knowledge_categories_json TEXT NOT NULL DEFAULT '[]',
+      is_builtin INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_templates_tenant_category ON persona_templates(tenant_id, category)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2117,6 +2143,7 @@ const MIGRATIONS: readonly Migration[] = [
   v059_tenant_byok_byos,
   v060_memory_confidence,
   v061_drift_analysis_log,
+  v062_persona_templates,
 ];
 
 interface MigrationRow {

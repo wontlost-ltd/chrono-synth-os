@@ -12,6 +12,20 @@
       "hash": "708022d11c9a0628edef77e47372b34730474526375096bff6f3c28cdaf7cc59"
     }
   ],
+  "admin-templates.ts": [
+    {
+      "name": "CreatePersonaTemplateSchema",
+      "hash": "e6afbc1d4aee66d0c10ff316cb451a0a23e42a3c594d39c4f08d8f25f9e4a41a"
+    },
+    {
+      "name": "InstantiatePersonaTemplateSchema",
+      "hash": "eb7a6ae4ee330bcfa71a34c632ad45543b416e15096196b222f290bb3cbc8885"
+    },
+    {
+      "name": "PatchPersonaTemplateSchema",
+      "hash": "7a0a40feadd9b811ef48f6b21e17352f05dfc0632628b92fb7102839c34ba06d"
+    }
+  ],
   "api-keys.ts": [
     {
       "name": "CreateApiKeySchema",

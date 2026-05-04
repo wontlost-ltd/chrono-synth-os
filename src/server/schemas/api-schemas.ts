@@ -58,6 +58,54 @@ export const ForkPersonaSchema = z.object({
   resourceQuota: z.number().min(0).max(1).default(0.2),
 });
 
+/* 岗位人格模板（P1-A） */
+const TemplateValueAnchorSchema = z.object({
+  label: z.string().min(1),
+  weight: z.number().min(0).max(1),
+});
+
+const TemplateBehaviorBoundarySchema = z.object({
+  rule: z.enum(['never_discuss', 'always_escalate', 'require_confirmation']),
+  topic: z.string().min(1),
+});
+
+const TemplateCategorySchema = z.enum([
+  'customer_service', 'engineer', 'legal', 'sales', 'hr', 'finance',
+]);
+
+export const CreatePersonaTemplateSchema = z.object({
+  category: TemplateCategorySchema,
+  label: z.string().min(1).max(120),
+  description: z.string().max(2000).optional(),
+  defaultValues: z.array(TemplateValueAnchorSchema).max(50).optional(),
+  defaultNarrative: z.string().max(4000).optional(),
+  behaviorBoundaries: z.array(TemplateBehaviorBoundarySchema).max(50).optional(),
+  requiredKnowledgeCategories: z.array(z.string().min(1).max(120)).max(50).optional(),
+});
+
+export const PatchPersonaTemplateSchema = z.object({
+  label: z.string().min(1).max(120).optional(),
+  description: z.string().max(2000).optional(),
+  defaultValues: z.array(TemplateValueAnchorSchema).max(50).optional(),
+  defaultNarrative: z.string().max(4000).optional(),
+  behaviorBoundaries: z.array(TemplateBehaviorBoundarySchema).max(50).optional(),
+  requiredKnowledgeCategories: z.array(z.string().min(1).max(120)).max(50).optional(),
+});
+
+export const InstantiatePersonaTemplateSchema = z.object({
+  displayName: z.string().min(1).max(120),
+  ownerUserId: z.string().min(1).optional(),
+  overrideValues: z.array(TemplateValueAnchorSchema).max(50).optional(),
+  overrideNarrative: z.string().max(4000).optional(),
+  initialKnowledge: z.array(z.object({
+    title: z.string().min(1).max(200),
+    content: z.string().min(1).max(8000),
+    source: z.string().max(120).optional(),
+    tags: z.array(z.string().max(60)).max(20).optional(),
+    confidence: z.number().min(0).max(1).optional(),
+  })).max(20).optional(),
+});
+
 export const SimulatePersonaSchema = z.object({
   personaId: z.string().min(1),
   scenario: z.object({
