@@ -37,7 +37,7 @@ export function registerMemoryRoutes(app: FastifyInstance, os: ChronoSynthOS, te
     }
 
     const body = CreateMemorySchema.parse(request.body);
-    const { memory, indexPromise } = facade.createCoreMemory(request.tenantId, body.kind, body.content, body.valence, body.salience);
+    const { memory, indexPromise } = facade.createCoreMemory(request.tenantId, body.kind, body.content, body.valence, body.salience, body.sourceKind ?? 'user_input');
 
     if (indexPromise) {
       indexPromise.catch((err) => {

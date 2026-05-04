@@ -2025,6 +2025,35 @@ const v059_tenant_byok_byos: Migration = {
   ],
 };
 
+/** v060: 记忆置信度与来源追踪（AI 安全治理 T0-B.1） */
+const v060_memory_confidence: Migration = {
+  version: 'v060',
+  description: 'AI 安全治理：memory_nodes 置信度、来源类型与未验证标记',
+  sql: [
+    '/* safe:add-column:memory_nodes:confidence_score */ ALTER TABLE memory_nodes ADD COLUMN confidence_score REAL NOT NULL DEFAULT 0.5',
+    '/* safe:add-column:memory_nodes:source_kind */ ALTER TABLE memory_nodes ADD COLUMN source_kind TEXT NOT NULL DEFAULT \'unknown\'',
+    '/* safe:add-column:memory_nodes:unverified */ ALTER TABLE memory_nodes ADD COLUMN unverified INTEGER NOT NULL DEFAULT 1',
+  ],
+};
+
+/** v061: 人格漂移分析日志（AI 安全治理 T0-B.2） */
+const v061_drift_analysis_log: Migration = {
+  version: 'v061',
+  description: 'AI 安全治理：人格漂移分析日志',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS drift_analysis_log (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      baseline_snapshot_id TEXT,
+      analyzed_at INTEGER NOT NULL,
+      overall_drift_score REAL NOT NULL,
+      alert_level TEXT NOT NULL DEFAULT 'ok',
+      value_drifts_json TEXT NOT NULL DEFAULT '[]'
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_drift_analysis_log_tenant ON drift_analysis_log(tenant_id, analyzed_at DESC)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2086,6 +2115,8 @@ const MIGRATIONS: readonly Migration[] = [
   v057_conflict_inbox,
   v058_import_commit_tokens,
   v059_tenant_byok_byos,
+  v060_memory_confidence,
+  v061_drift_analysis_log,
 ];
 
 interface MigrationRow {

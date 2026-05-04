@@ -12,6 +12,7 @@ import { ConfigService } from '../../config/config-service.js';
 import { requireRole } from '../plugins/rbac.js';
 import { ValidationError, ErrorCode } from '../../errors/index.js';
 import type { JwtPayload } from '../../types/auth.js';
+import { PersonaDriftAnalyzer } from '../../safety/persona-drift-analyzer.js';
 
 export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
   const redis = (app as unknown as { redis?: { publish(channel: string, message: string): Promise<void> } }).redis;
@@ -59,5 +60,25 @@ export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, c
     const offset = parseInt(query.offset ?? '0', 10) || 0;
     const audit = configService.getAudit(limit, offset);
     return { data: audit };
+  });
+
+  /* POST /api/v1/admin/safety/drift-report — 立即生成并返回漂移报告（仅 admin） */
+  app.post('/api/v1/admin/safety/drift-report', {
+    preHandler: requireRole('admin'),
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request) => {
+    const analyzer = new PersonaDriftAnalyzer(db);
+    const report = analyzer.analyze(request.tenantId);
+    return { data: report };
+  });
+
+  /* GET /api/v1/admin/safety/drift-report — 获取最近一次漂移报告（仅 admin） */
+  app.get('/api/v1/admin/safety/drift-report', {
+    preHandler: requireRole('admin'),
+  }, async (request, reply) => {
+    const analyzer = new PersonaDriftAnalyzer(db);
+    const report = analyzer.getLatest(request.tenantId);
+    if (!report) return reply.code(404).send({ error: 'No drift report found. Run POST first.' });
+    return { data: report };
   });
 }

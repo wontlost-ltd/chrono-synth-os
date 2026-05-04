@@ -24,11 +24,15 @@ export const UpdateValueSchema = z.object({
 });
 
 /* 记忆管理 */
+export const MemorySourceKindSchema = z.enum(['user_input', 'api_sync', 'system_inferred', 'unknown']).default('unknown');
+export type MemorySourceKind = z.infer<typeof MemorySourceKindSchema>;
+
 export const CreateMemorySchema = z.object({
   kind: z.enum(['episodic', 'semantic', 'procedural']),
   content: z.string().min(1),
   valence: z.number().min(-1).max(1),
   salience: z.number().min(0).max(1),
+  sourceKind: MemorySourceKindSchema.optional(),
 });
 
 export const LinkMemorySchema = z.object({

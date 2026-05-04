@@ -9,6 +9,7 @@ import type { AppConfig } from '../config/schema.js';
 import type { IDatabase } from '../storage/database.js';
 import type { MemoryNode, MemoryEdge, MemoryKind, ActivationResult, ConsolidationResult, EvictionResult, WorkingMemorySlot } from '../types/core-self.js';
 import type { PersonaMemorySensitivity } from '../persona-core/types.js';
+import type { MemorySourceKind } from '../server/schemas/api-schemas.js';
 import { FieldEncryption } from '../storage/encryption.js';
 import { EmbeddingIndex } from '../intelligence/embedding-index.js';
 import { ModelRouter } from '../intelligence/model-router.js';
@@ -19,6 +20,13 @@ import { BillingOutbox } from '../billing/billing-outbox.js';
 import { UsageTracker } from '../billing/usage-tracker.js';
 import { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
+
+const CONFIDENCE_BY_SOURCE: Record<string, number> = {
+  user_input: 0.95,
+  api_sync: 0.70,
+  system_inferred: 0.60,
+  unknown: 0.30,
+};
 
 /** persona 记忆创建结果 */
 export interface PersonaMemoryResult {
@@ -179,11 +187,26 @@ export class MemoryFacade {
     content: string,
     valence: number,
     salience: number,
+    sourceKind: MemorySourceKind = 'unknown',
   ): { memory: MemoryNode; indexPromise?: Promise<boolean> } {
     const tenantOS = this.getOS(tenantId);
     const memory = tenantOS.core.addMemory(kind, content, valence, salience);
     const idx = this.getEmbeddingIndex(tenantOS, tenantId);
     const indexPromise = idx ? idx.indexMemory(memory.id, content) : undefined;
+
+    // 写入置信度元数据（列由 v060 迁移新增，旧实例中可能不存在则静默失败）
+    const confidenceScore = CONFIDENCE_BY_SOURCE[sourceKind] ?? 0.3;
+    const unverified = confidenceScore < 0.8 ? 1 : 0;
+    try {
+      tenantOS.getDatabase().prepare<void>(
+        `UPDATE memory_nodes
+            SET confidence_score = ?, source_kind = ?, unverified = ?
+          WHERE id = ?`,
+      ).run(confidenceScore, sourceKind, unverified, memory.id);
+    } catch {
+      // 列尚未存在（旧迁移未运行）时静默跳过
+    }
+
     return { memory, indexPromise };
   }
 
