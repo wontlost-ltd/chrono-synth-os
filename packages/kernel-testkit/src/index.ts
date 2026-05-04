@@ -10,7 +10,7 @@ import {
   type SyncStatusSnapshotV1,
 } from '@chrono/contracts';
 import { createMemoryDatabase, runMigrations } from '../../../dist/index.js';
-import type { IDatabase } from '../../../src/storage/database.js';
+import type { IDatabase } from '../../../dist/index.js';
 
 function buildCapabilities(
   state: RuntimeSyncStateV1,

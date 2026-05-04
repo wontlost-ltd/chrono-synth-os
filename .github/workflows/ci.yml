@@ -16,6 +16,10 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
       - run: npm run build
       - run: npm run typecheck
       - run: npm run test
@@ -33,6 +37,10 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
       - run: npm run build
       - name: Package tests (kernel / data-plane / contracts / sync-engine)
         run: npm run test:packages
@@ -82,6 +90,10 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
       - run: npm ci
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
       - run: npm run build
       - name: Run PostgreSQL integration tests
         run: npm run test:integration
