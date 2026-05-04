@@ -43,6 +43,12 @@ export class NodeEntitlementService implements EntitlementContract {
       rateLimitPerMinute: limits['rate_limit'] ?? 100,
       maxAvatars: limits['avatars'] ?? -1,
       maxMemoryNodes: limits[fieldToResource.get('maxMemoryNodes') ?? 'memory_nodes'] ?? -1,
+      /* Phase-1 业务度量；entitlement 系统对这些资源以 add-on 形式覆盖时由
+       * computeEffectiveLimits 提供，否则回退到默认 -1（无限制） */
+      maxPersonas: limits['personas'] ?? -1,
+      conversationMessagesPerMonth: limits['conversation_message'] ?? -1,
+      knowledgeStorageGb: limits['knowledge_storage_gb'] ?? -1,
+      bulkImportItemsPerMonth: limits['bulk_knowledge_import_item'] ?? -1,
     };
   }
 }

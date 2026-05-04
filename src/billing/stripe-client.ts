@@ -41,14 +41,44 @@ export async function createCheckoutSession(
   priceId: string,
   successUrl: string,
   cancelUrl: string,
+  options: { trialDays?: number; metadata?: Record<string, string> } = {},
 ): Promise<Stripe.Checkout.Session> {
   const stripe = getStripe(config);
-  return stripe.checkout.sessions.create({
+  const sessionParams: Stripe.Checkout.SessionCreateParams = {
     customer: customerId,
     mode: 'subscription',
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: successUrl,
     cancel_url: cancelUrl,
+  };
+  if (options.trialDays && options.trialDays > 0) {
+    sessionParams.subscription_data = {
+      trial_period_days: Math.min(options.trialDays, 90), /* Stripe 上限 90 天 */
+    };
+  }
+  if (options.metadata) {
+    sessionParams.subscription_data = {
+      ...sessionParams.subscription_data,
+      metadata: options.metadata,
+    };
+  }
+  return stripe.checkout.sessions.create(sessionParams);
+}
+
+/** 退款（admin 用，按 payment_intent 或 invoice 反向打款） */
+export async function refundPayment(
+  config: AppConfig,
+  options: { paymentIntent?: string; charge?: string; amount?: number; reason?: 'duplicate' | 'fraudulent' | 'requested_by_customer' },
+): Promise<Stripe.Refund> {
+  const stripe = getStripe(config);
+  if (!options.paymentIntent && !options.charge) {
+    throw new Error('refundPayment 需要 paymentIntent 或 charge 任一');
+  }
+  return stripe.refunds.create({
+    payment_intent: options.paymentIntent,
+    charge: options.charge,
+    amount: options.amount,
+    reason: options.reason ?? 'requested_by_customer',
   });
 }
 

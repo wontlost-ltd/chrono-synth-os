@@ -2185,6 +2185,18 @@ const v065_conversation_messages: Migration = {
   ],
 };
 
+/** v066: P1-D Stripe 真实订阅（subscriptions 加试用 / 宽限期 / cancel_at_period_end / last_invoice）*/
+const v066_subscription_fields: Migration = {
+  version: 'v066',
+  description: 'P1-D：subscriptions 增加 trial_end / grace_period_ends_at / cancel_at_period_end / last_invoice_id',
+  sql: [
+    '/* safe:add-column:subscriptions:trial_end */ ALTER TABLE subscriptions ADD COLUMN trial_end INTEGER',
+    '/* safe:add-column:subscriptions:grace_period_ends_at */ ALTER TABLE subscriptions ADD COLUMN grace_period_ends_at INTEGER',
+    '/* safe:add-column:subscriptions:cancel_at_period_end */ ALTER TABLE subscriptions ADD COLUMN cancel_at_period_end INTEGER NOT NULL DEFAULT 0',
+    '/* safe:add-column:subscriptions:last_invoice_id */ ALTER TABLE subscriptions ADD COLUMN last_invoice_id TEXT',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2252,6 +2264,7 @@ const MIGRATIONS: readonly Migration[] = [
   v063_bulk_knowledge_import,
   v064_bulk_import_metadata,
   v065_conversation_messages,
+  v066_subscription_fields,
 ];
 
 interface MigrationRow {

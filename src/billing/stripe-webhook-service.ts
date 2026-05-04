@@ -62,6 +62,16 @@ export class StripeWebhookService {
         case 'customer.subscription.deleted':
           this.handleSubscriptionDeleted(dataObject, now);
           break;
+        case 'customer.subscription.trial_will_end':
+          this.handleTrialWillEnd(dataObject, now);
+          break;
+        case 'invoice.paid':
+        case 'invoice.payment_succeeded':
+          this.handleInvoicePaid(dataObject, now);
+          break;
+        case 'invoice.payment_failed':
+          this.handleInvoicePaymentFailed(dataObject, now);
+          break;
       }
     });
 
@@ -131,10 +141,84 @@ export class StripeWebhookService {
       now,
     }));
 
+    /* 同步 P1-D 新字段：trial_end / cancel_at_period_end（直接 SQL） */
+    const trialEnd = typeof subscription.trial_end === 'number' && subscription.trial_end > 0
+      ? subscription.trial_end * 1000 : null;
+    const cancelAtPeriodEnd = subscription.cancel_at_period_end === true ? 1 : 0;
+    this.db.prepare<void>(
+      `UPDATE subscriptions
+          SET trial_end = ?,
+              cancel_at_period_end = ?,
+              grace_period_ends_at = NULL,
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(trialEnd, cancelAtPeriodEnd, now, tenantSub.id);
+
     if (resolvedPlanId !== tenantSub.plan_id) {
       syncPlanToQuota(this.db, tenantSub.tenant_id, resolvedPlanId);
       this.entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
     }
+  }
+
+  private handleTrialWillEnd(subscription: Record<string, unknown>, now: number): void {
+    /* 仅记录信号：业务侧通过 audit log 检测后通知用户。
+     * 这里不主动改 status（仍然 trialing 直到 Stripe 推送 subscription.updated）。 */
+    const customerId = typeof subscription.customer === 'string'
+      ? subscription.customer
+      : (subscription.customer as { id: string })?.id ?? '';
+    if (!customerId) return;
+    /* 写入 webhook_events 表已由 swhsCmdRecordEvent 完成；此处仅 noop。
+     * 业务侧通过 webhook_events.event_type='customer.subscription.trial_will_end' 触发通知。 */
+    void now;
+  }
+
+  private handleInvoicePaid(invoice: Record<string, unknown>, now: number): void {
+    const customerId = typeof invoice.customer === 'string'
+      ? invoice.customer
+      : (invoice.customer as { id: string })?.id ?? '';
+    if (!customerId) return;
+
+    const tenantSub = this.tx.queryOne(swhsQuerySubByStripeCustomer(customerId));
+    if (!tenantSub) return;
+
+    const invoiceId = typeof invoice.id === 'string' ? invoice.id : null;
+
+    this.db.prepare<void>(
+      `UPDATE subscriptions
+          SET status = CASE WHEN status IN ('past_due', 'canceled') THEN 'active' ELSE status END,
+              grace_period_ends_at = NULL,
+              last_invoice_id = COALESCE(?, last_invoice_id),
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(invoiceId, now, tenantSub.id);
+
+    if (tenantSub.status === 'past_due') {
+      /* 复活：把配额恢复到当前 plan */
+      syncPlanToQuota(this.db, tenantSub.tenant_id, tenantSub.plan_id);
+      this.entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
+    }
+  }
+
+  private handleInvoicePaymentFailed(invoice: Record<string, unknown>, now: number): void {
+    const customerId = typeof invoice.customer === 'string'
+      ? invoice.customer
+      : (invoice.customer as { id: string })?.id ?? '';
+    if (!customerId) return;
+
+    const tenantSub = this.tx.queryOne(swhsQuerySubByStripeCustomer(customerId));
+    if (!tenantSub) return;
+
+    const invoiceId = typeof invoice.id === 'string' ? invoice.id : null;
+    const graceMs = 3 * 24 * 60 * 60 * 1000;
+
+    this.db.prepare<void>(
+      `UPDATE subscriptions
+          SET status = 'past_due',
+              grace_period_ends_at = ?,
+              last_invoice_id = COALESCE(?, last_invoice_id),
+              updated_at = ?
+        WHERE id = ?`,
+    ).run(now + graceMs, invoiceId, now, tenantSub.id);
   }
 
   private handleSubscriptionDeleted(subscription: Record<string, unknown>, now: number): void {

@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import { BillingRouteFacade } from '../../billing/billing-route-facade.js';
-import { CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
+import { BillingRefundSchema, CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 import { StateError, ErrorCode } from '../../errors/index.js';
 
@@ -68,8 +68,19 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
 
   /* POST /api/v1/billing/checkout — 创建 Checkout Session */
   app.post('/api/v1/billing/checkout', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request) => {
-    const { priceId, successUrl, cancelUrl } = CheckoutSchema.parse(request.body);
-    return { data: await facade.createCheckout(request.tenantId, priceId, successUrl, cancelUrl) };
+    const { priceId, successUrl, cancelUrl, trialDays } = CheckoutSchema.parse(request.body);
+    return {
+      data: await facade.createCheckout(request.tenantId, priceId, successUrl, cancelUrl, { trialDays }),
+    };
+  });
+
+  /* POST /api/v1/admin/billing/refund — admin 退款 */
+  app.post('/api/v1/admin/billing/refund', {
+    preHandler: requireRole('admin'),
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request) => {
+    const body = BillingRefundSchema.parse(request.body);
+    return { data: await facade.refundPayment(body) };
   });
 
   /* POST /api/v1/billing/portal — 创建客户门户 */

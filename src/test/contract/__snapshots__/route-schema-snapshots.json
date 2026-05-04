@@ -98,8 +98,12 @@
   ],
   "billing.ts": [
     {
+      "name": "BillingRefundSchema",
+      "hash": "dcfe6cb0718a73d71052f47b3561adf8d79ed2122d5897b2578bc70a791edc1d"
+    },
+    {
       "name": "CheckoutSchema",
-      "hash": "894529adbc0ae581513abfb943a1adb06f0bea901408c62cdb8b64bb8dd80721"
+      "hash": "cfbe947bfa1682d2c1815b7333f5e0fc905227cd690564da1e54fe133a9e50dc"
     },
     {
       "name": "PortalSchema",
@@ -107,7 +111,7 @@
     },
     {
       "name": "SubscribeBillingSchema",
-      "hash": "f2a3d9fa778e3ddbcc8c41f8e246bae89a1983676421a1d293a13e649d835027"
+      "hash": "d88292c8c9e2942d7ff970a7f3e25cde183e868409f9bb9227b9cd3527cee6ce"
     }
   ],
   "bulk-knowledge-import.ts": [

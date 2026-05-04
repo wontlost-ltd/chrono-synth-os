@@ -22,6 +22,7 @@ import type {
   SubmitMessageInput,
 } from '../../conversation/conversation-service.js';
 import type { PersonaCoreService } from '../../persona-core/persona-core-service.js';
+import type { SubscriptionGateService } from '../../billing/subscription-gate-service.js';
 import { ConversationMessageRequestSchema } from '../schemas/api-schemas.js';
 import {
   AuthorizationError,
@@ -33,6 +34,7 @@ import { PersonaNotFoundForConversationError } from '../../conversation/conversa
 interface RouteServices {
   conversation: ConversationService;
   personaCore: PersonaCoreService;
+  subscriptionGate?: SubscriptionGateService;
 }
 
 const SSE_TOKEN_CHUNK_SIZE = 32;
@@ -77,7 +79,22 @@ function perPersonaUserKey(request: FastifyRequest): string {
 }
 
 export function registerConversationRoutes(app: FastifyInstance, services: RouteServices): void {
-  const { conversation, personaCore } = services;
+  const { conversation, personaCore, subscriptionGate } = services;
+
+  /** P1-D 闸门：preHandler 检查订阅可用性；402 时不进入业务流水线 */
+  function gate(reply: FastifyReply, tenantId: string, resource: 'conversation_message'): boolean {
+    if (!subscriptionGate) return true;
+    const decision = subscriptionGate.canUseResource(tenantId, resource);
+    if (decision.allowed) return true;
+    reply.code(decision.statusCode).send({
+      error: {
+        code: decision.reason,
+        message: '订阅状态不允许使用对话功能。请订阅或恢复有效订阅后重试。',
+        upgradeUrl: decision.upgradeUrl,
+      },
+    });
+    return false;
+  }
 
   /* POST /:personaId/conversations/messages */
   app.post<{ Params: { personaId: string } }>(
@@ -95,6 +112,7 @@ export function registerConversationRoutes(app: FastifyInstance, services: Route
       const user = requireJwtUser(request);
       const personaId = request.params.personaId;
       assertPersonaOwnership(personaCore, request.tenantId, user.sub, personaId);
+      if (!gate(reply, request.tenantId, 'conversation_message')) return reply;
 
       const body = ConversationMessageRequestSchema.parse(request.body);
       const submitInput = buildSubmitInput(body, user, personaId, request.tenantId);
@@ -128,6 +146,7 @@ export function registerConversationRoutes(app: FastifyInstance, services: Route
       const user = requireJwtUser(request);
       const personaId = request.params.personaId;
       assertPersonaOwnership(personaCore, request.tenantId, user.sub, personaId);
+      if (!gate(reply, request.tenantId, 'conversation_message')) return reply;
 
       const body = ConversationMessageRequestSchema.parse(request.body);
       const submitInput = buildSubmitInput(body, user, personaId, request.tenantId);

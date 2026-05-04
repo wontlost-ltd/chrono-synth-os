@@ -13,6 +13,8 @@ import type { TaskQueue } from '../queue/task-queue.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { PersonaTemplateService } from '../enterprise/persona-template-service.js';
 import type { Logger } from '../utils/logger.js';
+import type { UsageTracker } from '../billing/usage-tracker.js';
+import type { BillingOutbox } from '../billing/billing-outbox.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import {
   BulkImportStore,
@@ -81,6 +83,10 @@ export class BulkImportService {
     private readonly fetcher: UrlContentFetcher,
     private readonly logger: Logger,
     private readonly templateService?: PersonaTemplateService,
+    /** P1-D 计费上报 */
+    private readonly usageTracker?: UsageTracker,
+    private readonly billingOutbox?: BillingOutbox,
+    private readonly stripeCustomerLookup?: (tenantId: string) => string | null,
   ) {
     this.store = new BulkImportStore(db);
   }
@@ -188,6 +194,13 @@ export class BulkImportService {
         this.store.setMetadata(input.jobId, metadata);
       }
 
+      /* P1-D 计费上报：以最终 imported_count 作为 quantity */
+      const finalJob = this.store.get(input.tenantId, input.jobId);
+      const importedCount = finalJob?.importedCount ?? 0;
+      if (importedCount > 0) {
+        this.recordBillableUsage(input.tenantId, importedCount);
+      }
+
       this.store.markCompleted(input.jobId);
     } catch (err) {
       this.logger.error(
@@ -290,6 +303,24 @@ export class BulkImportService {
       `DELETE FROM persona_knowledge_items
         WHERE tenant_id = ? AND persona_id = ? AND fingerprint = ?`,
     ).run(tenantId, personaId, fingerprint);
+  }
+
+  private recordBillableUsage(tenantId: string, quantity: number): void {
+    try {
+      this.usageTracker?.record(tenantId, 'bulk_knowledge_import_item', quantity);
+    } catch (err) {
+      this.logger.warn('BulkImportService', `usage tracker record failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (this.billingOutbox && this.stripeCustomerLookup) {
+      try {
+        const customerId = this.stripeCustomerLookup(tenantId);
+        if (customerId) {
+          this.billingOutbox.enqueue(tenantId, customerId, 'chrono_bulk_knowledge_import_item', quantity);
+        }
+      } catch (err) {
+        this.logger.warn('BulkImportService', `billing outbox enqueue failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 }
 

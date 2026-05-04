@@ -49,9 +49,10 @@ describe('BillingService 执行器注册', () => {
     const service = new BillingService(db);
 
     const plans = service.listPlans();
-    assert.ok(plans.length >= 2);
+    assert.ok(plans.length >= 3);
     assert.ok(plans.some(p => p.id === 'free'));
-    assert.ok(plans.some(p => p.id === 'pro'));
+    assert.ok(plans.some(p => p.id === 'starter'));
+    assert.ok(plans.some(p => p.id === 'growth'));
   });
 
   it('subscribeTenant 创建订阅并生成发票', () => {

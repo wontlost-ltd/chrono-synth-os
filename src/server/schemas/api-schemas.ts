@@ -493,11 +493,25 @@ export const CheckoutSchema = z.object({
   priceId: z.string().min(1),
   successUrl: z.string().min(1),
   cancelUrl: z.string().min(1),
+  /** P1-D：可选试用期天数（Stripe 上限 90） */
+  trialDays: z.number().int().min(1).max(90).optional(),
 });
 
 export const SubscribeBillingSchema = z.object({
   planId: z.string().min(1),
+  trialDays: z.number().int().min(1).max(90).optional(),
 });
+
+/** P1-D admin 退款 */
+export const BillingRefundSchema = z.object({
+  paymentIntent: z.string().min(1).optional(),
+  charge: z.string().min(1).optional(),
+  amount: z.number().int().positive().optional(),
+  reason: z.enum(['duplicate', 'fraudulent', 'requested_by_customer']).optional(),
+}).refine(
+  (v) => Boolean(v.paymentIntent || v.charge),
+  { message: 'paymentIntent 或 charge 必须提供其一' },
+);
 
 export const PortalSchema = z.object({
   returnUrl: z.string().min(1),

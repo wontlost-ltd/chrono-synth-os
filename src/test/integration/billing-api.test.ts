@@ -103,14 +103,14 @@ describe('计费 API 集成测试', () => {
           authorization: `Bearer ${accessToken}`,
           'x-tenant-id': tenantId,
         },
-        payload: { planId: 'pro' },
+        payload: { planId: 'starter' },
       });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.body);
-      assert.equal(body.data.subscription.planId, 'pro');
+      assert.equal(body.data.subscription.planId, 'starter');
       assert.equal(body.data.subscription.status, 'active');
-      assert.equal(body.data.invoice.planId, 'pro');
-      assert.equal(body.data.invoice.amountMinor, 4900);
+      assert.equal(body.data.invoice.planId, 'starter');
+      assert.equal(body.data.invoice.amountMinor, 9900);
       assert.equal(body.data.invoice.currency, 'USD');
       assert.equal(body.data.invoice.status, 'open');
     });

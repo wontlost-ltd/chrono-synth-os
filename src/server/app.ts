@@ -76,6 +76,9 @@ import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
 import { CostTracker as ConversationCostTracker } from '../intelligence/cost-tracker.js';
+import { UsageTracker as P1dUsageTracker } from '../billing/usage-tracker.js';
+import { BillingOutbox as P1dBillingOutbox } from '../billing/billing-outbox.js';
+import { SubscriptionGateService } from '../billing/subscription-gate-service.js';
 import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
 import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
@@ -316,10 +319,25 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   }
 
   /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
-   * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动） */
+   * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动）
+   * P1-D 注入 UsageTracker + BillingOutbox 上报 bulk_knowledge_import_item */
   const bulkImportPersonaCoreService = new PersonaCoreService(db);
   const bulkImportTemplateService = new PersonaTemplateService(db, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
+  const p1dUsageTracker = new P1dUsageTracker(db);
+  const p1dBillingOutbox = config.stripe.enabled ? new P1dBillingOutbox(db, config) : undefined;
+  const stripeCustomerLookup = (tenantId: string): string | null => {
+    try {
+      const row = db.prepare<{ stripe_customer_id: string | null }>(
+        `SELECT stripe_customer_id FROM subscriptions
+          WHERE tenant_id = ? AND stripe_customer_id IS NOT NULL
+          ORDER BY created_at DESC LIMIT 1`,
+      ).get(tenantId);
+      return row?.stripe_customer_id ?? null;
+    } catch {
+      return null;
+    }
+  };
   const bulkImportService = new BulkImportService(
     db,
     bulkImportPersonaCoreService,
@@ -327,6 +345,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     new UrlContentFetcher(),
     deps.os.getLogger(),
     bulkImportTemplateService,
+    p1dUsageTracker,
+    p1dBillingOutbox,
+    config.stripe.enabled ? stripeCustomerLookup : undefined,
   );
   if (worker) {
     registerBulkImportHandler(worker, bulkImportService, deps.os.getLogger());
@@ -364,6 +385,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     costTracker: conversationCostTracker,
     quotaManager: conversationQuotaManager,
     circuitBreaker: conversationCircuitBreaker,
+    /* P1-D：用量追踪 + Stripe 计量上报 */
+    usageTracker: p1dUsageTracker,
+    billingOutbox: p1dBillingOutbox,
+    stripeCustomerLookup: config.stripe.enabled ? stripeCustomerLookup : undefined,
     guardOptions: {
       embeddingProvider: config.intelligence.apiKey ? conversationLlmRouter : undefined,
     },
@@ -372,6 +397,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       logger: deps.os.getLogger(),
     },
   });
+  /* P1-D 订阅状态闸门：在 conversation 路由 preHandler 调用 */
+  const subscriptionGate = new SubscriptionGateService(db);
   const conversationRetentionWorker = new ConversationRetentionWorker(
     conversationService,
     conversationService.getConfirmationStore(),
@@ -425,6 +452,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerConversationRoutes(app, {
     conversation: conversationService,
     personaCore: bulkImportPersonaCoreService,
+    subscriptionGate,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);

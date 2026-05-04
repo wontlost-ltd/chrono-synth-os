@@ -7,12 +7,19 @@ import type { TenantScope } from '../../index.js';
 
 /** 资源配额限制，-1 表示无限制 */
 export interface PlanLimits {
+  /* 既有字段（保留以维持向后兼容） */
   readonly maxSimulations: number;
   readonly maxPaths: number;
   readonly llmTokensPerMonth: number;
   readonly rateLimitPerMinute: number;
   readonly maxAvatars: number;
   readonly maxMemoryNodes: number;
+
+  /* Phase-1 业务度量（P1-D 新增） */
+  readonly maxPersonas: number;
+  readonly conversationMessagesPerMonth: number;
+  readonly knowledgeStorageGb: number;
+  readonly bulkImportItemsPerMonth: number;
 }
 
 /** 权益检查结果 */

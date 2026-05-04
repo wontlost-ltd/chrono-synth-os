@@ -25,6 +25,8 @@ import type { FieldEncryption } from '../storage/encryption.js';
 import type { TokenBudget } from '../intelligence/token-budget.js';
 import type { QuotaManager } from '../multi-tenant/quota-manager.js';
 import type { CostTracker } from '../intelligence/cost-tracker.js';
+import type { UsageTracker } from '../billing/usage-tracker.js';
+import type { BillingOutbox } from '../billing/billing-outbox.js';
 import { CircuitBreaker, CircuitOpenError, CircuitTimeoutError } from '../server/plugins/circuit-breaker.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { ConversationStore } from './conversation-store.js';
@@ -71,6 +73,12 @@ export interface ConversationServiceDeps {
   tokenBudget?: TokenBudget;
   quotaManager?: QuotaManager;
   costTracker?: CostTracker;
+  /** P1-D：记录 conversation_message 用量到 usage_records（用于 SubscriptionGate 月度计算） */
+  usageTracker?: UsageTracker;
+  /** P1-D：异步推送 Stripe Meter Event */
+  billingOutbox?: BillingOutbox;
+  /** P1-D：用于查询订阅 stripe_customer_id 决定是否推送计量事件 */
+  stripeCustomerLookup?: (tenantId: string) => string | null;
   circuitBreaker?: CircuitBreaker;
   guardOptions?: ConstructorParameters<typeof ValueGuard>[0];
   retrieverOptions?: ConstructorParameters<typeof ConversationKnowledgeRetriever>[1];
@@ -613,7 +621,35 @@ export class ConversationService {
 
     this.recordMetric(outcome.guardAction, outcome.durationMs);
 
+    /* P1-D: 计费用量上报 —— 仅在确实消耗了 LLM 资源的路径上报（pre_block /
+     * needs_confirmation / quota_exceeded 不计费） */
+    const billable = outcome.guardAction === null
+      || outcome.guardAction === 'escalate'
+      || outcome.guardAction === 'post_redact'
+      || outcome.guardAction === 'llm_fallback';
+    if (billable) {
+      this.recordBillableUsage(input.tenantId, 1);
+    }
+
     return message;
+  }
+
+  private recordBillableUsage(tenantId: string, quantity: number): void {
+    try {
+      this.deps.usageTracker?.record(tenantId, 'conversation_message', quantity);
+    } catch (err) {
+      this.deps.logger.warn('ConversationService', `usage tracker record failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (this.deps.billingOutbox && this.deps.stripeCustomerLookup) {
+      try {
+        const customerId = this.deps.stripeCustomerLookup(tenantId);
+        if (customerId) {
+          this.deps.billingOutbox.enqueue(tenantId, customerId, 'chrono_conversation_message', quantity);
+        }
+      } catch (err) {
+        this.deps.logger.warn('ConversationService', `billing outbox enqueue failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   private recordMetric(action: GuardAction, durationMs: number): void {

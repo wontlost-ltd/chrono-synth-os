@@ -17,6 +17,7 @@ import { PLANS, getPlanLimits } from './plans.js';
 import { listAddOns, getAddOnById, seedDefaultAddOns } from './add-ons.js';
 import {
   createCheckoutSession,
+  refundPayment,
   createPortalSession,
   constructWebhookEvent,
   createCustomer,
@@ -148,7 +149,13 @@ export class BillingRouteFacade {
     return this.config.stripe.enabled;
   }
 
-  async createCheckout(tenantId: string, priceId: string, successUrl: string, cancelUrl: string) {
+  async createCheckout(
+    tenantId: string,
+    priceId: string,
+    successUrl: string,
+    cancelUrl: string,
+    options: { trialDays?: number } = {},
+  ) {
     if (!VALID_PRICE_IDS.has(priceId)) {
       throw new ValidationError('无效的 priceId', ErrorCode.VALIDATION_FORMAT);
     }
@@ -158,10 +165,39 @@ export class BillingRouteFacade {
 
     const customerId = await ensureStripeCustomer(this.db, this.config, this.webhookService, tenantId);
     try {
-      const session = await createCheckoutSession(this.config, customerId, priceId, successUrl, cancelUrl);
+      const session = await createCheckoutSession(this.config, customerId, priceId, successUrl, cancelUrl, {
+        trialDays: options.trialDays,
+        metadata: { tenantId },
+      });
       return { sessionId: session.id, url: session.url };
     } catch (err) {
       throw new StateError(`支付会话创建失败: ${err instanceof Error ? err.message : String(err)}`, ErrorCode.STATE_INVALID_TRANSITION);
+    }
+  }
+
+  /** admin 退款入口：通过 paymentIntent 或 charge 反向打款；webhook 仅同步状态 */
+  async refundPayment(input: {
+    paymentIntent?: string;
+    charge?: string;
+    amount?: number;
+    reason?: 'duplicate' | 'fraudulent' | 'requested_by_customer';
+  }) {
+    if (!this.config.stripe.enabled) {
+      throw new StateError('Stripe 未启用，无法退款', ErrorCode.STATE_INVALID_TRANSITION);
+    }
+    try {
+      const refund = await refundPayment(this.config, input);
+      return {
+        refundId: refund.id,
+        status: refund.status,
+        amount: refund.amount,
+        currency: refund.currency,
+      };
+    } catch (err) {
+      throw new StateError(
+        `退款失败: ${err instanceof Error ? err.message : String(err)}`,
+        ErrorCode.STATE_INVALID_TRANSITION,
+      );
     }
   }
 
