@@ -13,7 +13,11 @@ import {
   PersonaTemplateNotFoundError,
   BuiltInTemplateImmutableError,
 } from '../../enterprise/persona-template-service.js';
-import { BUILTIN_TEMPLATE_SEEDS } from '../../enterprise/persona-template-catalog.js';
+import {
+  BUILTIN_TEMPLATE_SEEDS,
+  renderTemplateString,
+  extractTemplateVariables,
+} from '../../enterprise/persona-template-catalog.js';
 
 describe('PersonaTemplateService', () => {
   let os: ChronoSynthOS;
@@ -131,5 +135,65 @@ describe('PersonaTemplateService', () => {
     const valueAnchors = knowledge.filter((k) => k.title.startsWith('价值锚点：'));
     assert.equal(valueAnchors.length, 1);
     assert.ok(valueAnchors[0].title.includes('极简主义'));
+  });
+
+  it('instantiate templateVariables 渲染占位符到 boundaries 和 narrative', () => {
+    const result = service.instantiate({
+      tenantId: 'tenant_a',
+      ownerUserId: TEST_USER_ID,
+      templateId: 'tpl_builtin_customer_service',
+      displayName: '已配置的客服',
+      templateVariables: {
+        refund_threshold: '¥5000',
+        escalation_role: '客服主管',
+      },
+    });
+
+    const profile = result.persona.profile as Record<string, unknown>;
+    const narrative = profile.narrative as string;
+    assert.ok(narrative.includes('客服主管'), `narrative 应包含 escalation_role: ${narrative}`);
+    assert.ok(!narrative.includes('{{escalation_role}}'), 'narrative 占位符应已被替换');
+
+    const boundaries = profile.behaviorBoundaries as Array<{ rule: string; topic: string }>;
+    const refundRule = boundaries.find((b) => b.rule === 'always_escalate');
+    assert.ok(refundRule);
+    assert.ok(refundRule.topic.includes('¥5000'), `topic 应包含金额: ${refundRule.topic}`);
+    assert.ok(!refundRule.topic.includes('{{refund_threshold}}'));
+
+    const vars = profile.templateVariables as Record<string, string>;
+    assert.equal(vars.refund_threshold, '¥5000');
+    assert.equal(vars.escalation_role, '客服主管');
+  });
+
+  it('instantiate 缺失变量时占位符保留原样', () => {
+    const result = service.instantiate({
+      tenantId: 'tenant_a',
+      ownerUserId: TEST_USER_ID,
+      templateId: 'tpl_builtin_legal',
+      displayName: '法务（未配置）',
+      templateVariables: { contract_threshold: '$50000' },
+    });
+
+    const profile = result.persona.profile as Record<string, unknown>;
+    const narrative = profile.narrative as string;
+    const boundaries = profile.behaviorBoundaries as Array<{ topic: string }>;
+    const contractTopic = boundaries.map((b) => b.topic).join(' ');
+    assert.ok(contractTopic.includes('$50000'));
+    assert.ok(narrative.includes('{{escalation_role}}'), `未配置的变量应保留: ${narrative}`);
+  });
+
+  it('renderTemplateString: 基本替换、缺失变量保留、空白容差', () => {
+    assert.equal(renderTemplateString('hello {{name}}', { name: 'World' }), 'hello World');
+    assert.equal(renderTemplateString('{{ key }}', { key: 'X' }), 'X');
+    assert.equal(renderTemplateString('{{a}} {{b}}', { a: '1' }), '1 {{b}}');
+    assert.equal(renderTemplateString('no placeholders', {}), 'no placeholders');
+    assert.equal(renderTemplateString('{{empty}}', { empty: '' }), '{{empty}}', '空字符串视为未填');
+  });
+
+  it('extractTemplateVariables 列出所有占位符（去重排序）', () => {
+    const csTemplate = BUILTIN_TEMPLATE_SEEDS.find((t) => t.id === 'tpl_builtin_customer_service');
+    assert.ok(csTemplate);
+    const vars = extractTemplateVariables(csTemplate);
+    assert.deepEqual(vars, ['escalation_role', 'refund_threshold']);
   });
 });

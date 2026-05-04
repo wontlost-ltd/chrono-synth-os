@@ -97,6 +97,8 @@ export const InstantiatePersonaTemplateSchema = z.object({
   ownerUserId: z.string().min(1).optional(),
   overrideValues: z.array(TemplateValueAnchorSchema).max(50).optional(),
   overrideNarrative: z.string().max(4000).optional(),
+  /** 用于渲染模板文案中 {{variable}} 占位符的键值映射；缺失变量保留原占位符 */
+  templateVariables: z.record(z.string().min(1).max(64), z.string().max(500)).optional(),
   initialKnowledge: z.array(z.object({
     title: z.string().min(1).max(200),
     content: z.string().min(1).max(8000),

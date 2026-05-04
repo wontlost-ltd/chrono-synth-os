@@ -18,6 +18,7 @@ import {
   PersonaTemplateNotFoundError,
   BuiltInTemplateImmutableError,
 } from '../../enterprise/persona-template-service.js';
+import { extractTemplateVariables } from '../../enterprise/persona-template-catalog.js';
 import {
   CreatePersonaTemplateSchema,
   PatchPersonaTemplateSchema,
@@ -49,6 +50,16 @@ export function registerAdminTemplateRoutes(app: FastifyInstance, os: ChronoSynt
     const tpl = templateService.get(request.tenantId, request.params.id);
     if (!tpl) throw new NotFoundError(`模板 ${request.params.id} 不存在`, ErrorCode.NOT_FOUND_TEMPLATE);
     return { data: tpl };
+  });
+
+  /* GET /api/v1/admin/persona-templates/:id/variables — 列出模板需要填充的占位符 */
+  app.get<{ Params: { id: string } }>('/api/v1/admin/persona-templates/:id/variables', {
+    preHandler: requireRole('admin'),
+  }, async (request) => {
+    const tpl = templateService.get(request.tenantId, request.params.id);
+    if (!tpl) throw new NotFoundError(`模板 ${request.params.id} 不存在`, ErrorCode.NOT_FOUND_TEMPLATE);
+    const variables = extractTemplateVariables(tpl);
+    return { data: { templateId: tpl.id, variables } };
   });
 
   /* POST /api/v1/admin/persona-templates */
@@ -119,6 +130,7 @@ export function registerAdminTemplateRoutes(app: FastifyInstance, os: ChronoSynt
         displayName: body.displayName,
         overrideValues: body.overrideValues,
         overrideNarrative: body.overrideNarrative,
+        templateVariables: body.templateVariables,
         initialKnowledge: body.initialKnowledge,
       });
       return reply.status(201).send({

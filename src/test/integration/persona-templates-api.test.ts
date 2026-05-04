@@ -124,6 +124,44 @@ describe('岗位人格模板 API 集成测试', () => {
     assert.equal(res.statusCode, 403);
   });
 
+  it('GET /:id/variables 列出占位符列表', async () => {
+    const { accessToken, tenantId } = await registerAndGetAuth(app, 'tpl-vars@test.com');
+    const headers = { authorization: `Bearer ${accessToken}`, 'x-tenant-id': tenantId };
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/persona-templates/tpl_builtin_customer_service/variables',
+      headers,
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body).data;
+    assert.equal(body.templateId, 'tpl_builtin_customer_service');
+    assert.deepEqual(body.variables, ['escalation_role', 'refund_threshold']);
+  });
+
+  it('instantiate templateVariables 端到端渲染', async () => {
+    const { accessToken, tenantId } = await registerAndGetAuth(app, 'tpl-render@test.com');
+    const headers = { authorization: `Bearer ${accessToken}`, 'x-tenant-id': tenantId };
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/admin/persona-templates/tpl_builtin_finance/instantiate',
+      headers,
+      payload: {
+        displayName: 'Acme 财务-PROD',
+        templateVariables: { budget_overrun_threshold: '8%' },
+      },
+    });
+    assert.equal(res.statusCode, 201);
+    const body = JSON.parse(res.body).data;
+    const profile = body.persona.profile as Record<string, unknown>;
+    const boundaries = profile.behaviorBoundaries as Array<{ rule: string; topic: string }>;
+    const budgetRule = boundaries.find((b) => b.rule === 'always_escalate');
+    assert.ok(budgetRule);
+    assert.ok(budgetRule.topic.includes('8%'), `topic should include '8%': ${budgetRule.topic}`);
+    assert.ok(!budgetRule.topic.includes('{{'), '占位符应已替换');
+  });
+
   it('POST 创建 + DELETE 自定义模板 roundtrip', async () => {
     const { accessToken, tenantId } = await registerAndGetAuth(app, 'tpl-crud@test.com');
     const headers = { authorization: `Bearer ${accessToken}`, 'x-tenant-id': tenantId };

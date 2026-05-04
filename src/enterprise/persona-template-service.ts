@@ -20,6 +20,7 @@ import {
   BUILTIN_TEMPLATE_SEEDS,
   BUILTIN_TENANT_ID,
   isValidCategory,
+  renderTemplateString,
   type BehaviorBoundary,
   type PersonaTemplate,
   type PersonaTemplateCategory,
@@ -52,6 +53,8 @@ export interface InstantiateTemplateInput {
   displayName: string;
   overrideValues?: TemplateValueAnchor[];
   overrideNarrative?: string;
+  /** 用于渲染模板文案中 {{variable}} 占位符的键值映射 */
+  templateVariables?: Record<string, string>;
   initialKnowledge?: Array<{
     title: string;
     content: string;
@@ -250,8 +253,16 @@ export class PersonaTemplateService {
     const template = this.get(input.tenantId, input.templateId);
     if (!template) throw new PersonaTemplateNotFoundError(input.templateId);
 
+    const vars = input.templateVariables ?? {};
     const valueAnchors = input.overrideValues ?? template.defaultValues;
-    const narrative = input.overrideNarrative ?? template.defaultNarrative;
+    const renderedNarrative = renderTemplateString(
+      input.overrideNarrative ?? template.defaultNarrative,
+      vars,
+    );
+    const renderedBoundaries: BehaviorBoundary[] = template.behaviorBoundaries.map((b) => ({
+      rule: b.rule,
+      topic: renderTemplateString(b.topic, vars),
+    }));
 
     /* 合成初始知识：模板的价值锚点 + 调用方提供的额外条目 */
     const valueKnowledge = valueAnchors.map((v) => ({
@@ -268,9 +279,10 @@ export class PersonaTemplateService {
       templateId: template.id,
       templateCategory: template.category,
       templateLabel: template.label,
-      narrative,
-      behaviorBoundaries: template.behaviorBoundaries,
+      narrative: renderedNarrative,
+      behaviorBoundaries: renderedBoundaries,
       requiredKnowledgeCategories: template.requiredKnowledgeCategories,
+      templateVariables: vars,
     };
 
     const persona = this.personaCoreService.createPersona({
@@ -294,6 +306,7 @@ export class PersonaTemplateService {
         templateCategory: template.category,
         valueAnchorCount: valueAnchors.length,
         initialKnowledgeCount: initialKnowledge.length,
+        templateVariableKeys: Object.keys(vars),
       },
     });
 
