@@ -18,7 +18,7 @@ import {
   orgCmdUpdateMembershipActive,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { StateError, ValidationError, ErrorCode } from '../errors/index.js';
 
@@ -72,10 +72,17 @@ export interface UpsertMemberInput {
 
 export class OrganizationService {
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
 
-  constructor(private readonly db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   listByUser(tenantId: string, userId: string) {
@@ -105,7 +112,7 @@ export class OrganizationService {
       throw new StateError(`organization slug 已存在: ${organizationSlug}`, ErrorCode.STATE_INVALID_TRANSITION);
     }
 
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       this.tx.execute(orgCmdCreateOrg({ id: organizationId, tenantId, name: input.name, slug: organizationSlug, createdByUserId: userId, now }));
       this.tx.execute(orgCmdCreateWorkspace({ id: workspaceId, tenantId, organizationId, name: input.defaultWorkspaceName, slug: workspaceSlug, now }));
       this.tx.execute(orgCmdCreateMembership({ id: membershipId, tenantId, organizationId, userId, now }));
@@ -173,7 +180,7 @@ export class OrganizationService {
     const existingMembership = this.tx.queryOne(orgQueryMembership({ tenantId, organizationId, userId: user.id }));
     const membershipId = existingMembership?.id ?? `orgm_${randomUUID()}`;
 
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       if (existingMembership) {
         this.tx.execute(orgCmdUpdateMembershipActive({ tenantId, organizationId, userId: user!.id, now }));
       } else {

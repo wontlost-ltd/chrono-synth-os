@@ -16,7 +16,7 @@ import {
   scimCmdDeleteIdentities, scimCmdDeleteUser,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { StateError, ErrorCode } from '../errors/index.js';
 import { IdentityService } from '../identity/identity-service.js';
@@ -49,10 +49,19 @@ export interface ScimCreateInput {
 
 export class ScimProvisioningService {
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
+  private readonly uowOrDb: UowOrDb;
 
-  constructor(private readonly db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
+    this.uowOrDb = uowOrDb;
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   listUsers(tenantId: string, input: ScimListInput) {
@@ -85,7 +94,7 @@ export class ScimProvisioningService {
 
     const now = Date.now();
     const userId = existing?.id ?? `user_${randomUUID()}`;
-    const identityService = new IdentityService(this.db);
+    const identityService = new IdentityService(this.uowOrDb);
     if (!existing) {
       this.tx.execute(scimCmdCreateUser({ id: userId, email: input.email, tenantId, now }));
     }
@@ -100,7 +109,7 @@ export class ScimProvisioningService {
     if (!row) return false;
 
     try {
-      this.db.transaction(() => {
+      this.runAtomic(() => {
         const avatarIds = this.tx.queryMany(scimQueryAvatarIdsByUser(userId)) as unknown as ScimAvatarIdRow[];
         for (const avatar of avatarIds) {
           this.tx.execute(scimCmdDeleteDeviceAvatars(avatar.id));

@@ -12,6 +12,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { PersonaCoreDetail } from '../persona-core/types.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -102,15 +103,28 @@ export class BuiltInTemplateImmutableError extends Error {
 }
 
 export class PersonaTemplateService {
+  private readonly db: IDatabase | null;
+
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly personaCoreService: PersonaCoreService,
-  ) {}
+  ) {
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private requireDb(method: string): IDatabase {
+    if (!this.db) {
+      throw new Error(
+        `PersonaTemplateService.${method} requires IDatabase entrance (raw SQL not yet routed via kernel commands)`,
+      );
+    }
+    return this.db;
+  }
 
   /** 启动期：把内置模板内容刷新到 DB（INSERT OR REPLACE） */
   syncBuiltins(): void {
     const now = Date.now();
-    const stmt = this.db.prepare<void>(
+    const stmt = this.requireDb('syncBuiltins').prepare<void>(
       `INSERT OR REPLACE INTO persona_templates
         (id, tenant_id, category, label, description,
          default_values_json, default_narrative, behavior_boundaries_json,
@@ -136,7 +150,7 @@ export class PersonaTemplateService {
 
   /** 列出当前租户可见的所有模板（内置 + 自定义） */
   list(tenantId: string): PersonaTemplate[] {
-    const rows = this.db.prepare<TemplateRow>(
+    const rows = this.requireDb('list').prepare<TemplateRow>(
       `SELECT * FROM persona_templates
         WHERE tenant_id = ? OR tenant_id = ?
         ORDER BY is_builtin DESC, category ASC, label ASC`,
@@ -146,7 +160,7 @@ export class PersonaTemplateService {
 
   /** 读取单个模板（必须属于调用者或内置） */
   get(tenantId: string, templateId: string): PersonaTemplate | null {
-    const row = this.db.prepare<TemplateRow>(
+    const row = this.requireDb('get').prepare<TemplateRow>(
       `SELECT * FROM persona_templates
         WHERE id = ? AND (tenant_id = ? OR tenant_id = ?)`,
     ).get(templateId, tenantId, BUILTIN_TENANT_ID);
@@ -175,7 +189,7 @@ export class PersonaTemplateService {
       updatedAt: now,
     };
 
-    this.db.prepare<void>(
+    this.requireDb('create').prepare<void>(
       `INSERT INTO persona_templates
         (id, tenant_id, category, label, description,
          default_values_json, default_narrative, behavior_boundaries_json,
@@ -215,7 +229,7 @@ export class PersonaTemplateService {
       updatedAt: Date.now(),
     };
 
-    this.db.prepare<void>(
+    this.requireDb('update').prepare<void>(
       `UPDATE persona_templates
           SET label = ?, description = ?,
               default_values_json = ?, default_narrative = ?,
@@ -243,7 +257,7 @@ export class PersonaTemplateService {
     if (!existing) throw new PersonaTemplateNotFoundError(templateId);
     if (existing.isBuiltIn) throw new BuiltInTemplateImmutableError(templateId);
 
-    this.db.prepare<void>(
+    this.requireDb('delete').prepare<void>(
       'DELETE FROM persona_templates WHERE id = ? AND tenant_id = ?',
     ).run(templateId, tenantId);
   }
@@ -294,21 +308,23 @@ export class PersonaTemplateService {
       initialKnowledge,
     });
 
-    recordBusinessAuditLog(this.db, {
-      tenantId: input.tenantId,
-      actorType: 'user',
-      actorId: input.ownerUserId,
-      actionType: 'persona_template.instantiated',
-      targetType: 'persona_core',
-      targetId: persona.id,
-      payload: {
-        templateId: template.id,
-        templateCategory: template.category,
-        valueAnchorCount: valueAnchors.length,
-        initialKnowledgeCount: initialKnowledge.length,
-        templateVariableKeys: Object.keys(vars),
-      },
-    });
+    if (this.db) {
+      recordBusinessAuditLog(this.db, {
+        tenantId: input.tenantId,
+        actorType: 'user',
+        actorId: input.ownerUserId,
+        actionType: 'persona_template.instantiated',
+        targetType: 'persona_core',
+        targetId: persona.id,
+        payload: {
+          templateId: template.id,
+          templateCategory: template.category,
+          valueAnchorCount: valueAnchors.length,
+          initialKnowledgeCount: initialKnowledge.length,
+          templateVariableKeys: Object.keys(vars),
+        },
+      });
+    }
 
     return {
       persona,

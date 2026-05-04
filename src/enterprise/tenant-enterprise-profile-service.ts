@@ -11,7 +11,7 @@ import type { TenantManifestV1 } from '@chrono/contracts';
 import type { AppConfig } from '../config/schema.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { FieldEncryption } from '../storage/encryption.js';
 import {
@@ -200,14 +200,16 @@ function toProfile(row: TprofRow | null | undefined): TenantEnterpriseProfile {
 
 export class TenantEnterpriseProfileService {
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
 
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly config: AppConfig,
     private readonly logger?: Logger,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
   }
 
   getProfile(tenantId: string): TenantEnterpriseProfile {
@@ -291,6 +293,12 @@ export class TenantEnterpriseProfileService {
     const byosProvider = patch.byosProvider ?? current.byosProvider ?? 'platform';
     const byosBucket = patch.byosBucket ?? current.byosBucket ?? '';
     const byosKeyPrefix = patch.byosKeyPrefix ?? current.byosKeyPrefix ?? '';
+    if (!this.db) {
+      throw new ValidationError(
+        'TenantEnterpriseProfileService.upsertProfile 写入 BYOS 字段需要 IDatabase 入口；UoW 入口暂未支持',
+        ErrorCode.STATE_INVALID_TRANSITION,
+      );
+    }
     this.db.prepare<void>(
       `UPDATE tenant_enterprise_profiles
        SET byos_provider = ?, byos_bucket = ?, byos_key_prefix = ?
