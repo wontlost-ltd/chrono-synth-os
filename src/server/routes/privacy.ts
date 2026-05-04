@@ -76,11 +76,18 @@ export function registerPrivacyRoutes(
       return reply.code(302).redirect(row.download_url);
     }
 
-    // 回退：直接返回内联 JSON（向后兼容旧记录）
+    // 回退：直接返回内联 manifest JSON（向后兼容旧记录；捆绑格式仅返回 manifest 部分）
     if (row.pack_json) {
+      let manifestJson = row.pack_json;
+      try {
+        const parsed = JSON.parse(row.pack_json) as unknown;
+        if (parsed !== null && typeof parsed === 'object' && 'manifest' in (parsed as object)) {
+          manifestJson = JSON.stringify((parsed as { manifest: unknown }).manifest);
+        }
+      } catch { /* 保留原始内容 */ }
       return reply
         .header('Content-Type', 'application/json')
-        .send(row.pack_json);
+        .send(manifestJson);
     }
 
     return reply.code(404).send({ error: 'Export data not available' });

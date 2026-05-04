@@ -375,9 +375,19 @@ export class PrivacyService {
         updateExportJob(db, jobId, { state: 'running', percent: 10 });
 
         const exportResult = this.exportData(tenantId);
-        const { rawManifestJson } = buildPortabilityPack(exportResult, effectiveSigningKey);
+        const { manifest, payloads: payloadNdjsons, rawManifestJson } = buildPortabilityPack(exportResult, effectiveSigningKey);
 
-        // 序列化并上传至对象存储
+        // 将 NDJSON 字符串解析回行数组，便于 commitImport 直接读取
+        const payloadRows: Record<string, unknown[]> = {};
+        for (const [path, ndjson] of Object.entries(payloadNdjsons)) {
+          const tableName = path.replace(/^payloads\//, '').replace(/\.ndjson$/, '');
+          payloadRows[tableName] = ndjson.trim() ? ndjson.split('\n').map((line) => JSON.parse(line) as unknown) : [];
+        }
+
+        // 打包为捆绑格式：manifest + 行数据，一起存入 pack_json
+        const bundledPack = JSON.stringify({ manifest, payloads: payloadRows });
+
+        // 上传 manifest JSON（外部可下载）到对象存储
         const packBuffer = Buffer.from(rawManifestJson, 'utf-8');
         const keyPrefix = tenantProfile?.byosKeyPrefix?.trim() ? `${tenantProfile.byosKeyPrefix.trim()}/` : '';
         const objectKey = `${keyPrefix}exports/${tenantId}/${jobId}.pack.json`;
@@ -390,7 +400,7 @@ export class PrivacyService {
           percent: 100,
           completed_at: completedAt,
           download_url: downloadUrl,
-          pack_json: rawManifestJson,
+          pack_json: bundledPack,
         });
       } catch {
         const completedAt = this.os.getClock().now();
@@ -433,14 +443,33 @@ export class PrivacyService {
   }
 
   /**
+   * 将捆绑包 JSON 或纯 manifest JSON 解析为 manifest 对象。
+   * 捆绑格式：{ manifest: {...}, payloads: {...} }
+   * 旧格式：直接为 PortabilityPackManifestV1 对象
+   */
+  private extractManifestJson(packJson: string): string {
+    try {
+      const parsed = JSON.parse(packJson) as unknown;
+      if (parsed !== null && typeof parsed === 'object' && 'manifest' in (parsed as object)) {
+        return JSON.stringify((parsed as { manifest: unknown }).manifest);
+      }
+    } catch {
+      // fall through
+    }
+    return packJson;
+  }
+
+  /**
    * 对导入包清单执行 dry-run 验证，返回报告（不写入任何数据）
    */
   dryRunImport(tenantId: string, packManifestJson: string): ImportDryRunReportV1 {
     const importId = generatePrefixedId('import');
 
+    const manifestJson = this.extractManifestJson(packManifestJson);
+
     const parseResult = PortabilityPackManifestV1Schema.safeParse(
       (() => {
-        try { return JSON.parse(packManifestJson) as unknown; } catch { return null; }
+        try { return JSON.parse(manifestJson) as unknown; } catch { return null; }
       })(),
     );
 
@@ -492,7 +521,7 @@ export class PrivacyService {
     let commitToken: string | undefined;
     if (canCommit) {
       commitToken = randomBytes(16).toString('hex');
-      const manifestChecksum = sha256Hex(packManifestJson);
+      const manifestChecksum = sha256Hex(manifestJson);
       const expiresAt = Date.now() + 15 * 60 * 1000;
       this.importTokenStore.issue(commitToken, tenantId, importId, manifestChecksum, expiresAt);
     }
@@ -513,9 +542,10 @@ export class PrivacyService {
 
   commitImport(
     tenantId: string,
-    manifestJson: string,
+    packJson: string,
     commitToken: string,
   ): ImportCommitResultV1 {
+    const manifestJson = this.extractManifestJson(packJson);
     const manifestChecksum = sha256Hex(manifestJson);
     const consumed = this.importTokenStore.consume(commitToken, tenantId, manifestChecksum);
     if (!consumed) {
@@ -526,6 +556,17 @@ export class PrivacyService {
       try { return JSON.parse(manifestJson) as unknown; } catch { return null; }
     })();
     const manifest = PortabilityPackManifestV1Schema.parse(parsedJson);
+
+    // 从捆绑格式中提取行数据；旧格式无 payloads 字段则跳过写入
+    let bundledPayloads: Record<string, unknown[]> | null = null;
+    try {
+      const raw = JSON.parse(packJson) as unknown;
+      if (raw !== null && typeof raw === 'object' && 'payloads' in (raw as object)) {
+        bundledPayloads = (raw as { payloads: Record<string, unknown[]> }).payloads;
+      }
+    } catch {
+      // 纯 manifest JSON，无行数据
+    }
 
     const db = this.os.getDatabase();
     const now = Date.now();
@@ -539,6 +580,37 @@ export class PrivacyService {
           skippedCount += 1;
           continue;
         }
+
+        const rows = bundledPayloads?.[payload.logicalName];
+        if (!rows || rows.length === 0) {
+          skippedCount += 1;
+          continue;
+        }
+
+        // 每行做 INSERT OR REPLACE — 依赖表的 PRIMARY KEY 实现幂等 upsert
+        for (const row of rows) {
+          if (row === null || typeof row !== 'object') continue;
+          const record = row as Record<string, unknown>;
+          const cols = Object.keys(record);
+          if (cols.length === 0) continue;
+
+          const placeholders = cols.map(() => '?').join(', ');
+          const values = cols.map((c) => {
+            const v = record[c];
+            if (v === null || v === undefined) return null;
+            if (typeof v === 'number' || typeof v === 'string' || typeof v === 'bigint') return v as SqlValue;
+            return JSON.stringify(v);
+          }) as SqlValue[];
+
+          try {
+            db.prepare<void>(
+              `INSERT OR REPLACE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`,
+            ).run(...values);
+          } catch {
+            // 单行失败不中断整个导入（例如缺失列时跳过该行）
+          }
+        }
+
         importedCount += 1;
       }
 
