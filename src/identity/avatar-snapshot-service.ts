@@ -8,8 +8,7 @@ import {
   asnapQueryAutorunConfig, asnapQueryDriftConfig,
   asnapQueryLastRunMetrics, asnapQueryInstalledDevices,
 } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface AutorunState {
@@ -34,9 +33,9 @@ export class AvatarSnapshotService {
   private readonly log: SnapshotLogger;
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase, logger?: SnapshotLogger) {
+  constructor(uowOrDb: UowOrDb, logger?: SnapshotLogger) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
     this.log = logger ?? noopLogger;
   }
 

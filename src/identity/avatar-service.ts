@@ -3,7 +3,6 @@
  * CRUD + 配额检查 + 软删除
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, AvatarRow } from '@chrono/kernel';
 import {
   avtQueryById, avtQueryByIdIdentity, avtQueryByIdentity,
@@ -13,7 +12,7 @@ import {
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Avatar, AvatarKind, BehaviorOverrides } from './types.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function rowToAvatar(r: AvatarRow): Avatar {
@@ -33,9 +32,9 @@ function rowToAvatar(r: AvatarRow): Avatar {
 export class AvatarService {
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
   }
 
   create(identityId: string, data: { label: string; kind?: AvatarKind; behaviorOverrides?: BehaviorOverrides }): Avatar {

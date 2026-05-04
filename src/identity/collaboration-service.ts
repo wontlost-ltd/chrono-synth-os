@@ -10,8 +10,7 @@ import {
   collabQueryShareCount, collabQuerySharedList, collabQueryShareOwner,
   collabCmdUpdatePermission, collabCmdCreateShare, collabCmdDeleteShare,
 } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { AuthorizationError, NotFoundError, ErrorCode } from '../errors/index.js';
 
@@ -34,9 +33,9 @@ export interface SharedSimulation {
 export class CollaborationService {
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
   }
 
   share(simulationId: string, ownerUserId: string, tenantId: string, targetUserId: string, permission: string): ShareResult {

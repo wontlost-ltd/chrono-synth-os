@@ -23,6 +23,7 @@ import {
   subqQueryActivePlan,
 } from '@chrono/kernel';
 import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function hashToken(token: string): string {
@@ -58,13 +59,17 @@ export interface RefreshResult {
 
 export class AuthService {
   private readonly tx: SyncWriteUnitOfWork;
+  /** UoW 模式下为 null；syncPlanToQuota / IdentityService / cleanupExpired
+   *  都依赖 IDatabase，这些路径在 UoW 模式下应被外部组合时显式转换。 */
+  private readonly db: IDatabase | null;
 
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     private readonly config: AppConfig,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
   }
 
   async register(app: FastifyInstance, email: string, password: string): Promise<RegisterResult> {
@@ -96,9 +101,9 @@ export class AuthService {
       id: subId, tenantId, stripeCustomerId, periodStart: now, periodEnd, now,
     }));
 
-    syncPlanToQuota(this.db, tenantId, 'free');
+    if (this.db) syncPlanToQuota(this.db, tenantId, 'free');
 
-    const identityService = new IdentityService(this.db);
+    const identityService = new IdentityService(this.db ?? this.tx);
     identityService.create(userId, tenantId, email.split('@')[0]);
 
     const tokens = await this.generateTokenPair(app, userId, tenantId, 'admin');
@@ -186,7 +191,11 @@ export class AuthService {
   }
 
   cleanupExpiredTokens(): number {
-    return AuthService.cleanupExpired(this.db);
+    /* UoW 模式下没有 db.transaction 包裹，但 cleanup 是单条 DELETE，不破坏一致性 */
+    if (this.db) return AuthService.cleanupExpired(this.db);
+    return this.tx.execute(authCmdCleanupExpiredTokens({
+      cutoff: Date.now() - 30 * 24 * 60 * 60 * 1000,
+    })).rowsAffected;
   }
 
   static cleanupExpired(db: IDatabase): number {

@@ -4,7 +4,6 @@
  */
 
 import { hash, verify } from '@node-rs/argon2';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   uprofQueryById, uprofQueryByEmailExclude, uprofQueryFullById,
@@ -12,7 +11,7 @@ import {
 } from '@chrono/kernel';
 import type { UserProfileSummaryRow } from '@chrono/kernel';
 import { AuthenticationError, ValidationError, ErrorCode } from '../errors/index.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function userToProfile(row: UserProfileSummaryRow) {
@@ -28,9 +27,9 @@ function userToProfile(row: UserProfileSummaryRow) {
 export class UserProfileService {
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
   }
 
   getProfile(userId: string) {

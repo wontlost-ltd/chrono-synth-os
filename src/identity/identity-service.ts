@@ -12,7 +12,7 @@ import {
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Identity } from './types.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function rowToIdentity(r: IdentityRow): Identity {
@@ -28,13 +28,18 @@ function rowToIdentity(r: IdentityRow): Identity {
 }
 
 export class IdentityService {
-  private readonly db: IDatabase;
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
 
-  constructor(db: IDatabase) {
-    this.db = db;
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   listByTenant(tenantId: string): Identity[] {
@@ -59,7 +64,7 @@ export class IdentityService {
     const avatarId = generatePrefixedId('avt');
     const now = Date.now();
 
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       this.tx.execute(identCmdCreate({ identityId, userId, tenantId, displayName, now }));
       this.tx.execute(identCmdCreateDefaultAvatar({ avatarId, identityId, now }));
     });

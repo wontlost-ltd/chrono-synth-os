@@ -9,7 +9,7 @@ import {
   davtCmdInstall, davtCmdUninstall, davtCmdDeactivateAll, davtCmdActivate,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Avatar, DeviceAvatar } from './types.js';
@@ -18,11 +18,18 @@ import { AvatarService } from './avatar-service.js';
 export class DeviceAvatarService {
   private readonly avatarService: AvatarService;
   private readonly tx: SyncWriteUnitOfWork;
+  private readonly db: IDatabase | null;
 
-  constructor(private readonly db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
-    this.avatarService = new AvatarService(db);
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
+    this.avatarService = new AvatarService(uowOrDb);
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 
   install(deviceId: string, avatarId: string): DeviceAvatar {
@@ -42,7 +49,7 @@ export class DeviceAvatarService {
   /** 设置活跃分身（同一设备仅一个活跃） */
   activate(deviceId: string, avatarId: string): boolean {
     let ok = false;
-    this.db.transaction(() => {
+    this.runAtomic(() => {
       this.tx.execute(davtCmdDeactivateAll(deviceId));
       const result = this.tx.execute(davtCmdActivate({ deviceId, avatarId }));
       ok = result.rowsAffected > 0;

@@ -9,8 +9,7 @@ import {
   mdevQueryByUid, mdevQueryListByUser, mdevQueryOwned,
   mdevCmdCreate, mdevCmdUpdateOnRegister, mdevCmdUpdatePushToken, mdevCmdDelete,
 } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
 
@@ -24,9 +23,9 @@ export interface RegisterDeviceInput {
 export class MobileDeviceService {
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(db: IDatabase) {
+  constructor(uowOrDb: UowOrDb) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = asUow(uowOrDb);
   }
 
   register(tenantId: string, userId: string, input: RegisterDeviceInput) {
