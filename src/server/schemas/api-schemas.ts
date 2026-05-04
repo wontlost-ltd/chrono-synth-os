@@ -32,7 +32,7 @@ export const CreateMemorySchema = z.object({
   content: z.string().min(1),
   valence: z.number().min(-1).max(1),
   salience: z.number().min(0).max(1),
-  sourceKind: MemorySourceKindSchema.optional(),
+  sourceKind: z.enum(['user_input', 'api_sync', 'system_inferred', 'unknown']).default('user_input'),
 });
 
 export const LinkMemorySchema = z.object({

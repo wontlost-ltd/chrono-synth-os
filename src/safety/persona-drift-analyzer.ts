@@ -38,6 +38,36 @@ const DEFAULT_THRESHOLDS: DriftThresholds = {
   critical: 0.30,
 };
 
+/**
+ * 从 config_items 表解析当前生效的漂移阈值；DB 缺失或解析失败时使用 fallback。
+ * 用于路由层动态读取（admin 通过 PATCH /admin/config 调整后立即生效，无需重启）。
+ */
+export function resolveDriftThresholds(
+  db: IDatabase,
+  fallback: DriftThresholds = DEFAULT_THRESHOLDS,
+): DriftThresholds {
+  const readNumber = (key: string): number | undefined => {
+    try {
+      const row = db.prepare<{ value_json: string }>(
+        'SELECT value_json FROM config_items WHERE key = ?',
+      ).get(key);
+      if (!row) return undefined;
+      const parsed = JSON.parse(row.value_json);
+      return typeof parsed === 'number' ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const warning = readNumber('safety.drift.warningThreshold') ?? fallback.warning;
+  const critical = readNumber('safety.drift.criticalThreshold') ?? fallback.critical;
+
+  // 防御性约束：critical 必须严格大于 warning，否则回退到 fallback
+  if (critical <= warning) return fallback;
+
+  return { warning, critical };
+}
+
 interface SnapshotRow {
   id: string;
   data_json: string;

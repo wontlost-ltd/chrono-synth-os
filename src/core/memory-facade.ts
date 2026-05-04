@@ -36,9 +36,15 @@ export interface PersonaMemoryResult {
   createdAt: string;
 }
 
+export interface MemoryNodeWithConfidence extends MemoryNode {
+  confidenceScore: number;
+  sourceKind: MemorySourceKind;
+  unverified: boolean;
+}
+
 /** 记忆列表分页结果 */
 export interface MemoryListResult {
-  data: MemoryNode[];
+  data: MemoryNodeWithConfidence[];
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }
 
@@ -195,10 +201,11 @@ export class MemoryFacade {
     const indexPromise = idx ? idx.indexMemory(memory.id, content) : undefined;
 
     // 写入置信度元数据（列由 v060 迁移新增，旧实例中可能不存在则静默失败）
+    // 使用 sharedDb（非租户隔离包装）直接按 id 更新，避免 TenantDatabase 重写 WHERE 条件干扰
     const confidenceScore = CONFIDENCE_BY_SOURCE[sourceKind] ?? 0.3;
     const unverified = confidenceScore < 0.8 ? 1 : 0;
     try {
-      tenantOS.getDatabase().prepare<void>(
+      this.sharedDb.prepare<void>(
         `UPDATE memory_nodes
             SET confidence_score = ?, source_kind = ?, unverified = ?
           WHERE id = ?`,
@@ -214,8 +221,37 @@ export class MemoryFacade {
     const tenantOS = this.getOS(tenantId);
     const offset = (page - 1) * pageSize;
     const { nodes, total } = tenantOS.core.memories.getMemoriesPaginated(pageSize, offset);
+
+    // 追加 confidence 字段（batch IN 查询，单次往返）
+    let confMap = new Map<string, { confidence_score: number; source_kind: string; unverified: number }>();
+    if (nodes.length > 0) {
+      const placeholders = nodes.map(() => '?').join(', ');
+      try {
+        // 使用 sharedDb 直接按 id 查询（ids 已由 getMemoriesPaginated 租户过滤），避免 TenantDatabase 重写 WHERE 引发误匹配
+        const confRows = this.sharedDb.prepare<{
+          id: string;
+          confidence_score: number;
+          source_kind: string;
+          unverified: number;
+        }>(`SELECT id, confidence_score, source_kind, unverified FROM memory_nodes WHERE id IN (${placeholders})`).all(...nodes.map((n) => n.id));
+        confMap = new Map(confRows.map((r) => [r.id, r]));
+      } catch {
+        // 列尚未存在（旧迁移未运行）时静默跳过，使用默认值
+      }
+    }
+
+    const data: MemoryNodeWithConfidence[] = nodes.map((n) => {
+      const conf = confMap.get(n.id);
+      return {
+        ...n,
+        confidenceScore: conf?.confidence_score ?? 0.3,
+        sourceKind: (conf?.source_kind ?? 'unknown') as MemorySourceKind,
+        unverified: conf ? conf.unverified === 1 : true,
+      };
+    });
+
     return {
-      data: nodes,
+      data,
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) || 1 },
     };
   }

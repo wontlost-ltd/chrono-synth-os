@@ -175,7 +175,7 @@
   "memories.ts": [
     {
       "name": "CreateMemorySchema",
-      "hash": "b9d9f037e6dc0593cd6eb680be58c00486cca29c1c2cfab7f85837abfc6f80c8"
+      "hash": "e72c60ef1b7552f7bb8a24bcd71300d56a4ab31a8e287ca5d8bc56b6296bb1cd"
     },
     {
       "name": "CreatePersonaMemoryRecordSchema",

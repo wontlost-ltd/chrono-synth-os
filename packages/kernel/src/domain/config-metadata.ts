@@ -65,6 +65,7 @@ const PREFIX_RULES: readonly PrefixRule[] = [
   { prefix: 'integration.',  category: 'protected', requiresRestart: false, groupKey: 'intelligence' },
   { prefix: 'request.',      category: 'admin',     requiresRestart: false, groupKey: 'server' },
   { prefix: 'ruleEngine.',   category: 'admin',     requiresRestart: false, groupKey: 'intelligence' },
+  { prefix: 'safety.',       category: 'admin',     requiresRestart: false, groupKey: 'safety' },
 ];
 
 /**

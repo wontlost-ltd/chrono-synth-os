@@ -319,7 +319,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerNarrativeRoutes(app, deps.os, tenantFactory);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
-  registerOperationRoutes(app, deps.os, tenantFactory);
+  registerOperationRoutes(app, deps.os, tenantFactory, config);
   registerConflictRoutes(app, db, config);
   registerMetricsRoutes(app, deps.os, config);
   registerAuditRoutes(app, db);

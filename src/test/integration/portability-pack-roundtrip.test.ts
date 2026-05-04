@@ -78,6 +78,67 @@ describe('Portability Pack GA roundtrip', () => {
     assert.ok(dryRun.canCommit || dryRun.blockers.length > 0);
   });
 
+  it('commitImport 单行失败时计入 failedCount 并保留失败详情', async () => {
+    db = createMemoryDatabase();
+    runMigrations(db);
+    tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-failures-'));
+
+    os = new ChronoSynthOS({
+      db,
+      skipMigrations: true,
+      clock: new TestClock(1_700_000_000_000),
+      logger: new SilentLogger(),
+    });
+    os.start();
+
+    const config = loadConfig({
+      websocket: { enabled: false },
+      objectStorage: { provider: 'local', localPath: tmpDir, presignTtlSeconds: 60 },
+    });
+    const service = new PrivacyService(os, undefined, config, new LocalObjectStorageClient(tmpDir));
+    const tenantId = 'default';
+
+    // 准备一行合法记录
+    db.prepare<void>(
+      `INSERT INTO quota_limits (tenant_id, resource, max_per_window, window_ms)
+       VALUES (?, 'test:fail-resource', 100, 60000)`,
+    ).run(tenantId);
+
+    // 导出
+    const started = service.startExportJob(tenantId);
+    let status = service.getExportJobStatus(tenantId, started.exportId);
+    const deadline = Date.now() + 3_000;
+    while (status?.state !== 'completed' && Date.now() < deadline) {
+      await sleep(100);
+      status = service.getExportJobStatus(tenantId, started.exportId);
+    }
+    assert.equal(status?.state, 'completed');
+    const row = getExportJob(db, started.exportId);
+    assert.ok(row?.pack_json);
+
+    // 篡改 bundled payload 的某行：插入一个不存在的列以触发 SQL 错误
+    const bundled = JSON.parse(row.pack_json) as { manifest: unknown; payloads: Record<string, unknown[]> };
+    const quotaRows = bundled.payloads.quota_limits as Array<Record<string, unknown>> | undefined;
+    if (quotaRows && quotaRows.length > 0) {
+      quotaRows.push({ nonexistent_column_xyz: 'will-fail', another_bad: 42 });
+    }
+    const tamperedPackJson = JSON.stringify(bundled);
+
+    // dry-run 仍然基于 manifest 校验通过，commitImport 内部对每行错误降级
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, tamperedPackJson));
+    assert.ok(dryRun.canCommit);
+    assert.ok(dryRun.commitToken);
+
+    const result = ImportCommitResultV1Schema.parse(
+      service.commitImport(tenantId, tamperedPackJson, dryRun.commitToken),
+    );
+    assert.ok(result.failedCount >= 1, `failedCount should be >= 1, got ${result.failedCount}`);
+    assert.ok(result.failures.length >= 1, 'failures array should contain at least 1 entry');
+    assert.equal(result.failures[0].logicalName, 'quota_limits');
+    assert.ok(typeof result.failures[0].rowIndex === 'number');
+    assert.ok(result.failures[0].reason.length > 0);
+  });
+
   it('commitImport 写入行并返回 importedCount > 0', async () => {
     db = createMemoryDatabase();
     runMigrations(db);

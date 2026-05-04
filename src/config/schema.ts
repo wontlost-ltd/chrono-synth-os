@@ -351,6 +351,17 @@ const runtimeSchema = z.object({
   }),
 });
 
+/** AI 安全治理配置（漂移监测阈值） */
+const safetySchema = z.object({
+  drift: z.object({
+    warningThreshold: z.coerce.number().min(0).max(1).default(0.15),
+    criticalThreshold: z.coerce.number().min(0).max(1).default(0.30),
+  }).default({ warningThreshold: 0.15, criticalThreshold: 0.30 })
+    .refine((v) => v.criticalThreshold > v.warningThreshold, {
+      message: 'criticalThreshold 必须大于 warningThreshold',
+    }),
+}).default({ drift: { warningThreshold: 0.15, criticalThreshold: 0.30 } });
+
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
   db: dbSchema.default({ driver: 'sqlite', path: ':memory:', pool: { max: 10, idleTimeoutMs: 30_000 } }),
@@ -449,6 +460,7 @@ export const AppConfigSchema = z.object({
     localPath: '/tmp/chrono-exports',
     presignTtlSeconds: 3600,
   }),
+  safety: safetySchema,
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;

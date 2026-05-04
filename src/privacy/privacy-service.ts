@@ -572,6 +572,9 @@ export class PrivacyService {
     const now = Date.now();
     let importedCount = 0;
     let skippedCount = 0;
+    let failedCount = 0;
+    const failures: Array<{ logicalName: string; rowIndex: number; reason: string }> = [];
+    const MAX_FAILURE_DETAILS = 50;
 
     db.exec('BEGIN');
     try {
@@ -588,7 +591,8 @@ export class PrivacyService {
         }
 
         // 每行做 INSERT OR REPLACE — 依赖表的 PRIMARY KEY 实现幂等 upsert
-        for (const row of rows) {
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
           if (row === null || typeof row !== 'object') continue;
           const record = row as Record<string, unknown>;
           const cols = Object.keys(record);
@@ -606,8 +610,13 @@ export class PrivacyService {
             db.prepare<void>(
               `INSERT OR REPLACE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`,
             ).run(...values);
-          } catch {
-            // 单行失败不中断整个导入（例如缺失列时跳过该行）
+          } catch (err) {
+            // 单行失败不中断整个导入；记录失败行索引和原因，可观测
+            failedCount += 1;
+            if (failures.length < MAX_FAILURE_DETAILS) {
+              const reason = err instanceof Error ? err.message : String(err);
+              failures.push({ logicalName: payload.logicalName, rowIndex: i, reason });
+            }
           }
         }
 
@@ -633,6 +642,8 @@ export class PrivacyService {
       importId: consumed.importId,
       importedCount,
       skippedCount,
+      failedCount,
+      failures,
     };
   }
 

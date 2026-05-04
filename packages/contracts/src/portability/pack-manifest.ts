@@ -238,6 +238,12 @@ export const ImportCommitResultV1Schema = z.object({
   importId: z.string().min(1),
   importedCount: z.number().int().nonnegative(),
   skippedCount: z.number().int().nonnegative(),
+  failedCount: z.number().int().nonnegative().default(0),
+  failures: z.array(z.object({
+    logicalName: z.string().min(1),
+    rowIndex: z.number().int().nonnegative(),
+    reason: z.string().min(1),
+  })).default([]),
 }).strict();
 
 export type PortabilityPackManifestV1 = z.infer<typeof PortabilityPackManifestV1Schema>;
