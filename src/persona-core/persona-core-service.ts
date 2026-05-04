@@ -1571,6 +1571,7 @@ export class PersonaCoreService {
         tagsJson: JSON.stringify(input.tags ?? []),
         confidence,
         now,
+        fingerprint: input.fingerprint ?? null,
       }));
 
       this.insertMemory({

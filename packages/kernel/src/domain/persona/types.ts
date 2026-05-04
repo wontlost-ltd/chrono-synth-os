@@ -516,6 +516,7 @@ export interface AddPersonaKnowledgeInput {
   source?: string;
   tags?: string[];
   confidence?: number;
+  fingerprint?: string;
 }
 
 export interface AddGovernanceEventInput {

@@ -744,9 +744,9 @@ export function registerPersonaCoreExecutors(): void {
   registerCommand<PcoreCreateKnowledgeItemParams>(PCORE_CMD_CREATE_KNOWLEDGE_ITEM, (db, p) => {
     const result = db.prepare<void>(
       `INSERT INTO persona_knowledge_items (
-        id, tenant_id, persona_id, title, content, source, tags_json, confidence, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(p.id, p.tenantId, p.personaId, p.title, p.content, p.source, p.tagsJson, p.confidence, p.now, p.now);
+        id, tenant_id, persona_id, title, content, source, tags_json, confidence, fingerprint, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(p.id, p.tenantId, p.personaId, p.title, p.content, p.source, p.tagsJson, p.confidence, p.fingerprint ?? null, p.now, p.now);
     return { rowsAffected: result.changes };
   });
 

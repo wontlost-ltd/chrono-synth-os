@@ -2080,6 +2080,38 @@ const v062_persona_templates: Migration = {
   ],
 };
 
+/** v063: 知识批量导入（P1-B）
+ *  - persona_knowledge_items 新增 fingerprint 列 + 部分 unique 索引（仅非 NULL 行参与去重，旧数据不受影响）
+ *  - bulk_knowledge_import_jobs 表用于跟踪批量导入 job 状态、计数与失败详情
+ */
+const v063_bulk_knowledge_import: Migration = {
+  version: 'v063',
+  description: 'P1-B 知识批量导入：fingerprint 去重 + 异步 job 跟踪',
+  sql: [
+    '/* safe:add-column:persona_knowledge_items:fingerprint */ ALTER TABLE persona_knowledge_items ADD COLUMN fingerprint TEXT',
+    '/* safe:if-table-exists:persona_knowledge_items */ CREATE UNIQUE INDEX IF NOT EXISTS idx_persona_knowledge_fp ON persona_knowledge_items(tenant_id, persona_id, fingerprint) WHERE fingerprint IS NOT NULL',
+
+    `CREATE TABLE IF NOT EXISTS bulk_knowledge_import_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued', 'running', 'completed', 'failed')),
+      total_items INTEGER NOT NULL,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      failures_json TEXT NOT NULL DEFAULT '[]',
+      deduplicate_strategy TEXT NOT NULL DEFAULT 'skip' CHECK(deduplicate_strategy IN ('skip', 'overwrite')),
+      created_at INTEGER NOT NULL,
+      started_at INTEGER,
+      completed_at INTEGER
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_bki_jobs_tenant_created ON bulk_knowledge_import_jobs(tenant_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_bki_jobs_persona ON bulk_knowledge_import_jobs(tenant_id, persona_id, created_at DESC)',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2144,6 +2176,7 @@ const MIGRATIONS: readonly Migration[] = [
   v060_memory_confidence,
   v061_drift_analysis_log,
   v062_persona_templates,
+  v063_bulk_knowledge_import,
 ];
 
 interface MigrationRow {
@@ -2185,6 +2218,9 @@ function hasColumn(db: IDatabase, table: string, column: string): boolean {
 /** 解析 safe:add-column 标记 */
 const ADD_COLUMN_RE = /^\/\* safe:add-column:(\w+):(\w+) \*\/ /;
 
+/** 解析 safe:if-table-exists 标记：表不存在时跳过整条 SQL（不抛错） */
+const IF_TABLE_EXISTS_RE = /^\/\* safe:if-table-exists:(\w+) \*\/ /;
+
 /** 执行所有迁移（签名不变，内部逻辑改为版本化） */
 export function runMigrations(db: IDatabase): void {
   ensureMigrationTable(db);
@@ -2196,14 +2232,22 @@ export function runMigrations(db: IDatabase): void {
     db.transaction(() => {
       for (const sql of migration.sql) {
         /* 处理 safe:add-column 标记：表不存在或列已存在时跳过 */
-        const match = ADD_COLUMN_RE.exec(sql);
-        if (match) {
-          const [, table, column] = match;
+        const addColumnMatch = ADD_COLUMN_RE.exec(sql);
+        if (addColumnMatch) {
+          const [, table, column] = addColumnMatch;
           if (!hasTable(db, table) || hasColumn(db, table, column)) continue;
           db.exec(sql.replace(ADD_COLUMN_RE, ''));
-        } else {
-          db.exec(sql);
+          continue;
         }
+        /* 处理 safe:if-table-exists 标记：表不存在时静默跳过 */
+        const ifTableMatch = IF_TABLE_EXISTS_RE.exec(sql);
+        if (ifTableMatch) {
+          const [, table] = ifTableMatch;
+          if (!hasTable(db, table)) continue;
+          db.exec(sql.replace(IF_TABLE_EXISTS_RE, ''));
+          continue;
+        }
+        db.exec(sql);
       }
       db.prepare<void>(
         'INSERT INTO schema_migrations (version, description, applied_at) VALUES (?, ?, ?)',

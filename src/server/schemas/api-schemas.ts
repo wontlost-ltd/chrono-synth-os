@@ -108,6 +108,21 @@ export const InstantiatePersonaTemplateSchema = z.object({
   })).max(20).optional(),
 });
 
+/* P1-B 知识批量导入 */
+const BulkImportSourceSchema = z.object({
+  kind: z.enum(['text', 'url', 'file']),
+  /** text: 直接内容；url: HTTP(S) URL；file: 调用方已解码的文本 */
+  content: z.string().min(1).max(5 * 1024 * 1024),
+  title: z.string().min(1).max(200).optional(),
+  category: z.string().min(1).max(120).optional(),
+  fingerprint: z.string().min(8).max(128).optional(),
+});
+
+export const BulkKnowledgeImportSchema = z.object({
+  sources: z.array(BulkImportSourceSchema).min(1).max(500),
+  deduplicateStrategy: z.enum(['skip', 'overwrite']).default('skip'),
+});
+
 export const SimulatePersonaSchema = z.object({
   personaId: z.string().min(1),
   scenario: z.object({

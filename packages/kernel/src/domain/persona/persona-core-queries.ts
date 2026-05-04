@@ -570,6 +570,7 @@ export interface PcoreCreateKnowledgeItemParams {
   tagsJson: string;
   confidence: number;
   now: number;
+  fingerprint?: string | null;
 }
 
 export interface PcoreSetPersonaStatusParams extends PcoreTenantPersonaParams {

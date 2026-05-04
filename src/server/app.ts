@@ -63,6 +63,11 @@ import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerAdminConfigRoutes } from './routes/admin-config.js';
 import { registerAdminTemplateRoutes } from './routes/admin-templates.js';
+import { registerBulkKnowledgeImportRoutes } from './routes/bulk-knowledge-import.js';
+import { BulkImportService } from '../knowledge/bulk-import-service.js';
+import { UrlContentFetcher } from '../knowledge/url-content-fetcher.js';
+import { registerBulkImportHandler } from '../knowledge/bulk-import-worker.js';
+import { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import { registerAdminDeploymentRoutes } from './routes/admin-deployment.js';
 import { registerAdminControlPlaneRoutes } from './routes/admin-control-plane.js';
 import { registerMobileRoutes } from './routes/mobile.js';
@@ -223,12 +228,14 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 任务队列（提前创建以便注入健康路由） */
   let worker: TaskWorker | undefined;
+  let bulkImportTaskQueue: TaskQueue | undefined;
   if (config.queue.enabled) {
     const queueDb = deps.db ?? deps.os.getDatabase();
     const queue = new TaskQueue(queueDb, undefined, {
       maxPendingPerTenant: config.queue.maxPendingPerTenant,
       completedRetentionMs: config.queue.completedRetentionMs,
     });
+    bulkImportTaskQueue = queue;
     worker = new TaskWorker(
       queue,
       deps.os.bus,
@@ -300,6 +307,19 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', async () => { await worker!.stop(); });
   }
 
+  /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径） */
+  const bulkImportPersonaCoreService = new PersonaCoreService(db);
+  const bulkImportService = new BulkImportService(
+    db,
+    bulkImportPersonaCoreService,
+    bulkImportTaskQueue,
+    new UrlContentFetcher(),
+    deps.os.getLogger(),
+  );
+  if (worker) {
+    registerBulkImportHandler(worker, bulkImportService, deps.os.getLogger());
+  }
+
   /* 路由 */
   registerAuthRoutes(app, db, config);
   registerUserRoutes(app, services);
@@ -338,6 +358,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerApiKeyRoutes(app, services);
   registerAdminConfigRoutes(app, db, config);
   registerAdminTemplateRoutes(app, deps.os);
+  registerBulkKnowledgeImportRoutes(app, {
+    bulkImport: bulkImportService,
+    personaCore: bulkImportPersonaCoreService,
+  });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
   registerMobileRoutes(app, services);
