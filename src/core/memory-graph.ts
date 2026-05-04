@@ -1,6 +1,16 @@
 /**
  * 认知记忆图 — 薄适配器，将公共 API 委托给 kernel 领域服务
  * SQL 实现位于 src/storage/executors/memory-executors.ts
+ *
+ * 事务管理策略：
+ *   多步原子操作（decayAll、consolidateAll 等）需要跨多个 kernel 函数共享
+ *   一个事务。SyncWriteUnitOfWork 抽象本身不管理事务范围；为了维持
+ *   原子性同时不破坏多运行时目标，我们保留 IDatabase 入口分支，仅
+ *   在 IDatabase 形态下启用 db.transaction() 包裹。
+ *
+ *   从已迁移的 SyncWriteUnitOfWork 入口进入时，调用方应在外层用
+ *   factory.write() 自己包裹事务范围；我们的多步方法直接执行（不再嵌套
+ *   db.transaction）。这与 kernel domain function 的同步语义完全契合。
  */
 
 import type { IDatabase } from '../storage/database.js';
@@ -12,8 +22,8 @@ import type {
 import type { Clock } from '../utils/clock.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
-import type { KernelClock, KernelRandom, ContentEncryptor } from '@chrono/kernel';
+import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import type { KernelClock, KernelRandom, ContentEncryptor, SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   DEFAULT_COGNITION_CONFIG, mergeMemoryConfig, NOOP_ENCRYPTOR,
   addMemory, accessMemory, getMemory, getMemoryBatch, getAllMemories,
@@ -37,18 +47,24 @@ function toContentEncryptor(encryption?: FieldEncryption): ContentEncryptor {
 }
 
 export class CognitiveMemoryGraph {
+  private readonly tx: SyncWriteUnitOfWork;
+  /** 仅在 IDatabase 形态下持有；用于多步原子操作的 db.transaction 包裹。
+   *  调用方传入 SyncWriteUnitOfWork 时应自行管理事务范围（factory.write） */
+  private readonly db: IDatabase | null;
   private readonly config: MemoryCognitionConfig;
   private readonly encryptor: ContentEncryptor;
   private readonly kernelClock: KernelClock;
   private readonly kernelRandom: KernelRandom;
 
   constructor(
-    private readonly db: IDatabase,
+    uowOrDb: UowOrDb,
     clock: Clock,
     config?: Partial<MemoryCognitionConfig>,
     encryption?: FieldEncryption,
   ) {
     registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
+    this.db = unwrapDb(uowOrDb);
     this.config = config ? mergeMemoryConfig(DEFAULT_COGNITION_CONFIG, config) : DEFAULT_COGNITION_CONFIG;
     this.encryptor = toContentEncryptor(encryption);
     this.kernelClock = { now: () => clock.now() };
@@ -56,136 +72,114 @@ export class CognitiveMemoryGraph {
   }
 
   addMemory(kind: MemoryKind, content: string, valence: number, salience: number): MemoryNode {
-    const tx = directUnitOfWork(this.db);
-    return addMemory(tx, this.kernelClock, this.kernelRandom, this.config, this.encryptor, kind, content, valence, salience);
+    return addMemory(this.tx, this.kernelClock, this.kernelRandom, this.config, this.encryptor, kind, content, valence, salience);
   }
 
   accessMemory(id: MemoryId): MemoryNode | undefined {
-    const tx = directUnitOfWork(this.db);
-    return accessMemory(tx, this.kernelClock, this.config, this.encryptor, id) ?? undefined;
+    return accessMemory(this.tx, this.kernelClock, this.config, this.encryptor, id) ?? undefined;
   }
 
   getMemory(id: MemoryId): MemoryNode | undefined {
-    const tx = directUnitOfWork(this.db);
-    return getMemory(tx, this.encryptor, id) ?? undefined;
+    return getMemory(this.tx, this.encryptor, id) ?? undefined;
   }
 
   getMemoryBatch(ids: MemoryId[]): Map<MemoryId, MemoryNode> {
-    const tx = directUnitOfWork(this.db);
-    return getMemoryBatch(tx, this.encryptor, ids);
+    return getMemoryBatch(this.tx, this.encryptor, ids);
   }
 
   getAllMemories(): Map<MemoryId, MemoryNode> {
-    const tx = directUnitOfWork(this.db);
-    return getAllMemories(tx, this.encryptor);
+    return getAllMemories(this.tx, this.encryptor);
   }
 
   getMemoriesPaginated(limit: number, offset: number): { nodes: MemoryNode[]; total: number } {
-    const tx = directUnitOfWork(this.db);
-    return getMemoriesPaginated(tx, this.encryptor, limit, offset);
+    return getMemoriesPaginated(this.tx, this.encryptor, limit, offset);
   }
 
   addEdge(source: MemoryId, target: MemoryId, relation: string, strength: number): MemoryEdge {
-    const tx = directUnitOfWork(this.db);
-    return addEdge(tx, source, target, relation, strength);
+    return addEdge(this.tx, source, target, relation, strength);
   }
 
   getAllEdges(): MemoryEdge[] {
-    const tx = directUnitOfWork(this.db);
-    return getAllEdges(tx);
+    return getAllEdges(this.tx);
   }
 
   getEdgesFor(id: MemoryId): MemoryEdge[] {
-    const tx = directUnitOfWork(this.db);
-    return getEdgesFor(tx, id);
+    return getEdgesFor(this.tx, id);
   }
 
   deleteMemory(id: MemoryId): boolean {
-    const tx = directUnitOfWork(this.db);
-    return deleteMemory(tx, id);
+    return deleteMemory(this.tx, id);
   }
 
   deleteAll(): void {
-    const tx = directUnitOfWork(this.db);
-    deleteAllMemories(tx);
+    deleteAllMemories(this.tx);
   }
 
   insertMemory(mem: MemoryNode): void {
-    const tx = directUnitOfWork(this.db);
-    insertMemory(tx, this.config, this.encryptor, mem);
+    insertMemory(this.tx, this.config, this.encryptor, mem);
   }
 
   decayAll(): { decayed: Array<{ memoryId: string; oldSalience: number; newSalience: number }>; evicted: EvictionResult[] } {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return decayAll(tx, this.kernelClock, this.config);
-    });
+    return this.runAtomic(() => decayAll(this.tx, this.kernelClock, this.config));
   }
 
   spreadActivation(sourceId: MemoryId): ActivationResult[] {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return spreadActivation(tx, this.config, sourceId);
-    });
+    return this.runAtomic(() => spreadActivation(this.tx, this.config, sourceId));
   }
 
   admitToWorkingMemory(memoryId: MemoryId): { admitted: boolean; evicted: MemoryId | null } {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return admitToWorkingMemory(tx, this.kernelClock, this.config, this.encryptor, memoryId);
-    });
+    return this.runAtomic(() =>
+      admitToWorkingMemory(this.tx, this.kernelClock, this.config, this.encryptor, memoryId),
+    );
   }
 
   getWorkingMemorySlots(): WorkingMemorySlot[] {
-    const tx = directUnitOfWork(this.db);
-    return getWorkingMemorySlots(tx);
+    return getWorkingMemorySlots(this.tx);
   }
 
   refreshWorkingMemory(): WorkingMemorySlot[] {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return refreshWorkingMemory(tx, this.kernelClock, this.config, this.encryptor);
-    });
+    return this.runAtomic(() => refreshWorkingMemory(this.tx, this.kernelClock, this.config, this.encryptor));
   }
 
   removeFromWorkingMemory(memoryId: MemoryId): boolean {
-    const tx = directUnitOfWork(this.db);
-    return removeFromWorkingMemory(tx, memoryId);
+    return removeFromWorkingMemory(this.tx, memoryId);
   }
 
   findConsolidationCandidates(): MemoryId[] {
-    const tx = directUnitOfWork(this.db);
-    return findConsolidationCandidates(tx, this.config);
+    return findConsolidationCandidates(this.tx, this.config);
   }
 
   consolidateMemory(memoryId: MemoryId): ConsolidationResult | undefined {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return consolidateMemory(tx, this.kernelClock, this.kernelRandom, this.config, memoryId);
-    }) ?? undefined;
+    return this.runAtomic(() =>
+      consolidateMemory(this.tx, this.kernelClock, this.kernelRandom, this.config, memoryId),
+    ) ?? undefined;
   }
 
   consolidateAll(): ConsolidationResult[] {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return consolidateAll(tx, this.kernelClock, this.kernelRandom, this.config);
-    });
+    return this.runAtomic(() =>
+      consolidateAll(this.tx, this.kernelClock, this.kernelRandom, this.config),
+    );
   }
 
   getRelatedMemories(id: MemoryId, maxDepth = 2): MemoryNode[] {
-    const tx = directUnitOfWork(this.db);
-    return getRelatedMemories(tx, this.encryptor, id, maxDepth);
+    return getRelatedMemories(this.tx, this.encryptor, id, maxDepth);
   }
 
   getMemoryCount(): number {
-    const tx = directUnitOfWork(this.db);
-    return getMemoryCount(tx);
+    return getMemoryCount(this.tx);
   }
 
   evictExcess(): EvictionResult[] {
-    return this.db.transaction(() => {
-      const tx = directUnitOfWork(this.db);
-      return evictExcess(tx, this.config);
-    });
+    return this.runAtomic(() => evictExcess(this.tx, this.config));
+  }
+
+  /**
+   * 原子执行多步操作。
+   * - IDatabase 形态：用 db.transaction() 包裹
+   * - SyncWriteUnitOfWork 形态：直接执行；调用方应自行通过 factory.write 管理事务
+   */
+  private runAtomic<T>(fn: () => T): T {
+    if (this.db) return this.db.transaction(fn);
+    return fn();
   }
 }

@@ -3,17 +3,18 @@
  * SQL 实现位于 src/storage/executors/anchor-executors.ts
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SurvivalAnchor, SurvivalAnchorKind } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import {
   createAnchor, updateAnchor, getAnchorById, getAllAnchors,
   deleteAnchor, deleteAllAnchors, upsertAnchor,
 } from '@chrono/kernel';
-import type { KernelClock, KernelRandom, SurvivalAnchorPatch } from '@chrono/kernel';
+import type {
+  KernelClock, KernelRandom, SurvivalAnchorPatch, SyncWriteUnitOfWork,
+} from '@chrono/kernel';
 
 /** 向后兼容别名 */
 export type SurvivalAnchorUpdate = SurvivalAnchorPatch;
@@ -27,57 +28,49 @@ function toKernelRandom(): KernelRandom {
 }
 
 export class SurvivalAnchorStore {
+  private readonly tx: SyncWriteUnitOfWork;
   private readonly kernelClock: KernelClock;
   private readonly kernelRandom: KernelRandom;
 
-  constructor(
-    private readonly db: IDatabase,
-    clock: Clock,
-  ) {
+  constructor(uowOrDb: UowOrDb, clock: Clock) {
     registerCoreSelfExecutors();
+    this.tx = asUow(uowOrDb);
     this.kernelClock = toKernelClock(clock);
     this.kernelRandom = toKernelRandom();
   }
 
   /** 创建生存锚点 */
   create(label: string, kind: SurvivalAnchorKind, value: unknown, severity: number): SurvivalAnchor {
-    const tx = directUnitOfWork(this.db);
-    return createAnchor(tx, this.kernelClock, this.kernelRandom, label, kind, value, severity);
+    return createAnchor(this.tx, this.kernelClock, this.kernelRandom, label, kind, value, severity);
   }
 
   /** 更新生存锚点 */
   update(id: string, patch: SurvivalAnchorUpdate): SurvivalAnchor | undefined {
-    const tx = directUnitOfWork(this.db);
-    return updateAnchor(tx, this.kernelClock, id, patch) ?? undefined;
+    return updateAnchor(this.tx, this.kernelClock, id, patch) ?? undefined;
   }
 
   /** 按 ID 获取 */
   getById(id: string): SurvivalAnchor | undefined {
-    const tx = directUnitOfWork(this.db);
-    return getAnchorById(tx, id) ?? undefined;
+    return getAnchorById(this.tx, id) ?? undefined;
   }
 
   /** 获取全部锚点 */
   getAll(): SurvivalAnchor[] {
-    const tx = directUnitOfWork(this.db);
-    return getAllAnchors(tx);
+    return getAllAnchors(this.tx);
   }
 
   /** 删除锚点 */
   delete(id: string): boolean {
-    const tx = directUnitOfWork(this.db);
-    return deleteAnchor(tx, id);
+    return deleteAnchor(this.tx, id);
   }
 
   /** 删除全部 */
   deleteAll(): void {
-    const tx = directUnitOfWork(this.db);
-    deleteAllAnchors(tx);
+    deleteAllAnchors(this.tx);
   }
 
   /** 按原始数据插入（恢复用） */
   insert(anchor: SurvivalAnchor): void {
-    const tx = directUnitOfWork(this.db);
-    upsertAnchor(tx, anchor);
+    upsertAnchor(this.tx, anchor);
   }
 }
