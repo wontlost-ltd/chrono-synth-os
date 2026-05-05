@@ -1,4 +1,6 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+/* IDatabase 保留：flushInternal 用 db.transaction(...) 做原子批写，
+ * SyncWriteUnitOfWork 接口不包含 transaction 原语。 */
 import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
 import { recordPlatformDlqEvent } from '../events/platform-dlq.js';

@@ -3,6 +3,8 @@ import {
   buildTenantKafkaTopicPattern,
   resolveTenantKafkaTopic,
 } from '../enterprise/tenant-kafka-topics.js';
+/* IDatabase 保留：生产者/消费者用 db.transaction(...) 把"投递 + 标记发送"
+ * 或"应用 rollup + 提交 offset 准备"绑成一个原子单元。 */
 import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { Logger } from '../utils/logger.js';

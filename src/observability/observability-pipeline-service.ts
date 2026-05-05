@@ -1,5 +1,7 @@
 import type { AppConfig } from '../config/schema.js';
 import { Socket } from 'node:net';
+/* IDatabase 保留：本类仅作 db 容器转发给内层 worker / kafka 客户端，
+ * 内层依赖 db.transaction（不在 SyncWriteUnitOfWork 接口上）。 */
 import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
 import { ObservabilityKafkaOutboxProducer, ObservabilityKafkaRollupConsumer } from './kafka-transport.js';

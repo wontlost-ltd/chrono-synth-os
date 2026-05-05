@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { getObservabilityOutboxBacklog, type ObservabilityOutboxBacklog } from './observability-outbox.js';
+/* IDatabase 保留：本监控只做 db.prepare('SELECT 1') 健康探针，
+ * 这是 /readyz 语义；不属于 SyncWriteUnitOfWork 抽象层。 */
 import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
 import { getPackageVersion } from '../utils/package-version.js';
