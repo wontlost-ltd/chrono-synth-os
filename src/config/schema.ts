@@ -170,6 +170,46 @@ const intelligenceSchema = z.object({
   budget: intelligenceBudgetSchema,
 });
 
+/* P3 Agent / Tool adapters config */
+const agentWebSearchSchema = z.object({
+  provider: z.enum(['exa', 'serper', 'mock']).default('mock'),
+  apiKey: z.string().optional(),
+  /** 单次搜索最多返回结果数（结果会被截断） */
+  maxResults: z.coerce.number().int().min(1).max(50).default(10),
+  /** 单条结果最大字符数（防止内容过大） */
+  maxContentLength: z.coerce.number().int().min(100).max(20_000).default(2000),
+  /** 调用单价（分），用于成本上报 */
+  costCentsPerCall: z.coerce.number().int().nonnegative().default(0),
+});
+
+const agentCalendarSchema = z.object({
+  provider: z.enum(['google', 'mock']).default('mock'),
+  /** Google service account JSON 路径或内容（生产环境推荐 service account） */
+  serviceAccountJson: z.string().optional(),
+  /** OAuth2 access token（替代 service account；用户授权流程产物） */
+  oauthAccessToken: z.string().optional(),
+  /** 默认时区（IANA） */
+  defaultTimezone: z.string().default('UTC'),
+});
+
+const agentEmailSchema = z.object({
+  provider: z.enum(['gmail', 'mock']).default('mock'),
+  serviceAccountJson: z.string().optional(),
+  oauthAccessToken: z.string().optional(),
+  /** 强制 dry-run 模式（不真发邮件，仅返回 RFC822 报文）；生产环境应为 false */
+  dryRun: z.boolean().default(false),
+  /** 单封邮件附件总大小上限（字节） */
+  maxAttachmentBytes: z.coerce.number().int().nonnegative().default(25 * 1024 * 1024),
+});
+
+const agentSchema = z.object({
+  webSearch: agentWebSearchSchema.default({
+    provider: 'mock', maxResults: 10, maxContentLength: 2000, costCentsPerCall: 0,
+  }),
+  calendar: agentCalendarSchema.default({ provider: 'mock', defaultTimezone: 'UTC' }),
+  email: agentEmailSchema.default({ provider: 'mock', dryRun: true, maxAttachmentBytes: 25 * 1024 * 1024 }),
+});
+
 const encryptionSchema = z.object({
   enabled: z.boolean().default(false),
   masterKey: z.string().default('change-me-in-production-32chars!'),
@@ -383,6 +423,11 @@ export const AppConfigSchema = z.object({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
     budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
+  }),
+  agent: agentSchema.default({
+    webSearch: { provider: 'mock', maxResults: 10, maxContentLength: 2000, costCentsPerCall: 0 },
+    calendar: { provider: 'mock', defaultTimezone: 'UTC' },
+    email: { provider: 'mock', dryRun: true, maxAttachmentBytes: 25 * 1024 * 1024 },
   }),
   encryption: encryptionSchema.default({
     enabled: false,

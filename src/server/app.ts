@@ -74,6 +74,9 @@ import { MemorySearchTool } from '../agent/tools/memory-search-tool.js';
 import { MemoryAddTool } from '../agent/tools/memory-add-tool.js';
 import { KnowledgeQueryTool } from '../agent/tools/knowledge-query-tool.js';
 import { DecisionRecordTool } from '../agent/tools/decision-record-tool.js';
+import { WebSearchTool } from '../agent/tools/web-search-tool.js';
+import { CalendarTool } from '../agent/tools/calendar-tool.js';
+import { EmailTool } from '../agent/tools/email-tool.js';
 import { ChronoMcpServer } from '../mcp/chrono-mcp-server.js';
 import { registerBulkKnowledgeImportRoutes } from './routes/bulk-knowledge-import.js';
 import { BulkImportService } from '../knowledge/bulk-import-service.js';
@@ -431,7 +434,27 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   toolRegistry.register(new MemoryAddTool(bulkImportPersonaCoreService));
   toolRegistry.register(new KnowledgeQueryTool(conversationService.getRetriever()));
   toolRegistry.register(new DecisionRecordTool(bulkImportPersonaCoreService));
-  /* P3-C 外部工具适配器在此注册（WebSearch / Calendar / Email） */
+  /* P3-C 外部工具适配器 */
+  toolRegistry.register(new WebSearchTool({
+    provider: config.agent.webSearch.provider,
+    apiKey: config.agent.webSearch.apiKey,
+    maxResults: config.agent.webSearch.maxResults,
+    maxContentLength: config.agent.webSearch.maxContentLength,
+    costCentsPerCall: config.agent.webSearch.costCentsPerCall,
+  }, deps.os.getLogger()));
+  toolRegistry.register(new CalendarTool({
+    provider: config.agent.calendar.provider,
+    serviceAccountJson: config.agent.calendar.serviceAccountJson,
+    oauthAccessToken: config.agent.calendar.oauthAccessToken,
+    defaultTimezone: config.agent.calendar.defaultTimezone,
+  }, deps.os.getLogger()));
+  toolRegistry.register(new EmailTool({
+    provider: config.agent.email.provider,
+    serviceAccountJson: config.agent.email.serviceAccountJson,
+    oauthAccessToken: config.agent.email.oauthAccessToken,
+    dryRun: config.agent.email.dryRun,
+    maxAttachmentBytes: config.agent.email.maxAttachmentBytes,
+  }, deps.os.getLogger()));
   toolRegistry.freeze();
 
   const toolInvocationPipeline = new ToolInvocationPipeline({

@@ -131,7 +131,7 @@ describe('MCP API 集成测试', () => {
 
   /* ── tools/list ────────────────────────────────────────────────── */
 
-  it('tools/list 返回 5 个内置工具', async () => {
+  it('tools/list 返回所有内置工具', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/mcp',
@@ -140,14 +140,12 @@ describe('MCP API 集成测试', () => {
     });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
-    const names = body.result.tools.map((t: { name: string }) => t.name).sort();
-    assert.deepEqual(names, [
-      'decision.record',
-      'knowledge.query',
-      'memory.add',
-      'memory.search',
-      'persona.get_context',
-    ]);
+    const names = body.result.tools.map((t: { name: string }) => t.name);
+    assert.ok(names.includes('persona.get_context'));
+    assert.ok(names.includes('memory.search'));
+    assert.ok(names.includes('memory.add'));
+    assert.ok(names.includes('knowledge.query'));
+    assert.ok(names.includes('decision.record'));
   });
 
   /* ── tools/call 权限闸门 ────────────────────────────────────────── */
@@ -362,6 +360,227 @@ describe('MCP API 集成测试', () => {
   });
 
   /* ── 调用历史审计 ──────────────────────────────────────────────── */
+
+  /* ── 二次确认 flow（P3-C5）────────────────────────────────────── */
+
+  it('高风险工具首次调用返回 confirmation_required + token', async () => {
+    const auth = new AgencyAuthorizationService(os.getDatabase());
+    const perm = new ToolPermissionService(os.getDatabase());
+    auth.create({
+      tenantId, personaId, principalUserId: userId,
+      scope: 'all', scopeDescription: 'High-risk tool confirmation flow test',
+    });
+    perm.grant({
+      tenantId, personaId, toolId: 'calendar',
+      scope: 'execute', constraints: {}, grantedBy: userId,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 100, method: 'tools/call',
+        personaId,
+        params: {
+          name: 'calendar',
+          arguments: { action: 'create', calendarId: 'primary', event: { summary: 'Team meeting' } },
+        },
+      },
+    });
+    const body = JSON.parse(res.body);
+    assert.equal(body.error.code, -32005); // MCP_ERROR_CONFIRMATION_REQUIRED
+    assert.ok(body.error.data.confirmationTokenId);
+    assert.ok(body.error.data.confirmationTokenId.startsWith('cct_'));
+  });
+
+  it('携带相同参数的 confirmationToken 第二次调用成功', async () => {
+    const auth = new AgencyAuthorizationService(os.getDatabase());
+    const perm = new ToolPermissionService(os.getDatabase());
+    auth.create({
+      tenantId, personaId, principalUserId: userId,
+      scope: 'all', scopeDescription: 'Confirmation token consume test',
+    });
+    perm.grant({
+      tenantId, personaId, toolId: 'calendar',
+      scope: 'execute', constraints: {}, grantedBy: userId,
+    });
+
+    const args = { action: 'list', calendarId: 'primary' };
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 101, method: 'tools/call',
+        personaId,
+        params: { name: 'calendar', arguments: args },
+      },
+    });
+    const tokenId = JSON.parse(r1.body).error.data.confirmationTokenId;
+
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 102, method: 'tools/call',
+        personaId,
+        params: { name: 'calendar', arguments: args, confirmationToken: tokenId },
+      },
+    });
+    const body2 = JSON.parse(r2.body);
+    assert.ok(body2.result, `Expected success result, got error: ${JSON.stringify(body2.error)}`);
+    assert.equal((body2.result.content[0] as { json: { mock: boolean } }).json.mock, true);
+  });
+
+  it('不同参数的调用复用 confirmationToken 失败（input_changed）', async () => {
+    const auth = new AgencyAuthorizationService(os.getDatabase());
+    const perm = new ToolPermissionService(os.getDatabase());
+    auth.create({
+      tenantId, personaId, principalUserId: userId,
+      scope: 'all', scopeDescription: 'Confirmation token mismatch test',
+    });
+    perm.grant({
+      tenantId, personaId, toolId: 'calendar',
+      scope: 'execute', constraints: {}, grantedBy: userId,
+    });
+
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 103, method: 'tools/call',
+        personaId,
+        params: { name: 'calendar', arguments: { action: 'list' } },
+      },
+    });
+    const tokenId = JSON.parse(r1.body).error.data.confirmationTokenId;
+
+    /* 第二次用不同参数 → token 校验失败 */
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 104, method: 'tools/call',
+        personaId,
+        params: {
+          name: 'calendar',
+          arguments: { action: 'list', calendarId: 'different' },
+          confirmationToken: tokenId,
+        },
+      },
+    });
+    const body2 = JSON.parse(r2.body);
+    assert.equal(body2.error.code, -32002); // permission_denied (token invalid)
+    assert.match(body2.error.message, /token/);
+  });
+
+  /* ── 外部工具：mock provider 走完整路径 ────────────────────────── */
+
+  it('web_search mock provider 完整路径', async () => {
+    const auth = new AgencyAuthorizationService(os.getDatabase());
+    const perm = new ToolPermissionService(os.getDatabase());
+    auth.create({
+      tenantId, personaId, principalUserId: userId,
+      scope: 'research', scopeDescription: 'Research tool integration test',
+    });
+    perm.grant({
+      tenantId, personaId, toolId: 'web_search',
+      scope: 'read', constraints: {}, grantedBy: userId,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 200, method: 'tools/call',
+        personaId,
+        params: { name: 'web_search', arguments: { query: 'test', topK: 3 } },
+      },
+    });
+    const body = JSON.parse(res.body);
+    assert.ok(body.result);
+    const json = (body.result.content[0] as { json: { results: unknown[] } }).json;
+    assert.ok(Array.isArray(json.results));
+  });
+
+  it('email.send dryRun mode 返回 dryRun 结构（高风险流程）', async () => {
+    const auth = new AgencyAuthorizationService(os.getDatabase());
+    const perm = new ToolPermissionService(os.getDatabase());
+    auth.create({
+      tenantId, personaId, principalUserId: userId,
+      scope: 'communication', scopeDescription: 'Email integration test',
+    });
+    perm.grant({
+      tenantId, personaId, toolId: 'email.send',
+      scope: 'execute', constraints: {}, grantedBy: userId,
+    });
+
+    /* 第一次：高风险，返回 confirmation_required */
+    const args = { to: 'someone@example.com', subject: 'Hi', bodyText: 'Hello there' };
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 300, method: 'tools/call',
+        personaId,
+        params: { name: 'email.send', arguments: args },
+      },
+    });
+    const tokenId = JSON.parse(r1.body).error.data.confirmationTokenId;
+
+    /* 第二次：携带 token 真正发出（mock 模式自动 dryRun） */
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: {
+        jsonrpc: '2.0', id: 301, method: 'tools/call',
+        personaId,
+        params: { name: 'email.send', arguments: args, confirmationToken: tokenId },
+      },
+    });
+    const body2 = JSON.parse(r2.body);
+    assert.ok(body2.result);
+    const json = (body2.result.content[0] as { json: { dryRun: boolean; to: string } }).json;
+    assert.equal(json.dryRun, true);
+    assert.equal(json.to, 'someone@example.com');
+  });
+
+  /* ── tools/list 返回 8 个内置工具（5 内部 + 3 外部）─────────── */
+
+  it('tools/list 返回 8 个内置工具', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/mcp',
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { jsonrpc: '2.0', id: 400, method: 'tools/list' },
+    });
+    const body = JSON.parse(res.body);
+    const names = body.result.tools.map((t: { name: string }) => t.name).sort();
+    assert.deepEqual(names, [
+      'calendar',
+      'decision.record',
+      'email.send',
+      'knowledge.query',
+      'memory.add',
+      'memory.search',
+      'persona.get_context',
+      'web_search',
+    ]);
+    /* 高风险工具应被标记 */
+    const calendar = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'calendar');
+    assert.equal(calendar.highRisk, true);
+    const email = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'email.send');
+    assert.equal(email.highRisk, true);
+    const webSearch = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'web_search');
+    assert.equal(webSearch.highRisk, false);
+  });
 
   it('调用历史可通过 admin REST 查询', async () => {
     const auth = new AgencyAuthorizationService(os.getDatabase());
