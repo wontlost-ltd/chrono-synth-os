@@ -64,10 +64,14 @@ export interface InvokeRequest {
   readonly toolId: string;
   readonly invokerType: 'mcp' | 'internal' | 'admin';
   readonly invokerId: string;
+  /** 触发调用的用户 ID（用于"待我确认"列表索引）；MCP/internal 无对应用户时可省略 */
+  readonly invokerUserId?: string | null;
   readonly arguments: Record<string, unknown>;
   readonly confirmationToken?: string;
   readonly externalUserId?: string;
   readonly sessionId?: string;
+  /** 可选的用户级 OAuth token 解析器（pipeline 透传给工具上下文） */
+  readonly oauthResolver?: import('./tool-adapter.js').UserOauthTokenResolver;
 }
 
 const LAYER = 'ToolInvocationPipeline';
@@ -149,9 +153,11 @@ export class ToolInvocationPipeline {
       personaId: request.personaId,
       invokerType: request.invokerType,
       invokerId: request.invokerId,
+      invokerUserId: request.invokerUserId ?? null,
       arguments: request.arguments,
       confirmationToken: request.confirmationToken,
       deadline,
+      oauthResolver: request.oauthResolver,
     };
 
     try {
@@ -164,6 +170,7 @@ export class ToolInvocationPipeline {
         toolId: request.toolId,
         invokerType: request.invokerType,
         invokerId: request.invokerId,
+        invokerUserId: request.invokerUserId ?? null,
         status: 'success',
         inputHash,
         outputSizeBytes: result.outputSizeBytes,
@@ -195,6 +202,7 @@ export class ToolInvocationPipeline {
         toolId: request.toolId,
         invokerType: request.invokerType,
         invokerId: request.invokerId,
+        invokerUserId: request.invokerUserId ?? null,
         status,
         inputHash,
         outputSizeBytes: 0,
@@ -253,6 +261,7 @@ export class ToolInvocationPipeline {
       toolId: request.toolId,
       invokerType: request.invokerType,
       invokerId: request.invokerId,
+      invokerUserId: request.invokerUserId ?? null,
       status: 'pending_confirmation',
       inputHash,
       outputSizeBytes: 0,
@@ -301,6 +310,7 @@ export class ToolInvocationPipeline {
       toolId: request.toolId,
       invokerType: request.invokerType,
       invokerId: request.invokerId,
+      invokerUserId: request.invokerUserId ?? null,
       status,
       inputHash,
       outputSizeBytes: 0,

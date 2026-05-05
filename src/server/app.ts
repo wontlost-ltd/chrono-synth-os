@@ -78,6 +78,12 @@ import { WebSearchTool } from '../agent/tools/web-search-tool.js';
 import { CalendarTool } from '../agent/tools/calendar-tool.js';
 import { EmailTool } from '../agent/tools/email-tool.js';
 import { ChronoMcpServer } from '../mcp/chrono-mcp-server.js';
+import { UserOauthTokenService, IdentityEncryption, type TokenEncryption } from '../agent/user-oauth-token-service.js';
+import { GoogleOauthFlow } from '../agent/oauth-google-flow.js';
+import { registerAgentOauthRoutes } from './routes/agent-oauth.js';
+import { registerAgentConfirmationsRoutes } from './routes/agent-confirmations.js';
+import { createUserOauthTokenResolverFactory } from './agent-oauth-resolver.js';
+import { ToolInvocationsRetentionWorker } from '../agent/tool-invocations-retention-worker.js';
 import { registerBulkKnowledgeImportRoutes } from './routes/bulk-knowledge-import.js';
 import { BulkImportService } from '../knowledge/bulk-import-service.js';
 import { UrlContentFetcher } from '../knowledge/url-content-fetcher.js';
@@ -427,6 +433,23 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* P3 Agent / MCP Server 装配 */
   const toolPermissionService = new ToolPermissionService(tx);
   const agencyAuthorizationService = new AgencyAuthorizationService(tx);
+
+  /**
+   * F2：用户级 Google OAuth
+   *  - encryption.enabled=true → 复用 conversationEncryption（密文落盘）
+   *  - encryption.enabled=false → 使用 IdentityEncryption（明文直通；仅测试/开发）
+   */
+  const agentOauthEncryption: TokenEncryption | ConversationFieldEncryption =
+    conversationEncryption ?? new IdentityEncryption();
+  const userOauthTokenService = new UserOauthTokenService(tx, agentOauthEncryption);
+  const googleOauthEnabled = !!(config.agent.oauth.google.clientId
+    && config.agent.oauth.google.clientSecret
+    && config.agent.oauth.google.redirectUri);
+  const googleOauthFlow = googleOauthEnabled ? new GoogleOauthFlow({
+    clientId: config.agent.oauth.google.clientId,
+    clientSecret: config.agent.oauth.google.clientSecret,
+    redirectUri: config.agent.oauth.google.redirectUri,
+  }) : null;
   const toolRegistry = new ToolRegistry();
 
   toolRegistry.register(new PersonaContextTool(bulkImportPersonaCoreService));
@@ -466,6 +489,24 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     confirmationStore: conversationService.getConfirmationStore(),
   });
   const mcpServer = new ChronoMcpServer(toolRegistry, toolInvocationPipeline, deps.os.getLogger());
+
+  /* F2/F3：用户级 OAuth resolver 工厂（每个请求构造独立 resolver） */
+  const oauthResolverFactory = createUserOauthTokenResolverFactory({
+    tokens: userOauthTokenService,
+    googleFlow: googleOauthFlow,
+    logger: deps.os.getLogger(),
+  });
+
+  /* F4：tool_invocations retention worker */
+  const toolInvocationsRetentionWorker = new ToolInvocationsRetentionWorker(
+    toolPermissionService,
+    deps.os.getLogger(),
+    {
+      retentionMs: config.agent.toolInvocationsRetentionDays * 24 * 60 * 60 * 1000,
+    },
+  );
+  toolInvocationsRetentionWorker.start();
+  app.addHook('onClose', async () => { await toolInvocationsRetentionWorker.stop(); });
 
   /* 路由 */
   registerAuthRoutes(app, db, config);
@@ -520,7 +561,17 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
   registerAdminToolsRoutes(app, db);
-  registerMcpRoutes(app, mcpServer);
+  registerMcpRoutes(app, mcpServer, oauthResolverFactory);
+  registerAgentOauthRoutes(app, {
+    googleFlow: googleOauthFlow,
+    tokens: userOauthTokenService,
+    config,
+  });
+  registerAgentConfirmationsRoutes(app, {
+    mcpServer,
+    permissions: toolPermissionService,
+    oauthResolverFactory,
+  });
   registerMobileRoutes(app, services);
   registerIdentityRoutes(app, services);
   registerAvatarRoutes(app, db, deps.os, tenantFactory);

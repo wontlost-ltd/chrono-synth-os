@@ -40,6 +40,8 @@ function isPublicPath(url: string): boolean {
   if (path.startsWith('/scim/')) return true;
   /* Stripe webhook 豁免（由 Stripe 签名验证保护） */
   if (path === '/api/v1/billing/webhook') return true;
+  /* Google OAuth 回调（由 state 签名保护） */
+  if (path === '/api/v1/agent/oauth/google/callback') return true;
   return false;
 }
 

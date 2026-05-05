@@ -202,12 +202,27 @@ const agentEmailSchema = z.object({
   maxAttachmentBytes: z.coerce.number().int().nonnegative().default(25 * 1024 * 1024),
 });
 
+const agentOauthGoogleSchema = z.object({
+  /** OAuth2 client id（来自 Google Cloud Console） */
+  clientId: z.string().default(''),
+  clientSecret: z.string().default(''),
+  /** OAuth2 回调 URI；必须与 Google Cloud Console 中注册的一致 */
+  redirectUri: z.string().default(''),
+});
+
+const agentOauthSchema = z.object({
+  google: agentOauthGoogleSchema.default({ clientId: '', clientSecret: '', redirectUri: '' }),
+});
+
 const agentSchema = z.object({
   webSearch: agentWebSearchSchema.default({
     provider: 'mock', maxResults: 10, maxContentLength: 2000, costCentsPerCall: 0,
   }),
   calendar: agentCalendarSchema.default({ provider: 'mock', defaultTimezone: 'UTC' }),
   email: agentEmailSchema.default({ provider: 'mock', dryRun: true, maxAttachmentBytes: 25 * 1024 * 1024 }),
+  oauth: agentOauthSchema.default({ google: { clientId: '', clientSecret: '', redirectUri: '' } }),
+  /** tool_invocations 表的保留天数；超过此天数的记录由 retention worker 清理 */
+  toolInvocationsRetentionDays: z.coerce.number().int().min(7).max(3650).default(90),
 });
 
 const encryptionSchema = z.object({
@@ -428,6 +443,8 @@ export const AppConfigSchema = z.object({
     webSearch: { provider: 'mock', maxResults: 10, maxContentLength: 2000, costCentsPerCall: 0 },
     calendar: { provider: 'mock', defaultTimezone: 'UTC' },
     email: { provider: 'mock', dryRun: true, maxAttachmentBytes: 25 * 1024 * 1024 },
+    oauth: { google: { clientId: '', clientSecret: '', redirectUri: '' } },
+    toolInvocationsRetentionDays: 90,
   }),
   encryption: encryptionSchema.default({
     enabled: false,
@@ -548,6 +565,25 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_INTELLIGENCE_TEMPERATURE:        (v) => { deepSet(env, 'intelligence.temperature', parseFloat(v)); },
     CHRONO_INTELLIGENCE_SIM_ROLLOUTS:       (v) => { deepSet(env, 'intelligence.simulation.rollouts', parseInt(v, 10)); },
     CHRONO_INTELLIGENCE_SIM_MAX_OPTIONS:    (v) => { deepSet(env, 'intelligence.simulation.maxOptions', parseInt(v, 10)); },
+    /* P3 Agent / Tool adapters */
+    CHRONO_AGENT_WEB_SEARCH_PROVIDER:       (v) => { deepSet(env, 'agent.webSearch.provider', v); },
+    CHRONO_AGENT_WEB_SEARCH_API_KEY:        (v) => { deepSet(env, 'agent.webSearch.apiKey', v); },
+    CHRONO_AGENT_WEB_SEARCH_MAX_RESULTS:    (v) => { deepSet(env, 'agent.webSearch.maxResults', parseInt(v, 10)); },
+    CHRONO_AGENT_WEB_SEARCH_MAX_CONTENT:    (v) => { deepSet(env, 'agent.webSearch.maxContentLength', parseInt(v, 10)); },
+    CHRONO_AGENT_WEB_SEARCH_COST_CENTS:     (v) => { deepSet(env, 'agent.webSearch.costCentsPerCall', parseInt(v, 10)); },
+    CHRONO_AGENT_CALENDAR_PROVIDER:         (v) => { deepSet(env, 'agent.calendar.provider', v); },
+    CHRONO_AGENT_CALENDAR_SERVICE_ACCOUNT_JSON: (v) => { deepSet(env, 'agent.calendar.serviceAccountJson', v); },
+    CHRONO_AGENT_CALENDAR_OAUTH_ACCESS_TOKEN:   (v) => { deepSet(env, 'agent.calendar.oauthAccessToken', v); },
+    CHRONO_AGENT_CALENDAR_DEFAULT_TIMEZONE: (v) => { deepSet(env, 'agent.calendar.defaultTimezone', v); },
+    CHRONO_AGENT_EMAIL_PROVIDER:            (v) => { deepSet(env, 'agent.email.provider', v); },
+    CHRONO_AGENT_EMAIL_SERVICE_ACCOUNT_JSON: (v) => { deepSet(env, 'agent.email.serviceAccountJson', v); },
+    CHRONO_AGENT_EMAIL_OAUTH_ACCESS_TOKEN:  (v) => { deepSet(env, 'agent.email.oauthAccessToken', v); },
+    CHRONO_AGENT_EMAIL_DRY_RUN:             (v) => { deepSet(env, 'agent.email.dryRun', v === 'true'); },
+    CHRONO_AGENT_EMAIL_MAX_ATTACHMENT_BYTES: (v) => { deepSet(env, 'agent.email.maxAttachmentBytes', parseInt(v, 10)); },
+    CHRONO_AGENT_OAUTH_GOOGLE_CLIENT_ID:    (v) => { deepSet(env, 'agent.oauth.google.clientId', v); },
+    CHRONO_AGENT_OAUTH_GOOGLE_CLIENT_SECRET: (v) => { deepSet(env, 'agent.oauth.google.clientSecret', v); },
+    CHRONO_AGENT_OAUTH_GOOGLE_REDIRECT_URI: (v) => { deepSet(env, 'agent.oauth.google.redirectUri', v); },
+    CHRONO_AGENT_TOOL_INVOCATIONS_RETENTION_DAYS: (v) => { deepSet(env, 'agent.toolInvocationsRetentionDays', parseInt(v, 10)); },
     CHRONO_REQUEST_TIMEOUT_MS:      (v) => { deepSet(env, 'request.timeoutMs', parseInt(v, 10)); },
     CHRONO_REQUEST_MAX_BODY_BYTES:  (v) => { deepSet(env, 'request.maxBodyBytes', parseInt(v, 10)); },
     CHRONO_RUNTIME_RECOVERY_ENABLED: (v) => { deepSet(env, 'runtime.recovery.enabled', v === 'true'); },

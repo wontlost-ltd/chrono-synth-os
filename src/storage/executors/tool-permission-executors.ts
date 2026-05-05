@@ -11,7 +11,8 @@ import {
   AGAUTH_QUERY_BY_REVOCATION_KEY,
   AGAUTH_CMD_CREATE, AGAUTH_CMD_REVOKE, AGAUTH_CMD_SUSPEND, AGAUTH_CMD_RESUME,
   TINV_QUERY_BY_ID, TINV_QUERY_LIST_BY_PERSONA, TINV_QUERY_DAILY_COUNT,
-  TINV_CMD_RECORD, TINV_CMD_UPDATE_STATUS,
+  TINV_QUERY_PENDING_BY_USER, TINV_QUERY_BY_CONFIRMATION_TOKEN,
+  TINV_CMD_RECORD, TINV_CMD_UPDATE_STATUS, TINV_CMD_PRUNE_BEFORE,
 } from '@chrono/kernel';
 import type {
   ToolPermissionRow, ToolPermissionGrantParams,
@@ -22,7 +23,8 @@ import type {
   AgauthRevokeParams, AgauthSuspendParams,
   ToolInvocationRow, ToolInvocationRecordParams,
   TinvByIdParams, TinvListByPersonaParams, TinvDailyCountParams,
-  TinvUpdateStatusParams,
+  TinvUpdateStatusParams, TinvPendingByUserParams,
+  TinvByConfirmationTokenParams, TinvPruneBeforeParams,
 } from '@chrono/kernel';
 
 const TPERM_SELECT = `
@@ -37,7 +39,7 @@ const AGAUTH_SELECT = `
     FROM agency_authorizations`;
 
 const TINV_SELECT = `
-  SELECT id, tenant_id, persona_id, tool_id, invoker_type, invoker_id, status,
+  SELECT id, tenant_id, persona_id, tool_id, invoker_type, invoker_id, invoker_user_id, status,
          input_hash, output_size_bytes, error_message, cost_cents, duration_ms,
          invoked_at, completed_at, confirmation_token_id
     FROM tool_invocations`;
@@ -217,12 +219,12 @@ export function registerToolPermissionExecutors(): void {
   registerCommand<ToolInvocationRecordParams>(TINV_CMD_RECORD, (db, p) => {
     const result = db.prepare<void>(
       `INSERT INTO tool_invocations
-         (id, tenant_id, persona_id, tool_id, invoker_type, invoker_id, status,
+         (id, tenant_id, persona_id, tool_id, invoker_type, invoker_id, invoker_user_id, status,
           input_hash, output_size_bytes, error_message, cost_cents, duration_ms,
           invoked_at, completed_at, confirmation_token_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      p.id, p.tenantId, p.personaId, p.toolId, p.invokerType, p.invokerId, p.status,
+      p.id, p.tenantId, p.personaId, p.toolId, p.invokerType, p.invokerId, p.invokerUserId, p.status,
       p.inputHash, p.outputSizeBytes, p.errorMessage, p.costCents, p.durationMs,
       p.invokedAt, p.completedAt, p.confirmationTokenId,
     );
@@ -239,6 +241,41 @@ export function registerToolPermissionExecutors(): void {
       p.status, p.outputSizeBytes, p.errorMessage,
       p.costCents, p.durationMs, p.completedAt, p.id,
     );
+    return { rowsAffected: result.changes };
+  });
+
+  /* ── F3 待确认列表 / Token 反查 ────────────────────────────────────── */
+
+  registerQuery<readonly ToolInvocationRow[], TinvPendingByUserParams>(TINV_QUERY_PENDING_BY_USER, (db, p) => {
+    return db.prepare<ToolInvocationRow>(
+      `${TINV_SELECT}
+        WHERE tenant_id = ? AND invoker_user_id = ? AND status = 'pending_confirmation'
+        ORDER BY invoked_at DESC
+        LIMIT ?`,
+    ).all(p.tenantId, p.userId, p.limit);
+  });
+
+  registerQuery<ToolInvocationRow | null, TinvByConfirmationTokenParams>(TINV_QUERY_BY_CONFIRMATION_TOKEN, (db, p) => {
+    return db.prepare<ToolInvocationRow>(
+      `${TINV_SELECT}
+        WHERE tenant_id = ? AND confirmation_token_id = ?
+        ORDER BY invoked_at DESC LIMIT 1`,
+    ).get(p.tenantId, p.confirmationTokenId) ?? null;
+  });
+
+  /* ── F4 留存清理 ──────────────────────────────────────────────────── */
+
+  registerCommand<TinvPruneBeforeParams>(TINV_CMD_PRUNE_BEFORE, (db, p) => {
+    /* SQLite DELETE ... LIMIT 在标准发行版未启用，改用子查询限制批次 */
+    const result = db.prepare<void>(
+      `DELETE FROM tool_invocations
+        WHERE id IN (
+          SELECT id FROM tool_invocations
+           WHERE invoked_at < ? AND status != 'pending_confirmation'
+           ORDER BY invoked_at ASC
+           LIMIT ?
+        )`,
+    ).run(p.cutoff, p.batchSize);
     return { rowsAffected: result.changes };
   });
 }

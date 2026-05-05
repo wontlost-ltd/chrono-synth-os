@@ -182,4 +182,79 @@ describe('ToolPermissionService', () => {
       assert.equal(count, 1);
     } finally { db.close(); }
   });
+
+  it('listPendingByUser 仅返回当前用户的 pending_confirmation', () => {
+    const { db, service } = makeService();
+    try {
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        invokerType: 'mcp', invokerId: 'c1', invokerUserId: 'user_a',
+        status: 'pending_confirmation',
+        inputHash: 'h1', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 0, confirmationTokenId: 'cct_1',
+      });
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        invokerType: 'mcp', invokerId: 'c1', invokerUserId: 'user_b',
+        status: 'pending_confirmation',
+        inputHash: 'h2', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 0, confirmationTokenId: 'cct_2',
+      });
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        invokerType: 'mcp', invokerId: 'c1', invokerUserId: 'user_a',
+        status: 'success',
+        inputHash: 'h3', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 0, confirmationTokenId: null,
+      });
+      const list = service.listPendingByUser('default', 'user_a', 50);
+      assert.equal(list.length, 1);
+      assert.equal(list[0].confirmationTokenId, 'cct_1');
+      assert.equal(list[0].invokerUserId, 'user_a');
+    } finally { db.close(); }
+  });
+
+  it('getByConfirmationToken 通过 token id 反查', () => {
+    const { db, service } = makeService();
+    try {
+      const id = service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        invokerType: 'mcp', invokerId: 'c1', invokerUserId: 'user_a',
+        status: 'pending_confirmation',
+        inputHash: 'h1', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 0, confirmationTokenId: 'cct_xyz',
+      });
+      const found = service.getByConfirmationToken('default', 'cct_xyz');
+      assert.ok(found);
+      assert.equal(found?.id, id);
+    } finally { db.close(); }
+  });
+
+  it('pruneInvocationsBefore 跳过 pending_confirmation 行', () => {
+    const { db, service } = makeService();
+    try {
+      const oldTime = Date.now() - 100 * 24 * 60 * 60 * 1000;
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        invokerType: 'mcp', invokerId: 'c1', invokerUserId: 'user_a',
+        status: 'success',
+        inputHash: 'h1', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 0, confirmationTokenId: null,
+        invokedAt: oldTime,
+      });
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        invokerType: 'mcp', invokerId: 'c1', invokerUserId: 'user_a',
+        status: 'pending_confirmation',
+        inputHash: 'h2', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 0, confirmationTokenId: 'cct_keep',
+        invokedAt: oldTime,
+      });
+      const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      const removed = service.pruneInvocationsBefore(cutoff, 100);
+      assert.equal(removed, 1);
+      const stillPending = service.getByConfirmationToken('default', 'cct_keep');
+      assert.ok(stillPending);
+    } finally { db.close(); }
+  });
 });

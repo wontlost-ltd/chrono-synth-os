@@ -79,7 +79,15 @@ export class CalendarTool implements ToolAdapter {
       return mockResult(action, calendarId, ctx.arguments);
     }
 
-    const accessToken = await getGoogleAccessToken({
+    /* 优先使用 ctx.oauthResolver（用户级授权）；fallback 到 service account */
+    const userToken = ctx.oauthResolver ? await ctx.oauthResolver(SCOPE) : null;
+    if (ctx.oauthResolver && userToken === null && !this.options.serviceAccountJson) {
+      throw new StateError(
+        '用户尚未授权 Google Calendar；请先完成 OAuth 流程',
+        ErrorCode.STATE_INVALID_TRANSITION,
+      );
+    }
+    const accessToken = userToken ?? await getGoogleAccessToken({
       scope: SCOPE,
       serviceAccountJson: this.options.serviceAccountJson,
       oauthAccessToken: this.options.oauthAccessToken,

@@ -48,7 +48,11 @@ export interface McpCallContext {
   readonly tenantId: string;
   readonly personaId: string;
   readonly invokerId: string;
+  /** 触发调用的用户 ID（用于"待我确认"列表索引）；JWT 路径下取 sub */
+  readonly invokerUserId?: string | null;
   readonly invokerType: 'mcp' | 'admin';
+  /** 用户级 OAuth token 解析器（HTTP 层按 user 注入） */
+  readonly oauthResolver?: import('../agent/tool-adapter.js').UserOauthTokenResolver;
 }
 
 export class ChronoMcpServer {
@@ -131,8 +135,10 @@ export class ChronoMcpServer {
       toolId: params.name,
       invokerType: ctx.invokerType,
       invokerId: ctx.invokerId,
+      invokerUserId: ctx.invokerUserId ?? null,
       arguments: params.arguments as Record<string, unknown>,
       confirmationToken: params.confirmationToken,
+      oauthResolver: ctx.oauthResolver,
     });
 
     if (decision.ok) {

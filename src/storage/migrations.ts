@@ -2270,6 +2270,46 @@ const v067_agent_tool_permissions: Migration = {
   ],
 };
 
+/** v068: P3 后续增强：用户级 OAuth Token 表 + tool_invocations 用户身份与索引 */
+const v068_agent_oauth_and_invocations: Migration = {
+  version: 'v068',
+  description: 'P3 后续：user_oauth_tokens / tool_invocations.invoker_user_id / 待确认 + 留存索引',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS user_oauth_tokens (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      access_token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT,
+      access_expires_at INTEGER NOT NULL,
+      granted_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      revoked_at INTEGER,
+      revocation_reason TEXT,
+      UNIQUE(tenant_id, user_id, provider, scope)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_user_oauth_tokens_lookup
+       ON user_oauth_tokens(tenant_id, user_id, provider)
+       WHERE revoked_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_user_oauth_tokens_expiry
+       ON user_oauth_tokens(access_expires_at)
+       WHERE revoked_at IS NULL`,
+
+    `/* safe:add-column:tool_invocations:invoker_user_id */ ALTER TABLE tool_invocations ADD COLUMN invoker_user_id TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_pending
+       ON tool_invocations(tenant_id, invoker_user_id, invoked_at DESC)
+       WHERE status = 'pending_confirmation'`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_confirmation_token
+       ON tool_invocations(tenant_id, confirmation_token_id)
+       WHERE confirmation_token_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_retention
+       ON tool_invocations(invoked_at)
+       WHERE status != 'pending_confirmation'`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2339,6 +2379,7 @@ const MIGRATIONS: readonly Migration[] = [
   v065_conversation_messages,
   v066_subscription_fields,
   v067_agent_tool_permissions,
+  v068_agent_oauth_and_invocations,
 ];
 
 interface MigrationRow {

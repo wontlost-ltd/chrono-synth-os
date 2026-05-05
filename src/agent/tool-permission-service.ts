@@ -18,7 +18,8 @@ import {
   tpermQueryByRevocationKey, tpermQueryDailyUsage,
   tpermCmdGrant, tpermCmdRevoke, tpermCmdRevokeByKey,
   tinvQueryById, tinvQueryListByPersona, tinvQueryDailyCount,
-  tinvCmdRecord, tinvCmdUpdateStatus,
+  tinvQueryPendingByUser, tinvQueryByConfirmationToken,
+  tinvCmdRecord, tinvCmdUpdateStatus, tinvCmdPruneBefore,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { ValidationError, NotFoundError, ErrorCode } from '../errors/index.js';
@@ -138,6 +139,7 @@ export class ToolPermissionService {
     toolId: string;
     invokerType: 'mcp' | 'internal' | 'admin';
     invokerId: string;
+    invokerUserId?: string | null;
     status: ToolInvocationStatus;
     inputHash: string;
     outputSizeBytes: number;
@@ -157,6 +159,7 @@ export class ToolPermissionService {
       toolId: input.toolId,
       invokerType: input.invokerType,
       invokerId: input.invokerId,
+      invokerUserId: input.invokerUserId ?? null,
       status: input.status,
       inputHash: input.inputHash,
       outputSizeBytes: input.outputSizeBytes,
@@ -209,6 +212,27 @@ export class ToolPermissionService {
     const row = this.tx.queryOne(tinvQueryDailyCount({ tenantId, personaId, toolId, sinceMs, successOnly }));
     return row?.count ?? 0;
   }
+
+  /** 列出当前用户待确认的高风险调用（F3） */
+  listPendingByUser(tenantId: string, userId: string, limit = 50): ToolInvocation[] {
+    const rows = this.tx.queryMany(tinvQueryPendingByUser({ tenantId, userId, limit })) as unknown as ToolInvocationRow[];
+    return rows.map(rowToInvocation);
+  }
+
+  /** 通过 confirmation token id 反查 invocation（F3） */
+  getByConfirmationToken(tenantId: string, confirmationTokenId: string): ToolInvocation | null {
+    const row = this.tx.queryOne(tinvQueryByConfirmationToken({ tenantId, confirmationTokenId }));
+    return row ? rowToInvocation(row) : null;
+  }
+
+  /**
+   * 删除截止时间之前的 invocation 记录（保留 pending_confirmation）
+   * @returns 实际删除行数
+   */
+  pruneInvocationsBefore(cutoff: number, batchSize = 1000): number {
+    const result = this.tx.execute(tinvCmdPruneBefore({ cutoff, batchSize }));
+    return result.rowsAffected;
+  }
 }
 
 function rowToPermission(row: ToolPermissionRow): ToolPermission {
@@ -240,6 +264,7 @@ function rowToInvocation(row: ToolInvocationRow): ToolInvocation {
     toolId: row.tool_id,
     invokerType: row.invoker_type as 'mcp' | 'internal' | 'admin',
     invokerId: row.invoker_id,
+    invokerUserId: row.invoker_user_id,
     status: row.status as ToolInvocationStatus,
     inputHash: row.input_hash,
     outputSizeBytes: row.output_size_bytes,

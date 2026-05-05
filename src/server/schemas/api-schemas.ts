@@ -780,3 +780,38 @@ export const CreateAgencyAuthorizationSchema = z.object({
   deniedTools: z.array(z.string().min(1)).optional(),
   expiresAt: z.number().int().positive().nullable().optional(),
 });
+
+/* ── F2/F3：Agent OAuth + 待确认 schemas ─────────────────────────── */
+
+export const AgentOauthAuthorizeBodySchema = z.object({
+  scope: z.string().min(1),
+  redirectAfter: z.string().min(1).max(512).default('/'),
+});
+
+export const AgentOauthCallbackQuerySchema = z.object({
+  code: z.string().min(1).optional(),
+  state: z.string().min(1).optional(),
+  error: z.string().optional(),
+  error_description: z.string().optional(),
+});
+
+export const AgentOauthScopeQuerySchema = z.object({
+  scope: z.string().min(1),
+});
+
+export const AgentOauthRevokeBodySchema = z.object({
+  reason: z.string().min(1).max(256).default('user_initiated'),
+});
+
+export const AgentConfirmationsPendingQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+export const AgentConfirmationsApproveBodySchema = z.object({
+  arguments: z.record(z.string(), z.unknown()),
+  sessionId: z.string().min(1).max(128).optional(),
+});
+
+export const AgentConfirmationsRejectBodySchema = z.object({
+  reason: z.string().min(1).max(256).default('user_rejected'),
+});

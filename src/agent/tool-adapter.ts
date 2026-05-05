@@ -7,17 +7,29 @@
 
 import type { McpToolSchema } from '@chrono/kernel';
 
+/**
+ * 用户级 OAuth access token 解析器
+ *
+ * 工具按 scope 索取 access token；resolver 内部自动刷新 + 持久化。
+ * 返回 null 表示该用户尚未对此 scope 授权（工具应回 401 引导授权）。
+ */
+export type UserOauthTokenResolver = (scope: string) => Promise<string | null>;
+
 /** 工具调用上下文 */
 export interface ToolInvocationContext {
   readonly tenantId: string;
   readonly personaId: string;
   readonly invokerType: 'mcp' | 'internal' | 'admin';
   readonly invokerId: string;
+  /** 触发本次调用的用户 ID（用于按用户解析 OAuth token） */
+  readonly invokerUserId?: string | null;
   readonly arguments: Record<string, unknown>;
   /** 二次确认 token（若工具 highRisk） */
   readonly confirmationToken?: string;
   /** 调用截止时间 */
   readonly deadline: number;
+  /** 用户级 OAuth token 解析器（可选；存在则工具优先使用） */
+  readonly oauthResolver?: UserOauthTokenResolver;
 }
 
 /** 工具内容元素 */

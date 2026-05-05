@@ -32,6 +32,8 @@ export const AGAUTH_QUERY_BY_REVOCATION_KEY = 'agencyAuth.byRevocationKey' as co
 export const TINV_QUERY_BY_ID = 'toolInvocation.byId' as const;
 export const TINV_QUERY_LIST_BY_PERSONA = 'toolInvocation.listByPersona' as const;
 export const TINV_QUERY_DAILY_COUNT = 'toolInvocation.dailyCount' as const;
+export const TINV_QUERY_PENDING_BY_USER = 'toolInvocation.pendingByUser' as const;
+export const TINV_QUERY_BY_CONFIRMATION_TOKEN = 'toolInvocation.byConfirmationToken' as const;
 
 /* ── Command kinds ───────────────────────────────────────────────────── */
 
@@ -46,6 +48,7 @@ export const AGAUTH_CMD_RESUME = 'agencyAuth.resume' as const;
 
 export const TINV_CMD_RECORD = 'toolInvocation.record' as const;
 export const TINV_CMD_UPDATE_STATUS = 'toolInvocation.updateStatus' as const;
+export const TINV_CMD_PRUNE_BEFORE = 'toolInvocation.pruneBefore' as const;
 
 /* ── 参数类型 ────────────────────────────────────────────────────────── */
 
@@ -138,6 +141,22 @@ export interface TinvUpdateStatusParams {
   readonly completedAt: number;
 }
 
+export interface TinvPendingByUserParams {
+  readonly tenantId: string;
+  readonly userId: string;
+  readonly limit: number;
+}
+
+export interface TinvByConfirmationTokenParams {
+  readonly tenantId: string;
+  readonly confirmationTokenId: string;
+}
+
+export interface TinvPruneBeforeParams {
+  readonly cutoff: number;
+  readonly batchSize: number;
+}
+
 /* ── Query 工厂 ─────────────────────────────────────────────────────── */
 
 export function tpermQueryByPersonaTool(p: TpermByPersonaToolParams): Query<ToolPermissionRow | null, TpermByPersonaToolParams> {
@@ -188,6 +207,14 @@ export function tinvQueryDailyCount(p: TinvDailyCountParams): Query<{ count: num
   return { kind: TINV_QUERY_DAILY_COUNT, params: p };
 }
 
+export function tinvQueryPendingByUser(p: TinvPendingByUserParams): Query<readonly ToolInvocationRow[], TinvPendingByUserParams> {
+  return { kind: TINV_QUERY_PENDING_BY_USER, params: p };
+}
+
+export function tinvQueryByConfirmationToken(p: TinvByConfirmationTokenParams): Query<ToolInvocationRow | null, TinvByConfirmationTokenParams> {
+  return { kind: TINV_QUERY_BY_CONFIRMATION_TOKEN, params: p };
+}
+
 /* ── Command 工厂 ───────────────────────────────────────────────────── */
 
 export function tpermCmdGrant(p: ToolPermissionGrantParams): Command<ToolPermissionGrantParams> {
@@ -224,4 +251,8 @@ export function tinvCmdRecord(p: ToolInvocationRecordParams): Command<ToolInvoca
 
 export function tinvCmdUpdateStatus(p: TinvUpdateStatusParams): Command<TinvUpdateStatusParams> {
   return { kind: TINV_CMD_UPDATE_STATUS, params: p };
+}
+
+export function tinvCmdPruneBefore(p: TinvPruneBeforeParams): Command<TinvPruneBeforeParams> {
+  return { kind: TINV_CMD_PRUNE_BEFORE, params: p };
 }

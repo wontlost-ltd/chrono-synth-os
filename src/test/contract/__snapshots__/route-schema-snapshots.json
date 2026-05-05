@@ -44,6 +44,38 @@
       "hash": "b7efa79737f005b6c63e0a4aad9ce2e0039955a7b8672f1cacc39f788dfc22bf"
     }
   ],
+  "agent-confirmations.ts": [
+    {
+      "name": "AgentConfirmationsApproveBodySchema",
+      "hash": "157c8ceb50caa68eef771caed1c7e6b70e2b5465984770cd9471fc14c4c5ff49"
+    },
+    {
+      "name": "AgentConfirmationsPendingQuerySchema",
+      "hash": "b78db12239d01bcbae32640d096210bb7b446232e4300777ca5e184d1541ac32"
+    },
+    {
+      "name": "AgentConfirmationsRejectBodySchema",
+      "hash": "62df4372c5951639af4da6ce1b16f783475443473e54be4d137bcae6f75983ea"
+    }
+  ],
+  "agent-oauth.ts": [
+    {
+      "name": "AgentOauthAuthorizeBodySchema",
+      "hash": "a1c9450fcc93d13bf2e0b581b225100449c156246fd464bfb3d59d476ff596b9"
+    },
+    {
+      "name": "AgentOauthCallbackQuerySchema",
+      "hash": "19393f88f411ab357ef3c5fbec71d1cab5f366ca251e6379d95d023488aa9215"
+    },
+    {
+      "name": "AgentOauthRevokeBodySchema",
+      "hash": "ccc449b28df4ae0d7f635fcca10e0d4ea6305a41ad5c979573965af42da6337b"
+    },
+    {
+      "name": "AgentOauthScopeQuerySchema",
+      "hash": "79adab3e39d16795c360e4360dc5edcb17be21c98cdd7dad81c72ac32d4f7762"
+    }
+  ],
   "api-keys.ts": [
     {
       "name": "CreateApiKeySchema",

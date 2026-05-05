@@ -29,6 +29,8 @@ export interface ToolInvocation {
   readonly invokerType: 'mcp' | 'internal' | 'admin';
   /** 调用者标识（jwt sub / api key hash / mcp client id） */
   readonly invokerId: string;
+  /** 触发调用的用户 ID（用于"待我确认"列表索引）；MCP/internal 无对应用户时为 null */
+  readonly invokerUserId: string | null;
   readonly status: ToolInvocationStatus;
   /** 输入参数 hash（sha256，前 16 字节）— 用于去重和一致性校验 */
   readonly inputHash: string;
@@ -52,6 +54,7 @@ export interface ToolInvocationRecordParams {
   readonly toolId: string;
   readonly invokerType: string;
   readonly invokerId: string;
+  readonly invokerUserId: string | null;
   readonly status: string;
   readonly inputHash: string;
   readonly outputSizeBytes: number;
@@ -71,6 +74,7 @@ export interface ToolInvocationRow {
   readonly tool_id: string;
   readonly invoker_type: string;
   readonly invoker_id: string;
+  readonly invoker_user_id: string | null;
   readonly status: string;
   readonly input_hash: string;
   readonly output_size_bytes: number;

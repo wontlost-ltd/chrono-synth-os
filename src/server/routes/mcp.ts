@@ -27,6 +27,7 @@ import {
   MCP_ERROR_UNAUTHORIZED,
 } from '@chrono/kernel';
 import type { JwtPayload } from '../../types/auth.js';
+import type { UserOauthTokenResolverFactory } from '../agent-oauth-resolver.js';
 
 const MCP_RATE_LIMIT = {
   config: {
@@ -45,7 +46,11 @@ interface McpRequestBody {
   params?: unknown;
 }
 
-export function registerMcpRoutes(app: FastifyInstance, mcpServer: ChronoMcpServer): void {
+export function registerMcpRoutes(
+  app: FastifyInstance,
+  mcpServer: ChronoMcpServer,
+  oauthResolverFactory?: UserOauthTokenResolverFactory,
+): void {
   /* GET /api/v1/mcp/capabilities — 能力发现（无需鉴权，便于客户端探测） */
   app.get('/api/v1/mcp/capabilities', async () => {
     return {
@@ -104,7 +109,9 @@ export function registerMcpRoutes(app: FastifyInstance, mcpServer: ChronoMcpServ
       tenantId: request.tenantId,
       personaId: personaId || 'unbound',
       invokerId: user.sub,
+      invokerUserId: user.sub,
       invokerType: user.role === 'admin' ? 'admin' : 'mcp',
+      oauthResolver: oauthResolverFactory?.(request.tenantId, user.sub),
     };
 
     const rpcRequest: JsonRpcRequest = {
