@@ -815,3 +815,32 @@ export const AgentConfirmationsApproveBodySchema = z.object({
 export const AgentConfirmationsRejectBodySchema = z.object({
   reason: z.string().min(1).max(256).default('user_rejected'),
 });
+
+/* P1.7.2 — analytics 批量埋点
+ *
+ * Property value 限制为标量（string / number / boolean / null）以阻断
+ * 嵌套对象造成的 PII 泄漏。string 上限 2000 字符避开 abuse；keys 限制 32 个。
+ * Event name 强制 lowercase + dot/underscore，便于按 prefix 聚合。 */
+const AnalyticsPropertyValueSchema = z.union([
+  z.string().max(2000),
+  z.number(),
+  z.boolean(),
+  z.null(),
+]);
+
+export const AnalyticsEventSchema = z.object({
+  name: z.string().min(1).max(128).regex(/^[a-z0-9_.]+$/, {
+    message: 'event name must be lowercase alphanumeric / underscore / dot',
+  }),
+  properties: z.record(z.string().max(64), AnalyticsPropertyValueSchema)
+    .refine((p) => Object.keys(p).length <= 32, {
+      message: 'properties must have at most 32 keys',
+    })
+    .optional(),
+  ts: z.number().int().nonnegative().optional(),
+});
+
+export const AnalyticsBatchSchema = z.object({
+  events: z.array(AnalyticsEventSchema).min(1).max(200),
+  sessionId: z.string().min(8).max(128).optional(),
+});

@@ -7,48 +7,18 @@
  * 离线作业按 tenant_id 滚动 rollup。
  *
  * 设计取舍：
- *  - 单事务批量 INSERT，避免 N 次 round trip（最大 200/批，由路由层强制）。
- *  - properties_json 仅接受字符串/数字/布尔/null，过滤嵌套对象，防止 PII
- *    被无意写入；保留 stringification 工作，便于 SQL 查询时直接 JSON 过滤。
- *  - 客户端时间戳 (client_ts) 不可信但保留，便于排查时差；服务端写入 ingested_at
- *    作为权威时间。
+ *  - 单事务批量 INSERT，避免 N 次 round trip（最大 200/批，由 schema 强制）。
+ *  - properties 仅接受标量值（schema 层校验），过滤嵌套对象，防止 PII 泄漏。
+ *  - 客户端时间戳 (client_ts) 不可信但保留，便于排查时差；服务端写入
+ *    ingested_at 作为权威时间。
  *  - 失败行不会让整批失败（per-row try/catch），只记录失败计数；这是埋点
  *    层的合理权衡——丢一行胜过丢一整批。
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import type { IDatabase } from '../../storage/database.js';
-
-/** 单个事件 payload；与前端 AnalyticsEvent 接口对齐。 */
-const AnalyticsPropertyValueSchema = z.union([
-  z.string().max(2000),
-  z.number(),
-  z.boolean(),
-  z.null(),
-]);
-
-const AnalyticsEventSchema = z.object({
-  /** event 名称：lowercase + dot-separated；最长 128 字符 */
-  name: z.string().min(1).max(128).regex(/^[a-z0-9_.]+$/, {
-    message: 'event name must be lowercase alphanumeric / underscore / dot',
-  }),
-  /** 自定义属性；字符串值最长 2000，整体最多 32 个 key */
-  properties: z.record(z.string().max(64), AnalyticsPropertyValueSchema)
-    .refine((p) => Object.keys(p).length <= 32, {
-      message: 'properties must have at most 32 keys',
-    })
-    .optional(),
-  /** 客户端时间戳（毫秒，自 1970）；服务器仍写自己的 ingested_at */
-  ts: z.number().int().nonnegative().optional(),
-});
-
-const BatchSchema = z.object({
-  events: z.array(AnalyticsEventSchema).min(1).max(200),
-  /** 可选 session_id：未登录场景下用于事件关联 */
-  sessionId: z.string().min(8).max(128).optional(),
-});
+import { AnalyticsBatchSchema } from '../schemas/api-schemas.js';
 
 interface JwtUserShape {
   sub?: string;
@@ -65,7 +35,7 @@ export function registerAnalyticsRoutes(app: FastifyInstance, db: IDatabase | un
    * 批量写入用户旅程事件。无 db 时降级为接受请求但不持久化（dev / readonly）。
    * 路由本身不做严格 rate-limit（埋点本就稀疏），但全局 rate-limit 仍生效。 */
   app.post('/api/v1/analytics/events', async (request, reply) => {
-    const parsed = BatchSchema.safeParse(request.body);
+    const parsed = AnalyticsBatchSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
         error: 'ValidationError',

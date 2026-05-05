@@ -76,6 +76,12 @@
       "hash": "79adab3e39d16795c360e4360dc5edcb17be21c98cdd7dad81c72ac32d4f7762"
     }
   ],
+  "analytics.ts": [
+    {
+      "name": "AnalyticsBatchSchema",
+      "hash": "bbe3f057aafb64459df750c62c8e12dc281cb287b94cbeb4db56682a106f371d"
+    }
+  ],
   "api-keys.ts": [
     {
       "name": "CreateApiKeySchema",
