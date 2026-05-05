@@ -17,6 +17,7 @@ export type ToolInvocationStatus =
   | 'denied_permission'
   | 'denied_quota'
   | 'denied_circuit_open'
+  | 'tool_not_found'
   | 'timeout';
 
 /** 工具调用记录 */

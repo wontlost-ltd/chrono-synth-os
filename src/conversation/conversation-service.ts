@@ -155,6 +155,10 @@ export class ConversationService {
     return this.confirmationStore;
   }
 
+  getRetriever(): ConversationKnowledgeRetriever {
+    return this.retriever;
+  }
+
   /** Health probe：当前 LLM 调用链 circuit breaker 状态 */
   getCircuitState(): 'closed' | 'open' | 'half_open' {
     return this.circuitBreaker.getState();

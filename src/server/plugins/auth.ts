@@ -16,7 +16,7 @@ import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
 /** 不需要认证的路径前缀（仅健康检查端点豁免，指标端点需认证） */
-const PUBLIC_PATHS = new Set(['/healthz', '/readyz']);
+const PUBLIC_PATHS = new Set(['/healthz', '/readyz', '/api/v1/mcp/capabilities']);
 
 function isPublicPath(url: string): boolean {
   for (const p of PUBLIC_PATHS) {

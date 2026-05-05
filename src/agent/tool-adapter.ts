@@ -1,0 +1,61 @@
+/**
+ * 工具适配器接口
+ *
+ * 所有外部工具（WebSearch / Calendar / Email / 内部 MCP 工具）实现此接口。
+ * ToolInvocationPipeline 通过此接口统一调度，不关心工具实际类型。
+ */
+
+import type { McpToolSchema } from '@chrono/kernel';
+
+/** 工具调用上下文 */
+export interface ToolInvocationContext {
+  readonly tenantId: string;
+  readonly personaId: string;
+  readonly invokerType: 'mcp' | 'internal' | 'admin';
+  readonly invokerId: string;
+  readonly arguments: Record<string, unknown>;
+  /** 二次确认 token（若工具 highRisk） */
+  readonly confirmationToken?: string;
+  /** 调用截止时间 */
+  readonly deadline: number;
+}
+
+/** 工具内容元素 */
+export type ToolContent =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'json'; readonly json: unknown };
+
+/** 工具调用结果 */
+export interface ToolInvocationResult {
+  /** 标准化输出（structured） */
+  readonly content: readonly ToolContent[];
+  /** 计费金额（分） */
+  readonly costCents: number;
+  /** 输出 size（bytes，用于审计） */
+  readonly outputSizeBytes: number;
+}
+
+/** 工具元数据 */
+export interface ToolMetadata {
+  readonly id: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly inputSchema: McpToolSchema;
+  /** 高风险工具：强制二次确认（pipeline 自动校验） */
+  readonly highRisk: boolean;
+  /** 默认超时（ms）；pipeline 强制；null = 无超时（仅极少数同步工具用） */
+  readonly defaultTimeoutMs: number;
+  /** 默认每日调用上限（用作 constraints fallback） */
+  readonly defaultMaxPerDay: number;
+}
+
+/** 工具适配器 */
+export interface ToolAdapter {
+  readonly metadata: ToolMetadata;
+  /**
+   * 执行工具。pipeline 已完成所有前置检查（权限、配额、确认、断路器）。
+   * 实现方只负责：读取 arguments → 调用底层 API → 返回 ToolInvocationResult。
+   * 抛出异常 → pipeline 捕获并记录为 status=failed/timeout。
+   */
+  invoke(ctx: ToolInvocationContext): Promise<ToolInvocationResult>;
+}

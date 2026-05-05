@@ -220,6 +220,7 @@
       "hash": "79da6bd1168c5e2cbe977d607a8983cda24bb2b840d39ad6717f11151f9829bc"
     }
   ],
+  "mcp.ts": [],
   "memories.ts": [
     {
       "name": "CreateMemorySchema",

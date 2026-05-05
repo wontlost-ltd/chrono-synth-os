@@ -64,6 +64,17 @@ import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerAdminConfigRoutes } from './routes/admin-config.js';
 import { registerAdminTemplateRoutes } from './routes/admin-templates.js';
 import { registerAdminToolsRoutes } from './routes/admin-tools.js';
+import { registerMcpRoutes } from './routes/mcp.js';
+import { ToolPermissionService } from '../agent/tool-permission-service.js';
+import { AgencyAuthorizationService } from '../agent/agency-authorization-service.js';
+import { ToolRegistry } from '../agent/tool-registry.js';
+import { ToolInvocationPipeline } from '../agent/tool-invocation-pipeline.js';
+import { PersonaContextTool } from '../agent/tools/persona-context-tool.js';
+import { MemorySearchTool } from '../agent/tools/memory-search-tool.js';
+import { MemoryAddTool } from '../agent/tools/memory-add-tool.js';
+import { KnowledgeQueryTool } from '../agent/tools/knowledge-query-tool.js';
+import { DecisionRecordTool } from '../agent/tools/decision-record-tool.js';
+import { ChronoMcpServer } from '../mcp/chrono-mcp-server.js';
 import { registerBulkKnowledgeImportRoutes } from './routes/bulk-knowledge-import.js';
 import { BulkImportService } from '../knowledge/bulk-import-service.js';
 import { UrlContentFetcher } from '../knowledge/url-content-fetcher.js';
@@ -410,6 +421,29 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   conversationRetentionWorker.start();
   app.addHook('onClose', async () => { await conversationRetentionWorker.stop(); });
 
+  /* P3 Agent / MCP Server 装配 */
+  const toolPermissionService = new ToolPermissionService(tx);
+  const agencyAuthorizationService = new AgencyAuthorizationService(tx);
+  const toolRegistry = new ToolRegistry();
+
+  toolRegistry.register(new PersonaContextTool(bulkImportPersonaCoreService));
+  toolRegistry.register(new MemorySearchTool(bulkImportPersonaCoreService));
+  toolRegistry.register(new MemoryAddTool(bulkImportPersonaCoreService));
+  toolRegistry.register(new KnowledgeQueryTool(conversationService.getRetriever()));
+  toolRegistry.register(new DecisionRecordTool(bulkImportPersonaCoreService));
+  /* P3-C 外部工具适配器在此注册（WebSearch / Calendar / Email） */
+  toolRegistry.freeze();
+
+  const toolInvocationPipeline = new ToolInvocationPipeline({
+    tx,
+    registry: toolRegistry,
+    logger: deps.os.getLogger(),
+    permissions: toolPermissionService,
+    authorizations: agencyAuthorizationService,
+    confirmationStore: conversationService.getConfirmationStore(),
+  });
+  const mcpServer = new ChronoMcpServer(toolRegistry, toolInvocationPipeline, deps.os.getLogger());
+
   /* 路由 */
   registerAuthRoutes(app, db, config);
   registerUserRoutes(app, services);
@@ -463,6 +497,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
   registerAdminToolsRoutes(app, db);
+  registerMcpRoutes(app, mcpServer);
   registerMobileRoutes(app, services);
   registerIdentityRoutes(app, services);
   registerAvatarRoutes(app, db, deps.os, tenantFactory);
