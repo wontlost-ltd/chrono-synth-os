@@ -1,0 +1,36 @@
+{
+  "@context": "https://chrono-synth.dev/ppf/v1",
+  "@type": "PersonaKernel",
+  "id": "did:chrono:abcdefgh",
+  "version": "1.0",
+  "createdAt": 1700000000000,
+  "exportedAt": 1714867200000,
+  "sourceInstance": "https://app.chrono-synth.dev",
+  "values": [
+    { "id": "precision", "label": "Precision", "weight": 0.78 },
+    { "id": "patience", "label": "Patience", "weight": 0.92 }
+  ],
+  "narrative": {
+    "primary": "Out-of-order values should fail validation.",
+    "additional": []
+  },
+  "memory": {
+    "schema": "memory-node.v1",
+    "nodes": [],
+    "edges": []
+  },
+  "capabilities": [],
+  "tools": { "allowed": [], "denied": [] },
+  "governance": {
+    "driftThreshold": { "warning": 0.15, "critical": 0.30 },
+    "hallucinationPolicy": "flag_and_confirm",
+    "retentionDays": 365,
+    "requireConfirmationFor": []
+  },
+  "provenance": {
+    "exportedBy": "test",
+    "exportReason": "test",
+    "checksum": "sha256:0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "signature": null
+}

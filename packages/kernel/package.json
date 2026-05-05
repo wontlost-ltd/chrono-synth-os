@@ -1,7 +1,7 @@
 {
   "name": "@chrono/kernel",
   "version": "0.1.0",
-  "private": true,
+  "description": "Pure-domain kernel for the Chrono Synth digital persona system. Zero runtime dependencies; portable to Node.js, Web Workers, Tauri, and React Native via host-supplied UnitOfWork adapters.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,5 +10,29 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "chrono-synth",
+    "persona",
+    "domain-driven-design",
+    "unit-of-work",
+    "ppf",
+    "ai-agent",
+    "portable"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrono-synth/chrono-synth-os.git",
+    "directory": "packages/kernel"
+  },
+  "homepage": "https://github.com/chrono-synth/chrono-synth-os/tree/main/packages/kernel#readme",
+  "publishConfig": {
+    "access": "public"
   }
 }
