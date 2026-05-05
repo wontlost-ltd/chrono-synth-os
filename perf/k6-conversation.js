@@ -43,6 +43,7 @@ const personaIds = new SharedArray('persona-ids', () => PERSONA_IDS_RAW.split(',
 
 const messageDuration = new Trend('chrono_conversation_message_ms', true);
 const messageQuotaExhausted = new Counter('chrono_conversation_quota_exhausted_total');
+const messageServerError = new Counter('chrono_conversation_server_error_total');
 
 const SCENARIOS = {
   /* CI smoke：5 VU × 30s，总 ~150 req，验证脚本可执行 */
@@ -78,13 +79,32 @@ if (!SCENARIOS[SCENARIO]) {
   fail(`Unknown K6_SCENARIO=${SCENARIO}; expected one of: ${Object.keys(SCENARIOS).join(', ')}`);
 }
 
-export const options = {
-  scenarios: { conversation: SCENARIOS[SCENARIO] },
-  thresholds: {
+/* smoke 阈值放宽：CI runner 通常没有完整的 persona seed + 有效 JWT，
+ * 大量请求会被授权层 (403) 或路由限速 (429) 合法拦截。smoke 只验证
+ * “不冒烟”——服务存活、无 5xx、无连接错误。Ramp/soak/contention 跑在
+ * staging 环境上，使用真实 fixture，恢复严格阈值。 */
+const THRESHOLDS_BY_SCENARIO = {
+  smoke: {
+    /* smoke 不验证业务正确性，只验证服务存活 */
+    'http_req_duration{name:msg_send}': ['p(95)<2000'],
+    'http_reqs{name:msg_send}': ['count>0'],
+    'chrono_conversation_server_error_total': ['count==0'],
+  },
+  ramp: {
     'http_req_failed{name:msg_send}': ['rate<0.01'],
     'http_req_duration{name:msg_send}': ['p(95)<500', 'p(99)<1500'],
     'checks': ['rate>0.99'],
   },
+  soak: {
+    'http_req_failed{name:msg_send}': ['rate<0.01'],
+    'http_req_duration{name:msg_send}': ['p(95)<500', 'p(99)<1500'],
+    'checks': ['rate>0.99'],
+  },
+};
+
+export const options = {
+  scenarios: { conversation: SCENARIOS[SCENARIO] },
+  thresholds: THRESHOLDS_BY_SCENARIO[SCENARIO] ?? THRESHOLDS_BY_SCENARIO.ramp,
   /* k6 默认会跟随 30x；保持显式以避免后续策略意外变化 */
   maxRedirects: 0,
   /* 对话端点本身有时延；2x p99 SLO 作为单请求超时上限 */
@@ -132,9 +152,8 @@ export default function () {
     'no 5xx': (r) => r.status < 500,
   });
 
-  if (res.status === 429) {
-    messageQuotaExhausted.add(1);
-  }
+  if (res.status === 429) messageQuotaExhausted.add(1);
+  if (res.status >= 500) messageServerError.add(1);
 
   if (!ok) {
     /* 仅在调试时打印；CI 阈值会 fail 整个 run */
