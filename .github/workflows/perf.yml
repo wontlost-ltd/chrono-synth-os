@@ -1,0 +1,168 @@
+name: Perf
+
+on:
+  # 每周日 03:00 UTC（北京时间周日 11:00）跑 ramp profile
+  schedule:
+    - cron: '0 3 * * 0'
+  # 手动触发：可以选 scenario，也可以指定单个脚本
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'k6 scenario (smoke / ramp / soak / contention / burst)'
+        required: false
+        default: 'ramp'
+        type: choice
+        options: [smoke, ramp, soak, contention, burst]
+      script:
+        description: 'Which suite to run (all / conversation / agent-tool / portability-export)'
+        required: false
+        default: 'all'
+        type: choice
+        options: [all, conversation, agent-tool, portability-export]
+  # PR 上跑 smoke profile，作为 fast feedback；不阻塞合并（持续 ≤ 90s）
+  pull_request:
+    branches: [main]
+    paths:
+      - 'perf/**'
+      - '.github/workflows/perf.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    # weekly 跑 30 分钟 + 一些 buffer；手动可调；smoke ≤ 5 分钟
+    timeout-minutes: 50
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: chrono_perf
+          POSTGRES_USER: perf
+          POSTGRES_PASSWORD: perf
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+      redis:
+        image: redis:8-alpine
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    env:
+      # PR 跑 smoke；schedule + dispatch 用 inputs.scenario 或默认 ramp
+      K6_SCENARIO: ${{ github.event.inputs.scenario || (github.event_name == 'pull_request' && 'smoke' || 'ramp') }}
+      RUN_SCRIPT: ${{ github.event.inputs.script || 'all' }}
+      # 测试 fixture 用的 personaId 列表；perf-bootstrap 步骤会预先 seed
+      PERSONA_IDS: 'perf-persona-1,perf-persona-2,perf-persona-3,perf-persona-4,perf-persona-5'
+      # 后端启动配置：与 test-postgres 任务保持同源
+      CHRONO_DB_DRIVER: postgres
+      CHRONO_DB_CONNECTION_STRING: postgres://perf:perf@localhost:5432/chrono_perf
+      REDIS_URL: redis://localhost:6379
+      CHRONO_AUTH_ENABLED: 'true'
+      # 这两个仅 perf-runner 使用；不要复用生产或集成环境的 secret
+      CHRONO_AUTH_API_KEYS: ${{ secrets.PERF_API_KEYS || 'perf-api-key-do-not-use-in-prod' }}
+      PERF_BEARER_TOKEN: ${{ secrets.PERF_BEARER_TOKEN || '' }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        run: |
+          npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+          npx tsc -b tsconfig.src.json
+          npm run build
+
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          K6_VERSION=v0.55.2
+          curl -fsSL "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-amd64.tar.gz" \
+            | tar -xz -C /tmp
+          sudo install -m 0755 "/tmp/k6-${K6_VERSION}-linux-amd64/k6" /usr/local/bin/k6
+          k6 version
+
+      - name: Validate scripts (k6 archive)
+        run: |
+          set -euo pipefail
+          mkdir -p perf-archives
+          for f in perf/k6-*.js; do
+            k6 archive --quiet -O "perf-archives/$(basename "$f").tar" "$f"
+          done
+
+      - name: Start backend
+        run: |
+          set -euo pipefail
+          mkdir -p perf-results perf-logs
+          npm run start > perf-logs/backend.log 2>&1 &
+          echo $! > perf-logs/backend.pid
+          # 探活：最多等 60 秒
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:3000/healthz > /dev/null 2>&1; then
+              echo "backend healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "backend did not become healthy within 60s; tail of log:"
+          tail -100 perf-logs/backend.log
+          exit 1
+
+      - name: Run conversation perf
+        if: env.RUN_SCRIPT == 'all' || env.RUN_SCRIPT == 'conversation'
+        env:
+          BASE_URL: http://localhost:3000
+          API_KEY: ${{ env.CHRONO_AUTH_API_KEYS }}
+        run: k6 run perf/k6-conversation.js
+
+      - name: Run agent-tool perf
+        if: env.RUN_SCRIPT == 'all' || env.RUN_SCRIPT == 'agent-tool'
+        env:
+          BASE_URL: http://localhost:3000
+          BEARER_TOKEN: ${{ env.PERF_BEARER_TOKEN }}
+        # PERF_BEARER_TOKEN secret 缺失时跳过这一步并 warn，不让整条流水线 fail
+        run: |
+          if [ -z "${BEARER_TOKEN:-}" ]; then
+            echo "::warning::Skipping agent-tool perf — PERF_BEARER_TOKEN secret not set"
+            exit 0
+          fi
+          k6 run perf/k6-agent-tool.js
+
+      - name: Run portability-export perf
+        if: env.RUN_SCRIPT == 'all' || env.RUN_SCRIPT == 'portability-export'
+        env:
+          BASE_URL: http://localhost:3000
+          BEARER_TOKEN: ${{ env.PERF_BEARER_TOKEN }}
+        run: |
+          if [ -z "${BEARER_TOKEN:-}" ]; then
+            echo "::warning::Skipping portability-export perf — PERF_BEARER_TOKEN secret not set"
+            exit 0
+          fi
+          k6 run perf/k6-portability-export.js
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f perf-logs/backend.pid ]; then
+            kill "$(cat perf-logs/backend.pid)" || true
+          fi
+
+      - name: Upload perf results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ env.K6_SCENARIO }}-${{ github.run_id }}
+          path: |
+            perf-results/
+            perf-logs/
+          retention-days: 30
+          if-no-files-found: warn
