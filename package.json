@@ -36,7 +36,7 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^25.2.3",
+    "@types/node": "^25.6.0",
     "@types/pg": "^8.16.0",
     "fake-indexeddb": "^6.2.5",
     "typescript": "^5.9.3"
