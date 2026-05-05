@@ -2310,6 +2310,35 @@ const v068_agent_oauth_and_invocations: Migration = {
   ],
 };
 
+/** v069: P1.7.2 onboarding/UX 埋点。用户旅程事件批量写入，配合
+ *  `POST /api/v1/analytics/events`。每行一个事件，properties_json 存
+ *  调用方自定义属性（PII-free 字符串/数字/布尔，由路由层做白名单校验）。
+ *  user_id 可空：未登录的 onboarding 阶段允许匿名（按 session_id 关联）。 */
+const v069_events_user_journey: Migration = {
+  version: 'v069',
+  description: 'P1.7.2: events_user_journey for onboarding + first-use telemetry',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS events_user_journey (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT,
+      session_id TEXT,
+      name TEXT NOT NULL,
+      properties_json TEXT NOT NULL DEFAULT '{}',
+      client_ts INTEGER NOT NULL,
+      ingested_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_events_user_journey_tenant_ts
+       ON events_user_journey(tenant_id, ingested_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_events_user_journey_user_ts
+       ON events_user_journey(tenant_id, user_id, ingested_at DESC)
+       WHERE user_id IS NOT NULL`,
+    /* retention 索引：用 ingested_at 而非 client_ts，因为 client_ts 不可信 */
+    `CREATE INDEX IF NOT EXISTS idx_events_user_journey_retention
+       ON events_user_journey(ingested_at)`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2380,6 +2409,7 @@ const MIGRATIONS: readonly Migration[] = [
   v066_subscription_fields,
   v067_agent_tool_permissions,
   v068_agent_oauth_and_invocations,
+  v069_events_user_journey,
 ];
 
 interface MigrationRow {
