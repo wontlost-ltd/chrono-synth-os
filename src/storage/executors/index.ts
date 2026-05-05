@@ -50,6 +50,7 @@ import { registerConfirmationTokenExecutors } from './confirmation-token-executo
 import { registerConversationMessageExecutors } from './conversation-message-executors.js';
 import { registerPersonaTemplateExecutors } from './persona-template-executors.js';
 import { registerBulkImportExecutors } from './bulk-import-executors.js';
+import { registerToolPermissionExecutors } from './tool-permission-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -75,6 +76,7 @@ import {
   CMSG_QUERY_COUNT_BY_SESSION,
   PTPL_QUERY_LIST,
   BIMP_QUERY_BY_TENANT_AND_ID,
+  TPERM_QUERY_BY_PERSONA_TOOL,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -131,6 +133,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(CMSG_QUERY_COUNT_BY_SESSION)) registerConversationMessageExecutors();
   if (!resolveQueryExecutor(PTPL_QUERY_LIST)) registerPersonaTemplateExecutors();
   if (!resolveQueryExecutor(BIMP_QUERY_BY_TENANT_AND_ID)) registerBulkImportExecutors();
+  if (!resolveQueryExecutor(TPERM_QUERY_BY_PERSONA_TOOL)) registerToolPermissionExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

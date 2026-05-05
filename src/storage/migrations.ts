@@ -2197,6 +2197,79 @@ const v066_subscription_fields: Migration = {
   ],
 };
 
+/** v067: P3 Agent 工具权限 + 代理授权书 + 工具调用记录 */
+const v067_agent_tool_permissions: Migration = {
+  version: 'v067',
+  description: 'P3：tool_permissions / agency_authorizations / tool_invocations 表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tool_permissions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      constraints_json TEXT NOT NULL DEFAULT '{}',
+      granted_by TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      expires_at INTEGER,
+      revoked_at INTEGER,
+      revocation_reason TEXT,
+      revocation_key TEXT NOT NULL UNIQUE,
+      UNIQUE(tenant_id, persona_id, tool_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_permissions_persona
+       ON tool_permissions(tenant_id, persona_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_permissions_tenant_active
+       ON tool_permissions(tenant_id) WHERE revoked_at IS NULL`,
+
+    `CREATE TABLE IF NOT EXISTS agency_authorizations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      principal_user_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      scope_description TEXT NOT NULL,
+      allowed_tools_json TEXT NOT NULL DEFAULT '[]',
+      denied_tools_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active',
+      granted_at INTEGER NOT NULL,
+      expires_at INTEGER,
+      revoked_at INTEGER,
+      revocation_reason TEXT,
+      revocation_key TEXT NOT NULL UNIQUE
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_authorizations_persona
+       ON agency_authorizations(tenant_id, persona_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_authorizations_principal
+       ON agency_authorizations(tenant_id, principal_user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_authorizations_status
+       ON agency_authorizations(tenant_id, status)`,
+
+    `CREATE TABLE IF NOT EXISTS tool_invocations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      invoker_type TEXT NOT NULL,
+      invoker_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      output_size_bytes INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      cost_cents INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      invoked_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      confirmation_token_id TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_persona_invoked
+       ON tool_invocations(tenant_id, persona_id, invoked_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_quota_window
+       ON tool_invocations(tenant_id, persona_id, tool_id, invoked_at)
+       WHERE status = 'success'`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2265,6 +2338,7 @@ const MIGRATIONS: readonly Migration[] = [
   v064_bulk_import_metadata,
   v065_conversation_messages,
   v066_subscription_fields,
+  v067_agent_tool_permissions,
 ];
 
 interface MigrationRow {

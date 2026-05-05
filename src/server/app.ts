@@ -63,6 +63,7 @@ import { registerCollaborationRoutes } from './routes/collaboration.js';
 import { registerApiKeyRoutes } from './routes/api-keys.js';
 import { registerAdminConfigRoutes } from './routes/admin-config.js';
 import { registerAdminTemplateRoutes } from './routes/admin-templates.js';
+import { registerAdminToolsRoutes } from './routes/admin-tools.js';
 import { registerBulkKnowledgeImportRoutes } from './routes/bulk-knowledge-import.js';
 import { BulkImportService } from '../knowledge/bulk-import-service.js';
 import { UrlContentFetcher } from '../knowledge/url-content-fetcher.js';
@@ -461,6 +462,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
+  registerAdminToolsRoutes(app, db);
   registerMobileRoutes(app, services);
   registerIdentityRoutes(app, services);
   registerAvatarRoutes(app, db, deps.os, tenantFactory);

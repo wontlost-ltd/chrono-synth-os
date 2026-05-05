@@ -741,3 +741,42 @@ export const CommitImportBodySchema = z.object({
   manifestJson: z.string().min(1),
   commitToken: z.string().min(1),
 });
+
+/* P3 工具权限 / 代理授权管理 */
+const AdminToolScopeSchema = z.enum(['read', 'write', 'execute']);
+const AdminAgencyScopeSchema = z.enum(['communication', 'scheduling', 'research', 'finance', 'all']);
+
+const AdminToolConstraintsSchema = z.object({
+  maxActionsPerDay: z.number().int().positive().optional(),
+  requireConfirmation: z.boolean().optional(),
+  budgetLimitCents: z.number().int().nonnegative().optional(),
+  allowList: z.array(z.string()).optional(),
+  denyList: z.array(z.string()).optional(),
+}).strict();
+
+export const GrantToolPermissionSchema = z.object({
+  personaId: z.string().min(1),
+  toolId: z.string().min(1).max(100),
+  scope: AdminToolScopeSchema,
+  constraints: AdminToolConstraintsSchema.optional().default({}),
+  expiresAt: z.number().int().positive().nullable().optional(),
+});
+
+export const RevokeToolPermissionByKeySchema = z.object({
+  revocationKey: z.string().min(8),
+  reason: z.string().min(1).max(500),
+});
+
+export const RevokeReasonSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+export const CreateAgencyAuthorizationSchema = z.object({
+  personaId: z.string().min(1),
+  principalUserId: z.string().min(1),
+  scope: AdminAgencyScopeSchema,
+  scopeDescription: z.string().min(10).max(2000),
+  allowedTools: z.array(z.string().min(1)).optional(),
+  deniedTools: z.array(z.string().min(1)).optional(),
+  expiresAt: z.number().int().positive().nullable().optional(),
+});

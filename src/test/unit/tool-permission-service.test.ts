@@ -1,0 +1,185 @@
+/**
+ * 单元测试：ToolPermissionService（P3-A）
+ */
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { createMemoryDatabase } from '../../storage/database.js';
+import { runMigrations } from '../../storage/migrations.js';
+import { ToolPermissionService } from '../../agent/tool-permission-service.js';
+
+function makeService() {
+  const db = createMemoryDatabase();
+  runMigrations(db);
+  const service = new ToolPermissionService(db);
+  return { db, service };
+}
+
+describe('ToolPermissionService', () => {
+  it('grant 创建权限并返回 revocation_key', () => {
+    const { db, service } = makeService();
+    try {
+      const result = service.grant({
+        tenantId: 'default',
+        personaId: 'p1',
+        toolId: 'web_search',
+        scope: 'execute',
+        constraints: { maxActionsPerDay: 100 },
+        grantedBy: 'admin_user',
+      });
+      assert.ok(result.id.startsWith('tperm_'));
+      assert.ok(result.revocationKey.startsWith('rk_'));
+    } finally { db.close(); }
+  });
+
+  it('check 在权限存在且未撤销时返回 allowed', () => {
+    const { db, service } = makeService();
+    try {
+      service.grant({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        scope: 'execute', constraints: {}, grantedBy: 'admin',
+      });
+
+      const check = service.check({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search', now: Date.now(),
+      });
+      assert.equal(check.allowed, true);
+    } finally { db.close(); }
+  });
+
+  it('check 在未授予时返回 not_granted', () => {
+    const { db, service } = makeService();
+    try {
+      const check = service.check({
+        tenantId: 'default', personaId: 'p1', toolId: 'unknown', now: Date.now(),
+      });
+      assert.equal(check.allowed, false);
+      if (!check.allowed) assert.equal(check.reason, 'not_granted');
+    } finally { db.close(); }
+  });
+
+  it('revoke 后 check 返回 revoked', () => {
+    const { db, service } = makeService();
+    try {
+      const { id } = service.grant({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        scope: 'execute', constraints: {}, grantedBy: 'admin',
+      });
+
+      const ok = service.revoke(id, 'no longer needed');
+      assert.equal(ok, true);
+
+      const check = service.check({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search', now: Date.now(),
+      });
+      assert.equal(check.allowed, false);
+      if (!check.allowed) assert.equal(check.reason, 'revoked');
+    } finally { db.close(); }
+  });
+
+  it('revokeByKey 通过紧急 key 撤销', () => {
+    const { db, service } = makeService();
+    try {
+      const { revocationKey } = service.grant({
+        tenantId: 'default', personaId: 'p1', toolId: 'email',
+        scope: 'execute', constraints: {}, grantedBy: 'admin',
+      });
+
+      const ok = service.revokeByKey(revocationKey, 'urgent: leaked credentials');
+      assert.equal(ok, true);
+
+      const check = service.check({
+        tenantId: 'default', personaId: 'p1', toolId: 'email', now: Date.now(),
+      });
+      assert.equal(check.allowed, false);
+    } finally { db.close(); }
+  });
+
+  it('expiresAt 过期后 check 返回 expired', () => {
+    const { db, service } = makeService();
+    try {
+      const past = Date.now() - 60_000;
+      service.grant({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        scope: 'execute', constraints: {}, grantedBy: 'admin',
+        expiresAt: past,
+      });
+
+      const check = service.check({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search', now: Date.now(),
+      });
+      assert.equal(check.allowed, false);
+      if (!check.allowed) assert.equal(check.reason, 'expired');
+    } finally { db.close(); }
+  });
+
+  it('grant 同一 (persona, tool) 走 upsert：覆盖原 constraints', () => {
+    const { db, service } = makeService();
+    try {
+      service.grant({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        scope: 'read', constraints: { maxActionsPerDay: 10 },
+        grantedBy: 'admin',
+      });
+
+      service.grant({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        scope: 'execute', constraints: { maxActionsPerDay: 100 },
+        grantedBy: 'admin',
+      });
+
+      const list = service.listByPersona('default', 'p1');
+      assert.equal(list.length, 1);
+      assert.equal(list[0].scope, 'execute');
+      assert.equal(list[0].constraints.maxActionsPerDay, 100);
+    } finally { db.close(); }
+  });
+
+  it('recordInvocation 写入 tool_invocations，可查询', () => {
+    const { db, service } = makeService();
+    try {
+      const id = service.recordInvocation({
+        tenantId: 'default',
+        personaId: 'p1',
+        toolId: 'web_search',
+        invokerType: 'mcp',
+        invokerId: 'client_123',
+        status: 'success',
+        inputHash: 'abc',
+        outputSizeBytes: 1024,
+        errorMessage: null,
+        costCents: 1,
+        durationMs: 250,
+        confirmationTokenId: null,
+      });
+      assert.ok(id.startsWith('tinv_'));
+
+      const inv = service.getInvocation('default', id);
+      assert.ok(inv);
+      assert.equal(inv?.status, 'success');
+    } finally { db.close(); }
+  });
+
+  it('dailyUsageCount 仅统计当天 success 调用', () => {
+    const { db, service } = makeService();
+    try {
+      const now = Date.now();
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        invokerType: 'mcp', invokerId: 'c1', status: 'success',
+        inputHash: '1', outputSizeBytes: 0, errorMessage: null,
+        costCents: 0, durationMs: 1, confirmationTokenId: null,
+        invokedAt: now,
+      });
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        invokerType: 'mcp', invokerId: 'c1', status: 'failed',
+        inputHash: '2', outputSizeBytes: 0, errorMessage: 'err',
+        costCents: 0, durationMs: 1, confirmationTokenId: null,
+        invokedAt: now,
+      });
+      const count = service.dailyUsageCount('default', 'p1', 'web_search', now);
+      assert.equal(count, 1);
+    } finally { db.close(); }
+  });
+});

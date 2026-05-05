@@ -26,6 +26,24 @@
       "hash": "7a0a40feadd9b811ef48f6b21e17352f05dfc0632628b92fb7102839c34ba06d"
     }
   ],
+  "admin-tools.ts": [
+    {
+      "name": "CreateAgencyAuthorizationSchema",
+      "hash": "e5702e6024e31299a537c0022e1c88da960c030c4bd2ec5b248b51054afbf901"
+    },
+    {
+      "name": "GrantToolPermissionSchema",
+      "hash": "5023fe1d8ee7415aea1c66ba4cdeb7cffb5286f947812fa9fbe8805674a6f5a6"
+    },
+    {
+      "name": "RevokeReasonSchema",
+      "hash": "6c82d8f7bedf2c79c75abf173edf2fe5407f1caed60cf1f8d7d6235246823dd9"
+    },
+    {
+      "name": "RevokeToolPermissionByKeySchema",
+      "hash": "b7efa79737f005b6c63e0a4aad9ce2e0039955a7b8672f1cacc39f788dfc22bf"
+    }
+  ],
   "api-keys.ts": [
     {
       "name": "CreateApiKeySchema",
