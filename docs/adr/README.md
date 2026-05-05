@@ -51,11 +51,17 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 18 | [Tauri over Electron for the desktop app](0018-tauri-over-electron.md)                     | Accepted |
 | 19 | [React Native uses structural driver aliases](0019-rn-structural-driver-aliases.md)        | Accepted |
 | 20 | [ArgoCD over Flux for GitOps](0020-argocd-over-flux.md)                                    | Accepted |
+| 21 | [kustomize over Helm for K8s manifests](0021-kustomize-over-helm.md)                       | Accepted |
+| 22 | [MIT for the kernel, AGPL for enterprise modules](0022-mit-kernel-agpl-enterprise.md)      | Accepted |
+| 23 | [`safety.alerts.webhookSecret` is shared secret, not signed payload](0023-webhook-shared-secret-not-signed.md) | Accepted |
+| 24 | [Don't auto-restart on schema migration failure](0024-no-auto-restart-on-migration-fail.md) | Accepted |
+| 25 | [JSON over YAML for runtime config](0025-json-config-over-yaml.md)                         | Accepted |
+| 26 | [Stripe over Paddle for payments](0026-stripe-over-paddle.md)                              | Accepted |
+| 27 | [We don't ship a CLI](0027-no-cli.md)                                                      | Accepted |
+| 28 | [`audit_log` is per-tenant, not global](0028-audit-log-per-tenant.md)                      | Accepted |
+| 29 | [All timestamps are epoch milliseconds (`number`), not strings](0029-epoch-ms-timestamps.md) | Accepted |
+| 30 | [No GraphQL API](0030-no-graphql.md)                                                       | Accepted |
 
-Future records (planned, see `.claude/plan/enterprise-readiness-2026.md` P1.5):
-
-21. kustomize vs Helm · 22. MIT kernel / AGPL enterprise ·
-23. webhook shared-secret not signed · 24. no auto-restart on migration fail ·
-25. JSON over YAML for runtime config · 26. Stripe over Paddle ·
-27. no CLI · 28. audit_log per-tenant · 29. epoch ms timestamps ·
-30. no GraphQL.
+P1.5 closed: 30 records covering kernel architecture, storage, agent
+layer, deployment, and product policy. New decisions land as 0031+
+following the same MADR-lite template (see `0001-kernel-zero-runtime-deps.md`).
