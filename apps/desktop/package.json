@@ -10,7 +10,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@chrono/contracts": "*",
-    "@chrono/kernel": "*"
+    "@chrono/kernel": "*",
+    "@chrono/adapter-tauri": "*"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
