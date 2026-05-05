@@ -2,8 +2,7 @@ import { ErrorCode, ValidationError } from '../errors/index.js';
 import {
   kafkaQueryTenantNamespace, kafkaQueryAllNamespaces,
 } from '@chrono/kernel';
-import type { KafkaTenantNamespaceRow } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
+import type { KafkaTenantNamespaceRow, SyncWriteUnitOfWork } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 const KAFKA_NAMESPACE_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,118}[a-z0-9])?$/;
@@ -63,16 +62,14 @@ function deriveKafkaNamespace(row: KafkaTenantNamespaceRow | undefined, tenantId
   return null;
 }
 
-export function resolveTenantKafkaTopic(uowOrDb: UowOrDb, tenantId: string, baseTopic: string): string {
+export function resolveTenantKafkaTopic(tx: SyncWriteUnitOfWork, tenantId: string, baseTopic: string): string {
   registerCoreSelfExecutors();
-  const tx = asUow(uowOrDb);
   const row = tx.queryOne(kafkaQueryTenantNamespace({ tenantId }));
   return buildTenantKafkaTopic(baseTopic, deriveKafkaNamespace(row ?? undefined, tenantId));
 }
 
-export function listTenantKafkaTopics(uowOrDb: UowOrDb, baseTopic: string): string[] {
+export function listTenantKafkaTopics(tx: SyncWriteUnitOfWork, baseTopic: string): string[] {
   registerCoreSelfExecutors();
-  const tx = asUow(uowOrDb);
   const rows = tx.queryMany(kafkaQueryAllNamespaces()) as unknown as KafkaTenantNamespaceRow[];
   const topics = new Set<string>([baseTopic]);
   for (const row of rows) {

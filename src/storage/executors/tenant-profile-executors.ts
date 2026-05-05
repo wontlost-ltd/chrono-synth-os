@@ -7,11 +7,13 @@ import {
   TPROF_QUERY_BY_TENANT, TPROF_QUERY_BY_SCIM_TOKEN,
   TPROF_CMD_UPDATE, TPROF_CMD_INSERT,
   TPROF_CMD_UPDATE_SCIM_TOKEN, TPROF_CMD_INSERT_WITH_SCIM_TOKEN,
+  TPROF_CMD_UPDATE_BYOS,
 } from '@chrono/kernel';
 import type {
   TprofRow, TprofScimTenantRow,
   TprofUpdateParams, TprofInsertParams,
   TprofUpdateScimTokenParams, TprofInsertWithScimTokenParams,
+  TprofUpdateByosParams,
 } from '@chrono/kernel';
 
 export function registerTenantProfileExecutors(): void {
@@ -91,6 +93,15 @@ export function registerTenantProfileExecutors(): void {
         created_at, updated_at
       ) VALUES (?, 'shared_cluster', 'shared', '', 'platform_managed', NULL, ?, 0, '', '', '', '', 'openid profile email', 'email', 'name', ?, ?)`,
     ).run(p.tenantId, p.tokenHash, p.now, p.now);
+    return { rowsAffected: result.changes };
+  });
+
+  registerCommand<TprofUpdateByosParams>(TPROF_CMD_UPDATE_BYOS, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE tenant_enterprise_profiles
+          SET byos_provider = ?, byos_bucket = ?, byos_key_prefix = ?
+        WHERE tenant_id = ?`,
+    ).run(p.byosProvider, p.byosBucket, p.byosKeyPrefix, p.tenantId);
     return { rowsAffected: result.changes };
   });
 }

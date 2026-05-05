@@ -4,7 +4,6 @@
  * 不直接调用 db.prepare()
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   obsQueryPendingEvents, obsQueryBacklogPending, obsQueryBacklogProcessing,
@@ -12,7 +11,6 @@ import {
   obsCmdPublishEvent, obsCmdRequeueStale, obsCmdMarkProcessing,
   obsCmdMarkSent, obsCmdMarkFailed, obsCmdApplyRollupDelta,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
@@ -110,13 +108,8 @@ export function resetObservabilityPipelineMetrics(): void {
   observabilityPipelineMetrics.eventsRecovered = 0;
 }
 
-function getTx(db: IDatabase): SyncWriteUnitOfWork {
+export function publishObservabilityEvent(tx: SyncWriteUnitOfWork, event: ObservabilityEventEnvelope): string {
   registerCoreSelfExecutors();
-  return directUnitOfWork(db);
-}
-
-export function publishObservabilityEvent(db: IDatabase, event: ObservabilityEventEnvelope): string {
-  const tx = getTx(db);
   const id = generatePrefixedId('obevt');
   tx.execute(obsCmdPublishEvent({
     id,
@@ -131,13 +124,13 @@ export function publishObservabilityEvent(db: IDatabase, event: ObservabilityEve
   return id;
 }
 
-export function listPendingObservabilityEvents(db: IDatabase, limit: number): ObservabilityOutboxRow[] {
-  const tx = getTx(db);
+export function listPendingObservabilityEvents(tx: SyncWriteUnitOfWork, limit: number): ObservabilityOutboxRow[] {
+  registerCoreSelfExecutors();
   return [...tx.queryMany(obsQueryPendingEvents(limit))] as ObservabilityOutboxRow[];
 }
 
-export function requeueStaleObservabilityEvents(db: IDatabase, staleBefore: number): number {
-  const tx = getTx(db);
+export function requeueStaleObservabilityEvents(tx: SyncWriteUnitOfWork, staleBefore: number): number {
+  registerCoreSelfExecutors();
   const result = tx.execute(obsCmdRequeueStale({ staleBefore }));
   const count = result.rowsAffected;
   if (count > 0) {
@@ -146,25 +139,25 @@ export function requeueStaleObservabilityEvents(db: IDatabase, staleBefore: numb
   return count;
 }
 
-export function markObservabilityEventProcessing(db: IDatabase, id: string): boolean {
-  const tx = getTx(db);
+export function markObservabilityEventProcessing(tx: SyncWriteUnitOfWork, id: string): boolean {
+  registerCoreSelfExecutors();
   const result = tx.execute(obsCmdMarkProcessing({ id, now: Date.now() }));
   return result.rowsAffected > 0;
 }
 
-export function markObservabilityEventSent(db: IDatabase, id: string): void {
-  const tx = getTx(db);
+export function markObservabilityEventSent(tx: SyncWriteUnitOfWork, id: string): void {
+  registerCoreSelfExecutors();
   tx.execute(obsCmdMarkSent({ id, now: Date.now() }));
   observabilityPipelineMetrics.eventsProcessed++;
 }
 
 export function markObservabilityEventFailed(
-  db: IDatabase,
+  tx: SyncWriteUnitOfWork,
   row: ObservabilityOutboxRow,
   error: string,
   maxAttempts: number,
 ): void {
-  const tx = getTx(db);
+  registerCoreSelfExecutors();
   const nextAttempts = row.attempts + 1;
   tx.execute(obsCmdMarkFailed({
     id: row.id,
@@ -176,26 +169,26 @@ export function markObservabilityEventFailed(
   observabilityPipelineMetrics.eventsFailed++;
 }
 
-export function getObservabilityOutboxBacklog(db: IDatabase): ObservabilityOutboxBacklog {
-  const tx = getTx(db);
+export function getObservabilityOutboxBacklog(tx: SyncWriteUnitOfWork): ObservabilityOutboxBacklog {
+  registerCoreSelfExecutors();
   const pending = tx.queryOne(obsQueryBacklogPending())?.count ?? 0;
   const processing = tx.queryOne(obsQueryBacklogProcessing())?.count ?? 0;
   const failed = tx.queryOne(obsQueryBacklogFailed())?.count ?? 0;
   return { pending, processing, failed };
 }
 
-export function getObservabilityRollup(db: IDatabase, tenantId: string): ObservabilityRollupRow {
-  const tx = getTx(db);
+export function getObservabilityRollup(tx: SyncWriteUnitOfWork, tenantId: string): ObservabilityRollupRow {
+  registerCoreSelfExecutors();
   const row = tx.queryOne(obsQueryRollup(tenantId));
   return (row ?? emptyObservabilityRollup(tenantId)) as ObservabilityRollupRow;
 }
 
 export function applyObservabilityRollupDelta(
-  db: IDatabase,
+  tx: SyncWriteUnitOfWork,
   tenantId: string,
   delta: ObservabilityRollupDelta,
 ): void {
-  const tx = getTx(db);
+  registerCoreSelfExecutors();
   tx.execute(obsCmdApplyRollupDelta({
     tenantId,
     runtimeCompletedCount: delta.runtimeCompletedCount ?? 0,

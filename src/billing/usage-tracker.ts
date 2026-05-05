@@ -5,16 +5,12 @@
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { usageQueryGet, usageQuerySummary, usageCmdRecord } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
 export class UsageTracker {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   /** 记录一次资源使用 */

@@ -1,11 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, AuditLogRow as KernelAuditLogRow } from '@chrono/kernel';
 import {
   auditQueryById, auditQueryList, auditQueryCount,
-  auditCmdRecordRequest, auditCmdRecordBusiness,
+  auditCmdRecordRequest, auditCmdRecordBusiness, auditCmdEnsureSchema,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type AuditEventKind = 'request' | 'business';
@@ -73,35 +71,9 @@ export interface QueryAuditLogOptions {
   targetId?: string;
 }
 
-export function ensureAuditLogColumns(db: IDatabase): void {
-  const statements = [
-    'ALTER TABLE audit_log ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0',
-    'ALTER TABLE audit_log ADD COLUMN event_kind TEXT NOT NULL DEFAULT \'request\'',
-    'ALTER TABLE audit_log ADD COLUMN user_id TEXT',
-    'ALTER TABLE audit_log ADD COLUMN user_email TEXT',
-    'ALTER TABLE audit_log ADD COLUMN action_type TEXT DEFAULT \'other\'',
-    'ALTER TABLE audit_log ADD COLUMN actor_type TEXT',
-    'ALTER TABLE audit_log ADD COLUMN actor_id TEXT',
-    'ALTER TABLE audit_log ADD COLUMN target_type TEXT',
-    'ALTER TABLE audit_log ADD COLUMN target_id TEXT',
-    'ALTER TABLE audit_log ADD COLUMN payload_json TEXT',
-  ];
-
-  for (const statement of statements) {
-    try {
-      db.prepare<void>(statement).run();
-    } catch {
-      /* 兼容已升级数据库 */
-    }
-  }
-
-  try {
-    db.prepare<void>(
-      `UPDATE audit_log SET created_at = timestamp WHERE created_at = 0`,
-    ).run();
-  } catch {
-    /* 忽略兼容性失败 */
-  }
+export function ensureAuditLogColumns(tx: SyncWriteUnitOfWork): void {
+  registerCoreSelfExecutors();
+  tx.execute(auditCmdEnsureSchema());
 }
 
 export function hashApiKey(apiKey: string | undefined): string | null {
@@ -109,13 +81,8 @@ export function hashApiKey(apiKey: string | undefined): string | null {
   return createHash('sha256').update(apiKey).digest('hex').slice(0, 16);
 }
 
-function getTx(db: IDatabase): SyncWriteUnitOfWork {
+export function recordRequestAuditLog(tx: SyncWriteUnitOfWork, input: RequestAuditInput): void {
   registerCoreSelfExecutors();
-  return directUnitOfWork(db);
-}
-
-export function recordRequestAuditLog(db: IDatabase, input: RequestAuditInput): void {
-  const tx = getTx(db);
   const createdAt = input.createdAt ?? Date.now();
   tx.execute(auditCmdRecordRequest({
     id: randomUUID(),
@@ -136,8 +103,8 @@ export function recordRequestAuditLog(db: IDatabase, input: RequestAuditInput): 
   }));
 }
 
-export function recordBusinessAuditLog(db: IDatabase, input: BusinessAuditInput): string {
-  const tx = getTx(db);
+export function recordBusinessAuditLog(tx: SyncWriteUnitOfWork, input: BusinessAuditInput): string {
+  registerCoreSelfExecutors();
   const createdAt = input.createdAt ?? Date.now();
   const id = randomUUID();
   tx.execute(auditCmdRecordBusiness({
@@ -157,8 +124,8 @@ export function recordBusinessAuditLog(db: IDatabase, input: BusinessAuditInput)
   return id;
 }
 
-export function queryAuditLog(db: IDatabase, options: QueryAuditLogOptions): AuditLogRecord[] {
-  const tx = getTx(db);
+export function queryAuditLog(tx: SyncWriteUnitOfWork, options: QueryAuditLogOptions): AuditLogRecord[] {
+  registerCoreSelfExecutors();
   const limit = options.limit ?? 100;
   const offset = options.offset ?? 0;
   const rows = [...tx.queryMany(auditQueryList({
@@ -174,8 +141,8 @@ export function queryAuditLog(db: IDatabase, options: QueryAuditLogOptions): Aud
   return rows.map(auditLogFromRow);
 }
 
-export function countAuditLogs(db: IDatabase, options: Omit<QueryAuditLogOptions, 'limit' | 'offset'>): number {
-  const tx = getTx(db);
+export function countAuditLogs(tx: SyncWriteUnitOfWork, options: Omit<QueryAuditLogOptions, 'limit' | 'offset'>): number {
+  registerCoreSelfExecutors();
   const result = tx.queryOne(auditQueryCount({
     tenantId: options.tenantId,
     eventKind: options.eventKind && options.eventKind !== 'all' ? options.eventKind : null,
@@ -187,8 +154,8 @@ export function countAuditLogs(db: IDatabase, options: Omit<QueryAuditLogOptions
   return Number(result?.count ?? 0);
 }
 
-export function getAuditLogById(db: IDatabase, tenantId: string, id: string): AuditLogRecord | null {
-  const tx = getTx(db);
+export function getAuditLogById(tx: SyncWriteUnitOfWork, tenantId: string, id: string): AuditLogRecord | null {
+  registerCoreSelfExecutors();
   const row = tx.queryOne(auditQueryById(tenantId, id));
   return row ? auditLogFromRow(row) : null;
 }

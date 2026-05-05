@@ -5,13 +5,12 @@ import {
   tprofQueryByTenant, tprofQueryByScimToken,
   tprofCmdUpdate, tprofCmdInsert,
   tprofCmdUpdateScimToken, tprofCmdInsertWithScimToken,
+  tprofCmdUpdateByos,
 } from '@chrono/kernel';
 import { TenantManifestV1Schema } from '@chrono/contracts';
 import type { TenantManifestV1 } from '@chrono/contracts';
 import type { AppConfig } from '../config/schema.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
-import type { IDatabase } from '../storage/database.js';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { FieldEncryption } from '../storage/encryption.js';
 import {
@@ -199,17 +198,12 @@ function toProfile(row: TprofRow | null | undefined): TenantEnterpriseProfile {
 }
 
 export class TenantEnterpriseProfileService {
-  private readonly tx: SyncWriteUnitOfWork;
-  private readonly db: IDatabase | null;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly config: AppConfig,
     private readonly logger?: Logger,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
   }
 
   getProfile(tenantId: string): TenantEnterpriseProfile {
@@ -289,21 +283,11 @@ export class TenantEnterpriseProfileService {
       this.tx.execute(tprofCmdInsert(cmdParams));
     }
 
-    // 持久化 BYOS 配置字段（内核命令不含这些列，直接更新）
+    // 持久化 BYOS 配置字段
     const byosProvider = patch.byosProvider ?? current.byosProvider ?? 'platform';
     const byosBucket = patch.byosBucket ?? current.byosBucket ?? '';
     const byosKeyPrefix = patch.byosKeyPrefix ?? current.byosKeyPrefix ?? '';
-    if (!this.db) {
-      throw new ValidationError(
-        'TenantEnterpriseProfileService.upsertProfile 写入 BYOS 字段需要 IDatabase 入口；UoW 入口暂未支持',
-        ErrorCode.STATE_INVALID_TRANSITION,
-      );
-    }
-    this.db.prepare<void>(
-      `UPDATE tenant_enterprise_profiles
-       SET byos_provider = ?, byos_bucket = ?, byos_key_prefix = ?
-       WHERE tenant_id = ?`,
-    ).run(byosProvider, byosBucket, byosKeyPrefix, tenantId);
+    this.tx.execute(tprofCmdUpdateByos({ tenantId, byosProvider, byosBucket, byosKeyPrefix }));
 
     return this.getProfile(tenantId);
   }

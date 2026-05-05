@@ -8,6 +8,7 @@ import { UsageTracker } from '../../billing/usage-tracker.js';
 import { QuotaExceededError } from '../../errors/index.js';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('ModelRouter (Mock Provider)', () => {
   const router = new ModelRouter({
@@ -215,7 +216,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额充足时正常调用', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = new QuotaManager(directUnitOfWork(db));
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100_000, 3_600_000);
 
       const r = new ModelRouter({
@@ -231,7 +232,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额耗尽时 chat 抛出 QuotaExceededError', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = new QuotaManager(directUnitOfWork(db));
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100, 3_600_000);
 
       const r = new ModelRouter({
@@ -250,7 +251,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额耗尽时 embed 抛出 QuotaExceededError', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = new QuotaManager(directUnitOfWork(db));
       quotaManager.setLimit('tenant-1', 'llm_tokens', 1, 3_600_000);
 
       const r = new ModelRouter({
@@ -289,7 +290,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('chat 后 UsageTracker 记录 llm_tokens 用量', async () => {
-      const usageTracker = new UsageTracker(db);
+      const usageTracker = new UsageTracker(directUnitOfWork(db));
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',

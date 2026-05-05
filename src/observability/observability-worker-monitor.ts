@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import type { AddressInfo } from 'node:net';
 import { getObservabilityOutboxBacklog, type ObservabilityOutboxBacklog } from './observability-outbox.js';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { Logger } from '../utils/logger.js';
 import { getPackageVersion } from '../utils/package-version.js';
 
@@ -76,7 +77,7 @@ export function buildObservabilityWorkerMonitorSnapshot(
 
   try {
     deps.db.prepare<{ ok: number }>('SELECT 1 AS ok').get();
-    backlog = getObservabilityOutboxBacklog(deps.db);
+    backlog = getObservabilityOutboxBacklog(directUnitOfWork(deps.db));
   } catch (err) {
     databaseStatus = 'degraded';
     outboxStatus = 'unavailable';

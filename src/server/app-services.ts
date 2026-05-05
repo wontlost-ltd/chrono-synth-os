@@ -7,6 +7,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../config/schema.js';
 import type { Logger } from '../utils/logger.js';
 import { AuthService } from '../identity/auth-service.js';
@@ -49,22 +50,23 @@ export function buildAppServices(
   logger?: Logger,
 ): AppServices {
   const pushService = new MockPushService(logger);
+  const tx = directUnitOfWork(db);
 
   return {
     db,
-    auth: new AuthService(db, appConfig),
-    identity: new IdentityService(db),
-    avatar: new AvatarService(db),
-    collaboration: new CollaborationService(db),
-    mobileDevice: new MobileDeviceService(db),
-    mobileDeviceFacade: new MobileDeviceFacade(db, pushService),
-    userProfile: new UserProfileService(db),
-    organization: new OrganizationService(db),
-    tenantProfile: new TenantEnterpriseProfileService(db, appConfig, logger),
-    scim: new ScimProvisioningService(db),
-    adminControlPlane: new AdminControlPlaneService(db),
-    apiKey: new ApiKeyService(db),
+    auth: new AuthService(tx, appConfig),
+    identity: new IdentityService(tx),
+    avatar: new AvatarService(tx),
+    collaboration: new CollaborationService(tx),
+    mobileDevice: new MobileDeviceService(tx),
+    mobileDeviceFacade: new MobileDeviceFacade(tx, pushService),
+    userProfile: new UserProfileService(tx),
+    organization: new OrganizationService(tx),
+    tenantProfile: new TenantEnterpriseProfileService(tx, appConfig, logger),
+    scim: new ScimProvisioningService(tx),
+    adminControlPlane: new AdminControlPlaneService(tx),
+    apiKey: new ApiKeyService(tx),
     config: new ConfigService(db, appConfig),
-    knowledgeSource: new KnowledgeSourceService(db),
+    knowledgeSource: new KnowledgeSourceService(tx),
   };
 }

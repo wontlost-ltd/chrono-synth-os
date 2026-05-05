@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../../config/schema.js';
 import { AuthenticationError, ConfigError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { OidcAuthorizeQuerySchema, OidcCallbackQuerySchema } from '../schemas/api-schemas.js';
@@ -73,8 +74,9 @@ export function registerOidcRoutes(app: FastifyInstance, db: IDatabase, config: 
   if (!config.jwt.enabled) return;
 
   const baseUrl = config.server.publicUrl;
-  const profileService = new TenantEnterpriseProfileService(db, config);
-  const ssoUserService = new SsoUserService(db);
+  const tx = directUnitOfWork(db);
+  const profileService = new TenantEnterpriseProfileService(tx, config);
+  const ssoUserService = new SsoUserService(tx);
   const stateStore: OidcStateStore = app.redis
     ? createRedisStateStore(app.redis as unknown as RedisClient)
     : createMemoryStateStore();

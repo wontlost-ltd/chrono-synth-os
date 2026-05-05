@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { TaskQueue } from '../../queue/task-queue.js';
 import { UrlContentFetcher } from '../../knowledge/url-content-fetcher.js';
@@ -45,7 +46,7 @@ describe('BulkImportService', () => {
        VALUES (?, ?, 'pw', 'admin', ?, 1000, 1000)`,
     ).run(TEST_USER_ID, `${TEST_USER_ID}@test.com`, TEST_TENANT_ID);
 
-    personaCoreService = new PersonaCoreService(db);
+    personaCoreService = new PersonaCoreService(directUnitOfWork(db));
     const persona = personaCoreService.createPersona({
       tenantId: TEST_TENANT_ID,
       ownerUserId: TEST_USER_ID,
@@ -55,7 +56,7 @@ describe('BulkImportService', () => {
 
     taskQueue = new TaskQueue(db);
     service = new BulkImportService(
-      db,
+      directUnitOfWork(db),
       personaCoreService,
       taskQueue,
       new UrlContentFetcher({ skipDnsResolve: true }),
@@ -190,7 +191,7 @@ describe('BulkImportService', () => {
 
   it('taskQueue 缺失时 >20 条抛 BulkImportQueueDisabledError', async () => {
     const noQueueService = new BulkImportService(
-      os.getDatabase(),
+      directUnitOfWork(os.getDatabase()),
       personaCoreService,
       undefined,
       new UrlContentFetcher({ skipDnsResolve: true }),

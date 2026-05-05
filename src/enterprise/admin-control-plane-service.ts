@@ -13,7 +13,6 @@ import {
   acpQueryWalletCount, acpQueryWalletList, acpQueryWalletSummary,
   acpQueryGovCount, acpQueryGovList, acpQueryGovSummary,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function toIso(value: number | null): string | null {
@@ -42,11 +41,8 @@ function buildPagination(total: number, page: number, pageSize: number): Paginat
 }
 
 export class AdminControlPlaneService {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   listPersonas(tenantId: string, pagination: PaginationInput, status?: string) {

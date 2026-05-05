@@ -5,6 +5,7 @@ import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { RuntimeRecoveryWorker } from '../../persona-core/runtime-recovery-worker.js';
 import { SilentLogger } from '../../utils/logger.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('RuntimeRecoveryWorker', () => {
   let db: IDatabase;
@@ -14,7 +15,7 @@ describe('RuntimeRecoveryWorker', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    service = new PersonaCoreService(db);
+    service = new PersonaCoreService(directUnitOfWork(db));
     logger = new SilentLogger();
 
     const now = Date.now();

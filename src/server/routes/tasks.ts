@@ -7,11 +7,12 @@ import type { FastifyInstance } from 'fastify';
 import type { TaskQueue } from '../../queue/task-queue.js';
 import type { TaskWorker } from '../../queue/task-worker.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { TaskQueryService } from '../../queue/task-query-service.js';
 
 export function registerTaskRoutes(app: FastifyInstance, queue: TaskQueue, worker?: TaskWorker, db?: IDatabase): void {
-  const personaCoreService = db ? new PersonaCoreService(db) : null;
+  const personaCoreService = db ? new PersonaCoreService(directUnitOfWork(db)) : null;
   const service = new TaskQueryService(queue, worker, personaCoreService);
 
   /* GET /api/v1/tasks/:taskId — 查询异步任务状态 */

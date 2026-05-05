@@ -7,6 +7,7 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { PersonaVersion, SimulationResult } from '../../types/index.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { ForkPersonaSchema, SimulatePersonaSchema, UpdatePersonaStatusSchema } from '../schemas/api-schemas.js';
@@ -29,7 +30,7 @@ function serializeResult(r: SimulationResult): Record<string, unknown> {
 }
 
 export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
-  const personaCoreService = new PersonaCoreService(os.getDatabase());
+  const personaCoreService = new PersonaCoreService(directUnitOfWork(os.getDatabase()));
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;

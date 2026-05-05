@@ -8,7 +8,6 @@ import {
   asnapQueryAutorunConfig, asnapQueryDriftConfig,
   asnapQueryLastRunMetrics, asnapQueryInstalledDevices,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface AutorunState {
@@ -31,11 +30,9 @@ const noopLogger: SnapshotLogger = { warn() {} };
 
 export class AvatarSnapshotService {
   private readonly log: SnapshotLogger;
-  private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(uowOrDb: UowOrDb, logger?: SnapshotLogger) {
+  constructor(private readonly tx: SyncWriteUnitOfWork, logger?: SnapshotLogger) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
     this.log = logger ?? noopLogger;
   }
 

@@ -26,7 +26,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new SubscriptionGateService(db);
+      const fromDb = new SubscriptionGateService(directUnitOfWork(db));
       assert.equal(fromDb.canUseResource('default', 'conversation_message').allowed, true);
 
       const fromUow = new SubscriptionGateService(directUnitOfWork(db));
@@ -38,7 +38,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ConfirmationTokenStore(db);
+      const fromDb = new ConfirmationTokenStore(directUnitOfWork(db));
       const issued = fromDb.issue({
         tenantId: 'default', personaId: 'p1', sessionId: 's1', externalUserId: 'u1',
         topic: 'finance', rule: 'require_confirmation', userInput: 'hello',
@@ -60,7 +60,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ConversationKnowledgeRetriever(db);
+      const fromDb = new ConversationKnowledgeRetriever(directUnitOfWork(db));
       assert.deepEqual(await fromDb.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }), []);
 
       const fromUow = new ConversationKnowledgeRetriever(directUnitOfWork(db));
@@ -72,7 +72,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ConversationStore(db);
+      const fromDb = new ConversationStore(directUnitOfWork(db));
       assert.equal(fromDb.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }), 0);
 
       const fromUow = new ConversationStore(directUnitOfWork(db));
@@ -84,7 +84,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new BulkImportStore(db);
+      const fromDb = new BulkImportStore(directUnitOfWork(db));
       assert.equal(fromDb.get('default', 'job_missing'), null);
 
       const fromUow = new BulkImportStore(directUnitOfWork(db));
@@ -97,7 +97,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     runMigrations(db);
     try {
       const logger = new ConsoleLogger('warn');
-      const fromDb = new ConversationAuditPublisher(db, logger);
+      const fromDb = new ConversationAuditPublisher(directUnitOfWork(db), logger);
       fromDb.publish({
         tenantId: 'default', actorType: 'user', actorId: 'u1',
         actionType: 'audit.test', targetType: 'tt', targetId: 'ti',
@@ -115,7 +115,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new KnowledgeSourceService(db);
+      const fromDb = new KnowledgeSourceService(directUnitOfWork(db));
       const fromUow = new KnowledgeSourceService(directUnitOfWork(db));
       assert.deepEqual(
         fromDb.list('default', 1, 10).pagination.total,

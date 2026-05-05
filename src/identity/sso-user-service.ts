@@ -4,7 +4,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { UserRole } from '../types/auth.js';
 import { AuthenticationError, ErrorCode } from '../errors/index.js';
@@ -16,7 +15,6 @@ import {
   authCmdCreateUser, authCmdCreateSubscription,
   authCmdUpdateDisplayName,
 } from '@chrono/kernel';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface SsoUserResult {
@@ -27,16 +25,11 @@ export interface SsoUserResult {
 }
 
 export class SsoUserService {
-  private readonly tx: SyncWriteUnitOfWork;
   private readonly identityService: IdentityService;
-  /** 仅用于把 sync 任务（如 syncPlanToQuota）写入 IDatabase；UoW 模式下为 null */
-  private readonly db: IDatabase | null;
 
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
-    this.identityService = new IdentityService(uowOrDb);
+    this.identityService = new IdentityService(tx);
   }
 
   /**
@@ -120,7 +113,7 @@ export class SsoUserService {
         periodEnd: now + 365 * 24 * 60 * 60 * 1000,
         now,
       }));
-      if (this.db) syncPlanToQuota(this.db, tenantId, 'free');
+      syncPlanToQuota(this.tx, tenantId, 'free');
     }
   }
 }

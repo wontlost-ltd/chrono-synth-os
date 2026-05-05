@@ -10,37 +10,25 @@
  * 集中处理 PII payload 截断、错误隔离与未来切换到真正异步 outbox 的扩展点。
  */
 
-import type { IDatabase } from '../storage/database.js';
-import { unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { Logger } from '../utils/logger.js';
 import { recordBusinessAuditLog, type BusinessAuditInput } from '../audit/audit-log-store.js';
 
 const PAYLOAD_VALUE_MAX = 1024;
 
 export class ConversationAuditPublisher {
-  private readonly db: IDatabase | null;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly logger: Logger,
-  ) {
-    this.db = unwrapDb(uowOrDb);
-  }
+  ) {}
 
   publish(event: BusinessAuditInput): void {
     const safe: BusinessAuditInput = {
       ...event,
       payload: event.payload ? truncatePayloadValues(event.payload, PAYLOAD_VALUE_MAX) : event.payload,
     };
-    if (!this.db) {
-      this.logger.warn(
-        'ConversationAuditPublisher',
-        `[uow-mode] 跳过审计写入 actionType=${event.actionType} target=${event.targetId}`,
-      );
-      return;
-    }
     try {
-      recordBusinessAuditLog(this.db, safe);
+      recordBusinessAuditLog(this.tx, safe);
     } catch (err) {
       this.logger.error(
         'ConversationAuditPublisher',

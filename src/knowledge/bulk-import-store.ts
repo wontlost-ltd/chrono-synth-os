@@ -15,7 +15,6 @@ import {
   bimpCmdUpdateFailures, bimpCmdSetMetadata,
   bimpCmdMarkCompleted, bimpCmdMarkFailed,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type BulkImportJobState = 'queued' | 'running' | 'completed' | 'failed';
@@ -58,11 +57,8 @@ export interface BulkImportJobRecord {
 const MAX_FAILURE_DETAILS = 50;
 
 export class BulkImportStore {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   create(input: {

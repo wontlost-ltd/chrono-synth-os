@@ -9,6 +9,7 @@ import {
   BIMP_CMD_CREATE, BIMP_CMD_MARK_RUNNING, BIMP_CMD_INCREMENT_COUNTER,
   BIMP_CMD_UPDATE_FAILURES, BIMP_CMD_SET_METADATA,
   BIMP_CMD_MARK_COMPLETED, BIMP_CMD_MARK_FAILED,
+  BIMP_QUERY_FIND_BY_FINGERPRINT, BIMP_CMD_DELETE_BY_FINGERPRINT,
 } from '@chrono/kernel';
 import type {
   BimpJobRow, BimpFailuresRow, BimpStuckRow,
@@ -16,6 +17,7 @@ import type {
   BimpCreateParams, BimpMarkRunningParams, BimpIncrementCounterParams,
   BimpUpdateFailuresParams, BimpSetMetadataParams,
   BimpMarkCompletedParams, BimpMarkFailedParams,
+  BimpFingerprintParams,
 } from '@chrono/kernel';
 
 /** 限制可注入的列名，避免 SQL 注入 */
@@ -120,6 +122,22 @@ export function registerBulkImportExecutors(): void {
               failures_json = ?
         WHERE id = ?`,
     ).run(p.now, p.failuresJson, p.jobId);
+    return { rowsAffected: result.changes };
+  });
+
+  registerQuery<{ id: string } | null, BimpFingerprintParams>(BIMP_QUERY_FIND_BY_FINGERPRINT, (db, p) => {
+    return db.prepare<{ id: string }>(
+      `SELECT id FROM persona_knowledge_items
+        WHERE tenant_id = ? AND persona_id = ? AND fingerprint = ?
+        LIMIT 1`,
+    ).get(p.tenantId, p.personaId, p.fingerprint) ?? null;
+  });
+
+  registerCommand<BimpFingerprintParams>(BIMP_CMD_DELETE_BY_FINGERPRINT, (db, p) => {
+    const result = db.prepare<void>(
+      `DELETE FROM persona_knowledge_items
+        WHERE tenant_id = ? AND persona_id = ? AND fingerprint = ?`,
+    ).run(p.tenantId, p.personaId, p.fingerprint);
     return { rowsAffected: result.changes };
   });
 }

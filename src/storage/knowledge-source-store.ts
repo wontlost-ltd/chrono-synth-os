@@ -8,7 +8,6 @@ import {
   ksrcQueryById, ksrcQueryList, ksrcQueryCount, ksrcQueryEnabledByIds,
   ksrcCmdCreate, ksrcCmdUpdate, ksrcCmdUpdateState, ksrcCmdDelete,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from './uow-helpers.js';
 import { registerCoreSelfExecutors } from './executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { KnowledgeSourceRecord, KnowledgeSourceType } from '../types/avatar-autorun.js';
@@ -29,11 +28,8 @@ function rowToRecord(r: KsrcRow): KnowledgeSourceRecord {
 }
 
 export class KnowledgeSourceStore {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   create(tenantId: string, data: { type: KnowledgeSourceType; name: string; configJson: string }): KnowledgeSourceRecord {

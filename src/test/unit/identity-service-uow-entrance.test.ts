@@ -31,7 +31,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'user_a', 'a@x.com');
-      const fromDb = new IdentityService(db);
+      const fromDb = new IdentityService(directUnitOfWork(db));
       const ident = fromDb.create('user_a', 'default', 'A');
       assert.ok(ident.id);
 
@@ -50,9 +50,9 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'user_av', 'av@x.com');
-      const ident = new IdentityService(db).create('user_av', 'default', 'Av');
+      const ident = new IdentityService(directUnitOfWork(db)).create('user_av', 'default', 'Av');
 
-      const fromDb = new AvatarService(db);
+      const fromDb = new AvatarService(directUnitOfWork(db));
       const fromUow = new AvatarService(directUnitOfWork(db));
       assert.ok(fromDb.getDefault(ident.id));
       assert.ok(fromUow.getDefault(ident.id));
@@ -64,8 +64,8 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'user_da', 'da@x.com');
-      const ident = new IdentityService(db).create('user_da', 'default', 'DA');
-      const avatarSvc = new AvatarService(db);
+      const ident = new IdentityService(directUnitOfWork(db)).create('user_da', 'default', 'DA');
+      const avatarSvc = new AvatarService(directUnitOfWork(db));
       const av1 = avatarSvc.create(ident.id, { label: 'A1' });
 
       const now = Date.now();
@@ -74,7 +74,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
          VALUES (?, 'default', 'user_da', 'duid', 'web', ?, ?)`,
       ).run('dev1', now, now);
 
-      const svc = new DeviceAvatarService(db);
+      const svc = new DeviceAvatarService(directUnitOfWork(db));
       svc.install('dev1', av1.id);
       assert.equal(svc.activate('dev1', av1.id), true);
 
@@ -88,15 +88,15 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runMigrations(db);
     try {
       const uow = directUnitOfWork(db);
-      assert.ok(new CollaborationService(db));
+      assert.ok(new CollaborationService(directUnitOfWork(db)));
       assert.ok(new CollaborationService(uow));
-      assert.ok(new UserProfileService(db));
+      assert.ok(new UserProfileService(directUnitOfWork(db)));
       assert.ok(new UserProfileService(uow));
-      assert.ok(new MobileDeviceService(db));
+      assert.ok(new MobileDeviceService(directUnitOfWork(db)));
       assert.ok(new MobileDeviceService(uow));
-      assert.ok(new AvatarSnapshotService(db));
+      assert.ok(new AvatarSnapshotService(directUnitOfWork(db)));
       assert.ok(new AvatarSnapshotService(uow));
-      assert.ok(new SsoUserService(db));
+      assert.ok(new SsoUserService(directUnitOfWork(db)));
       assert.ok(new SsoUserService(uow));
     } finally { db.close(); }
   });

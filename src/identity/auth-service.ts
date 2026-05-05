@@ -6,7 +6,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { hash, verify } from '@node-rs/argon2';
 import type { FastifyInstance } from 'fastify';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { AppConfig } from '../config/schema.js';
 import type { JwtPayload } from '../types/auth.js';
@@ -22,8 +21,6 @@ import {
   authCmdCleanupExpiredTokens,
   subqQueryActivePlan,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function hashToken(token: string): string {
@@ -58,18 +55,11 @@ export interface RefreshResult {
 }
 
 export class AuthService {
-  private readonly tx: SyncWriteUnitOfWork;
-  /** UoW 模式下为 null；syncPlanToQuota / IdentityService / cleanupExpired
-   *  都依赖 IDatabase，这些路径在 UoW 模式下应被外部组合时显式转换。 */
-  private readonly db: IDatabase | null;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly config: AppConfig,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
   }
 
   async register(app: FastifyInstance, email: string, password: string): Promise<RegisterResult> {
@@ -101,9 +91,9 @@ export class AuthService {
       id: subId, tenantId, stripeCustomerId, periodStart: now, periodEnd, now,
     }));
 
-    if (this.db) syncPlanToQuota(this.db, tenantId, 'free');
+    syncPlanToQuota(this.tx, tenantId, 'free');
 
-    const identityService = new IdentityService(this.db ?? this.tx);
+    const identityService = new IdentityService(this.tx);
     identityService.create(userId, tenantId, email.split('@')[0]);
 
     const tokens = await this.generateTokenPair(app, userId, tenantId, 'admin');
@@ -191,19 +181,14 @@ export class AuthService {
   }
 
   cleanupExpiredTokens(): number {
-    /* UoW 模式下没有 db.transaction 包裹，但 cleanup 是单条 DELETE，不破坏一致性 */
-    if (this.db) return AuthService.cleanupExpired(this.db);
-    return this.tx.execute(authCmdCleanupExpiredTokens({
-      cutoff: Date.now() - 30 * 24 * 60 * 60 * 1000,
-    })).rowsAffected;
+    return AuthService.cleanupExpired(this.tx);
   }
 
-  static cleanupExpired(db: IDatabase): number {
+  static cleanupExpired(tx: SyncWriteUnitOfWork): number {
     registerCoreSelfExecutors();
-    const tx = directUnitOfWork(db);
     const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     let changes = 0;
-    db.transaction(() => {
+    tx.transaction(() => {
       changes = tx.execute(authCmdCleanupExpiredTokens({ cutoff })).rowsAffected;
     });
     return changes;

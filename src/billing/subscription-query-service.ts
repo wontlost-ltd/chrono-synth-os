@@ -7,15 +7,11 @@ import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   subqQueryLatestPlan, subqQueryActiveStripeCustomer, subqQueryActivePlan,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export class SubscriptionQueryService {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   /** 获取租户最近一条订阅的 plan_id（不过滤 status），无订阅时返回 'free' */

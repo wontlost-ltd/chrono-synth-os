@@ -6,6 +6,7 @@ import {
   UPROF_QUERY_BY_ID, UPROF_QUERY_BY_EMAIL_EXCLUDE, UPROF_QUERY_FULL_BY_ID,
   UPROF_CMD_UPDATE_EMAIL, UPROF_CMD_UPDATE_PASSWORD,
 } from '@chrono/kernel';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
@@ -56,7 +57,7 @@ describe('UserProfileService 执行器注册', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     seedUser(db, 'user-1', 'test@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(directUnitOfWork(db));
 
     const profile = service.getProfile('user-1');
     assert.equal(profile.userId, 'user-1');
@@ -68,7 +69,7 @@ describe('UserProfileService 执行器注册', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     seedUser(db, 'user-1', 'old@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(directUnitOfWork(db));
 
     const updated = service.updateEmail('user-1', 'new@example.com');
     assert.equal(updated.email, 'new@example.com');
@@ -79,7 +80,7 @@ describe('UserProfileService 执行器注册', () => {
     runMigrations(db);
     seedUser(db, 'user-1', 'a@example.com', 'hash');
     seedUser(db, 'user-2', 'b@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(directUnitOfWork(db));
 
     assert.throws(() => service.updateEmail('user-1', 'b@example.com'), /已被使用/);
   });
@@ -89,7 +90,7 @@ describe('UserProfileService 执行器注册', () => {
     runMigrations(db);
     const pwHash = await hash('oldPassword123');
     seedUser(db, 'user-1', 'test@example.com', pwHash);
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(directUnitOfWork(db));
 
     const result = await service.changePassword('user-1', 'oldPassword123', 'newPassword456');
     assert.deepEqual(result, { success: true });

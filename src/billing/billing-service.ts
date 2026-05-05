@@ -8,7 +8,6 @@ import {
   bsvcCmdUpdateInvoice, bsvcCmdInsertInvoice,
   bsvcCmdDeleteUsageMeters, bsvcCmdInsertUsageMeter,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { EntitlementService } from './entitlement-service.js';
 import { PLANS, getPlan, syncPlanToQuota } from './plans.js';
@@ -53,15 +52,11 @@ function toIso(value: number | null): string | null {
 }
 
 export class BillingService {
-  private readonly tx: SyncWriteUnitOfWork;
-  private readonly uowOrDb: UowOrDb;
   private readonly entitlementService: EntitlementService;
 
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.uowOrDb = uowOrDb;
-    this.entitlementService = new EntitlementService(uowOrDb);
+    this.entitlementService = new EntitlementService(tx);
   }
 
   seedBillingPlans(): void {
@@ -131,7 +126,7 @@ export class BillingService {
       }));
     }
 
-    syncPlanToQuota(this.uowOrDb, tenantId, plan.id);
+    syncPlanToQuota(this.tx, tenantId, plan.id);
     this.entitlementService.syncTenantEntitlements(tenantId);
 
     const subscription = this.getLatestSubscription(tenantId);

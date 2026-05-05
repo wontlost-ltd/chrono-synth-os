@@ -10,7 +10,7 @@ import type {
 } from '@chrono/kernel';
 import {
   AUDIT_QUERY_BY_ID, AUDIT_QUERY_LIST, AUDIT_QUERY_COUNT,
-  AUDIT_CMD_RECORD_REQUEST, AUDIT_CMD_RECORD_BUSINESS,
+  AUDIT_CMD_RECORD_REQUEST, AUDIT_CMD_RECORD_BUSINESS, AUDIT_CMD_ENSURE_SCHEMA,
 } from '@chrono/kernel';
 
 const AUDIT_SELECT = `
@@ -90,6 +90,28 @@ export function registerAuditLogExecutors(): void {
       p.actorType, p.actorId, p.actionType, p.payloadJson,
     );
     return { rowsAffected: result.changes };
+  });
+
+  registerCommand<undefined>(AUDIT_CMD_ENSURE_SCHEMA, (db) => {
+    const statements = [
+      'ALTER TABLE audit_log ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE audit_log ADD COLUMN event_kind TEXT NOT NULL DEFAULT \'request\'',
+      'ALTER TABLE audit_log ADD COLUMN user_id TEXT',
+      'ALTER TABLE audit_log ADD COLUMN user_email TEXT',
+      'ALTER TABLE audit_log ADD COLUMN action_type TEXT DEFAULT \'other\'',
+      'ALTER TABLE audit_log ADD COLUMN actor_type TEXT',
+      'ALTER TABLE audit_log ADD COLUMN actor_id TEXT',
+      'ALTER TABLE audit_log ADD COLUMN target_type TEXT',
+      'ALTER TABLE audit_log ADD COLUMN target_id TEXT',
+      'ALTER TABLE audit_log ADD COLUMN payload_json TEXT',
+    ];
+    for (const statement of statements) {
+      try { db.prepare<void>(statement).run(); } catch { /* 已升级 */ }
+    }
+    try {
+      db.prepare<void>('UPDATE audit_log SET created_at = timestamp WHERE created_at = 0').run();
+    } catch { /* ignore */ }
+    return { rowsAffected: 0 };
   });
 
   registerCommand<AuditRecordBusinessParams>(AUDIT_CMD_RECORD_BUSINESS, (db, p) => {

@@ -1,5 +1,3 @@
-import type { IDatabase } from '../storage/database.js';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
@@ -817,30 +815,19 @@ function walletSettlementFromRow(row: WalletSettlementRow): TaskWalletSettlement
 }
 
 export class PersonaCoreService {
-  private readonly tx: SyncWriteUnitOfWork;
-  private readonly db: IDatabase | null;
-  private readonly uowOrDb: UowOrDb;
   private readonly encryption?: FieldEncryption;
   private readonly runtimeSessionTimeoutMs: number;
 
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     encryption?: FieldEncryption,
     runtimeSessionTimeoutMs = 60_000,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
-    this.uowOrDb = uowOrDb;
     this.encryption = encryption?.isEnabled ? encryption : undefined;
     this.runtimeSessionTimeoutMs = runtimeSessionTimeoutMs;
-    if (this.db) ensureAuditLogColumns(this.db);
-  }
-
-  private runAtomic<T>(fn: () => T): T {
-    if (this.db) return this.db.transaction(fn);
-    return fn();
+    ensureAuditLogColumns(tx);
   }
 
   private getEncryption(tenantId: string): FieldEncryption | undefined {
@@ -849,7 +836,7 @@ export class PersonaCoreService {
   }
 
   private getCognitive(tenantId: string): PersonaCognitiveMemoryGraph {
-    return new PersonaCognitiveMemoryGraph(this.uowOrDb, undefined, this.getEncryption(tenantId));
+    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId));
   }
 
   private recordBusinessAudit(input: {
@@ -861,8 +848,7 @@ export class PersonaCoreService {
     payload?: Record<string, unknown>;
     createdAt?: number;
   }): void {
-    if (!this.db) return;
-    recordBusinessAuditLog(this.db, {
+    recordBusinessAuditLog(this.tx, {
       tenantId: input.tenantId,
       actorType: 'user',
       actorId: input.actorId,
@@ -875,8 +861,7 @@ export class PersonaCoreService {
   }
 
   private publishObservability(event: Parameters<typeof publishObservabilityEvent>[1]): void {
-    if (!this.db) return;
-    publishObservabilityEvent(this.db, event);
+    publishObservabilityEvent(this.tx, event);
   }
 
   createPersona(input: CreatePersonaCoreInput): PersonaCoreDetail {
@@ -888,7 +873,7 @@ export class PersonaCoreService {
     const visibility = input.visibility ?? 'private';
     const initialReputation = 50;
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreatePersona({
         id: personaId,
         tenantId: input.tenantId,
@@ -1049,7 +1034,7 @@ export class PersonaCoreService {
     if (persona.status === 'active') return persona;
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdActivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
       this.insertMemory({
@@ -1071,7 +1056,7 @@ export class PersonaCoreService {
     if (persona.status === 'dormant') return persona;
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdDeactivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
       this.insertMemory({
@@ -1101,7 +1086,7 @@ export class PersonaCoreService {
 
     const now = Date.now();
     const transferId = generatePrefixedId('ptransfer');
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateTransfer({
         id: transferId,
         tenantId: input.tenantId,
@@ -1156,7 +1141,7 @@ export class PersonaCoreService {
     }
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdApproveTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
       this.tx.execute(pcoreCmdTransferPersonaOwner({
@@ -1309,7 +1294,7 @@ export class PersonaCoreService {
     const { startMs, endMs } = this.metricDateRange(metricDate);
     const personas = this.tx.queryMany(pcoreQueryDailyPersonas(tenantId)) as unknown as { id: string; reputation: number; growth_index: number }[];
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       for (const persona of personas) {
         const completedTasks = this.tx.queryOne(pcoreQueryDailyCompletedTaskCount({
           tenantId,
@@ -1575,7 +1560,7 @@ export class PersonaCoreService {
     const reputationDelta = round(confidence * 0.4);
     const currentReputation = persona.reputation;
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateKnowledgeItem({
         id: knowledgeId,
         tenantId: input.tenantId,
@@ -1672,7 +1657,7 @@ export class PersonaCoreService {
         break;
     }
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.insertGovernanceEvent({
         tenantId: input.tenantId,
         personaId: input.personaId,
@@ -1843,7 +1828,7 @@ export class PersonaCoreService {
     const payoutId = generatePrefixedId('wpr');
     const nextBalanceMinor = toMinor(wallet.balance) - amountMinor;
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateWalletPayoutRequest({
         id: payoutId,
         tenantId: input.tenantId,
@@ -1905,7 +1890,7 @@ export class PersonaCoreService {
     const settlementId = generatePrefixedId('ws');
     const settlementLatencyMs = Math.max(0, now - (assignment.submittedAt ?? assignment.assignedAt));
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateWalletSettlement({
         id: settlementId,
         tenantId: input.tenantId,
@@ -2061,7 +2046,7 @@ export class PersonaCoreService {
     const now = Date.now();
     const assignmentId = generatePrefixedId('tas');
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateTaskAssignment({
         id: assignmentId,
         tenantId: input.tenantId,
@@ -2130,7 +2115,7 @@ export class PersonaCoreService {
     const sessionId = generatePrefixedId('rs');
     const timeoutAt = computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs);
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateRuntimeSession({
         id: sessionId,
         tenantId: input.tenantId,
@@ -2197,7 +2182,7 @@ export class PersonaCoreService {
       { type: 'text', uri: `runtime://${session.id}/artifact.json` },
     ];
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdExecuteRuntimeSession({
         tenantId,
         sessionId,
@@ -2267,7 +2252,7 @@ export class PersonaCoreService {
       task_id: task.id,
     };
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.insertMemory({
         tenantId,
         personaId: session.personaId,
@@ -2372,7 +2357,7 @@ export class PersonaCoreService {
     const resultId = generatePrefixedId('tr');
     const evaluation = input.evaluation ?? {};
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateTaskResult({
         id: resultId,
         tenantId: input.tenantId,
@@ -2454,7 +2439,7 @@ export class PersonaCoreService {
       platformAmountMinor,
     } = this.computeSettlementSplit(totalAmountMinor, split.ownerPct, split.personaPct, split.platformPct);
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdAcceptTaskResult({
         tenantId: input.tenantId,
         resultId: result.id,
@@ -2610,7 +2595,7 @@ export class PersonaCoreService {
     if (!result || result.status !== 'submitted') return null;
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdRejectTaskResult({
         tenantId: input.tenantId,
         resultId: result.id,
@@ -2699,7 +2684,7 @@ export class PersonaCoreService {
     if (!governanceCase) return null;
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdDisputeTaskAssignment({
         tenantId: input.tenantId,
         assignmentId: assignment.id,
@@ -2764,7 +2749,7 @@ export class PersonaCoreService {
     const caseId = generatePrefixedId('gcase');
     const details = input.details ?? {};
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateGovernanceCase({
         id: caseId,
         tenantId: input.tenantId,
@@ -2851,7 +2836,7 @@ export class PersonaCoreService {
     const severityLevel = this.severityToLevel(governanceCase.severity);
     const reputationDelta = this.reputationDeltaForAction(input.actionType, severityLevel);
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateGovernanceAction({
         id: actionId,
         tenantId: input.tenantId,
@@ -2982,7 +2967,7 @@ export class PersonaCoreService {
     if (!persona || persona.ownerUserId !== input.actorUserId) return null;
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdAppealGovernanceCase({
         tenantId: input.tenantId,
         caseId: input.caseId,
@@ -3041,7 +3026,7 @@ export class PersonaCoreService {
     if (!task || task.status !== 'open') return null;
 
     const now = Date.now();
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdAcceptMarketplaceTaskLegacy({
         tenantId: input.tenantId,
         taskId: input.taskId,
@@ -3080,7 +3065,7 @@ export class PersonaCoreService {
     const payout = round(task.reward * Math.max(qualityScore, 0.2), 2);
     const tokenReward = round(growthDelta * 8, 2);
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCompleteMarketplaceTask({
         tenantId: input.tenantId,
         taskId: input.taskId,

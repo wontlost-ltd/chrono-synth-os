@@ -10,6 +10,7 @@ import {
   SETTLE_CMD_DELETE_ORPHAN_TRANSACTIONS,
   SETTLE_CMD_INSERT_RUN,
 } from '@chrono/kernel';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { SettlementReconciliationService } from '../../billing/settlement-reconciliation-service.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveCommandExecutor, resolveQueryExecutor } from '../../storage/legacy-sync-bridge.js';
@@ -36,7 +37,7 @@ describe('SettlementReconciliationService', () => {
   it('空租户对账并持久化运行记录', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const service = new SettlementReconciliationService(db);
+    const service = new SettlementReconciliationService(directUnitOfWork(db));
 
     const run = service.reconcileTenant('tenant-a');
 

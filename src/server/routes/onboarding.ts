@@ -11,6 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { OnboardingService } from '../../onboarding/onboarding-service.js';
@@ -62,9 +63,10 @@ export function registerOnboardingRoutes(
   const sharedDb = db ?? os.getDatabase();
   const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
   const costTracker = new CostTracker(sharedDb);
-  const quotaManager = new QuotaManager(sharedDb);
-  const usageTracker = new UsageTracker(sharedDb);
-  const billingOutbox = new BillingOutbox(sharedDb, config);
+  const sharedTx = directUnitOfWork(sharedDb);
+  const quotaManager = new QuotaManager(sharedTx);
+  const usageTracker = new UsageTracker(sharedTx);
+  const billingOutbox = new BillingOutbox(sharedTx, config);
   const questionnaire = new QuestionnaireEngine();
 
   function getOS(tenantId: string): ChronoSynthOS {

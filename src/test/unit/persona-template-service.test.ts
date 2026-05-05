@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   PersonaTemplateService,
@@ -27,8 +28,9 @@ describe('PersonaTemplateService', () => {
   beforeEach(() => {
     os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
     os.start();
-    const personaCoreService = new PersonaCoreService(os.getDatabase());
-    service = new PersonaTemplateService(os.getDatabase(), personaCoreService);
+    const tx = directUnitOfWork(os.getDatabase());
+    const personaCoreService = new PersonaCoreService(tx);
+    service = new PersonaTemplateService(tx, personaCoreService);
     service.syncBuiltins();
 
     /* persona_core.owner_user_id 引用 users 表，instantiate 测试需要先建用户 */

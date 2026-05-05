@@ -12,19 +12,13 @@ import {
   entlCmdUpsert,
 } from '@chrono/kernel';
 import type { EffectiveLimits, EntlAddOnQuotaRow } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { EffectiveLimits };
 
 export class EntitlementService {
-  private readonly tx: SyncWriteUnitOfWork;
-  private readonly uowOrDb: UowOrDb;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.uowOrDb = uowOrDb;
   }
 
   /** 计算租户的有效配额限制（基础计划 + 附加组件叠加） */
@@ -53,7 +47,7 @@ export class EntitlementService {
   syncTenantEntitlements(tenantId: string): EffectiveLimits {
     const limits = this.computeEffectiveLimits(tenantId);
     const now = Date.now();
-    const qm = new QuotaManager(this.uowOrDb);
+    const qm = new QuotaManager(this.tx);
     const monthMs = 30 * 24 * 60 * 60 * 1000;
 
     for (const [resource, limit] of Object.entries(limits)) {

@@ -4,6 +4,8 @@ import {
   resolveTenantKafkaTopic,
 } from '../enterprise/tenant-kafka-topics.js';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { Logger } from '../utils/logger.js';
 import { recordPlatformDlqEvent } from '../events/platform-dlq.js';
 import {
@@ -140,12 +142,15 @@ export class ObservabilityKafkaOutboxProducer {
   private currentRun: Promise<ObservabilityKafkaFlushResult> | undefined;
   private producer: KafkaProducerLike | undefined;
   private started = false;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
     private readonly db: IDatabase,
     private readonly logger: Logger,
     private readonly config: AppConfig['observability'],
-  ) {}
+  ) {
+    this.tx = directUnitOfWork(db);
+  }
 
   async start(): Promise<boolean> {
     if (this.started) return true;
@@ -192,7 +197,7 @@ export class ObservabilityKafkaOutboxProducer {
         processed: 0,
         failed: 0,
         recovered: 0,
-        backlog: getObservabilityOutboxBacklog(this.db),
+        backlog: getObservabilityOutboxBacklog(this.tx),
       });
     }
     if (this.currentRun) return this.currentRun;
@@ -206,12 +211,12 @@ export class ObservabilityKafkaOutboxProducer {
   }
 
   private async flushInternal(batchSize: number): Promise<ObservabilityKafkaFlushResult> {
-    const recovered = requeueStaleObservabilityEvents(this.db, Date.now() - this.config.worker.staleProcessingMs);
-    const rows = listPendingObservabilityEvents(this.db, batchSize);
+    const recovered = requeueStaleObservabilityEvents(this.tx, Date.now() - this.config.worker.staleProcessingMs);
+    const rows = listPendingObservabilityEvents(this.tx, batchSize);
     const claimed: ObservabilityOutboxRow[] = [];
 
     for (const row of rows) {
-      if (markObservabilityEventProcessing(this.db, row.id)) {
+      if (markObservabilityEventProcessing(this.tx, row.id)) {
         claimed.push(row);
       }
     }
@@ -221,13 +226,13 @@ export class ObservabilityKafkaOutboxProducer {
         processed: 0,
         failed: 0,
         recovered,
-        backlog: getObservabilityOutboxBacklog(this.db),
+        backlog: getObservabilityOutboxBacklog(this.tx),
       };
     }
 
     let processed = 0;
     let failed = 0;
-    for (const [topic, topicRows] of groupClaimedRowsByKafkaTopic(this.db, claimed)) {
+    for (const [topic, topicRows] of groupClaimedRowsByKafkaTopic(this.tx, claimed)) {
       try {
         await this.producer!.send({
           topic,
@@ -245,14 +250,14 @@ export class ObservabilityKafkaOutboxProducer {
               payload: message.payload,
               createdAt: message.createdAt,
             });
-            markObservabilityEventSent(this.db, row.id);
+            markObservabilityEventSent(this.tx, row.id);
           });
         }
         processed += topicRows.length;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         for (const row of topicRows) {
-          markObservabilityEventFailed(this.db, row, message, this.config.worker.maxAttempts);
+          markObservabilityEventFailed(this.tx, row, message, this.config.worker.maxAttempts);
         }
         failed += topicRows.length;
         this.logger.warn(LAYER, 'Kafka 发件箱 topic 分发失败', {
@@ -267,7 +272,7 @@ export class ObservabilityKafkaOutboxProducer {
       processed,
       failed,
       recovered,
-      backlog: getObservabilityOutboxBacklog(this.db),
+      backlog: getObservabilityOutboxBacklog(this.tx),
     };
   }
 }
@@ -427,12 +432,12 @@ function isModuleNotFoundError(err: unknown, moduleName: string): boolean {
 }
 
 function groupClaimedRowsByKafkaTopic(
-  db: IDatabase,
+  tx: SyncWriteUnitOfWork,
   rows: ObservabilityOutboxRow[],
 ): Map<string, ObservabilityOutboxRow[]> {
   const grouped = new Map<string, ObservabilityOutboxRow[]>();
   for (const row of rows) {
-    const topic = resolveTenantKafkaTopic(db, row.tenant_id, row.topic);
+    const topic = resolveTenantKafkaTopic(tx, row.tenant_id, row.topic);
     const bucket = grouped.get(topic);
     if (bucket) {
       bucket.push(row);

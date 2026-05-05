@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { AppConfig } from '../../config/schema.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { RunRegulationSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 import { PersonaDriftAnalyzer, resolveDriftThresholds } from '../../safety/persona-drift-analyzer.js';
@@ -32,7 +33,7 @@ export function registerOperationRoutes(app: FastifyInstance, os: ChronoSynthOS,
       const analyzer = new PersonaDriftAnalyzer(tenantOS.getDatabase(), thresholds);
       const driftReport = analyzer.analyze(request.tenantId);
       if (driftReport.alertLevel !== 'ok') {
-        recordBusinessAuditLog(tenantOS.getDatabase(), {
+        recordBusinessAuditLog(directUnitOfWork(tenantOS.getDatabase()), {
           tenantId: request.tenantId,
           actorType: 'system',
           actorId: 'drift-monitor',

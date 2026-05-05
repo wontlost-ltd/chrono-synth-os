@@ -16,7 +16,7 @@ describe('Phase 3：PersonaCognitiveMemoryGraph 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new PersonaCognitiveMemoryGraph(db);
+      const fromDb = new PersonaCognitiveMemoryGraph(directUnitOfWork(db));
       assert.ok(fromDb);
 
       const fromUow = new PersonaCognitiveMemoryGraph(directUnitOfWork(db));

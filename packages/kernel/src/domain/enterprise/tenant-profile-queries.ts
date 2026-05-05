@@ -15,6 +15,7 @@ export const TPROF_CMD_UPDATE = 'tenantProfile.update' as const;
 export const TPROF_CMD_INSERT = 'tenantProfile.insert' as const;
 export const TPROF_CMD_UPDATE_SCIM_TOKEN = 'tenantProfile.updateScimToken' as const;
 export const TPROF_CMD_INSERT_WITH_SCIM_TOKEN = 'tenantProfile.insertWithScimToken' as const;
+export const TPROF_CMD_UPDATE_BYOS = 'tenantProfile.updateByos' as const;
 
 /* ── 行类型 ── */
 
@@ -76,6 +77,13 @@ export interface TprofInsertWithScimTokenParams {
   now: number;
 }
 
+export interface TprofUpdateByosParams {
+  tenantId: string;
+  byosProvider: string;
+  byosBucket: string;
+  byosKeyPrefix: string;
+}
+
 /* ── Query 工厂 ── */
 
 export function tprofQueryByTenant(tenantId: string): Query<TprofRow | null, string> {
@@ -102,4 +110,8 @@ export function tprofCmdUpdateScimToken(params: TprofUpdateScimTokenParams): Com
 
 export function tprofCmdInsertWithScimToken(params: TprofInsertWithScimTokenParams): Command<TprofInsertWithScimTokenParams> {
   return { kind: TPROF_CMD_INSERT_WITH_SCIM_TOKEN, params };
+}
+
+export function tprofCmdUpdateByos(params: TprofUpdateByosParams): Command<TprofUpdateByosParams> {
+  return { kind: TPROF_CMD_UPDATE_BYOS, params };
 }

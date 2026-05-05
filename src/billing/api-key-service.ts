@@ -7,7 +7,6 @@ import { randomUUID, createHash, randomBytes } from 'node:crypto';
 import type { SyncWriteUnitOfWork, ApiKeyRow } from '@chrono/kernel';
 import { apikeyQueryList, apikeyCmdCreate, apikeyCmdRevoke } from '@chrono/kernel';
 import { SubscriptionQueryService } from './subscription-query-service.js';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface ApiKeyDto {
@@ -31,13 +30,11 @@ export type CreateApiKeyOutcome =
   | { ok: false; tenantPlanId: string };
 
 export class ApiKeyService {
-  private readonly tx: SyncWriteUnitOfWork;
   private readonly subscriptionQuery: SubscriptionQueryService;
 
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.subscriptionQuery = new SubscriptionQueryService(uowOrDb);
+    this.subscriptionQuery = new SubscriptionQueryService(tx);
   }
 
   /**

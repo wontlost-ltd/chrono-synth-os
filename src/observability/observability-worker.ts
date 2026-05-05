@@ -1,4 +1,5 @@
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { Logger } from '../utils/logger.js';
 import { recordPlatformDlqEvent } from '../events/platform-dlq.js';
 import {
@@ -104,25 +105,26 @@ export class ObservabilityWorker {
   }
 
   private flushInternal(batchSize: number): ObservabilityFlushResult {
-    const recovered = requeueStaleObservabilityEvents(this.db, Date.now() - this.options.staleProcessingMs);
-    const rows = listPendingObservabilityEvents(this.db, batchSize);
+    const tx = directUnitOfWork(this.db);
+    const recovered = requeueStaleObservabilityEvents(tx, Date.now() - this.options.staleProcessingMs);
+    const rows = listPendingObservabilityEvents(tx, batchSize);
 
     let processed = 0;
     let failed = 0;
 
     for (const row of rows) {
-      if (!markObservabilityEventProcessing(this.db, row.id)) continue;
+      if (!markObservabilityEventProcessing(tx, row.id)) continue;
 
       try {
         this.db.transaction(() => {
           applyEventToRollups(this.db, row);
-          markObservabilityEventSent(this.db, row.id);
+          markObservabilityEventSent(tx, row.id);
         });
         processed++;
       } catch (err) {
         failed++;
         const message = err instanceof Error ? err.message : String(err);
-        markObservabilityEventFailed(this.db, row, message, this.options.maxAttempts);
+        markObservabilityEventFailed(tx, row, message, this.options.maxAttempts);
         if (row.attempts + 1 >= this.options.maxAttempts) {
           recordPlatformDlqEvent(this.db, {
             tenantId: row.tenant_id,
@@ -142,7 +144,7 @@ export class ObservabilityWorker {
       processed,
       failed,
       recovered,
-      backlog: getObservabilityOutboxBacklog(this.db),
+      backlog: getObservabilityOutboxBacklog(tx),
     };
   }
 }

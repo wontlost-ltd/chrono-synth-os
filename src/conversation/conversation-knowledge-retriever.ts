@@ -15,7 +15,6 @@
 import { createHash } from 'node:crypto';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { krtvQueryByPersona } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { Logger } from '../utils/logger.js';
 import type { RelevantKnowledge } from './conversation-types.js';
@@ -54,14 +53,12 @@ export class ConversationKnowledgeRetriever {
   /* 简单 LRU：fingerprint → embedding；命中跳过 provider 调用 */
   private readonly embeddingCache = new Map<string, number[]>();
   private readonly cacheCap = 1024;
-  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly options: RetrieverOptions = {},
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   async retrieve(input: {

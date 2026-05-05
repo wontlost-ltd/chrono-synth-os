@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('QuotaManager', () => {
   let db: IDatabase;
@@ -11,7 +12,7 @@ describe('QuotaManager', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    qm = new QuotaManager(db);
+    qm = new QuotaManager(directUnitOfWork(db));
   });
 
   it('无限制时 checkQuota 返回 true', () => {

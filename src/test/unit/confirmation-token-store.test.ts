@@ -8,6 +8,7 @@ import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
 import { ConfirmationTokenStore } from '../../conversation/confirmation-token-store.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const CTX = {
   tenantId: 't1',
@@ -23,7 +24,7 @@ describe('ConfirmationTokenStore', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    store = new ConfirmationTokenStore(db);
+    store = new ConfirmationTokenStore(directUnitOfWork(db));
   });
 
   afterEach(() => db.close());
@@ -86,7 +87,7 @@ describe('ConfirmationTokenStore', () => {
 
   it('pruneExpired 删除过期未消费 token', () => {
     const ttl = 50;
-    const shortStore = new ConfirmationTokenStore(db, ttl);
+    const shortStore = new ConfirmationTokenStore(directUnitOfWork(db), ttl);
     shortStore.issue({ ...CTX, topic: 't', rule: 'require_confirmation', userInput: 'msg' });
     /* 等待过期 */
     return new Promise<void>((resolve) => setTimeout(() => {

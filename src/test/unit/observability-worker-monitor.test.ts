@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../../observability/observability-outbox.js';
 import {
@@ -22,7 +23,7 @@ describe('ObservabilityWorkerMonitor', () => {
   });
 
   it('输出 ready snapshot 和 Prometheus 指标', () => {
-    publishObservabilityEvent(db, {
+    publishObservabilityEvent(directUnitOfWork(db), {
       tenantId: 'tenant_monitor',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'runtime.completed',

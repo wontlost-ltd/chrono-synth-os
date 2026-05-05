@@ -14,6 +14,7 @@ export const AUDIT_QUERY_COUNT = 'audit.count' as const;
 
 export const AUDIT_CMD_RECORD_REQUEST = 'audit.recordRequest' as const;
 export const AUDIT_CMD_RECORD_BUSINESS = 'audit.recordBusiness' as const;
+export const AUDIT_CMD_ENSURE_SCHEMA = 'audit.ensureSchema' as const;
 
 /* ── 行类型 ── */
 
@@ -121,4 +122,8 @@ export function auditCmdRecordRequest(params: AuditRecordRequestParams): Command
 
 export function auditCmdRecordBusiness(params: AuditRecordBusinessParams): Command<AuditRecordBusinessParams> {
   return { kind: AUDIT_CMD_RECORD_BUSINESS, params };
+}
+
+export function auditCmdEnsureSchema(): Command<undefined> {
+  return { kind: AUDIT_CMD_ENSURE_SCHEMA, params: undefined };
 }

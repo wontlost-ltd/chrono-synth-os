@@ -27,7 +27,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'u1', 'u1@x.com');
-      const fromDb = new PersonaCoreService(db);
+      const fromDb = new PersonaCoreService(directUnitOfWork(db));
       const persona = fromDb.createPersona({
         tenantId: 'default',
         ownerUserId: 'u1',
@@ -57,7 +57,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'u1', 'u1@x.com');
-      const fromDb = new PersonaCoreService(db);
+      const fromDb = new PersonaCoreService(directUnitOfWork(db));
       const persona = fromDb.createPersona({
         tenantId: 'default',
         ownerUserId: 'u1',

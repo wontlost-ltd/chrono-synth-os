@@ -10,6 +10,7 @@ import { ValueStore } from '../../core/value-store.js';
 import { DecisionStyleStore, DEFAULT_DECISION_STYLE } from '../../core/decision-style-store.js';
 import { CognitiveModelStore } from '../../core/cognitive-model-store.js';
 import { compilePersonaState, summarizeForPrompt } from '../../intelligence/persona-state.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('P-OS v0.1 五层人格模型', () => {
   let db: IDatabase;
@@ -23,7 +24,7 @@ describe('P-OS v0.1 五层人格模型', () => {
 
   describe('ValueStore 直接构造自注册', () => {
     it('无需外部注册即可直接创建和查询', () => {
-      const store = new ValueStore(db, clock);
+      const store = new ValueStore(directUnitOfWork(db), clock);
       const val = store.create('诚实', 0.8);
       assert.ok(val.id.startsWith('val_'));
       assert.equal(val.label, '诚实');
@@ -35,7 +36,7 @@ describe('P-OS v0.1 五层人格模型', () => {
 
   describe('SurvivalAnchorStore (L0)', () => {
     let store: SurvivalAnchorStore;
-    beforeEach(() => { store = new SurvivalAnchorStore(db, clock); });
+    beforeEach(() => { store = new SurvivalAnchorStore(directUnitOfWork(db), clock); });
 
     it('创建和获取锚点', () => {
       const anchor = store.create('风险底线', 'threshold', 0.2, 4);
@@ -102,7 +103,7 @@ describe('P-OS v0.1 五层人格模型', () => {
 
   describe('DecisionStyleStore (L2)', () => {
     let store: DecisionStyleStore;
-    beforeEach(() => { store = new DecisionStyleStore(db, clock); });
+    beforeEach(() => { store = new DecisionStyleStore(directUnitOfWork(db), clock); });
 
     it('未设置时返回默认值', () => {
       const style = store.get();
@@ -140,7 +141,7 @@ describe('P-OS v0.1 五层人格模型', () => {
 
   describe('CognitiveModelStore (L3)', () => {
     let store: CognitiveModelStore;
-    beforeEach(() => { store = new CognitiveModelStore(db, clock); });
+    beforeEach(() => { store = new CognitiveModelStore(directUnitOfWork(db), clock); });
 
     it('未设置时返回默认值', () => {
       const model = store.get();

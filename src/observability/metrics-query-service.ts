@@ -69,7 +69,7 @@ function rollupRowToSummary(row?: MtrxRollupRow | null): ObservabilitySummary {
 export class MetricsQueryService {
   private readonly tx: SyncWriteUnitOfWork;
 
-  constructor(private readonly db: IDatabase) {
+  constructor(db: IDatabase) {
     registerCoreSelfExecutors();
     this.tx = directUnitOfWork(db);
   }
@@ -86,7 +86,7 @@ export class MetricsQueryService {
   getObservabilitySummary(): { rollup: ObservabilitySummary; backlog: { pending: number; processing: number; failed: number } } {
     try {
       const rollupRow = this.tx.queryOne(mtrxQueryRollupSummary());
-      const backlog = getObservabilityOutboxBacklog(this.db);
+      const backlog = getObservabilityOutboxBacklog(this.tx);
       return {
         rollup: rollupRowToSummary(rollupRow),
         backlog: {

@@ -10,7 +10,6 @@ import {
   boutboxCmdEnqueue, boutboxCmdRequeueStale, boutboxCmdClaim,
   boutboxCmdMarkSent, boutboxCmdMarkFailed,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { reportUsage } from './stripe-client.js';
 
@@ -18,14 +17,11 @@ const MAX_ATTEMPTS = 5;
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
 
 export class BillingOutbox {
-  private readonly tx: SyncWriteUnitOfWork;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly config: AppConfig,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   /** 入队一条计量事件 */

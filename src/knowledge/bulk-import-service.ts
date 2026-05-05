@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { TaskQueue } from '../queue/task-queue.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { PersonaTemplateService } from '../enterprise/persona-template-service.js';
@@ -22,6 +22,7 @@ import {
   type BulkImportJobMetadata,
   type BulkImportJobRecord,
 } from './bulk-import-store.js';
+import { bimpQueryFindByFingerprint, bimpCmdDeleteByFingerprint } from '@chrono/kernel';
 import { UrlContentFetcher } from './url-content-fetcher.js';
 
 export type BulkImportSourceKind = 'text' | 'url' | 'file';
@@ -77,7 +78,7 @@ export class BulkImportService {
   private readonly store: BulkImportStore;
 
   constructor(
-    private readonly db: IDatabase,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly personaCoreService: PersonaCoreService,
     private readonly taskQueue: TaskQueue | undefined,
     private readonly fetcher: UrlContentFetcher,
@@ -88,7 +89,7 @@ export class BulkImportService {
     private readonly billingOutbox?: BillingOutbox,
     private readonly stripeCustomerLookup?: (tenantId: string) => string | null,
   ) {
-    this.store = new BulkImportStore(db);
+    this.store = new BulkImportStore(tx);
   }
 
   getStore(): BulkImportStore {
@@ -291,18 +292,11 @@ export class BulkImportService {
     personaId: string,
     fingerprint: string,
   ): { id: string } | null {
-    return this.db.prepare<{ id: string }>(
-      `SELECT id FROM persona_knowledge_items
-        WHERE tenant_id = ? AND persona_id = ? AND fingerprint = ?
-        LIMIT 1`,
-    ).get(tenantId, personaId, fingerprint) ?? null;
+    return this.tx.queryOne(bimpQueryFindByFingerprint({ tenantId, personaId, fingerprint }));
   }
 
   private deleteByFingerprint(tenantId: string, personaId: string, fingerprint: string): void {
-    this.db.prepare<void>(
-      `DELETE FROM persona_knowledge_items
-        WHERE tenant_id = ? AND persona_id = ? AND fingerprint = ?`,
-    ).run(tenantId, personaId, fingerprint);
+    this.tx.execute(bimpCmdDeleteByFingerprint({ tenantId, personaId, fingerprint }));
   }
 
   private recordBillableUsage(tenantId: string, quantity: number): void {

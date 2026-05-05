@@ -12,7 +12,6 @@ import {
   addonQueryCodeExists,
   addonCmdSeed, addonCmdCreate, addonCmdUpdate, addonCmdDeactivate,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { KernelAddOn };
@@ -45,13 +44,13 @@ function rowToAddOn(row: AddOnRow): AddOn {
   };
 }
 
-function getTx(uowOrDb: UowOrDb): SyncWriteUnitOfWork {
+function getTx(tx: SyncWriteUnitOfWork): SyncWriteUnitOfWork {
   registerCoreSelfExecutors();
-  return asUow(uowOrDb);
+  return tx;
 }
 
 /** 初始化默认附加组件（幂等），种子数据来自 kernel */
-export function seedDefaultAddOns(uowOrDb: UowOrDb): void {
+export function seedDefaultAddOns(uowOrDb: SyncWriteUnitOfWork): void {
   const tx = getTx(uowOrDb);
   const now = Date.now();
   for (const def of KERNEL_DEFAULT_ADD_ONS) {
@@ -71,7 +70,7 @@ export function seedDefaultAddOns(uowOrDb: UowOrDb): void {
 }
 
 /** 列出所有附加组件（可选仅活跃） */
-export function listAddOns(uowOrDb: UowOrDb, activeOnly = true): AddOn[] {
+export function listAddOns(uowOrDb: SyncWriteUnitOfWork, activeOnly = true): AddOn[] {
   const tx = getTx(uowOrDb);
   const rows = activeOnly
     ? tx.queryMany(addonQueryListActive()) as unknown as AddOnRow[]
@@ -80,21 +79,21 @@ export function listAddOns(uowOrDb: UowOrDb, activeOnly = true): AddOn[] {
 }
 
 /** 按 code 查找附加组件 */
-export function getAddOnByCode(uowOrDb: UowOrDb, code: string): AddOn | undefined {
+export function getAddOnByCode(uowOrDb: SyncWriteUnitOfWork, code: string): AddOn | undefined {
   const tx = getTx(uowOrDb);
   const row = tx.queryOne(addonQueryByCode(code));
   return row ? rowToAddOn(row) : undefined;
 }
 
 /** 按 ID 查找附加组件 */
-export function getAddOnById(uowOrDb: UowOrDb, id: string): AddOn | undefined {
+export function getAddOnById(uowOrDb: SyncWriteUnitOfWork, id: string): AddOn | undefined {
   const tx = getTx(uowOrDb);
   const row = tx.queryOne(addonQueryById(id));
   return row ? rowToAddOn(row) : undefined;
 }
 
 /** 创建附加组件 */
-export function createAddOn(uowOrDb: UowOrDb, data: Omit<AddOn, 'id' | 'isActive' | 'createdAt' | 'updatedAt'>): AddOn {
+export function createAddOn(uowOrDb: SyncWriteUnitOfWork, data: Omit<AddOn, 'id' | 'isActive' | 'createdAt' | 'updatedAt'>): AddOn {
   const tx = getTx(uowOrDb);
   const id = `addon_${randomUUID()}`;
   const now = Date.now();
@@ -112,7 +111,7 @@ export function createAddOn(uowOrDb: UowOrDb, data: Omit<AddOn, 'id' | 'isActive
 }
 
 /** 更新附加组件 */
-export function updateAddOn(uowOrDb: UowOrDb, id: string, data: Partial<Pick<AddOn, 'name' | 'description' | 'stripePriceId' | 'quotaAmount'>>): void {
+export function updateAddOn(uowOrDb: SyncWriteUnitOfWork, id: string, data: Partial<Pick<AddOn, 'name' | 'description' | 'stripePriceId' | 'quotaAmount'>>): void {
   if (
     data.name === undefined &&
     data.description === undefined &&
@@ -131,7 +130,7 @@ export function updateAddOn(uowOrDb: UowOrDb, id: string, data: Partial<Pick<Add
 }
 
 /** 停用附加组件 */
-export function deactivateAddOn(uowOrDb: UowOrDb, id: string): void {
+export function deactivateAddOn(uowOrDb: SyncWriteUnitOfWork, id: string): void {
   const tx = getTx(uowOrDb);
   tx.execute(addonCmdDeactivate({ id, now: Date.now() }));
 }

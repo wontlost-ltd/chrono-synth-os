@@ -27,5 +27,8 @@ export function directUnitOfWork(db: IDatabase): SyncWriteUnitOfWork {
       if (!executor) throw new Error(`未注册的命令: ${cmd.kind}`);
       return executor(db, cmd.params);
     },
+    transaction<T>(fn: () => T): T {
+      return db.transaction(fn);
+    },
   };
 }

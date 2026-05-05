@@ -16,7 +16,7 @@ export function applyObservabilityStoredEvent(db: IDatabase, event: Observabilit
   if (event.id && !claimObservabilityEvent(db, event)) {
     return false;
   }
-  applyObservabilityRollupDelta(db, event.tenantId, toRollupDelta(event));
+  applyObservabilityRollupDelta(directUnitOfWork(db), event.tenantId, toRollupDelta(event));
   return true;
 }
 

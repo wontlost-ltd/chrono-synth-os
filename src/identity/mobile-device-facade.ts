@@ -3,7 +3,7 @@
  * 封装设备注册、分身绑定、推送测试的业务逻辑
  */
 
-import type { UowOrDb } from '../storage/uow-helpers.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { JwtPayload } from '../types/auth.js';
 import type { PushService } from '../types/push.js';
 import { IdentityService } from './identity-service.js';
@@ -25,11 +25,11 @@ export class MobileDeviceFacade {
   private readonly identityService: IdentityService;
   private readonly avatarService: AvatarService;
 
-  constructor(uowOrDb: UowOrDb, private readonly pushService: PushService) {
-    this.deviceService = new MobileDeviceService(uowOrDb);
-    this.deviceAvatarService = new DeviceAvatarService(uowOrDb);
-    this.identityService = new IdentityService(uowOrDb);
-    this.avatarService = new AvatarService(uowOrDb);
+  constructor(tx: SyncWriteUnitOfWork, private readonly pushService: PushService) {
+    this.deviceService = new MobileDeviceService(tx);
+    this.deviceAvatarService = new DeviceAvatarService(tx);
+    this.identityService = new IdentityService(tx);
+    this.avatarService = new AvatarService(tx);
   }
 
   register(user: JwtPayload, input: RegisterDeviceInput) {

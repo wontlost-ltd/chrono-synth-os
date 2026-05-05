@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { PinoLogger } from '../logging/pino-logger.js';
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { buildAppServices } from './app-services.js';
 import type { AppConfig } from '../config/schema.js';
 import { NodeEventPublisher } from '../events/node-event-publisher.js';
@@ -179,6 +180,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 多租户 OS 工厂 */
   const db = deps.db ?? deps.os.getDatabase();
+  const tx = directUnitOfWork(db);
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const services = buildAppServices(db, config, deps.logger);
@@ -221,7 +223,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   if (config.billing.reconciliation.enabled) {
     settlementReconciliationWorker = new SettlementReconciliationWorker(
-      db,
+      tx,
       deps.os.getLogger(),
       {
         pollIntervalMs: config.billing.reconciliation.pollIntervalMs,
@@ -264,10 +266,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     }, 180_000);
 
     /* Avatar 自动运行 handler */
+    const queueTx = directUnitOfWork(queueDb);
     const autorunStore = new AvatarAutorunStore(queueDb);
-    const knowledgeStore = new KnowledgeSourceStore(queueDb);
-    const avatarService = new AvatarService(queueDb);
-    const quotaManager = new QuotaManager(queueDb);
+    const knowledgeStore = new KnowledgeSourceStore(queueTx);
+    const avatarService = new AvatarService(queueTx);
+    const quotaManager = new QuotaManager(queueTx);
     const knowledgeRegistry = new KnowledgeSourceRegistry();
     knowledgeRegistry.register('manual', new ManualKnowledgeSource());
     knowledgeRegistry.register('rss', new RssKnowledgeSource());
@@ -321,11 +324,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
    * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动）
    * P1-D 注入 UsageTracker + BillingOutbox 上报 bulk_knowledge_import_item */
-  const bulkImportPersonaCoreService = new PersonaCoreService(db);
-  const bulkImportTemplateService = new PersonaTemplateService(db, bulkImportPersonaCoreService);
+  const bulkImportPersonaCoreService = new PersonaCoreService(tx);
+  const bulkImportTemplateService = new PersonaTemplateService(tx, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
-  const p1dUsageTracker = new P1dUsageTracker(db);
-  const p1dBillingOutbox = config.stripe.enabled ? new P1dBillingOutbox(db, config) : undefined;
+  const p1dUsageTracker = new P1dUsageTracker(tx);
+  const p1dBillingOutbox = config.stripe.enabled ? new P1dBillingOutbox(tx, config) : undefined;
   const stripeCustomerLookup = (tenantId: string): string | null => {
     try {
       const row = db.prepare<{ stripe_customer_id: string | null }>(
@@ -339,7 +342,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     }
   };
   const bulkImportService = new BulkImportService(
-    db,
+    tx,
     bulkImportPersonaCoreService,
     bulkImportTaskQueue,
     new UrlContentFetcher(),
@@ -368,7 +371,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
   const conversationTokenBudget = new ConversationTokenBudget(config.intelligence.budget, db);
   const conversationCostTracker = new ConversationCostTracker(db);
-  const conversationQuotaManager = new QuotaManager(db);
+  const conversationQuotaManager = new QuotaManager(tx);
   const conversationCircuitBreaker = new ConversationCircuitBreaker({
     failureThreshold: 5,
     halfOpenMaxRequests: 1,
@@ -376,7 +379,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     executionTimeoutMs: 30_000,
   });
   const conversationService = new ConversationService({
-    db,
+    tx,
     llm: conversationLlmRouter,
     personaCoreService: bulkImportPersonaCoreService,
     logger: deps.os.getLogger(),
@@ -398,7 +401,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     },
   });
   /* P1-D 订阅状态闸门：在 conversation 路由 preHandler 调用 */
-  const subscriptionGate = new SubscriptionGateService(db);
+  const subscriptionGate = new SubscriptionGateService(tx);
   const conversationRetentionWorker = new ConversationRetentionWorker(
     conversationService,
     conversationService.getConfirmationStore(),
@@ -518,7 +521,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
   if (config.stripe.enabled) {
-    const billingOutbox = new BillingOutbox(db, config);
+    const billingOutbox = new BillingOutbox(tx, config);
     const FLUSH_INTERVAL_MS = 60_000;
     const flushTimer = setInterval(() => {
       void billingOutbox.flush().catch((err) => {

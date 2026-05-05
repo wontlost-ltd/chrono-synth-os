@@ -25,6 +25,8 @@ export const BIMP_CMD_UPDATE_FAILURES = 'bulkImport.updateFailures' as const;
 export const BIMP_CMD_SET_METADATA = 'bulkImport.setMetadata' as const;
 export const BIMP_CMD_MARK_COMPLETED = 'bulkImport.markCompleted' as const;
 export const BIMP_CMD_MARK_FAILED = 'bulkImport.markFailed' as const;
+export const BIMP_QUERY_FIND_BY_FINGERPRINT = 'bulkImport.findByFingerprint' as const;
+export const BIMP_CMD_DELETE_BY_FINGERPRINT = 'bulkImport.deleteByFingerprint' as const;
 
 /* ── 行类型 ── */
 
@@ -118,6 +120,12 @@ export interface BimpMarkFailedParams {
   now: number;
 }
 
+export interface BimpFingerprintParams {
+  tenantId: string;
+  personaId: string;
+  fingerprint: string;
+}
+
 /* ── Query 工厂 ── */
 
 export function bimpQueryById(params: BimpByIdParams): Query<{ failures_json: string } | null, BimpByIdParams> {
@@ -168,4 +176,12 @@ export function bimpCmdMarkCompleted(params: BimpMarkCompletedParams): Command<B
 
 export function bimpCmdMarkFailed(params: BimpMarkFailedParams): Command<BimpMarkFailedParams> {
   return { kind: BIMP_CMD_MARK_FAILED, params };
+}
+
+export function bimpQueryFindByFingerprint(params: BimpFingerprintParams): Query<{ id: string } | null, BimpFingerprintParams> {
+  return { kind: BIMP_QUERY_FIND_BY_FINGERPRINT, params };
+}
+
+export function bimpCmdDeleteByFingerprint(params: BimpFingerprintParams): Command<BimpFingerprintParams> {
+  return { kind: BIMP_CMD_DELETE_BY_FINGERPRINT, params };
 }

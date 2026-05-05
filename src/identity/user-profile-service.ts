@@ -11,7 +11,6 @@ import {
 } from '@chrono/kernel';
 import type { UserProfileSummaryRow } from '@chrono/kernel';
 import { AuthenticationError, ValidationError, ErrorCode } from '../errors/index.js';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function userToProfile(row: UserProfileSummaryRow) {
@@ -25,11 +24,8 @@ function userToProfile(row: UserProfileSummaryRow) {
 }
 
 export class UserProfileService {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   getProfile(userId: string) {

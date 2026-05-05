@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { ensureAuditLogColumns, recordRequestAuditLog } from '../../audit/audit-log-store.js';
 
@@ -38,7 +39,8 @@ function resolveActionType(path: string): string {
 export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined): void {
   if (!db) return;
 
-  ensureAuditLogColumns(db);
+  const tx = directUnitOfWork(db);
+  ensureAuditLogColumns(tx);
 
   /* 记录请求开始时间，用于计算延迟 */
   app.addHook('onRequest', (request: FastifyRequest, _reply: FastifyReply, done) => {
@@ -70,7 +72,7 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
       const actionType = resolveActionType(routePath);
       const actorType = apiKey ? 'api_key' : userId ? 'user' : null;
 
-      recordRequestAuditLog(db, {
+      recordRequestAuditLog(tx, {
         tenantId,
         requestId,
         method: request.method,

@@ -3,7 +3,7 @@
  * 封装知识源的业务逻辑，路由层只做请求解析和响应序列化
  */
 
-import type { UowOrDb } from '../storage/uow-helpers.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { KnowledgeSourceRecord, KnowledgeSourceType } from '../types/avatar-autorun.js';
 import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
@@ -34,8 +34,8 @@ export interface PaginatedResult<T> {
 export class KnowledgeSourceService {
   private readonly store: KnowledgeSourceStore;
 
-  constructor(uowOrDb: UowOrDb) {
-    this.store = new KnowledgeSourceStore(uowOrDb);
+  constructor(tx: SyncWriteUnitOfWork) {
+    this.store = new KnowledgeSourceStore(tx);
   }
 
   list(tenantId: string, page: number, pageSize: number): PaginatedResult<KnowledgeSourceRecord> {

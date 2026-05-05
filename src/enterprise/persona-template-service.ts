@@ -16,8 +16,6 @@ import {
   ptplQueryList, ptplQueryById,
   ptplCmdUpsertBuiltin, ptplCmdInsert, ptplCmdUpdate, ptplCmdDelete,
 } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { PersonaCoreDetail } from '../persona-core/types.js';
@@ -94,17 +92,11 @@ export class BuiltInTemplateImmutableError extends Error {
 }
 
 export class PersonaTemplateService {
-  private readonly tx: SyncWriteUnitOfWork;
-  /** 仅用于审计日志（recordBusinessAuditLog 仍依赖 IDatabase）；UoW 模式下静默跳过 */
-  private readonly db: IDatabase | null;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly personaCoreService: PersonaCoreService,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
   }
 
   /** 启动期：把内置模板内容刷新到 DB（INSERT OR REPLACE） */
@@ -264,23 +256,21 @@ export class PersonaTemplateService {
       initialKnowledge,
     });
 
-    if (this.db) {
-      recordBusinessAuditLog(this.db, {
-        tenantId: input.tenantId,
-        actorType: 'user',
-        actorId: input.ownerUserId,
-        actionType: 'persona_template.instantiated',
-        targetType: 'persona_core',
-        targetId: persona.id,
-        payload: {
-          templateId: template.id,
-          templateCategory: template.category,
-          valueAnchorCount: valueAnchors.length,
-          initialKnowledgeCount: initialKnowledge.length,
-          templateVariableKeys: Object.keys(vars),
-        },
-      });
-    }
+    recordBusinessAuditLog(this.tx, {
+      tenantId: input.tenantId,
+      actorType: 'user',
+      actorId: input.ownerUserId,
+      actionType: 'persona_template.instantiated',
+      targetType: 'persona_core',
+      targetId: persona.id,
+      payload: {
+        templateId: template.id,
+        templateCategory: template.category,
+        valueAnchorCount: valueAnchors.length,
+        initialKnowledgeCount: initialKnowledge.length,
+        templateVariableKeys: Object.keys(vars),
+      },
+    });
 
     return {
       persona,

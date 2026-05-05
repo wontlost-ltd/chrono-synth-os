@@ -6,6 +6,7 @@ import {
   BOUTBOX_CMD_ENQUEUE, BOUTBOX_CMD_REQUEUE_STALE, BOUTBOX_CMD_CLAIM,
   BOUTBOX_CMD_MARK_SENT, BOUTBOX_CMD_MARK_FAILED,
 } from '@chrono/kernel';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveCommandExecutor, resolveQueryExecutor } from '../../storage/legacy-sync-bridge.js';
@@ -40,7 +41,7 @@ describe('UsageTracker & BillingOutbox 执行器注册', () => {
   it('UsageTracker record 和 getUsage 通过 data plane 契约持久化', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const tracker = new UsageTracker(db);
+    const tracker = new UsageTracker(directUnitOfWork(db));
 
     tracker.record('t1', 'llm_tokens', 100);
     tracker.record('t1', 'llm_tokens', 50);
@@ -52,7 +53,7 @@ describe('UsageTracker & BillingOutbox 执行器注册', () => {
   it('UsageTracker getSummary 返回按资源分组的用量', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const tracker = new UsageTracker(db);
+    const tracker = new UsageTracker(directUnitOfWork(db));
 
     tracker.record('t1', 'llm_tokens', 100);
     tracker.record('t1', 'simulations', 3);

@@ -11,6 +11,7 @@ import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { ConversationService } from '../../conversation/conversation-service.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import type { LLMProvider, ChatMessage, ChatOptions, ChatResponse } from '../../intelligence/llm-provider.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const TEST_USER_ID = 'user_billing';
 const TEST_TENANT_ID = 'tenant_billing';
@@ -56,7 +57,7 @@ describe('ConversationService 计费上报', () => {
        VALUES (?, ?, 'pw', 'admin', ?, 1000, 1000)`,
     ).run(TEST_USER_ID, `${TEST_USER_ID}@x.com`, TEST_TENANT_ID);
 
-    personaCoreService = new PersonaCoreService(db);
+    personaCoreService = new PersonaCoreService(directUnitOfWork(db));
     const persona = personaCoreService.createPersona({
       tenantId: TEST_TENANT_ID,
       ownerUserId: TEST_USER_ID,
@@ -68,12 +69,12 @@ describe('ConversationService 计费上报', () => {
     });
     personaId = persona.id;
 
-    usageTracker = new UsageTracker(db);
+    usageTracker = new UsageTracker(directUnitOfWork(db));
     billingOutbox = new StubBillingOutbox();
     llm = new StubLLM();
 
     service = new ConversationService({
-      db,
+      tx: directUnitOfWork(db),
       llm,
       personaCoreService,
       logger: new SilentLogger(),
@@ -126,7 +127,7 @@ describe('ConversationService 计费上报', () => {
 
   it('stripeCustomerLookup 返回 null → outbox 不入队（free 计划无 Stripe 客户）', async () => {
     const noCustomerService = new ConversationService({
-      db: os.getDatabase(),
+      tx: directUnitOfWork(os.getDatabase()),
       llm,
       personaCoreService,
       logger: new SilentLogger(),

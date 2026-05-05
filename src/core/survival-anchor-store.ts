@@ -7,7 +7,6 @@ import type { SurvivalAnchor, SurvivalAnchorKind } from '../types/personality-os
 import type { Clock } from '../utils/clock.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import {
   createAnchor, updateAnchor, getAnchorById, getAllAnchors,
   deleteAnchor, deleteAllAnchors, upsertAnchor,
@@ -28,13 +27,11 @@ function toKernelRandom(): KernelRandom {
 }
 
 export class SurvivalAnchorStore {
-  private readonly tx: SyncWriteUnitOfWork;
   private readonly kernelClock: KernelClock;
   private readonly kernelRandom: KernelRandom;
 
-  constructor(uowOrDb: UowOrDb, clock: Clock) {
+  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
     this.kernelClock = toKernelClock(clock);
     this.kernelRandom = toKernelRandom();
   }

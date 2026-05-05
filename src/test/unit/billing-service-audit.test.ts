@@ -10,6 +10,7 @@ import {
   AUDIT_QUERY_BY_ID, AUDIT_QUERY_LIST, AUDIT_QUERY_COUNT,
   AUDIT_CMD_RECORD_REQUEST, AUDIT_CMD_RECORD_BUSINESS,
 } from '@chrono/kernel';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { BillingService } from '../../billing/billing-service.js';
 import {
   recordRequestAuditLog, recordBusinessAuditLog, queryAuditLog, countAuditLogs, getAuditLogById,
@@ -46,7 +47,7 @@ describe('BillingService 执行器注册', () => {
   it('seedBillingPlans 和 listPlans 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const service = new BillingService(db);
+    const service = new BillingService(directUnitOfWork(db));
 
     const plans = service.listPlans();
     assert.ok(plans.length >= 3);
@@ -58,7 +59,7 @@ describe('BillingService 执行器注册', () => {
   it('subscribeTenant 创建订阅并生成发票', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const service = new BillingService(db);
+    const service = new BillingService(directUnitOfWork(db));
 
     const result = service.subscribeTenant('tenant-a', 'free');
     assert.equal(result.subscription.tenantId, 'tenant-a');
@@ -87,7 +88,7 @@ describe('AuditLogStore 执行器注册', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
 
-    recordRequestAuditLog(db, {
+    recordRequestAuditLog(directUnitOfWork(db), {
       tenantId: 'tenant-a',
       requestId: 'req-1',
       method: 'GET',
@@ -97,12 +98,12 @@ describe('AuditLogStore 执行器注册', () => {
       actionType: 'read',
     });
 
-    const logs = queryAuditLog(db, { tenantId: 'tenant-a' });
+    const logs = queryAuditLog(directUnitOfWork(db), { tenantId: 'tenant-a' });
     assert.equal(logs.length, 1);
     assert.equal(logs[0].method, 'GET');
     assert.equal(logs[0].statusCode, 200);
 
-    const count = countAuditLogs(db, { tenantId: 'tenant-a' });
+    const count = countAuditLogs(directUnitOfWork(db), { tenantId: 'tenant-a' });
     assert.equal(count, 1);
   });
 
@@ -110,7 +111,7 @@ describe('AuditLogStore 执行器注册', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
 
-    const id = recordBusinessAuditLog(db, {
+    const id = recordBusinessAuditLog(directUnitOfWork(db), {
       tenantId: 'tenant-a',
       actorType: 'user',
       actorId: 'user-1',
@@ -119,7 +120,7 @@ describe('AuditLogStore 执行器注册', () => {
       targetId: 'avatar-1',
     });
 
-    const record = getAuditLogById(db, 'tenant-a', id);
+    const record = getAuditLogById(directUnitOfWork(db), 'tenant-a', id);
     assert.ok(record);
     assert.equal(record.eventKind, 'business');
     assert.equal(record.actorId, 'user-1');

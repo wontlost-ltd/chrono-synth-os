@@ -11,7 +11,6 @@ import {
   cmsgCmdInsert, cmsgCmdDeleteByPersona, cmsgCmdPruneByRetention,
 } from '@chrono/kernel';
 import type { CmsgRow } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type {
@@ -43,15 +42,12 @@ export interface InsertMessageInput {
 }
 
 export class ConversationStore {
-  private readonly tx: SyncWriteUnitOfWork;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly encryption?: FieldEncryption,
     private readonly encryptionKeyRef = 'master',
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   insert(input: InsertMessageInput): ConversationMessage {

@@ -8,6 +8,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
@@ -157,7 +158,7 @@ const authRateLimit = {
 export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
   if (!config.jwt.enabled) return;
 
-  const authService = new AuthService(db, config);
+  const authService = new AuthService(directUnitOfWork(db), config);
 
   app.post('/api/v1/auth/register', authRateLimit, async (request, reply) => {
     const { email, password } = RegisterSchema.parse(request.body);
@@ -223,11 +224,11 @@ export async function generateTokenPair(
   tenantId: string,
   role: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
-  const authService = new AuthService(db, config);
+  const authService = new AuthService(directUnitOfWork(db), config);
   return authService.generateTokenPair(app, userId, tenantId, role);
 }
 
 /** 清理过期和已吊销的刷新令牌 */
 export function cleanupExpiredTokens(db: IDatabase): number {
-  return AuthService.cleanupExpired(db);
+  return AuthService.cleanupExpired(directUnitOfWork(db));
 }

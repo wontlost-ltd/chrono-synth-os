@@ -9,6 +9,7 @@ import { runMigrations } from '../../storage/migrations.js';
 import type { IDatabase } from '../../storage/database.js';
 import { StripeWebhookService } from '../../billing/stripe-webhook-service.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const TENANT = 'tenant_wh';
 const STRIPE_CUSTOMER = 'cus_test_123';
@@ -66,7 +67,7 @@ describe('StripeWebhookService 扩展事件', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    service = new StripeWebhookService(db, new EntitlementService(db));
+    service = new StripeWebhookService(directUnitOfWork(db), new EntitlementService(directUnitOfWork(db)));
   });
 
   afterEach(() => db.close());

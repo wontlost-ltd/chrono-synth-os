@@ -5,6 +5,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { AvatarAutorunService } from './avatar-autorun-service.js';
 import type { AvatarAutorunConfig, AvatarAutorunRunLog } from '../types/avatar-autorun.js';
 import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
@@ -46,7 +47,7 @@ export class AvatarAutorunFacade {
     private readonly autorunService: AvatarAutorunService | undefined,
   ) {
     this.store = new AvatarAutorunStore(db);
-    this.avatarService = new AvatarService(db);
+    this.avatarService = new AvatarService(directUnitOfWork(db));
   }
 
   getConfig(tenantId: string, avatarId: string): (AvatarAutorunConfig & { intervalMinutes: number }) | null {

@@ -9,6 +9,7 @@ import {
   QUOTA_CMD_SET_LIMIT, QUOTA_CMD_CLEAR_LIMIT,
   QUOTA_CMD_CONSUME, QUOTA_CMD_RECORD_USAGE,
 } from '@chrono/kernel';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { AvatarService } from '../../identity/avatar-service.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
@@ -47,7 +48,7 @@ describe('AvatarService 执行器注册', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     seedIdentity(db, 'identity-1');
-    const service = new AvatarService(db);
+    const service = new AvatarService(directUnitOfWork(db));
 
     const avatar = service.create('identity-1', { label: '测试分身' });
     assert.equal(avatar.identityId, 'identity-1');
@@ -64,7 +65,7 @@ describe('AvatarService 执行器注册', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     seedIdentity(db, 'identity-1');
-    const service = new AvatarService(db);
+    const service = new AvatarService(directUnitOfWork(db));
 
     const avatar = service.create('identity-1', { label: '原始' });
     const updated = service.update(avatar.id, { label: '更新后' });
@@ -83,7 +84,7 @@ describe('AvatarService 执行器注册', () => {
     runMigrations(db);
     seedIdentity(db, 'identity-1');
     seedIdentity(db, 'identity-2');
-    const service = new AvatarService(db);
+    const service = new AvatarService(directUnitOfWork(db));
 
     service.create('identity-1', { label: '分身A' });
     service.create('identity-1', { label: '分身B' });
@@ -116,7 +117,7 @@ describe('QuotaManager 执行器注册', () => {
   it('setLimit 和 checkQuota 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = new QuotaManager(directUnitOfWork(db));
 
     quota.setLimit('tenant-a', 'api_calls', 100, 60_000);
     assert.equal(quota.checkQuota('tenant-a', 'api_calls', 1), true);
@@ -126,7 +127,7 @@ describe('QuotaManager 执行器注册', () => {
   it('consumeQuota 原子消费与上限检查', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = new QuotaManager(directUnitOfWork(db));
     const now = 120_000;
 
     quota.setLimit('tenant-a', 'tokens', 10, 60_000);
@@ -139,7 +140,7 @@ describe('QuotaManager 执行器注册', () => {
   it('窗口滚动后配额重置', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = new QuotaManager(directUnitOfWork(db));
     const windowMs = 60_000;
 
     quota.setLimit('tenant-a', 'tokens', 5, windowMs);
@@ -157,7 +158,7 @@ describe('QuotaManager 执行器注册', () => {
   it('clearLimit 允许无限消费', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = new QuotaManager(directUnitOfWork(db));
 
     quota.setLimit('tenant-a', 'api_calls', 1, 60_000);
     quota.clearLimit('tenant-a', 'api_calls');

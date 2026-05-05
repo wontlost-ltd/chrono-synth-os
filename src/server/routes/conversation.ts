@@ -17,6 +17,7 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { JwtPayload } from '../../types/auth.js';
 import type {
   ConversationService,
@@ -101,7 +102,7 @@ export function registerConversationRoutes(app: FastifyInstance, services: Route
 
     if (db) {
       try {
-        recordBusinessAuditLog(db, {
+        recordBusinessAuditLog(directUnitOfWork(db), {
           tenantId,
           actorType: 'user',
           actorId: ownerUserId,

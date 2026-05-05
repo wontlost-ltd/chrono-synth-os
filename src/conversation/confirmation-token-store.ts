@@ -14,7 +14,6 @@ import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   ctokenQueryById, ctokenCmdInsert, ctokenCmdConsume, ctokenCmdPruneExpired,
 } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 
@@ -46,14 +45,11 @@ export interface VerifyTokenInput {
 }
 
 export class ConfirmationTokenStore {
-  private readonly tx: SyncWriteUnitOfWork;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly ttlMs: number = DEFAULT_TOKEN_TTL_MS,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   issue(input: IssueTokenInput): IssuedToken {

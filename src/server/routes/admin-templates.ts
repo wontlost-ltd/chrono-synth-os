@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { JwtPayload } from '../../types/auth.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   PersonaTemplateService,
@@ -28,9 +29,9 @@ import { requireRole } from '../plugins/rbac.js';
 import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 
 export function registerAdminTemplateRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
-  const db = os.getDatabase();
-  const personaCoreService = new PersonaCoreService(db);
-  const templateService = new PersonaTemplateService(db, personaCoreService);
+  const tx = directUnitOfWork(os.getDatabase());
+  const personaCoreService = new PersonaCoreService(tx);
+  const templateService = new PersonaTemplateService(tx, personaCoreService);
 
   /* 启动期：刷新内置模板内容（升级时无需迁移） */
   templateService.syncBuiltins();

@@ -10,6 +10,7 @@ import { AvatarAutorunStore } from '../../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../../storage/knowledge-source-store.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('AvatarAutorunStore', () => {
   let db: IDatabase;
@@ -22,8 +23,8 @@ describe('AvatarAutorunStore', () => {
     store = new AvatarAutorunStore(db);
 
     /* 创建 identity + avatar 满足外键约束 */
-    const identityService = new IdentityService(db);
-    const avatarService = new AvatarService(db);
+    const identityService = new IdentityService(directUnitOfWork(db));
+    const avatarService = new AvatarService(directUnitOfWork(db));
     const identity = identityService.create('user_1', 'tenant_1', '测试用户');
     const avatar = avatarService.create(identity.id, { label: '测试分身', kind: 'work' });
     avatarId = avatar.id;
@@ -281,7 +282,7 @@ describe('KnowledgeSourceStore', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    store = new KnowledgeSourceStore(db);
+    store = new KnowledgeSourceStore(directUnitOfWork(db));
   });
 
   it('创建知识源', () => {

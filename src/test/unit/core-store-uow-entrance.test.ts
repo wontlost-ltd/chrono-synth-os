@@ -23,7 +23,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ValueStore(db, clock);
+      const fromDb = new ValueStore(directUnitOfWork(db), clock);
       const v1 = fromDb.create('curiosity', 0.8);
       assert.ok(v1.id);
 
@@ -90,7 +90,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const graph = new CognitiveMemoryGraph(db, clock);
+      const graph = new CognitiveMemoryGraph(directUnitOfWork(db), clock);
       const m1 = graph.addMemory('episodic', 'test memory 1', 0.5, 0.8);
       assert.ok(m1.id);
       /* decayAll 内部使用 db.transaction 包裹 */

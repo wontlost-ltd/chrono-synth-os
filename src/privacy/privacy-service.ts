@@ -7,6 +7,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { AppConfig } from '../config/schema.js';
 import type { IDatabase, SqlValue } from '../storage/database.js';
+import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import { FieldEncryption } from '../storage/encryption.js';
 import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-profile-service.js';
@@ -223,7 +224,7 @@ export class PrivacyService {
     const db = os.getDatabase();
     this.config = config;
     this.importTokenStore = importTokenStore ?? createImportTokenStore(db);
-    this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
+    this.profileService = config ? new TenantEnterpriseProfileService(directUnitOfWork(db), config) : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.signingKey = config?.encryption.masterKey ?? 'change-me-in-production-32chars!';
     this.presignTtlSeconds = config?.objectStorage.presignTtlSeconds ?? 3600;
@@ -335,9 +336,9 @@ export class PrivacyService {
 
   getAuditTrail(tenantId: string, page: number, pageSize: number) {
     const offset = (page - 1) * pageSize;
-    const db = this.os.getDatabase();
-    const total = countAuditLogs(db, { tenantId, eventKind: 'all' });
-    const rows = queryAuditLog(db, {
+    const tx = directUnitOfWork(this.os.getDatabase());
+    const total = countAuditLogs(tx, { tenantId, eventKind: 'all' });
+    const rows = queryAuditLog(tx, {
       tenantId,
       eventKind: 'all',
       limit: pageSize,

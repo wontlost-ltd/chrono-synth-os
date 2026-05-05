@@ -4,7 +4,6 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, SwhsSubscriptionRow } from '@chrono/kernel';
 import { syncPlanToQuota, PLANS } from './plans.js';
 import type { EntitlementService } from './entitlement-service.js';
@@ -15,7 +14,6 @@ import {
   swhsCmdCancelByCustomer, swhsCmdCancelTenantAddons,
   swhsCmdFinalizeTrialPeriod, swhsCmdReviveInvoicePaid, swhsCmdMarkPastDue,
 } from '@chrono/kernel';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { SwhsSubscriptionRow as SubscriptionRow };
@@ -29,23 +27,11 @@ export interface WebhookProcessResult {
 }
 
 export class StripeWebhookService {
-  private readonly tx: SyncWriteUnitOfWork;
-  private readonly db: IDatabase | null;
-  private readonly uowOrDb: UowOrDb;
-
   constructor(
-    uowOrDb: UowOrDb,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly entitlementService: EntitlementService,
   ) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
-    this.uowOrDb = uowOrDb;
-  }
-
-  private runAtomic<T>(fn: () => T): T {
-    if (this.db) return this.db.transaction(fn);
-    return fn();
   }
 
   /**
@@ -55,7 +41,7 @@ export class StripeWebhookService {
   processEvent(eventId: string, eventType: string, dataObject: Record<string, unknown>): WebhookProcessResult {
     let duplicate = false;
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       const now = Date.now();
       const inserted = this.tx.execute(swhsCmdRecordEvent({ eventId, eventType, now }));
 
@@ -106,7 +92,7 @@ export class StripeWebhookService {
 
   /** 购买附加组件（插入 + 权益同步在同一事务内） */
   purchaseAddOn(tenantId: string, addOnId: string): void {
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       const now = Date.now();
       this.tx.execute(swhsCmdPurchaseAddon({
         id: `ta_${randomUUID()}`,
@@ -163,7 +149,7 @@ export class StripeWebhookService {
     }));
 
     if (resolvedPlanId !== tenantSub.plan_id) {
-      syncPlanToQuota(this.uowOrDb, tenantSub.tenant_id, resolvedPlanId);
+      syncPlanToQuota(this.tx, tenantSub.tenant_id, resolvedPlanId);
       this.entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
     }
   }
@@ -199,7 +185,7 @@ export class StripeWebhookService {
 
     if (tenantSub.status === 'past_due') {
       /* 复活：把配额恢复到当前 plan */
-      syncPlanToQuota(this.uowOrDb, tenantSub.tenant_id, tenantSub.plan_id);
+      syncPlanToQuota(this.tx, tenantSub.tenant_id, tenantSub.plan_id);
       this.entitlementService.syncTenantEntitlements(tenantSub.tenant_id);
     }
   }
@@ -234,7 +220,7 @@ export class StripeWebhookService {
     this.tx.execute(swhsCmdCancelByCustomer({ stripeCustomerId: customerId, now }));
 
     if (canceledSub) {
-      syncPlanToQuota(this.uowOrDb, canceledSub.tenant_id, 'free');
+      syncPlanToQuota(this.tx, canceledSub.tenant_id, 'free');
       this.tx.execute(swhsCmdCancelTenantAddons({ tenantId: canceledSub.tenant_id, now }));
       this.entitlementService.syncTenantEntitlements(canceledSub.tenant_id);
     }

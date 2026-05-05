@@ -5,6 +5,7 @@ import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { FieldEncryption } from '../../storage/encryption.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -15,7 +16,7 @@ describe('PersonaCoreService', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    service = new PersonaCoreService(db);
+    service = new PersonaCoreService(directUnitOfWork(db));
 
     const now = Date.now();
     db.prepare<void>(
@@ -432,7 +433,7 @@ describe('PersonaCoreService', () => {
       masterKey: randomBytes(32).toString('base64'),
       keyRotationIntervalDays: 90,
     });
-    const encryptedService = new PersonaCoreService(encDb, encryption);
+    const encryptedService = new PersonaCoreService(directUnitOfWork(encDb), encryption);
 
     const now = Date.now();
     encDb.prepare<void>(

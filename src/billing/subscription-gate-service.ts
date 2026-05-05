@@ -13,7 +13,6 @@
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { subqQueryGateLatest, usageQueryGet, type SubqGateRow } from '@chrono/kernel';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { getPlanLimits } from './plans.js';
 
@@ -31,11 +30,8 @@ const RESOURCE_KEYS = {
 export type GateResource = keyof typeof RESOURCE_KEYS;
 
 export class SubscriptionGateService {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   canUseResource(tenantId: string, resource: GateResource, now = Date.now()): GateDecision {

@@ -4,7 +4,6 @@
  * 创建身份时同时生成默认 Avatar
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, IdentityRow } from '@chrono/kernel';
 import {
   identQueryByUser, identQueryById, identQueryByTenant,
@@ -12,7 +11,6 @@ import {
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Identity } from './types.js';
-import { asUow, unwrapDb, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function rowToIdentity(r: IdentityRow): Identity {
@@ -28,18 +26,8 @@ function rowToIdentity(r: IdentityRow): Identity {
 }
 
 export class IdentityService {
-  private readonly tx: SyncWriteUnitOfWork;
-  private readonly db: IDatabase | null;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
-    this.db = unwrapDb(uowOrDb);
-  }
-
-  private runAtomic<T>(fn: () => T): T {
-    if (this.db) return this.db.transaction(fn);
-    return fn();
   }
 
   listByTenant(tenantId: string): Identity[] {
@@ -64,7 +52,7 @@ export class IdentityService {
     const avatarId = generatePrefixedId('avt');
     const now = Date.now();
 
-    this.runAtomic(() => {
+    this.tx.transaction(() => {
       this.tx.execute(identCmdCreate({ identityId, userId, tenantId, displayName, now }));
       this.tx.execute(identCmdCreateDefaultAvatar({ avatarId, identityId, now }));
     });

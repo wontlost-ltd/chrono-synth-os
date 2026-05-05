@@ -2,6 +2,7 @@ import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
+import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { loadConfig } from '../../config/schema.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import {
@@ -45,7 +46,7 @@ describe('Kafka transport helpers', () => {
   });
 
   it('可根据 enterprise deployment profile 解析 tenant Kafka topic', () => {
-    const service = new TenantEnterpriseProfileService(db, loadConfig({}));
+    const service = new TenantEnterpriseProfileService(directUnitOfWork(db), loadConfig({}));
     service.upsertProfile('tenant-enterprise', {
       deploymentMode: 'dedicated_db',
       kafkaNamespace: 'tenant-enterprise',
@@ -55,18 +56,18 @@ describe('Kafka transport helpers', () => {
     });
 
     assert.equal(
-      resolveTenantKafkaTopic(db, 'tenant-enterprise', OBSERVABILITY_TOPIC),
+      resolveTenantKafkaTopic(directUnitOfWork(db), 'tenant-enterprise', OBSERVABILITY_TOPIC),
       'tenant-enterprise.observability.events',
     );
     assert.equal(
-      resolveTenantKafkaTopic(db, 'tenant-auto', OBSERVABILITY_TOPIC),
+      resolveTenantKafkaTopic(directUnitOfWork(db), 'tenant-auto', OBSERVABILITY_TOPIC),
       'tenant-tenant-auto.observability.events',
     );
-    assert.equal(resolveTenantKafkaTopic(db, 'tenant-shared', OBSERVABILITY_TOPIC), OBSERVABILITY_TOPIC);
+    assert.equal(resolveTenantKafkaTopic(directUnitOfWork(db), 'tenant-shared', OBSERVABILITY_TOPIC), OBSERVABILITY_TOPIC);
   });
 
   it('可以把 outbox row 编码并解码为 Kafka 消息', () => {
-    const id = publishObservabilityEvent(db, {
+    const id = publishObservabilityEvent(directUnitOfWork(db), {
       tenantId: 'tenant_kafka',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'runtime.completed',
@@ -104,13 +105,13 @@ describe('Kafka transport helpers', () => {
   });
 
   it('Kafka outbox producer 会按 tenant namespace 分 topic 发送', async () => {
-    const profileService = new TenantEnterpriseProfileService(db, loadConfig({}));
+    const profileService = new TenantEnterpriseProfileService(directUnitOfWork(db), loadConfig({}));
     profileService.upsertProfile('tenant-enterprise', {
       deploymentMode: 'dedicated_db',
       kafkaNamespace: 'tenant-enterprise',
     });
 
-    const sharedEventId = publishObservabilityEvent(db, {
+    const sharedEventId = publishObservabilityEvent(directUnitOfWork(db), {
       tenantId: 'tenant-shared',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'task.outcome',
@@ -119,7 +120,7 @@ describe('Kafka transport helpers', () => {
         status: 'completed',
       },
     });
-    const dedicatedEventId = publishObservabilityEvent(db, {
+    const dedicatedEventId = publishObservabilityEvent(directUnitOfWork(db), {
       tenantId: 'tenant-enterprise',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'runtime.completed',
@@ -195,8 +196,8 @@ describe('Kafka transport helpers', () => {
       { id: sharedEventId, status: 'sent' },
     ].sort((left, right) => left.id.localeCompare(right.id)));
 
-    const sharedRollup = getObservabilityRollup(db, 'tenant-shared');
-    const dedicatedRollup = getObservabilityRollup(db, 'tenant-enterprise');
+    const sharedRollup = getObservabilityRollup(directUnitOfWork(db), 'tenant-shared');
+    const dedicatedRollup = getObservabilityRollup(directUnitOfWork(db), 'tenant-enterprise');
     assert.equal(sharedRollup.task_terminal_count, 1);
     assert.equal(sharedRollup.task_success_count, 0);
     assert.equal(dedicatedRollup.runtime_completed_count, 1);

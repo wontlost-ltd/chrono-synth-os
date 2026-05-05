@@ -127,7 +127,7 @@ export function replayPlatformDlqEvent(db: IDatabase, id: string): boolean {
     throw new Error('DLQ payload 不是可重放的对象');
   }
 
-  publishObservabilityEvent(db, {
+  publishObservabilityEvent(tx, {
     tenantId: row.tenant_id,
     topic: OBSERVABILITY_TOPIC,
     eventType: row.event_type as ObservabilityEventType,

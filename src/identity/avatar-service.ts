@@ -12,7 +12,6 @@ import {
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { Avatar, AvatarKind, BehaviorOverrides } from './types.js';
-import { asUow, type UowOrDb } from '../storage/uow-helpers.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function rowToAvatar(r: AvatarRow): Avatar {
@@ -30,11 +29,8 @@ function rowToAvatar(r: AvatarRow): Avatar {
 }
 
 export class AvatarService {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(uowOrDb: UowOrDb) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = asUow(uowOrDb);
   }
 
   create(identityId: string, data: { label: string; kind?: AvatarKind; behaviorOverrides?: BehaviorOverrides }): Avatar {
