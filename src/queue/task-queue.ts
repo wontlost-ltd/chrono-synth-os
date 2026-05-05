@@ -12,7 +12,6 @@ import {
   taskCmdEnqueue, taskCmdClaim, taskCmdComplete, taskCmdFail,
   taskCmdReschedule, taskCmdDeleteBatch, taskCmdReapRetryable, taskCmdReapExhausted,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { QuotaExceededError } from '../errors/index.js';
@@ -78,7 +77,7 @@ export class TaskQueue {
     this.workerId = workerId ?? generatePrefixedId('worker');
     this.config = { ...DEFAULT_QUEUE_CONFIG, ...config };
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 入队新任务（priority: 0=普通, 1=高优先, 2=紧急） */

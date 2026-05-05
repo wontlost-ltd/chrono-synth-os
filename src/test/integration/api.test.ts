@@ -7,7 +7,6 @@ import { TestClock } from '../../utils/clock.js';
 import { loadConfig } from '../../config/schema.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import type { FastifyInstance } from 'fastify';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('API 集成测试', () => {
   let os: ChronoSynthOS;
@@ -577,7 +576,7 @@ describe('身份与分身 API', () => {
       `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
        VALUES (?, ?, ?, 'member', ?, ?, ?)`,
     ).run(userId, email, 'hash', tenantId, now, now);
-    const identityService = new IdentityService(directUnitOfWork(os.getDatabase()));
+    const identityService = new IdentityService(os.getDatabase());
     identityService.ensureForUser(userId, tenantId, email.split('@')[0]!);
     return signUserToken(userId);
   }

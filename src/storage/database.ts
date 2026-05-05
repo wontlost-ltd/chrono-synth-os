@@ -1,19 +1,33 @@
 /**
  * 数据库抽象接口与 node:sqlite 实现
+ *
+ * IDatabase 同时实现 SyncWriteUnitOfWork 端口：
+ *  - schema migrations / raw storage 使用 prepare()/exec()
+ *  - service 层使用 queryOne()/queryMany()/execute()/transaction() (kernel 端口)
+ *
+ * 因此 IDatabase 既是 SQLite-style 数据访问接口，也是 kernel UoW 端口的具体实现，
+ * 中间没有任何"adapter / wrapper"对象。
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import type {
+  SyncWriteUnitOfWork, Query, Command, ExecResult,
+} from '@chrono/kernel';
+import { resolveQueryExecutor, resolveCommandExecutor } from './legacy-sync-bridge.js';
 
 /** SQL 参数值类型 */
 export type SqlValue = null | number | bigint | string;
 
-/** 数据库抽象接口 */
-export interface IDatabase {
+/**
+ * 数据库抽象接口。
+ * 继承 SyncWriteUnitOfWork：service 层只需依赖 SyncWriteUnitOfWork，
+ * 既能拿到 query/execute/transaction 端口，也能在 storage / migrations 场景
+ * 通过 prepare()/exec() 直接走 SQL。
+ */
+export interface IDatabase extends SyncWriteUnitOfWork {
   exec(sql: string): void;
   prepare<T = unknown>(sql: string): IPreparedStatement<T>;
   close(): void;
-  /** 在事务中执行函数，异常时自动回滚 */
-  transaction<T>(fn: () => T): T;
 }
 
 export interface IPreparedStatement<T = unknown> {
@@ -89,6 +103,27 @@ export class SqliteDatabase implements IDatabase {
 
   close(): void {
     this.db.close();
+  }
+
+  /* ── SyncWriteUnitOfWork 端口 ────────────────────────────────────────── */
+
+  queryOne<TResult, TParams = unknown>(q: Query<TResult, TParams>): TResult | null {
+    const executor = resolveQueryExecutor(q.kind);
+    if (!executor) throw new Error(`未注册的查询: ${q.kind}`);
+    const result = executor(this, q.params);
+    return (result as TResult) ?? null;
+  }
+
+  queryMany<TResult, TParams = unknown>(q: Query<TResult, TParams>): readonly TResult[] {
+    const executor = resolveQueryExecutor(q.kind);
+    if (!executor) throw new Error(`未注册的查询: ${q.kind}`);
+    return executor(this, q.params) as readonly TResult[];
+  }
+
+  execute<TParams>(cmd: Command<TParams>): ExecResult {
+    const executor = resolveCommandExecutor(cmd.kind);
+    if (!executor) throw new Error(`未注册的命令: ${cmd.kind}`);
+    return executor(this, cmd.params);
   }
 }
 

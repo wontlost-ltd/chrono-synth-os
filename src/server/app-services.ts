@@ -7,7 +7,6 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../config/schema.js';
 import type { Logger } from '../utils/logger.js';
 import { AuthService } from '../identity/auth-service.js';
@@ -50,7 +49,7 @@ export function buildAppServices(
   logger?: Logger,
 ): AppServices {
   const pushService = new MockPushService(logger);
-  const tx = directUnitOfWork(db);
+  const tx = db;
 
   return {
     db,

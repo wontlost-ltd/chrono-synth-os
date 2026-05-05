@@ -20,7 +20,6 @@ import {
   lsimCmdCreate, lsimCmdSetStatus, lsimCmdSetStatusCompleted,
   lsimCmdUpdateProgress, lsimCmdSaveSummary, lsimCmdSavePath,
 } from '@chrono/kernel';
-import { directUnitOfWork } from './direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from './executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 
@@ -62,7 +61,7 @@ export class LifeSimulationStore {
 
   constructor(db: IDatabase) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 创建模拟记录 */

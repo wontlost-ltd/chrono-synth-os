@@ -210,6 +210,9 @@ describe('TenantDatabase', () => {
       transaction<T>(fn: () => T): T {
         return fn();
       },
+      queryOne: () => null,
+      queryMany: () => [],
+      execute: () => ({ rowsAffected: 0 }),
       prepare<T = unknown>(sql: string): IPreparedStatement<T> {
         capturedSql = sql;
         return {
@@ -251,6 +254,9 @@ describe('TenantDatabase', () => {
       transaction<T>(fn: () => T): T {
         return fn();
       },
+      queryOne: () => null,
+      queryMany: () => [],
+      execute: () => ({ rowsAffected: 0 }),
       prepare<T = unknown>(sql: string): IPreparedStatement<T> {
         capturedSql = sql;
         return {

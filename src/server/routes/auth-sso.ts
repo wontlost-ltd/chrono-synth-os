@@ -7,7 +7,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../../config/schema.js';
 import { buildAuthorizeUrl, exchangeCode, fetchUserInfo } from '../plugins/auth0.js';
 import { ConfigError, ValidationError, AuthenticationError, ErrorCode } from '../../errors/index.js';
@@ -93,7 +92,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
   };
 
   const baseUrl = config.server.publicUrl;
-  const ssoUserService = new SsoUserService(directUnitOfWork(db));
+  const ssoUserService = new SsoUserService(db);
   const stateStore: SsoStateStore = app.redis
     ? createRedisStateStore(app.redis as unknown as RedisClient)
     : createMemoryStateStore();

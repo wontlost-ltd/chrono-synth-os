@@ -14,7 +14,6 @@ import {
   type UsageSnapshot,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { TokenBudgetConfig };
@@ -37,7 +36,7 @@ export class TokenBudget {
     this.config = { ...DEFAULT_TOKEN_BUDGET_CONFIG, ...config };
     if (db) {
       registerCoreSelfExecutors();
-      this.tx = directUnitOfWork(db);
+      this.tx = db;
     } else {
       this.tx = null;
     }

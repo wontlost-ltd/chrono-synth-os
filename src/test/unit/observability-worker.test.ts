@@ -2,7 +2,6 @@ import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { SilentLogger } from '../../utils/logger.js';
 import {
   OBSERVABILITY_TOPIC,
@@ -27,42 +26,42 @@ describe('ObservabilityWorker', () => {
   });
 
   it('将待处理观测事件聚合到租户 rollup', async () => {
-    publishObservabilityEvent(directUnitOfWork(db), {
+    publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'runtime.completed',
       partitionKey: 'rs_1',
       payload: { durationMs: 1200, updatedAt: 1000 },
     });
-    publishObservabilityEvent(directUnitOfWork(db), {
+    publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'task.outcome',
       partitionKey: 'task_1',
       payload: { outcome: 'accepted', terminal: true, success: true, updatedAt: 1000 },
     });
-    publishObservabilityEvent(directUnitOfWork(db), {
+    publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'wallet.settlement_completed',
       partitionKey: 'wallet_1',
       payload: { totalAmountMinor: 18000, latencyMs: 900, updatedAt: 1000 },
     });
-    publishObservabilityEvent(directUnitOfWork(db), {
+    publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'governance.case_opened',
       partitionKey: 'case_1',
       payload: { updatedAt: 1000 },
     });
-    publishObservabilityEvent(directUnitOfWork(db), {
+    publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'governance.action_applied',
       partitionKey: 'case_1',
       payload: { previousStatus: 'open', caseStatus: 'action_applied', updatedAt: 1000 },
     });
-    publishObservabilityEvent(directUnitOfWork(db), {
+    publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'persona.growth_recorded',
@@ -77,7 +76,7 @@ describe('ObservabilityWorker', () => {
     assert.equal(result.failed, 0);
     assert.equal(result.backlog.pending, 0);
 
-    const rollup = getObservabilityRollup(directUnitOfWork(db), 'tenant_obs');
+    const rollup = getObservabilityRollup(db, 'tenant_obs');
     assert.equal(rollup.runtime_completed_count, 1);
     assert.equal(rollup.runtime_duration_total_ms, 1200);
     assert.equal(rollup.task_terminal_count, 1);
@@ -94,14 +93,14 @@ describe('ObservabilityWorker', () => {
   });
 
   it('会回收卡在 processing 的陈旧事件', async () => {
-    const eventId = publishObservabilityEvent(directUnitOfWork(db), {
+    const eventId = publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'runtime.completed',
       partitionKey: 'rs_stale',
       payload: { durationMs: 300 },
     });
-    assert.equal(markObservabilityEventProcessing(directUnitOfWork(db), eventId), true);
+    assert.equal(markObservabilityEventProcessing(db, eventId), true);
     db.prepare<void>(
       'UPDATE observability_outbox SET processed_at = ? WHERE id = ?',
     ).run(Date.now() - 10_000, eventId);
@@ -114,11 +113,11 @@ describe('ObservabilityWorker', () => {
 
     assert.equal(result.recovered, 1);
     assert.equal(result.processed, 1);
-    assert.equal(getObservabilityRollup(directUnitOfWork(db), 'tenant_obs').runtime_completed_count, 1);
+    assert.equal(getObservabilityRollup(db, 'tenant_obs').runtime_completed_count, 1);
   });
 
   it('处理失败达到上限后会把消息写入 DLQ', async () => {
-    const eventId = publishObservabilityEvent(directUnitOfWork(db), {
+    const eventId = publishObservabilityEvent(db, {
       tenantId: 'tenant_obs',
       topic: OBSERVABILITY_TOPIC,
       eventType: 'runtime.completed',
@@ -173,7 +172,7 @@ describe('ObservabilityWorker', () => {
       createdAt: 2000,
     });
 
-    const rollup = getObservabilityRollup(directUnitOfWork(db), 'tenant_obs');
+    const rollup = getObservabilityRollup(db, 'tenant_obs');
     assert.equal(appliedFirst, true);
     assert.equal(appliedSecond, false);
     assert.equal(rollup.task_terminal_count, 1);

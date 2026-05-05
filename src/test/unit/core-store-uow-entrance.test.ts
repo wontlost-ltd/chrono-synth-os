@@ -7,7 +7,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { TestClock } from '../../utils/clock.js';
 import { ValueStore } from '../../core/value-store.js';
 import { NarrativeStore } from '../../core/narrative-store.js';
@@ -23,11 +22,11 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ValueStore(directUnitOfWork(db), clock);
+      const fromDb = new ValueStore(db, clock);
       const v1 = fromDb.create('curiosity', 0.8);
       assert.ok(v1.id);
 
-      const fromUow = new ValueStore(directUnitOfWork(db), clock);
+      const fromUow = new ValueStore(db, clock);
       const v2 = fromUow.create('honesty', 0.7);
       assert.ok(v2.id);
 
@@ -41,7 +40,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const store = new NarrativeStore(directUnitOfWork(db), clock);
+      const store = new NarrativeStore(db, clock);
       store.set('我是一个测试人格');
       assert.equal(store.get(), '我是一个测试人格');
     } finally {
@@ -53,7 +52,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const store = new CognitiveModelStore(directUnitOfWork(db), clock);
+      const store = new CognitiveModelStore(db, clock);
       const model = store.set({ growthMindset: 0.6 });
       assert.equal(model.growthMindset, 0.6);
     } finally {
@@ -65,7 +64,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const store = new DecisionStyleStore(directUnitOfWork(db), clock);
+      const store = new DecisionStyleStore(db, clock);
       const updated = store.set({ explorationBias: 0.4 });
       assert.equal(updated.explorationBias, 0.4);
     } finally {
@@ -77,7 +76,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const store = new SurvivalAnchorStore(directUnitOfWork(db), clock);
+      const store = new SurvivalAnchorStore(db, clock);
       const anchor = store.create('健康', 'must_have', { metric: 'energy' }, 3);
       assert.ok(anchor.id);
       assert.equal(store.getAll().length, 1);
@@ -90,7 +89,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const graph = new CognitiveMemoryGraph(directUnitOfWork(db), clock);
+      const graph = new CognitiveMemoryGraph(db, clock);
       const m1 = graph.addMemory('episodic', 'test memory 1', 0.5, 0.8);
       assert.ok(m1.id);
       /* decayAll 内部使用 db.transaction 包裹 */
@@ -105,7 +104,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const uow = directUnitOfWork(db);
+      const uow = db;
       const graph = new CognitiveMemoryGraph(uow, clock);
       const m = graph.addMemory('episodic', 'sync uow memory', 0, 0.7);
       assert.ok(m.id);

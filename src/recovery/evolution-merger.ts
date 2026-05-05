@@ -19,7 +19,6 @@ import {
   selectBestResult, buildEvolutionDiffReport,
 } from '@chrono/kernel';
 import type { ValueSnapshot } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 const LAYER = 'Evolution';
@@ -33,7 +32,7 @@ export class EvolutionMerger {
     private readonly logger: Logger,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /**

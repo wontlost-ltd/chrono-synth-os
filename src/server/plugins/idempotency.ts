@@ -8,7 +8,6 @@ import type { IdemRow } from '@chrono/kernel';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { ErrorCode, StateError, ValidationError } from '../../errors/index.js';
 
@@ -123,7 +122,7 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
   if (!db || !config.idempotency.enabled) return;
 
   registerCoreSelfExecutors();
-  const tx: SyncWriteUnitOfWork = directUnitOfWork(db);
+  const tx: SyncWriteUnitOfWork = db;
 
   app.addHook('preHandler', (request, reply, done) => {
     if (!IDEMPOTENT_METHODS.has(request.method)) return done();

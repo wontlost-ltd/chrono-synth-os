@@ -4,7 +4,6 @@ import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('AvatarService', () => {
   let db: IDatabase;
@@ -15,8 +14,8 @@ describe('AvatarService', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    identityService = new IdentityService(directUnitOfWork(db));
-    avatarService = new AvatarService(directUnitOfWork(db));
+    identityService = new IdentityService(db);
+    avatarService = new AvatarService(db);
     const identity = identityService.create('user_1', 'tenant_1', '测试用户');
     identityId = identity.id;
   });

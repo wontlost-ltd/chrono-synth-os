@@ -10,7 +10,6 @@ import {
   mtrxQueryBillingOutboxCount, mtrxQueryTenantUsage,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { getObservabilityOutboxBacklog } from './observability-outbox.js';
 
@@ -71,7 +70,7 @@ export class MetricsQueryService {
 
   constructor(db: IDatabase) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   getQueueBacklog(): { pending: number; running: number; failed: number } {

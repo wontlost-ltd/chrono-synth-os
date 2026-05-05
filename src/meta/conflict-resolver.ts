@@ -18,7 +18,6 @@ import {
   detectValueDivergences, detectResourceContention, pairKey,
 } from '@chrono/kernel';
 import type { PersonaVersionSnapshot } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 const VALID_KINDS = new Set<string>(['value_divergence', 'resource_contention', 'narrative_inconsistency']);
@@ -32,7 +31,7 @@ export class ConflictResolver {
     private readonly clock: Clock,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 检测价值分歧冲突（跳过已存在未解决冲突的版本对） */

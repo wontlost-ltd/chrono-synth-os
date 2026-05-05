@@ -9,7 +9,6 @@ import {
   llmCmdRecord, llmQueryMonthlySummary, llmQueryRecent,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { CostRecord };
@@ -20,7 +19,7 @@ export class CostTracker {
   constructor(db?: IDatabase) {
     if (db) {
       registerCoreSelfExecutors();
-      this.tx = directUnitOfWork(db);
+      this.tx = db;
     } else {
       this.tx = null;
     }

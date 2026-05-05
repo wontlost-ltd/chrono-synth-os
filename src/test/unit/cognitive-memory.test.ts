@@ -7,7 +7,6 @@ import { TestClock } from '../../utils/index.js';
 import { CognitiveMemoryGraph, DEFAULT_COGNITION_CONFIG } from '../../core/memory-graph.js';
 import { FieldEncryption } from '../../storage/encryption.js';
 import type { MemoryCognitionConfig } from '../../types/core-self.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('CognitiveMemoryGraph', () => {
   let db: IDatabase;
@@ -18,7 +17,7 @@ describe('CognitiveMemoryGraph', () => {
     db = createMemoryDatabase();
     runMigrations(db);
     clock = new TestClock(1000);
-    graph = new CognitiveMemoryGraph(directUnitOfWork(db), clock);
+    graph = new CognitiveMemoryGraph(db, clock);
   });
 
   // ===== CRUD 基础功能 =====
@@ -174,7 +173,7 @@ describe('CognitiveMemoryGraph', () => {
       graph.addEdge(a.id, b.id, 'r1', 1.0);
 
       const config: Partial<MemoryCognitionConfig> = { activation: { baseActivation: 0.5, damping: 0.1, maxDepth: 2 } };
-      const graphHigh = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const graphHigh = new CognitiveMemoryGraph(db, clock, config);
       graphHigh.spreadActivation(a.id);
       const updated = graphHigh.getMemory(b.id)!;
       assert.ok(updated.salience <= 1.0, `salience 不超过 1.0: ${updated.salience}`);
@@ -200,7 +199,7 @@ describe('CognitiveMemoryGraph', () => {
 
     it('容量限制驱逐最低分', () => {
       const config: Partial<MemoryCognitionConfig> = { workingMemory: { capacity: 2, recencyDecay: 0.0001 } };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       const low = g.addMemory('episodic', 'low', 0.0, 0.1);
       const mid = g.addMemory('episodic', 'mid', 0.0, 0.5);
@@ -217,7 +216,7 @@ describe('CognitiveMemoryGraph', () => {
 
     it('低分记忆不替换已有', () => {
       const config: Partial<MemoryCognitionConfig> = { workingMemory: { capacity: 1, recencyDecay: 0.0001 } };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       const high = g.addMemory('episodic', 'high', 0.0, 0.9);
       const low = g.addMemory('episodic', 'low', 0.0, 0.01);
@@ -253,7 +252,7 @@ describe('CognitiveMemoryGraph', () => {
         consolidation: { accessThreshold: 3, minSalience: 0.3 },
         eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
       };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       const m = g.addMemory('episodic', '反复访问的事件', 0.5, 0.8);
       g.accessMemory(m.id);
@@ -282,7 +281,7 @@ describe('CognitiveMemoryGraph', () => {
 
     it('非 episodic 不被固化', () => {
       const config: Partial<MemoryCognitionConfig> = { consolidation: { accessThreshold: 1, minSalience: 0.0 } };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       const m = g.addMemory('semantic', '知识', 0.3, 0.5);
       g.accessMemory(m.id);
@@ -292,7 +291,7 @@ describe('CognitiveMemoryGraph', () => {
 
     it('固化后关联边被复制到新记忆', () => {
       const config: Partial<MemoryCognitionConfig> = { consolidation: { accessThreshold: 2, minSalience: 0.3 } };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       const m1 = g.addMemory('episodic', '事件1', 0.5, 0.8);
       const m2 = g.addMemory('semantic', '知识', 0.3, 0.6);
@@ -308,7 +307,7 @@ describe('CognitiveMemoryGraph', () => {
 
     it('consolidateAll 批量固化', () => {
       const config: Partial<MemoryCognitionConfig> = { consolidation: { accessThreshold: 2, minSalience: 0.1 } };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       const m1 = g.addMemory('episodic', '事件1', 0.5, 0.8);
       const m2 = g.addMemory('episodic', '事件2', 0.3, 0.6);
@@ -355,7 +354,7 @@ describe('CognitiveMemoryGraph', () => {
         consolidation: { accessThreshold: 3, minSalience: 0.1 },
         eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
       };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       /* 创建记忆 */
       const m1 = g.addMemory('episodic', '重要事件', 0.8, 0.9);
@@ -407,7 +406,7 @@ describe('CognitiveMemoryGraph', () => {
       const config: Partial<MemoryCognitionConfig> = {
         workingMemory: { capacity: 3, recencyDecay: 0.001 },
       };
-      const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+      const g = new CognitiveMemoryGraph(db, clock, config);
 
       /* 只能容纳 3 个 */
       const m1 = g.addMemory('episodic', 'a', 0.0, 0.5);
@@ -432,7 +431,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0.05, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
         const m = g.addMemory('episodic', '低重要性事件', 0.0, 0.06);
         clock.advance(500_000);
 
@@ -447,7 +446,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
         g.addMemory('episodic', '低重要性事件', 0.0, 0.001);
         clock.advance(1_000_000);
 
@@ -459,7 +458,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0.05, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
         const m1 = g.addMemory('episodic', '低重要性', 0.0, 0.06);
         const m2 = g.addMemory('semantic', '关联知识', 0.5, 0.9);
         g.addEdge(m1.id, m2.id, 'related', 0.8);
@@ -481,7 +480,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0, maxMemoryNodes: 5, capacityTargetRatio: 0.8, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
 
         /* 创建 6 个记忆（超过上限 5） */
         for (let i = 0; i < 6; i++) {
@@ -504,7 +503,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
         for (let i = 0; i < 10; i++) {
           g.addMemory('episodic', `事件${i}`, 0.0, 0.5);
         }
@@ -516,7 +515,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0, maxMemoryNodes: 3, capacityTargetRatio: 0.6, deleteConsolidatedSources: false, batchSize: 2 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
         for (let i = 0; i < 6; i++) {
           g.addMemory('episodic', `事件${i}`, 0.0, (i + 1) * 0.1);
         }
@@ -530,7 +529,7 @@ describe('CognitiveMemoryGraph', () => {
         const config: Partial<MemoryCognitionConfig> = {
           eviction: { salienceFloor: 0, maxMemoryNodes: 10, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
         for (let i = 0; i < 5; i++) {
           g.addMemory('episodic', `事件${i}`, 0.0, 0.5);
         }
@@ -545,7 +544,7 @@ describe('CognitiveMemoryGraph', () => {
           consolidation: { accessThreshold: 2, minSalience: 0.1 },
           eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: true, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
 
         const m = g.addMemory('episodic', '反复事件', 0.5, 0.8);
         g.accessMemory(m.id);
@@ -568,7 +567,7 @@ describe('CognitiveMemoryGraph', () => {
           consolidation: { accessThreshold: 2, minSalience: 0.1 },
           eviction: { salienceFloor: 0, maxMemoryNodes: -1, capacityTargetRatio: 0.9, deleteConsolidatedSources: false, batchSize: 1000 },
         };
-        const g = new CognitiveMemoryGraph(directUnitOfWork(db), clock, config);
+        const g = new CognitiveMemoryGraph(db, clock, config);
 
         const m = g.addMemory('episodic', '反复事件', 0.5, 0.8);
         g.accessMemory(m.id);
@@ -609,7 +608,7 @@ describe('CognitiveMemoryGraph', () => {
       runMigrations(encDb);
       const masterKey = randomBytes(32).toString('base64');
       encryption = new FieldEncryption({ enabled: true, masterKey, keyRotationIntervalDays: 90 });
-      encryptedGraph = new CognitiveMemoryGraph(directUnitOfWork(encDb), new TestClock(1000), undefined, encryption);
+      encryptedGraph = new CognitiveMemoryGraph(encDb, new TestClock(1000), undefined, encryption);
     });
 
     it('addMemory 返回明文 content', () => {
@@ -649,7 +648,7 @@ describe('CognitiveMemoryGraph', () => {
     });
 
     it('未启用加密时 content 以明文存储', () => {
-      const plainGraph = new CognitiveMemoryGraph(directUnitOfWork(encDb), new TestClock(1000));
+      const plainGraph = new CognitiveMemoryGraph(encDb, new TestClock(1000));
       const m = plainGraph.addMemory('episodic', '明文数据', 0.5, 0.8);
       const row = encDb.prepare<{ content: string }>('SELECT content FROM memory_nodes WHERE id = ?').get(m.id);
       assert.ok(row);

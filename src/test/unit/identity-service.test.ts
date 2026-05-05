@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('IdentityService', () => {
   let db: IDatabase;
@@ -12,7 +11,7 @@ describe('IdentityService', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    svc = new IdentityService(directUnitOfWork(db));
+    svc = new IdentityService(db);
   });
 
   it('创建身份并同时生成默认分身', () => {

@@ -4,7 +4,6 @@ import {
   resolveTenantKafkaTopic,
 } from '../enterprise/tenant-kafka-topics.js';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { Logger } from '../utils/logger.js';
 import { recordPlatformDlqEvent } from '../events/platform-dlq.js';
@@ -149,7 +148,7 @@ export class ObservabilityKafkaOutboxProducer {
     private readonly logger: Logger,
     private readonly config: AppConfig['observability'],
   ) {
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   async start(): Promise<boolean> {

@@ -10,7 +10,6 @@ import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { FieldEncryption } from '../../storage/encryption.js';
 import type { FastifyInstance } from 'fastify';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('可视化与隐私 API 集成测试', () => {
   let os: ChronoSynthOS;
@@ -92,7 +91,7 @@ describe('可视化与隐私 API 集成测试', () => {
         `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run('user_privacy_export_target', 'privacy-export-target@example.com', 'hash', 'member', 'default', now, now);
-      const identityService = new IdentityService(directUnitOfWork(db));
+      const identityService = new IdentityService(db);
       const identity = identityService.ensureForUser('user_privacy_export', 'default', 'privacy-export');
       const defaultAvatar = db.prepare<{ id: string }>(
         'SELECT id FROM avatars WHERE identity_id = ? AND is_default = 1 LIMIT 1',
@@ -146,7 +145,7 @@ describe('可视化与隐私 API 集成测试', () => {
           report_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run('recon_privacy_export', 'default', 1, 0, 0, 0, 0, 0, JSON.stringify({ mismatchedSettlementIds: [] }), now);
-      const personaService = new PersonaCoreService(directUnitOfWork(db));
+      const personaService = new PersonaCoreService(db);
       const persona = personaService.createPersona({
         tenantId: 'default',
         ownerUserId: 'user_privacy_export',
@@ -279,7 +278,7 @@ describe('可视化与隐私 API 集成测试', () => {
       try {
         const db = encryptedOs.getDatabase();
         const encryption = new FieldEncryption(encryptedConfig.encryption);
-        const personaService = new PersonaCoreService(directUnitOfWork(db), encryption);
+        const personaService = new PersonaCoreService(db, encryption);
         const now = Date.now();
         db.prepare<void>(
           `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
@@ -347,7 +346,7 @@ describe('可视化与隐私 API 集成测试', () => {
         `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run('user_privacy_delete_target', 'privacy-delete-target@example.com', 'hash', 'member', 'default', now, now);
-      const identityService = new IdentityService(directUnitOfWork(db));
+      const identityService = new IdentityService(db);
       const identity = identityService.ensureForUser('user_privacy_delete', 'default', 'privacy-delete');
       const defaultAvatar = db.prepare<{ id: string }>(
         'SELECT id FROM avatars WHERE identity_id = ? AND is_default = 1 LIMIT 1',
@@ -401,7 +400,7 @@ describe('可视化与隐私 API 集成测试', () => {
           report_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run('recon_privacy_delete', 'default', 1, 1, 1, 4, 3, 0, JSON.stringify({ mismatchedSettlementIds: ['ws_1'] }), now);
-      const personaService = new PersonaCoreService(directUnitOfWork(db));
+      const personaService = new PersonaCoreService(db);
       const persona = personaService.createPersona({
         tenantId: 'default',
         ownerUserId: 'user_privacy_delete',

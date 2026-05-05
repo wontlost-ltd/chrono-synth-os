@@ -5,7 +5,6 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../../config/schema.js';
 import { BillingRouteFacade } from '../../billing/billing-route-facade.js';
 import { BillingRefundSchema, CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
@@ -13,7 +12,7 @@ import { requireRole } from '../plugins/rbac.js';
 import { StateError, ErrorCode } from '../../errors/index.js';
 
 export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
-  const facade = new BillingRouteFacade(directUnitOfWork(db), config);
+  const facade = new BillingRouteFacade(db, config);
 
   /* GET /api/v1/billing/plans — 所有可用计划 */
   app.get('/api/v1/billing/plans', async () => {

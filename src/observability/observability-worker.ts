@@ -1,5 +1,4 @@
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { Logger } from '../utils/logger.js';
 import { recordPlatformDlqEvent } from '../events/platform-dlq.js';
 import {
@@ -105,7 +104,7 @@ export class ObservabilityWorker {
   }
 
   private flushInternal(batchSize: number): ObservabilityFlushResult {
-    const tx = directUnitOfWork(this.db);
+    const tx = this.db;
     const recovered = requeueStaleObservabilityEvents(tx, Date.now() - this.options.staleProcessingMs);
     const rows = listPendingObservabilityEvents(tx, batchSize);
 

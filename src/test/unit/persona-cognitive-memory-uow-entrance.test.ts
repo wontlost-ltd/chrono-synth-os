@@ -8,7 +8,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCognitiveMemoryGraph } from '../../persona-core/persona-cognitive-memory.js';
 
 describe('Phase 3：PersonaCognitiveMemoryGraph 双入口', () => {
@@ -16,10 +15,10 @@ describe('Phase 3：PersonaCognitiveMemoryGraph 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new PersonaCognitiveMemoryGraph(directUnitOfWork(db));
+      const fromDb = new PersonaCognitiveMemoryGraph(db);
       assert.ok(fromDb);
 
-      const fromUow = new PersonaCognitiveMemoryGraph(directUnitOfWork(db));
+      const fromUow = new PersonaCognitiveMemoryGraph(db);
       assert.ok(fromUow);
     } finally { db.close(); }
   });

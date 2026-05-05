@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   ConversationService,
@@ -54,7 +53,7 @@ describe('ConversationService (生产级)', () => {
        VALUES (?, ?, 'pw', 'admin', ?, 1000, 1000)`,
     ).run(TEST_USER_ID, `${TEST_USER_ID}@test.com`, TEST_TENANT_ID);
 
-    personaCoreService = new PersonaCoreService(directUnitOfWork(db));
+    personaCoreService = new PersonaCoreService(db);
     const persona = personaCoreService.createPersona({
       tenantId: TEST_TENANT_ID,
       ownerUserId: TEST_USER_ID,
@@ -72,7 +71,7 @@ describe('ConversationService (生产级)', () => {
 
     llm = new StubLLM();
     service = new ConversationService({
-      tx: directUnitOfWork(db),
+      tx: db,
       llm,
       personaCoreService,
       logger: new SilentLogger(),

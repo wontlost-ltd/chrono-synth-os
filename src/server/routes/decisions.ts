@@ -10,7 +10,6 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
@@ -60,7 +59,7 @@ export function registerDecisionRoutes(
   tenantFactory?: TenantOSFactory,
 ): void {
   const sharedDb = db ?? os.getDatabase();
-  const sharedTx = directUnitOfWork(sharedDb);
+  const sharedTx = sharedDb;
   const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
   const costTracker = new CostTracker(sharedDb);
   const usageTracker = new UsageTracker(sharedTx);

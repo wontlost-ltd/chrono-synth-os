@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerMetricsRoutes } from '../../server/routes/metrics.js';
 import type { IDatabase, IPreparedStatement, SqlValue } from '../../storage/database.js';
+import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
+import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
+import type { Query, Command, ExecResult } from '@chrono/kernel';
 
 function createStatement<T>(handler: (...params: SqlValue[]) => T | T[] | undefined): IPreparedStatement<T> {
   return {
@@ -22,11 +25,27 @@ function createStatement<T>(handler: (...params: SqlValue[]) => T | T[] | undefi
 }
 
 function createBigIntMetricsDb(): IDatabase {
-  return {
+  registerCoreSelfExecutors();
+  const db: IDatabase = {
     exec() {},
     close() {},
     transaction<T>(fn: () => T): T {
       return fn();
+    },
+    queryOne<TResult, TParams>(q: Query<TResult, TParams>): TResult | null {
+      const exec = resolveQueryExecutor(q.kind);
+      if (!exec) throw new Error(`未注册的查询: ${q.kind}`);
+      return (exec(db, q.params) as TResult) ?? null;
+    },
+    queryMany<TResult, TParams>(q: Query<TResult, TParams>): readonly TResult[] {
+      const exec = resolveQueryExecutor(q.kind);
+      if (!exec) throw new Error(`未注册的查询: ${q.kind}`);
+      return exec(db, q.params) as readonly TResult[];
+    },
+    execute<TParams>(cmd: Command<TParams>): ExecResult {
+      const exec = resolveCommandExecutor(cmd.kind);
+      if (!exec) throw new Error(`未注册的命令: ${cmd.kind}`);
+      return exec(db, cmd.params);
     },
     prepare<T = unknown>(sql: string): IPreparedStatement<T> {
       if (sql.includes('FROM billing_outbox')) {
@@ -61,6 +80,7 @@ function createBigIntMetricsDb(): IDatabase {
       return createStatement(() => undefined) as unknown as IPreparedStatement<T>;
     },
   };
+  return db;
 }
 
 describe('metrics routes', () => {

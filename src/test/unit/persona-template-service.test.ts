@@ -7,7 +7,6 @@ import assert from 'node:assert/strict';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   PersonaTemplateService,
@@ -28,7 +27,7 @@ describe('PersonaTemplateService', () => {
   beforeEach(() => {
     os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
     os.start();
-    const tx = directUnitOfWork(os.getDatabase());
+    const tx = os.getDatabase();
     const personaCoreService = new PersonaCoreService(tx);
     service = new PersonaTemplateService(tx, personaCoreService);
     service.syncBuiltins();

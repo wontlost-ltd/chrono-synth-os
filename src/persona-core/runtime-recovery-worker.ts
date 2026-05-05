@@ -1,5 +1,4 @@
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { Logger } from '../utils/logger.js';
 import { PersonaCoreService } from './persona-core-service.js';
 
@@ -85,7 +84,7 @@ export class RuntimeRecoveryWorker {
   }
 
   private flushInternal(): RuntimeRecoveryResult {
-    const service = new PersonaCoreService(directUnitOfWork(this.db));
+    const service = new PersonaCoreService(this.db);
     const result = service.recoverTimedOutRuntimeSessions({
       now: Date.now(),
       sessionTimeoutMs: this.options.sessionTimeoutMs,

@@ -13,7 +13,6 @@ import {
   ivfCmdUpsert, ivfQueryByModel, ivfQueryMetaByModel,
 } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { Clock } from '../utils/clock.js';
 import type { LLMProvider } from './llm-provider.js';
@@ -105,7 +104,7 @@ export class EmbeddingIndex {
   ) {
     this.maxCacheSize = maxCacheSize ?? DEFAULT_MAX_CACHE_SIZE;
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 淘汰最久未访问的缓存条目直到容量合规（局部选择避免全量排序） */

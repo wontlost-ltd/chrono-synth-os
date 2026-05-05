@@ -13,7 +13,6 @@ import { loadConfig } from '../../config/schema.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import type { FastifyInstance } from 'fastify';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -130,7 +129,7 @@ describe('计费 API 集成测试', () => {
         tenantId: string;
       };
 
-      const tx = directUnitOfWork(os.getDatabase());
+      const tx = os.getDatabase();
       const usageTracker = new UsageTracker(tx);
       usageTracker.record(auth.tenantId, 'llm_tokens', 1200);
       usageTracker.record(auth.tenantId, 'simulation', 2);
@@ -232,7 +231,7 @@ describe('计费 API 集成测试', () => {
       };
 
       const db = os.getDatabase();
-      const personaService = new PersonaCoreService(directUnitOfWork(db));
+      const personaService = new PersonaCoreService(db);
       const persona = personaService.createPersona({
         tenantId: auth.tenantId,
         ownerUserId: auth.userId,

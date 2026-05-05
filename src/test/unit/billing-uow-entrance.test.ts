@@ -9,7 +9,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { loadConfig } from '../../config/schema.js';
 import { ApiKeyService } from '../../billing/api-key-service.js';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
@@ -30,17 +29,17 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     runMigrations(db);
     const config = loadConfig({});
     try {
-      assert.equal(new UsageTracker(directUnitOfWork(db)).getUsage('default', 'simulation'), 0);
-      assert.equal(new UsageTracker(directUnitOfWork(db)).getUsage('default', 'simulation'), 0);
+      assert.equal(new UsageTracker(db).getUsage('default', 'simulation'), 0);
+      assert.equal(new UsageTracker(db).getUsage('default', 'simulation'), 0);
 
-      assert.equal(new SubscriptionQueryService(directUnitOfWork(db)).getLatestPlanId('default'), 'free');
-      assert.equal(new SubscriptionQueryService(directUnitOfWork(db)).getLatestPlanId('default'), 'free');
+      assert.equal(new SubscriptionQueryService(db).getLatestPlanId('default'), 'free');
+      assert.equal(new SubscriptionQueryService(db).getLatestPlanId('default'), 'free');
 
-      assert.deepEqual(new ApiKeyService(directUnitOfWork(db)).list('default'), []);
-      assert.deepEqual(new ApiKeyService(directUnitOfWork(db)).list('default'), []);
+      assert.deepEqual(new ApiKeyService(db).list('default'), []);
+      assert.deepEqual(new ApiKeyService(db).list('default'), []);
 
-      assert.equal(new BillingOutbox(directUnitOfWork(db), config).pendingCount(), 0);
-      assert.equal(new BillingOutbox(directUnitOfWork(db), config).pendingCount(), 0);
+      assert.equal(new BillingOutbox(db, config).pendingCount(), 0);
+      assert.equal(new BillingOutbox(db, config).pendingCount(), 0);
     } finally { db.close(); }
   });
 
@@ -48,14 +47,14 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      assert.deepEqual(listAddOns(directUnitOfWork(db), false), []);
-      assert.deepEqual(listAddOns(directUnitOfWork(db), false), []);
+      assert.deepEqual(listAddOns(db, false), []);
+      assert.deepEqual(listAddOns(db, false), []);
 
-      syncPlanToQuota(directUnitOfWork(db), 'tenant_a', 'free');
-      syncPlanToQuota(directUnitOfWork(db), 'tenant_b', 'starter');
+      syncPlanToQuota(db, 'tenant_a', 'free');
+      syncPlanToQuota(db, 'tenant_b', 'starter');
 
-      assert.equal(new QuotaManager(directUnitOfWork(db)).checkQuota('tenant_a', 'simulation'), true);
-      assert.equal(new QuotaManager(directUnitOfWork(db)).checkQuota('tenant_b', 'simulation'), true);
+      assert.equal(new QuotaManager(db).checkQuota('tenant_a', 'simulation'), true);
+      assert.equal(new QuotaManager(db).checkQuota('tenant_b', 'simulation'), true);
     } finally { db.close(); }
   });
 
@@ -63,14 +62,14 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new EntitlementService(directUnitOfWork(db));
-      const fromUow = new EntitlementService(directUnitOfWork(db));
+      const fromDb = new EntitlementService(db);
+      const fromUow = new EntitlementService(db);
       assert.deepEqual(
         fromDb.computeEffectiveLimits('default'),
         fromUow.computeEffectiveLimits('default'),
       );
 
-      const node = new NodeEntitlementService(directUnitOfWork(db));
+      const node = new NodeEntitlementService(db);
       const limits = await node.effectiveLimits({ tenantId: 'default' });
       assert.ok(limits.maxSimulations !== undefined);
     } finally { db.close(); }
@@ -80,19 +79,19 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDbSvc = new BillingService(directUnitOfWork(db));
+      const fromDbSvc = new BillingService(db);
       assert.ok(fromDbSvc.listPlans().length > 0);
-      const fromUowSvc = new BillingService(directUnitOfWork(db));
+      const fromUowSvc = new BillingService(db);
       assert.ok(fromUowSvc.listPlans().length > 0);
 
-      const ent = new EntitlementService(directUnitOfWork(db));
-      const fromDbWh = new StripeWebhookService(directUnitOfWork(db), ent);
-      const fromUowWh = new StripeWebhookService(directUnitOfWork(db), ent);
+      const ent = new EntitlementService(db);
+      const fromDbWh = new StripeWebhookService(db, ent);
+      const fromUowWh = new StripeWebhookService(db, ent);
       assert.equal(fromDbWh.getLatestSubscription('default'), undefined);
       assert.equal(fromUowWh.getLatestSubscription('default'), undefined);
 
-      const fromDbRec = new SettlementReconciliationService(directUnitOfWork(db));
-      const fromUowRec = new SettlementReconciliationService(directUnitOfWork(db));
+      const fromDbRec = new SettlementReconciliationService(db);
+      const fromUowRec = new SettlementReconciliationService(db);
       assert.deepEqual(fromDbRec.listRuns('default'), fromUowRec.listRuns('default'));
     } finally { db.close(); }
   });

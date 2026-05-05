@@ -11,7 +11,6 @@ import {
 import type { PengRow } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
 import { mapToJson, jsonToMap, deepStringify, deepParse } from '../storage/serialization.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { PersonaVersion, PersonaVersionId, PersonaStatus, SimulationResult } from '../types/persona-version.js';
 import type { Clock } from '../utils/clock.js';
@@ -27,7 +26,7 @@ export class PersonaEngine {
     private readonly clock: Clock,
   ) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 从核心价值分叉创建新人格版本 */

@@ -19,7 +19,6 @@ import {
   AUTH_CMD_REVOKE_TOKEN_BY_HASH, AUTH_CMD_REVOKE_TOKENS_BY_USER,
   AUTH_CMD_CLEANUP_EXPIRED_TOKENS, AUTH_CMD_UPDATE_DISPLAY_NAME,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
@@ -91,8 +90,8 @@ describe('StripeWebhookService 数据平面契约', () => {
     resetCoreSelfExecutors();
     db = createMemoryDatabase();
     runMigrations(db);
-    const entitlementService = new EntitlementService(directUnitOfWork(db));
-    service = new StripeWebhookService(directUnitOfWork(db), entitlementService);
+    const entitlementService = new EntitlementService(db);
+    service = new StripeWebhookService(db, entitlementService);
   });
 
   it('processEvent 幂等：重复事件标记 duplicate', () => {
@@ -236,7 +235,7 @@ describe('AuthService.cleanupExpired 数据平面契约', () => {
       'INSERT INTO refresh_tokens (id, user_id, token_hash, is_revoked, expires_at, created_at) VALUES (?, ?, ?, 0, ?, ?)',
     ).run('rt_active', 'user_1', 'hash_active', now + 86400000, now);
 
-    const cleaned = AuthService.cleanupExpired(directUnitOfWork(db));
+    const cleaned = AuthService.cleanupExpired(db);
     assert.equal(cleaned, 2);
 
     const remaining = db.prepare<{ id: string }>('SELECT id FROM refresh_tokens').all();
@@ -245,7 +244,7 @@ describe('AuthService.cleanupExpired 数据平面契约', () => {
   });
 
   it('无令牌时清理返回 0', () => {
-    const cleaned = AuthService.cleanupExpired(directUnitOfWork(db));
+    const cleaned = AuthService.cleanupExpired(db);
     assert.equal(cleaned, 0);
   });
 });
@@ -258,7 +257,7 @@ describe('SsoUserService 数据平面契约', () => {
     resetCoreSelfExecutors();
     db = createMemoryDatabase();
     runMigrations(db);
-    service = new SsoUserService(directUnitOfWork(db));
+    service = new SsoUserService(db);
   });
 
   it('OIDC 首次用户创建 admin 角色', () => {

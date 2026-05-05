@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { TenantEnterpriseProfile } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
@@ -52,7 +51,7 @@ interface TenantVaultAuditRow {
 }
 
 export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
-  const profileService = new TenantEnterpriseProfileService(directUnitOfWork(db), config);
+  const profileService = new TenantEnterpriseProfileService(db, config);
 
   app.get('/api/v1/admin/deployment/profile', {
     preHandler: requireRole('admin'),

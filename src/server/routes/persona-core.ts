@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, NotFoundError, StateError, ValidationError, ErrorCode } from '../../errors/index.js';
@@ -325,7 +324,7 @@ function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
 }
 
 export function registerPersonaCoreRoutes(app: FastifyInstance, db: IDatabase, config?: AppConfig): void {
-  const tx = directUnitOfWork(db);
+  const tx = db;
   const profileService = config ? new TenantEnterpriseProfileService(tx, config) : undefined;
   const service = new PersonaCoreService(
     tx,

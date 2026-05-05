@@ -7,7 +7,6 @@ import type { SyncWriteUnitOfWork, SnapshotSummaryRow } from '@chrono/kernel';
 import { snapQueryById, snapQueryLatest, snapQueryList, snapCmdSave, snapCmdDelete } from '@chrono/kernel';
 import { deepStringify, deepParse } from '../storage/serialization.js';
 import type { SystemSnapshot, SnapshotId } from '../types/snapshot.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export class SnapshotStore {
@@ -15,7 +14,7 @@ export class SnapshotStore {
 
   constructor(db: IDatabase) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 保存快照 */

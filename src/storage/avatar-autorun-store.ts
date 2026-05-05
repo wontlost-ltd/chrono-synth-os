@@ -15,7 +15,6 @@ import {
   autorunCmdInsertRun, autorunCmdSetRunStarted, autorunCmdSetRunCompleted,
   autorunCmdSetRunStatus, autorunCmdUpdateRunTaskId,
 } from '@chrono/kernel';
-import { directUnitOfWork } from './direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from './executors/index.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import type { AvatarAutorunConfig, AvatarAutorunRunLog, AutorunRunMetrics, AutorunRunStatus } from '../types/avatar-autorun.js';
@@ -61,7 +60,7 @@ export class AvatarAutorunStore {
 
   constructor(db: IDatabase) {
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   getConfig(tenantId: string, avatarId: string): AvatarAutorunConfig | null {

@@ -13,6 +13,8 @@
 import { Worker, isMainThread, parentPort, workerData, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import type { IDatabase, IPreparedStatement, SqlValue } from './database.js';
+import type { Query, Command, ExecResult } from '@chrono/kernel';
+import { resolveQueryExecutor, resolveCommandExecutor } from './legacy-sync-bridge.js';
 
 export interface PostgresPoolOptions {
   readonly max: number;
@@ -420,6 +422,27 @@ export class PostgresDatabase implements IDatabase {
       this.sendSync({ type: 'close', sql: '', params: [] });
     } catch { /* Worker 可能已终止 */ }
     await this.worker.terminate();
+  }
+
+  /* ── SyncWriteUnitOfWork 端口 ────────────────────────────────────────── */
+
+  queryOne<TResult, TParams = unknown>(q: Query<TResult, TParams>): TResult | null {
+    const executor = resolveQueryExecutor(q.kind);
+    if (!executor) throw new Error(`未注册的查询: ${q.kind}`);
+    const result = executor(this, q.params);
+    return (result as TResult) ?? null;
+  }
+
+  queryMany<TResult, TParams = unknown>(q: Query<TResult, TParams>): readonly TResult[] {
+    const executor = resolveQueryExecutor(q.kind);
+    if (!executor) throw new Error(`未注册的查询: ${q.kind}`);
+    return executor(this, q.params) as readonly TResult[];
+  }
+
+  execute<TParams>(cmd: Command<TParams>): ExecResult {
+    const executor = resolveCommandExecutor(cmd.kind);
+    if (!executor) throw new Error(`未注册的命令: ${cmd.kind}`);
+    return executor(this, cmd.params);
   }
 
   /**

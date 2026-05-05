@@ -10,6 +10,7 @@
  */
 
 import type { IDatabase, IPreparedStatement, SqlValue } from '../storage/database.js';
+import { resolveQueryExecutor, resolveCommandExecutor } from '../storage/legacy-sync-bridge.js';
 
 /** 需要租户隔离的表 */
 const TENANT_TABLES = new Set([
@@ -345,5 +346,28 @@ export class TenantDatabase implements IDatabase {
 
   close(): void {
     /* 租户数据库不关闭底层连接——由宿主管理 */
+  }
+
+  /* ── SyncWriteUnitOfWork 端口
+   *  关键：必须把 this（TenantDatabase）传给 executor，
+   *  这样 executor 内部的 prepare()/exec() 会经过租户重写。
+   *  不能简单 this.inner.queryOne(q)，那样会跳过租户隔离。 */
+
+  queryOne<TResult, TParams = unknown>(q: import('@chrono/kernel').Query<TResult, TParams>): TResult | null {
+    const exec = resolveQueryExecutor(q.kind);
+    if (!exec) throw new Error(`未注册的查询: ${q.kind}`);
+    return (exec(this, q.params) as TResult) ?? null;
+  }
+
+  queryMany<TResult, TParams = unknown>(q: import('@chrono/kernel').Query<TResult, TParams>): readonly TResult[] {
+    const exec = resolveQueryExecutor(q.kind);
+    if (!exec) throw new Error(`未注册的查询: ${q.kind}`);
+    return exec(this, q.params) as readonly TResult[];
+  }
+
+  execute<TParams>(cmd: import('@chrono/kernel').Command<TParams>): import('@chrono/kernel').ExecResult {
+    const exec = resolveCommandExecutor(cmd.kind);
+    if (!exec) throw new Error(`未注册的命令: ${cmd.kind}`);
+    return exec(this, cmd.params);
   }
 }

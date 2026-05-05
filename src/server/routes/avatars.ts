@@ -14,7 +14,6 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { JwtPayload } from '../../types/auth.js';
@@ -30,7 +29,7 @@ import { CreateAvatarSchema, UpdateAvatarSchema } from '../schemas/api-schemas.j
 import { currentGlobalSeq } from '../plugins/websocket.js';
 
 export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
-  const tx = directUnitOfWork(db);
+  const tx = db;
   const identityService = new IdentityService(tx);
   const avatarService = new AvatarService(tx);
   const snapshotService = new AvatarSnapshotService(tx, app.log);

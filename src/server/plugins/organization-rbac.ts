@@ -3,7 +3,6 @@ import {
   orgQueryActiveMembership, orgQueryMembershipRoles,
 } from '@chrono/kernel';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
@@ -31,7 +30,7 @@ export function getOrganizationMembershipContext(
   userId: string,
 ): OrganizationMembershipContext | null {
   registerCoreSelfExecutors();
-  const tx = directUnitOfWork(db);
+  const tx = db;
 
   const membership = tx.queryOne(orgQueryActiveMembership({ tenantId, organizationId, userId }));
   if (!membership) return null;

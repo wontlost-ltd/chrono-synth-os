@@ -8,7 +8,6 @@ import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
 import type { IDatabase } from '../../storage/database.js';
 import { SubscriptionGateService } from '../../billing/subscription-gate-service.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const TENANT = 'tenant_gate';
 
@@ -57,7 +56,7 @@ describe('SubscriptionGateService', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runMigrations(db);
-    gate = new SubscriptionGateService(directUnitOfWork(db));
+    gate = new SubscriptionGateService(db);
   });
 
   afterEach(() => db.close());

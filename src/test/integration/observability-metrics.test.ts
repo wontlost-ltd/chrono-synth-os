@@ -8,7 +8,6 @@ import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { createApp } from '../../server/index.js';
 import { TestClock } from '../../utils/clock.js';
 import { SilentLogger } from '../../utils/logger.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('Observability Metrics 集成测试', () => {
   let os: ChronoSynthOS;
@@ -34,7 +33,7 @@ describe('Observability Metrics 集成测试', () => {
     });
     os.start();
     app = await createApp({ os, config });
-    service = new PersonaCoreService(directUnitOfWork(os.getDatabase()));
+    service = new PersonaCoreService(os.getDatabase());
     worker = new ObservabilityWorker(os.getDatabase(), logger, { batchSize: 50 });
 
     const now = Date.now();

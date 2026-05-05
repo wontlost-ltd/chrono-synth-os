@@ -5,7 +5,6 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { countAuditLogs, getAuditLogById, queryAuditLog } from '../../audit/audit-log-store.js';
 import { PaginationQuerySchema } from '../schemas/api-schemas.js';
 
@@ -22,7 +21,7 @@ export function registerAuditRoutes(app: FastifyInstance, db: IDatabase | undefi
     const targetType = typeof query.targetType === 'string' ? query.targetType : undefined;
     const targetId = typeof query.targetId === 'string' ? query.targetId : undefined;
 
-    const tx = directUnitOfWork(db);
+    const tx = db;
     const total = countAuditLogs(tx, {
       tenantId,
       eventKind: eventKind === 'request' || eventKind === 'business' ? eventKind : 'all',
@@ -52,7 +51,7 @@ export function registerAuditRoutes(app: FastifyInstance, db: IDatabase | undefi
 
   app.get<{ Params: { id: string } }>('/api/v1/audit/logs/:id', async (request) => {
     if (!db) return { data: null };
-    const record = getAuditLogById(directUnitOfWork(db), request.tenantId ?? 'default', request.params.id);
+    const record = getAuditLogById(db, request.tenantId ?? 'default', request.params.id);
     return { data: record };
   });
 }

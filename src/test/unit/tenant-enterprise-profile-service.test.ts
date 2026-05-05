@@ -5,7 +5,6 @@ import { runMigrations } from '../../storage/migrations.js';
 import { loadConfig } from '../../config/schema.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { TenantManifestV1Schema } from '@chrono/contracts';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 describe('TenantEnterpriseProfileService', () => {
   it('字段加密关闭时允许保存任意 tenant-dedicated kmsKeyRef', () => {
@@ -17,7 +16,7 @@ describe('TenantEnterpriseProfileService', () => {
         enabled: false,
       },
     });
-    const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config);
+    const service = new TenantEnterpriseProfileService(db, config);
 
     const profile = service.upsertProfile('tenant_local', {
       deploymentMode: 'dedicated_db',
@@ -41,7 +40,7 @@ describe('TenantEnterpriseProfileService', () => {
       const db = createMemoryDatabase();
       runMigrations(db);
       const config = loadConfig({ region: 'ap-east-1' });
-      const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config);
+      const service = new TenantEnterpriseProfileService(db, config);
 
       const manifest = service.getManifest('default');
 
@@ -62,7 +61,7 @@ describe('TenantEnterpriseProfileService', () => {
         region: 'us-east-1',
         encryption: { enabled: false },
       });
-      const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config);
+      const service = new TenantEnterpriseProfileService(db, config);
       service.upsertProfile('tenant_aws', {
         deploymentMode: 'dedicated_db',
         encryptionMode: 'tenant_dedicated',
@@ -82,7 +81,7 @@ describe('TenantEnterpriseProfileService', () => {
       const db = createMemoryDatabase();
       runMigrations(db);
       const config = loadConfig({ region: 'eu-central-1' });
-      const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config);
+      const service = new TenantEnterpriseProfileService(db, config);
       service.upsertProfile('tenant_shared', {
         deploymentMode: 'shared_cluster',
         encryptionMode: 'platform_managed',
@@ -100,7 +99,7 @@ describe('TenantEnterpriseProfileService', () => {
       const db = createMemoryDatabase();
       runMigrations(db);
       const config = loadConfig({ region: 'local', db: { path: '/data/chrono.db' } });
-      const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config);
+      const service = new TenantEnterpriseProfileService(db, config);
 
       const manifest = service.getManifest('default');
 

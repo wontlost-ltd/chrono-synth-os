@@ -9,7 +9,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -27,7 +26,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'u1', 'u1@x.com');
-      const fromDb = new PersonaCoreService(directUnitOfWork(db));
+      const fromDb = new PersonaCoreService(db);
       const persona = fromDb.createPersona({
         tenantId: 'default',
         ownerUserId: 'u1',
@@ -46,7 +45,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromUow = new PersonaCoreService(directUnitOfWork(db));
+      const fromUow = new PersonaCoreService(db);
       const graph = (fromUow as unknown as { getCognitive: (t: string) => unknown }).getCognitive('default');
       assert.ok(graph);
     } finally { db.close(); }
@@ -57,7 +56,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
     runMigrations(db);
     try {
       seedUser(db, 'u1', 'u1@x.com');
-      const fromDb = new PersonaCoreService(directUnitOfWork(db));
+      const fromDb = new PersonaCoreService(db);
       const persona = fromDb.createPersona({
         tenantId: 'default',
         ownerUserId: 'u1',
@@ -65,7 +64,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
         profile: {},
         visibility: 'private',
       });
-      const fromUow = new PersonaCoreService(directUnitOfWork(db));
+      const fromUow = new PersonaCoreService(db);
       const detail = fromUow.getPersonaDetail('default', 'u1', persona.id);
       assert.equal(detail?.id, persona.id);
     } finally { db.close(); }

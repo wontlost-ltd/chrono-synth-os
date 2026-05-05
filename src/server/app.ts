@@ -8,7 +8,6 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { PinoLogger } from '../logging/pino-logger.js';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { buildAppServices } from './app-services.js';
 import type { AppConfig } from '../config/schema.js';
 import { NodeEventPublisher } from '../events/node-event-publisher.js';
@@ -180,7 +179,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 多租户 OS 工厂 */
   const db = deps.db ?? deps.os.getDatabase();
-  const tx = directUnitOfWork(db);
+  const tx = db;
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const services = buildAppServices(db, config, deps.logger);
@@ -266,7 +265,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     }, 180_000);
 
     /* Avatar 自动运行 handler */
-    const queueTx = directUnitOfWork(queueDb);
+    const queueTx = queueDb;
     const autorunStore = new AvatarAutorunStore(queueDb);
     const knowledgeStore = new KnowledgeSourceStore(queueTx);
     const avatarService = new AvatarService(queueTx);

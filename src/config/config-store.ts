@@ -12,7 +12,6 @@ import {
   cfgCmdUpsert, cfgCmdAuditLog,
 } from '@chrono/kernel';
 import { resolveConfigMetadata, type ConfigCategory } from './config-metadata.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { ConfigItemRow, ConfigAuditRow };
@@ -24,7 +23,7 @@ export class ConfigStore {
   constructor(db: IDatabase) {
     this.db = db;
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   /** 获取所有配置项（按 key 排序） */

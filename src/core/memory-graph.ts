@@ -3,7 +3,7 @@
  * SQL 实现位于 src/storage/executors/memory-executors.ts
  *
  * 多步原子操作通过 SyncWriteUnitOfWork.transaction(fn) 提供：
- *   - SQLite 桥接（directUnitOfWork）→ 委托 IDatabase.transaction
+ *   - SQLite 实现（IDatabase.transaction）直接由 SqliteDatabase / PostgresDatabase 提供
  *   - 其他运行时由各自适配器决定（例如 Web Worker 可使用 messageport 协议事务）
  */
 

@@ -20,7 +20,6 @@ import {
 import type {
   UpdateGateConfig, UpdateTrigger, PendingUpdate,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { UpdateGateConfig, UpdateTrigger, PendingUpdate };
@@ -39,7 +38,7 @@ export class UpdateGate {
   ) {
     this.config = { ...DEFAULT_UPDATE_GATE_CONFIG, ...config };
     registerCoreSelfExecutors();
-    this.tx = directUnitOfWork(db);
+    this.tx = db;
   }
 
   requiresConfirmation(layer: 'L0' | 'L1', delta: number): boolean {

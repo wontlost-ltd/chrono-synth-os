@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { provisionTenantKafkaNamespace } from '../../enterprise/kafka-namespace-provisioner.js';
 import { loadConfig } from '../../config/schema.js';
 import type { Logger } from '../../utils/logger.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const silentLogger: Logger = {
   debug: () => {},
@@ -83,7 +82,7 @@ describe('TenantEnterpriseProfileService.provisionKafkaNamespace', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     const config = loadConfig({ encryption: { enabled: false } });
-    const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config, silentLogger);
+    const service = new TenantEnterpriseProfileService(db, config, silentLogger);
 
     service.upsertProfile('tenant-kafka', {
       deploymentMode: 'dedicated_db',
@@ -106,7 +105,7 @@ describe('TenantEnterpriseProfileService.provisionKafkaNamespace', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     const config = loadConfig({ encryption: { enabled: false } });
-    const service = new TenantEnterpriseProfileService(directUnitOfWork(db), config, silentLogger);
+    const service = new TenantEnterpriseProfileService(db, config, silentLogger);
 
     service.upsertProfile('my-org', {
       deploymentMode: 'dedicated_db',

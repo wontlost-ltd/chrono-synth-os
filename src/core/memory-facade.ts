@@ -7,7 +7,6 @@ import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import type { AppConfig } from '../config/schema.js';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import type { MemoryNode, MemoryEdge, MemoryKind, ActivationResult, ConsolidationResult, EvictionResult, WorkingMemorySlot } from '../types/core-self.js';
 import type { PersonaMemorySensitivity } from '../persona-core/types.js';
 import type { MemorySourceKind } from '../server/schemas/api-schemas.js';
@@ -90,7 +89,7 @@ export class MemoryFacade {
     private readonly config: AppConfig | undefined,
   ) {
     this.sharedDb = os.getDatabase();
-    const sharedTx = directUnitOfWork(this.sharedDb);
+    const sharedTx = this.sharedDb;
     const encryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.personaCoreService = new PersonaCoreService(sharedTx, encryption);
     this.tokenBudget = config ? new TokenBudget(config.intelligence.budget, this.sharedDb) : undefined;

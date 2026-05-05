@@ -11,7 +11,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
 import { runMigrations } from '../../storage/migrations.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { ConversationAuditPublisher } from '../../conversation/audit-publisher.js';
 import { ConfirmationTokenStore } from '../../conversation/confirmation-token-store.js';
 import { ConversationKnowledgeRetriever } from '../../conversation/conversation-knowledge-retriever.js';
@@ -26,10 +25,10 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new SubscriptionGateService(directUnitOfWork(db));
+      const fromDb = new SubscriptionGateService(db);
       assert.equal(fromDb.canUseResource('default', 'conversation_message').allowed, true);
 
-      const fromUow = new SubscriptionGateService(directUnitOfWork(db));
+      const fromUow = new SubscriptionGateService(db);
       assert.equal(fromUow.canUseResource('default', 'conversation_message').allowed, true);
     } finally { db.close(); }
   });
@@ -38,14 +37,14 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ConfirmationTokenStore(directUnitOfWork(db));
+      const fromDb = new ConfirmationTokenStore(db);
       const issued = fromDb.issue({
         tenantId: 'default', personaId: 'p1', sessionId: 's1', externalUserId: 'u1',
         topic: 'finance', rule: 'require_confirmation', userInput: 'hello',
       });
       assert.ok(issued.token.startsWith('cct_'));
 
-      const fromUow = new ConfirmationTokenStore(directUnitOfWork(db));
+      const fromUow = new ConfirmationTokenStore(db);
       const result = fromUow.consume({
         token: issued.token,
         tenantId: 'default', personaId: 'p1', sessionId: 's1', externalUserId: 'u1',
@@ -60,10 +59,10 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ConversationKnowledgeRetriever(directUnitOfWork(db));
+      const fromDb = new ConversationKnowledgeRetriever(db);
       assert.deepEqual(await fromDb.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }), []);
 
-      const fromUow = new ConversationKnowledgeRetriever(directUnitOfWork(db));
+      const fromUow = new ConversationKnowledgeRetriever(db);
       assert.deepEqual(await fromUow.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }), []);
     } finally { db.close(); }
   });
@@ -72,10 +71,10 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new ConversationStore(directUnitOfWork(db));
+      const fromDb = new ConversationStore(db);
       assert.equal(fromDb.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }), 0);
 
-      const fromUow = new ConversationStore(directUnitOfWork(db));
+      const fromUow = new ConversationStore(db);
       assert.equal(fromUow.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }), 0);
     } finally { db.close(); }
   });
@@ -84,10 +83,10 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new BulkImportStore(directUnitOfWork(db));
+      const fromDb = new BulkImportStore(db);
       assert.equal(fromDb.get('default', 'job_missing'), null);
 
-      const fromUow = new BulkImportStore(directUnitOfWork(db));
+      const fromUow = new BulkImportStore(db);
       assert.equal(fromUow.get('default', 'job_missing'), null);
     } finally { db.close(); }
   });
@@ -97,13 +96,13 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     runMigrations(db);
     try {
       const logger = new ConsoleLogger('warn');
-      const fromDb = new ConversationAuditPublisher(directUnitOfWork(db), logger);
+      const fromDb = new ConversationAuditPublisher(db, logger);
       fromDb.publish({
         tenantId: 'default', actorType: 'user', actorId: 'u1',
         actionType: 'audit.test', targetType: 'tt', targetId: 'ti',
       });
 
-      const fromUow = new ConversationAuditPublisher(directUnitOfWork(db), logger);
+      const fromUow = new ConversationAuditPublisher(db, logger);
       fromUow.publish({
         tenantId: 'default', actorType: 'user', actorId: 'u1',
         actionType: 'audit.test', targetType: 'tt', targetId: 'ti',
@@ -115,8 +114,8 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runMigrations(db);
     try {
-      const fromDb = new KnowledgeSourceService(directUnitOfWork(db));
-      const fromUow = new KnowledgeSourceService(directUnitOfWork(db));
+      const fromDb = new KnowledgeSourceService(db);
+      const fromUow = new KnowledgeSourceService(db);
       assert.deepEqual(
         fromDb.list('default', 1, 10).pagination.total,
         fromUow.list('default', 1, 10).pagination.total,

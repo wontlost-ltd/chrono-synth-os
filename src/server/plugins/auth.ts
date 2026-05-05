@@ -12,7 +12,6 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { apikeyQueryByHash } from '@chrono/kernel';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
@@ -53,7 +52,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
   }
 
   if (db) registerCoreSelfExecutors();
-  const tx = db ? directUnitOfWork(db) : null;
+  const tx = db ? db : null;
 
   app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
     /* 运维端点和 CORS 预检请求豁免 */

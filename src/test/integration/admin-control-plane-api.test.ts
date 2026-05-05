@@ -7,7 +7,6 @@ import { loadConfig } from '../../config/schema.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
-import { directUnitOfWork } from '../../storage/direct-uow-adapter.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -47,7 +46,7 @@ describe('Admin Control Plane API 集成测试', () => {
       tenantId: string;
     };
 
-    const personaService = new PersonaCoreService(directUnitOfWork(os.getDatabase()));
+    const personaService = new PersonaCoreService(os.getDatabase());
     const persona = personaService.createPersona({
       tenantId: auth.tenantId,
       ownerUserId: auth.userId,

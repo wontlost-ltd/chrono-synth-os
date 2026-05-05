@@ -9,7 +9,6 @@ import {
   dlqQueryByTenant, dlqQueryBacklogPending, dlqQueryBacklogReplayed,
   dlqQueryById, dlqCmdRecord, dlqCmdMarkReplayed,
 } from '@chrono/kernel';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent, type ObservabilityEventType } from '../observability/observability-outbox.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -75,7 +74,7 @@ export function resolvePlatformDlqTopic(eventType?: string | null): PlatformDlqT
 
 function getTx(db: IDatabase): SyncWriteUnitOfWork {
   registerCoreSelfExecutors();
-  return directUnitOfWork(db);
+  return db;
 }
 
 export function recordPlatformDlqEvent(db: IDatabase, input: RecordPlatformDlqInput): string {

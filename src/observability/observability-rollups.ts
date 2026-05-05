@@ -1,6 +1,5 @@
 import { obsCmdClaimEvent } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
-import { directUnitOfWork } from '../storage/direct-uow-adapter.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { applyObservabilityRollupDelta, type ObservabilityEventType, type ObservabilityRollupDelta } from './observability-outbox.js';
 
@@ -16,7 +15,7 @@ export function applyObservabilityStoredEvent(db: IDatabase, event: Observabilit
   if (event.id && !claimObservabilityEvent(db, event)) {
     return false;
   }
-  applyObservabilityRollupDelta(directUnitOfWork(db), event.tenantId, toRollupDelta(event));
+  applyObservabilityRollupDelta(db, event.tenantId, toRollupDelta(event));
   return true;
 }
 
@@ -100,7 +99,7 @@ function stringValue(value: unknown): string | undefined {
 
 function claimObservabilityEvent(db: IDatabase, event: ObservabilityStoredEvent): boolean {
   registerCoreSelfExecutors();
-  const tx = directUnitOfWork(db);
+  const tx = db;
   const result = tx.execute(obsCmdClaimEvent({
     eventId: event.id!,
     tenantId: event.tenantId,
