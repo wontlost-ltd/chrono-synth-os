@@ -13,6 +13,7 @@
     { "path": "./packages/design-tokens" },
     { "path": "./packages/kernel-testkit" },
     { "path": "./packages/adapter-web" },
+    { "path": "./packages/adapter-tauri" },
     { "path": "./apps/desktop" }
   ]
 }

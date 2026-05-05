@@ -9,6 +9,8 @@
 
 export { MemoryWebKVStore } from './web-kv-store.js';
 export type { WebKVStore } from './web-kv-store.js';
+export { IndexedDbWebKVStore } from './indexeddb-store.js';
+export type { IndexedDbWebKVStoreOptions } from './indexeddb-store.js';
 export { InMemoryTables, DEFAULT_TABLE_SCHEMA } from './in-memory-tables.js';
 export type { Row, TableSchema, SerializedSnapshot, SerializedTable } from './in-memory-tables.js';
 export {
@@ -25,3 +27,4 @@ export { WebPersistenceController } from './persistence-controller.js';
 export type { PersistenceControllerOptions } from './persistence-controller.js';
 
 export { registerToolPermissionExecutors } from './executors/tool-permission-executors.js';
+export { registerValueExecutors } from './executors/value-executors.js';

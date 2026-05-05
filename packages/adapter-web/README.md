@@ -43,32 +43,29 @@ tx.transaction(() => {
 await persistence.flushNow();                  // before tab unload
 ```
 
-## IndexedDB adapter recipe
+## IndexedDB binding
 
-Implement `WebKVStore` against IndexedDB. Sketch:
+Shipped as `IndexedDbWebKVStore`. The factory is injected so the module never reaches for browser globals — that means tests can use polyfills.
 
 ```ts
-import type { WebKVStore } from '@chrono/adapter-web';
+import { IndexedDbWebKVStore } from '@chrono/adapter-web';
 
-export class IndexedDbWebKVStore implements WebKVStore {
-  constructor(private readonly dbName: string, private readonly key = 'snapshot') {}
-
-  async load() {
-    const db = await openDb(this.dbName);
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction('kv', 'readonly');
-      const req = tx.objectStore('kv').get(this.key);
-      req.onsuccess = () => resolve(req.result ?? null);
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  async save(snapshot: unknown) { /* … objectStore.put(snapshot, this.key) … */ }
-  async clear() { /* … objectStore.delete(this.key) … */ }
-}
+const store = new IndexedDbWebKVStore({
+  dbName: 'chrono-persona',
+  idb: indexedDB, // browser global; pass `self.indexedDB` from a Web Worker
+});
 ```
 
-Why isn't this shipped in-package? CI runs in Node and would need `fake-indexeddb`. The adapter is small and host-specific; copy it.
+Tests:
+
+```ts
+import 'fake-indexeddb/auto'; // shims `indexedDB` onto globalThis
+import { IndexedDbWebKVStore } from '@chrono/adapter-web';
+
+const store = new IndexedDbWebKVStore({ dbName: 't', idb: indexedDB });
+```
+
+The integration test at `src/test/integration/adapter-web-indexeddb.test.ts` covers the round-trip using `fake-indexeddb`.
 
 ## Trade-offs
 
