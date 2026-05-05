@@ -41,7 +41,7 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 08 | [`IDatabase` implements `SyncWriteUnitOfWork` directly](0008-idatabase-implements-uow.md) | Accepted |
 | 09 | [Drift-alert webhook is best-effort, not outbox](0009-drift-webhook-best-effort.md)       | Accepted |
 | 10 | [Retention windows are env-tunable, not hardcoded](0010-retention-env-tunable.md)         | Accepted |
-| 11 | [`core_values` uses a single-row PK per persona](0011-core-values-single-row-pk.md)        | Accepted |
+| 11 | [`core_values` is tall (one row per value), tenant-scoped](0011-core-values-tall-schema.md) | Accepted |
 | 12 | [`agency_authorizations` is separate from `tool_permissions`](0012-agency-vs-tool-permission.md) | Accepted |
 | 13 | [Confirmation tokens don't persist arguments](0013-confirmation-tokens-no-args.md)         | Accepted |
 | 14 | [Integration tests use `createMemoryDatabase()`](0014-integration-tests-memory-database.md) | Accepted |
