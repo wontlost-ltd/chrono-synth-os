@@ -13,16 +13,25 @@
 
 ## CodeQL 失败
 
-1. 打开 Security 页签 → Code scanning alerts
-2. 看 alert 详情：每条都有 `description` + `recommendation`
-3. **必须修复**的：injection / xss / 不安全反序列化 / hardcoded credential / weak crypto / path traversal
-4. **可标 false positive 的**：误判（必须在 PR 描述中给理由 + 标 `tool/codeql/false-positive`）
-5. 修复后 push，CodeQL 自动 re-run
+> 仓库未启用 GitHub Advanced Security，因此 SARIF 不上传到 Security 页签的
+> Code scanning alerts；改为以 workflow artifact 方式保留。
+
+1. 打开 Actions → 失败的 Security run → Artifacts
+2. 下载 `codeql-sarif-<sha>`，里面是 `javascript.sarif`（标准 SARIF 2.1）
+3. 用 SARIF viewer 打开（VSCode 插件 `MS-SarifVSCode.sarif-viewer` 或在线
+   `microsoft.github.io/sarif-web-component`）；每条 alert 含 `description` + `recommendation`
+4. **必须修复**的：injection / xss / 不安全反序列化 / hardcoded credential / weak crypto / path traversal
+5. **可标 false positive 的**：误判（必须在 PR 描述中给理由）
+6. 修复后 push，CodeQL 自动 re-run
 
 **绝不绕过的方式**：
 - ❌ 改 query suite 把 alert 静默
 - ❌ 在 paths-ignore 加业务代码（仅 dist / test 等可加）
-- ❌ 直接关 alert 状态为 dismissed without fix
+- ❌ 改 `upload: never` 为 `if: false` 来跳过整个分析
+
+**未来开启 Advanced Security 时**：把 `upload: never` 改成默认（删除该参数），
+删掉 `output:` 与 `Upload SARIF as artifact` 步骤，恢复 `permissions:
+security-events: write`，alert 即直接写入 Security 页签。
 
 ## TruffleHog 失败
 
