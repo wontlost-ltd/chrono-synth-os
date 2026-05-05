@@ -35,16 +35,10 @@ jobs:
     # weekly 跑 30 分钟 + 一些 buffer；手动可调；smoke ≤ 5 分钟
     timeout-minutes: 50
 
+    # 默认 sqlite in-memory：perf-smoke 只关心 HTTP 层 / 应用栈开销，不卷
+    # 入 DB I/O。Postgres 路径有自己的 test-postgres workflow（CI）覆盖。
+    # 如需用 postgres 跑容量回归，dispatch 时设 USE_POSTGRES=true（占位，未实现）。
     services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: chrono_perf
-          POSTGRES_USER: perf
-          POSTGRES_PASSWORD: perf
-        ports: ['5432:5432']
-        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
-
       redis:
         image: redis:8-alpine
         ports: ['6379:6379']
@@ -54,11 +48,12 @@ jobs:
       # PR 跑 smoke；schedule + dispatch 用 inputs.scenario 或默认 ramp
       K6_SCENARIO: ${{ github.event.inputs.scenario || (github.event_name == 'pull_request' && 'smoke' || 'ramp') }}
       RUN_SCRIPT: ${{ github.event.inputs.script || 'all' }}
-      # 测试 fixture 用的 personaId 列表；perf-bootstrap 步骤会预先 seed
+      # 测试 fixture 用的 personaId 列表；不强制存在——脚本随机挑选，
+      # 服务端 404 会被 check 捕获并影响 SLO 阈值，由开发者排查。
       PERSONA_IDS: 'perf-persona-1,perf-persona-2,perf-persona-3,perf-persona-4,perf-persona-5'
-      # 后端启动配置：与 test-postgres 任务保持同源
-      CHRONO_DB_DRIVER: postgres
-      CHRONO_DB_CONNECTION_STRING: postgres://perf:perf@localhost:5432/chrono_perf
+      # 后端启动：sqlite 内存模式 + redis container；不需要 postgres
+      CHRONO_DB_DRIVER: sqlite
+      CHRONO_DB_PATH: ':memory:'
       REDIS_URL: redis://localhost:6379
       CHRONO_AUTH_ENABLED: 'true'
       # 这两个仅 perf-runner 使用；不要复用生产或集成环境的 secret
