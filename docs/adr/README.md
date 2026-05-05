@@ -41,15 +41,20 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 08 | [`IDatabase` implements `SyncWriteUnitOfWork` directly](0008-idatabase-implements-uow.md) | Accepted |
 | 09 | [Drift-alert webhook is best-effort, not outbox](0009-drift-webhook-best-effort.md)       | Accepted |
 | 10 | [Retention windows are env-tunable, not hardcoded](0010-retention-env-tunable.md)         | Accepted |
+| 11 | [`core_values` uses a single-row PK per persona](0011-core-values-single-row-pk.md)        | Accepted |
+| 12 | [`agency_authorizations` is separate from `tool_permissions`](0012-agency-vs-tool-permission.md) | Accepted |
+| 13 | [Confirmation tokens don't persist arguments](0013-confirmation-tokens-no-args.md)         | Accepted |
+| 14 | [Integration tests use `createMemoryDatabase()`](0014-integration-tests-memory-database.md) | Accepted |
+| 15 | [Kernel commands return `{ rowsAffected }`, not `T`](0015-kernel-commands-rows-affected.md) | Accepted |
+| 16 | [npm workspaces monorepo over polyrepo](0016-monorepo-workspaces.md)                       | Accepted |
+| 17 | [No Redux / Zustand / Pinia in `@chrono/adapter-web`](0017-no-redux-zustand-in-adapter-web.md) | Accepted |
+| 18 | [Tauri over Electron for the desktop app](0018-tauri-over-electron.md)                     | Accepted |
+| 19 | [React Native uses structural driver aliases](0019-rn-structural-driver-aliases.md)        | Accepted |
+| 20 | [ArgoCD over Flux for GitOps](0020-argocd-over-flux.md)                                    | Accepted |
 
 Future records (planned, see `.claude/plan/enterprise-readiness-2026.md` P1.5):
 
-11. core_values single-row PK · 12. agency-authorization vs tool-permission ·
-13. confirmation tokens don't persist arguments · 14. integration tests use
-createMemoryDatabase · 15. kernel commands return `{rowsAffected}` ·
-16. monorepo workspaces · 17. no Redux/Zustand in adapter-web ·
-18. Tauri over Electron · 19. RN structural driver aliases ·
-20. ArgoCD vs Flux · 21. kustomize vs Helm · 22. MIT kernel / AGPL enterprise ·
+21. kustomize vs Helm · 22. MIT kernel / AGPL enterprise ·
 23. webhook shared-secret not signed · 24. no auto-restart on migration fail ·
 25. JSON over YAML for runtime config · 26. Stripe over Paddle ·
 27. no CLI · 28. audit_log per-tenant · 29. epoch ms timestamps ·
