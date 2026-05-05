@@ -1,5 +1,5 @@
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { obsCmdClaimEvent } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { applyObservabilityRollupDelta, type ObservabilityEventType, type ObservabilityRollupDelta } from './observability-outbox.js';
 
@@ -11,11 +11,11 @@ export interface ObservabilityStoredEvent {
   createdAt: number;
 }
 
-export function applyObservabilityStoredEvent(db: IDatabase, event: ObservabilityStoredEvent): boolean {
-  if (event.id && !claimObservabilityEvent(db, event)) {
+export function applyObservabilityStoredEvent(tx: SyncWriteUnitOfWork, event: ObservabilityStoredEvent): boolean {
+  if (event.id && !claimObservabilityEvent(tx, event)) {
     return false;
   }
-  applyObservabilityRollupDelta(db, event.tenantId, toRollupDelta(event));
+  applyObservabilityRollupDelta(tx, event.tenantId, toRollupDelta(event));
   return true;
 }
 
@@ -97,9 +97,8 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function claimObservabilityEvent(db: IDatabase, event: ObservabilityStoredEvent): boolean {
+function claimObservabilityEvent(tx: SyncWriteUnitOfWork, event: ObservabilityStoredEvent): boolean {
   registerCoreSelfExecutors();
-  const tx = db;
   const result = tx.execute(obsCmdClaimEvent({
     eventId: event.id!,
     tenantId: event.tenantId,

@@ -9,7 +9,6 @@ import {
   mtrxQueryQueueCount, mtrxQueryRollupSummary,
   mtrxQueryBillingOutboxCount, mtrxQueryTenantUsage,
 } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { getObservabilityOutboxBacklog } from './observability-outbox.js';
 
@@ -66,11 +65,8 @@ function rollupRowToSummary(row?: MtrxRollupRow | null): ObservabilitySummary {
 }
 
 export class MetricsQueryService {
-  private readonly tx: SyncWriteUnitOfWork;
-
-  constructor(db: IDatabase) {
+  constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.tx = db;
   }
 
   getQueueBacklog(): { pending: number; running: number; failed: number } {

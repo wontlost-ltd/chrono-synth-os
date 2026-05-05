@@ -1,3 +1,4 @@
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
 import { recordPlatformDlqEvent } from '../events/platform-dlq.js';
@@ -116,7 +117,7 @@ export class ObservabilityWorker {
 
       try {
         this.db.transaction(() => {
-          applyEventToRollups(this.db, row);
+          applyEventToRollups(tx, row);
           markObservabilityEventSent(tx, row.id);
         });
         processed++;
@@ -148,9 +149,9 @@ export class ObservabilityWorker {
   }
 }
 
-function applyEventToRollups(db: IDatabase, row: ObservabilityOutboxRow): void {
+function applyEventToRollups(tx: SyncWriteUnitOfWork, row: ObservabilityOutboxRow): void {
   const payload = parsePayload(row.payload_json);
-  applyObservabilityStoredEvent(db, {
+  applyObservabilityStoredEvent(tx, {
     id: row.id,
     tenantId: row.tenant_id,
     eventType: row.event_type,

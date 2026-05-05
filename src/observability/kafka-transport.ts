@@ -242,7 +242,7 @@ export class ObservabilityKafkaOutboxProducer {
         for (const row of topicRows) {
           const message = outboxRowToKafkaMessage(row);
           this.db.transaction(() => {
-            applyObservabilityStoredEvent(this.db, {
+            applyObservabilityStoredEvent(this.tx, {
               id: message.id,
               tenantId: message.tenantId,
               eventType: message.eventType,
@@ -286,12 +286,15 @@ export interface ObservabilityKafkaFlushResult {
 export class ObservabilityKafkaRollupConsumer {
   private consumer: KafkaConsumerLike | undefined;
   private running = false;
+  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
     private readonly db: IDatabase,
     private readonly logger: Logger,
     private readonly config: AppConfig['observability'],
-  ) {}
+  ) {
+    this.tx = db;
+  }
 
   async start(): Promise<boolean> {
     if (this.running) return true;
@@ -316,7 +319,7 @@ export class ObservabilityKafkaRollupConsumer {
           try {
             const decoded = decodeKafkaObservabilityMessage(message.value);
             this.db.transaction(() => {
-              applyObservabilityStoredEvent(this.db, {
+              applyObservabilityStoredEvent(this.tx, {
                 id: decoded.id,
                 tenantId: decoded.tenantId,
                 eventType: decoded.eventType,
