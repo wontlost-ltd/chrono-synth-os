@@ -92,20 +92,17 @@ jobs:
           k6 version
 
       - name: Validate script syntax (k6 inspect)
-        # k6 inspect only parses the script; it does NOT run init code, so
-        # scripts that fail() on missing env vars still validate cleanly.
-        # k6 archive runs init context and would trip those guards.
-        env:
-          # Provide stub secrets so any imported config validators that read
-          # __ENV at parse time (rare, but possible in user-extended scripts)
-          # don't false-positive. The real run steps below set the actual
-          # values from CI secrets.
-          BEARER_TOKEN: stub-for-inspect-only
-          API_KEY: stub-for-inspect-only
+        # k6 inspect runs the init context (so fail() guards trip), and k6
+        # only exposes vars passed via --env, not the runner's OS env. We
+        # inject stub values here purely to satisfy the auth-presence
+        # guards; the actual run steps below pass the real CI values.
         run: |
           set -euo pipefail
           for f in perf/k6-*.js; do
-            k6 inspect "$f" > /dev/null
+            k6 inspect \
+              --env BEARER_TOKEN=stub-for-inspect-only \
+              --env API_KEY=stub-for-inspect-only \
+              "$f" > /dev/null
           done
 
       - name: Start backend
