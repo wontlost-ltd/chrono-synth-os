@@ -24,6 +24,9 @@ export {
   createExecutorRegistry,
   registerToolPermissionExecutors,
   registerValueExecutors,
+  registerMemoryExecutors,
+  registerNarrativeExecutors,
+  registerDecisionStyleExecutors,
 } from '@chrono/adapter-web';
 export type {
   WebKVStore,

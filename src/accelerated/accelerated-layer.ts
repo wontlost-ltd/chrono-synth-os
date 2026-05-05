@@ -5,7 +5,7 @@
  */
 
 import type { EventBus } from '../events/event-bus.js';
-import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { PersonaVersion, SimulationResult, SimulationScenario } from '../types/persona-version.js';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
@@ -19,14 +19,14 @@ export class AcceleratedLayer {
   readonly simulator: SimulationRunner;
 
   constructor(
-    db: IDatabase,
+    tx: SyncWriteUnitOfWork,
     private readonly bus: EventBus,
     clock: Clock,
     private readonly logger: Logger,
     evaluator?: EvaluatorFn,
     private readonly tenantId?: string,
   ) {
-    this.personas = new PersonaEngine(db, clock);
+    this.personas = new PersonaEngine(tx, clock);
     this.simulator = new SimulationRunner(clock, evaluator);
   }
 

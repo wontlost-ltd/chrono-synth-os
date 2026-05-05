@@ -11,3 +11,4 @@ dist-test/
 *.db
 backups/
 **/.DS_Store
+packages/*/*.tgz

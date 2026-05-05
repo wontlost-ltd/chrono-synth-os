@@ -9,7 +9,6 @@ import {
   pengCmdSetQuota, pengCmdDelete, pengCmdDeleteAll, pengCmdInsertRaw,
 } from '@chrono/kernel';
 import type { PengRow } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
 import { mapToJson, jsonToMap, deepStringify, deepParse } from '../storage/serialization.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { PersonaVersion, PersonaVersionId, PersonaStatus, SimulationResult } from '../types/persona-version.js';
@@ -19,14 +18,11 @@ import { generatePrefixedId } from '../utils/id-generator.js';
 const VALID_STATUSES = new Set<string>(['active', 'paused', 'completed', 'failed']);
 
 export class PersonaEngine {
-  private readonly tx: SyncWriteUnitOfWork;
-
   constructor(
-    db: IDatabase,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly clock: Clock,
   ) {
     registerCoreSelfExecutors();
-    this.tx = db;
   }
 
   /** 从核心价值分叉创建新人格版本 */

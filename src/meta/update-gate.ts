@@ -3,7 +3,6 @@
  * 纯决策逻辑（requiresConfirmation）在 kernel，SQL 留在此处
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { PendingUpdateRow as KernelPendingUpdateRow } from '@chrono/kernel';
 import {
@@ -28,17 +27,15 @@ const LAYER = 'UpdateGate';
 
 export class UpdateGate {
   private readonly config: UpdateGateConfig;
-  private readonly tx: SyncWriteUnitOfWork;
 
   constructor(
-    db: IDatabase,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly clock: Clock,
     config?: Partial<UpdateGateConfig>,
     private readonly logger?: Logger,
   ) {
     this.config = { ...DEFAULT_UPDATE_GATE_CONFIG, ...config };
     registerCoreSelfExecutors();
-    this.tx = db;
   }
 
   requiresConfirmation(layer: 'L0' | 'L1', delta: number): boolean {

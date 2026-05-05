@@ -6,7 +6,7 @@
 
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { EventBus } from '../events/event-bus.js';
-import type { IDatabase } from '../storage/database.js';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { AllocationStrategy, IntegrationProposal, ResourceAllocation } from '../types/meta-regulation.js';
 import type { PersonaVersion, SimulationResult } from '../types/persona-version.js';
 import type { Clock } from '../utils/clock.js';
@@ -26,7 +26,7 @@ export class MetaRegulationLayer {
   private readonly updateGate?: UpdateGate;
 
   constructor(
-    db: IDatabase,
+    tx: SyncWriteUnitOfWork,
     private readonly bus: EventBus,
     private readonly clock: Clock,
     private readonly logger: Logger,
@@ -35,7 +35,7 @@ export class MetaRegulationLayer {
     private readonly tenantId?: string,
   ) {
     this.updateGate = updateGate;
-    this.conflicts = new ConflictResolver(db, clock);
+    this.conflicts = new ConflictResolver(tx, clock);
     this.integrator = new IntegrationEngine(clock, integrationConfig, logger);
     this.allocator = new ResourceAllocator(clock);
   }

@@ -28,3 +28,6 @@ export type { PersistenceControllerOptions } from './persistence-controller.js';
 
 export { registerToolPermissionExecutors } from './executors/tool-permission-executors.js';
 export { registerValueExecutors } from './executors/value-executors.js';
+export { registerMemoryExecutors } from './executors/memory-executors.js';
+export { registerNarrativeExecutors } from './executors/narrative-executors.js';
+export { registerDecisionStyleExecutors } from './executors/decision-style-executors.js';

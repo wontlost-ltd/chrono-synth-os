@@ -3,7 +3,6 @@
  * 纯计算（分歧检测、严重性分类）在 kernel，SQL 留在此处
  */
 
-import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork, ConflictRow } from '@chrono/kernel';
 import {
   conflictQueryUnresolved, conflictQueryAll,
@@ -24,14 +23,11 @@ const VALID_KINDS = new Set<string>(['value_divergence', 'resource_contention', 
 const VALID_SEVERITIES = new Set<string>(['low', 'medium', 'high', 'critical']);
 
 export class ConflictResolver {
-  private readonly tx: SyncWriteUnitOfWork;
-
   constructor(
-    db: IDatabase,
+    private readonly tx: SyncWriteUnitOfWork,
     private readonly clock: Clock,
   ) {
     registerCoreSelfExecutors();
-    this.tx = db;
   }
 
   /** 检测价值分歧冲突（跳过已存在未解决冲突的版本对） */
