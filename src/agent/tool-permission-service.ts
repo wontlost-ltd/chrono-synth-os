@@ -23,6 +23,7 @@ import {
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { ValidationError, NotFoundError, ErrorCode } from '../errors/index.js';
+import { toolInvocationOutcomeTotal } from '../observability/metrics.js';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -170,6 +171,11 @@ export class ToolPermissionService {
       completedAt: input.completedAt ?? invokedAt,
       confirmationTokenId: input.confirmationTokenId,
     }));
+    toolInvocationOutcomeTotal.add(1, {
+      tenant_id: input.tenantId,
+      tool_id: input.toolId,
+      outcome: input.status,
+    });
     return id;
   }
 

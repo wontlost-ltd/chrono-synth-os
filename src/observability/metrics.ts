@@ -23,6 +23,17 @@ export const llmTokensUsed = meter.createCounter('chrono_llm_tokens_used', {
   description: 'LLM token 消耗总量',
 });
 
+/** HTTP 请求时延（秒）— histogram with default buckets for p95/p99 SLO */
+export const requestDurationSeconds = meter.createHistogram('chrono_request_duration_seconds', {
+  description: 'HTTP 请求时延（秒），用于 SLO 计算',
+  unit: 's',
+});
+
+/** 工具调用结果计数（labels: tool_id, outcome） */
+export const toolInvocationOutcomeTotal = meter.createCounter('chrono_tool_invocation_outcome_total', {
+  description: 'tool_invocations 终态计数（success / failed / denied_* / timeout / pending_confirmation）',
+});
+
 /** 活跃订阅数 */
 export const activeSubscriptions = meter.createUpDownCounter('chrono_active_subscriptions', {
   description: '当前活跃订阅数',
