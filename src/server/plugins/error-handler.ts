@@ -54,6 +54,19 @@ export function registerErrorHandler(app: FastifyInstance): void {
       });
     }
 
+    /* 限流插件抛出的 RateLimitError（@fastify/rate-limit 触顶时 throw）。
+     * rate-limit.ts 的 errorResponseBuilder 已经把 retryAfter 等字段挂在
+     * Error 上；这里负责按既定 statusCode 透传，避免落入 500 catch-all。 */
+    const rateErr = error as Error & { statusCode?: number; code?: string; retryAfter?: number };
+    if (rateErr.code === 'RATE_LIMIT_EXCEEDED' && typeof rateErr.statusCode === 'number') {
+      return reply.status(rateErr.statusCode).send({
+        error: 'RateLimitError',
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: rateErr.message,
+        retryAfter: rateErr.retryAfter,
+      });
+    }
+
     /* 其他未知错误 → 500（记录完整堆栈） */
     request.log.error({ err: error }, 'unhandled error');
     return reply.status(500).send({

@@ -61,12 +61,23 @@ export async function registerRateLimit(app: FastifyInstance, config: AppConfig)
     /* 确保正常响应也携带限流头（X-RateLimit-Limit/Remaining/Reset） */
     addHeadersOnExceeding: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true },
     addHeaders: { 'x-ratelimit-limit': true, 'x-ratelimit-remaining': true, 'x-ratelimit-reset': true, 'retry-after': true },
-    errorResponseBuilder: (_request, context) => ({
-      error: 'RateLimitError',
-      code: 'RATE_LIMIT_EXCEEDED',
-      message: `请求过于频繁，请在 ${Math.ceil(context.ttl / 1000)} 秒后重试`,
-      retryAfter: Math.ceil(context.ttl / 1000),
-    }),
+    errorResponseBuilder: (_request, context) => {
+      /* @fastify/rate-limit 在限速触发时会 throw 这个返回值。
+       * 必须返回真正的 Error 对象（带 statusCode + code）；返回 plain object
+       * 会被全局 setErrorHandler 当作未知错误吞掉，最终客户端拿到 500
+       * 而不是 429。曾在 perf 烟测中复现：smoke run 25371205551。 */
+      const retryAfterSec = Math.ceil(context.ttl / 1000);
+      const err = new Error(`请求过于频繁，请在 ${retryAfterSec} 秒后重试`) as Error & {
+        statusCode: number;
+        code: string;
+        retryAfter: number;
+      };
+      err.statusCode = context.statusCode;
+      err.code = 'RATE_LIMIT_EXCEEDED';
+      err.retryAfter = retryAfterSec;
+      err.name = 'RateLimitError';
+      return err;
+    },
   };
 
   /* 当 Redis 可用时使用 Redis 存储（分布式限流） */
