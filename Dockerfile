@@ -10,6 +10,9 @@ COPY packages/data-plane/package.json packages/data-plane/
 COPY packages/design-tokens/package.json packages/design-tokens/
 COPY packages/sync-engine/package.json packages/sync-engine/
 COPY packages/kernel-testkit/package.json packages/kernel-testkit/
+COPY packages/adapter-web/package.json packages/adapter-web/
+COPY packages/adapter-tauri/package.json packages/adapter-tauri/
+COPY packages/adapter-react-native/package.json packages/adapter-react-native/
 COPY packages/tsconfig.base.json packages/
 COPY tsconfig.src.json tsconfig.scripts.json ./
 RUN npm ci
@@ -30,6 +33,19 @@ RUN npx tsc -p packages/data-plane/tsconfig.json
 COPY packages/design-tokens/src packages/design-tokens/src
 COPY packages/design-tokens/tsconfig.json packages/design-tokens/
 RUN npx tsc -p packages/design-tokens/tsconfig.json
+
+# Runtime adapter packages (test-only at this layer, but required by tsc tests)
+COPY packages/adapter-web/src packages/adapter-web/src
+COPY packages/adapter-web/tsconfig.json packages/adapter-web/
+RUN npx tsc -p packages/adapter-web/tsconfig.json
+
+COPY packages/adapter-tauri/src packages/adapter-tauri/src
+COPY packages/adapter-tauri/tsconfig.json packages/adapter-tauri/
+RUN npx tsc -p packages/adapter-tauri/tsconfig.json
+
+COPY packages/adapter-react-native/src packages/adapter-react-native/src
+COPY packages/adapter-react-native/tsconfig.json packages/adapter-react-native/
+RUN npx tsc -p packages/adapter-react-native/tsconfig.json
 
 COPY src/ src/
 COPY scripts/ scripts/
