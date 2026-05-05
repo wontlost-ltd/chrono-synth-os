@@ -91,12 +91,21 @@ jobs:
           sudo install -m 0755 "/tmp/k6-${K6_VERSION}-linux-amd64/k6" /usr/local/bin/k6
           k6 version
 
-      - name: Validate scripts (k6 archive)
+      - name: Validate script syntax (k6 inspect)
+        # k6 inspect only parses the script; it does NOT run init code, so
+        # scripts that fail() on missing env vars still validate cleanly.
+        # k6 archive runs init context and would trip those guards.
+        env:
+          # Provide stub secrets so any imported config validators that read
+          # __ENV at parse time (rare, but possible in user-extended scripts)
+          # don't false-positive. The real run steps below set the actual
+          # values from CI secrets.
+          BEARER_TOKEN: stub-for-inspect-only
+          API_KEY: stub-for-inspect-only
         run: |
           set -euo pipefail
-          mkdir -p perf-archives
           for f in perf/k6-*.js; do
-            k6 archive --quiet -O "perf-archives/$(basename "$f").tar" "$f"
+            k6 inspect "$f" > /dev/null
           done
 
       - name: Start backend
