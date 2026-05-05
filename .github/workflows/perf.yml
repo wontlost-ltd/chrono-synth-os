@@ -56,6 +56,10 @@ jobs:
       CHRONO_DB_PATH: ':memory:'
       REDIS_URL: redis://localhost:6379
       CHRONO_AUTH_ENABLED: 'true'
+      # 全局限流默认 100 req/min；perf-smoke 单 VU ~25 RPS 会瞬间触顶。
+      # 这里抬到 10⁶/min（~16k RPS），等于禁用全局限流，专注测应用栈本身。
+      CHRONO_RATE_LIMIT_MAX: '1000000'
+      CHRONO_RATE_LIMIT_WINDOW_MS: '60000'
       # 这两个仅 perf-runner 使用；不要复用生产或集成环境的 secret
       CHRONO_AUTH_API_KEYS: ${{ secrets.PERF_API_KEYS || 'perf-api-key-do-not-use-in-prod' }}
       PERF_BEARER_TOKEN: ${{ secrets.PERF_BEARER_TOKEN || '' }}
