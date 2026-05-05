@@ -113,3 +113,86 @@ npm run test:ops
 - 7 天外备份会自动清理
 - 恢复脚本支持 SQLite / PostgreSQL
 - 恢复后服务可以通过健康检查
+
+---
+
+## P2.5 — Chaos Engineering 演练
+
+`chrono-synth-deploy/chaos/experiments/` 下的 chaos-mesh 资源用于在
+staging 集群定期触发可控故障，验证服务韧性。每月最后一周执行一次
+全演练，结果记入 `docs/operations/chaos-drill-log.md`。
+
+### 演练前置条件
+
+1. chaos-mesh 已安装在 staging 集群（namespace `chaos-mesh`）。
+2. 演练窗口提前 24h 在 #sre-oncall 公告。
+3. SLO 团队确认当前没有进行中的事故。
+
+### 实验目录
+
+| 实验 | 期望 RTO | 期望 RPO | 预警阈值 |
+|------|---------|---------|---------|
+| pod-kill-backend | < 60s | 0 | 1m 内 5xx > 0.5% 即视为失败 |
+| network-partition-postgres | < 60s（恢复后） | 0 | 分区期间 /readyz 必须返回 503 |
+| dns-failure-llm-upstream | n/a（外部依赖） | 0 | 5xx 不超过 0.5%；4xx 不限 |
+
+### <a id="pod-kill-drill"></a>Pod-kill 演练
+
+```bash
+kubectl apply -f chaos/experiments/pod-kill-backend.yaml
+# 实验运行 5s 后自动恢复；另一副本应在 healthcheck 超时前接管
+kubectl rollout status deploy/backend -n chrono-synth
+```
+
+观察：
+- `kubectl get pods -n chrono-synth -l app.kubernetes.io/name=backend`
+  应在 60s 内恢复到目标副本数。
+- Grafana：5xx burst < 30s。
+- 漂移分析、对话提交 SLO 不受影响。
+
+### <a id="db-partition-drill"></a>DB 网络分区演练
+
+```bash
+kubectl apply -f chaos/experiments/network-partition-postgres.yaml
+# 60s 后自动恢复
+```
+
+期望：
+- 分区期间 `/readyz` 返回 503 ≤ 5s 内（驱动层探活）。
+- backend pod 不会被 OOMKill，只是被摘出 endpoints。
+- 分区结束后 1 分钟内全部重新 ready；无需手工 restart。
+
+### <a id="llm-dns-drill"></a>LLM upstream DNS 故障演练
+
+```bash
+kubectl apply -f chaos/experiments/dns-failure-llm-upstream.yaml
+# 60s 后自动恢复
+```
+
+期望：
+- 对话提交 5xx rate < 0.5%；4xx with Retry-After 不限。
+- `chrono_conversation_quota_exceeded_total` 升高。
+- circuit breaker 跳闸日志可见，避免重试风暴。
+- 故障结束后无需人工干预即可恢复。
+
+### Region failover playbook（多区域，规划中）
+
+> 当前为单 region 部署；本节是 P3.6 完成后的目标 SOP。
+
+1. 确认 primary region 不可用（监控持续 5min 无心跳）。
+2. 切换 DNS：将 `api.chrono.example.com` 指向 secondary region 的
+   入口 LB。TTL 已预设为 60s。
+3. Failover postgres：用最新 streaming replica 的 LSN promote 为
+   primary（异步复制；预期 RPO < 5s）。
+4. ArgoCD 在 secondary region 的 cluster 上做 sync 把 secrets +
+   service accounts 装好。
+5. 跑 `npm run test:dr` 的子集（healthz + login + 创建 persona）
+   作为冒烟测试。
+6. 全员 #sre-oncall 通报：实际 RPO / RTO / 受影响请求数。
+
+### 验收标准（P2.5）
+
+- [ ] pod-kill 演练每月一次、结果归档
+- [ ] network-partition 演练每月一次、结果归档
+- [ ] DNS 故障演练每月一次、结果归档
+- [ ] 任一演练导致 SLO breach 时，触发事故复盘流程
