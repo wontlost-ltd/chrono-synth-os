@@ -1,0 +1,98 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Sunday 04:00 UTC for drift detection on supply-chain CVEs
+    - cron: '0 4 * * 0'
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  codeql:
+    name: CodeQL (SAST)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # Use security-and-quality query suite to gate HIGH+ findings
+          queries: security-and-quality
+          config: |
+            paths-ignore:
+              - dist
+              - dist-test
+              - '**/*.test.ts'
+              - '**/*.test.tsx'
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+
+  secrets-scan:
+    name: Secrets scan (trufflehog)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: TruffleHog filesystem scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --results=verified,unknown
+
+  license-check:
+    name: Dependency license allowlist
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      - name: Install license-checker
+        run: npm install -g license-checker-rseidelsohn@^4
+      - name: Run allowlist check
+        run: |
+          # Production deps only; reject GPL-3 / AGPL family
+          npx --yes license-checker-rseidelsohn \
+            --production \
+            --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;0BSD;CC0-1.0;Unlicense;MPL-2.0;Python-2.0;BlueOak-1.0.0;CC-BY-4.0;CC-BY-3.0' \
+            --excludePackages 'chrono-synth-os@2.0.0' \
+            --summary
+
+  sbom:
+    name: SBOM (SPDX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      - uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          artifact-name: chrono-synth-os-sbom-${{ github.sha }}.spdx.json
+          output-file: sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chrono-synth-os-sbom-${{ github.sha }}
+          path: sbom.spdx.json
+          retention-days: 90
