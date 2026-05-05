@@ -2,7 +2,12 @@
  * 跨运行时设计令牌
  * 纯值常量，零运行时依赖
  * typography 使用平台无关数值描述符，font family 分平台提供
+ *
+ * v1 = chronoDesignTokens (below). v2 = ./v2 (semantic + theme-aware,
+ * preferred for new code). v1 stays for backward compatibility.
  */
+
+export * as v2 from './v2/index.js';
 
 export const chronoDesignTokens = {
   color: {
