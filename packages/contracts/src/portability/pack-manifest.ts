@@ -239,6 +239,12 @@ export const ImportCommitResultV1Schema = z.object({
   importedCount: z.number().int().nonnegative(),
   skippedCount: z.number().int().nonnegative(),
   failedCount: z.number().int().nonnegative().default(0),
+  /**
+   * Rows skipped because the local row already had a newer `updated_at`.
+   * Only populated for tables that carry an `updated_at` column; for
+   * legacy tables without versioning, late-wins via INSERT OR REPLACE.
+   */
+  staleSkippedCount: z.number().int().nonnegative().default(0),
   failures: z.array(z.object({
     logicalName: z.string().min(1),
     rowIndex: z.number().int().nonnegative(),

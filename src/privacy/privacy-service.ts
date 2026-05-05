@@ -573,8 +573,35 @@ export class PrivacyService {
     let importedCount = 0;
     let skippedCount = 0;
     let failedCount = 0;
+    let staleSkippedCount = 0;
     const failures: Array<{ logicalName: string; rowIndex: number; reason: string }> = [];
     const MAX_FAILURE_DETAILS = 50;
+
+    /**
+     * 表 schema 缓存：识别 PRIMARY KEY 列与是否拥有 updated_at，以决定 upsert 策略。
+     *  - 有 updated_at + 单列 PK：版本感知 upsert（excluded.updated_at 严格大于本地才覆盖）
+     *  - 否则：fallback 到 INSERT OR REPLACE（保留既有行为）
+     */
+    interface TableSchema {
+      pkColumns: string[];
+      hasUpdatedAt: boolean;
+    }
+    const schemaCache = new Map<string, TableSchema>();
+    const introspectTable = (table: string): TableSchema => {
+      const cached = schemaCache.get(table);
+      if (cached) return cached;
+      const rows = db.prepare<{ name: string; pk: number }>(
+        `PRAGMA table_info(${table})`,
+      ).all();
+      const pkColumns = rows
+        .filter((r) => r.pk > 0)
+        .sort((a, b) => a.pk - b.pk)
+        .map((r) => r.name);
+      const hasUpdatedAt = rows.some((r) => r.name === 'updated_at');
+      const schema: TableSchema = { pkColumns, hasUpdatedAt };
+      schemaCache.set(table, schema);
+      return schema;
+    };
 
     db.exec('BEGIN');
     try {
@@ -590,7 +617,9 @@ export class PrivacyService {
           continue;
         }
 
-        // 每行做 INSERT OR REPLACE — 依赖表的 PRIMARY KEY 实现幂等 upsert
+        const schema = introspectTable(payload.logicalName);
+        const versionAware = schema.hasUpdatedAt && schema.pkColumns.length === 1;
+
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
           if (row === null || typeof row !== 'object') continue;
@@ -607,11 +636,26 @@ export class PrivacyService {
           }) as SqlValue[];
 
           try {
-            db.prepare<void>(
-              `INSERT OR REPLACE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`,
-            ).run(...values);
+            if (versionAware && record['updated_at'] !== undefined && record['updated_at'] !== null) {
+              const pk = schema.pkColumns[0]!;
+              /* 仅当 excluded.updated_at 严格大于本地版本才覆盖；否则保留本地行（视作 staleSkipped） */
+              const updateAssignments = cols
+                .filter((c) => c !== pk)
+                .map((c) => `${c} = excluded.${c}`)
+                .join(', ');
+              const sql = updateAssignments.length > 0
+                ? `INSERT INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})
+                     ON CONFLICT(${pk}) DO UPDATE SET ${updateAssignments}
+                     WHERE excluded.updated_at > ${payload.logicalName}.updated_at`
+                : `INSERT OR IGNORE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`;
+              const result = db.prepare<void>(sql).run(...values);
+              if (result.changes === 0) staleSkippedCount += 1;
+            } else {
+              db.prepare<void>(
+                `INSERT OR REPLACE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`,
+              ).run(...values);
+            }
           } catch (err) {
-            // 单行失败不中断整个导入；记录失败行索引和原因，可观测
             failedCount += 1;
             if (failures.length < MAX_FAILURE_DETAILS) {
               const reason = err instanceof Error ? err.message : String(err);
@@ -643,6 +687,7 @@ export class PrivacyService {
       importedCount,
       skippedCount,
       failedCount,
+      staleSkippedCount,
       failures,
     };
   }

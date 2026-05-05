@@ -198,4 +198,113 @@ describe('Portability Pack GA roundtrip', () => {
     const countAfter = (db.prepare<{ n: number }>(`SELECT COUNT(*) AS n FROM quota_limits WHERE tenant_id = ? AND resource = 'test:resource'`).get(tenantId))?.n ?? 0;
     assert.equal(countAfter, 1, 'commitImport should restore deleted row');
   });
+
+  it('commitImport 版本感知合并：本地 updated_at 较新时拒绝覆盖', async () => {
+    db = createMemoryDatabase();
+    runMigrations(db);
+    tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-merge-'));
+
+    os = new ChronoSynthOS({
+      db,
+      skipMigrations: true,
+      clock: new TestClock(1_700_000_000_000),
+      logger: new SilentLogger(),
+    });
+    os.start();
+    const config = loadConfig({
+      websocket: { enabled: false },
+      objectStorage: { provider: 'local', localPath: tmpDir, presignTtlSeconds: 60 },
+    });
+    const service = new PrivacyService(os, undefined, config, new LocalObjectStorageClient(tmpDir));
+    const tenantId = 'default';
+
+    /* core_values 有 updated_at + 单列 PK，触发版本感知 upsert 路径 */
+    db.prepare<void>(
+      `INSERT INTO core_values (id, label, weight, updated_at, tenant_id, time_discount, emotion_amplifier)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('patience', 'Patience-OLD', 0.5, 1_700_000_000_000, tenantId, 0.5, 1.0);
+
+    /* 导出一份 pack，里面 patience 行的 updated_at = 1_700_000_000_000 */
+    const started = service.startExportJob(tenantId);
+    const deadline = Date.now() + 3_000;
+    let status = service.getExportJobStatus(tenantId, started.exportId);
+    while (status?.state !== 'completed' && Date.now() < deadline) {
+      await sleep(100);
+      status = service.getExportJobStatus(tenantId, started.exportId);
+    }
+    assert.equal(status?.state, 'completed');
+    const row = getExportJob(db, started.exportId);
+    assert.ok(row?.pack_json);
+
+    /* 在 commitImport 之前，把本地行的 updated_at 推进到比 pack 更新 + 改 label 为 NEW */
+    db.prepare<void>(
+      `UPDATE core_values SET label = 'Patience-NEW', updated_at = ? WHERE id = ?`,
+    ).run(1_800_000_000_000, 'patience');
+
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, row.pack_json));
+    assert.ok(dryRun.canCommit && dryRun.commitToken);
+
+    const result = ImportCommitResultV1Schema.parse(
+      service.commitImport(tenantId, row.pack_json, dryRun.commitToken),
+    );
+    /* 旧导入数据应被拒绝（stale），本地 NEW 保留 */
+    assert.ok(result.staleSkippedCount >= 1, `expected stale skip, got ${result.staleSkippedCount}`);
+    const after = db.prepare<{ label: string; updated_at: number }>(
+      `SELECT label, updated_at FROM core_values WHERE id = ?`,
+    ).get('patience');
+    assert.equal(after?.label, 'Patience-NEW', 'newer local row must be preserved');
+    assert.equal(after?.updated_at, 1_800_000_000_000);
+  });
+
+  it('commitImport 版本感知合并：本地 updated_at 较旧时正常覆盖', async () => {
+    db = createMemoryDatabase();
+    runMigrations(db);
+    tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-merge-newer-'));
+
+    os = new ChronoSynthOS({
+      db,
+      skipMigrations: true,
+      clock: new TestClock(1_700_000_000_000),
+      logger: new SilentLogger(),
+    });
+    os.start();
+    const config = loadConfig({
+      websocket: { enabled: false },
+      objectStorage: { provider: 'local', localPath: tmpDir, presignTtlSeconds: 60 },
+    });
+    const service = new PrivacyService(os, undefined, config, new LocalObjectStorageClient(tmpDir));
+    const tenantId = 'default';
+
+    /* 导出一行 updated_at=1_800_000_000_000，再回设本地为更老的值 */
+    db.prepare<void>(
+      `INSERT INTO core_values (id, label, weight, updated_at, tenant_id, time_discount, emotion_amplifier)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('precision', 'Precision-NEW', 0.7, 1_800_000_000_000, tenantId, 0.5, 1.0);
+
+    const started = service.startExportJob(tenantId);
+    const deadline = Date.now() + 3_000;
+    let status = service.getExportJobStatus(tenantId, started.exportId);
+    while (status?.state !== 'completed' && Date.now() < deadline) {
+      await sleep(100);
+      status = service.getExportJobStatus(tenantId, started.exportId);
+    }
+    const row = getExportJob(db, started.exportId);
+    assert.ok(row?.pack_json);
+
+    /* 把本地降为更老版本 */
+    db.prepare<void>(
+      `UPDATE core_values SET label = 'Precision-OLD', updated_at = ? WHERE id = ?`,
+    ).run(1_700_000_000_000, 'precision');
+
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, row.pack_json));
+    const result = ImportCommitResultV1Schema.parse(
+      service.commitImport(tenantId, row.pack_json, dryRun.commitToken!),
+    );
+    assert.equal(result.staleSkippedCount, 0);
+    const after = db.prepare<{ label: string; updated_at: number }>(
+      `SELECT label, updated_at FROM core_values WHERE id = ?`,
+    ).get('precision');
+    assert.equal(after?.label, 'Precision-NEW', 'newer pack row must overwrite older local row');
+    assert.equal(after?.updated_at, 1_800_000_000_000);
+  });
 });
