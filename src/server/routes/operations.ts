@@ -9,7 +9,8 @@ import type { AppConfig } from '../../config/schema.js';
 import { RunRegulationSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
 import { PersonaDriftAnalyzer, resolveDriftThresholds } from '../../safety/persona-drift-analyzer.js';
-import { recordBusinessAuditLog } from '../../audit/audit-log-store.js';
+import { DriftAlertService } from '../../safety/drift-alert-service.js';
+import { ConsoleLogger } from '../../utils/logger.js';
 
 export function registerOperationRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory, config?: AppConfig): void {
   function getOS(request: FastifyRequest): ChronoSynthOS {
@@ -28,24 +29,17 @@ export function registerOperationRoutes(app: FastifyInstance, os: ChronoSynthOS,
       const fallback = config?.safety
         ? { warning: config.safety.drift.warningThreshold, critical: config.safety.drift.criticalThreshold }
         : undefined;
-      const thresholds = resolveDriftThresholds(tenantOS.getDatabase(), fallback);
-      const analyzer = new PersonaDriftAnalyzer(tenantOS.getDatabase(), thresholds);
+      const db = tenantOS.getDatabase();
+      const thresholds = resolveDriftThresholds(db, fallback);
+      const analyzer = new PersonaDriftAnalyzer(db, thresholds);
       const driftReport = analyzer.analyze(request.tenantId);
-      if (driftReport.alertLevel !== 'ok') {
-        recordBusinessAuditLog(tenantOS.getDatabase(), {
-          tenantId: request.tenantId,
-          actorType: 'system',
-          actorId: 'drift-monitor',
-          actionType: `persona.drift.${driftReport.alertLevel}`,
-          targetType: 'drift_report',
-          targetId: driftReport.reportId,
-          payload: {
-            alertLevel: driftReport.alertLevel,
-            overallDriftScore: driftReport.overallDriftScore,
-            affectedValues: driftReport.valueDrifts.filter((d) => d.alertLevel !== 'ok').length,
-          },
-        });
-      }
+      const alertOptions = {
+        webhookUrl: config?.safety?.alerts.webhookUrl ?? '',
+        webhookTimeoutMs: config?.safety?.alerts.webhookTimeoutMs ?? 5_000,
+        webhookSecret: config?.safety?.alerts.webhookSecret ?? '',
+      };
+      const alerts = new DriftAlertService({ tx: db, logger: new ConsoleLogger('warn'), options: alertOptions });
+      await alerts.process(driftReport);
     } catch { /* 漂移分析失败不影响演化结果 */ }
 
     return { data: result };

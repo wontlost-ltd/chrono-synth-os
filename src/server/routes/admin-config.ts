@@ -13,6 +13,8 @@ import { requireRole } from '../plugins/rbac.js';
 import { ValidationError, ErrorCode } from '../../errors/index.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { PersonaDriftAnalyzer, resolveDriftThresholds } from '../../safety/persona-drift-analyzer.js';
+import { DriftAlertService } from '../../safety/drift-alert-service.js';
+import { ConsoleLogger } from '../../utils/logger.js';
 
 export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
   const redis = (app as unknown as { redis?: { publish(channel: string, message: string): Promise<void> } }).redis;
@@ -67,6 +69,13 @@ export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, c
     critical: config.safety.drift.criticalThreshold,
   };
 
+  const driftAlertLogger = new ConsoleLogger('warn');
+  const driftAlertOptions = {
+    webhookUrl: config.safety.alerts.webhookUrl,
+    webhookTimeoutMs: config.safety.alerts.webhookTimeoutMs,
+    webhookSecret: config.safety.alerts.webhookSecret,
+  };
+
   /* POST /api/v1/admin/safety/drift-report — 立即生成并返回漂移报告（仅 admin） */
   app.post('/api/v1/admin/safety/drift-report', {
     preHandler: requireRole('admin'),
@@ -75,7 +84,9 @@ export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, c
     const thresholds = resolveDriftThresholds(db, driftThresholdFallback);
     const analyzer = new PersonaDriftAnalyzer(db, thresholds);
     const report = analyzer.analyze(request.tenantId);
-    return { data: report };
+    const alerts = new DriftAlertService({ tx: db, logger: driftAlertLogger, options: driftAlertOptions });
+    const alertResult = await alerts.process(report);
+    return { data: { ...report, alertEmitted: alertResult.alertEmitted, auditId: alertResult.auditId } };
   });
 
   /* GET /api/v1/admin/safety/drift-report — 获取最近一次漂移报告（仅 admin） */

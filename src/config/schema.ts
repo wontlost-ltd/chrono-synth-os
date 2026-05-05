@@ -406,7 +406,7 @@ const runtimeSchema = z.object({
   }),
 });
 
-/** AI 安全治理配置（漂移监测阈值） */
+/** AI 安全治理配置（漂移监测阈值 + 告警分发） */
 const safetySchema = z.object({
   drift: z.object({
     warningThreshold: z.coerce.number().min(0).max(1).default(0.15),
@@ -415,7 +415,17 @@ const safetySchema = z.object({
     .refine((v) => v.criticalThreshold > v.warningThreshold, {
       message: 'criticalThreshold 必须大于 warningThreshold',
     }),
-}).default({ drift: { warningThreshold: 0.15, criticalThreshold: 0.30 } });
+  alerts: z.object({
+    /** 漂移告警 webhook URL（空字符串禁用网络分发，audit 仍写入） */
+    webhookUrl: z.string().default(''),
+    webhookTimeoutMs: z.coerce.number().int().min(500).max(30_000).default(5_000),
+    /** 共享密钥；非空则随请求以 X-Chrono-Webhook-Secret 头发送 */
+    webhookSecret: z.string().default(''),
+  }).default({ webhookUrl: '', webhookTimeoutMs: 5_000, webhookSecret: '' }),
+}).default({
+  drift: { warningThreshold: 0.15, criticalThreshold: 0.30 },
+  alerts: { webhookUrl: '', webhookTimeoutMs: 5_000, webhookSecret: '' },
+});
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -584,6 +594,11 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_AGENT_OAUTH_GOOGLE_CLIENT_SECRET: (v) => { deepSet(env, 'agent.oauth.google.clientSecret', v); },
     CHRONO_AGENT_OAUTH_GOOGLE_REDIRECT_URI: (v) => { deepSet(env, 'agent.oauth.google.redirectUri', v); },
     CHRONO_AGENT_TOOL_INVOCATIONS_RETENTION_DAYS: (v) => { deepSet(env, 'agent.toolInvocationsRetentionDays', parseInt(v, 10)); },
+    CHRONO_SAFETY_DRIFT_WARNING_THRESHOLD:  (v) => { deepSet(env, 'safety.drift.warningThreshold', parseFloat(v)); },
+    CHRONO_SAFETY_DRIFT_CRITICAL_THRESHOLD: (v) => { deepSet(env, 'safety.drift.criticalThreshold', parseFloat(v)); },
+    CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
+    CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
+    CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },
     CHRONO_REQUEST_TIMEOUT_MS:      (v) => { deepSet(env, 'request.timeoutMs', parseInt(v, 10)); },
     CHRONO_REQUEST_MAX_BODY_BYTES:  (v) => { deepSet(env, 'request.maxBodyBytes', parseInt(v, 10)); },
     CHRONO_RUNTIME_RECOVERY_ENABLED: (v) => { deepSet(env, 'runtime.recovery.enabled', v === 'true'); },
