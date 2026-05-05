@@ -48,9 +48,11 @@ jobs:
       # PR 跑 smoke；schedule + dispatch 用 inputs.scenario 或默认 ramp
       K6_SCENARIO: ${{ github.event.inputs.scenario || (github.event_name == 'pull_request' && 'smoke' || 'ramp') }}
       RUN_SCRIPT: ${{ github.event.inputs.script || 'all' }}
-      # 测试 fixture 用的 personaId 列表；不强制存在——脚本随机挑选，
+      # 测试 fixture 用的 personaId 列表（50 个）；不强制存在——脚本随机挑选，
       # 服务端 404 会被 check 捕获并影响 SLO 阈值，由开发者排查。
-      PERSONA_IDS: 'perf-persona-1,perf-persona-2,perf-persona-3,perf-persona-4,perf-persona-5'
+      # 50 个 ID 是为了把负载分散到对话路由的 60/min/persona-user 限速槽上：
+      # smoke 25 RPS / 50 personas = 0.5 RPS/persona，留 50× 安全余量。
+      PERSONA_IDS: 'perf-persona-01,perf-persona-02,perf-persona-03,perf-persona-04,perf-persona-05,perf-persona-06,perf-persona-07,perf-persona-08,perf-persona-09,perf-persona-10,perf-persona-11,perf-persona-12,perf-persona-13,perf-persona-14,perf-persona-15,perf-persona-16,perf-persona-17,perf-persona-18,perf-persona-19,perf-persona-20,perf-persona-21,perf-persona-22,perf-persona-23,perf-persona-24,perf-persona-25,perf-persona-26,perf-persona-27,perf-persona-28,perf-persona-29,perf-persona-30,perf-persona-31,perf-persona-32,perf-persona-33,perf-persona-34,perf-persona-35,perf-persona-36,perf-persona-37,perf-persona-38,perf-persona-39,perf-persona-40,perf-persona-41,perf-persona-42,perf-persona-43,perf-persona-44,perf-persona-45,perf-persona-46,perf-persona-47,perf-persona-48,perf-persona-49,perf-persona-50'
       # 后端启动：sqlite 内存模式 + redis container；不需要 postgres
       CHRONO_DB_DRIVER: sqlite
       CHRONO_DB_PATH: ':memory:'
