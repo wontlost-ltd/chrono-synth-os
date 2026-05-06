@@ -2339,6 +2339,27 @@ const v069_events_user_journey: Migration = {
   ],
 };
 
+/** v070: P2.7 health dashboard 历史快照表。每天为每个 (tenant, persona)
+ *  写一条 core_values 全图快照；前端用 d7 / d30 数据点画 radar 对比图。
+ *  写入由 src/jobs/core-values-snapshot.ts 的定时任务负责。 */
+const v070_core_values_snapshot: Migration = {
+  version: 'v070',
+  description: 'P2.7 health dashboard: core_values_snapshot daily history',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS core_values_snapshot (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT,
+      values_json TEXT NOT NULL,
+      snapshot_at INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_core_values_snapshot_tenant_ts
+       ON core_values_snapshot(tenant_id, snapshot_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_core_values_snapshot_retention
+       ON core_values_snapshot(snapshot_at)`,
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2410,6 +2431,7 @@ const MIGRATIONS: readonly Migration[] = [
   v067_agent_tool_permissions,
   v068_agent_oauth_and_invocations,
   v069_events_user_journey,
+  v070_core_values_snapshot,
 ];
 
 interface MigrationRow {

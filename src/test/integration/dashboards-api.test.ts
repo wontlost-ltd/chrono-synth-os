@@ -37,7 +37,7 @@ describe('GET /api/v1/admin/dashboards/persona/:personaId', () => {
     os.close();
   });
 
-  it('returns the canonical PersonaHealth shape for an unknown persona', async () => {
+  it('returns the full PersonaHealth shape with all 5 series for an unknown persona', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/admin/dashboards/persona/unknown-persona-id',
@@ -45,11 +45,23 @@ describe('GET /api/v1/admin/dashboards/persona/:personaId', () => {
 
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body) as {
-      data: { personaId: string; values: Array<{ label: string; current: number }>; generatedAt: number };
+      data: {
+        personaId: string;
+        values: unknown[];
+        decisionTrend: unknown[];
+        memoryStack: unknown[];
+        toolMix: unknown[];
+        driftTimeline: unknown[];
+        generatedAt: number;
+      };
     };
+
     assert.equal(body.data.personaId, 'unknown-persona-id');
-    assert.ok(Array.isArray(body.data.values));
-    assert.equal(body.data.values.length, 0);
+    assert.ok(Array.isArray(body.data.values), 'values is array');
+    assert.ok(Array.isArray(body.data.decisionTrend), 'decisionTrend is array');
+    assert.ok(Array.isArray(body.data.memoryStack), 'memoryStack is array');
+    assert.ok(Array.isArray(body.data.toolMix), 'toolMix is array');
+    assert.ok(Array.isArray(body.data.driftTimeline), 'driftTimeline is array');
     assert.equal(typeof body.data.generatedAt, 'number');
     assert.ok(body.data.generatedAt > 0);
   });
