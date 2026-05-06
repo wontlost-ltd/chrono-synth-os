@@ -114,6 +114,25 @@ import {
   pcoreCmdInsertGrowthEvent,
   pcoreCmdInsertGovernanceEvent,
   pcoreCmdInsertMemory,
+  type PcorePersonaRow,
+  type PcoreWalletRow,
+  type PcoreForkRow,
+  type PcoreMemoryRow,
+  type PcoreKnowledgeRow,
+  type PcoreGrowthEventRow,
+  type PcoreGovernanceEventRow,
+  type PcoreMarketplaceTaskRow,
+  type PcoreTransferRow,
+  type PcoreReputationHistoryRow,
+  type PcoreTaskApplicationRow,
+  type PcoreTaskAssignmentRow,
+  type PcoreRuntimeSessionRow,
+  type PcoreTaskResultRow,
+  type PcoreGovernanceCaseRow,
+  type PcoreGovernanceActionRow,
+  type PcoreWalletTransactionRow,
+  type PcoreWalletPayoutRequestRow,
+  type PcoreWalletSettlementRow,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
@@ -192,295 +211,28 @@ import type {
   WalletTransactionType,
 } from './types.js';
 
-interface PersonaCoreRow {
-  id: string;
-  tenant_id: string;
-  owner_user_id: string;
-  display_name: string;
-  profile_json: string;
-  status: PersonaCore['status'];
-  lifecycle_status?: PersonaCore['status'];
-  visibility: PersonaCore['visibility'];
-  growth_index: number;
-  reputation: number;
-  training_investment: number;
-  created_at: number;
-  updated_at: number;
-  deceased_at: number | null;
-  transferred_at: number | null;
-}
-
-interface PersonaWalletRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  wallet_address: string;
-  balance: number;
-  token_balance: number;
-  currency?: string;
-  status?: PersonaWallet['status'];
-  last_settled_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-interface PersonaForkRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  label: string;
-  fork_type: PersonaFork['forkType'];
-  status: PersonaFork['status'];
-  sync_mode: PersonaFork['syncMode'];
-  experience_factor: number;
-  created_at: number;
-  updated_at: number;
-  recycled_at: number | null;
-}
-
-interface PersonaMemoryRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  fork_id: string | null;
-  kind: PersonaMemory['kind'];
-  sensitivity?: PersonaMemorySensitivity | null;
-  is_encrypted?: number | null;
-  owner_restricted?: number | null;
-  summary: string;
-  content_json: string;
-  importance: number;
-  created_at: number;
-  updated_at: number;
-}
-
-interface PersonaKnowledgeRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  title: string;
-  content: string;
-  source: string;
-  tags_json: string;
-  confidence: number;
-  created_at: number;
-  updated_at: number;
-}
-
-interface PersonaGrowthEventRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  task_id: string | null;
-  event_type: PersonaGrowthEvent['eventType'];
-  growth_delta: number;
-  reputation_delta: number;
-  training_delta: number;
-  payload_json: string;
-  created_at: number;
-}
-
-interface PersonaGovernanceEventRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  event_type: PersonaGovernanceEvent['eventType'];
-  severity: number;
-  summary: string;
-  payload_json: string;
-  actor_user_id: string | null;
-  created_at: number;
-}
-
-interface MarketplaceTaskRow {
-  id: string;
-  tenant_id: string;
-  publisher_user_id: string;
-  assignee_persona_id: string | null;
-  assignee_fork_id: string | null;
-  assignee_persona_name?: string | null;
-  title: string;
-  description: string;
-  category: MarketplaceTask['category'];
-  reward: number;
-  currency: string;
-  status: MarketplaceTask['status'];
-  quality_score: number | null;
-  growth_delta: number | null;
-  published_at: number;
-  accepted_at: number | null;
-  completed_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-interface PersonaTransferRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  from_owner_user_id: string;
-  to_owner_user_id: string;
-  status: PersonaTransfer['status'];
-  reason: string;
-  requested_at: number;
-  approved_at: number | null;
-  completed_at: number | null;
-}
-
-interface ReputationHistoryRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  old_score: number;
-  new_score: number;
-  reason: string;
-  created_at: number;
-}
-
-interface TaskApplicationRow {
-  id: string;
-  tenant_id: string;
-  task_id: string;
-  persona_id: string;
-  ranking_score: number;
-  status: TaskApplication['status'];
-  created_at: number;
-  updated_at: number;
-}
-
-interface TaskAssignmentRow {
-  id: string;
-  tenant_id: string;
-  task_id: string;
-  persona_id: string;
-  application_id: string | null;
-  runtime_session_id: string | null;
-  status: TaskAssignment['status'];
-  assigned_at: number;
-  started_at: number | null;
-  submitted_at: number | null;
-  completed_at: number | null;
-}
-
-interface RuntimeSessionRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  task_id: string;
-  assignment_id: string | null;
-  state: RuntimeSession['state'];
-  retry_count: number;
-  timeout_at: number | null;
-  plan_json: string | null;
-  artifacts_json: string;
-  evaluation_json: string | null;
-  result_summary_json: string | null;
-  error_json: string | null;
-  created_at: number;
-  updated_at: number;
-  completed_at: number | null;
-}
-
-interface TaskResultRow {
-  id: string;
-  tenant_id: string;
-  task_id: string;
-  assignment_id: string;
-  result_uri: string;
-  evaluation_json: string;
-  quality_score: number | null;
-  client_rating: number | null;
-  status: TaskResult['status'];
-  rejection_reason: string | null;
-  created_at: number;
-  updated_at: number;
-  accepted_at: number | null;
-  rejected_at: number | null;
-  disputed_at: number | null;
-}
-
-interface GovernanceCaseRow {
-  id: string;
-  tenant_id: string;
-  persona_id: string;
-  task_id: string | null;
-  trigger_type: string;
-  severity: GovernanceCase['severity'];
-  status: GovernanceCase['status'];
-  details_json: string;
-  appeal_json: string | null;
-  opened_at: number;
-  resolved_at: number | null;
-  appealed_at: number | null;
-}
-
-interface GovernanceActionRow {
-  id: string;
-  tenant_id: string;
-  case_id: string;
-  action_type: GovernanceAction['actionType'];
-  duration_seconds: number | null;
-  details_json: string;
-  actor_user_id: string | null;
-  created_at: number;
-}
-
-interface WalletTransactionRow {
-  id: string;
-  tenant_id: string;
-  wallet_id: string;
-  transaction_type: WalletTransaction['transactionType'];
-  amount_minor: number;
-  currency: string;
-  reference_type: string | null;
-  reference_id: string | null;
-  created_at: number;
-}
-
-interface WalletPayoutRequestRow {
-  id: string;
-  tenant_id: string;
-  wallet_id: string;
-  amount_minor: number;
-  currency: string;
-  status: WalletPayoutRequest['status'];
-  requested_by_user_id: string;
-  created_at: number;
-  completed_at: number | null;
-}
-
-interface WalletSettlementRow {
-  id: string;
-  tenant_id: string;
-  wallet_id: string;
-  task_id: string;
-  assignment_id: string;
-  total_amount_minor: number;
-  currency: string;
-  owner_pct: number;
-  persona_pct: number;
-  platform_pct: number;
-  owner_amount_minor: number;
-  persona_amount_minor: number;
-  platform_amount_minor: number;
-  status: TaskWalletSettlement['status'];
-  created_at: number;
-  completed_at: number | null;
-}
-
-interface PersonaSummaryRow extends PersonaCoreRow {
-  wallet_id: string;
-  wallet_address: string;
-  balance: number;
-  token_balance: number;
-  last_settled_at: number | null;
-  wallet_created_at: number;
-  wallet_updated_at: number;
-  active_fork_count: number;
-  memory_count: number;
-  knowledge_count: number;
-  active_task_count: number;
-}
+/* Row types are aliased to the kernel-side interfaces. Kernel rows use
+ * `readonly` on every property and store narrowed enums as `string`; the
+ * service is the authoritative narrower at the FromRow boundary helpers. */
+type PersonaCoreRow = PcorePersonaRow;
+type PersonaWalletRow = PcoreWalletRow;
+type PersonaForkRow = PcoreForkRow;
+type PersonaMemoryRow = PcoreMemoryRow;
+type PersonaKnowledgeRow = PcoreKnowledgeRow;
+type PersonaGrowthEventRow = PcoreGrowthEventRow;
+type PersonaGovernanceEventRow = PcoreGovernanceEventRow;
+type MarketplaceTaskRow = PcoreMarketplaceTaskRow;
+type PersonaTransferRow = PcoreTransferRow;
+type ReputationHistoryRow = PcoreReputationHistoryRow;
+type TaskApplicationRow = PcoreTaskApplicationRow;
+type TaskAssignmentRow = PcoreTaskAssignmentRow;
+type RuntimeSessionRow = PcoreRuntimeSessionRow;
+type TaskResultRow = PcoreTaskResultRow;
+type GovernanceCaseRow = PcoreGovernanceCaseRow;
+type GovernanceActionRow = PcoreGovernanceActionRow;
+type WalletTransactionRow = PcoreWalletTransactionRow;
+type WalletPayoutRequestRow = PcoreWalletPayoutRequestRow;
+type WalletSettlementRow = PcoreWalletSettlementRow;
 
 function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -515,8 +267,8 @@ function personaFromRow(row: PersonaCoreRow): PersonaCore {
     ownerUserId: row.owner_user_id,
     displayName: row.display_name,
     profile: safeJsonParse<Record<string, unknown>>(row.profile_json, {}),
-    status: row.lifecycle_status ?? row.status,
-    visibility: row.visibility,
+    status: (row.lifecycle_status ?? row.status) as PersonaCore['status'],
+    visibility: row.visibility as PersonaCore['visibility'],
     growthIndex: Number(row.growth_index),
     reputation: Number(row.reputation),
     trainingInvestment: Number(row.training_investment),
@@ -536,7 +288,7 @@ function walletFromRow(row: PersonaWalletRow): PersonaWallet {
     balance: Number(row.balance),
     tokenBalance: Number(row.token_balance),
     currency: row.currency ?? 'CRED',
-    status: row.status ?? 'active',
+    status: (row.status ?? 'active') as PersonaWallet['status'],
     lastSettledAt: row.last_settled_at === null ? null : Number(row.last_settled_at),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -544,14 +296,17 @@ function walletFromRow(row: PersonaWalletRow): PersonaWallet {
 }
 
 function forkFromRow(row: PersonaForkRow): PersonaFork {
+  /* Kernel rows store narrowed enums as plain strings (the Query type
+   * surface is provider-agnostic); the persona-core service is the
+   * authoritative narrower for this domain. */
   return {
     id: row.id,
     tenantId: row.tenant_id,
     personaId: row.persona_id,
     label: row.label,
-    forkType: row.fork_type,
-    status: row.status,
-    syncMode: row.sync_mode,
+    forkType: row.fork_type as PersonaFork['forkType'],
+    status: row.status as PersonaFork['status'],
+    syncMode: row.sync_mode as PersonaFork['syncMode'],
     experienceFactor: Number(row.experience_factor),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -591,7 +346,7 @@ function growthEventFromRow(row: PersonaGrowthEventRow): PersonaGrowthEvent {
     tenantId: row.tenant_id,
     personaId: row.persona_id,
     taskId: row.task_id,
-    eventType: row.event_type,
+    eventType: row.event_type as PersonaGrowthEvent['eventType'],
     growthDelta: Number(row.growth_delta),
     reputationDelta: Number(row.reputation_delta),
     trainingDelta: Number(row.training_delta),
@@ -605,7 +360,7 @@ function governanceEventFromRow(row: PersonaGovernanceEventRow): PersonaGovernan
     id: row.id,
     tenantId: row.tenant_id,
     personaId: row.persona_id,
-    eventType: row.event_type,
+    eventType: row.event_type as PersonaGovernanceEvent['eventType'],
     severity: Number(row.severity),
     summary: row.summary,
     payload: safeJsonParse<Record<string, unknown>>(row.payload_json, {}),
@@ -624,10 +379,10 @@ function taskFromRow(row: MarketplaceTaskRow): MarketplaceTask {
     assigneePersonaName: row.assignee_persona_name ?? null,
     title: row.title,
     description: row.description,
-    category: row.category,
+    category: row.category as MarketplaceTask['category'],
     reward: Number(row.reward),
     currency: row.currency,
-    status: row.status,
+    status: row.status as MarketplaceTask['status'],
     qualityScore: row.quality_score === null ? null : Number(row.quality_score),
     growthDelta: row.growth_delta === null ? null : Number(row.growth_delta),
     publishedAt: Number(row.published_at),
@@ -645,7 +400,7 @@ function transferFromRow(row: PersonaTransferRow): PersonaTransfer {
     personaId: row.persona_id,
     fromOwnerUserId: row.from_owner_user_id,
     toOwnerUserId: row.to_owner_user_id,
-    status: row.status,
+    status: row.status as PersonaTransfer['status'],
     reason: row.reason,
     requestedAt: Number(row.requested_at),
     approvedAt: row.approved_at === null ? null : Number(row.approved_at),
@@ -672,7 +427,7 @@ function taskApplicationFromRow(row: TaskApplicationRow): TaskApplication {
     taskId: row.task_id,
     personaId: row.persona_id,
     rankingScore: Number(row.ranking_score),
-    status: row.status,
+    status: row.status as TaskApplication['status'],
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -686,7 +441,7 @@ function taskAssignmentFromRow(row: TaskAssignmentRow): TaskAssignment {
     personaId: row.persona_id,
     applicationId: row.application_id,
     runtimeSessionId: row.runtime_session_id,
-    status: row.status,
+    status: row.status as TaskAssignment['status'],
     assignedAt: Number(row.assigned_at),
     startedAt: row.started_at === null ? null : Number(row.started_at),
     submittedAt: row.submitted_at === null ? null : Number(row.submitted_at),
@@ -701,7 +456,7 @@ function runtimeSessionFromRow(row: RuntimeSessionRow): RuntimeSession {
     personaId: row.persona_id,
     taskId: row.task_id,
     assignmentId: row.assignment_id,
-    state: row.state,
+    state: row.state as RuntimeSession['state'],
     retryCount: Number(row.retry_count),
     timeoutAt: row.timeout_at === null ? null : Number(row.timeout_at),
     plan: safeJsonParse<{ steps: string[] } | null>(row.plan_json, null),
@@ -725,7 +480,7 @@ function taskResultFromRow(row: TaskResultRow): TaskResult {
     evaluation: safeJsonParse<Record<string, unknown>>(row.evaluation_json, {}),
     qualityScore: row.quality_score === null ? null : Number(row.quality_score),
     clientRating: row.client_rating === null ? null : Number(row.client_rating),
-    status: row.status,
+    status: row.status as TaskResult['status'],
     rejectionReason: row.rejection_reason,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -742,8 +497,8 @@ function governanceCaseFromRow(row: GovernanceCaseRow): GovernanceCase {
     personaId: row.persona_id,
     taskId: row.task_id,
     triggerType: row.trigger_type,
-    severity: row.severity,
-    status: row.status,
+    severity: row.severity as GovernanceCase['severity'],
+    status: row.status as GovernanceCase['status'],
     details: safeJsonParse<Record<string, unknown>>(row.details_json, {}),
     appeal: safeJsonParse<Record<string, unknown> | null>(row.appeal_json, null),
     openedAt: Number(row.opened_at),
@@ -757,7 +512,7 @@ function governanceActionFromRow(row: GovernanceActionRow): GovernanceAction {
     id: row.id,
     tenantId: row.tenant_id,
     caseId: row.case_id,
-    actionType: row.action_type,
+    actionType: row.action_type as GovernanceAction['actionType'],
     durationSeconds: row.duration_seconds === null ? null : Number(row.duration_seconds),
     details: safeJsonParse<Record<string, unknown>>(row.details_json, {}),
     actorUserId: row.actor_user_id,
@@ -770,7 +525,7 @@ function walletTransactionFromRow(row: WalletTransactionRow): WalletTransaction 
     id: row.id,
     tenantId: row.tenant_id,
     walletId: row.wallet_id,
-    transactionType: row.transaction_type,
+    transactionType: row.transaction_type as WalletTransaction['transactionType'],
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
     referenceType: row.reference_type,
@@ -786,7 +541,7 @@ function walletPayoutRequestFromRow(row: WalletPayoutRequestRow): WalletPayoutRe
     walletId: row.wallet_id,
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
-    status: row.status,
+    status: row.status as WalletPayoutRequest['status'],
     requestedByUserId: row.requested_by_user_id,
     createdAt: Number(row.created_at),
     completedAt: row.completed_at === null ? null : Number(row.completed_at),
@@ -808,7 +563,7 @@ function walletSettlementFromRow(row: WalletSettlementRow): TaskWalletSettlement
     ownerAmountMinor: Number(row.owner_amount_minor),
     personaAmountMinor: Number(row.persona_amount_minor),
     platformAmountMinor: Number(row.platform_amount_minor),
-    status: row.status,
+    status: row.status as TaskWalletSettlement['status'],
     createdAt: Number(row.created_at),
     completedAt: row.completed_at === null ? null : Number(row.completed_at),
   };
@@ -949,7 +704,7 @@ export class PersonaCoreService {
   }
 
   listPersonas(tenantId: string, ownerUserId: string): PersonaCoreSummary[] {
-    const rows = this.tx.queryMany(pcoreQuerySummariesByOwner({ tenantId, ownerUserId })) as unknown as PersonaSummaryRow[];
+    const rows = this.tx.queryMany(pcoreQuerySummariesByOwner({ tenantId, ownerUserId }));
 
     return rows.map((row) => ({
       ...personaFromRow(row),
@@ -974,21 +729,21 @@ export class PersonaCoreService {
   }
 
   getPersonaDetail(tenantId: string, ownerUserId: string, personaId: string): PersonaCoreDetail | null {
-    const base = this.tx.queryOne(pcoreQuerySummaryByOwner({ tenantId, ownerUserId, personaId })) as unknown as PersonaSummaryRow | null;
+    const base = this.tx.queryOne(pcoreQuerySummaryByOwner({ tenantId, ownerUserId, personaId }));
 
     if (!base) return null;
 
-    const forks = (this.tx.queryMany(pcoreQueryForksByPersona({ tenantId, personaId })) as unknown as PersonaForkRow[]).map(forkFromRow);
+    const forks = this.tx.queryMany(pcoreQueryForksByPersona({ tenantId, personaId })).map(forkFromRow);
 
-    const recentMemories = (this.tx.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })) as unknown as PersonaMemoryRow[]).map((row) => this.memoryFromRow(row));
+    const recentMemories = this.tx.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })).map((row) => this.memoryFromRow(row));
 
-    const knowledgeItems = (this.tx.queryMany(pcoreQueryRecentKnowledge({ tenantId, personaId })) as unknown as PersonaKnowledgeRow[]).map(knowledgeFromRow);
+    const knowledgeItems = this.tx.queryMany(pcoreQueryRecentKnowledge({ tenantId, personaId })).map(knowledgeFromRow);
 
-    const growthEvents = (this.tx.queryMany(pcoreQueryRecentGrowthEvents({ tenantId, personaId })) as unknown as PersonaGrowthEventRow[]).map(growthEventFromRow);
+    const growthEvents = this.tx.queryMany(pcoreQueryRecentGrowthEvents({ tenantId, personaId })).map(growthEventFromRow);
 
-    const governanceEvents = (this.tx.queryMany(pcoreQueryRecentGovernanceEvents({ tenantId, personaId })) as unknown as PersonaGovernanceEventRow[]).map(governanceEventFromRow);
+    const governanceEvents = this.tx.queryMany(pcoreQueryRecentGovernanceEvents({ tenantId, personaId })).map(governanceEventFromRow);
 
-    const marketplaceTasks = (this.tx.queryMany(pcoreQueryRecentMarketplaceTasks({ tenantId, ownerUserId, personaId })) as unknown as MarketplaceTaskRow[]).map(taskFromRow);
+    const marketplaceTasks = this.tx.queryMany(pcoreQueryRecentMarketplaceTasks({ tenantId, ownerUserId, personaId })).map(taskFromRow);
 
     return {
       ...personaFromRow(base),
@@ -1081,7 +836,7 @@ export class PersonaCoreService {
     const pending = this.tx.queryOne(pcoreQueryPendingTransfer({
       tenantId: input.tenantId,
       personaId: input.personaId,
-    })) as unknown as PersonaTransferRow | null;
+    }));
     if (pending) return transferFromRow(pending);
 
     const now = Date.now();
@@ -1135,7 +890,7 @@ export class PersonaCoreService {
       tenantId: input.tenantId,
       personaId: input.personaId,
       transferId: input.transferId,
-    })) as unknown as PersonaTransferRow | null;
+    }));
     if (!transfer || transfer.status !== 'pending_review' || transfer.to_owner_user_id !== input.approverUserId) {
       return null;
     }
@@ -1199,7 +954,7 @@ export class PersonaCoreService {
     const completedTransfer = this.tx.queryOne(pcoreQueryTransferById({
       tenantId: input.tenantId,
       transferId: input.transferId,
-    })) as unknown as PersonaTransferRow | null;
+    }));
     const persona = this.getPersonaDetail(input.tenantId, input.approverUserId, input.personaId);
     if (!completedTransfer || !persona) return null;
     return {
@@ -1210,7 +965,7 @@ export class PersonaCoreService {
 
   listTransfers(tenantId: string, requesterUserId: string, personaId: string): PersonaTransfer[] | null {
     if (!this.canAccessTransferHistory(tenantId, requesterUserId, personaId)) return null;
-    return (this.tx.queryMany(pcoreQueryTransfersByPersona({ tenantId, personaId })) as unknown as PersonaTransferRow[]).map(transferFromRow);
+    return this.tx.queryMany(pcoreQueryTransfersByPersona({ tenantId, personaId })).map(transferFromRow);
   }
 
   getReputationSummary(tenantId: string, ownerUserId: string, personaId: string): PersonaReputationSummary | null {
@@ -1233,7 +988,7 @@ export class PersonaCoreService {
 
   listReputationHistory(tenantId: string, ownerUserId: string, personaId: string): PersonaReputationHistoryEntry[] | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return (this.tx.queryMany(pcoreQueryReputationHistory({ tenantId, personaId })) as unknown as ReputationHistoryRow[]).map(reputationHistoryFromRow);
+    return this.tx.queryMany(pcoreQueryReputationHistory({ tenantId, personaId })).map(reputationHistoryFromRow);
   }
 
   listTopPersonas(
@@ -1241,7 +996,7 @@ export class PersonaCoreService {
     options?: { category?: MarketplaceTask['category']; limit?: number },
   ): PersonaRankingEntry[] {
     const limit = Math.max(1, Math.min(50, options?.limit ?? 10));
-    const personas = this.tx.queryMany(pcoreQueryActivePersonasForRanking(tenantId)) as unknown as PersonaSummaryRow[];
+    const personas = this.tx.queryMany(pcoreQueryActivePersonasForRanking(tenantId));
 
     return personas
       .map((row) => {
@@ -1292,7 +1047,7 @@ export class PersonaCoreService {
 
   materializeDailyAnalytics(tenantId: string, metricDate = this.currentMetricDate()): DailyAnalyticsMaterialization {
     const { startMs, endMs } = this.metricDateRange(metricDate);
-    const personas = this.tx.queryMany(pcoreQueryDailyPersonas(tenantId)) as unknown as { id: string; reputation: number; growth_index: number }[];
+    const personas = this.tx.queryMany(pcoreQueryDailyPersonas(tenantId));
 
     this.tx.transaction(() => {
       for (const persona of personas) {
@@ -1439,7 +1194,7 @@ export class PersonaCoreService {
       kind: options?.kind,
       cursor: options?.cursor,
       limit,
-    })) as unknown as PersonaMemoryRow[];
+    }));
     return rows.map((row) => this.memoryFromRow(row));
   }
 
@@ -1479,8 +1234,8 @@ export class PersonaCoreService {
     if (!persona) return null;
 
     const state = this.getCognitive(tenantId).buildState(tenantId, personaId);
-    const kindRows = this.tx.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId })) as unknown as { kind: PersonaCognitiveMemoryKind; count: number }[];
-    const relationRows = this.tx.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId })) as unknown as { relation: string; count: number }[];
+    const kindRows = this.tx.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId }));
+    const relationRows = this.tx.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId }));
 
     const memoryKindCounts: Record<PersonaCognitiveMemoryKind, number> = {
       episodic: 0,
@@ -1488,7 +1243,7 @@ export class PersonaCoreService {
       procedural: 0,
     };
     for (const row of kindRows) {
-      memoryKindCounts[row.kind] = Number(row.count);
+      memoryKindCounts[row.kind as PersonaCognitiveMemoryKind] = Number(row.count);
     }
 
     return {
@@ -1516,7 +1271,7 @@ export class PersonaCoreService {
       memoryId: input.memoryId,
       kind: input.kind,
       limit,
-    })) as unknown as { id: string }[];
+    }));
     const nodes = nodeRows
       .map((row) => this.getCognitive(tenantId).getMemory(tenantId, personaId, row.id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
@@ -1525,19 +1280,12 @@ export class PersonaCoreService {
       return { nodes: [], edges: [] };
     }
 
-    const edges = (this.tx.queryMany(pcoreQueryMemoryEdges({
+    const edges = this.tx.queryMany(pcoreQueryMemoryEdges({
       tenantId,
       personaId,
       nodeIds: nodes.map((node) => node.id),
       relation: input.relation,
-    })) as unknown as {
-      tenant_id: string;
-      persona_id: string;
-      source: string;
-      target: string;
-      strength: number;
-      relation: string;
-    }[]).map((row) => ({
+    })).map((row) => ({
       tenantId: row.tenant_id,
       personaId: row.persona_id,
       source: row.source,
@@ -1801,12 +1549,12 @@ export class PersonaCoreService {
 
   getWallet(tenantId: string, ownerUserId: string, personaId: string): PersonaWallet | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    const row = this.tx.queryOne(pcoreQueryWalletByPersona({ tenantId, personaId })) as unknown as PersonaWalletRow | null;
+    const row = this.tx.queryOne(pcoreQueryWalletByPersona({ tenantId, personaId }));
     return row ? walletFromRow(row) : null;
   }
 
   getWalletByIdForOwner(tenantId: string, ownerUserId: string, walletId: string): PersonaWallet | null {
-    const row = this.tx.queryOne(pcoreQueryWalletByIdForOwner({ tenantId, walletId })) as unknown as PersonaWalletRow & { owner_user_id: string } | null;
+    const row = this.tx.queryOne(pcoreQueryWalletByIdForOwner({ tenantId, walletId }));
     if (!row || row.owner_user_id !== ownerUserId) return null;
     return walletFromRow(row);
   }
@@ -1814,7 +1562,7 @@ export class PersonaCoreService {
   listWalletTransactions(tenantId: string, ownerUserId: string, walletId: string): WalletTransaction[] | null {
     const wallet = this.getWalletByIdForOwner(tenantId, ownerUserId, walletId);
     if (!wallet) return null;
-    return (this.tx.queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })) as unknown as WalletTransactionRow[]).map(walletTransactionFromRow);
+    return this.tx.queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })).map(walletTransactionFromRow);
   }
 
   requestWalletPayout(input: RequestWalletPayoutInput): WalletPayoutRequest | null {
@@ -1987,7 +1735,7 @@ export class PersonaCoreService {
   }
 
   findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
-    const row = this.tx.queryOne(pcoreQueryTaskApplication({ tenantId, taskId, personaId })) as unknown as TaskApplicationRow | null;
+    const row = this.tx.queryOne(pcoreQueryTaskApplication({ tenantId, taskId, personaId }));
     return row ? taskApplicationFromRow(row) : null;
   }
 
@@ -2137,7 +1885,7 @@ export class PersonaCoreService {
   }
 
   getRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const row = this.tx.queryOne(pcoreQueryRuntimeSession({ tenantId, sessionId })) as unknown as RuntimeSessionRow | null;
+    const row = this.tx.queryOne(pcoreQueryRuntimeSession({ tenantId, sessionId }));
     if (!row || !this.personaExists(tenantId, ownerUserId, row.persona_id)) return null;
     return runtimeSessionFromRow(row);
   }
@@ -2300,17 +2048,18 @@ export class PersonaCoreService {
     const rows = this.tx.queryMany(pcoreQueryTimedOutRuntimeSessions({
       now: input.now,
       limit: input.limit ?? 100,
-    })) as unknown as RuntimeSessionRow[];
+    }));
 
     let recovered = 0;
     let timedOut = 0;
 
     for (const row of rows) {
-      if (!ACTIVE_RUNTIME_STATES.has(row.state)) continue;
+      const state = row.state as RuntimeSession['state'];
+      if (!ACTIVE_RUNTIME_STATES.has(state)) continue;
 
       const errorPayload = {
         code: 'runtime_timeout',
-        previousState: row.state,
+        previousState: state,
         detectedAt: input.now,
         retryCount: Number(row.retry_count),
       };
@@ -2319,7 +2068,7 @@ export class PersonaCoreService {
         this.tx.execute(pcoreCmdRetryRuntimeSession({
           tenantId: row.tenant_id,
           sessionId: row.id,
-          state: nextRuntimeRetryState(row.state),
+          state: nextRuntimeRetryState(state),
           timeoutAt: computeRuntimeTimeoutAt(input.now, input.sessionTimeoutMs),
           now: input.now,
           errorJson: JSON.stringify(errorPayload),
@@ -2738,7 +2487,7 @@ export class PersonaCoreService {
 
   listGovernanceCases(tenantId: string, ownerUserId: string, personaId: string): GovernanceCase[] | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return (this.tx.queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })) as unknown as GovernanceCaseRow[]).map(governanceCaseFromRow);
+    return this.tx.queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })).map(governanceCaseFromRow);
   }
 
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null {
@@ -3010,7 +2759,7 @@ export class PersonaCoreService {
   }
 
   listMarketplaceTasks(tenantId: string, status?: MarketplaceTask['status']): MarketplaceTask[] {
-    return (this.tx.queryMany(pcoreQueryMarketplaceTasksByTenant({ tenantId, status })) as unknown as MarketplaceTaskRow[]).map(taskFromRow);
+    return this.tx.queryMany(pcoreQueryMarketplaceTasksByTenant({ tenantId, status })).map(taskFromRow);
   }
 
   getMarketplaceTaskById(tenantId: string, taskId: string): MarketplaceTask | null {
@@ -3640,7 +3389,7 @@ export class PersonaCoreService {
       tenantId: row.tenant_id,
       personaId: row.persona_id,
       forkId: row.fork_id,
-      kind: row.kind,
+      kind: row.kind as PersonaMemory['kind'],
       sensitivity,
       isEncrypted,
       ownerRestricted,

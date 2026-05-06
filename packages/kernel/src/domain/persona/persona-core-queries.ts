@@ -1106,7 +1106,7 @@ export interface PcoreInsertMemoryParams {
 
 /* Query factories */
 
-export function pcoreQuerySummariesByOwner(params: PcoreTenantOwnerParams): Query<readonly PcorePersonaSummaryRow[], PcoreTenantOwnerParams> {
+export function pcoreQuerySummariesByOwner(params: PcoreTenantOwnerParams): Query<PcorePersonaSummaryRow, PcoreTenantOwnerParams> {
   return { kind: PCORE_QUERY_SUMMARIES_BY_OWNER, params };
 }
 
@@ -1114,27 +1114,27 @@ export function pcoreQuerySummaryByOwner(params: PcoreSummaryByOwnerParams): Que
   return { kind: PCORE_QUERY_SUMMARY_BY_OWNER, params };
 }
 
-export function pcoreQueryForksByPersona(params: PcoreTenantPersonaParams): Query<readonly PcoreForkRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryForksByPersona(params: PcoreTenantPersonaParams): Query<PcoreForkRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_FORKS_BY_PERSONA, params };
 }
 
-export function pcoreQueryRecentMemories(params: PcoreTenantPersonaParams): Query<readonly PcoreMemoryRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryRecentMemories(params: PcoreTenantPersonaParams): Query<PcoreMemoryRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_RECENT_MEMORIES, params };
 }
 
-export function pcoreQueryRecentKnowledge(params: PcoreTenantPersonaParams): Query<readonly PcoreKnowledgeRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryRecentKnowledge(params: PcoreTenantPersonaParams): Query<PcoreKnowledgeRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_RECENT_KNOWLEDGE, params };
 }
 
-export function pcoreQueryRecentGrowthEvents(params: PcoreTenantPersonaParams): Query<readonly PcoreGrowthEventRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryRecentGrowthEvents(params: PcoreTenantPersonaParams): Query<PcoreGrowthEventRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_RECENT_GROWTH_EVENTS, params };
 }
 
-export function pcoreQueryRecentGovernanceEvents(params: PcoreTenantPersonaParams): Query<readonly PcoreGovernanceEventRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryRecentGovernanceEvents(params: PcoreTenantPersonaParams): Query<PcoreGovernanceEventRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_RECENT_GOVERNANCE_EVENTS, params };
 }
 
-export function pcoreQueryRecentMarketplaceTasks(params: PcoreRecentMarketplaceTasksParams): Query<readonly PcoreMarketplaceTaskRow[], PcoreRecentMarketplaceTasksParams> {
+export function pcoreQueryRecentMarketplaceTasks(params: PcoreRecentMarketplaceTasksParams): Query<PcoreMarketplaceTaskRow, PcoreRecentMarketplaceTasksParams> {
   return { kind: PCORE_QUERY_RECENT_MARKETPLACE_TASKS, params };
 }
 
@@ -1150,7 +1150,7 @@ export function pcoreQueryTransferById(params: PcoreTransferByIdParams): Query<P
   return { kind: PCORE_QUERY_TRANSFER_BY_ID, params };
 }
 
-export function pcoreQueryTransfersByPersona(params: PcoreTenantPersonaParams): Query<readonly PcoreTransferRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryTransfersByPersona(params: PcoreTenantPersonaParams): Query<PcoreTransferRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_TRANSFERS_BY_PERSONA, params };
 }
 
@@ -1162,11 +1162,11 @@ export function pcoreQueryGovernancePenaltyCount(params: PcoreTenantPersonaParam
   return { kind: PCORE_QUERY_GOVERNANCE_PENALTY_COUNT, params };
 }
 
-export function pcoreQueryReputationHistory(params: PcoreTenantPersonaParams): Query<readonly PcoreReputationHistoryRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryReputationHistory(params: PcoreTenantPersonaParams): Query<PcoreReputationHistoryRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_REPUTATION_HISTORY, params };
 }
 
-export function pcoreQueryActivePersonasForRanking(tenantId: string): Query<readonly PcorePersonaSummaryRow[], string> {
+export function pcoreQueryActivePersonasForRanking(tenantId: string): Query<PcorePersonaSummaryRow, string> {
   return { kind: PCORE_QUERY_ACTIVE_PERSONAS_FOR_RANKING, params: tenantId };
 }
 
@@ -1182,7 +1182,7 @@ export function pcoreQueryMarketplaceAnalytics(tenantId: string): Query<PcoreMar
   return { kind: PCORE_QUERY_MARKETPLACE_ANALYTICS, params: tenantId };
 }
 
-export function pcoreQueryDailyPersonas(tenantId: string): Query<readonly PcoreDailyPersonaRow[], string> {
+export function pcoreQueryDailyPersonas(tenantId: string): Query<PcoreDailyPersonaRow, string> {
   return { kind: PCORE_QUERY_DAILY_PERSONAS, params: tenantId };
 }
 
@@ -1202,23 +1202,23 @@ export function pcoreQueryEconomyAnalytics(tenantId: string): Query<PcoreEconomy
   return { kind: PCORE_QUERY_ECONOMY_ANALYTICS, params: tenantId };
 }
 
-export function pcoreQueryPersonaMemories(params: PcorePersonaMemoriesParams): Query<readonly PcoreMemoryRow[], PcorePersonaMemoriesParams> {
+export function pcoreQueryPersonaMemories(params: PcorePersonaMemoriesParams): Query<PcoreMemoryRow, PcorePersonaMemoriesParams> {
   return { kind: PCORE_QUERY_PERSONA_MEMORIES, params };
 }
 
-export function pcoreQueryMemoryKindCounts(params: PcoreTenantPersonaParams): Query<readonly PcoreMemoryCountByKindRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryMemoryKindCounts(params: PcoreTenantPersonaParams): Query<PcoreMemoryCountByKindRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_MEMORY_KIND_COUNTS, params };
 }
 
-export function pcoreQueryMemoryRelationCounts(params: PcoreTenantPersonaParams): Query<readonly PcoreMemoryCountByRelationRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryMemoryRelationCounts(params: PcoreTenantPersonaParams): Query<PcoreMemoryCountByRelationRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_MEMORY_RELATION_COUNTS, params };
 }
 
-export function pcoreQueryMemoryNodeIds(params: PcoreMemoryNodeIdsParams): Query<readonly PcoreMemoryNodeIdRow[], PcoreMemoryNodeIdsParams> {
+export function pcoreQueryMemoryNodeIds(params: PcoreMemoryNodeIdsParams): Query<PcoreMemoryNodeIdRow, PcoreMemoryNodeIdsParams> {
   return { kind: PCORE_QUERY_MEMORY_NODE_IDS, params };
 }
 
-export function pcoreQueryMemoryEdges(params: PcoreMemoryEdgesParams): Query<readonly PcoreMemoryEdgeRow[], PcoreMemoryEdgesParams> {
+export function pcoreQueryMemoryEdges(params: PcoreMemoryEdgesParams): Query<PcoreMemoryEdgeRow, PcoreMemoryEdgesParams> {
   return { kind: PCORE_QUERY_MEMORY_EDGES, params };
 }
 
@@ -1230,7 +1230,7 @@ export function pcoreQueryWalletByIdForOwner(params: PcoreWalletByIdParams): Que
   return { kind: PCORE_QUERY_WALLET_BY_ID_FOR_OWNER, params };
 }
 
-export function pcoreQueryWalletTransactions(params: PcoreWalletByIdParams): Query<readonly PcoreWalletTransactionRow[], PcoreWalletByIdParams> {
+export function pcoreQueryWalletTransactions(params: PcoreWalletByIdParams): Query<PcoreWalletTransactionRow, PcoreWalletByIdParams> {
   return { kind: PCORE_QUERY_WALLET_TRANSACTIONS, params };
 }
 
@@ -1242,17 +1242,17 @@ export function pcoreQueryRuntimeSession(params: PcoreRuntimeSessionParams): Que
   return { kind: PCORE_QUERY_RUNTIME_SESSION, params };
 }
 
-export function pcoreQueryTimedOutRuntimeSessions(params: PcoreTimedOutRuntimeSessionsParams): Query<readonly PcoreRuntimeSessionRow[], PcoreTimedOutRuntimeSessionsParams> {
+export function pcoreQueryTimedOutRuntimeSessions(params: PcoreTimedOutRuntimeSessionsParams): Query<PcoreRuntimeSessionRow, PcoreTimedOutRuntimeSessionsParams> {
   return { kind: PCORE_QUERY_TIMED_OUT_RUNTIME_SESSIONS, params };
 }
 
-export function pcoreQueryGovernanceCasesByPersona(params: PcoreTenantPersonaParams): Query<readonly PcoreGovernanceCaseRow[], PcoreTenantPersonaParams> {
+export function pcoreQueryGovernanceCasesByPersona(params: PcoreTenantPersonaParams): Query<PcoreGovernanceCaseRow, PcoreTenantPersonaParams> {
   return { kind: PCORE_QUERY_GOVERNANCE_CASES_BY_PERSONA, params };
 }
 
 /* Wave-23 Query factories */
 
-export function pcoreQueryMarketplaceTasksByTenant(params: PcoreMarketplaceTasksByTenantParams): Query<readonly PcoreMarketplaceTaskRow[], PcoreMarketplaceTasksByTenantParams> {
+export function pcoreQueryMarketplaceTasksByTenant(params: PcoreMarketplaceTasksByTenantParams): Query<PcoreMarketplaceTaskRow, PcoreMarketplaceTasksByTenantParams> {
   return { kind: PCORE_QUERY_MARKETPLACE_TASKS_BY_TENANT, params };
 }
 
