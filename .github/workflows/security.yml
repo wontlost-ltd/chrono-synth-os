@@ -42,10 +42,14 @@ jobs:
         id: analyze
         with:
           category: '/language:javascript-typescript'
-          # 关闭 Code Scanning 上传：仓库未购买 Advanced Security
+          # 关闭 SARIF Code Scanning 上传：仓库未购买 Advanced Security
           upload: never
           # SARIF 输出目录；后续 upload-artifact 步骤打包成工件
           output: sarif-results
+          # 同时关闭 CodeQL database 上传。这一步独立于 SARIF；没有 GHAS
+          # 的仓库会触发 4 次重试后报 warning，污染日志。
+          # 输入定义见 github/codeql-action src/database-upload.ts。
+          upload-database: false
       - name: Upload SARIF as artifact
         if: always()
         uses: actions/upload-artifact@v4
