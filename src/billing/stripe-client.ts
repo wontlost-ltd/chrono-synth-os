@@ -14,8 +14,11 @@ export function getStripe(config: AppConfig): Stripe {
     if (!config.stripe.secretKey) {
       throw new Error('Stripe secretKey 未配置');
     }
+    /* Pinned to the SDK v22 default — the version the TypeScript types
+     * reflect. Bumping to a newer date string requires a coordinated
+     * SDK upgrade so the response shapes stay in sync. */
     stripeInstance = new Stripe(config.stripe.secretKey, {
-      apiVersion: '2025-01-27.acacia' as Stripe.LatestApiVersion,
+      apiVersion: '2026-04-22.dahlia',
     });
   }
   return stripeInstance;
