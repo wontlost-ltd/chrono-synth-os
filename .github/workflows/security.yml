@@ -52,7 +52,7 @@ jobs:
           upload-database: false
       - name: Upload SARIF as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codeql-sarif-${{ github.sha }}
           path: sarif-results/
@@ -111,7 +111,7 @@ jobs:
           format: spdx-json
           artifact-name: chrono-synth-os-sbom-${{ github.sha }}.spdx.json
           output-file: sbom.spdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: chrono-synth-os-sbom-${{ github.sha }}
           path: sbom.spdx.json
