@@ -96,3 +96,9 @@ updates:
     labels:
       - dependencies
       - docker
+    ignore:
+      # Skip non-LTS Node majors. Odd-numbered Node releases (21, 23, 25...)
+      # have ~6 month support windows; production images track LTS only
+      # (currently 24, next 26 in 2026 Q3).
+      - dependency-name: node
+        versions: ['25', '27', '29']
