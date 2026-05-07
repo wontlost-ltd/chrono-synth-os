@@ -82,7 +82,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: ${{ vars.CI_RUNNER_LABELS && '' || 'npm' }}
       - run: npm ci --ignore-scripts
       - name: Install license-checker
         run: npm install -g license-checker-rseidelsohn@^4
@@ -104,7 +104,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: ${{ vars.CI_RUNNER_LABELS && '' || 'npm' }}
       - run: npm ci --ignore-scripts
       - uses: anchore/sbom-action@v0
         with:

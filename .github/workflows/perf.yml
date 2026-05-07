@@ -72,7 +72,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: ${{ vars.CI_RUNNER_LABELS && '' || 'npm' }}
 
       - name: Install dependencies
         run: npm ci
