@@ -10,3 +10,4 @@ export * from './cost-tracker-types.js';
 export * from './token-budget-types.js';
 export * from './llm-usage-queries.js';
 export * from './embedding-queries.js';
+export * from './embedding-pg-queries.js';
