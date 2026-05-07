@@ -32,10 +32,10 @@ export function registerAvatarExecutors(): void {
     ).get(p.avatarId, p.identityId) ?? null;
   });
 
-  registerQuery<AvatarRow, string>(AVT_QUERY_BY_IDENTITY, (db, identityId) => {
+  registerQuery<AvatarRow[], string>(AVT_QUERY_BY_IDENTITY, (db, identityId) => {
     return db.prepare<AvatarRow>(
       'SELECT * FROM avatars WHERE identity_id = ? AND is_active = 1 ORDER BY is_default DESC, created_at ASC',
-    ).all(identityId) as unknown as AvatarRow;
+    ).all(identityId);
   });
 
   registerQuery<AvatarRow | null, string>(AVT_QUERY_DEFAULT, (db, identityId) => {

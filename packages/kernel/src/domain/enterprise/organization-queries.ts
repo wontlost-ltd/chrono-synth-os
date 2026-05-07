@@ -207,7 +207,7 @@ export interface OrgUpdateMembershipActiveParams {
 
 /* ── Query 工厂 ── */
 
-export function orgQueryListByUser(params: OrgTenantUserParams): Query<readonly OrgListByUserRow[], OrgTenantUserParams> {
+export function orgQueryListByUser(params: OrgTenantUserParams): Query<OrgListByUserRow, OrgTenantUserParams> {
   return { kind: ORG_QUERY_LIST_BY_USER, params };
 }
 
@@ -219,11 +219,11 @@ export function orgQueryById(params: OrgTenantIdParams): Query<OrgIdRow | null, 
   return { kind: ORG_QUERY_BY_ID, params };
 }
 
-export function orgQueryMembers(params: OrgMembersParams): Query<readonly OrgMemberRow[], OrgMembersParams> {
+export function orgQueryMembers(params: OrgMembersParams): Query<OrgMemberRow, OrgMembersParams> {
   return { kind: ORG_QUERY_MEMBERS, params };
 }
 
-export function orgQueryRoleBindings(params: OrgRoleBindingsParams): Query<readonly OrgRoleBindingRow[], OrgRoleBindingsParams> {
+export function orgQueryRoleBindings(params: OrgRoleBindingsParams): Query<OrgRoleBindingRow, OrgRoleBindingsParams> {
   return { kind: ORG_QUERY_ROLE_BINDINGS, params };
 }
 
@@ -263,7 +263,7 @@ export function orgQueryActiveMembership(params: OrgMembershipParams): Query<Org
   return { kind: ORG_QUERY_ACTIVE_MEMBERSHIP, params };
 }
 
-export function orgQueryMembershipRoles(params: OrgRoleBindingsParams): Query<readonly OrgMembershipRoleRow[], OrgRoleBindingsParams> {
+export function orgQueryMembershipRoles(params: OrgRoleBindingsParams): Query<OrgMembershipRoleRow, OrgRoleBindingsParams> {
   return { kind: ORG_QUERY_MEMBERSHIP_ROLES, params };
 }
 

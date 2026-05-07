@@ -4,7 +4,7 @@
  */
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
-import type { SyncWriteUnitOfWork, ApiKeyRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { apikeyQueryList, apikeyCmdCreate, apikeyCmdRevoke } from '@chrono/kernel';
 import { SubscriptionQueryService } from './subscription-query-service.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
@@ -58,7 +58,7 @@ export class ApiKeyService {
 
   /** 列出租户所有 API Key（不含明文） */
   list(tenantId: string): ApiKeyDto[] {
-    const rows = this.tx.queryMany(apikeyQueryList(tenantId)) as unknown as ApiKeyRow[];
+    const rows = this.tx.queryMany(apikeyQueryList(tenantId));
 
     return rows.map(r => ({
       id: r.id,

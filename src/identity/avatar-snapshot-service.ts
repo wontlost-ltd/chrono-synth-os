@@ -3,7 +3,7 @@
  * 封装跨设备快照中 autorun 配置、drift 状态、已安装设备的数据访问
  */
 
-import type { SyncWriteUnitOfWork, AsnapDeviceIdRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   asnapQueryAutorunConfig, asnapQueryDriftConfig,
   asnapQueryLastRunMetrics, asnapQueryInstalledDevices,
@@ -81,7 +81,7 @@ export class AvatarSnapshotService {
   /** 获取 avatar 的已安装设备列表 */
   getInstalledDevices(avatarId: string): string[] {
     try {
-      const rows = this.tx.queryMany(asnapQueryInstalledDevices(avatarId)) as unknown as AsnapDeviceIdRow[];
+      const rows = this.tx.queryMany(asnapQueryInstalledDevices(avatarId));
       return rows.map(r => r.device_id);
     } catch (err) {
       this.log.warn({ err, avatarId }, '设备列表查询失败，返回空列表');

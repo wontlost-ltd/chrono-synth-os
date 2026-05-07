@@ -148,14 +148,14 @@ export class BulkImportStore {
   }
 
   listByPersona(tenantId: string, personaId: string, limit = 20): BulkImportJobRecord[] {
-    const rows = this.tx.queryMany(bimpQueryListByPersona({ tenantId, personaId, limit })) as unknown as BimpJobRow[];
+    const rows = this.tx.queryMany(bimpQueryListByPersona({ tenantId, personaId, limit }));
     return rows.map(rowToRecord);
   }
 
   /** worker 启动期回收：所有处于 running 但 started_at 老于 cutoff 的 job 标记 failed */
   reapStuck(cutoffMs: number): number {
     const cutoff = Date.now() - cutoffMs;
-    const stuck = this.tx.queryMany(bimpQueryStuck({ cutoff })) as unknown as Array<{ id: string }>;
+    const stuck = this.tx.queryMany(bimpQueryStuck({ cutoff }));
     for (const row of stuck) {
       this.markFailed(row.id, `worker timeout (>${cutoffMs}ms running)`);
     }

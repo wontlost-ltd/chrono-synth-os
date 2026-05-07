@@ -110,13 +110,13 @@ export class ToolPermissionService {
 
   /** 列出 persona 的所有权限（含已撤销） */
   listByPersona(tenantId: string, personaId: string): ToolPermission[] {
-    const rows = this.tx.queryMany(tpermQueryListByPersona({ tenantId, personaId })) as unknown as ToolPermissionRow[];
+    const rows = this.tx.queryMany(tpermQueryListByPersona({ tenantId, personaId }));
     return rows.map(rowToPermission);
   }
 
   /** 列出 tenant 所有权限（admin 用） */
   listByTenant(tenantId: string): ToolPermission[] {
-    const rows = this.tx.queryMany(tpermQueryListByTenant(tenantId)) as unknown as ToolPermissionRow[];
+    const rows = this.tx.queryMany(tpermQueryListByTenant(tenantId));
     return rows.map(rowToPermission);
   }
 
@@ -208,7 +208,7 @@ export class ToolPermissionService {
 
   /** 列出 persona 历史调用 */
   listInvocations(tenantId: string, personaId: string, limit = 50, offset = 0): ToolInvocation[] {
-    const rows = this.tx.queryMany(tinvQueryListByPersona({ tenantId, personaId, limit, offset })) as unknown as ToolInvocationRow[];
+    const rows = this.tx.queryMany(tinvQueryListByPersona({ tenantId, personaId, limit, offset }));
     return rows.map(rowToInvocation);
   }
 
@@ -221,7 +221,7 @@ export class ToolPermissionService {
 
   /** 列出当前用户待确认的高风险调用（F3） */
   listPendingByUser(tenantId: string, userId: string, limit = 50): ToolInvocation[] {
-    const rows = this.tx.queryMany(tinvQueryPendingByUser({ tenantId, userId, limit })) as unknown as ToolInvocationRow[];
+    const rows = this.tx.queryMany(tinvQueryPendingByUser({ tenantId, userId, limit }));
     return rows.map(rowToInvocation);
   }
 

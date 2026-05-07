@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { SyncWriteUnitOfWork, ScimUserRow, ScimAvatarIdRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork, ScimUserRow } from '@chrono/kernel';
 import {
   scimQueryUsers, scimQueryUsersByEmail,
   scimQueryUserCount, scimQueryUserCountByEmail,
@@ -53,13 +53,13 @@ export class ScimProvisioningService {
   listUsers(tenantId: string, input: ScimListInput) {
     const offset = input.startIndex - 1;
 
-    let rows: ScimUserRow[];
+    let rows: readonly ScimUserRow[];
     let total: number;
     if (input.userName) {
-      rows = this.tx.queryMany(scimQueryUsersByEmail({ tenantId, email: input.userName, count: input.count, offset })) as unknown as ScimUserRow[];
+      rows = this.tx.queryMany(scimQueryUsersByEmail({ tenantId, email: input.userName, count: input.count, offset }));
       total = this.tx.queryOne(scimQueryUserCountByEmail({ tenantId, email: input.userName }))?.count ?? 0;
     } else {
-      rows = this.tx.queryMany(scimQueryUsers({ tenantId, count: input.count, offset })) as unknown as ScimUserRow[];
+      rows = this.tx.queryMany(scimQueryUsers({ tenantId, count: input.count, offset }));
       total = this.tx.queryOne(scimQueryUserCount(tenantId))?.count ?? 0;
     }
 
@@ -96,7 +96,7 @@ export class ScimProvisioningService {
 
     try {
       this.tx.transaction(() => {
-        const avatarIds = this.tx.queryMany(scimQueryAvatarIdsByUser(userId)) as unknown as ScimAvatarIdRow[];
+        const avatarIds = this.tx.queryMany(scimQueryAvatarIdsByUser(userId));
         for (const avatar of avatarIds) {
           this.tx.execute(scimCmdDeleteDeviceAvatars(avatar.id));
           this.tx.execute(scimCmdDeleteAutorunRunlog(avatar.id));

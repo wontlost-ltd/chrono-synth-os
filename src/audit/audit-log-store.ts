@@ -128,7 +128,7 @@ export function queryAuditLog(tx: SyncWriteUnitOfWork, options: QueryAuditLogOpt
   registerCoreSelfExecutors();
   const limit = options.limit ?? 100;
   const offset = options.offset ?? 0;
-  const rows = [...tx.queryMany(auditQueryList({
+  const rows = tx.queryMany(auditQueryList({
     tenantId: options.tenantId,
     limit,
     offset,
@@ -137,7 +137,7 @@ export function queryAuditLog(tx: SyncWriteUnitOfWork, options: QueryAuditLogOpt
     actionType: options.actionType ?? null,
     targetType: options.targetType ?? null,
     targetId: options.targetId ?? null,
-  }))] as unknown as KernelAuditLogRow[];
+  }));
   return rows.map(auditLogFromRow);
 }
 

@@ -145,14 +145,14 @@ export class LifeSimulationStore {
   /** 按租户查询 */
   getByTenant(tenantId: string, limit = 20): LifeSimulationRecord[] {
     const rows = this.tx.queryMany(lsimQueryByTenant(tenantId, limit));
-    return [...rows].map(r => rowToSimRecord(r as unknown as LifeSimRow));
+    return rows.map(rowToSimRecord);
   }
 
   /** 按租户分页查询（SQL 级 OFFSET） */
   getByTenantPaginated(tenantId: string, limit: number, offset: number): { records: LifeSimulationRecord[]; total: number } {
     const total = Number(this.tx.queryOne(lsimQueryCountByTenant(tenantId))?.count ?? 0);
     const rows = this.tx.queryMany(lsimQueryPaginated(tenantId, limit, offset));
-    const records = [...rows].map(r => rowToSimRecord(r as unknown as LifeSimRow));
+    const records = rows.map(rowToSimRecord);
     return { records, total };
   }
 
@@ -169,12 +169,12 @@ export class LifeSimulationStore {
     const rows = tenantId
       ? this.tx.queryMany(lsimQueryVariantsTenant(baseSimulationId, tenantId))
       : this.tx.queryMany(lsimQueryVariants(baseSimulationId));
-    return [...rows].map(r => rowToSimRecord(r as unknown as LifeSimRow));
+    return rows.map(rowToSimRecord);
   }
 
   /** 查询模拟的所有路径摘要 */
   getPathsBySimulation(simId: string): LifeSimulationPathRecord[] {
     const rows = this.tx.queryMany(lsimQueryPathsBySim(simId));
-    return [...rows].map(r => rowToPathRecord(r as unknown as LifeSimPathRow));
+    return rows.map(rowToPathRecord);
   }
 }

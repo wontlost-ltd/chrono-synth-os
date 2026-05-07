@@ -3,7 +3,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
-import type { SyncWriteUnitOfWork, SnapshotSummaryRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { snapQueryById, snapQueryLatest, snapQueryList, snapCmdSave, snapCmdDelete } from '@chrono/kernel';
 import { deepStringify, deepParse } from '../storage/serialization.js';
 import type { SystemSnapshot, SnapshotId } from '../types/snapshot.js';
@@ -47,7 +47,7 @@ export class SnapshotStore {
 
   /** 列出所有快照的元数据 */
   list(): Array<{ id: string; reason: string; createdAt: number }> {
-    const rows = [...this.tx.queryMany(snapQueryList())] as unknown as SnapshotSummaryRow[];
+    const rows = [...this.tx.queryMany(snapQueryList())];
     return rows.map(r => ({ id: r.id, reason: r.reason, createdAt: r.created_at }));
   }
 

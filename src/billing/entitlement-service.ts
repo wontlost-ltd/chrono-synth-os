@@ -11,7 +11,7 @@ import {
   entlQueryPlanId, entlQueryAddOnQuotas, entlQueryActiveTenantAddons,
   entlCmdUpsert,
 } from '@chrono/kernel';
-import type { EffectiveLimits, EntlAddOnQuotaRow } from '@chrono/kernel';
+import type { EffectiveLimits } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type { EffectiveLimits };
@@ -29,7 +29,7 @@ export class EntitlementService {
     const planLimits = getPlanLimits(planId);
 
     /* 查询活跃附加组件的配额叠加 */
-    const addOnRows = this.tx.queryMany(entlQueryAddOnQuotas(tenantId)) as unknown as EntlAddOnQuotaRow[];
+    const addOnRows = this.tx.queryMany(entlQueryAddOnQuotas(tenantId));
 
     const addOns: AddOnQuota[] = addOnRows.map(r => ({
       resource: r.resource,
@@ -74,7 +74,7 @@ export class EntitlementService {
 
   /** 获取租户的活跃附加组件列表 */
   getActiveTenantAddOns(tenantId: string): Array<{ addOnId: string; resource: string; quotaAmount: number }> {
-    const rows = this.tx.queryMany(entlQueryActiveTenantAddons(tenantId)) as unknown as Array<{ add_on_id: string; resource: string; quota_amount: number }>;
+    const rows = this.tx.queryMany(entlQueryActiveTenantAddons(tenantId));
     return rows.map(r => ({
       addOnId: r.add_on_id,
       resource: r.resource,

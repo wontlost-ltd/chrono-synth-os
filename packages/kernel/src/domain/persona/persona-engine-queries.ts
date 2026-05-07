@@ -78,11 +78,11 @@ export function pengQueryById(id: string): Query<PengRow | null, string> {
   return { kind: PENG_QUERY_BY_ID, params: id };
 }
 
-export function pengQueryActive(): Query<readonly PengRow[], void> {
+export function pengQueryActive(): Query<PengRow, void> {
   return { kind: PENG_QUERY_ACTIVE, params: undefined as unknown as void };
 }
 
-export function pengQueryAll(): Query<readonly PengRow[], void> {
+export function pengQueryAll(): Query<PengRow, void> {
   return { kind: PENG_QUERY_ALL, params: undefined as unknown as void };
 }
 

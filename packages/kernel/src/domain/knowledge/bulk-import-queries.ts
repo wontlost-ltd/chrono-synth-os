@@ -136,7 +136,7 @@ export function bimpQueryByTenantAndId(params: BimpByTenantAndIdParams): Query<B
   return { kind: BIMP_QUERY_BY_TENANT_AND_ID, params };
 }
 
-export function bimpQueryListByPersona(params: BimpListByPersonaParams): Query<readonly BimpJobRow[], BimpListByPersonaParams> {
+export function bimpQueryListByPersona(params: BimpListByPersonaParams): Query<BimpJobRow, BimpListByPersonaParams> {
   return { kind: BIMP_QUERY_LIST_BY_PERSONA, params };
 }
 
@@ -144,7 +144,7 @@ export function bimpQueryFailures(params: BimpByIdParams): Query<BimpFailuresRow
   return { kind: BIMP_QUERY_FAILURES, params };
 }
 
-export function bimpQueryStuck(params: BimpStuckParams): Query<readonly BimpStuckRow[], BimpStuckParams> {
+export function bimpQueryStuck(params: BimpStuckParams): Query<BimpStuckRow, BimpStuckParams> {
   return { kind: BIMP_QUERY_STUCK, params };
 }
 

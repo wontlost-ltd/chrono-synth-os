@@ -4,7 +4,7 @@
  */
 
 import type { AppConfig } from '../config/schema.js';
-import type { SyncWriteUnitOfWork, BillingOutboxRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   boutboxQueryPending, boutboxQueryPendingCount, boutboxQueryFailedCount,
   boutboxCmdEnqueue, boutboxCmdRequeueStale, boutboxCmdClaim,
@@ -37,7 +37,7 @@ export class BillingOutbox {
     /* 回收卡在 processing 超过阈值的行（崩溃恢复） */
     this.tx.execute(boutboxCmdRequeueStale(Date.now() - STALE_PROCESSING_MS));
 
-    const rows = [...this.tx.queryMany(boutboxQueryPending(MAX_ATTEMPTS, batchSize))] as unknown as BillingOutboxRow[];
+    const rows = [...this.tx.queryMany(boutboxQueryPending(MAX_ATTEMPTS, batchSize))];
 
     let processed = 0;
     let failed = 0;

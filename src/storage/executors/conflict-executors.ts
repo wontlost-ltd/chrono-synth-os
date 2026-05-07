@@ -14,16 +14,16 @@ import {
 export function registerConflictExecutors(): void {
   /* ── Queries ── */
 
-  registerQuery<ConflictRow, void>(CONFLICT_QUERY_UNRESOLVED, (db) => {
+  registerQuery<ConflictRow[], void>(CONFLICT_QUERY_UNRESOLVED, (db) => {
     return db.prepare<ConflictRow>(
       'SELECT * FROM conflicts WHERE resolved_at IS NULL ORDER BY detected_at DESC',
-    ).all() as unknown as ConflictRow;
+    ).all();
   });
 
-  registerQuery<ConflictRow, void>(CONFLICT_QUERY_ALL, (db) => {
+  registerQuery<ConflictRow[], void>(CONFLICT_QUERY_ALL, (db) => {
     return db.prepare<ConflictRow>(
       'SELECT * FROM conflicts ORDER BY detected_at DESC',
-    ).all() as unknown as ConflictRow;
+    ).all();
   });
 
   /* ── Commands ── */

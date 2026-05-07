@@ -92,7 +92,7 @@ export function collabQueryShareCount(userId: string): Query<CollabShareCountRow
   return { kind: COLLAB_QUERY_SHARE_COUNT, params: userId };
 }
 
-export function collabQuerySharedList(params: CollabSharedListParams): Query<readonly CollabSharedRow[], CollabSharedListParams> {
+export function collabQuerySharedList(params: CollabSharedListParams): Query<CollabSharedRow, CollabSharedListParams> {
   return { kind: COLLAB_QUERY_SHARED_LIST, params };
 }
 

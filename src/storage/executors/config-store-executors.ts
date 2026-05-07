@@ -16,16 +16,16 @@ import {
 export function registerConfigStoreExecutors(): void {
   /* ── Queries ── */
 
-  registerQuery<ConfigItemRow, void>(CFG_QUERY_ALL, (db) => {
+  registerQuery<ConfigItemRow[], void>(CFG_QUERY_ALL, (db) => {
     return db.prepare<ConfigItemRow>(
       'SELECT * FROM config_items ORDER BY key',
-    ).all() as unknown as ConfigItemRow;
+    ).all();
   });
 
-  registerQuery<ConfigItemRow, ConfigCategory>(CFG_QUERY_BY_CATEGORY, (db, category) => {
+  registerQuery<ConfigItemRow[], ConfigCategory>(CFG_QUERY_BY_CATEGORY, (db, category) => {
     return db.prepare<ConfigItemRow>(
       'SELECT * FROM config_items WHERE category = ? ORDER BY key',
-    ).all(category) as unknown as ConfigItemRow;
+    ).all(category);
   });
 
   registerQuery<ConfigItemRow | null, string>(CFG_QUERY_BY_KEY, (db, key) => {
@@ -34,16 +34,16 @@ export function registerConfigStoreExecutors(): void {
     ).get(key) ?? null;
   });
 
-  registerQuery<ConfigAuditRow, CfgAuditParams>(CFG_QUERY_AUDIT, (db, p) => {
+  registerQuery<ConfigAuditRow[], CfgAuditParams>(CFG_QUERY_AUDIT, (db, p) => {
     return db.prepare<ConfigAuditRow>(
       'SELECT * FROM config_audit ORDER BY changed_at DESC LIMIT ? OFFSET ?',
-    ).all(p.limit, p.offset) as unknown as ConfigAuditRow;
+    ).all(p.limit, p.offset);
   });
 
-  registerQuery<ConfigAuditRow, CfgAuditByKeyParams>(CFG_QUERY_AUDIT_BY_KEY, (db, p) => {
+  registerQuery<ConfigAuditRow[], CfgAuditByKeyParams>(CFG_QUERY_AUDIT_BY_KEY, (db, p) => {
     return db.prepare<ConfigAuditRow>(
       'SELECT * FROM config_audit WHERE config_key = ? ORDER BY changed_at DESC LIMIT ?',
-    ).all(p.key, p.limit) as unknown as ConfigAuditRow;
+    ).all(p.key, p.limit);
   });
 
   /* ── Commands ── */

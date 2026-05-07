@@ -51,7 +51,7 @@ export function davtQueryActive(deviceId: string): Query<DavtRow | null, string>
   return { kind: DAVT_QUERY_ACTIVE, params: deviceId };
 }
 
-export function davtQueryListByDevice(deviceId: string): Query<readonly DavtRow[], string> {
+export function davtQueryListByDevice(deviceId: string): Query<DavtRow, string> {
   return { kind: DAVT_QUERY_LIST_BY_DEVICE, params: deviceId };
 }
 

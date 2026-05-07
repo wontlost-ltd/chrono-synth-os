@@ -239,7 +239,7 @@ if (!isMainThread && parentPort) {
         }
 
         case 'begin-tx': {
-          const client = await pool.connect() as unknown as PgClient;
+          const client = await pool.connect() as PgClient;
           const txId = nextTxId++;
           txClients.set(txId, client);
           await client.query('BEGIN');
@@ -392,7 +392,7 @@ export class PostgresDatabase implements IDatabase {
     try {
       const result = fn();
       /* 防御：如果回调意外返回 Promise，commit 会在异步操作完成前执行，导致数据不一致 */
-      if (result !== null && result !== undefined && typeof (result as unknown as Promise<unknown>).then === 'function') {
+      if (result instanceof Promise) {
         throw new Error('transaction() 回调不可返回 Promise，同步接口不支持异步事务');
       }
       this.sendSync({ type: 'commit-tx', sql: '', params: [], txId });

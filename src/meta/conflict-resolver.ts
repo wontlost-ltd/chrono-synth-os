@@ -98,13 +98,13 @@ export class ConflictResolver {
 
   /** 获取未解决的冲突 */
   getUnresolved(): Conflict[] {
-    const rows = [...this.tx.queryMany(conflictQueryUnresolved())] as unknown as ConflictRow[];
+    const rows = [...this.tx.queryMany(conflictQueryUnresolved())];
     return rows.map(r => this.toConflict(r));
   }
 
   /** 获取所有冲突 */
   getAll(): Conflict[] {
-    const rows = [...this.tx.queryMany(conflictQueryAll())] as unknown as ConflictRow[];
+    const rows = [...this.tx.queryMany(conflictQueryAll())];
     return rows.map(r => this.toConflict(r));
   }
 

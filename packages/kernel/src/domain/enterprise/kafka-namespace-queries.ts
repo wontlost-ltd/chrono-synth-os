@@ -29,6 +29,6 @@ export function kafkaQueryTenantNamespace(params: KafkaTenantNamespaceParams): Q
   return { kind: KAFKA_QUERY_TENANT_NAMESPACE, params };
 }
 
-export function kafkaQueryAllNamespaces(): Query<readonly KafkaTenantNamespaceRow[], void> {
+export function kafkaQueryAllNamespaces(): Query<KafkaTenantNamespaceRow, void> {
   return { kind: KAFKA_QUERY_ALL_NAMESPACES, params: undefined as unknown as void };
 }

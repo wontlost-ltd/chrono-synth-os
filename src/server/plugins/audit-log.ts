@@ -43,7 +43,7 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
 
   /* 记录请求开始时间，用于计算延迟 */
   app.addHook('onRequest', (request: FastifyRequest, _reply: FastifyReply, done) => {
-    (request as unknown as Record<string, number>).__startTime = performance.now();
+    request.__startTime = performance.now();
     done();
   });
 
@@ -53,7 +53,7 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
       return done();
     }
 
-    const start = (request as unknown as Record<string, number>).__startTime;
+    const start = request.__startTime;
     const latency = start !== undefined ? performance.now() - start : 0;
     const requestId = (reply.getHeader('X-Request-Id') as string) || 'unknown';
 
@@ -67,7 +67,7 @@ export function registerAuditLog(app: FastifyInstance, db: IDatabase | undefined
       const user = request.user as JwtPayload | undefined;
       const userId = user?.sub ?? null;
       /* JwtPayload 不包含 email，从请求装饰器获取（如有） */
-      const userEmail = (request as unknown as { userEmail?: string }).userEmail ?? null;
+      const userEmail = request.userEmail ?? null;
       const actionType = resolveActionType(routePath);
       const actorType = apiKey ? 'api_key' : userId ? 'user' : null;
 

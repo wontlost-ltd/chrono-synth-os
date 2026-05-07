@@ -20,13 +20,8 @@ import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
 import { AnalyticsBatchSchema } from '../schemas/api-schemas.js';
 
-interface JwtUserShape {
-  sub?: string;
-  tenantId?: string;
-}
-
 function getUserId(request: FastifyRequest): string | null {
-  const user = (request as unknown as { user?: JwtUserShape }).user;
+  const user = request.user;
   return user?.sub ?? null;
 }
 

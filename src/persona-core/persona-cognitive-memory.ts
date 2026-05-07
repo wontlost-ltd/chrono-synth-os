@@ -1,5 +1,5 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
-import type { PcmemNodeRow, PcmemEdgeRow, PcmemWmRow } from '@chrono/kernel';
+import type { PcmemNodeRow, PcmemEdgeRow } from '@chrono/kernel';
 import {
   pcmemQueryNodeById, pcmemQueryNodeBySource, pcmemQueryNodeByKnowledge,
   pcmemQueryRecentNodes, pcmemQueryListNodes, pcmemQueryListNodesByKinds,
@@ -154,7 +154,7 @@ export class PersonaCognitiveMemoryGraph {
 
     for (let layer = 0; layer < boundedDepth; layer++) {
       if (frontier.length === 0) break;
-      const edges = this.tx.queryMany(pcmemQueryEdgesByFrontier({ tenantId, personaId, frontier })) as unknown as PcmemEdgeRow[];
+      const edges = this.tx.queryMany(pcmemQueryEdgesByFrontier({ tenantId, personaId, frontier }));
 
       const neighborIds: string[] = [];
       for (const edge of edges) {
@@ -212,7 +212,7 @@ export class PersonaCognitiveMemoryGraph {
     kind: PersonaCognitiveMemoryKind,
     forkId: string | null,
   ): void {
-    const rows = this.tx.queryMany(pcmemQueryRecentNodes({ tenantId, personaId, excludeId: memoryId })) as unknown as PcmemNodeRow[];
+    const rows = this.tx.queryMany(pcmemQueryRecentNodes({ tenantId, personaId, excludeId: memoryId }));
 
     for (const row of rows) {
       const sameKind = row.kind === kind;
@@ -229,26 +229,26 @@ export class PersonaCognitiveMemoryGraph {
     options: { kinds?: PersonaCognitiveMemoryKind[]; limit: number },
   ): PersonaCognitiveMemory[] {
     if (!options.kinds?.length) {
-      const rows = this.tx.queryMany(pcmemQueryListNodes({ tenantId, personaId, limit: options.limit })) as unknown as PcmemNodeRow[];
+      const rows = this.tx.queryMany(pcmemQueryListNodes({ tenantId, personaId, limit: options.limit }));
       return rows.map((row) => toMemory(row, this.decryptContent.bind(this)));
     }
 
     const rows = this.tx.queryMany(pcmemQueryListNodesByKinds({
       tenantId, personaId, kinds: options.kinds, limit: options.limit,
-    })) as unknown as PcmemNodeRow[];
+    }));
     return rows.map((row) => toMemory(row, this.decryptContent.bind(this)));
   }
 
   private getMemoryBatch(tenantId: string, personaId: string, memoryIds: string[]): PersonaCognitiveMemory[] {
     if (memoryIds.length === 0) return [];
-    const rows = this.tx.queryMany(pcmemQueryBatchNodes({ tenantId, personaId, ids: memoryIds })) as unknown as PcmemNodeRow[];
+    const rows = this.tx.queryMany(pcmemQueryBatchNodes({ tenantId, personaId, ids: memoryIds }));
     const byId = new Map(rows.map((row) => [row.id, toMemory(row, this.decryptContent.bind(this))]));
     return memoryIds.map((id) => byId.get(id)).filter((value): value is PersonaCognitiveMemory => Boolean(value));
   }
 
   private refreshAndLoadWorkingMemory(tenantId: string, personaId: string): PersonaWorkingMemoryEntry[] {
     this.tx.transaction(() => {
-      const slots = this.tx.queryMany(pcmemQueryWmAllSlots({ tenantId, personaId })) as unknown as PcmemWmRow[];
+      const slots = this.tx.queryMany(pcmemQueryWmAllSlots({ tenantId, personaId }));
 
       const memoryIds = slots.map((slot) => slot.memory_id);
       const memories = new Map(this.getMemoryBatch(tenantId, personaId, memoryIds).map((memory) => [memory.id, memory]));
@@ -265,7 +265,7 @@ export class PersonaCognitiveMemoryGraph {
       }
     });
 
-    const slots = this.tx.queryMany(pcmemQueryWmSlotsOrdered({ tenantId, personaId })) as unknown as PcmemWmRow[];
+    const slots = this.tx.queryMany(pcmemQueryWmSlotsOrdered({ tenantId, personaId }));
     const memories = new Map(
       this.getMemoryBatch(tenantId, personaId, slots.map((slot) => slot.memory_id)).map((memory) => [memory.id, memory]),
     );
@@ -329,7 +329,7 @@ export class PersonaCognitiveMemoryGraph {
   }
 
   getEdges(tenantId: string, personaId: string): PersonaCognitiveEdge[] {
-    const rows = this.tx.queryMany(pcmemQueryAllEdges({ tenantId, personaId })) as unknown as PcmemEdgeRow[];
+    const rows = this.tx.queryMany(pcmemQueryAllEdges({ tenantId, personaId }));
     return rows.map(toEdge);
   }
 }

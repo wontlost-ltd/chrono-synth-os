@@ -28,6 +28,6 @@ export interface KrtvByPersonaParams {
 
 /* ── Query 工厂 ── */
 
-export function krtvQueryByPersona(params: KrtvByPersonaParams): Query<readonly KrtvKnowledgeRow[], KrtvByPersonaParams> {
+export function krtvQueryByPersona(params: KrtvByPersonaParams): Query<KrtvKnowledgeRow, KrtvByPersonaParams> {
   return { kind: KRTV_QUERY_BY_PERSONA, params };
 }

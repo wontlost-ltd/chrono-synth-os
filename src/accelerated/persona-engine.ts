@@ -72,13 +72,13 @@ export class PersonaEngine {
 
   /** 获取所有活跃版本 */
   getActive(): PersonaVersion[] {
-    const rows = this.tx.queryMany(pengQueryActive()) as unknown as PengRow[];
+    const rows = this.tx.queryMany(pengQueryActive());
     return rows.map(r => this.toPersona(r));
   }
 
   /** 获取全部版本 */
   getAll(): PersonaVersion[] {
-    const rows = this.tx.queryMany(pengQueryAll()) as unknown as PengRow[];
+    const rows = this.tx.queryMany(pengQueryAll());
     return rows.map(r => this.toPersona(r));
   }
 

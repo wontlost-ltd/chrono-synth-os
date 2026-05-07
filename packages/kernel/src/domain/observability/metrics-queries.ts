@@ -63,6 +63,6 @@ export function mtrxQueryBillingOutboxCount(status: string): Query<MtrxCountRow 
   return { kind: MTRX_QUERY_BILLING_OUTBOX_COUNT, params: status };
 }
 
-export function mtrxQueryTenantUsage(params: MtrxTenantUsageParams): Query<readonly MtrxTenantUsageRow[], MtrxTenantUsageParams> {
+export function mtrxQueryTenantUsage(params: MtrxTenantUsageParams): Query<MtrxTenantUsageRow, MtrxTenantUsageParams> {
   return { kind: MTRX_QUERY_TENANT_USAGE, params };
 }

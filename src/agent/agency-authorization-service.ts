@@ -110,12 +110,12 @@ export class AgencyAuthorizationService {
   }
 
   listByPersona(tenantId: string, personaId: string): AgencyAuthorization[] {
-    const rows = this.tx.queryMany(agauthQueryListByPersona({ tenantId, personaId })) as unknown as AgencyAuthorizationRow[];
+    const rows = this.tx.queryMany(agauthQueryListByPersona({ tenantId, personaId }));
     return rows.map(rowToAuth);
   }
 
   listByPrincipal(tenantId: string, principalUserId: string): AgencyAuthorization[] {
-    const rows = this.tx.queryMany(agauthQueryListByPrincipal({ tenantId, principalUserId })) as unknown as AgencyAuthorizationRow[];
+    const rows = this.tx.queryMany(agauthQueryListByPrincipal({ tenantId, principalUserId }));
     return rows.map(rowToAuth);
   }
 

@@ -87,7 +87,7 @@ export function ksrcQueryById(params: KsrcByIdParams): Query<KsrcRow | null, Ksr
   return { kind: KSRC_QUERY_BY_ID, params };
 }
 
-export function ksrcQueryList(params: KsrcListParams): Query<readonly KsrcRow[], KsrcListParams> {
+export function ksrcQueryList(params: KsrcListParams): Query<KsrcRow, KsrcListParams> {
   return { kind: KSRC_QUERY_LIST, params };
 }
 
@@ -95,7 +95,7 @@ export function ksrcQueryCount(tenantId: string): Query<KsrcCountRow | null, str
   return { kind: KSRC_QUERY_COUNT, params: tenantId };
 }
 
-export function ksrcQueryEnabledByIds(params: KsrcEnabledByIdsParams): Query<readonly KsrcRow[], KsrcEnabledByIdsParams> {
+export function ksrcQueryEnabledByIds(params: KsrcEnabledByIdsParams): Query<KsrcRow, KsrcEnabledByIdsParams> {
   return { kind: KSRC_QUERY_ENABLED_BY_IDS, params };
 }
 

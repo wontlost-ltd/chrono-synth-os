@@ -33,7 +33,7 @@ export function uoauthQueryByUserProviderScope(p: UserOauthQueryParams): Query<U
   return { kind: UOAUTH_QUERY_BY_USER_PROVIDER_SCOPE, params: p };
 }
 
-export function uoauthQueryListByUser(p: UserOauthListByUserParams): Query<readonly UserOauthTokenRow[], UserOauthListByUserParams> {
+export function uoauthQueryListByUser(p: UserOauthListByUserParams): Query<UserOauthTokenRow, UserOauthListByUserParams> {
   return { kind: UOAUTH_QUERY_LIST_BY_USER, params: p };
 }
 

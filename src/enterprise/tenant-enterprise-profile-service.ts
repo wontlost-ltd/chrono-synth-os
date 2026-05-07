@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Logger } from '../utils/logger.js';
+import { SilentLogger, type Logger } from '../utils/logger.js';
 import type { SyncWriteUnitOfWork, TprofRow } from '@chrono/kernel';
 import {
   tprofQueryByTenant, tprofQueryByScimToken,
@@ -298,7 +298,7 @@ export class TenantEnterpriseProfileService {
    */
   async provisionKafkaNamespace(tenantId: string): Promise<ProvisionResult> {
     const profile = this.getProfile(tenantId);
-    const logger = this.logger ?? { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as Logger;
+    const logger: Logger = this.logger ?? new SilentLogger();
     return provisionTenantKafkaNamespace(tenantId, profile.kafkaNamespace, this.config, logger);
   }
 

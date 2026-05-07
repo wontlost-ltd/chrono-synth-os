@@ -3,6 +3,7 @@
  * 创建并配置 Fastify 实例，注册所有路由和插件
  */
 
+import './fastify-augmentation.js';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
@@ -160,6 +161,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     console.warn(`[WARN] ${msg}`);
   }
 
+  /* loggerInstance with a custom pino instance produces
+   * FastifyInstance<..., Logger<never, boolean>> which TS won't unify with
+   * the FastifyBaseLogger-parameterised default. The runtime API is
+   * identical; cast at the boundary. */
   const app: FastifyInstance = deps.logger
     ? Fastify({ loggerInstance: deps.logger.pino, bodyLimit: config.request.maxBodyBytes }) as unknown as FastifyInstance
     : Fastify({ logger: false, bodyLimit: config.request.maxBodyBytes });

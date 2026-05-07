@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SyncWriteUnitOfWork, BsvcSubscriptionRow, BsvcInvoiceRow, BsvcUsageMeterRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork, BsvcSubscriptionRow, BsvcInvoiceRow } from '@chrono/kernel';
 import {
   bsvcQueryListPlans, bsvcQueryLatestSub, bsvcQueryReconciliation,
   bsvcQueryInvoiceByPeriod, bsvcQueryInvoiceById, bsvcQueryInvoicesByTenant,
@@ -85,10 +85,7 @@ export class BillingService {
     limits: Record<string, number>;
   }> {
     this.seedBillingPlans();
-    const rows = [...this.tx.queryMany(bsvcQueryListPlans())] as unknown as Array<{
-      id: string; name: string; stripe_price_id: string; price_minor: number;
-      currency: string; billing_interval: string; limits_json: string;
-    }>;
+    const rows = this.tx.queryMany(bsvcQueryListPlans());
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
@@ -148,7 +145,7 @@ export class BillingService {
       this.materializeInvoice(current);
     }
 
-    const invoices = [...this.tx.queryMany(bsvcQueryInvoicesByTenant(tenantId))] as unknown as BsvcInvoiceRow[];
+    const invoices = [...this.tx.queryMany(bsvcQueryInvoicesByTenant(tenantId))];
     return invoices.map((invoice) => this.serializeInvoice(invoice));
   }
 
@@ -234,9 +231,9 @@ export class BillingService {
     periodStart: number,
     periodEnd: number,
   ): Record<string, number> {
-    const rows = [...this.tx.queryMany(bsvcQueryUsageRecordsSummary({
+    const rows = this.tx.queryMany(bsvcQueryUsageRecordsSummary({
       tenantId, periodStart, periodEnd,
-    }))] as unknown as BsvcUsageMeterRow[];
+    }));
 
     this.tx.execute(bsvcCmdDeleteUsageMeters({ tenantId, periodStart, periodEnd }));
 
@@ -300,9 +297,9 @@ export class BillingService {
     periodStart: number,
     periodEnd: number,
   ): Record<string, number> {
-    const rows = [...this.tx.queryMany(bsvcQueryUsageMeters({
+    const rows = this.tx.queryMany(bsvcQueryUsageMeters({
       tenantId, periodStart, periodEnd,
-    }))] as unknown as BsvcUsageMeterRow[];
+    }));
     return Object.fromEntries(rows.map((row) => [row.resource, Number(row.total_quantity)]));
   }
 }

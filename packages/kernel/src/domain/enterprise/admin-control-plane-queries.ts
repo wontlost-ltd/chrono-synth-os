@@ -132,7 +132,7 @@ export function acpQueryPersonaCount(params: AcpFilterParams): Query<AcpCountRow
   return { kind: ACP_QUERY_PERSONA_COUNT, params };
 }
 
-export function acpQueryPersonaList(params: AcpPagedParams): Query<readonly AcpPersonaRow[], AcpPagedParams> {
+export function acpQueryPersonaList(params: AcpPagedParams): Query<AcpPersonaRow, AcpPagedParams> {
   return { kind: ACP_QUERY_PERSONA_LIST, params };
 }
 
@@ -144,7 +144,7 @@ export function acpQueryTaskCount(params: AcpFilterParams): Query<AcpCountRow | 
   return { kind: ACP_QUERY_TASK_COUNT, params };
 }
 
-export function acpQueryTaskList(params: AcpPagedParams): Query<readonly AcpTaskRow[], AcpPagedParams> {
+export function acpQueryTaskList(params: AcpPagedParams): Query<AcpTaskRow, AcpPagedParams> {
   return { kind: ACP_QUERY_TASK_LIST, params };
 }
 
@@ -156,7 +156,7 @@ export function acpQueryWalletCount(params: AcpFilterParams): Query<AcpCountRow 
   return { kind: ACP_QUERY_WALLET_COUNT, params };
 }
 
-export function acpQueryWalletList(params: AcpPagedParams): Query<readonly AcpWalletRow[], AcpPagedParams> {
+export function acpQueryWalletList(params: AcpPagedParams): Query<AcpWalletRow, AcpPagedParams> {
   return { kind: ACP_QUERY_WALLET_LIST, params };
 }
 
@@ -168,7 +168,7 @@ export function acpQueryGovCount(params: AcpFilterParams): Query<AcpCountRow | n
   return { kind: ACP_QUERY_GOV_COUNT, params };
 }
 
-export function acpQueryGovList(params: AcpPagedParams): Query<readonly AcpGovRow[], AcpPagedParams> {
+export function acpQueryGovList(params: AcpPagedParams): Query<AcpGovRow, AcpPagedParams> {
   return { kind: ACP_QUERY_GOV_LIST, params };
 }
 

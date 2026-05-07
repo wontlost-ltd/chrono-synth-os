@@ -188,19 +188,19 @@ export function pcmemQueryNodeByKnowledge(params: PcmemNodeByKnowledgeParams): Q
   return { kind: PCMEM_QUERY_NODE_BY_KNOWLEDGE, params };
 }
 
-export function pcmemQueryRecentNodes(params: PcmemRecentNodesParams): Query<readonly PcmemNodeRow[], PcmemRecentNodesParams> {
+export function pcmemQueryRecentNodes(params: PcmemRecentNodesParams): Query<PcmemNodeRow, PcmemRecentNodesParams> {
   return { kind: PCMEM_QUERY_RECENT_NODES, params };
 }
 
-export function pcmemQueryListNodes(params: PcmemListNodesParams): Query<readonly PcmemNodeRow[], PcmemListNodesParams> {
+export function pcmemQueryListNodes(params: PcmemListNodesParams): Query<PcmemNodeRow, PcmemListNodesParams> {
   return { kind: PCMEM_QUERY_LIST_NODES, params };
 }
 
-export function pcmemQueryListNodesByKinds(params: PcmemListNodesByKindsParams): Query<readonly PcmemNodeRow[], PcmemListNodesByKindsParams> {
+export function pcmemQueryListNodesByKinds(params: PcmemListNodesByKindsParams): Query<PcmemNodeRow, PcmemListNodesByKindsParams> {
   return { kind: PCMEM_QUERY_LIST_NODES_BY_KINDS, params };
 }
 
-export function pcmemQueryBatchNodes(params: PcmemBatchNodesParams): Query<readonly PcmemNodeRow[], PcmemBatchNodesParams> {
+export function pcmemQueryBatchNodes(params: PcmemBatchNodesParams): Query<PcmemNodeRow, PcmemBatchNodesParams> {
   return { kind: PCMEM_QUERY_BATCH_NODES, params };
 }
 
@@ -212,19 +212,19 @@ export function pcmemQueryCountEdges(params: PcmemTenantPersonaParams): Query<Pc
   return { kind: PCMEM_QUERY_COUNT_EDGES, params };
 }
 
-export function pcmemQueryEdgesByFrontier(params: PcmemEdgesByFrontierParams): Query<readonly PcmemEdgeRow[], PcmemEdgesByFrontierParams> {
+export function pcmemQueryEdgesByFrontier(params: PcmemEdgesByFrontierParams): Query<PcmemEdgeRow, PcmemEdgesByFrontierParams> {
   return { kind: PCMEM_QUERY_EDGES_BY_FRONTIER, params };
 }
 
-export function pcmemQueryAllEdges(params: PcmemTenantPersonaParams): Query<readonly PcmemEdgeRow[], PcmemTenantPersonaParams> {
+export function pcmemQueryAllEdges(params: PcmemTenantPersonaParams): Query<PcmemEdgeRow, PcmemTenantPersonaParams> {
   return { kind: PCMEM_QUERY_ALL_EDGES, params };
 }
 
-export function pcmemQueryWmAllSlots(params: PcmemTenantPersonaParams): Query<readonly PcmemWmRow[], PcmemTenantPersonaParams> {
+export function pcmemQueryWmAllSlots(params: PcmemTenantPersonaParams): Query<PcmemWmRow, PcmemTenantPersonaParams> {
   return { kind: PCMEM_QUERY_WM_ALL_SLOTS, params };
 }
 
-export function pcmemQueryWmSlotsOrdered(params: PcmemTenantPersonaParams): Query<readonly PcmemWmRow[], PcmemTenantPersonaParams> {
+export function pcmemQueryWmSlotsOrdered(params: PcmemTenantPersonaParams): Query<PcmemWmRow, PcmemTenantPersonaParams> {
   return { kind: PCMEM_QUERY_WM_SLOTS_ORDERED, params };
 }
 

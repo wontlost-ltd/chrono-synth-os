@@ -75,7 +75,7 @@ export function mdevQueryByUid(params: MdevByUidParams): Query<MdevDeviceRow | n
   return { kind: MDEV_QUERY_BY_UID, params };
 }
 
-export function mdevQueryListByUser(userId: string): Query<readonly MdevDeviceRow[], string> {
+export function mdevQueryListByUser(userId: string): Query<MdevDeviceRow, string> {
   return { kind: MDEV_QUERY_LIST_BY_USER, params: userId };
 }
 

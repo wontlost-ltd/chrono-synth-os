@@ -18,7 +18,7 @@ export function registerObservability(app: FastifyInstance, config: AppConfig): 
     if (span) {
       const route = request.routeOptions?.url ?? request.url.split('?')[0];
       span.setAttribute('http.route', route);
-      const user = (request as unknown as { user?: { sub: string; tenantId?: string } }).user;
+      const user = request.user;
       span.setAttribute('chrono.tenant_id', user?.tenantId ?? 'unknown');
       if (user) {
         span.setAttribute('chrono.user_id', user.sub);

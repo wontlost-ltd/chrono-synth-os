@@ -109,8 +109,8 @@ export class MetricsQueryService {
   getTenantUsage(retentionMs: number, limit: number = 200): Array<{ tenant_id: string; resource: string; total: number }> {
     try {
       const cutoff = Date.now() - retentionMs;
-      const rows = this.tx.queryMany(mtrxQueryTenantUsage({ cutoff, limit })) as unknown as Array<{ tenant_id: string; resource: string; total: number }>;
-      return rows;
+      const rows = this.tx.queryMany(mtrxQueryTenantUsage({ cutoff, limit }));
+      return [...rows];
     } catch { return []; }
   }
 }

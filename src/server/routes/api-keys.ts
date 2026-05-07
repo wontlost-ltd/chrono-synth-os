@@ -15,7 +15,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, services: AppServices
 
   /* POST /api/v1/api-keys — 创建 */
   app.post('/api/v1/api-keys', async (request, reply) => {
-    const user = (request as unknown as { user?: { sub?: string; tenantId?: string; role?: string } }).user;
+    const user = request.user;
     if (!user?.sub) {
       throw new AuthenticationError('需要认证', ErrorCode.AUTH_INVALID_TOKEN);
     }
@@ -45,7 +45,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, services: AppServices
 
   /* GET /api/v1/api-keys — 列出（仅管理员） */
   app.get('/api/v1/api-keys', async (request, reply) => {
-    const user = (request as unknown as { user?: { sub?: string; tenantId?: string; role?: string } }).user;
+    const user = request.user;
     if (!user?.sub) {
       throw new AuthenticationError('需要认证', ErrorCode.AUTH_INVALID_TOKEN);
     }
@@ -63,7 +63,7 @@ export function registerApiKeyRoutes(app: FastifyInstance, services: AppServices
 
   /* DELETE /api/v1/api-keys/:id — 吊销 */
   app.delete<{ Params: { id: string } }>('/api/v1/api-keys/:id', async (request, reply) => {
-    const user = (request as unknown as { user?: { sub?: string; tenantId?: string; role?: string } }).user;
+    const user = request.user;
     if (!user?.sub) {
       throw new AuthenticationError('需要认证', ErrorCode.AUTH_INVALID_TOKEN);
     }

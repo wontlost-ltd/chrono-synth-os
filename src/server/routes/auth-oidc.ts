@@ -76,7 +76,7 @@ export function registerOidcRoutes(app: FastifyInstance, db: IDatabase, config: 
   const profileService = new TenantEnterpriseProfileService(db, config);
   const ssoUserService = new SsoUserService(db);
   const stateStore: OidcStateStore = app.redis
-    ? createRedisStateStore(app.redis as unknown as RedisClient)
+    ? createRedisStateStore(app.redis)
     : createMemoryStateStore();
 
   const oidcRateLimit = {

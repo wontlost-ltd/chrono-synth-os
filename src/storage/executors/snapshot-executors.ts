@@ -24,10 +24,10 @@ export function registerSnapshotExecutors(): void {
     ).get() ?? null;
   });
 
-  registerQuery<SnapshotSummaryRow, void>(SNAP_QUERY_LIST, (db) => {
+  registerQuery<SnapshotSummaryRow[], void>(SNAP_QUERY_LIST, (db) => {
     return db.prepare<SnapshotSummaryRow>(
       'SELECT id, reason, created_at FROM snapshots ORDER BY created_at DESC',
-    ).all() as unknown as SnapshotSummaryRow;
+    ).all();
   });
 
   /* ── Commands ── */

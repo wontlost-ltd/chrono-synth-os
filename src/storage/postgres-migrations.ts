@@ -1579,6 +1579,572 @@ const v048_observability_processed_events: Migration = {
   ],
 };
 
+/** v049: 异步导出任务追踪（PostgreSQL） */
+const v049_export_jobs: Migration = {
+  version: 'v049',
+  description: '可移植性：异步导出任务状态追踪',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS export_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued',
+      percent INTEGER NOT NULL DEFAULT 0,
+      eta_ms BIGINT,
+      created_at BIGINT NOT NULL,
+      completed_at BIGINT,
+      download_url TEXT,
+      error_code TEXT,
+      warnings TEXT NOT NULL DEFAULT '[]',
+      pack_json TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_export_jobs_tenant ON export_jobs(tenant_id, created_at DESC)',
+  ],
+};
+
+/** v050: KMS 密钥审计日志（PostgreSQL） */
+const v050_kms_key_audit: Migration = {
+  version: 'v050',
+  description: 'KMS 密钥操作审计日志',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS kms_key_audit (
+      event_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      key_ref TEXT NOT NULL,
+      performed_at TEXT NOT NULL,
+      success INTEGER NOT NULL DEFAULT 1,
+      error_code TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_kms_key_audit_tenant ON kms_key_audit(tenant_id, performed_at DESC)',
+  ],
+};
+
+/** v051: 租户自带对象存储（BYOS）配置列（PostgreSQL） */
+const v051_tenant_byos_object_storage: Migration = {
+  version: 'v051',
+  description: '租户自带对象存储（BYOS）配置',
+  sql: [
+    `ALTER TABLE tenant_enterprise_profiles ADD COLUMN IF NOT EXISTS byos_provider TEXT NOT NULL DEFAULT 'platform'`,
+    `ALTER TABLE tenant_enterprise_profiles ADD COLUMN IF NOT EXISTS byos_bucket TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE tenant_enterprise_profiles ADD COLUMN IF NOT EXISTS byos_key_prefix TEXT NOT NULL DEFAULT ''`,
+  ],
+};
+
+/** v052: 事件账本核心表（PostgreSQL） */
+const v052_event_ledger: Migration = {
+  version: 'v052',
+  description: '事件账本：event_ledger 主表、消费者检查点与权威模式控制表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS event_ledger (
+      event_id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      stream_id TEXT NOT NULL,
+      stream_version INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      occurred_at BIGINT NOT NULL,
+      command_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      backfill_source_id TEXT,
+      UNIQUE(tenant_id, stream_id, stream_version)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_event_ledger_stream ON event_ledger(tenant_id, stream_id, stream_version)`,
+    `CREATE INDEX IF NOT EXISTS idx_event_ledger_tenant ON event_ledger(tenant_id, occurred_at)`,
+    `CREATE TABLE IF NOT EXISTS event_ledger_consumer_checkpoints (
+      consumer_id TEXT PRIMARY KEY,
+      last_event_id TEXT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS event_ledger_authority (
+      singleton INTEGER PRIMARY KEY DEFAULT 1 CHECK(singleton = 1),
+      mode TEXT NOT NULL DEFAULT 'tables_primary',
+      changed_at BIGINT NOT NULL,
+      changed_reason TEXT NOT NULL DEFAULT ''
+    )`,
+    `INSERT INTO event_ledger_authority(singleton, mode, changed_at) VALUES(1, 'tables_primary', 0) ON CONFLICT (singleton) DO NOTHING`,
+  ],
+};
+
+/** v053: persona_core 双写发件箱（PostgreSQL） */
+const v053_persona_core_ledger_outbox: Migration = {
+  version: 'v053',
+  description: 'persona_core 双写发件箱：暂存待追加至 event_ledger 的事件',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS persona_core_ledger_outbox (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      stream_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      command_id TEXT NOT NULL,
+      created_at BIGINT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_attempted_at BIGINT,
+      error TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_persona_outbox_pending ON persona_core_ledger_outbox(tenant_id, created_at) WHERE attempts < 3`,
+  ],
+};
+
+/** v054: 投影存储表（PostgreSQL） */
+const v054_projection_store: Migration = {
+  version: 'v054',
+  description: '投影存储：读模型持久化，支持按租户+投影名+ID读写',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS projection_store (
+      tenant_id TEXT NOT NULL,
+      projection TEXT NOT NULL,
+      id TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0,
+      updated_at BIGINT NOT NULL,
+      PRIMARY KEY (tenant_id, projection, id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_projection_store_list ON projection_store(tenant_id, projection, id)`,
+  ],
+};
+
+/** v055: 平台密钥撤销记录表（PostgreSQL） */
+const v055_platform_key_revocations: Migration = {
+  version: 'v055',
+  description: '平台密钥撤销记录',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS platform_key_revocations (
+      key_ref TEXT PRIMARY KEY,
+      revoked_at BIGINT NOT NULL,
+      revoked_by TEXT
+    )`,
+  ],
+};
+
+/** v056: 平台运维操作日志（PostgreSQL） */
+const v056_platform_ops_log: Migration = {
+  version: 'v056',
+  description: '平台运维操作日志（控制平面事件）',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS platform_ops_log (
+      id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      occurred_at BIGINT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_platform_ops_log_time ON platform_ops_log(occurred_at DESC)`,
+  ],
+};
+
+/** v057: 同步冲突收件箱（PostgreSQL） */
+const v057_conflict_inbox: Migration = {
+  version: 'v057',
+  description: '同步冲突收件箱',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS conflict_inbox (
+      conflict_id TEXT PRIMARY KEY,
+      conflict_version TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      command_id TEXT,
+      source_runtime TEXT NOT NULL,
+      detected_at TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      local_summary_id TEXT NOT NULL,
+      local_summary_params TEXT NOT NULL DEFAULT '{}',
+      server_summary_id TEXT NOT NULL,
+      server_summary_params TEXT NOT NULL DEFAULT '{}',
+      suggested_actions TEXT NOT NULL DEFAULT '["keep_server"]',
+      resolved_at TEXT,
+      resolution_action TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_conflict_inbox_tenant ON conflict_inbox(tenant_id, detected_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_conflict_inbox_blocking ON conflict_inbox(tenant_id, severity) WHERE resolved_at IS NULL',
+  ],
+};
+
+/** v058: 导入 commit token 与导入任务追踪（PostgreSQL） */
+const v058_import_commit_tokens: Migration = {
+  version: 'v058',
+  description: '可移植性：导入 commit token 与导入任务追踪',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS import_commit_tokens (
+      token TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      import_id TEXT NOT NULL,
+      manifest_checksum TEXT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      created_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_ict_tenant ON import_commit_tokens(tenant_id)',
+    `CREATE TABLE IF NOT EXISTS import_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending',
+      manifest_checksum TEXT NOT NULL,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      completed_at BIGINT,
+      error_message TEXT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_ij_tenant ON import_jobs(tenant_id)',
+  ],
+};
+
+/** v059: 租户 BYOK/BYOS 密钥版本、密钥操作审计与存储绑定（PostgreSQL） */
+const v059_tenant_byok_byos: Migration = {
+  version: 'v059',
+  description: '租户 BYOK/BYOS 密钥版本、密钥操作审计与存储绑定',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tenant_key_versions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      key_ref TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at BIGINT NOT NULL,
+      revoked_at BIGINT,
+      UNIQUE(tenant_id, key_ref, provider, version)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tenant_key_versions_tenant_key
+      ON tenant_key_versions(tenant_id, key_ref, provider, version DESC)`,
+    `CREATE TABLE IF NOT EXISTS tenant_vault_audit (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      key_ref TEXT NOT NULL,
+      key_version INTEGER,
+      outcome TEXT NOT NULL,
+      error_message TEXT,
+      performed_at BIGINT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tenant_vault_audit_tenant_time
+      ON tenant_vault_audit(tenant_id, performed_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS tenant_storage_bindings (
+      tenant_id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      bucket_or_path TEXT NOT NULL,
+      region TEXT,
+      encryption_key_ref TEXT,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+  ],
+};
+
+/** v060: 记忆置信度与来源追踪（PostgreSQL） */
+const v060_memory_confidence: Migration = {
+  version: 'v060',
+  description: 'AI 安全治理：memory_nodes 置信度、来源类型与未验证标记',
+  sql: [
+    'ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS confidence_score DOUBLE PRECISION NOT NULL DEFAULT 0.5',
+    `ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS source_kind TEXT NOT NULL DEFAULT 'unknown'`,
+    'ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS unverified INTEGER NOT NULL DEFAULT 1',
+  ],
+};
+
+/** v061: 人格漂移分析日志（PostgreSQL） */
+const v061_drift_analysis_log: Migration = {
+  version: 'v061',
+  description: 'AI 安全治理：人格漂移分析日志',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS drift_analysis_log (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      baseline_snapshot_id TEXT,
+      analyzed_at BIGINT NOT NULL,
+      overall_drift_score DOUBLE PRECISION NOT NULL,
+      alert_level TEXT NOT NULL DEFAULT 'ok',
+      value_drifts_json TEXT NOT NULL DEFAULT '[]'
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_drift_analysis_log_tenant ON drift_analysis_log(tenant_id, analyzed_at DESC)',
+  ],
+};
+
+/** v062: 岗位人格模板系统（PostgreSQL） */
+const v062_persona_templates: Migration = {
+  version: 'v062',
+  description: 'P1-A 岗位人格模板：predefined builtin templates + custom CRUD',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS persona_templates (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      category TEXT NOT NULL,
+      label TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      default_values_json TEXT NOT NULL DEFAULT '[]',
+      default_narrative TEXT NOT NULL DEFAULT '',
+      behavior_boundaries_json TEXT NOT NULL DEFAULT '[]',
+      required_knowledge_categories_json TEXT NOT NULL DEFAULT '[]',
+      is_builtin INTEGER NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_persona_templates_tenant_category ON persona_templates(tenant_id, category)',
+  ],
+};
+
+/** v063: 知识批量导入（PostgreSQL）
+ *  - persona_knowledge_items 在 v032 已建表，无需 if-table-exists 守卫
+ */
+const v063_bulk_knowledge_import: Migration = {
+  version: 'v063',
+  description: 'P1-B 知识批量导入：fingerprint 去重 + 异步 job 跟踪',
+  sql: [
+    'ALTER TABLE persona_knowledge_items ADD COLUMN IF NOT EXISTS fingerprint TEXT',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_persona_knowledge_fp ON persona_knowledge_items(tenant_id, persona_id, fingerprint) WHERE fingerprint IS NOT NULL',
+
+    `CREATE TABLE IF NOT EXISTS bulk_knowledge_import_jobs (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      owner_user_id TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN ('queued', 'running', 'completed', 'failed')),
+      total_items INTEGER NOT NULL,
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      skipped_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      failures_json TEXT NOT NULL DEFAULT '[]',
+      deduplicate_strategy TEXT NOT NULL DEFAULT 'skip' CHECK(deduplicate_strategy IN ('skip', 'overwrite')),
+      created_at BIGINT NOT NULL,
+      started_at BIGINT,
+      completed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_bki_jobs_tenant_created ON bulk_knowledge_import_jobs(tenant_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_bki_jobs_persona ON bulk_knowledge_import_jobs(tenant_id, persona_id, created_at DESC)',
+  ],
+};
+
+/** v064: 批量知识导入 job 元数据扩展（PostgreSQL） */
+const v064_bulk_import_metadata: Migration = {
+  version: 'v064',
+  description: 'P1-B job 元数据：模板联动统计',
+  sql: [
+    `ALTER TABLE bulk_knowledge_import_jobs ADD COLUMN IF NOT EXISTS metadata_json TEXT NOT NULL DEFAULT '{}'`,
+  ],
+};
+
+/** v065: 对话接入层（PostgreSQL） */
+const v065_conversation_messages: Migration = {
+  version: 'v065',
+  description: 'P1-C 对话接入层：conversation_messages + conversation_confirmation_tokens',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS conversation_messages (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      external_user_id TEXT NOT NULL,
+      user_input TEXT NOT NULL,
+      assistant_output TEXT NOT NULL,
+      memories_used_json TEXT NOT NULL DEFAULT '[]',
+      should_escalate INTEGER NOT NULL DEFAULT 0,
+      confidence_score DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+      confidence_factors_json TEXT NOT NULL DEFAULT '[]',
+      guard_action TEXT,
+      guard_reason TEXT,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      encryption_key_ref TEXT,
+      input_redacted_pii_count INTEGER NOT NULL DEFAULT 0,
+      output_redacted_pii_count INTEGER NOT NULL DEFAULT 0,
+      retention_class TEXT NOT NULL DEFAULT 'standard' CHECK(retention_class IN ('standard', 'extended', 'litigation_hold')),
+      created_at BIGINT NOT NULL,
+      UNIQUE(tenant_id, persona_id, session_id, message_id)
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_conv_msg_session ON conversation_messages(tenant_id, persona_id, session_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_conv_msg_user ON conversation_messages(tenant_id, external_user_id, created_at DESC)',
+    'CREATE INDEX IF NOT EXISTS idx_conv_msg_retention ON conversation_messages(tenant_id, retention_class, created_at)',
+
+    `CREATE TABLE IF NOT EXISTS conversation_confirmation_tokens (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      external_user_id TEXT NOT NULL,
+      requested_topic TEXT NOT NULL,
+      requested_rule TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      issued_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      consumed_at BIGINT
+    )`,
+    'CREATE INDEX IF NOT EXISTS idx_conv_conf_token_lookup ON conversation_confirmation_tokens(tenant_id, persona_id, session_id, expires_at)',
+    'CREATE INDEX IF NOT EXISTS idx_conv_conf_token_expiry ON conversation_confirmation_tokens(expires_at)',
+  ],
+};
+
+/** v066: P1-D Stripe 真实订阅扩展字段（PostgreSQL） */
+const v066_subscription_fields: Migration = {
+  version: 'v066',
+  description: 'P1-D：subscriptions 增加 trial_end / grace_period_ends_at / cancel_at_period_end / last_invoice_id',
+  sql: [
+    'ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS trial_end BIGINT',
+    'ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS grace_period_ends_at BIGINT',
+    'ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS cancel_at_period_end INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS last_invoice_id TEXT',
+  ],
+};
+
+/** v067: P3 Agent 工具权限 + 代理授权书 + 工具调用记录（PostgreSQL） */
+const v067_agent_tool_permissions: Migration = {
+  version: 'v067',
+  description: 'P3：tool_permissions / agency_authorizations / tool_invocations 表',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS tool_permissions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      constraints_json TEXT NOT NULL DEFAULT '{}',
+      granted_by TEXT NOT NULL,
+      granted_at BIGINT NOT NULL,
+      expires_at BIGINT,
+      revoked_at BIGINT,
+      revocation_reason TEXT,
+      revocation_key TEXT NOT NULL UNIQUE,
+      UNIQUE(tenant_id, persona_id, tool_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_permissions_persona
+       ON tool_permissions(tenant_id, persona_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_permissions_tenant_active
+       ON tool_permissions(tenant_id) WHERE revoked_at IS NULL`,
+
+    `CREATE TABLE IF NOT EXISTS agency_authorizations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      principal_user_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      scope_description TEXT NOT NULL,
+      allowed_tools_json TEXT NOT NULL DEFAULT '[]',
+      denied_tools_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active',
+      granted_at BIGINT NOT NULL,
+      expires_at BIGINT,
+      revoked_at BIGINT,
+      revocation_reason TEXT,
+      revocation_key TEXT NOT NULL UNIQUE
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_authorizations_persona
+       ON agency_authorizations(tenant_id, persona_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_authorizations_principal
+       ON agency_authorizations(tenant_id, principal_user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agency_authorizations_status
+       ON agency_authorizations(tenant_id, status)`,
+
+    `CREATE TABLE IF NOT EXISTS tool_invocations (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      invoker_type TEXT NOT NULL,
+      invoker_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      output_size_bytes INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      cost_cents INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      invoked_at BIGINT NOT NULL,
+      completed_at BIGINT,
+      confirmation_token_id TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_persona_invoked
+       ON tool_invocations(tenant_id, persona_id, invoked_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_quota_window
+       ON tool_invocations(tenant_id, persona_id, tool_id, invoked_at)
+       WHERE status = 'success'`,
+  ],
+};
+
+/** v068: P3 后续：用户级 OAuth Token + tool_invocations 用户身份与索引（PostgreSQL） */
+const v068_agent_oauth_and_invocations: Migration = {
+  version: 'v068',
+  description: 'P3 后续：user_oauth_tokens / tool_invocations.invoker_user_id / 待确认 + 留存索引',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS user_oauth_tokens (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      access_token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT,
+      access_expires_at BIGINT NOT NULL,
+      granted_at BIGINT NOT NULL,
+      updated_at BIGINT NOT NULL,
+      revoked_at BIGINT,
+      revocation_reason TEXT,
+      UNIQUE(tenant_id, user_id, provider, scope)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_user_oauth_tokens_lookup
+       ON user_oauth_tokens(tenant_id, user_id, provider)
+       WHERE revoked_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_user_oauth_tokens_expiry
+       ON user_oauth_tokens(access_expires_at)
+       WHERE revoked_at IS NULL`,
+
+    'ALTER TABLE tool_invocations ADD COLUMN IF NOT EXISTS invoker_user_id TEXT',
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_pending
+       ON tool_invocations(tenant_id, invoker_user_id, invoked_at DESC)
+       WHERE status = 'pending_confirmation'`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_confirmation_token
+       ON tool_invocations(tenant_id, confirmation_token_id)
+       WHERE confirmation_token_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_tool_invocations_retention
+       ON tool_invocations(invoked_at)
+       WHERE status != 'pending_confirmation'`,
+  ],
+};
+
+/** v069: onboarding/UX 用户旅程埋点（PostgreSQL） */
+const v069_events_user_journey: Migration = {
+  version: 'v069',
+  description: 'P1.7.2: events_user_journey for onboarding + first-use telemetry',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS events_user_journey (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      user_id TEXT,
+      session_id TEXT,
+      name TEXT NOT NULL,
+      properties_json TEXT NOT NULL DEFAULT '{}',
+      client_ts BIGINT NOT NULL,
+      ingested_at BIGINT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_events_user_journey_tenant_ts
+       ON events_user_journey(tenant_id, ingested_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_events_user_journey_user_ts
+       ON events_user_journey(tenant_id, user_id, ingested_at DESC)
+       WHERE user_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_events_user_journey_retention
+       ON events_user_journey(ingested_at)`,
+  ],
+};
+
+/** v070: health dashboard 历史快照（PostgreSQL） */
+const v070_core_values_snapshot: Migration = {
+  version: 'v070',
+  description: 'P2.7 health dashboard: core_values_snapshot daily history',
+  sql: [
+    `CREATE TABLE IF NOT EXISTS core_values_snapshot (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      persona_id TEXT,
+      values_json TEXT NOT NULL,
+      snapshot_at BIGINT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_core_values_snapshot_tenant_ts
+       ON core_values_snapshot(tenant_id, snapshot_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_core_values_snapshot_retention
+       ON core_values_snapshot(snapshot_at)`,
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -1629,4 +2195,26 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v046_tenant_enterprise_profile,
   v047_multi_identity_per_tenant,
   v048_observability_processed_events,
+  v049_export_jobs,
+  v050_kms_key_audit,
+  v051_tenant_byos_object_storage,
+  v052_event_ledger,
+  v053_persona_core_ledger_outbox,
+  v054_projection_store,
+  v055_platform_key_revocations,
+  v056_platform_ops_log,
+  v057_conflict_inbox,
+  v058_import_commit_tokens,
+  v059_tenant_byok_byos,
+  v060_memory_confidence,
+  v061_drift_analysis_log,
+  v062_persona_templates,
+  v063_bulk_knowledge_import,
+  v064_bulk_import_metadata,
+  v065_conversation_messages,
+  v066_subscription_fields,
+  v067_agent_tool_permissions,
+  v068_agent_oauth_and_invocations,
+  v069_events_user_journey,
+  v070_core_values_snapshot,
 ];

@@ -79,7 +79,7 @@ export function llmQueryMonthlySummary(params: LlmMonthlySummaryParams): Query<L
   return { kind: LLM_QUERY_MONTHLY_SUMMARY, params };
 }
 
-export function llmQueryRecent(params: LlmRecentParams): Query<readonly LlmUsageRow[], LlmRecentParams> {
+export function llmQueryRecent(params: LlmRecentParams): Query<LlmUsageRow, LlmRecentParams> {
   return { kind: LLM_QUERY_RECENT, params };
 }
 

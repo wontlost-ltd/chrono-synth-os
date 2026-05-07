@@ -73,8 +73,8 @@ export function seedDefaultAddOns(uowOrDb: SyncWriteUnitOfWork): void {
 export function listAddOns(uowOrDb: SyncWriteUnitOfWork, activeOnly = true): AddOn[] {
   const tx = getTx(uowOrDb);
   const rows = activeOnly
-    ? tx.queryMany(addonQueryListActive()) as unknown as AddOnRow[]
-    : tx.queryMany(addonQueryListAll()) as unknown as AddOnRow[];
+    ? tx.queryMany(addonQueryListActive())
+    : tx.queryMany(addonQueryListAll());
   return rows.map(rowToAddOn);
 }
 

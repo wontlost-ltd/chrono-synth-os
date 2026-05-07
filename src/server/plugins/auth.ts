@@ -106,12 +106,16 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
         const keyHash = hashKey(apiKey);
         const row = tx.queryOne(apikeyQueryByHash(keyHash));
         if (row) {
-          /* 注入伪 JWT user 以便下游计划感知限流和租户解析 */
-          (request as unknown as { user: { sub: string; tenantId: string; role: string; planId: string } }).user = {
+          /* 注入伪 JWT user 以便下游计划感知限流和租户解析.
+           * iat/exp 不适用于 API key,但 JwtPayload 类型要求它们;
+           * 用 0 占位且 cast 缩窄. */
+          request.user = {
             sub: `apikey:${row.id}`,
             tenantId: row.tenant_id,
             role: 'member',
             planId: row.plan_id,
+            iat: 0,
+            exp: 0,
           };
           return done();
         }
@@ -143,11 +147,13 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
     }
 
     /* 静态 Key 强制绑定 default 租户，防止 X-Tenant-Id 头伪造 */
-    (request as unknown as { user: { sub: string; tenantId: string; role: string; planId: string } }).user = {
+    request.user = {
       sub: 'apikey:static',
       tenantId: 'default',
       role: 'member',
       planId: 'free',
+      iat: 0,
+      exp: 0,
     };
 
     done();

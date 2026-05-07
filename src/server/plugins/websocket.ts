@@ -257,7 +257,7 @@ export async function registerWebSocket(
 
   app.get('/ws', { websocket: true }, (socket, request: FastifyRequest) => {
     /* JWT 鉴权：从已验证的 request.user 获取租户 */
-    const user = (request as unknown as { user?: { sub?: string; tenantId?: string } }).user;
+    const user = request.user;
     if (config.jwt.enabled && !user?.sub) {
       safeSend(socket, { type: 'error', code: 'AUTH_REQUIRED', message: '需要认证' });
       socket.close(4001, 'Authentication required');

@@ -132,7 +132,7 @@ export class ConversationStore {
     const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
     const rows = this.tx.queryMany(cmsgQueryListBySession({
       tenantId: input.tenantId, personaId: input.personaId, sessionId: input.sessionId, limit,
-    })) as unknown as CmsgRow[];
+    }));
     return rows.map((r) => this.rowToMessage(r));
   }
 

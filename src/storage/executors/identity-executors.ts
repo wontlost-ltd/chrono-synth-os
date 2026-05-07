@@ -28,10 +28,10 @@ export function registerIdentityExecutors(): void {
     ).get(identityId) ?? null;
   });
 
-  registerQuery<IdentityRow, string>(IDENT_QUERY_BY_TENANT, (db, tenantId) => {
+  registerQuery<IdentityRow[], string>(IDENT_QUERY_BY_TENANT, (db, tenantId) => {
     return db.prepare<IdentityRow>(
       'SELECT * FROM identities WHERE tenant_id = ? ORDER BY created_at ASC',
-    ).all(tenantId) as unknown as IdentityRow;
+    ).all(tenantId);
   });
 
   /* ── Commands ── */

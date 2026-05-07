@@ -3,7 +3,7 @@
  * 管理 Avatar 在设备上的安装、卸载和激活切换
  */
 
-import type { SyncWriteUnitOfWork, DavtRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   davtQueryActive, davtQueryListByDevice, davtQueryIsInstalled,
   davtCmdInstall, davtCmdUninstall, davtCmdDeactivateAll, davtCmdActivate,
@@ -53,7 +53,7 @@ export class DeviceAvatarService {
   }
 
   listByDevice(deviceId: string): Avatar[] {
-    const rows = this.tx.queryMany(davtQueryListByDevice(deviceId)) as unknown as DavtRow[];
+    const rows = this.tx.queryMany(davtQueryListByDevice(deviceId));
     const avatars: Avatar[] = [];
     for (const row of rows) {
       const avatar = this.avatarService.getById(row.avatar_id);

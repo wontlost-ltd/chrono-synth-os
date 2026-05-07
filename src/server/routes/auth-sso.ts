@@ -94,7 +94,7 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
   const baseUrl = config.server.publicUrl;
   const ssoUserService = new SsoUserService(db);
   const stateStore: SsoStateStore = app.redis
-    ? createRedisStateStore(app.redis as unknown as RedisClient)
+    ? createRedisStateStore(app.redis)
     : createMemoryStateStore();
 
   const ssoRateLimit = {

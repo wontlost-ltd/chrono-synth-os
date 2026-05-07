@@ -28,7 +28,7 @@ function expandRole(role: AccessRole): UserRole[] {
 export function requireRole(...allowedRoles: AccessRole[]): preHandlerHookHandler {
   const allowed = new Set<string>(allowedRoles.flatMap(expandRole));
   return (request: FastifyRequest, _reply: FastifyReply, done) => {
-    const jwtEnabled = (request.server as unknown as { jwtEnabled?: boolean }).jwtEnabled;
+    const jwtEnabled = request.server.jwtEnabled;
     if (!jwtEnabled) {
       if (IS_PRODUCTION) {
         /* 生产环境强制认证 — JWT 未启用时拒绝受保护端点 */

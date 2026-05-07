@@ -72,7 +72,7 @@ export class ConversationKnowledgeRetriever {
 
     const rows = this.tx.queryMany(krtvQueryByPersona({
       tenantId: input.tenantId, personaId: input.personaId,
-    })) as unknown as KnowledgeRow[];
+    }));
     if (rows.length === 0) return [];
 
     /* Step 1: 关键词层全量打分 */

@@ -81,11 +81,7 @@ export class CostTracker {
   /** 获取最近 N 条记录 */
   getRecent(tenantId: string, limit = 20): readonly CostRecord[] {
     if (this.tx) {
-      const rows = this.tx.queryMany(llmQueryRecent({ tenantId, limit })) as unknown as Array<{
-        tenant_id: string; provider: string; model: string;
-        input_tokens: number; output_tokens: number; total_tokens: number;
-        estimated_cost_usd: number; recorded_at: number;
-      }>;
+      const rows = this.tx.queryMany(llmQueryRecent({ tenantId, limit }));
       return rows.map(r => ({
         tenantId: r.tenant_id,
         provider: r.provider,

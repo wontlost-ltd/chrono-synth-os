@@ -216,7 +216,7 @@ export class AzureBlobObjectStorageClient implements ObjectStorageClient {
 /**
  * 根据 AppConfig.objectStorage.provider 创建对应的存储客户端
  */
-export function createObjectStorageClient(config: AppConfig): ObjectStorageClient {
+export function createObjectStorageClient(config: Pick<AppConfig, 'objectStorage'>): ObjectStorageClient {
   const cfg = config.objectStorage;
 
   switch (cfg.provider) {

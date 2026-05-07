@@ -4,9 +4,6 @@
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
-import type {
-  AcpPersonaRow, AcpTaskRow, AcpWalletRow, AcpGovRow,
-} from '@chrono/kernel';
 import {
   acpQueryPersonaCount, acpQueryPersonaList, acpQueryPersonaSummary,
   acpQueryTaskCount, acpQueryTaskList, acpQueryTaskSummary,
@@ -50,7 +47,7 @@ export class AdminControlPlaneService {
     const filterStatus = status ?? null;
 
     const total = this.tx.queryOne(acpQueryPersonaCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryPersonaList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpPersonaRow[];
+    const rows = this.tx.queryMany(acpQueryPersonaList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
     const summary = this.tx.queryOne(acpQueryPersonaSummary(tenantId));
 
     return {
@@ -84,7 +81,7 @@ export class AdminControlPlaneService {
     const filterStatus = status ?? null;
 
     const total = this.tx.queryOne(acpQueryTaskCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryTaskList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpTaskRow[];
+    const rows = this.tx.queryMany(acpQueryTaskList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
     const summary = this.tx.queryOne(acpQueryTaskSummary(tenantId));
 
     return {
@@ -118,7 +115,7 @@ export class AdminControlPlaneService {
     const filterStatus = status ?? null;
 
     const total = this.tx.queryOne(acpQueryWalletCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryWalletList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpWalletRow[];
+    const rows = this.tx.queryMany(acpQueryWalletList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
     const summary = this.tx.queryOne(acpQueryWalletSummary(tenantId));
 
     return {
@@ -149,7 +146,7 @@ export class AdminControlPlaneService {
     const filterStatus = status ?? null;
 
     const total = this.tx.queryOne(acpQueryGovCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryGovList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset })) as unknown as AcpGovRow[];
+    const rows = this.tx.queryMany(acpQueryGovList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
     const summary = this.tx.queryOne(acpQueryGovSummary(tenantId));
 
     return {

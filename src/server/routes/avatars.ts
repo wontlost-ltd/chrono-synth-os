@@ -119,7 +119,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   });
 
   /* 投影计算共用逻辑 */
-  async function handleProjection(request: { user: unknown; tenantId?: string }, id: string) {
+  async function handleProjection(request: { user?: unknown; tenantId?: string }, id: string) {
     const user = request.user as JwtPayload;
     const { avatar } = requireOwnedAvatar(user, id);
 

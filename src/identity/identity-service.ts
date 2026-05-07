@@ -31,7 +31,7 @@ export class IdentityService {
   }
 
   listByTenant(tenantId: string): Identity[] {
-    const rows = [...this.tx.queryMany(identQueryByTenant(tenantId))] as unknown as IdentityRow[];
+    const rows = [...this.tx.queryMany(identQueryByTenant(tenantId))];
     return rows.map(rowToIdentity);
   }
 

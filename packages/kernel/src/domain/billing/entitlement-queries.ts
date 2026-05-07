@@ -46,11 +46,11 @@ export function entlQueryPlanId(tenantId: string): Query<EntlPlanIdRow | null, s
   return { kind: ENTL_QUERY_PLAN_ID, params: tenantId };
 }
 
-export function entlQueryAddOnQuotas(tenantId: string): Query<readonly EntlAddOnQuotaRow[], string> {
+export function entlQueryAddOnQuotas(tenantId: string): Query<EntlAddOnQuotaRow, string> {
   return { kind: ENTL_QUERY_ADD_ON_QUOTAS, params: tenantId };
 }
 
-export function entlQueryActiveTenantAddons(tenantId: string): Query<readonly EntlActiveTenantAddonRow[], string> {
+export function entlQueryActiveTenantAddons(tenantId: string): Query<EntlActiveTenantAddonRow, string> {
   return { kind: ENTL_QUERY_ACTIVE_TENANT_ADDONS, params: tenantId };
 }
 

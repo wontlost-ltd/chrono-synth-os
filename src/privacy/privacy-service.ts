@@ -242,7 +242,7 @@ export class PrivacyService {
           gcsBucket: '', gcsProjectId: '', gcsKeyFile: '',
           azureConnectionString: '', azureContainer: '',
         },
-      } as unknown as AppConfig);
+      });
     }
   }
 

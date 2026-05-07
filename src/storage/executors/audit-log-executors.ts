@@ -58,12 +58,12 @@ export function registerAuditLogExecutors(): void {
     ).get(p.tenantId, p.id) ?? null;
   });
 
-  registerQuery<AuditLogRow, AuditListParams>(AUDIT_QUERY_LIST, (db, p) => {
+  registerQuery<AuditLogRow[], AuditListParams>(AUDIT_QUERY_LIST, (db, p) => {
     const { where, params } = buildAuditWhere(p);
     params.push(p.limit, p.offset);
     return db.prepare<AuditLogRow>(
       `${AUDIT_SELECT} WHERE ${where} ORDER BY created_at DESC, timestamp DESC LIMIT ? OFFSET ?`,
-    ).all(...params) as unknown as AuditLogRow;
+    ).all(...params);
   });
 
   registerQuery<{ count: number } | null, AuditCountParams>(AUDIT_QUERY_COUNT, (db, p) => {

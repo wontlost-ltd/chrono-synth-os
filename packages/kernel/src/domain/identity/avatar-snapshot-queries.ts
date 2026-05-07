@@ -60,6 +60,6 @@ export function asnapQueryLastRunMetrics(params: AsnapLastRunParams): Query<Asna
   return { kind: ASNAP_QUERY_LAST_RUN_METRICS, params };
 }
 
-export function asnapQueryInstalledDevices(avatarId: string): Query<readonly AsnapDeviceIdRow[], string> {
+export function asnapQueryInstalledDevices(avatarId: string): Query<AsnapDeviceIdRow, string> {
   return { kind: ASNAP_QUERY_INSTALLED_DEVICES, params: avatarId };
 }

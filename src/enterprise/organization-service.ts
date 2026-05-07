@@ -4,7 +4,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { SyncWriteUnitOfWork, OrgListByUserRow, OrgMemberRow, OrgRoleBindingRow } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork, OrgListByUserRow } from '@chrono/kernel';
 import type { OrganizationRole } from './organization-roles.js';
 import {
   orgQueryListByUser, orgQueryBySlug, orgQueryById,
@@ -74,7 +74,7 @@ export class OrganizationService {
   }
 
   listByUser(tenantId: string, userId: string) {
-    const rows = this.tx.queryMany(orgQueryListByUser({ tenantId, userId })) as unknown as OrgListByUserRow[];
+    const rows = this.tx.queryMany(orgQueryListByUser({ tenantId, userId }));
 
     return rows.map((row) => serializeOrganization(row, row.workspace_id ? {
       id: row.workspace_id,
@@ -117,10 +117,10 @@ export class OrganizationService {
   }
 
   listMembers(tenantId: string, organizationId: string) {
-    const members = this.tx.queryMany(orgQueryMembers({ tenantId, organizationId })) as unknown as OrgMemberRow[];
+    const members = this.tx.queryMany(orgQueryMembers({ tenantId, organizationId }));
 
     return members.map((member) => {
-      const bindings = this.tx.queryMany(orgQueryRoleBindings({ tenantId, organizationId, membershipId: member.membership_id })) as unknown as OrgRoleBindingRow[];
+      const bindings = this.tx.queryMany(orgQueryRoleBindings({ tenantId, organizationId, membershipId: member.membership_id }));
 
       return {
         membershipId: member.membership_id,

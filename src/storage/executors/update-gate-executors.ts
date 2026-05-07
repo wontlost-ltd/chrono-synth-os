@@ -18,10 +18,10 @@ export function registerUpdateGateExecutors(): void {
     ).get(id) ?? null;
   });
 
-  registerQuery<PendingUpdateRow, string>(UGATE_QUERY_PENDING, (db, status) => {
+  registerQuery<PendingUpdateRow[], string>(UGATE_QUERY_PENDING, (db, status) => {
     return db.prepare<PendingUpdateRow>(
       'SELECT * FROM pending_updates WHERE status = ? ORDER BY created_at',
-    ).all(status) as unknown as PendingUpdateRow;
+    ).all(status);
   });
 
   /* ── Commands ── */

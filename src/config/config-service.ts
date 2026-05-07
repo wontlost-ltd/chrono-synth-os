@@ -30,7 +30,10 @@ export class ConfigService {
   constructor(
     db: IDatabase,
     private readonly currentConfig: AppConfig,
-    private readonly redis?: { publish(channel: string, message: string): Promise<void> },
+    /* Match ioredis Redis.publish signature (returns Promise<number> = the
+     * count of subscribers that received the message). The ConfigService
+     * doesn't use the return value, so any thenable shape works. */
+    private readonly redis?: { publish(channel: string, message: string): Promise<number> },
   ) {
     this.store = new ConfigStore(db);
   }
@@ -49,7 +52,7 @@ export class ConfigService {
    * requiresRestart 的配置项修改后需重启才真正生效
    */
   getEffectiveConfig(callerRole: string): Record<string, unknown> {
-    const flatCurrent = flattenObject(this.currentConfig as unknown as Record<string, unknown>);
+    const flatCurrent = flattenObject(this.currentConfig);
     const dbItems = this.store.getAll();
 
     for (const item of dbItems) {
@@ -72,7 +75,7 @@ export class ConfigService {
   async applyPatch(patch: Record<string, unknown>, changedBy: string): Promise<ApplyPatchResult> {
     /* 校验所有 key 的合法性 */
     const allowedKeys = new Set(Object.keys(
-      flattenObject(this.currentConfig as unknown as Record<string, unknown>),
+      flattenObject(this.currentConfig),
     ));
     for (const key of Object.keys(patch)) {
       if (!allowedKeys.has(key)) {
@@ -85,7 +88,7 @@ export class ConfigService {
     }
 
     /* 用 Zod 对合并后的值做部分校验 */
-    const currentFlat = flattenObject(this.currentConfig as unknown as Record<string, unknown>);
+    const currentFlat = flattenObject(this.currentConfig);
     const merged = { ...currentFlat, ...patch };
     const nested = unflattenObject(merged);
     AppConfigSchema.parse(nested);
@@ -139,7 +142,7 @@ export class ConfigService {
 }
 
 /** 将嵌套对象扁平化为 dot-separated key */
-function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string, unknown> {
+function flattenObject(obj: object, prefix = ''): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     const fullKey = prefix ? `${prefix}.${key}` : key;

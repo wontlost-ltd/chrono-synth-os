@@ -42,7 +42,7 @@ export interface ApiKeyRevokeParams {
 
 /* ── Query 工厂 ── */
 
-export function apikeyQueryList(tenantId: string): Query<readonly ApiKeyRow[], string> {
+export function apikeyQueryList(tenantId: string): Query<ApiKeyRow, string> {
   return { kind: APIKEY_QUERY_LIST, params: tenantId };
 }
 

@@ -75,7 +75,7 @@ export class SqliteDatabase implements IDatabase {
     try {
       const result = fn();
       /* 防御：同步事务接口不支持异步回调 */
-      if (result !== null && result !== undefined && typeof (result as unknown as Promise<unknown>).then === 'function') {
+      if (result instanceof Promise) {
         throw new Error('transaction() 回调不可返回 Promise，同步接口不支持异步事务');
       }
       this.db.exec('COMMIT');

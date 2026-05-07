@@ -120,7 +120,7 @@ export class PersonaTemplateService {
 
   /** 列出当前租户可见的所有模板（内置 + 自定义） */
   list(tenantId: string): PersonaTemplate[] {
-    const rows = this.tx.queryMany(ptplQueryList({ tenantId, builtinTenantId: BUILTIN_TENANT_ID })) as unknown as PtplRow[];
+    const rows = this.tx.queryMany(ptplQueryList({ tenantId, builtinTenantId: BUILTIN_TENANT_ID }));
     return rows.map(rowToTemplate);
   }
 

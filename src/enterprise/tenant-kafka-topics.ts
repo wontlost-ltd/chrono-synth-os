@@ -70,7 +70,7 @@ export function resolveTenantKafkaTopic(tx: SyncWriteUnitOfWork, tenantId: strin
 
 export function listTenantKafkaTopics(tx: SyncWriteUnitOfWork, baseTopic: string): string[] {
   registerCoreSelfExecutors();
-  const rows = tx.queryMany(kafkaQueryAllNamespaces()) as unknown as KafkaTenantNamespaceRow[];
+  const rows = tx.queryMany(kafkaQueryAllNamespaces());
   const topics = new Set<string>([baseTopic]);
   for (const row of rows) {
     topics.add(buildTenantKafkaTopic(baseTopic, deriveKafkaNamespace(row, row.tenant_id)));

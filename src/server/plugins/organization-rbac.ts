@@ -37,7 +37,7 @@ export function getOrganizationMembershipContext(
 
   const roleRows = tx.queryMany(orgQueryMembershipRoles({
     tenantId, organizationId, membershipId: membership.membership_id,
-  })) as unknown as Array<{ role: OrganizationRole }>;
+  })).map((r) => ({ role: r.role as OrganizationRole }));
 
   return {
     membershipId: membership.membership_id,

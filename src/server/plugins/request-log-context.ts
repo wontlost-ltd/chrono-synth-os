@@ -16,7 +16,7 @@ export function registerRequestLogContext(app: FastifyInstance): void {
   /* preHandler 在 onRequest（JWT + tenant 解析）之后执行，tenantId 已确定 */
   app.addHook('preHandler', (request: FastifyRequest, _reply: FastifyReply, done) => {
     const tenantId = request.tenantId ?? 'default';
-    const userId = (request as unknown as { user?: { sub?: string } }).user?.sub;
+    const userId = request.user?.sub;
     request.log = userId
       ? request.log.child({ tenantId, userId })
       : request.log.child({ tenantId });

@@ -61,7 +61,7 @@ export class CollaborationService {
     const countRow = this.tx.queryOne(collabQueryShareCount(userId));
     const total = countRow?.count ?? 0;
 
-    const rows = this.tx.queryMany(collabQuerySharedList({ userId, limit: pageSize, offset })) as unknown as import('@chrono/kernel').CollabSharedRow[];
+    const rows = this.tx.queryMany(collabQuerySharedList({ userId, limit: pageSize, offset }));
 
     return {
       data: rows.map((s) => ({

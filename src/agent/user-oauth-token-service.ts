@@ -104,7 +104,7 @@ export class UserOauthTokenService {
 
   /** 列出用户全部活跃 token（已脱敏：仅元数据） */
   listByUser(tenantId: string, userId: string): readonly Omit<UserOauthToken, 'accessToken' | 'refreshToken'>[] {
-    const rows = this.tx.queryMany(uoauthQueryListByUser({ tenantId, userId })) as unknown as UserOauthTokenRow[];
+    const rows = this.tx.queryMany(uoauthQueryListByUser({ tenantId, userId }));
     return rows.map(rowToMetadata);
   }
 

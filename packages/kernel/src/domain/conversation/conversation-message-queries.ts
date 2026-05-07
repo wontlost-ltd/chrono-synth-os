@@ -106,7 +106,7 @@ export function cmsgQueryByIdempotency(params: CmsgIdempotencyParams): Query<Cms
   return { kind: CMSG_QUERY_BY_IDEMPOTENCY, params };
 }
 
-export function cmsgQueryListBySession(params: CmsgListParams): Query<readonly CmsgRow[], CmsgListParams> {
+export function cmsgQueryListBySession(params: CmsgListParams): Query<CmsgRow, CmsgListParams> {
   return { kind: CMSG_QUERY_LIST_BY_SESSION, params };
 }
 

@@ -161,7 +161,12 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
     const sub = this.tx.queryOne(subqQueryActivePlan(tenantId));
     const planId = sub?.plan_id ?? 'free';
-    const signPayload = { sub: userId, tenantId, role, planId } as unknown as JwtPayload;
+    /* iat/exp are injected by @fastify/jwt during sign() but the typed
+     * surface still requires them; supply only the application claims
+     * and let the runtime backfill timestamps. */
+    const signPayload = {
+      sub: userId, tenantId, role: role as JwtPayload['role'], planId,
+    } as JwtPayload;
     const accessToken = app.jwt.sign(signPayload);
 
     const refreshToken = randomUUID();

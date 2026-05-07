@@ -84,7 +84,7 @@ export class UpdateGate {
   }
 
   getPending(): PendingUpdate[] {
-    const rows = [...this.tx.queryMany(ugateQueryPending())] as unknown as KernelPendingUpdateRow[];
+    const rows = [...this.tx.queryMany(ugateQueryPending())];
     return rows.map(row => this.toPending(row));
   }
 

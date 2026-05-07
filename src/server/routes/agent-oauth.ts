@@ -113,7 +113,7 @@ export function registerAgentOauthRoutes(app: FastifyInstance, deps: RegisterAge
   const { googleFlow, tokens } = deps;
   /* google_oauth 未配置时仍注册路由但返回 503，避免前端 404 */
   const stateStore: AgentOauthStateStore = app.redis
-    ? createRedisStore(app.redis as unknown as RedisClient)
+    ? createRedisStore(app.redis)
     : createMemoryStore();
 
   const rateLimit = {

@@ -83,7 +83,7 @@ export interface PtplDeleteParams {
 
 /* ── Query 工厂 ── */
 
-export function ptplQueryList(params: PtplListParams): Query<readonly PtplRow[], PtplListParams> {
+export function ptplQueryList(params: PtplListParams): Query<PtplRow, PtplListParams> {
   return { kind: PTPL_QUERY_LIST, params };
 }
 

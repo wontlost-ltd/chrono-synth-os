@@ -81,12 +81,12 @@ const collector = new MetricsCollector();
 /** 注册请求级指标采集钩子 */
 export function registerMetrics(app: FastifyInstance): void {
   app.addHook('onRequest', (request: FastifyRequest, _reply, done) => {
-    (request as unknown as Record<string, unknown>).__startTime = performance.now();
+    request.__startTime = performance.now();
     done();
   });
 
   app.addHook('onResponse', (request: FastifyRequest, _reply, done) => {
-    const start = (request as unknown as Record<string, number>).__startTime;
+    const start = request.__startTime;
     if (start !== undefined) {
       const latency = performance.now() - start;
       /* 使用路由模板（如 /api/v1/values/:id）避免高基数；

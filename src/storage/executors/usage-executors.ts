@@ -17,10 +17,10 @@ export function registerUsageExecutors(): void {
     ).get(p.tenantId, p.resource, p.since) ?? null;
   });
 
-  registerQuery<{ resource: string; total: number }, UsageSummaryParams>(USAGE_QUERY_SUMMARY, (db, p) => {
+  registerQuery<Array<{ resource: string; total: number }>, UsageSummaryParams>(USAGE_QUERY_SUMMARY, (db, p) => {
     return db.prepare<{ resource: string; total: number }>(
       'SELECT resource, COALESCE(SUM(quantity), 0) AS total FROM usage_records WHERE tenant_id = ? AND recorded_at >= ? GROUP BY resource',
-    ).all(p.tenantId, p.since) as unknown as { resource: string; total: number };
+    ).all(p.tenantId, p.since);
   });
 
   /* ── Commands ── */

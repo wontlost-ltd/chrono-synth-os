@@ -90,11 +90,11 @@ export interface ScimDeleteUserParams {
 
 /* ── Query 工厂 ── */
 
-export function scimQueryUsers(params: ScimUsersParams): Query<readonly ScimUserRow[], ScimUsersParams> {
+export function scimQueryUsers(params: ScimUsersParams): Query<ScimUserRow, ScimUsersParams> {
   return { kind: SCIM_QUERY_USERS, params };
 }
 
-export function scimQueryUsersByEmail(params: ScimUsersByEmailParams): Query<readonly ScimUserRow[], ScimUsersByEmailParams> {
+export function scimQueryUsersByEmail(params: ScimUsersByEmailParams): Query<ScimUserRow, ScimUsersByEmailParams> {
   return { kind: SCIM_QUERY_USERS_BY_EMAIL, params };
 }
 
@@ -118,7 +118,7 @@ export function scimQueryUserExists(params: ScimTenantIdParams): Query<ScimAvata
   return { kind: SCIM_QUERY_USER_EXISTS, params };
 }
 
-export function scimQueryAvatarIdsByUser(userId: string): Query<readonly ScimAvatarIdRow[], string> {
+export function scimQueryAvatarIdsByUser(userId: string): Query<ScimAvatarIdRow, string> {
   return { kind: SCIM_QUERY_AVATAR_IDS_BY_USER, params: userId };
 }
 

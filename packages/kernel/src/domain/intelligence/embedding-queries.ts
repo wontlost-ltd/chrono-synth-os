@@ -63,7 +63,7 @@ export function ivfCmdUpsert(params: IvfUpsertParams): Command<IvfUpsertParams> 
 
 /* ── Query 工厂 ── */
 
-export function embQueryByModel(params: EmbByModelParams): Query<readonly EmbeddingRow[], EmbByModelParams> {
+export function embQueryByModel(params: EmbByModelParams): Query<EmbeddingRow, EmbByModelParams> {
   return { kind: EMB_QUERY_BY_MODEL, params };
 }
 

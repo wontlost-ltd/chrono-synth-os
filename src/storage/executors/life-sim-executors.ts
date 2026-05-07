@@ -35,10 +35,10 @@ export function registerLifeSimExecutors(): void {
     ).get(p.id, p.tenantId) ?? null;
   });
 
-  registerQuery<LifeSimRow, LsimByTenantParams>(LSIM_QUERY_BY_TENANT, (db, p) => {
+  registerQuery<LifeSimRow[], LsimByTenantParams>(LSIM_QUERY_BY_TENANT, (db, p) => {
     return db.prepare<LifeSimRow>(
       'SELECT * FROM life_simulations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?',
-    ).all(p.tenantId, p.limit) as unknown as LifeSimRow;
+    ).all(p.tenantId, p.limit);
   });
 
   registerQuery<{ count: number } | null, string>(LSIM_QUERY_COUNT_BY_TENANT, (db, tenantId) => {
@@ -47,10 +47,10 @@ export function registerLifeSimExecutors(): void {
     ).get(tenantId) ?? null;
   });
 
-  registerQuery<LifeSimRow, LsimPaginatedParams>(LSIM_QUERY_PAGINATED, (db, p) => {
+  registerQuery<LifeSimRow[], LsimPaginatedParams>(LSIM_QUERY_PAGINATED, (db, p) => {
     return db.prepare<LifeSimRow>(
       'SELECT * FROM life_simulations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-    ).all(p.tenantId, p.limit, p.offset) as unknown as LifeSimRow;
+    ).all(p.tenantId, p.limit, p.offset);
   });
 
   registerQuery<LifeSimPathRow | null, LsimPathDetailParams>(LSIM_QUERY_PATH_DETAIL, (db, p) => {
@@ -67,22 +67,22 @@ export function registerLifeSimExecutors(): void {
     ).get(p.simulationId, p.pathId, p.tenantId) ?? null;
   });
 
-  registerQuery<LifeSimRow, LsimVariantsParams>(LSIM_QUERY_VARIANTS, (db, p) => {
+  registerQuery<LifeSimRow[], LsimVariantsParams>(LSIM_QUERY_VARIANTS, (db, p) => {
     return db.prepare<LifeSimRow>(
       'SELECT * FROM life_simulations WHERE base_simulation_id = ? ORDER BY created_at ASC',
-    ).all(p.baseSimulationId) as unknown as LifeSimRow;
+    ).all(p.baseSimulationId);
   });
 
-  registerQuery<LifeSimRow, LsimVariantsTenantParams>(LSIM_QUERY_VARIANTS_TENANT, (db, p) => {
+  registerQuery<LifeSimRow[], LsimVariantsTenantParams>(LSIM_QUERY_VARIANTS_TENANT, (db, p) => {
     return db.prepare<LifeSimRow>(
       'SELECT * FROM life_simulations WHERE base_simulation_id = ? AND tenant_id = ? ORDER BY created_at ASC',
-    ).all(p.baseSimulationId, p.tenantId) as unknown as LifeSimRow;
+    ).all(p.baseSimulationId, p.tenantId);
   });
 
-  registerQuery<LifeSimPathRow, string>(LSIM_QUERY_PATHS_BY_SIM, (db, simId) => {
+  registerQuery<LifeSimPathRow[], string>(LSIM_QUERY_PATHS_BY_SIM, (db, simId) => {
     return db.prepare<LifeSimPathRow>(
       'SELECT * FROM life_simulation_paths WHERE simulation_id = ? ORDER BY created_at ASC',
-    ).all(simId) as unknown as LifeSimPathRow;
+    ).all(simId);
   });
 
   /* ── Commands ── */

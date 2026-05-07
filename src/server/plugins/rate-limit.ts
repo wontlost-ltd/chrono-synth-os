@@ -32,7 +32,7 @@ export async function registerRateLimit(app: FastifyInstance, config: AppConfig)
       if (cached && Date.now() - cached.cachedAt < PLAN_CACHE_TTL_MS) return cached.max;
 
       /* 从请求上下文获取计划信息（JWT payload 中的 planId） */
-      const user = (request as unknown as { user?: { planId?: string } }).user;
+      const user = request.user;
       const planId = user?.planId;
 
       /* 仅当有明确的 planId 时才缓存结果；无 planId 时使用默认值不缓存 */

@@ -72,7 +72,7 @@ export interface BoutboxMarkFailedParams {
 
 /* ── Query 工厂 ── */
 
-export function boutboxQueryPending(maxAttempts: number, limit: number): Query<readonly BillingOutboxRow[], BoutboxPendingParams> {
+export function boutboxQueryPending(maxAttempts: number, limit: number): Query<BillingOutboxRow, BoutboxPendingParams> {
   return { kind: BOUTBOX_QUERY_PENDING, params: { maxAttempts, limit } };
 }
 

@@ -24,13 +24,13 @@ import {
 export function registerBillingServiceExecutors(): void {
   /* ── Queries ── */
 
-  registerQuery<BillingPlanRow, void>(BSVC_QUERY_LIST_PLANS, (db) => {
+  registerQuery<BillingPlanRow[], void>(BSVC_QUERY_LIST_PLANS, (db) => {
     return db.prepare<BillingPlanRow>(
       `SELECT id, name, stripe_price_id, price_minor, currency, billing_interval, limits_json
        FROM billing_plans
        WHERE is_active = 1
        ORDER BY CASE id WHEN 'free' THEN 0 WHEN 'pro' THEN 1 ELSE 2 END ASC, name ASC`,
-    ).all() as unknown as BillingPlanRow;
+    ).all();
   });
 
   registerQuery<BsvcSubscriptionRow | null, string>(BSVC_QUERY_LATEST_SUB, (db, tenantId) => {
@@ -58,23 +58,23 @@ export function registerBillingServiceExecutors(): void {
     ).get(id) ?? null;
   });
 
-  registerQuery<BsvcInvoiceRow, string>(BSVC_QUERY_INVOICES_BY_TENANT, (db, tenantId) => {
+  registerQuery<BsvcInvoiceRow[], string>(BSVC_QUERY_INVOICES_BY_TENANT, (db, tenantId) => {
     return db.prepare<BsvcInvoiceRow>(
       `SELECT * FROM billing_invoices WHERE tenant_id = ? ORDER BY period_start DESC, created_at DESC`,
-    ).all(tenantId) as unknown as BsvcInvoiceRow;
+    ).all(tenantId);
   });
 
-  registerQuery<BsvcUsageMeterRow, BsvcUsageMetersParams>(BSVC_QUERY_USAGE_METERS, (db, p) => {
+  registerQuery<BsvcUsageMeterRow[], BsvcUsageMetersParams>(BSVC_QUERY_USAGE_METERS, (db, p) => {
     return db.prepare<BsvcUsageMeterRow>(
       `SELECT resource, total_quantity FROM usage_meters WHERE tenant_id = ? AND period_start = ? AND period_end = ? ORDER BY resource ASC`,
-    ).all(p.tenantId, p.periodStart, p.periodEnd) as unknown as BsvcUsageMeterRow;
+    ).all(p.tenantId, p.periodStart, p.periodEnd);
   });
 
-  registerQuery<BsvcUsageMeterRow, BsvcReconciliationParams>(BSVC_QUERY_USAGE_RECORDS_SUMMARY, (db, p) => {
+  registerQuery<BsvcUsageMeterRow[], BsvcReconciliationParams>(BSVC_QUERY_USAGE_RECORDS_SUMMARY, (db, p) => {
     return db.prepare<BsvcUsageMeterRow>(
       `SELECT resource, COALESCE(SUM(quantity), 0) AS total_quantity
        FROM usage_records WHERE tenant_id = ? AND recorded_at >= ? AND recorded_at < ? GROUP BY resource`,
-    ).all(p.tenantId, p.periodStart, p.periodEnd) as unknown as BsvcUsageMeterRow;
+    ).all(p.tenantId, p.periodStart, p.periodEnd);
   });
 
   /* ── Commands ── */

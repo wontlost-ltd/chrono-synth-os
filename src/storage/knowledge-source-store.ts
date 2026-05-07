@@ -70,7 +70,7 @@ export class KnowledgeSourceStore {
   }
 
   listByTenant(tenantId: string, limit: number, offset: number): { sources: KnowledgeSourceRecord[]; total: number } {
-    const rows = this.tx.queryMany(ksrcQueryList({ tenantId, limit, offset })) as unknown as KsrcRow[];
+    const rows = this.tx.queryMany(ksrcQueryList({ tenantId, limit, offset }));
     const countRow = this.tx.queryOne(ksrcQueryCount(tenantId));
     return {
       sources: rows.map(rowToRecord),
@@ -80,7 +80,7 @@ export class KnowledgeSourceStore {
 
   listEnabledByIds(tenantId: string, ids: string[]): KnowledgeSourceRecord[] {
     if (ids.length === 0) return [];
-    const rows = this.tx.queryMany(ksrcQueryEnabledByIds({ tenantId, ids })) as unknown as KsrcRow[];
+    const rows = this.tx.queryMany(ksrcQueryEnabledByIds({ tenantId, ids }));
     return rows.map(rowToRecord);
   }
 

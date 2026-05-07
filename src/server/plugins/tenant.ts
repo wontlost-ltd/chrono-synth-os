@@ -27,7 +27,7 @@ export function registerTenantDecorator(app: FastifyInstance): void {
 /** 注册租户解析钩子（必须在 JWT 认证钩子之后调用） */
 export function registerTenantHook(app: FastifyInstance): void {
   app.addHook('onRequest', (request: FastifyRequest, _reply: FastifyReply, done) => {
-    const jwtUser = (request as unknown as { user?: { tenantId?: string } }).user;
+    const jwtUser = request.user;
     if (jwtUser?.tenantId) {
       /* JWT 认证成功：tenantId 来自令牌，不可被 header 覆盖 */
       try {

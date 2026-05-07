@@ -85,11 +85,11 @@ export function addonQueryById(id: string): Query<AddOnRow | null, string> {
   return { kind: ADDON_QUERY_BY_ID, params: id };
 }
 
-export function addonQueryListActive(): Query<readonly AddOnRow[], void> {
+export function addonQueryListActive(): Query<AddOnRow, void> {
   return { kind: ADDON_QUERY_LIST_ACTIVE, params: undefined as unknown as void };
 }
 
-export function addonQueryListAll(): Query<readonly AddOnRow[], void> {
+export function addonQueryListAll(): Query<AddOnRow, void> {
   return { kind: ADDON_QUERY_LIST_ALL, params: undefined as unknown as void };
 }
 

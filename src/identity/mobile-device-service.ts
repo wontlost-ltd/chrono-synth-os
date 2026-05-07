@@ -52,7 +52,7 @@ export class MobileDeviceService {
   }
 
   listByUser(userId: string) {
-    const rows = this.tx.queryMany(mdevQueryListByUser(userId)) as unknown as MdevDeviceRow[];
+    const rows = this.tx.queryMany(mdevQueryListByUser(userId));
 
     return rows.map(r => ({
       id: r.id,

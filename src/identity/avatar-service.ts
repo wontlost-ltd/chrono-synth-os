@@ -59,7 +59,7 @@ export class AvatarService {
   }
 
   listByIdentity(identityId: string): Avatar[] {
-    const rows = [...this.tx.queryMany(avtQueryByIdentity(identityId))] as unknown as AvatarRow[];
+    const rows = [...this.tx.queryMany(avtQueryByIdentity(identityId))];
     return rows.map(rowToAvatar);
   }
 

@@ -17,7 +17,7 @@ import { DriftAlertService } from '../../safety/drift-alert-service.js';
 import { ConsoleLogger } from '../../utils/logger.js';
 
 export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
-  const redis = (app as unknown as { redis?: { publish(channel: string, message: string): Promise<void> } }).redis;
+  const redis = app.redis;
   const configService = new ConfigService(db, config, redis);
 
   /* GET /api/v1/admin/config — 按角色获取配置 */

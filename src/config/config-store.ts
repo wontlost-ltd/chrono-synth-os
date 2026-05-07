@@ -28,12 +28,12 @@ export class ConfigStore {
 
   /** 获取所有配置项（按 key 排序） */
   getAll(): ConfigItemRow[] {
-    return [...this.tx.queryMany(cfgQueryAll())] as unknown as ConfigItemRow[];
+    return [...this.tx.queryMany(cfgQueryAll())];
   }
 
   /** 获取指定分类的配置项 */
   getByCategory(category: ConfigCategory): ConfigItemRow[] {
-    return [...this.tx.queryMany(cfgQueryByCategory(category))] as unknown as ConfigItemRow[];
+    return [...this.tx.queryMany(cfgQueryByCategory(category))];
   }
 
   /** 获取单个配置项 */
@@ -83,11 +83,11 @@ export class ConfigStore {
 
   /** 查询审计日志 */
   getAudit(limit = 50, offset = 0): ConfigAuditRow[] {
-    return [...this.tx.queryMany(cfgQueryAudit(limit, offset))] as unknown as ConfigAuditRow[];
+    return [...this.tx.queryMany(cfgQueryAudit(limit, offset))];
   }
 
   /** 按 key 查询审计日志 */
   getAuditByKey(key: string, limit = 50): ConfigAuditRow[] {
-    return [...this.tx.queryMany(cfgQueryAuditByKey(key, limit))] as unknown as ConfigAuditRow[];
+    return [...this.tx.queryMany(cfgQueryAuditByKey(key, limit))];
   }
 }

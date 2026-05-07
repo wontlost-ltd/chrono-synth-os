@@ -163,11 +163,11 @@ export function tpermQueryByPersonaTool(p: TpermByPersonaToolParams): Query<Tool
   return { kind: TPERM_QUERY_BY_PERSONA_TOOL, params: p };
 }
 
-export function tpermQueryListByPersona(p: TpermListByPersonaParams): Query<readonly ToolPermissionRow[], TpermListByPersonaParams> {
+export function tpermQueryListByPersona(p: TpermListByPersonaParams): Query<ToolPermissionRow, TpermListByPersonaParams> {
   return { kind: TPERM_QUERY_LIST_BY_PERSONA, params: p };
 }
 
-export function tpermQueryListByTenant(tenantId: string): Query<readonly ToolPermissionRow[], string> {
+export function tpermQueryListByTenant(tenantId: string): Query<ToolPermissionRow, string> {
   return { kind: TPERM_QUERY_LIST_BY_TENANT, params: tenantId };
 }
 
@@ -183,11 +183,11 @@ export function agauthQueryById(p: AgauthByIdParams): Query<AgencyAuthorizationR
   return { kind: AGAUTH_QUERY_BY_ID, params: p };
 }
 
-export function agauthQueryListByPersona(p: AgauthListByPersonaParams): Query<readonly AgencyAuthorizationRow[], AgauthListByPersonaParams> {
+export function agauthQueryListByPersona(p: AgauthListByPersonaParams): Query<AgencyAuthorizationRow, AgauthListByPersonaParams> {
   return { kind: AGAUTH_QUERY_LIST_BY_PERSONA, params: p };
 }
 
-export function agauthQueryListByPrincipal(p: AgauthListByPrincipalParams): Query<readonly AgencyAuthorizationRow[], AgauthListByPrincipalParams> {
+export function agauthQueryListByPrincipal(p: AgauthListByPrincipalParams): Query<AgencyAuthorizationRow, AgauthListByPrincipalParams> {
   return { kind: AGAUTH_QUERY_LIST_BY_PRINCIPAL, params: p };
 }
 
@@ -199,7 +199,7 @@ export function tinvQueryById(p: TinvByIdParams): Query<ToolInvocationRow | null
   return { kind: TINV_QUERY_BY_ID, params: p };
 }
 
-export function tinvQueryListByPersona(p: TinvListByPersonaParams): Query<readonly ToolInvocationRow[], TinvListByPersonaParams> {
+export function tinvQueryListByPersona(p: TinvListByPersonaParams): Query<ToolInvocationRow, TinvListByPersonaParams> {
   return { kind: TINV_QUERY_LIST_BY_PERSONA, params: p };
 }
 
@@ -207,7 +207,7 @@ export function tinvQueryDailyCount(p: TinvDailyCountParams): Query<{ count: num
   return { kind: TINV_QUERY_DAILY_COUNT, params: p };
 }
 
-export function tinvQueryPendingByUser(p: TinvPendingByUserParams): Query<readonly ToolInvocationRow[], TinvPendingByUserParams> {
+export function tinvQueryPendingByUser(p: TinvPendingByUserParams): Query<ToolInvocationRow, TinvPendingByUserParams> {
   return { kind: TINV_QUERY_PENDING_BY_USER, params: p };
 }
 

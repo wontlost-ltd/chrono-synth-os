@@ -17,11 +17,6 @@ import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { Clock } from '../utils/clock.js';
 import type { LLMProvider } from './llm-provider.js';
 
-interface EmbeddingRow {
-  memory_id: string;
-  embedding_json: string;
-}
-
 export interface EmbeddingMatch {
   readonly memoryId: string;
   readonly score: number;
@@ -166,7 +161,7 @@ export class EmbeddingIndex {
     const now = Date.now();
     if (this.cacheLoadedAt > 0 && now - this.cacheLoadedAt < CACHE_TTL_MS) return;
 
-    const rows = this.tx.queryMany(embQueryByModel({ model: this.model })) as unknown as EmbeddingRow[];
+    const rows = this.tx.queryMany(embQueryByModel({ model: this.model }));
 
     const newCache = new Map<string, CachedVector>();
     for (const row of rows) {
