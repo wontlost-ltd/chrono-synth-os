@@ -61,7 +61,9 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 28 | [`audit_log` is per-tenant, not global](0028-audit-log-per-tenant.md)                      | Accepted |
 | 29 | [All timestamps are epoch milliseconds (`number`), not strings](0029-epoch-ms-timestamps.md) | Accepted |
 | 30 | [No GraphQL API](0030-no-graphql.md)                                                       | Accepted |
+| 31 | [`IDatabase` residue is intentional, not tech debt](0031-idatabase-residue-intentional.md) | Accepted |
 
-P1.5 closed: 30 records covering kernel architecture, storage, agent
-layer, deployment, and product policy. New decisions land as 0031+
-following the same MADR-lite template (see `0001-kernel-zero-runtime-deps.md`).
+New decisions land as 0032+ following the same MADR-lite template
+(see `0001-kernel-zero-runtime-deps.md`). The first 30 records were
+back-filled in P1.5 to cover kernel architecture, storage, agent
+layer, deployment, and product policy.
