@@ -49,8 +49,11 @@ jobs:
       - name: Kernel purity — forbidden imports
         run: npm run check:forbidden-imports
 
+  # Pinned to GitHub-hosted Ubuntu: docker/setup-buildx-action requires
+  # buildkit, which isn't available on a macOS self-hosted runner (only
+  # podman, which doesn't speak the buildkit gRPC protocol the action uses).
   docker-build:
-    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: build-and-test
     steps:
       - uses: actions/checkout@v6
@@ -71,8 +74,12 @@ jobs:
           exit-code: '1'
           severity: CRITICAL,HIGH
 
+  # Pinned to GitHub-hosted Ubuntu: workflow `services:` blocks are a
+  # Linux-only Actions feature (the runner orchestrates them via Docker).
+  # macOS runners don't support services and would skip the postgres
+  # container entirely, leading to confusing connection refused errors.
   test-postgres:
-    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     needs: build-and-test
     services:
       postgres:
