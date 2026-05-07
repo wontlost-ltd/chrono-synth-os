@@ -2203,6 +2203,43 @@ const v071_pgvector_embeddings: Migration = {
   ],
 };
 
+/** v072: pgvector stage 7 — drop legacy embedding_json + IVF tables.
+ *
+ *  ⚠️ Not yet enabled. Stage 7 of pgvector-integration-2026.md requires:
+ *    1. Stage 6 (helm flips useVectorExtension=true in prod)
+ *    2. ≥7-day observation period with the reconcile cron reporting
+ *       drift=0 across all tenants
+ *    3. All embedding-bearing tenants confirmed on the pgvector path
+ *
+ *  When all three are satisfied, add `v072_drop_embedding_json_legacy`
+ *  to the PG_MIGRATIONS array below (see docs/operations/pgvector-rollout.md
+ *  step E). Until then, the migration is exported but NOT executed.
+ *
+ *  SQLite path is unaffected: SQLite deployments keep `embedding_json`
+ *  via v006, and this migration is Postgres-only by definition.
+ */
+export const v072_drop_embedding_json_legacy: Migration = {
+  version: 'v072',
+  description: 'pgvector stage 7: drop embedding_json column + ivf_centroids/ivf_meta tables',
+  sql: [
+    /* The vector column has been dual-written for the entire ramp window
+     * (stage 4 + stage 5). After observation period, embedding_json is
+     * pure overhead — every read is now via the vector column path. */
+    `ALTER TABLE memory_embeddings DROP COLUMN IF EXISTS embedding_json`,
+
+    /* The trigger and helper function were created in v071 and remain
+     * relevant — they protect the vector column. They stay. */
+
+    /* IVF tables were the in-memory implementation's persistent K-Means
+     * cache. The pgvector path doesn't need them; PG IVF/HNSW indexes
+     * live on disk. SQLite keeps its in-process IVF (different code
+     * path; no shared schema), so dropping these tables on the Postgres
+     * side has no SQLite impact. */
+    `DROP TABLE IF EXISTS ivf_centroids`,
+    `DROP TABLE IF EXISTS ivf_meta`,
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
