@@ -2145,6 +2145,64 @@ const v070_core_values_snapshot: Migration = {
   ],
 };
 
+/** v071: pgvector — 为 memory_embeddings 加 vector 列 + HNSW index + dims 校验
+ *
+ *  这是 pgvector 集成阶段 2（.claude/plan/pgvector-integration-2026.md）。
+ *  embedding 列 nullable，老数据继续用 embedding_json；新数据由 stage 4 双写。
+ *  stage 7 才会 DROP COLUMN embedding_json。
+ *
+ *  注意：这条迁移 PG-only，SQLite 路径无对应版本（vector / HNSW / pgcrypto
+ *  trigger 都是 Postgres 扩展）。SQLite 部署仍用 v006 的 embedding_json TEXT。
+ */
+const v071_pgvector_embeddings: Migration = {
+  version: 'v071',
+  description: 'pgvector stage 2: add embedding vector column + HNSW index + dims trigger',
+  sql: [
+    `CREATE EXTENSION IF NOT EXISTS vector`,
+
+    /* The vector dimension 1536 matches OpenAI text-embedding-3-small (default).
+     * Multi-model coexistence is supported via embedding_model — different
+     * tenants/snapshots can use different models, the trigger validates dims
+     * matches the actual vector length. */
+    `ALTER TABLE memory_embeddings ADD COLUMN IF NOT EXISTS embedding vector(1536)`,
+    `ALTER TABLE memory_embeddings ADD COLUMN IF NOT EXISTS embedding_model TEXT`,
+    `ALTER TABLE memory_embeddings ADD COLUMN IF NOT EXISTS embedding_dims INTEGER`,
+
+    /* dims must match the actual vector length when both are set; null embedding
+     * is fine (legacy rows still on embedding_json). */
+    `CREATE OR REPLACE FUNCTION validate_embedding_dims() RETURNS TRIGGER AS $$
+       BEGIN
+         IF NEW.embedding IS NOT NULL AND vector_dims(NEW.embedding) <> NEW.embedding_dims THEN
+           RAISE EXCEPTION 'embedding_dims (%) does not match vector(%) length',
+             NEW.embedding_dims, vector_dims(NEW.embedding);
+         END IF;
+         RETURN NEW;
+       END $$ LANGUAGE plpgsql`,
+
+    /* DROP TRIGGER first so the migration is idempotent — repeat runs replace
+     * the trigger cleanly without "already exists" errors. */
+    `DROP TRIGGER IF EXISTS memory_embeddings_dims_check ON memory_embeddings`,
+    `CREATE TRIGGER memory_embeddings_dims_check
+       BEFORE INSERT OR UPDATE ON memory_embeddings
+       FOR EACH ROW EXECUTE FUNCTION validate_embedding_dims()`,
+
+    /* HNSW index for cosine similarity. m=16 + ef_construction=64 are
+     * production-tuned defaults (pgvector 0.5+); good for < 1M rows.
+     * Build is fast on empty/small tables; will be slower (~30s/10K rows)
+     * once we backfill in stage 4. */
+    `CREATE INDEX IF NOT EXISTS memory_embeddings_vec_cos_idx
+       ON memory_embeddings
+       USING hnsw (embedding vector_cosine_ops)
+       WITH (m = 16, ef_construction = 64)`,
+
+    /* Per-(tenant, model) helper: HNSW is global; the WHERE clauses on
+     * tenant_id + embedding_model run as a filter step before vector
+     * scoring, so a btree on those columns keeps that step cheap. */
+    `CREATE INDEX IF NOT EXISTS memory_embeddings_tenant_model_idx
+       ON memory_embeddings (tenant_id, embedding_model)`,
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2217,4 +2275,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v068_agent_oauth_and_invocations,
   v069_events_user_journey,
   v070_core_values_snapshot,
+  v071_pgvector_embeddings,
 ];
