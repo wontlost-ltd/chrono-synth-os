@@ -5,7 +5,7 @@ import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { InMemoryEmbeddingIndex } from '../../intelligence/embedding-index-memory.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 import { DataIngestion } from '../../onboarding/data-ingestion.js';
 
@@ -20,7 +20,7 @@ describe('DataIngestion', () => {
     const clock = new TestClock(1000);
     core = new CoreRhythmLayer(db, new EventBus(), clock, new SilentLogger());
     const llm = new ModelRouter({ provider: 'mock', model: 'test', embeddingModel: 'mock-embed' });
-    const embeddingIndex = new EmbeddingIndex(db, clock, llm, 'mock-embed');
+    const embeddingIndex = new InMemoryEmbeddingIndex(db, clock, llm, 'mock-embed');
     ingestion = new DataIngestion(core, embeddingIndex);
   });
 

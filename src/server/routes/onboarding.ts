@@ -18,7 +18,8 @@ import { QuestionnaireEngine } from '../../onboarding/questionnaire-engine.js';
 import { DataIngestion } from '../../onboarding/data-ingestion.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
 import { RuleEngine } from '../../intelligence/rule-engine.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import type { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { createEmbeddingIndex } from '../../intelligence/embedding-index-factory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 import { TokenBudget } from '../../intelligence/token-budget.js';
@@ -123,7 +124,13 @@ export function registerOnboardingRoutes(
       stripeCustomerId,
       billingOutbox,
     });
-    const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
+    const idx = createEmbeddingIndex({
+      tenantId,
+      db: tenantOS.getDatabase(),
+      clock: tenantOS.getClock(),
+      llm,
+      config,
+    });
     embeddingIndexes.set(tenantId, idx);
     const retrieval = new RetrievalService(tenantOS.core.memories, idx);
     const ruleEngine = config.ruleEngine.enabled

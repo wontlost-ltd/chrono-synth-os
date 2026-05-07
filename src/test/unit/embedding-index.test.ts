@@ -5,7 +5,8 @@ import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import type { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { InMemoryEmbeddingIndex } from '../../intelligence/embedding-index-memory.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 
 describe('EmbeddingIndex', () => {
@@ -25,7 +26,7 @@ describe('EmbeddingIndex', () => {
       model: 'test',
       embeddingModel: 'mock-embed',
     });
-    index = new EmbeddingIndex(db, clock, llm, 'mock-embed');
+    index = new InMemoryEmbeddingIndex(db, clock, llm, 'mock-embed');
   });
 
   /** 创建真实记忆节点（满足 FK 约束）并返回 ID */
@@ -94,7 +95,7 @@ describe('EmbeddingIndex', () => {
     });
 
     it('不同 model 的嵌入不互相干扰', async () => {
-      const otherIndex = new EmbeddingIndex(db, clock, llm, 'other-model');
+      const otherIndex = new InMemoryEmbeddingIndex(db, clock, llm, 'other-model');
       const idA = createMemory('测试内容');
       const idB = createMemory('其他内容');
       await index.indexMemory(idA, '测试内容');

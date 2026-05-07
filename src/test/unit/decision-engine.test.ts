@@ -5,7 +5,7 @@ import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { InMemoryEmbeddingIndex } from '../../intelligence/embedding-index-memory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
@@ -30,7 +30,7 @@ describe('DecisionEngine', () => {
       model: 'test',
       embeddingModel: 'mock-embed',
     });
-    const embeddingIndex = new EmbeddingIndex(db, clock, llm, 'mock-embed');
+    const embeddingIndex = new InMemoryEmbeddingIndex(db, clock, llm, 'mock-embed');
     const retrieval = new RetrievalService(core.memories, embeddingIndex);
     engine = new DecisionEngine(core, retrieval, llm, clock, new SilentLogger(), simConfig);
   });
@@ -124,7 +124,7 @@ describe('DecisionEngine', () => {
     it('maxOptions 限制备选项数量', async () => {
       const smallConfig: SimulationConfig = { rollouts: 1, maxOptions: 2 };
       const llm = new ModelRouter({ provider: 'mock', model: 'test', embeddingModel: 'mock-embed' });
-      const embeddingIndex = new EmbeddingIndex(db, clock, llm, 'mock-embed');
+      const embeddingIndex = new InMemoryEmbeddingIndex(db, clock, llm, 'mock-embed');
       const retrieval = new RetrievalService(core.memories, embeddingIndex);
       const limitedEngine = new DecisionEngine(core, retrieval, llm, clock, new SilentLogger(), smallConfig);
 

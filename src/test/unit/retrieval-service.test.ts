@@ -5,7 +5,8 @@ import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import type { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { InMemoryEmbeddingIndex } from '../../intelligence/embedding-index-memory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 
@@ -28,7 +29,7 @@ describe('RetrievalService 混合检索', () => {
       model: 'test',
       embeddingModel: 'mock-embed',
     });
-    embeddingIndex = new EmbeddingIndex(db, clock, llm, 'mock-embed');
+    embeddingIndex = new InMemoryEmbeddingIndex(db, clock, llm, 'mock-embed');
     retrieval = new RetrievalService(core.memories, embeddingIndex);
   });
 

@@ -44,6 +44,7 @@ import { registerMetricsQueryExecutors } from './metrics-query-executors.js';
 import { registerIdempotencyExecutors } from './idempotency-executors.js';
 import { registerLlmUsageExecutors } from './llm-usage-executors.js';
 import { registerEmbeddingExecutors } from './embedding-executors.js';
+import { registerEmbeddingPgExecutors } from './embedding-pg-executors.js';
 import { registerKafkaNamespaceExecutors } from './kafka-namespace-executors.js';
 import { registerKnowledgeRetrieverExecutors } from './knowledge-retriever-executors.js';
 import { registerConfirmationTokenExecutors } from './confirmation-token-executors.js';
@@ -71,7 +72,8 @@ import {
   ACP_QUERY_PERSONA_COUNT, TPROF_QUERY_BY_TENANT, PENG_QUERY_BY_ID,
   PCMEM_QUERY_NODE_BY_ID, PCORE_QUERY_SUMMARIES_BY_OWNER,
   KSRC_QUERY_BY_ID, MTRX_QUERY_QUEUE_COUNT, IDEM_QUERY_EXISTING,
-  LLM_QUERY_MONTHLY_SUMMARY, EMB_QUERY_BY_MODEL, KAFKA_QUERY_TENANT_NAMESPACE,
+  LLM_QUERY_MONTHLY_SUMMARY, EMB_QUERY_BY_MODEL, EMB_QUERY_NEAREST_PG,
+  KAFKA_QUERY_TENANT_NAMESPACE,
   KRTV_QUERY_BY_PERSONA,
   CTOKEN_QUERY_BY_ID,
   CMSG_QUERY_COUNT_BY_SESSION,
@@ -129,6 +131,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(IDEM_QUERY_EXISTING)) registerIdempotencyExecutors();
   if (!resolveQueryExecutor(LLM_QUERY_MONTHLY_SUMMARY)) registerLlmUsageExecutors();
   if (!resolveQueryExecutor(EMB_QUERY_BY_MODEL)) registerEmbeddingExecutors();
+  if (!resolveQueryExecutor(EMB_QUERY_NEAREST_PG)) registerEmbeddingPgExecutors();
   if (!resolveQueryExecutor(KAFKA_QUERY_TENANT_NAMESPACE)) registerKafkaNamespaceExecutors();
   if (!resolveQueryExecutor(KRTV_QUERY_BY_PERSONA)) registerKnowledgeRetrieverExecutors();
   if (!resolveQueryExecutor(CTOKEN_QUERY_BY_ID)) registerConfirmationTokenExecutors();

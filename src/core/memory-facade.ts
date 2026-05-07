@@ -11,7 +11,8 @@ import type { MemoryNode, MemoryEdge, MemoryKind, ActivationResult, Consolidatio
 import type { PersonaMemorySensitivity } from '../persona-core/types.js';
 import type { MemorySourceKind } from '../server/schemas/api-schemas.js';
 import { FieldEncryption } from '../storage/encryption.js';
-import { EmbeddingIndex } from '../intelligence/embedding-index.js';
+import type { EmbeddingIndex } from '../intelligence/embedding-index.js';
+import { createEmbeddingIndex } from '../intelligence/embedding-index-factory.js';
 import { ModelRouter } from '../intelligence/model-router.js';
 import { TokenBudget } from '../intelligence/token-budget.js';
 import { CostTracker } from '../intelligence/cost-tracker.js';
@@ -134,7 +135,13 @@ export class MemoryFacade {
       stripeCustomerId,
       billingOutbox: this.billingOutbox ?? undefined,
     });
-    const idx = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, this.config.intelligence.embeddingModel);
+    const idx = createEmbeddingIndex({
+      tenantId,
+      db: tenantOS.getDatabase(),
+      clock: tenantOS.getClock(),
+      llm,
+      config: this.config,
+    });
     if (this.embeddingIndexes.size >= MAX_EMBEDDING_CACHE) {
       const oldest = this.embeddingIndexes.keys().next().value;
       if (oldest) this.embeddingIndexes.delete(oldest);

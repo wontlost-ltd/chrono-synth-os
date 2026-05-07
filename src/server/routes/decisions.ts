@@ -16,7 +16,7 @@ import { generatePrefixedId } from '../../utils/id-generator.js';
 import type { DecisionCase } from '../../intelligence/types.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
 import { RuleEngine } from '../../intelligence/rule-engine.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { createEmbeddingIndex } from '../../intelligence/embedding-index-factory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 import { TokenBudget } from '../../intelligence/token-budget.js';
@@ -106,7 +106,13 @@ export function registerDecisionRoutes(
       stripeCustomerId,
       billingOutbox,
     });
-    const embeddingIndex = new EmbeddingIndex(tenantOS.getDatabase(), tenantOS.getClock(), llm, config.intelligence.embeddingModel);
+    const embeddingIndex = createEmbeddingIndex({
+      tenantId,
+      db: tenantOS.getDatabase(),
+      clock: tenantOS.getClock(),
+      llm,
+      config,
+    });
     const retrieval = new RetrievalService(tenantOS.core.memories, embeddingIndex);
     const ruleEngine = config.ruleEngine.enabled
       ? new RuleEngine(tenantOS.getClock(), config.ruleEngine, tenantOS.getLogger())

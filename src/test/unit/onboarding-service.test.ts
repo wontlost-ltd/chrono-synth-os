@@ -7,7 +7,7 @@ import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
 import { OnboardingService } from '../../onboarding/onboarding-service.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
-import { EmbeddingIndex } from '../../intelligence/embedding-index.js';
+import { InMemoryEmbeddingIndex } from '../../intelligence/embedding-index-memory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
 
@@ -30,7 +30,7 @@ describe('OnboardingService', () => {
     snapshotCount = 0;
 
     const llm = new ModelRouter({ provider: 'mock', model: 'test', embeddingModel: 'mock-embed' });
-    const embeddingIndex = new EmbeddingIndex(db, clock, llm, 'mock-embed');
+    const embeddingIndex = new InMemoryEmbeddingIndex(db, clock, llm, 'mock-embed');
     const retrieval = new RetrievalService(core.memories, embeddingIndex);
     const engine = new DecisionEngine(core, retrieval, llm, clock, logger, { rollouts: 1, maxOptions: 2 });
 

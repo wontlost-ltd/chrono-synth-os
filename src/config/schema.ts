@@ -162,6 +162,12 @@ const intelligenceSchema = z.object({
   provider: z.enum(['openai', 'anthropic', 'ollama', 'mock']).default('mock'),
   model: z.string().default('claude-sonnet-4-5-20250929'),
   embeddingModel: z.string().default('text-embedding-3-small'),
+  /** Vector dimension for the configured embeddingModel. text-embedding-3-small=1536. */
+  embeddingDims: z.coerce.number().int().positive().default(1536),
+  /** Route embedding writes/searches through Postgres pgvector instead of the
+   * legacy in-memory + JSON column path. Requires db.driver=postgres and
+   * the v071_pgvector migration applied. */
+  useVectorExtension: z.coerce.boolean().default(false),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   maxTokens: z.coerce.number().int().default(4096),
@@ -446,6 +452,7 @@ export const AppConfigSchema = z.object({
   billing: billingSchema,
   intelligence: intelligenceSchema.default({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
+    embeddingDims: 1536, useVectorExtension: false,
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
     budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
   }),
@@ -569,6 +576,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_INTELLIGENCE_PROVIDER:           (v) => { deepSet(env, 'intelligence.provider', v); },
     CHRONO_INTELLIGENCE_MODEL:              (v) => { deepSet(env, 'intelligence.model', v); },
     CHRONO_INTELLIGENCE_EMBEDDING_MODEL:    (v) => { deepSet(env, 'intelligence.embeddingModel', v); },
+    CHRONO_INTELLIGENCE_EMBEDDING_DIMS:     (v) => { deepSet(env, 'intelligence.embeddingDims', parseInt(v, 10)); },
+    CHRONO_INTELLIGENCE_USE_VECTOR_EXT:     (v) => { deepSet(env, 'intelligence.useVectorExtension', v === 'true'); },
     CHRONO_INTELLIGENCE_API_KEY:            (v) => { deepSet(env, 'intelligence.apiKey', v); },
     CHRONO_INTELLIGENCE_BASE_URL:           (v) => { deepSet(env, 'intelligence.baseUrl', v); },
     CHRONO_INTELLIGENCE_MAX_TOKENS:         (v) => { deepSet(env, 'intelligence.maxTokens', parseInt(v, 10)); },
