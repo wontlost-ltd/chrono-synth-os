@@ -166,8 +166,14 @@ const intelligenceSchema = z.object({
   embeddingDims: z.coerce.number().int().positive().default(1536),
   /** Route embedding writes/searches through Postgres pgvector instead of the
    * legacy in-memory + JSON column path. Requires db.driver=postgres and
-   * the v071_pgvector migration applied. */
+   * the v071_pgvector migration applied. Acts as the default for tenants
+   * not listed in vectorExtensionTenants below. */
   useVectorExtension: z.coerce.boolean().default(false),
+  /** Per-tenant override for useVectorExtension: tenants in this list always
+   * get the pgvector path (even if the global flag is off); tenants NOT in
+   * this list fall back to the global flag. Empty list = global flag wins
+   * everywhere. Use this to ramp 1 → 10% → 50% → 100% during migration. */
+  vectorExtensionTenants: z.array(z.string()).default([]),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   maxTokens: z.coerce.number().int().default(4096),
@@ -452,7 +458,7 @@ export const AppConfigSchema = z.object({
   billing: billingSchema,
   intelligence: intelligenceSchema.default({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
-    embeddingDims: 1536, useVectorExtension: false,
+    embeddingDims: 1536, useVectorExtension: false, vectorExtensionTenants: [],
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
     budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
   }),
@@ -578,6 +584,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_INTELLIGENCE_EMBEDDING_MODEL:    (v) => { deepSet(env, 'intelligence.embeddingModel', v); },
     CHRONO_INTELLIGENCE_EMBEDDING_DIMS:     (v) => { deepSet(env, 'intelligence.embeddingDims', parseInt(v, 10)); },
     CHRONO_INTELLIGENCE_USE_VECTOR_EXT:     (v) => { deepSet(env, 'intelligence.useVectorExtension', v === 'true'); },
+    CHRONO_INTELLIGENCE_VECTOR_EXT_TENANTS: (v) => { deepSet(env, 'intelligence.vectorExtensionTenants', v.split(',').map((s) => s.trim()).filter(Boolean)); },
     CHRONO_INTELLIGENCE_API_KEY:            (v) => { deepSet(env, 'intelligence.apiKey', v); },
     CHRONO_INTELLIGENCE_BASE_URL:           (v) => { deepSet(env, 'intelligence.baseUrl', v); },
     CHRONO_INTELLIGENCE_MAX_TOKENS:         (v) => { deepSet(env, 'intelligence.maxTokens', parseInt(v, 10)); },

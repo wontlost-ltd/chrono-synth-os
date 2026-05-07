@@ -1,10 +1,17 @@
 /**
  * Factory for choosing the right EmbeddingIndex implementation.
  *
- * The decision: Postgres + pgvector when both
- *   (a) the runtime database is Postgres (driver = 'postgres'), AND
- *   (b) config.intelligence.useVectorExtension is true.
- * Otherwise the in-memory + JSON path is used (the legacy default).
+ * The decision (Postgres-driver branch only — SQLite always uses InMemory):
+ *   1. If tenantId is in config.intelligence.vectorExtensionTenants, use
+ *      PgvectorEmbeddingIndex regardless of the global flag. This is the
+ *      per-tenant ramp lever: explicit opt-in, controlled rollout.
+ *   2. Else, use PgvectorEmbeddingIndex iff the global
+ *      config.intelligence.useVectorExtension flag is true.
+ *   3. Else, fall back to InMemoryEmbeddingIndex.
+ *
+ * The allowlist takes precedence so an empty global flag + a list of pilot
+ * tenants is the natural way to gate-test pgvector before flipping the
+ * default for the whole fleet.
  *
  * Tests usually want a specific implementation. Construct the impl class
  * directly (InMemoryEmbeddingIndex / PgvectorEmbeddingIndex) for those —
@@ -32,8 +39,10 @@ export interface CreateEmbeddingIndexOptions {
 
 export function createEmbeddingIndex(opts: CreateEmbeddingIndexOptions): EmbeddingIndex {
   const { tenantId, db, clock, llm, config, maxCacheSize } = opts;
-  const usePg = config.db.driver === 'postgres'
-    && config.intelligence.useVectorExtension === true;
+  const onPostgres = config.db.driver === 'postgres';
+  const tenantOptedIn = config.intelligence.vectorExtensionTenants.includes(tenantId);
+  const globalFlag = config.intelligence.useVectorExtension === true;
+  const usePg = onPostgres && (tenantOptedIn || globalFlag);
 
   if (usePg) {
     return new PgvectorEmbeddingIndex(
