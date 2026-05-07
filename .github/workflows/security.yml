@@ -59,9 +59,14 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+  # Pinned to GitHub-hosted Ubuntu: trufflesecurity/trufflehog@main runs
+  # via `docker run`, and our macOS self-hosted runner uses podman without
+  # a `docker` CLI shim. Could be unblocked by installing `docker` CLI to
+  # alias podman, but trufflehog is light enough (~10s) that it's not worth
+  # the maintenance cost.
   secrets-scan:
     name: Secrets scan (trufflehog)
-    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
