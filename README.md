@@ -1,24 +1,38 @@
 # ChronoSynth OS
 
-**混合数字人格操作系统** — 通过三层架构实现稳定身份维护与并行人格实验的动态平衡。
+**The governance layer for enterprise AI agents.**
 
-## 架构概览
+When your team ships LangChain / CrewAI / OpenAI Agents SDK into production,
+ChronoSynth OS is the backend that controls which tools each agent can call,
+records every invocation to an immutable audit log, and detects when an
+agent's behavior drifts from its policy baseline. Self-hosted via Helm or
+run as SaaS — your data, your KMS keys, your audit retention.
+
+> Why this exists, who it's for, what's in / out of scope: see
+> [`.claude/gtm/01-pr-faq.md`](.claude/gtm/01-pr-faq.md).
+
+The agent-governance product is built on top of a portable persona kernel
+(`@chrono/kernel`, MIT) — a TypeScript domain core for persona identity,
+memory graph, value alignment, and tool permissioning. The kernel is
+runtime-agnostic (Node / Web Workers / Tauri / React Native via adapter
+PoCs) and stays open-source as the reference implementation of the
+Portable Persona Format v1 spec.
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│            元调控层 (Meta-Regulation)        │
-│     冲突检测 · 资源分配 · 集成决策              │
-├──────────────────┬──────────────────────────┤
-│   慢层 (Core)     │    快层 (Accelerated)    │
-│  核心价值 · 记忆   │  并行人格 · 模拟实验       │
-│  叙事 · 身份稳定   │  适应度评估 · 变异探索      │
-├──────────────────┴──────────────────────────┤
-│          事件总线 (EventBus)                 │
-│      17 种类型化事件 · 层间解耦通信             │
-├─────────────────────────────────────────────┤
-│          存储层 (SQLite)                     │
-│    node:sqlite · 事务保护 · 快照恢复           │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│   Agent governance surface (the product)        │
+│  Tool permission · Audit log · Drift detector   │
+│  Confirmation tokens · Per-tenant KMS · SCIM    │
+├─────────────────────────────────────────────────┤
+│   @chrono/kernel — portable persona core (OSS)  │
+│  Identity · Memory graph · Value alignment      │
+│  Decision engine · Persona drift baseline       │
+├─────────────────────────────────────────────────┤
+│   Storage adapters (Postgres + pgvector / SQL)  │
+│   Event ledger · Outbox · KMS envelope crypto   │
+└─────────────────────────────────────────────────┘
 ```
 
 关键架构决策记录在 [`docs/adr/`](docs/adr/README.md)：内核零依赖、同步 UoW、字段级加密、MCP 工具协议、可移植 JSON-LD 包等。
