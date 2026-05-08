@@ -10,6 +10,7 @@
 | TruffleHog | push / PR / weekly | 提交历史或当前 diff 出现疑似 secret |
 | License check | push / PR | 引入了 allowlist 之外的 license（GPL-3 / AGPL 等） |
 | SBOM | push / PR | SPDX 生成失败（罕见） |
+| DAST baseline | PR only | 当前以 `fail_action: false` 运行，不会让 PR fail；仅产出 artifact 供阅读 |
 
 ## CodeQL 失败
 
@@ -95,3 +96,45 @@ WARN: Found 1 license violation:
 - main 分支 drift（合并后产生的新组合）
 
 如果 scheduled 失败，**不阻塞** main 但必须在 24h 内有人响应（rotation 中的 on-call）。
+
+## DAST baseline
+
+> 任务：每个 PR 启一份 production image，用 OWASP ZAP 跑被动扫，
+> 报告作为 artifact 上传，**当前不会让 PR fail**。
+
+### 当前状态：collect-only
+首次集成意味着第一次跑会发现一堆 missing security headers
+（CSP / X-Frame-Options / HSTS / Permissions-Policy 等）。如果直接
+hard-fail 会卡住所有 PR。所以现状是 `fail_action: false`：
+
+- ZAP 仍然全量扫
+- 报告仍然上传到 `zap-baseline-<sha>` artifact（HTML / Markdown / JSON 三份）
+- backend log 单独上传到 `chrono-os-dast-backend-log-<sha>`
+- workflow 永远 pass
+
+### 怎么读报告
+1. Actions → 失败/通过的 Security run → Artifacts
+2. 下载 `zap-baseline-<sha>`，打开 `report_html.html`
+3. 看 **Alerts** 表，按 Risk 排序：
+   - **High** — 必须修（典型例：missing HSTS、不安全 cookie 属性、CORS misconfiguration）
+   - **Medium** — 优先级 P1（典型例：missing CSP、X-Content-Type-Options）
+   - **Low** — 改进项（典型例：cookie no SameSite）
+   - **Informational** — 已被 `cmd_options: '-I'` 静默，不出现
+
+### 切到 hard-fail 模式
+当 baseline 报告里 0 High + 0 Medium 时，把 `fail_action: false` 改成
+`fail_action: true`。这是 P0.1 的 follow-up PR，**不在首次接入 PR 范围内**。
+
+### 流水线本地复现
+```bash
+docker build -t chrono-synth-os:dast-local .
+docker run -d --name chrono-os-dast --network host \
+  -e CHRONO_AUTH_ENABLED=false chrono-synth-os:dast-local
+curl -fsS http://127.0.0.1:3000/healthz   # wait until 200
+docker run --rm --network host \
+  -v "$(pwd):/zap/wrk" -t \
+  ghcr.io/zaproxy/zaproxy:stable \
+  zap-baseline.py -t http://127.0.0.1:3000 -I -T 10 \
+    -r report_html.html -w report_md.md -J report_json.json
+docker rm -f chrono-os-dast
+```
