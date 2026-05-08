@@ -119,3 +119,116 @@ jobs:
           name: chrono-synth-os-sbom-${{ github.sha }}
           path: sbom.spdx.json
           retention-days: 90
+
+  # DAST baseline scan (P0.1 EP-1.1.c).
+  #
+  # Strategy: build the production image, run it locally on the runner,
+  # let ZAP probe http://127.0.0.1:3000 with passive checks only — no
+  # active attack payloads (use baseline, not full-scan).
+  #
+  # Why PR-to-main only (no push, no cron):
+  #   - Adds ~2-3 min to PR feedback. Fine on PRs that touch backend
+  #     surface; pointless on docs-only push events.
+  #   - Cron coverage already comes from `secrets-scan` and `codeql`.
+  #
+  # Why ubuntu-latest (not CI_RUNNER_LABELS): docker/setup-buildx-action
+  # and zaproxy/action-baseline both run via Docker; our self-hosted
+  # macOS runner uses podman without a `docker` CLI shim. Same rationale
+  # as the existing docker-build / secrets-scan jobs.
+  #
+  # Why fail_action: false (this PR): the first ZAP run will surface a
+  # backlog of missing security headers (CSP, X-Frame-Options, HSTS).
+  # Treating those as hard-fail today would block the very PR that
+  # reveals them. The artifact is uploaded so we can read it, prioritise
+  # fixes, then flip to fail_action: true in a follow-up PR once the
+  # baseline is clean. See `docs/operations/security-ci-runbook.md`
+  # → "DAST baseline" section.
+  dast-baseline:
+    name: DAST baseline (OWASP ZAP)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v4
+
+      # Build the production image on this job. The docker-build job in
+      # ci.yml has already populated the GHA cache; this layer hits it.
+      - name: Build chrono-synth-os image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: chrono-synth-os:dast-${{ github.sha }}
+          cache-from: type=gha
+          # Don't write to cache — let ci.yml's docker-build own that.
+          cache-to: type=inline
+
+      # Start the backend on the host network so ZAP (also docker) can
+      # reach it on 127.0.0.1:3000 without bridging.
+      #
+      # CHRONO_QUEUE_ENABLED=true: in NODE_ENV=production the life-
+      # simulations route refuses to start unless the async task queue
+      # is on (CPU-pressure guardrail). TaskQueue itself only needs the
+      # SQLite db, no Redis.
+      - name: Start chrono-synth-os
+        run: |
+          docker run -d \
+            --name chrono-os-dast \
+            --network host \
+            -e CHRONO_AUTH_ENABLED=false \
+            -e CHRONO_QUEUE_ENABLED=true \
+            -e CHRONO_DB_PATH=/app/data/chrono.db \
+            -e NODE_ENV=production \
+            chrono-synth-os:dast-${{ github.sha }}
+
+      - name: Wait for /healthz
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/healthz >/dev/null 2>&1; then
+              echo "backend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "backend did not become healthy in 60s — container logs:"
+          docker logs chrono-os-dast || true
+          exit 1
+
+      - name: ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://127.0.0.1:3000'
+          # `-I` = ignore info-level findings; `-T 10` = 10-min timeout.
+          # Passive checks only — zap-baseline.py never sends active
+          # attack payloads.
+          cmd_options: '-I -T 10'
+          # Don't auto-file a GitHub issue for findings. Triage happens
+          # against the uploaded artifact instead. Default is `true`.
+          allow_issue_writing: false
+          # Don't fail the PR on findings yet. The first run will surface
+          # missing security headers (CSP, X-Frame-Options, HSTS); we read
+          # the report, fix critical alerts in a follow-up PR, then flip
+          # this to true so future regressions hard-fail. Default is `false`.
+          fail_action: false
+          # Custom name to make the artifact discoverable per-SHA.
+          artifact_name: zap-baseline-${{ github.sha }}
+
+      - name: Capture backend log + cleanup
+        if: always()
+        run: |
+          docker logs chrono-os-dast > zap-backend.log 2>&1 || true
+          docker rm -f chrono-os-dast || true
+
+      - name: Upload backend log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chrono-os-dast-backend-log-${{ github.sha }}
+          path: zap-backend.log
+          retention-days: 14
+          if-no-files-found: warn
