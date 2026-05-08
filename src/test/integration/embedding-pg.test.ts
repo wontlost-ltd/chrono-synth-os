@@ -43,10 +43,12 @@ describe('PgvectorEmbeddingIndex integration', { skip: !TEST_URL }, () => {
     db = new PostgresDatabase(TEST_URL!, { max: 5, idleTimeoutMs: 10_000 });
 
     /* Clean slate: drop public schema and recreate. The pgvector extension
-     * is dropped along with everything else; v071 re-creates it. */
+     * gets dropped along with everything else and v071 recreates it.
+     * The connecting role becomes the default owner of the new schema,
+     * so no explicit GRANT is needed (matches both CI's `test` user and
+     * podman's `chrono` user). */
     db.exec('DROP SCHEMA public CASCADE');
     db.exec('CREATE SCHEMA public');
-    db.exec('GRANT ALL ON SCHEMA public TO chrono');
 
     runPostgresMigrations(db);
   });
