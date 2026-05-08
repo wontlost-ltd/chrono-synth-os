@@ -170,17 +170,21 @@ jobs:
 
       # Start the backend on the host network so ZAP (also docker) can
       # reach it on 127.0.0.1:3000 without bridging.
+      #
+      # CHRONO_QUEUE_ENABLED=true: in NODE_ENV=production the life-
+      # simulations route refuses to start unless the async task queue
+      # is on (CPU-pressure guardrail). TaskQueue itself only needs the
+      # SQLite db, no Redis.
       - name: Start chrono-synth-os
         run: |
           docker run -d \
             --name chrono-os-dast \
             --network host \
             -e CHRONO_AUTH_ENABLED=false \
+            -e CHRONO_QUEUE_ENABLED=true \
             -e CHRONO_DB_PATH=/app/data/chrono.db \
             -e NODE_ENV=production \
             chrono-synth-os:dast-${{ github.sha }}
-          # Auth is disabled by default in the schema; setting it
-          # explicitly keeps intent visible in the workflow log.
 
       - name: Wait for /healthz
         run: |
