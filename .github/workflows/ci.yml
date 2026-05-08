@@ -81,7 +81,11 @@ jobs:
     needs: build-and-test
     services:
       postgres:
-        image: postgres:17-alpine
+        # pgvector/pgvector:pg17 = vanilla Postgres 17 + the `vector`
+        # extension preinstalled (and pre-allowed). The plain
+        # `postgres:17-alpine` image doesn't ship the .so, so v071's
+        # `CREATE EXTENSION vector` fails with "not available".
+        image: pgvector/pgvector:pg17
         env:
           POSTGRES_DB: chrono_test
           POSTGRES_USER: test
