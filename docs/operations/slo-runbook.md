@@ -110,3 +110,69 @@
 2. PR 同时改 `recording-rules.yaml` + `alerts.yaml` + 本文件
 3. 至少 1 个 SRE reviewer
 4. 与产品对齐 SLA 影响（如果 SLO 影响合同）
+
+## 端到端告警链路演练
+
+> 集成 P0.2 时本仓只做了 manifest 接线，**没**真集群、**没**注入 Slack webhook、**没**做端到端演练。
+> 下面这套步骤等 dev/staging 集群可用 + Slack channel `#chrono-oncall` / `#chrono-slo-tickets` / `#chrono-alerts` 创建后跑一次演练 PR。
+
+### 前置准备
+
+1. 创建 Slack incoming webhook，分别用于：
+   - `#chrono-alerts`（默认 receiver）
+   - `#chrono-oncall`（critical / fast burn）
+   - `#chrono-slo-tickets`（warning / slow burn）
+2. 把所有 webhook URL 写入 `alertmanager-secrets`：
+   ```bash
+   kubectl create secret generic alertmanager-secrets \
+     -n chrono-synth \
+     --from-literal=SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
+3. 部署到 staging（不要在 prod 演练）。
+
+### 演练步骤 — fast burn alert
+
+目标：5xx 风暴 → fast burn alert 在 30 分钟内进 `#chrono-oncall`。
+
+```bash
+# 1. 验证 prometheus 已加载 SLO rules
+kubectl -n chrono-synth port-forward svc/prometheus 9090:9090 &
+curl -s http://127.0.0.1:9090/api/v1/rules | jq '.data.groups[].name' | grep chrono.slo
+# 期望: chrono.slo.api-availability / chrono.slo.api-latency / chrono.slo.agent-tool-success / chrono.slo.conversation-completion
+
+# 2. 验证 alertmanager 已就绪
+kubectl -n chrono-synth port-forward svc/alertmanager 9093:9093 &
+curl -s http://127.0.0.1:9093/api/v2/status | jq '.cluster.status'
+# 期望: "ready"
+
+# 3. 制造 5xx 流量（30 分钟）
+#    任选其一：
+#    a. 临时部署一个 wrong CHRONO_DB_PATH 让 / endpoint 大量 500
+#    b. 用 hey/k6 打不存在的 path 让 ingress 路由 5xx
+hey -z 30m -c 50 https://chrono.staging.local/api/v1/this-route-does-not-exist
+
+# 4. 等待 burn rate alert 触发（应该在 ~5 min 内 fire，2 min 持续后进 alertmanager）
+curl -s http://127.0.0.1:9090/api/v1/alerts | jq '.data.alerts[] | select(.labels.alertname=="ChronoApiAvailabilitySloFastBurn")'
+
+# 5. 期望在 #chrono-oncall 收到一条带 :rotating_light: 的消息，含 alert annotation
+#    + runbook 链接到本文档对应 section
+```
+
+### 演练成功判据
+
+- [ ] `chrono.slo.*` 4 个 rule group 都加载成功
+- [ ] alertmanager `/api/v2/status` 返回 ready
+- [ ] 5xx 风暴持续 30 min 内 `ChronoApiAvailabilitySloFastBurn` 出现
+- [ ] `#chrono-oncall` 收到对应 Slack 消息
+- [ ] 流量恢复正常后 alert auto-resolve，Slack 收到 `[RESOLVED]` 通知
+- [ ] inhibit_rules 验证：critical 触发时同 SLO 的 warning 不重复进 ticket channel
+
+### 演练失败排查
+
+| 现象 | 可能原因 |
+|---|---|
+| Rules 未加载 | `kubectl logs prometheus -c prometheus \| grep "loading rule"`；ConfigMap mount 路径错？ |
+| Alertmanager not ready | 检查 `alertmanager-secrets` 是否真注入了 webhook URL（`CHANGE_ME` 占位符没替换会跑但 send fail） |
+| Alert fire 但 Slack 没收到 | `kubectl logs deploy/alertmanager` 看 webhook POST 错误；防火墙挡了出向 443？ |
+| Alert 一直不 fire | rate 太低，burn rate 不够 14.4×；增加并发或拉长压测时间 |
