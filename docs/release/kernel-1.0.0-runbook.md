@@ -17,6 +17,12 @@
 - [ ] Branch up-to-date with `origin/main`
 - [ ] All tests green: `npm run test:golden`
 - [ ] PPF v1 spec checksum has not changed since freeze (verify against `docs/ppf/v1/spec.md` and `docs/ppf/v1/test-vectors/minimal-valid.json`)
+- [x] **EP-4.1 third-party interop sign-off** — `docs/ppf/v1/interop-report.md` records the Python reference implementation passing all v1 vectors; cross-impl SHA-256 pin asserted in both test suites. Spec freeze gate met.
+
+> The `version` field in `packages/kernel/package.json` has already been
+> bumped from `0.1.0` to `1.0.0` in the publish-prep commit. The runbook
+> §3 step "npm version 1.0.0 --no-git-tag-version" can be skipped if the
+> bump is already on the branch — verify with `node -p "require('./packages/kernel/package.json').version"`.
 
 ## 1. Pre-flight verification (no side effects)
 

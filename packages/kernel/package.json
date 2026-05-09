@@ -1,6 +1,6 @@
 {
   "name": "@chrono/kernel",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Pure-domain kernel for the Chrono Synth digital persona system. Zero runtime dependencies; portable to Node.js, Web Workers, Tauri, and React Native via host-supplied UnitOfWork adapters.",
   "type": "module",
   "main": "./dist/index.js",
