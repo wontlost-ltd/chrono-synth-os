@@ -20,3 +20,6 @@ export type {
   DeviceLookupResult,
   PushDispatcherOptions,
 } from './dispatcher.js';
+
+export { buildPushDispatcher } from './build-dispatcher.js';
+export type { BuildDispatcherOptions } from './build-dispatcher.js';

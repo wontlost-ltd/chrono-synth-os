@@ -2240,6 +2240,30 @@ export const v072_drop_embedding_json_legacy: Migration = {
   ],
 };
 
+/** v073 (postgres-side): EP-3.5 push token invalidation column.
+ *
+ *  Mirrors src/storage/migrations.ts v071. SQLite and Postgres have
+ *  diverged in the high seventies because the pgvector ramp lives on
+ *  the Postgres side only; this column matters on both, so the SQLite
+ *  side gets v071 and the Postgres side gets v073 to keep numbering
+ *  monotonic in each lineage.
+ *
+ *  v072_drop_embedding_json_legacy is intentionally still NOT in the
+ *  PG_MIGRATIONS array (it ships when the pgvector ramp completes —
+ *  see docs/operations/pgvector-rollout.md). v073 lands ahead of it,
+ *  which is fine because v073 only touches the unrelated devices table. */
+const v073_devices_token_invalidation: Migration = {
+  version: 'v073',
+  description: 'EP-3.5 devices.is_invalid_at column for push token invalidation',
+  sql: [
+    'ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_invalid_at BIGINT',
+    /* Partial index — only rows with the column set, which under steady
+     * state should be a tiny fraction of total devices. Keeps index
+     * size proportional to invalidation backlog rather than fleet size. */
+    'CREATE INDEX IF NOT EXISTS idx_devices_invalid ON devices(is_invalid_at) WHERE is_invalid_at IS NOT NULL',
+  ],
+};
+
 /** PostgreSQL 迁移列表 */
 export const PG_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2313,4 +2337,5 @@ export const PG_MIGRATIONS: readonly Migration[] = [
   v069_events_user_journey,
   v070_core_values_snapshot,
   v071_pgvector_embeddings,
+  v073_devices_token_invalidation,
 ];

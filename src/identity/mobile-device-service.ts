@@ -6,8 +6,9 @@
 import { randomUUID } from 'node:crypto';
 import type { SyncWriteUnitOfWork, MdevDeviceRow } from '@chrono/kernel';
 import {
-  mdevQueryByUid, mdevQueryListByUser, mdevQueryOwned,
-  mdevCmdCreate, mdevCmdUpdateOnRegister, mdevCmdUpdatePushToken, mdevCmdDelete,
+  mdevQueryByUid, mdevQueryById, mdevQueryListByUser, mdevQueryOwned,
+  mdevCmdCreate, mdevCmdUpdateOnRegister, mdevCmdUpdatePushToken,
+  mdevCmdMarkTokenInvalid, mdevCmdDelete,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
@@ -69,6 +70,26 @@ export class MobileDeviceService {
     this.requireOwnedDevice(deviceId, userId);
     this.tx.execute(mdevCmdUpdatePushToken({ deviceId, pushToken, now: Date.now() }));
     return { id: deviceId, pushToken, updated: true };
+  }
+
+  /**
+   * EP-3.5: dispatcher 收到平台 BadDeviceToken / UNREGISTERED 时调用。
+   *
+   * 不要求 user 上下文：dispatcher 在 agent 层从 deviceId 直接拿到结果，
+   * 没有 JWT。这里也不查 ownership——deviceId 是不可猜的随机串。
+   *
+   * 行为是 idempotent 的（COALESCE 保证只首次写入时间戳）；reason 当前
+   * 不持久化，由调用方记到日志/审计。
+   */
+  markTokenInvalid(deviceId: string, reason?: string): void {
+    this.tx.execute(
+      mdevCmdMarkTokenInvalid({ deviceId, now: Date.now(), reason }),
+    );
+  }
+
+  /** 按主键拿设备行；EP-3.5 dispatcher 用来构造 DeviceLookupResult。 */
+  findById(deviceId: string): MdevDeviceRow | null {
+    return this.tx.queryOne(mdevQueryById(deviceId));
   }
 
   delete(deviceId: string, userId: string) {

@@ -4,12 +4,14 @@
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
-  MDEV_QUERY_BY_UID, MDEV_QUERY_LIST_BY_USER, MDEV_QUERY_OWNED,
-  MDEV_CMD_CREATE, MDEV_CMD_UPDATE_ON_REGISTER, MDEV_CMD_UPDATE_PUSH_TOKEN, MDEV_CMD_DELETE,
+  MDEV_QUERY_BY_UID, MDEV_QUERY_BY_ID, MDEV_QUERY_LIST_BY_USER, MDEV_QUERY_OWNED,
+  MDEV_CMD_CREATE, MDEV_CMD_UPDATE_ON_REGISTER, MDEV_CMD_UPDATE_PUSH_TOKEN,
+  MDEV_CMD_MARK_TOKEN_INVALID, MDEV_CMD_DELETE,
 } from '@chrono/kernel';
 import type {
   MdevDeviceRow, MdevByUidParams, MdevOwnedParams,
   MdevCreateParams, MdevUpdateOnRegisterParams, MdevUpdatePushTokenParams,
+  MdevMarkTokenInvalidParams,
 } from '@chrono/kernel';
 
 export function registerMobileDeviceExecutors(): void {
@@ -17,6 +19,12 @@ export function registerMobileDeviceExecutors(): void {
     return db.prepare<MdevDeviceRow>(
       'SELECT * FROM devices WHERE tenant_id = ? AND user_id = ? AND device_uid = ?',
     ).get(p.tenantId, p.userId, p.deviceUid) ?? null;
+  });
+
+  registerQuery<MdevDeviceRow | null, string>(MDEV_QUERY_BY_ID, (db, deviceId) => {
+    return db.prepare<MdevDeviceRow>(
+      'SELECT * FROM devices WHERE id = ?',
+    ).get(deviceId) ?? null;
   });
 
   registerQuery<readonly MdevDeviceRow[], string>(MDEV_QUERY_LIST_BY_USER, (db, userId) => {
@@ -48,8 +56,21 @@ export function registerMobileDeviceExecutors(): void {
 
   registerCommand<MdevUpdatePushTokenParams>(MDEV_CMD_UPDATE_PUSH_TOKEN, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE devices SET push_token = ?, last_seen_at = ? WHERE id = ?',
+      /* Re-registering a token clears any prior invalidation marker —
+       * the new token is presumed valid until the next provider failure. */
+      'UPDATE devices SET push_token = ?, last_seen_at = ?, is_invalid_at = NULL WHERE id = ?',
     ).run(p.pushToken, p.now, p.deviceId);
+    return { rowsAffected: result.changes };
+  });
+
+  registerCommand<MdevMarkTokenInvalidParams>(MDEV_CMD_MARK_TOKEN_INVALID, (db, p) => {
+    /* Idempotent: re-marking an already-invalidated row keeps the
+     * earliest invalidation timestamp (COALESCE on the read side; the
+     * write here only updates when the column is currently NULL,
+     * preserving the historical signal). */
+    const result = db.prepare<void>(
+      'UPDATE devices SET is_invalid_at = COALESCE(is_invalid_at, ?) WHERE id = ?',
+    ).run(p.now, p.deviceId);
     return { rowsAffected: result.changes };
   });
 

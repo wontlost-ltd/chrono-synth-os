@@ -2360,6 +2360,25 @@ const v070_core_values_snapshot: Migration = {
   ],
 };
 
+/** v071 (sqlite-side): EP-3.5 push token invalidation column.
+ *
+ *  When APNs returns BadDeviceToken or FCM returns UNREGISTERED, the
+ *  PushDispatcher's onTokenInvalidated callback writes the timestamp
+ *  here and the dispatcher's deviceLookup short-circuits future sends
+ *  to that device. This avoids hammering already-dead tokens (which
+ *  is also what gets you rate-limited by Apple/Google). */
+const v071_devices_token_invalidation: Migration = {
+  version: 'v071',
+  description: 'EP-3.5 devices.is_invalid_at column for push token invalidation',
+  sql: [
+    /* SQLite: ALTER TABLE ADD COLUMN is idempotent across runs only when
+     * the column is missing — guarded by the migration version row, so
+     * re-running this migration on an already-applied DB is impossible. */
+    'ALTER TABLE devices ADD COLUMN is_invalid_at INTEGER',
+    'CREATE INDEX IF NOT EXISTS idx_devices_invalid ON devices(is_invalid_at) WHERE is_invalid_at IS NOT NULL',
+  ],
+};
+
 /** 所有迁移按版本顺序排列 */
 const MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -2432,6 +2451,7 @@ const MIGRATIONS: readonly Migration[] = [
   v068_agent_oauth_and_invocations,
   v069_events_user_journey,
   v070_core_values_snapshot,
+  v071_devices_token_invalidation,
 ];
 
 interface MigrationRow {
