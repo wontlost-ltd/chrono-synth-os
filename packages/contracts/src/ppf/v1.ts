@@ -132,3 +132,74 @@ export type PpfV1Document = z.infer<typeof PpfV1DocumentSchema>;
 export type PpfValue = z.infer<typeof PpfValueSchema>;
 export type PpfMemoryNode = z.infer<typeof PpfMemoryNodeSchema>;
 export type PpfGovernance = z.infer<typeof PpfGovernanceSchema>;
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Canonicalization (RFC 8785 subset) + §9 checksum.
+ *
+ * The TypeScript and Python (reference-impls/python/chrono_ppf) impls
+ * share this contract: feed the same vector through both, the
+ * `provenance.checksum`-style hash bytes MUST match. The shared test
+ * vector pins the expected hash (see test-vectors/README.md), so a
+ * change in either canonicalizer fails CI in both ecosystems.
+ * ────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Sort object keys recursively and re-serialize without spaces, mirroring
+ * the Python `chrono_ppf.canonical.canonicalize` output byte-for-byte.
+ *
+ * Limitations: PPF v1 only emits ASCII keys, finite numbers in [0, 1] or
+ * non-negative integers, and bounded UTF-8 strings — so we don't need
+ * full RFC 8785 number canonicalization or UTF-16 code-unit sorting.
+ */
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value !== null && typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as object).sort()) {
+      sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+export function canonicalize(doc: unknown): string {
+  return JSON.stringify(sortKeysDeep(doc));
+}
+
+/* Minimal ambient declarations: this package targets ES2024 with no DOM
+ * lib so it can ship to web, Tauri, and Node consumers identically. The
+ * declarations below pin only the surface we actually call. */
+declare class TextEncoder {
+  encode(input?: string): Uint8Array;
+}
+interface SubtleLike {
+  digest(algorithm: 'SHA-256', data: ArrayBufferView): Promise<ArrayBuffer>;
+}
+interface CryptoLike {
+  subtle?: SubtleLike;
+}
+declare const globalThis: { crypto?: CryptoLike };
+
+/**
+ * Compute the spec-§9 checksum: SHA-256 over the canonical bytes of the
+ * document with `signature` set to `null`.
+ *
+ * Uses the platform crypto.subtle when available (Node 19+, all evergreen
+ * browsers). Throws if neither is present — we deliberately do not fall
+ * back to a JS sha256, since this hash is consensus-critical and a JS
+ * polyfill would just add a second canonicalizer to keep in sync.
+ */
+export async function documentChecksum(doc: PpfV1Document): Promise<string> {
+  const snapshot = { ...doc, signature: null } as const;
+  const bytes = new TextEncoder().encode(canonicalize(snapshot));
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error('crypto.subtle is not available; cannot compute PPF checksum');
+  }
+  const digest = await subtle.digest('SHA-256', bytes);
+  const hex = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+  return `sha256:0x${hex}`;
+}
