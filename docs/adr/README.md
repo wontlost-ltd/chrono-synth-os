@@ -62,8 +62,32 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 29 | [All timestamps are epoch milliseconds (`number`), not strings](0029-epoch-ms-timestamps.md) | Accepted |
 | 30 | [No GraphQL API](0030-no-graphql.md)                                                       | Accepted |
 | 31 | [`IDatabase` residue is intentional, not tech debt](0031-idatabase-residue-intentional.md) | Accepted |
+| 32 | [PPF v1 uses zod schemas, not JSON Schema](0032-ppf-v1-zod-schemas.md)                     | Accepted |
+| 33 | [pgvector HNSW: m=16, ef_construction=64](0033-pgvector-hnsw-params.md)                    | Accepted |
+| 34 | [Subscription gate fails closed (402), no silent degradation](0034-subscription-gate-fails-closed.md) | Accepted |
+| 35 | [Knowledge bulk import dedupes via SHA-256 content fingerprint](0035-bulk-import-sha256-fingerprint.md) | Accepted |
+| 36 | [Drift threshold defaults: 0.15 warning / 0.30 critical](0036-drift-threshold-defaults.md) | Accepted |
+| 37 | [SSE for one-way push, WebSocket for bidirectional only](0037-sse-vs-websocket-routing.md) | Accepted |
+| 38 | [DAST runs passive baseline only, not full scan](0038-dast-passive-baseline.md)            | Accepted |
+| 39 | [ZAP DAST first-run uses fail_action: false (collect mode)](0039-zap-fail-action-collect-mode.md) | Accepted |
+| 40 | [SLO addon is a kustomize Component (not a Kustomization)](0040-slo-addon-as-component.md) | Accepted |
+| 41 | [ArgoCD sync waves: 6-band (-10 / -5 / 0 / 5 / 10 / 15)](0041-argocd-sync-waves-6-band.md) | Accepted |
+| 42 | [Web a11y testing uses playwright-axe, not vitest-axe](0042-playwright-axe-over-vitest-axe.md) | Accepted |
+| 43 | [i18n CJK literal allowlist via `// i18n-allow-cjk:` pragma](0043-i18n-cjk-allowlist-pragma.md) | Accepted |
+| 44 | [Kubernetes NetworkPolicy: default-deny + per-workload allow](0044-networkpolicy-default-deny.md) | Accepted |
+| 45 | [Pod Security Admission: `restricted` enforce + dev reverse-assertion](0045-psa-restricted-with-reverse-assertion.md) | Accepted |
 
-New decisions land as 0032+ following the same MADR-lite template
-(see `0001-kernel-zero-runtime-deps.md`). The first 30 records were
-back-filled in P1.5 to cover kernel architecture, storage, agent
-layer, deployment, and product policy.
+The first 31 records were back-filled in P1.5 to cover kernel
+architecture, storage, agent layer, deployment, and product policy.
+EP-2.3 added 14 more in 2026-05 covering decisions formed during
+P0/P1: PPF v1 / pgvector HNSW / subscription gate / bulk-import
+dedupe / drift thresholds / SSE-vs-WebSocket on the os side, plus
+the cross-repo infrastructure decisions (DAST baseline, ZAP collect
+mode, SLO Component, sync waves, playwright-axe, i18n CJK pragma,
+NetworkPolicy default-deny, PSA restricted) that landed across
+`chrono-synth-deploy` and `chrono-synth-web`. Cross-repo ADRs follow
+the precedent of ADR-0020/0021: scope field names the actual repo
+path; the os repo serves as the organisation-level ADR registry.
+
+New decisions land as 0046+ following the same MADR-lite template
+(see `0001-kernel-zero-runtime-deps.md`).
