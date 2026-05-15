@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { TaskQueue } from '../../queue/task-queue.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -10,7 +10,7 @@ describe('TaskQueue', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     queue = new TaskQueue(db);
   });
 

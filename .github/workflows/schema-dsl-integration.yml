@@ -1,0 +1,27 @@
+name: schema-dsl integration tests
+
+on:
+  pull_request:
+    paths:
+      - 'packages/schema-dsl/**'
+      - 'src/storage/dsl-migrations-runner.ts'
+      - 'src/test/integration/_setup-pg-databases.ts'
+      - 'src/test/integration/fixtures/legacy-migrations.ts'
+      - 'src/test/integration/schema-dsl-*.test.ts'
+      - 'tsconfig.integration.json'
+      - '.github/workflows/schema-dsl-integration.yml'
+  workflow_dispatch:
+
+jobs:
+  schema-dsl-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run build --workspace @chrono/schema-dsl
+      - run: npm run test:integration:schema-dsl
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'true'

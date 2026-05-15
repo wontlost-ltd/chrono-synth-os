@@ -102,8 +102,8 @@ table.
   the same `createHash('sha256').update(content).digest('hex').slice(0, 32)`
   pattern. The `KnowledgeSource` interface in `src/knowledge/knowledge-source.ts`
   documents this contract.
-- The unique index on `(tenant_id, fingerprint)` in
-  `migrations.ts/postgres-migrations.ts` v063/v064 is the safety net
+- The unique index on `(tenant_id, fingerprint)` in schema-dsl server migrations
+  v063/v064 is the safety net
   for any source that forgets to set fingerprint correctly: insertion
   fails loudly rather than silently duplicating.
 - Don't change the truncation length without a coordinated migration.

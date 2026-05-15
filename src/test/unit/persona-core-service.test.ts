@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { FieldEncryption } from '../../storage/encryption.js';
@@ -14,7 +14,7 @@ describe('PersonaCoreService', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     service = new PersonaCoreService(db);
 
     const now = Date.now();
@@ -426,7 +426,7 @@ describe('PersonaCoreService', () => {
 
   it('敏感 persona memory 在启用加密时以密文落库并明文回读', () => {
     const encDb = createMemoryDatabase();
-    runMigrations(encDb);
+    runDslSqliteMigrations(encDb);
     const encryption = new FieldEncryption({
       enabled: true,
       masterKey: randomBytes(32).toString('base64'),

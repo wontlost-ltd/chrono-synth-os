@@ -15,7 +15,7 @@ import { LifeSimulationStore } from '../../storage/life-simulation-store.js';
 import { ConfigStore } from '../../config/config-store.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveCommandExecutor, resolveQueryExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 
 describe('LifeSimulationStore 执行器注册', () => {
   beforeEach(() => {
@@ -45,7 +45,7 @@ describe('LifeSimulationStore 执行器注册', () => {
 
   it('创建模拟并按 ID 查询', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const store = new LifeSimulationStore(db);
 
     store.create('sim-1', 'tenant-a', 'task-1', { paths: 3, yearsPerPath: 10 } as never);
@@ -59,7 +59,7 @@ describe('LifeSimulationStore 执行器注册', () => {
 
   it('租户隔离查询与分页', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const store = new LifeSimulationStore(db);
 
     store.create('sim-a1', 'tenant-a', 'task-1', {} as never);
@@ -82,7 +82,7 @@ describe('LifeSimulationStore 执行器注册', () => {
 
   it('setStatus 和 completed 路径', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const store = new LifeSimulationStore(db);
 
     store.create('sim-1', 'tenant-a', 'task-1', {} as never);
@@ -115,7 +115,7 @@ describe('ConfigStore 执行器注册', () => {
 
   it('applyPatch 写入配置并生成审计日志', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const store = new ConfigStore(db);
 
     store.applyPatch({ 'app.name': 'test-app' }, 'admin');

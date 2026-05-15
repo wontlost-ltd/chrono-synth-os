@@ -11,13 +11,13 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
 
 function makeService(): { db: IDatabase; svc: MobileDeviceService } {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   const svc = new MobileDeviceService(db);
   return { db, svc };
 }

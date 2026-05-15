@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
@@ -13,7 +13,7 @@ describe('AvatarService', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     identityService = new IdentityService(db);
     avatarService = new AvatarService(db);
     const identity = identityService.create('user_1', 'tenant_1', '测试用户');

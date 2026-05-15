@@ -5,14 +5,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { DriftAlertService } from '../../safety/drift-alert-service.js';
 import { SilentLogger } from '../../utils/logger.js';
 import type { DriftReport } from '../../safety/persona-drift-analyzer.js';
 
 function setup() {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   return { db };
 }
 

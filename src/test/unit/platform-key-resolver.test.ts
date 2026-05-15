@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { PlatformKeyResolver } from '../../data-plane/platform-key-resolver.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -19,7 +19,7 @@ describe('PlatformKeyResolver', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
   });
 
   it('resolve() returns KeyHandle with correct algorithm', async () => {

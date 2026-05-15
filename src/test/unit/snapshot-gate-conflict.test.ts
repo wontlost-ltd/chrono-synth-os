@@ -13,7 +13,7 @@ import { UpdateGate } from '../../meta/update-gate.js';
 import { ConflictResolver } from '../../meta/conflict-resolver.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 
 describe('SnapshotStore 执行器注册', () => {
   beforeEach(() => { resetCoreSelfExecutors(); });
@@ -30,7 +30,7 @@ describe('SnapshotStore 执行器注册', () => {
 
   it('save 和 load 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const store = new SnapshotStore(db);
 
     const snapshot = {
@@ -48,7 +48,7 @@ describe('SnapshotStore 执行器注册', () => {
 
   it('list 和 delete 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const store = new SnapshotStore(db);
 
     store.save({ id: 'snap-a', reason: 'A', createdAt: 1000 } as any);
@@ -76,7 +76,7 @@ describe('UpdateGate 执行器注册', () => {
 
   it('propose 和 approve 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const clock = { now: () => Date.now() };
     const gate = new UpdateGate(db, clock);
 
@@ -93,7 +93,7 @@ describe('UpdateGate 执行器注册', () => {
 
   it('getPending 返回待处理项', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const clock = { now: () => Date.now() };
     const gate = new UpdateGate(db, clock);
 
@@ -120,7 +120,7 @@ describe('ConflictResolver 执行器注册', () => {
 
   it('resolve 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const clock = { now: () => Date.now() };
     const resolver = new ConflictResolver(db, clock);
 

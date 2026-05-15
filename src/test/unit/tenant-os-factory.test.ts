@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
@@ -12,7 +12,7 @@ describe('TenantOSFactory', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     factory = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), { maxCachedTenants: 3 });
   });
 

@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
@@ -17,7 +17,7 @@ describe('P-OS v0.1 五层人格模型', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     clock = new TestClock(1000);
   });
 

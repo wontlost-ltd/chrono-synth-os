@@ -5,7 +5,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { StripeWebhookService } from '../../billing/stripe-webhook-service.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
@@ -65,7 +65,7 @@ describe('StripeWebhookService 扩展事件', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     service = new StripeWebhookService(db, new EntitlementService(db));
   });
 

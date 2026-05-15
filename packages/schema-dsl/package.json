@@ -1,0 +1,83 @@
+{
+  "name": "@chrono/schema-dsl",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./renderers/postgres": {
+      "types": "./dist/src/renderers/postgres.d.ts",
+      "import": "./dist/src/renderers/postgres.js"
+    },
+    "./renderers/sqlite-sql": {
+      "types": "./dist/src/renderers/sqlite-sql.d.ts",
+      "import": "./dist/src/renderers/sqlite-sql.js"
+    },
+    "./renderers/sqlite-rust": {
+      "types": "./dist/src/renderers/sqlite-rust.d.ts",
+      "import": "./dist/src/renderers/sqlite-rust.js"
+    },
+    "./renderers/sqlite-rust-module": {
+      "types": "./dist/src/renderers/sqlite-rust-module.d.ts",
+      "import": "./dist/src/renderers/sqlite-rust-module.js"
+    },
+    "./migrations/server-simple": {
+      "types": "./dist/src/migrations/server-simple/index.d.ts",
+      "import": "./dist/src/migrations/server-simple/index.js"
+    },
+    "./migrations/server-raw": {
+      "types": "./dist/src/migrations/server-raw/index.d.ts",
+      "import": "./dist/src/migrations/server-raw/index.js"
+    },
+    "./migrations/desktop": {
+      "types": "./dist/src/migrations/desktop/index.d.ts",
+      "import": "./dist/src/migrations/desktop/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "bin/",
+    "!dist/test/**",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "bin": {
+    "schema-dsl-render-rust": "./bin/render-rust.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<ORG>/chrono-synth-os.git",
+    "directory": "packages/schema-dsl"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "pretest": "tsc",
+    "test": "node --test --test-force-exit dist/test/*.test.js dist/test/parity/*.test.js",
+    "test:parity-simple": "tsc && node --test --test-force-exit dist/test/parity/server-simple.test.js",
+    "test:parity-raw": "tsc && node --test --test-force-exit dist/test/parity/server-raw.test.js",
+    "test:parity-desktop": "tsc && node --test --test-force-exit dist/test/parity/desktop.test.js"
+  },
+  "dependencies": {
+    "node-sql-parser": "^5.4.0",
+    "pg-query-emscripten": "^5.1.0",
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^11.14.0",
+    "@types/node": "^25.2.3",
+    "better-sqlite3": "^12.10.0",
+    "testcontainers": "^11.14.0"
+  }
+}

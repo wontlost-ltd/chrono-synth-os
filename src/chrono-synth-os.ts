@@ -15,7 +15,8 @@ import { SnapshotStore } from './recovery/snapshot-store.js';
 import { LifeSimulationEngine, type LifeSimEngineConfig } from './simulation/life-simulation-engine.js';
 import { LifeSimulationService } from './simulation/life-simulation-service.js';
 import { LifeSimulationStore } from './storage/life-simulation-store.js';
-import { type IDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';
+import { type IDatabase, createMemoryDatabase } from './storage/index.js';
+import { runDslSqliteMigrations } from './storage/dsl-migrations-runner.js';
 import { registerCoreSelfExecutors } from './storage/executors/index.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
@@ -79,7 +80,7 @@ export class ChronoSynthOS {
 
     /* 初始化数据库表（createDatabase 工厂已处理迁移时跳过） */
     if (!config.skipMigrations) {
-      runMigrations(this.db);
+      runDslSqliteMigrations(this.db);
     }
 
     /* 创建事件总线 */

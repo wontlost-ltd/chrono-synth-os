@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -23,7 +23,7 @@ function seedUser(db: IDatabase, userId: string, email: string, tenantId = 'defa
 describe('Phase 2 批次 5：persona-core-service 双入口', () => {
   it('createPersona 双入口：IDatabase 路径走原子事务', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       seedUser(db, 'u1', 'u1@x.com');
       const fromDb = new PersonaCoreService(db);
@@ -43,7 +43,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
 
   it('UoW 入口：getCognitive 现已透传 UoW（Phase 3 解锁）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromUow = new PersonaCoreService(db);
       const graph = (fromUow as unknown as { getCognitive: (t: string) => unknown }).getCognitive('default');
@@ -53,7 +53,7 @@ describe('Phase 2 批次 5：persona-core-service 双入口', () => {
 
   it('UoW 入口：审计/可观测调用静默跳过', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       seedUser(db, 'u1', 'u1@x.com');
       const fromDb = new PersonaCoreService(db);

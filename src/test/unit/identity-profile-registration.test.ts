@@ -8,7 +8,7 @@ import {
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { UserProfileService } from '../../identity/user-profile-service.js';
 import type { IDatabase } from '../../storage/database.js';
 import { hash } from '@node-rs/argon2';
@@ -54,7 +54,7 @@ describe('UserProfileService 执行器注册', () => {
 
   it('getProfile 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'test@example.com', 'hash');
     const service = new UserProfileService(db);
 
@@ -66,7 +66,7 @@ describe('UserProfileService 执行器注册', () => {
 
   it('updateEmail 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'old@example.com', 'hash');
     const service = new UserProfileService(db);
 
@@ -76,7 +76,7 @@ describe('UserProfileService 执行器注册', () => {
 
   it('updateEmail 重复邮箱抛出错误', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'a@example.com', 'hash');
     seedUser(db, 'user-2', 'b@example.com', 'hash');
     const service = new UserProfileService(db);
@@ -86,7 +86,7 @@ describe('UserProfileService 执行器注册', () => {
 
   it('changePassword 验证旧密码并更新', async () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const pwHash = await hash('oldPassword123');
     seedUser(db, 'user-1', 'test@example.com', pwHash);
     const service = new UserProfileService(db);

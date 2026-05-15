@@ -2,12 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { personaCoreDualWrite } from '../../data-plane/persona-core-dual-write.js';
 import { createMemoryDatabase, type IDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { DualWriteFlushWorker } from '../../workers/dual-write-flush-worker.js';
 
 function makeDb(): IDatabase {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   return db;
 }
 

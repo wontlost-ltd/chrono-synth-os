@@ -8,6 +8,8 @@ dist-test/
 .idea/
 *.iml
 .env
+.npmrc
+!packages/schema-dsl/.npmrc
 *.db
 backups/
 **/.DS_Store

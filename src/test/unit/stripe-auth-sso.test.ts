@@ -21,7 +21,7 @@ import {
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { StripeWebhookService } from '../../billing/stripe-webhook-service.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
@@ -89,7 +89,7 @@ describe('StripeWebhookService 数据平面契约', () => {
   beforeEach(() => {
     resetCoreSelfExecutors();
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const entitlementService = new EntitlementService(db);
     service = new StripeWebhookService(db, entitlementService);
   });
@@ -212,7 +212,7 @@ describe('AuthService.cleanupExpired 数据平面契约', () => {
   beforeEach(() => {
     resetCoreSelfExecutors();
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
   });
 
   it('清理过期和已吊销的令牌', () => {
@@ -256,7 +256,7 @@ describe('SsoUserService 数据平面契约', () => {
   beforeEach(() => {
     resetCoreSelfExecutors();
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     service = new SsoUserService(db);
   });
 

@@ -19,6 +19,9 @@
     "test:load": "node --test --test-force-exit dist/test/load/**/*.test.js",
     "test:contract": "node --test --test-force-exit dist/test/contract/**/*.test.js",
     "test:packages": "node --test --test-force-exit packages/*/dist/**/*.test.js packages/*/dist-test/**/*.test.js",
+    "test:schema-dsl-parity:simple": "npm run --workspace @chrono/schema-dsl test:parity-simple",
+    "test:schema-dsl-parity:raw": "npm run --workspace @chrono/schema-dsl test:parity-raw",
+    "test:schema-dsl-parity:desktop": "npm run --workspace @chrono/schema-dsl test:parity-desktop",
     "test:ops": "bash -n scripts/backup_db.sh && bash -n scripts/restore_db.sh && bash -n scripts/backup_storage.sh && bash -n scripts/test_disaster_recovery.sh && bash scripts/test_disaster_recovery.sh",
     "check:forbidden-imports": "bash scripts/check-forbidden-imports.sh",
     "check:kernel-purity": "bash scripts/check-forbidden-imports.sh",
@@ -27,7 +30,8 @@
     "start": "node dist/main.js",
     "start:observability-worker": "node dist/main-observability-worker.js",
     "dev": "npm run build && node dist/main.js",
-    "dev:observability-worker": "npm run build && node dist/main-observability-worker.js"
+    "dev:observability-worker": "npm run build && node dist/main-observability-worker.js",
+    "test:integration:schema-dsl": "env -u NODE_USE_SYSTEM_CA tsc -p tsconfig.integration.json && env -u NODE_USE_SYSTEM_CA node --test --test-force-exit dist/src/test/integration/schema-dsl-*.test.js"
   },
   "keywords": [
     "digital-persona",

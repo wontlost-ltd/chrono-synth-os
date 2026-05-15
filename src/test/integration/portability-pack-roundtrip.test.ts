@@ -9,7 +9,7 @@ import { PrivacyService } from '../../privacy/privacy-service.js';
 import { LocalObjectStorageClient } from '../../privacy/object-storage-client.js';
 import { getExportJob } from '../../privacy/export-job-store.js';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { PortabilityPackManifestV1Schema, ImportDryRunReportV1Schema, ImportCommitResultV1Schema } from '@chrono/contracts';
@@ -36,7 +36,7 @@ describe('Portability Pack GA roundtrip', () => {
 
   it('exports a portability pack and validates import dry-run', async () => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-pack-'));
 
     os = new ChronoSynthOS({
@@ -80,7 +80,7 @@ describe('Portability Pack GA roundtrip', () => {
 
   it('commitImport 单行失败时计入 failedCount 并保留失败详情', async () => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-failures-'));
 
     os = new ChronoSynthOS({
@@ -141,7 +141,7 @@ describe('Portability Pack GA roundtrip', () => {
 
   it('commitImport 写入行并返回 importedCount > 0', async () => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-commit-'));
 
     os = new ChronoSynthOS({
@@ -201,7 +201,7 @@ describe('Portability Pack GA roundtrip', () => {
 
   it('commitImport 版本感知合并：本地 updated_at 较新时拒绝覆盖', async () => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-merge-'));
 
     os = new ChronoSynthOS({
@@ -258,7 +258,7 @@ describe('Portability Pack GA roundtrip', () => {
 
   it('commitImport 版本感知合并：本地 updated_at 较旧时正常覆盖', async () => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-merge-newer-'));
 
     os = new ChronoSynthOS({

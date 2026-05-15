@@ -9,7 +9,7 @@ import {
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveCommandExecutor, resolveQueryExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 
 describe('UsageTracker & BillingOutbox 执行器注册', () => {
   beforeEach(() => {
@@ -39,7 +39,7 @@ describe('UsageTracker & BillingOutbox 执行器注册', () => {
 
   it('UsageTracker record 和 getUsage 通过 data plane 契约持久化', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const tracker = new UsageTracker(db);
 
     tracker.record('t1', 'llm_tokens', 100);
@@ -51,7 +51,7 @@ describe('UsageTracker & BillingOutbox 执行器注册', () => {
 
   it('UsageTracker getSummary 返回按资源分组的用量', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const tracker = new UsageTracker(db);
 
     tracker.record('t1', 'llm_tokens', 100);

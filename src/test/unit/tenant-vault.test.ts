@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { createPlatformTenantVault } from '../../data-plane/tenant-vault.js';
 import { createStorageProviderResolver } from '../../data-plane/storage-provider-resolver.js';
-import { createMemoryDatabase, runMigrations, type IDatabase } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations, type IDatabase } from '../../storage/index.js';
 
 async function withDb(fn: (db: IDatabase) => Promise<void> | void): Promise<void> {
   const db = createMemoryDatabase();
   try {
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     await fn(db);
   } finally {
     db.close();

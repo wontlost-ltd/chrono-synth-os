@@ -9,7 +9,7 @@ import {
   type SyncCapabilitiesV1,
   type SyncStatusSnapshotV1,
 } from '@chrono/contracts';
-import { createMemoryDatabase, runMigrations } from '../../../dist/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../../dist/index.js';
 import type { IDatabase } from '../../../dist/index.js';
 
 function buildCapabilities(
@@ -59,7 +59,7 @@ export function createSyncStatusSnapshotFixture(
 
 export function createMigratedMemoryDb(): IDatabase {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   return db;
 }
 

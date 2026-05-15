@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-05 (pgvector stages 1-7)
-**Scope:** `src/storage/postgres-migrations.ts` v071, `chrono-synth-deploy/k8s/base/postgres/`
+**Scope:** schema-dsl server raw migration v071, `chrono-synth-deploy/k8s/base/postgres/`
 
 ## Context
 
@@ -117,7 +117,7 @@ Track recall metric in production via `chrono_embedding_query_recall`
 - [ADR-0001 — Kernel zero runtime deps](0001-kernel-zero-runtime-deps.md) —
   the embedding-index port abstraction lives in the kernel; the choice
   of pgvector lives in the adapter
-- `src/storage/postgres-migrations.ts` v071 — concrete SQL with comments
+- `packages/schema-dsl/src/migrations/server-raw/v071_pg.ts` — concrete SQL with comments
 - `docs/operations/pgvector-rollout.md` — staged rollout runbook
 - `scripts/pgvector-backfill.ts` — tenant backfill tool
 - `scripts/pgvector-drift-verify.ts` — recall verification tool used

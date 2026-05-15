@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
@@ -19,7 +19,7 @@ describe('EvolutionMerger', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     clock = new TestClock(1000);
     logger = new SilentLogger();
     const bus = new EventBus();
@@ -165,7 +165,7 @@ describe('EvolutionMerger', () => {
 
     /* 重建环境，提高 regretSensitivity */
     const db2 = createMemoryDatabase();
-    runMigrations(db2);
+    runDslSqliteMigrations(db2);
     const bus2 = new EventBus();
     const core2 = new CoreRhythmLayer(db2, bus2, clock, logger);
     const meta2 = new MetaRegulationLayer(db2, bus2, clock, logger);

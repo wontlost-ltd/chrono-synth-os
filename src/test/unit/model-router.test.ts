@@ -6,7 +6,7 @@ import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { QuotaExceededError } from '../../errors/index.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 
 describe('ModelRouter (Mock Provider)', () => {
@@ -129,7 +129,7 @@ describe('ModelRouter (Mock Provider)', () => {
 
     beforeEach(() => {
       db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
     });
 
     it('预算充足时正常调用', async () => {
@@ -185,7 +185,7 @@ describe('ModelRouter (Mock Provider)', () => {
 
     beforeEach(() => {
       db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
     });
 
     it('chat 后 CostTracker 写入 llm_usage 记录', async () => {
@@ -211,7 +211,7 @@ describe('ModelRouter (Mock Provider)', () => {
 
     beforeEach(() => {
       db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
     });
 
     it('llm_tokens 配额充足时正常调用', async () => {
@@ -285,7 +285,7 @@ describe('ModelRouter (Mock Provider)', () => {
 
     beforeEach(() => {
       db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
     });
 
     it('chat 后 UsageTracker 记录 llm_tokens 用量', async () => {

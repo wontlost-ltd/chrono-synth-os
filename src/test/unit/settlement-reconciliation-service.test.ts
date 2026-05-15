@@ -13,7 +13,7 @@ import {
 import { SettlementReconciliationService } from '../../billing/settlement-reconciliation-service.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveCommandExecutor, resolveQueryExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 
 describe('SettlementReconciliationService', () => {
   beforeEach(() => {
@@ -35,7 +35,7 @@ describe('SettlementReconciliationService', () => {
 
   it('空租户对账并持久化运行记录', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const service = new SettlementReconciliationService(db);
 
     const run = service.reconcileTenant('tenant-a');

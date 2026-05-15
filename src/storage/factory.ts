@@ -6,9 +6,8 @@
 import type { AppConfig } from '../config/schema.js';
 import type { IDatabase } from './database.js';
 import { SqliteDatabase } from './database.js';
-import { runMigrations } from './migrations.js';
+import { runDslPostgresMigrations, runDslSqliteMigrations } from './dsl-migrations-runner.js';
 import { PostgresDatabase } from './postgres-database.js';
-import { runPostgresMigrations } from './postgres-migrations-runner.js';
 
 /** 根据配置创建数据库实例并执行迁移 */
 export function createDatabase(config: AppConfig): IDatabase {
@@ -20,11 +19,11 @@ export function createDatabase(config: AppConfig): IDatabase {
       max: config.db.pool.max,
       idleTimeoutMs: config.db.pool.idleTimeoutMs,
     });
-    runPostgresMigrations(db);
+    runDslPostgresMigrations(db);
     return db;
   }
 
   const db = new SqliteDatabase(config.db.path);
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   return db;
 }

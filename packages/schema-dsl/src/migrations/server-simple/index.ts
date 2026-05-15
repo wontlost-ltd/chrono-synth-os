@@ -1,0 +1,194 @@
+export { v001_initial_schema } from './v001.js';
+export { v002_audit_log } from './v002.js';
+export { v003_audit_api_key } from './v003.js';
+export { v004_cognitive_memory } from './v004.js';
+export { v005_personality_os } from './v005.js';
+export { v006_memory_embeddings } from './v006.js';
+export { v008_task_queue } from './v008.js';
+export { v009_core_values_tuning } from './v009.js';
+export { v010_update_gate } from './v010.js';
+export { v011_migration } from './v011.js';
+export { v012_migration } from './v012.js';
+export { v013_migration } from './v013.js';
+export { v014_migration } from './v014.js';
+export { v015_migration } from './v015.js';
+export { v016_migration } from './v016.js';
+export { v017_migration } from './v017.js';
+export { v018_migration } from './v018.js';
+export { v019_migration } from './v019.js';
+export { v020_migration } from './v020.js';
+export { v021_migration } from './v021.js';
+export { v022_migration } from './v022.js';
+export { v023_migration } from './v023.js';
+export { v024_migration } from './v024.js';
+export { v025_migration } from './v025.js';
+export { v026_migration } from './v026.js';
+export { v028_migration } from './v028.js';
+export { v029_migration } from './v029.js';
+export { v031_migration } from './v031.js';
+export { v032_migration } from './v032.js';
+export { v033_migration } from './v033.js';
+export { v035_migration } from './v035.js';
+export { v036_migration } from './v036.js';
+export { v037_migration } from './v037.js';
+export { v038_migration } from './v038.js';
+export { v039_migration } from './v039.js';
+export { v042_migration } from './v042.js';
+export { v043_migration } from './v043.js';
+export { v044_migration } from './v044.js';
+export { v045_migration } from './v045.js';
+export { v046_migration } from './v046.js';
+export { v048_migration } from './v048.js';
+export { v049_migration } from './v049.js';
+export { v050_migration } from './v050.js';
+export { v051_migration } from './v051.js';
+export { v053_migration } from './v053.js';
+export { v054_migration } from './v054.js';
+export { v055_migration } from './v055.js';
+export { v056_migration } from './v056.js';
+export { v057_migration } from './v057.js';
+export { v058_migration } from './v058.js';
+export { v059_migration } from './v059.js';
+export { v060_migration } from './v060.js';
+export { v061_migration } from './v061.js';
+export { v062_migration } from './v062.js';
+export { v063_migration } from './v063.js';
+export { v064_migration } from './v064.js';
+export { v065_migration } from './v065.js';
+export { v066_migration } from './v066.js';
+export { v067_migration } from './v067.js';
+export { v068_migration } from './v068.js';
+export { v069_migration } from './v069.js';
+export { v070_migration } from './v070.js';
+export { v071_migration } from './v071.js';
+
+import type { Migration } from '../../index.js';
+import { v001_initial_schema } from './v001.js';
+import { v002_audit_log } from './v002.js';
+import { v003_audit_api_key } from './v003.js';
+import { v004_cognitive_memory } from './v004.js';
+import { v005_personality_os } from './v005.js';
+import { v006_memory_embeddings } from './v006.js';
+import { v008_task_queue } from './v008.js';
+import { v009_core_values_tuning } from './v009.js';
+import { v010_update_gate } from './v010.js';
+import { v011_migration } from './v011.js';
+import { v012_migration } from './v012.js';
+import { v013_migration } from './v013.js';
+import { v014_migration } from './v014.js';
+import { v015_migration } from './v015.js';
+import { v016_migration } from './v016.js';
+import { v017_migration } from './v017.js';
+import { v018_migration } from './v018.js';
+import { v019_migration } from './v019.js';
+import { v020_migration } from './v020.js';
+import { v021_migration } from './v021.js';
+import { v022_migration } from './v022.js';
+import { v023_migration } from './v023.js';
+import { v024_migration } from './v024.js';
+import { v025_migration } from './v025.js';
+import { v026_migration } from './v026.js';
+import { v028_migration } from './v028.js';
+import { v029_migration } from './v029.js';
+import { v031_migration } from './v031.js';
+import { v032_migration } from './v032.js';
+import { v033_migration } from './v033.js';
+import { v035_migration } from './v035.js';
+import { v036_migration } from './v036.js';
+import { v037_migration } from './v037.js';
+import { v038_migration } from './v038.js';
+import { v039_migration } from './v039.js';
+import { v042_migration } from './v042.js';
+import { v043_migration } from './v043.js';
+import { v044_migration } from './v044.js';
+import { v045_migration } from './v045.js';
+import { v046_migration } from './v046.js';
+import { v048_migration } from './v048.js';
+import { v049_migration } from './v049.js';
+import { v050_migration } from './v050.js';
+import { v051_migration } from './v051.js';
+import { v053_migration } from './v053.js';
+import { v054_migration } from './v054.js';
+import { v055_migration } from './v055.js';
+import { v056_migration } from './v056.js';
+import { v057_migration } from './v057.js';
+import { v058_migration } from './v058.js';
+import { v059_migration } from './v059.js';
+import { v060_migration } from './v060.js';
+import { v061_migration } from './v061.js';
+import { v062_migration } from './v062.js';
+import { v063_migration } from './v063.js';
+import { v064_migration } from './v064.js';
+import { v065_migration } from './v065.js';
+import { v066_migration } from './v066.js';
+import { v067_migration } from './v067.js';
+import { v068_migration } from './v068.js';
+import { v069_migration } from './v069.js';
+import { v070_migration } from './v070.js';
+import { v071_migration } from './v071.js';
+
+export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
+  v001_initial_schema,
+  v002_audit_log,
+  v003_audit_api_key,
+  v004_cognitive_memory,
+  v005_personality_os,
+  v006_memory_embeddings,
+  v008_task_queue,
+  v009_core_values_tuning,
+  v010_update_gate,
+  v011_migration,
+  v012_migration,
+  v013_migration,
+  v014_migration,
+  v015_migration,
+  v016_migration,
+  v017_migration,
+  v018_migration,
+  v019_migration,
+  v020_migration,
+  v021_migration,
+  v022_migration,
+  v023_migration,
+  v024_migration,
+  v025_migration,
+  v026_migration,
+  v028_migration,
+  v029_migration,
+  v031_migration,
+  v032_migration,
+  v033_migration,
+  v035_migration,
+  v036_migration,
+  v037_migration,
+  v038_migration,
+  v039_migration,
+  v042_migration,
+  v043_migration,
+  v044_migration,
+  v045_migration,
+  v046_migration,
+  v048_migration,
+  v049_migration,
+  v050_migration,
+  v051_migration,
+  v053_migration,
+  v054_migration,
+  v055_migration,
+  v056_migration,
+  v057_migration,
+  v058_migration,
+  v059_migration,
+  v060_migration,
+  v061_migration,
+  v062_migration,
+  v063_migration,
+  v064_migration,
+  v065_migration,
+  v066_migration,
+  v067_migration,
+  v068_migration,
+  v069_migration,
+  v070_migration,
+  v071_migration,
+];

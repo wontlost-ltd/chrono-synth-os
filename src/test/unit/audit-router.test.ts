@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { AUDIT_ROUTING_RULES, categorizeAuditEvent, DbAuditRouter } from '../../data-plane/audit-router.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -39,7 +39,7 @@ describe('DbAuditRouter', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     router = new DbAuditRouter(db);
   });
 

@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { loadConfig } from '../../config/schema.js';
 import { ApiKeyService } from '../../billing/api-key-service.js';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
@@ -26,7 +26,7 @@ import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 describe('Phase 3 Bil：billing 模块双入口', () => {
   it('A 类：UsageTracker / SubscriptionQueryService / ApiKeyService / BillingOutbox 双入口构造均成功', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const config = loadConfig({});
     try {
       assert.equal(new UsageTracker(db).getUsage('default', 'simulation'), 0);
@@ -45,7 +45,7 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
 
   it('A 类：listAddOns / syncPlanToQuota / QuotaManager 函数与类双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       assert.deepEqual(listAddOns(db, false), []);
       assert.deepEqual(listAddOns(db, false), []);
@@ -60,7 +60,7 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
 
   it('A 类：EntitlementService / NodeEntitlementService 双入口', async () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new EntitlementService(db);
       const fromUow = new EntitlementService(db);
@@ -77,7 +77,7 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
 
   it('B 类：BillingService / StripeWebhookService / SettlementReconciliationService 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDbSvc = new BillingService(db);
       assert.ok(fromDbSvc.listPlans().length > 0);

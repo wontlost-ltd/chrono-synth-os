@@ -1,6 +1,6 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { loadConfig } from '../../config/schema.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
@@ -31,7 +31,7 @@ describe('Kafka transport helpers', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
   });
 
   it('支持 tenant Kafka namespace 的 topic 组装与匹配', () => {
