@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { TestClock } from '../../utils/index.js';
 import { CognitiveMemoryGraph, DEFAULT_COGNITION_CONFIG } from '../../core/memory-graph.js';
@@ -15,7 +15,7 @@ describe('CognitiveMemoryGraph', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     clock = new TestClock(1000);
     graph = new CognitiveMemoryGraph(db, clock);
   });
@@ -605,7 +605,7 @@ describe('CognitiveMemoryGraph', () => {
 
     beforeEach(() => {
       encDb = createMemoryDatabase();
-      runMigrations(encDb);
+      runDslSqliteMigrations(encDb);
       const masterKey = randomBytes(32).toString('base64');
       encryption = new FieldEncryption({ enabled: true, masterKey, keyRotationIntervalDays: 90 });
       encryptedGraph = new CognitiveMemoryGraph(encDb, new TestClock(1000), undefined, encryption);

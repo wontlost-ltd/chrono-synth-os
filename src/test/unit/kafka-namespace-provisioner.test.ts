@@ -76,11 +76,11 @@ describe('provisionTenantKafkaNamespace', () => {
 describe('TenantEnterpriseProfileService.provisionKafkaNamespace', () => {
   it('delegates to provisioner with correct tenantId and namespace', async () => {
     const { createMemoryDatabase } = await import('../../storage/database.js');
-    const { runMigrations } = await import('../../storage/migrations.js');
+    const { runDslSqliteMigrations } = await import('../../storage/index.js');
     const { TenantEnterpriseProfileService } = await import('../../enterprise/tenant-enterprise-profile-service.js');
 
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const config = loadConfig({ encryption: { enabled: false } });
     const service = new TenantEnterpriseProfileService(db, config, silentLogger);
 
@@ -99,11 +99,11 @@ describe('TenantEnterpriseProfileService.provisionKafkaNamespace', () => {
 
   it('derives namespace from tenantId when none set on dedicated_db profile', async () => {
     const { createMemoryDatabase } = await import('../../storage/database.js');
-    const { runMigrations } = await import('../../storage/migrations.js');
+    const { runDslSqliteMigrations } = await import('../../storage/index.js');
     const { TenantEnterpriseProfileService } = await import('../../enterprise/tenant-enterprise-profile-service.js');
 
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const config = loadConfig({ encryption: { enabled: false } });
     const service = new TenantEnterpriseProfileService(db, config, silentLogger);
 

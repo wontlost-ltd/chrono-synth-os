@@ -15,7 +15,7 @@ export { ChronoClient } from './sdk/index.js';
 export type { ChronoClientOptions, ApiResponse } from './sdk/index.js';
 export { SnapshotStore, EvolutionMerger } from './recovery/index.js';
 export { EventBus, TypedEventEmitter } from './events/index.js';
-export { SqliteDatabase, createMemoryDatabase, runMigrations } from './storage/index.js';
+export { SqliteDatabase, createMemoryDatabase, runDslSqliteMigrations } from './storage/index.js';
 export type { IDatabase } from './storage/index.js';
 export { generateId, generatePrefixedId, TestClock, realClock, ConsoleLogger, SilentLogger } from './utils/index.js';
 

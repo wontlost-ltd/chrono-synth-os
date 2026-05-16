@@ -9,12 +9,12 @@ import { EnvelopeEncryption } from '../../enterprise/envelope-encryption.js';
 import { LocalObjectStorageClient } from '../../privacy/object-storage-client.js';
 import { loadConfig } from '../../config/schema.js';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 
 describe('BYOK/BYOS GA roundtrip', () => {
   it('roundtrips envelope encryption and local object storage', async () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const tmpDir = await mkdtemp(join(tmpdir(), 'chrono-byok-byos-'));
 
     try {

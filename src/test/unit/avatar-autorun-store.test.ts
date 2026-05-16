@@ -4,7 +4,7 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { AvatarAutorunStore } from '../../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../../storage/knowledge-source-store.js';
@@ -18,7 +18,7 @@ describe('AvatarAutorunStore', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     store = new AvatarAutorunStore(db);
 
     /* 创建 identity + avatar 满足外键约束 */
@@ -280,7 +280,7 @@ describe('KnowledgeSourceStore', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     store = new KnowledgeSourceStore(db);
   });
 

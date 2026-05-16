@@ -13,14 +13,14 @@ const TEST_URL = process.env.TEST_POSTGRES_URL;
 describe('PostgreSQL 集成测试', { skip: !TEST_URL }, () => {
   /* 延迟导入，避免在没有 pg 依赖时报错 */
   let PostgresDatabase: typeof import('../../storage/postgres-database.js').PostgresDatabase;
-  let runPostgresMigrations: typeof import('../../storage/postgres-migrations-runner.js').runPostgresMigrations;
+  let runDslPostgresMigrations: typeof import('../../storage/index.js').runDslPostgresMigrations;
   let db: InstanceType<typeof PostgresDatabase>;
 
   before(async () => {
     const pgMod = await import('../../storage/postgres-database.js');
-    const migMod = await import('../../storage/postgres-migrations-runner.js');
+    const migMod = await import('../../storage/index.js');
     PostgresDatabase = pgMod.PostgresDatabase;
-    runPostgresMigrations = migMod.runPostgresMigrations;
+    runDslPostgresMigrations = migMod.runDslPostgresMigrations;
 
     db = new PostgresDatabase(TEST_URL!, { max: 5, idleTimeoutMs: 10_000 });
 
@@ -34,7 +34,7 @@ describe('PostgreSQL 集成测试', { skip: !TEST_URL }, () => {
       try { db.exec(`DROP TABLE IF EXISTS ${t} CASCADE`); } catch { /* 忽略 */ }
     }
 
-    runPostgresMigrations(db);
+    runDslPostgresMigrations(db);
   });
 
   after(() => {

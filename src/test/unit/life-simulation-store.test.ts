@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { LifeSimulationStore } from '../../storage/life-simulation-store.js';
 import type { LifeSimulationConfig, LifePathResult } from '../../types/life-simulation.js';
@@ -35,7 +35,7 @@ describe('LifeSimulationStore', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     store = new LifeSimulationStore(db);
   });
 

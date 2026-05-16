@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../../observability/observability-outbox.js';
@@ -17,7 +17,7 @@ describe('ObservabilityWorkerMonitor', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     logger = new SilentLogger();
   });
 

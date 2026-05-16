@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -10,7 +10,7 @@ describe('QuotaManager', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     qm = new QuotaManager(db);
   });
 

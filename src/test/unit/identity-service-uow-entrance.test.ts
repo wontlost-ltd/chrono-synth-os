@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
 import { CollaborationService } from '../../identity/collaboration-service.js';
@@ -27,7 +27,7 @@ function seedUser(db: IDatabase, userId: string, email: string, tenantId = 'defa
 describe('Phase 2 批次 2：identity stores 双入口', () => {
   it('IdentityService 双入口：create 走原子事务（IDatabase 路径）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_a', 'a@x.com');
       const fromDb = new IdentityService(db);
@@ -46,7 +46,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
 
   it('AvatarService 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_av', 'av@x.com');
       const ident = new IdentityService(db).create('user_av', 'default', 'Av');
@@ -60,7 +60,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
 
   it('DeviceAvatarService 双入口：activate 多步原子（IDatabase 路径走 db.transaction）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_da', 'da@x.com');
       const ident = new IdentityService(db).create('user_da', 'default', 'DA');
@@ -84,7 +84,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
 
   it('CollaborationService / UserProfileService / MobileDeviceService / AvatarSnapshotService / SsoUserService 都接受双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const uow = db;
       assert.ok(new CollaborationService(db));

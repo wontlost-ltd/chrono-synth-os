@@ -10,7 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { ConversationAuditPublisher } from '../../conversation/audit-publisher.js';
 import { ConfirmationTokenStore } from '../../conversation/confirmation-token-store.js';
 import { ConversationKnowledgeRetriever } from '../../conversation/conversation-knowledge-retriever.js';
@@ -23,7 +23,7 @@ import { ConsoleLogger } from '../../utils/logger.js';
 describe('Phase 2 批次 4：data stores 双入口', () => {
   it('SubscriptionGateService 双入口：IDatabase 与 UoW 等价（已下沉至 kernel）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new SubscriptionGateService(db);
       assert.equal(fromDb.canUseResource('default', 'conversation_message').allowed, true);
@@ -35,7 +35,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
 
   it('ConfirmationTokenStore 双入口：已下沉至 kernel', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new ConfirmationTokenStore(db);
       const issued = fromDb.issue({
@@ -57,7 +57,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
 
   it('ConversationKnowledgeRetriever 双入口：已下沉至 kernel', async () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new ConversationKnowledgeRetriever(db);
       assert.deepEqual(await fromDb.retrieve({ tenantId: 'default', personaId: 'p1', userInput: 'test', topK: 5 }), []);
@@ -69,7 +69,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
 
   it('ConversationStore 双入口：已下沉至 kernel', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new ConversationStore(db);
       assert.equal(fromDb.countBySession({ tenantId: 'default', personaId: 'p1', sessionId: 's1' }), 0);
@@ -81,7 +81,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
 
   it('BulkImportStore 双入口：已下沉至 kernel', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new BulkImportStore(db);
       assert.equal(fromDb.get('default', 'job_missing'), null);
@@ -93,7 +93,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
 
   it('ConversationAuditPublisher 双入口：UoW 模式下静默跳过', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const logger = new ConsoleLogger('warn');
       const fromDb = new ConversationAuditPublisher(db, logger);
@@ -112,7 +112,7 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
 
   it('KnowledgeSourceService 双入口：UoW 与 IDatabase 等价（Phase 3 解锁）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new KnowledgeSourceService(db);
       const fromUow = new KnowledgeSourceService(db);

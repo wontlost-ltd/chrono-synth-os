@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { loadConfig } from '../../config/schema.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { TenantManifestV1Schema } from '@chrono/contracts';
@@ -9,7 +9,7 @@ import { TenantManifestV1Schema } from '@chrono/contracts';
 describe('TenantEnterpriseProfileService', () => {
   it('字段加密关闭时允许保存任意 tenant-dedicated kmsKeyRef', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const config = loadConfig({
       server: { publicUrl: 'https://api.example.test' },
       encryption: {
@@ -38,7 +38,7 @@ describe('TenantEnterpriseProfileService', () => {
   describe('getManifest', () => {
     it('默认租户（无 DB 记录）返回 platform_managed manifest', () => {
       const db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
       const config = loadConfig({ region: 'ap-east-1' });
       const service = new TenantEnterpriseProfileService(db, config);
 
@@ -56,7 +56,7 @@ describe('TenantEnterpriseProfileService', () => {
 
     it('dedicated_db + tenant_dedicated + AWS KMS keyRef 映射正确', () => {
       const db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
       const config = loadConfig({
         region: 'us-east-1',
         encryption: { enabled: false },
@@ -79,7 +79,7 @@ describe('TenantEnterpriseProfileService', () => {
 
     it('shared_cluster 租户返回 shared_cluster deploymentMode', () => {
       const db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
       const config = loadConfig({ region: 'eu-central-1' });
       const service = new TenantEnterpriseProfileService(db, config);
       service.upsertProfile('tenant_shared', {
@@ -97,7 +97,7 @@ describe('TenantEnterpriseProfileService', () => {
 
     it('manifest storage.primary 来自 config.db.path（SQLite）', () => {
       const db = createMemoryDatabase();
-      runMigrations(db);
+      runDslSqliteMigrations(db);
       const config = loadConfig({ region: 'local', db: { path: '/data/chrono.db' } });
       const service = new TenantEnterpriseProfileService(db, config);
 

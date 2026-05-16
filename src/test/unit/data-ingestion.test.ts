@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
@@ -16,7 +16,7 @@ describe('DataIngestion', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const clock = new TestClock(1000);
     core = new CoreRhythmLayer(db, new EventBus(), clock, new SilentLogger());
     const llm = new ModelRouter({ provider: 'mock', model: 'test', embeddingModel: 'mock-embed' });

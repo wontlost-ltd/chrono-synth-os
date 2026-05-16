@@ -100,6 +100,18 @@ bash scripts/backup_storage.sh
 
 完整说明见 [docs/disaster-recovery-runbook.md](docs/disaster-recovery-runbook.md)。
 
+## Server Migrations
+
+Server startup uses DSL-rendered database migrations for both PostgreSQL and
+SQLite. The old handwritten server migration files were removed in PR6; callers
+should use `runDslSqliteMigrations(db)` and `runDslPostgresMigrations(db)`
+directly.
+
+Integration tests keep the deleted SQL history as frozen fixtures and compare
+DSL-rendered execution against that baseline. Schema changes should update the
+DSL migrations intentionally and refresh those fixtures only when the deployed
+schema baseline is meant to change.
+
 ## Production Baseline
 
 根目录 `k8s/` 中的清单已废弃，仅供本地参考（详见 [k8s/README.md](k8s/README.md)）。生产 K8s / Podman 编排统一由同级仓库 `../chrono-synth-deploy` 维护：

@@ -2,13 +2,13 @@
 // Rollback drill: switches AuthorityMode from dual_write -> tables_primary
 // Usage: node dist/scripts/rollback-dual-write.js <db-path>
 import { SqliteDatabase } from '../src/storage/database.js';
-import { runMigrations } from '../src/storage/migrations.js';
+import { runDslSqliteMigrations } from '../src/storage/index.js';
 import { SqliteAuthoritySwitch } from '../src/data-plane/sqlite-event-ledger.js';
 
 async function main(): Promise<void> {
   const dbPath = process.argv[2] ?? ':memory:';
   const db = new SqliteDatabase(dbPath);
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   const sw = new SqliteAuthoritySwitch(db);
   const before = await sw.currentMode();
   await sw.switchTo('tables_primary', 'rollback-drill: manual rollback');

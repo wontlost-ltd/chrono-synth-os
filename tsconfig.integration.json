@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.src.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": false,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "paths": {
+      "@chrono/schema-dsl": ["./packages/schema-dsl/src/index.ts"]
+    }
+  },
+  "include": [
+    "src/test/integration/schema-dsl-*.test.ts",
+    "src/test/integration/dsl-runner-roundtrip.test.ts",
+    "src/test/integration/fixtures/**/*.ts",
+    "src/test/integration/better-sqlite3.d.ts",
+    "src/storage/dsl-migrations-runner.ts",
+    "packages/schema-dsl/src/**/*.ts"
+  ]
+}

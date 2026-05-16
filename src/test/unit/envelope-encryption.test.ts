@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { PlatformKmsClient, createKmsClient } from '../../enterprise/kms-client.js';
 import { EnvelopeEncryption } from '../../enterprise/envelope-encryption.js';
 import { loadConfig } from '../../config/schema.js';
@@ -10,7 +10,7 @@ const TEST_MASTER_KEY = Buffer.alloc(32, 0x42).toString('base64');
 
 function makeDb() {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   return db;
 }
 

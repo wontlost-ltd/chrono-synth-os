@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 import { TestClock } from '../../utils/index.js';
 import { UpdateGate } from '../../meta/update-gate.js';
@@ -12,7 +12,7 @@ describe('UpdateGate', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     clock = new TestClock(1000);
     gate = new UpdateGate(db, clock);
   });

@@ -5,7 +5,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { ConfirmationTokenStore } from '../../conversation/confirmation-token-store.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -22,7 +22,7 @@ describe('ConfirmationTokenStore', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     store = new ConfirmationTokenStore(db);
   });
 

@@ -1,0 +1,36 @@
+name: Publish @chrono/schema-dsl
+
+on:
+  push:
+    tags:
+      - 'schema-dsl-v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@chrono'
+      - run: npm ci
+      - name: Validate schema-dsl tag version
+        if: startsWith(github.ref, 'refs/tags/schema-dsl-v')
+        run: |
+          VERSION=$(node -p "require('./packages/schema-dsl/package.json').version")
+          test "${GITHUB_REF_NAME}" = "schema-dsl-v${VERSION}"
+      - run: npm run build --workspace @chrono/schema-dsl
+      - name: Run schema-dsl tests (with CLI spawn smoke)
+        run: npm run test --workspace @chrono/schema-dsl
+        env:
+          CHRONO_RUN_CLI_SMOKE: '1'
+      - run: npm publish --workspace @chrono/schema-dsl
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

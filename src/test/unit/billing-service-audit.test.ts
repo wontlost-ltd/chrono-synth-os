@@ -16,7 +16,7 @@ import {
 } from '../../audit/audit-log-store.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveCommandExecutor, resolveQueryExecutor } from '../../storage/legacy-sync-bridge.js';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 
 describe('BillingService 执行器注册', () => {
   beforeEach(() => {
@@ -45,7 +45,7 @@ describe('BillingService 执行器注册', () => {
 
   it('seedBillingPlans 和 listPlans 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const service = new BillingService(db);
 
     const plans = service.listPlans();
@@ -57,7 +57,7 @@ describe('BillingService 执行器注册', () => {
 
   it('subscribeTenant 创建订阅并生成发票', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     const service = new BillingService(db);
 
     const result = service.subscribeTenant('tenant-a', 'free');
@@ -85,7 +85,7 @@ describe('AuditLogStore 执行器注册', () => {
 
   it('recordRequestAuditLog 和 queryAuditLog 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
 
     recordRequestAuditLog(db, {
       tenantId: 'tenant-a',
@@ -108,7 +108,7 @@ describe('AuditLogStore 执行器注册', () => {
 
   it('recordBusinessAuditLog 和 getAuditLogById 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
 
     const id = recordBusinessAuditLog(db, {
       tenantId: 'tenant-a',

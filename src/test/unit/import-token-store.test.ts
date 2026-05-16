@@ -1,12 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createImportTokenStore } from '../../privacy/import-token-store.js';
-import { createMemoryDatabase, runMigrations, type IDatabase } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations, type IDatabase } from '../../storage/index.js';
 
 function withDb(fn: (db: IDatabase) => void): void {
   const db = createMemoryDatabase();
   try {
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     fn(db);
   } finally {
     db.close();

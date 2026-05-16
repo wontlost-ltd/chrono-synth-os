@@ -10,12 +10,12 @@ The plan it operationalizes: `.claude/plan/pgvector-integration-2026.md`.
 | Stage | What it does | Status |
 |---|---|---|
 | 1 | Kernel query types (`embCmdUpsertPg`, `embQueryNearestPg`) | ✅ Shipped (`packages/kernel/src/domain/intelligence/embedding-pg-queries.ts`) |
-| 2 | PG migration v071: add `vector(1536)` column + HNSW + dims trigger | ✅ Shipped (`src/storage/postgres-migrations.ts`) |
+| 2 | PG migration v071: add `vector(1536)` column + HNSW + dims trigger | ✅ Shipped (`packages/schema-dsl/src/migrations/server-raw/v071_pg.ts`) |
 | 3 | `EmbeddingIndex` interface, `InMemoryEmbeddingIndex` + `PgvectorEmbeddingIndex`, factory | ✅ Shipped |
 | 4 | Dual-write inside the executor + `pgvector-reconcile.ts` backfill/verify | ✅ Shipped (`scripts/pgvector-reconcile.ts`) |
 | 5 | Per-tenant allowlist (`vectorExtensionTenants`) | ✅ Shipped |
 | 6 | Helm chart values flip `useVectorExtension` per env (staging on, prod off) | ✅ Shipped (`chrono-synth-deploy/helm/chrono-synth/values-{staging,prod}.yaml`) |
-| 7 | Migration v072 dropping `embedding_json` + IVF legacy tables | 🟡 Code shipped, NOT in `PG_MIGRATIONS` array — manually opt-in |
+| 7 | Migration v072 dropping `embedding_json` + IVF legacy tables | 🟡 Code shipped as disabled schema-dsl raw migration — manually opt-in |
 
 ## Production rollout sequence
 
@@ -96,12 +96,12 @@ restart since `embedding_json` is still being dual-written.
 
 ### Step E — execute v072 (drop legacy)
 
-In `src/storage/postgres-migrations.ts`, the migration
-`v072_drop_embedding_json_legacy` is defined but is not included in
-the `PG_MIGRATIONS` array. To execute it:
+In `packages/schema-dsl/src/migrations/server-raw/v072_pg_disabled.ts`, the
+migration is defined with `disabled: true` and is omitted by the DSL runner. To
+execute it:
 
-1. Add `v072_drop_embedding_json_legacy` to `PG_MIGRATIONS` in commit
-   order (after `v071_pgvector_embeddings`).
+1. Promote v072 from `DISABLED_MIGRATIONS` into the enabled server raw migration
+   list in commit order after v071.
 2. Push. The next backend startup runs v072 in transactional mode:
    - `ALTER TABLE memory_embeddings DROP COLUMN IF EXISTS embedding_json`
    - `DROP TABLE IF EXISTS ivf_centroids`
@@ -119,10 +119,10 @@ This is irreversible without a restore. Make sure step D was clean.
 | Step C global flag | Set `USE_VECTOR_EXT=false`, helm upgrade — InMemory resumes |
 | Step E migration | The plan considers this point-of-no-return. Recovery is restore-from-backup |
 
-## Why v072 isn't in `PG_MIGRATIONS` yet
+## Why v072 is disabled
 
 Migrations execute on every backend startup. Putting v072 in the
-array would mean any deployment that hadn't yet completed steps A–D
+enabled list would mean any deployment that hadn't yet completed steps A–D
 would silently drop `embedding_json` and break the rollback path —
 potentially across the whole org if a stale CI build hit prod.
 

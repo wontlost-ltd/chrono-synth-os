@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations, mapToJson, jsonToMap, arrayToJson, jsonToArray } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations, mapToJson, jsonToMap, arrayToJson, jsonToArray } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
 
 describe('serialization', () => {
@@ -24,7 +24,7 @@ describe('SqliteDatabase', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
   });
 
   it('migrations 创建所有表', () => {

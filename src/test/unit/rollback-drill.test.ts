@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { SqliteAuthoritySwitch } from '../../data-plane/sqlite-event-ledger.js';
 import type { IDatabase } from '../../storage/database.js';
 
@@ -11,7 +11,7 @@ describe('Rollback drill AuthoritySwitch', () => {
 
   beforeEach(() => {
     db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     sw = new SqliteAuthoritySwitch(db);
   });
 

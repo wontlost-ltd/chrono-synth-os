@@ -14,7 +14,7 @@ const TEST_URL = process.env.TEST_POSTGRES_URL;
 
 describe('PgvectorEmbeddingIndex integration', { skip: !TEST_URL }, () => {
   let PostgresDatabase: typeof import('../../storage/postgres-database.js').PostgresDatabase;
-  let runPostgresMigrations: typeof import('../../storage/postgres-migrations-runner.js').runPostgresMigrations;
+  let runDslPostgresMigrations: typeof import('../../storage/index.js').runDslPostgresMigrations;
   let PgvectorEmbeddingIndex: typeof import('../../intelligence/embedding-index-pgvector.js').PgvectorEmbeddingIndex;
   let db: InstanceType<typeof PostgresDatabase>;
 
@@ -34,10 +34,10 @@ describe('PgvectorEmbeddingIndex integration', { skip: !TEST_URL }, () => {
 
   before(async () => {
     const pgMod = await import('../../storage/postgres-database.js');
-    const migMod = await import('../../storage/postgres-migrations-runner.js');
+    const migMod = await import('../../storage/index.js');
     const pgIdxMod = await import('../../intelligence/embedding-index-pgvector.js');
     PostgresDatabase = pgMod.PostgresDatabase;
-    runPostgresMigrations = migMod.runPostgresMigrations;
+    runDslPostgresMigrations = migMod.runDslPostgresMigrations;
     PgvectorEmbeddingIndex = pgIdxMod.PgvectorEmbeddingIndex;
 
     db = new PostgresDatabase(TEST_URL!, { max: 5, idleTimeoutMs: 10_000 });
@@ -50,7 +50,7 @@ describe('PgvectorEmbeddingIndex integration', { skip: !TEST_URL }, () => {
     db.exec('DROP SCHEMA public CASCADE');
     db.exec('CREATE SCHEMA public');
 
-    runPostgresMigrations(db);
+    runDslPostgresMigrations(db);
   });
 
   after(() => {

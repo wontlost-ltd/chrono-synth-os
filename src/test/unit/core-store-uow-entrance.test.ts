@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { TestClock } from '../../utils/clock.js';
 import { ValueStore } from '../../core/value-store.js';
 import { NarrativeStore } from '../../core/narrative-store.js';
@@ -20,7 +20,7 @@ const clock = new TestClock(1000);
 describe('Phase 2 批次 1：core stores 双入口', () => {
   it('ValueStore 可接受 IDatabase 或 SyncWriteUnitOfWork', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new ValueStore(db, clock);
       const v1 = fromDb.create('curiosity', 0.8);
@@ -38,7 +38,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
 
   it('NarrativeStore 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const store = new NarrativeStore(db, clock);
       store.set('我是一个测试人格');
@@ -50,7 +50,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
 
   it('CognitiveModelStore 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const store = new CognitiveModelStore(db, clock);
       const model = store.set({ growthMindset: 0.6 });
@@ -62,7 +62,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
 
   it('DecisionStyleStore 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const store = new DecisionStyleStore(db, clock);
       const updated = store.set({ explorationBias: 0.4 });
@@ -74,7 +74,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
 
   it('SurvivalAnchorStore 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const store = new SurvivalAnchorStore(db, clock);
       const anchor = store.create('健康', 'must_have', { metric: 'energy' }, 3);
@@ -87,7 +87,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
 
   it('CognitiveMemoryGraph IDatabase 形态：多步原子操作仍走 db.transaction', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const graph = new CognitiveMemoryGraph(db, clock);
       const m1 = graph.addMemory('episodic', 'test memory 1', 0.5, 0.8);
@@ -102,7 +102,7 @@ describe('Phase 2 批次 1：core stores 双入口', () => {
 
   it('CognitiveMemoryGraph SyncWriteUnitOfWork 形态：方法直接执行（不嵌套事务）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const uow = db;
       const graph = new CognitiveMemoryGraph(uow, clock);

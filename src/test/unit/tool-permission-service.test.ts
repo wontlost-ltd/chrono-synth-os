@@ -5,12 +5,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { ToolPermissionService } from '../../agent/tool-permission-service.js';
 
 function makeService() {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   const service = new ToolPermissionService(db);
   return { db, service };
 }

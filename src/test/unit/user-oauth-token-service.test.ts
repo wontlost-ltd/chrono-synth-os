@@ -6,13 +6,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { UserOauthTokenService } from '../../agent/user-oauth-token-service.js';
 import { FieldEncryption } from '../../storage/encryption.js';
 
 function makeService() {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   const masterKey = randomBytes(32).toString('base64');
   const encryption = new FieldEncryption({
     enabled: true,

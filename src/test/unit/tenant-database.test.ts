@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryDatabase, runMigrations } from '../../storage/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { TenantDatabase } from '../../multi-tenant/tenant-database.js';
 import type { IDatabase, IPreparedStatement, SqlValue } from '../../storage/database.js';
 
@@ -9,7 +9,7 @@ describe('TenantDatabase', () => {
 
   beforeEach(() => {
     baseDb = createMemoryDatabase();
-    runMigrations(baseDb);
+    runDslSqliteMigrations(baseDb);
   });
 
   it('INSERT 自动注入 tenant_id', () => {

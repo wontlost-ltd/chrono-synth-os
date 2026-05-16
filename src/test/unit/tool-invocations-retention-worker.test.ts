@@ -5,14 +5,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { ToolPermissionService } from '../../agent/tool-permission-service.js';
 import { ToolInvocationsRetentionWorker } from '../../agent/tool-invocations-retention-worker.js';
 import { SilentLogger } from '../../utils/logger.js';
 
 function setup() {
   const db = createMemoryDatabase();
-  runMigrations(db);
+  runDslSqliteMigrations(db);
   const permissions = new ToolPermissionService(db);
   const worker = new ToolInvocationsRetentionWorker(permissions, new SilentLogger(), {
     intervalMs: 60_000,

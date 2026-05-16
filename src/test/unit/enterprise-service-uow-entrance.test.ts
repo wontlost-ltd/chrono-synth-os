@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
-import { runMigrations } from '../../storage/migrations.js';
+import { runDslSqliteMigrations } from '../../storage/index.js';
 import { loadConfig } from '../../config/schema.js';
 import { AdminControlPlaneService } from '../../enterprise/admin-control-plane-service.js';
 import { OrganizationService } from '../../enterprise/organization-service.js';
@@ -25,7 +25,7 @@ function seedUser(db: IDatabase, userId: string, email: string, tenantId = 'defa
 describe('Phase 2 批次 3：enterprise services 双入口', () => {
   it('AdminControlPlaneService 双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new AdminControlPlaneService(db);
       const fromUow = new AdminControlPlaneService(db);
@@ -38,7 +38,7 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
 
   it('OrganizationService 双入口：create 走 runAtomic', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_org_db', 'org-db@x.com');
       const fromDb = new OrganizationService(db);
@@ -62,7 +62,7 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
 
   it('ScimProvisioningService 双入口：createUser → IdentityService 联动', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const fromDb = new ScimProvisioningService(db);
       const r1 = fromDb.createUser('default', { email: 'scim1@x.com', displayName: 'S1' });
@@ -79,7 +79,7 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
 
   it('TenantEnterpriseProfileService 双入口（只读路径）', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       const config = loadConfig({});
       const fromDb = new TenantEnterpriseProfileService(db, config);
@@ -91,7 +91,7 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
 
   it('tenant-kafka-topics 函数式双入口', () => {
     const db = createMemoryDatabase();
-    runMigrations(db);
+    runDslSqliteMigrations(db);
     try {
       assert.equal(resolveTenantKafkaTopic(db, 'default', 'events.audit'), 'events.audit');
       assert.equal(resolveTenantKafkaTopic(db, 'default', 'events.audit'), 'events.audit');
