@@ -1,4 +1,4 @@
-name: Publish @chrono/schema-dsl
+name: Publish @wontlost-ltd/schema-dsl
 
 on:
   push:
@@ -18,19 +18,19 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@chrono'
+          scope: '@wontlost-ltd'
       - run: npm ci
       - name: Validate schema-dsl tag version
         if: startsWith(github.ref, 'refs/tags/schema-dsl-v')
         run: |
           VERSION=$(node -p "require('./packages/schema-dsl/package.json').version")
           test "${GITHUB_REF_NAME}" = "schema-dsl-v${VERSION}"
-      - run: npm run build --workspace @chrono/schema-dsl
+      - run: npm run build --workspace @wontlost-ltd/schema-dsl
       - name: Run schema-dsl tests (with CLI spawn smoke)
-        run: npm run test --workspace @chrono/schema-dsl
+        run: npm run test --workspace @wontlost-ltd/schema-dsl
         env:
           CHRONO_RUN_CLI_SMOKE: '1'
-      - run: npm publish --workspace @chrono/schema-dsl
+      - run: npm publish --workspace @wontlost-ltd/schema-dsl
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
