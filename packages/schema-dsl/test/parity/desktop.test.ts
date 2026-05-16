@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import { DESKTOP_MIGRATIONS } from '../../src/migrations/desktop/index.js';
 import { renderRustModule } from '../../src/renderers/sqlite-rust-module.js';
 
-const CLI_SNAPSHOT_HEADER = 'test (@chrono/schema-dsl)';
+const CLI_SNAPSHOT_HEADER = 'test (@wontlost-ltd/schema-dsl)';
 
 // PR-D removed the hand-written tuple table from chrono-synth-desktop's
 // migrations.rs (it now uses include!(OUT_DIR/migrations_generated.rs)), so
@@ -47,10 +47,10 @@ describe('desktop sqlite-rust migrations', () => {
     // Avoid spawnSync inside node --test: when other tests in this file fail,
     // the test runner's failure detail dump can deadlock with subprocess stdout.
     // Instead, mirror exactly what bin/render-rust.js does (parseArgs default
-    // values for --header "test" and --package-name "@chrono/schema-dsl").
+    // values for --header "test" and --package-name "@wontlost-ltd/schema-dsl").
     const rust = renderRustModule({
       migrations: DESKTOP_MIGRATIONS,
-      packageHeader: `test (${'@chrono/schema-dsl'})`,
+      packageHeader: `test (${'@wontlost-ltd/schema-dsl'})`,
     });
     const snapshotPath = join(process.cwd(), 'test', 'parity', 'fixtures', 'desktop-module.rs.snapshot');
     const snapshot = readFileSync(snapshotPath, 'utf8');

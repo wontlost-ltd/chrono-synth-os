@@ -1,4 +1,4 @@
-# @chrono/schema-dsl
+# @wontlost-ltd/schema-dsl
 
 Declarative schema DSL for ChronoSynth migrations.
 
@@ -99,7 +99,7 @@ Current flow:
    `{ postgres: "v001", "sqlite-sql": "v001" }`.
 3. For historical migrations, use `type: "integer"` for boolean-like fields.
 4. Add the migration to `SERVER_SIMPLE_MIGRATIONS` in version order.
-5. Run `npm run test --workspace @chrono/schema-dsl`.
+5. Run `npm run test --workspace @wontlost-ltd/schema-dsl`.
 6. If a migration is raw or requires DML/table rebuild semantics, do not encode
    it as schema DSL. Use `defineRawMigration` in PR3.
 
@@ -123,12 +123,12 @@ real SQLite/PostgreSQL catalogs to catch drift after PR6.
 
 ## Desktop Integration
 
-The desktop repository consumes `@chrono/schema-dsl` as a build-time package.
+The desktop repository consumes `@wontlost-ltd/schema-dsl` as a build-time package.
 Its `src-tauri/build.rs` resolves the Rust renderer CLI in this order:
 
 1. `CHRONO_SCHEMA_DSL_CLI`
 2. `../node_modules/.bin/schema-dsl-render-rust`
-3. `../node_modules/@chrono/schema-dsl/bin/render-rust.js`
+3. `../node_modules/@wontlost-ltd/schema-dsl/bin/render-rust.js`
 
 The build script writes `migrations_generated.rs` into Cargo `OUT_DIR`.
 `src-tauri/src/db/migrations.rs` includes that generated file and keeps the
@@ -136,14 +136,14 @@ public `run_migrations(conn: &Connection) -> Result<()>` API stable while
 iterating over `DESKTOP_MIGRATIONS`.
 
 After this package is published to GitHub Packages, the desktop repository
-should install it with `npm install @chrono/schema-dsl`. Developer worktrees and
+should install it with `npm install @wontlost-ltd/schema-dsl`. Developer worktrees and
 CI overrides can use the env var fallback without requiring `node_modules`.
 
 ## Verification Notes
 
 - `npm run test:schema-dsl-parity:simple` covers v001-v010 except v007 across
   PostgreSQL and SQLite.
-- `npm run test --workspace @chrono/schema-dsl` also runs sabotage
+- `npm run test --workspace @wontlost-ltd/schema-dsl` also runs sabotage
   self-checks proving type, CHECK, column-order, nullable, and CHECK-whitespace
   behavior.
 
@@ -158,7 +158,7 @@ databases, then compare catalog dumps.
 # macOS + Podman example; use the socket for your local machine.
 export DOCKER_HOST="unix:///var/folders/42/vrxsf6r14p7f46p5q2040ggw0000gn/T/podman/podman-machine-api.sock"
 
-npm run build --workspace @chrono/schema-dsl
+npm run build --workspace @wontlost-ltd/schema-dsl
 npm run test:integration:schema-dsl
 ```
 
@@ -172,13 +172,13 @@ socket; no `DOCKER_HOST` override is required there.
 
 ## Publishing
 
-`@chrono/schema-dsl` publishes to GitHub Packages on tag push.
+`@wontlost-ltd/schema-dsl` publishes to GitHub Packages on tag push.
 
 ### Releasing a new version
 
 1. Bump `version` in `package.json`
 2. Update `CHANGELOG.md` (if exists)
-3. Run all tests: `npm run test --workspace @chrono/schema-dsl`
+3. Run all tests: `npm run test --workspace @wontlost-ltd/schema-dsl`
 4. Tag: `git tag schema-dsl-v<new-version>`
 5. Push: `git push origin schema-dsl-v<new-version>`
 6. CI publishes via `.github/workflows/publish-schema-dsl.yml`
@@ -191,7 +191,7 @@ socket; no `DOCKER_HOST` override is required there.
 //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 
 # Then
-npm install @chrono/schema-dsl
+npm install @wontlost-ltd/schema-dsl
 ```
 
 For desktop `build.rs` integration, see PR-D documentation.

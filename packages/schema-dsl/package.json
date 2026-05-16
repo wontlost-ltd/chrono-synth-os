@@ -1,6 +1,6 @@
 {
-  "name": "@chrono/schema-dsl",
-  "version": "0.1.0",
+  "name": "@wontlost-ltd/schema-dsl",
+  "version": "0.1.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
