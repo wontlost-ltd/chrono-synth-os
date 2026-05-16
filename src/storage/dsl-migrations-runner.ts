@@ -8,7 +8,7 @@ import {
   renderToSqlite,
   type Migration as DslMigration,
   type RenderedMigration,
-} from '@chrono/schema-dsl';
+} from '@wontlost-ltd/schema-dsl';
 
 export interface DslMigrationRunner {
   runDslPostgresMigrations(db: IDatabase): void;
