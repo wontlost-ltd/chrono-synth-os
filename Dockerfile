@@ -1,4 +1,4 @@
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 RUN apk upgrade --no-cache
 WORKDIR /app
 
@@ -59,7 +59,7 @@ COPY packages/sync-engine/src packages/sync-engine/src
 COPY packages/sync-engine/tsconfig.json packages/sync-engine/
 RUN npx tsc -p packages/sync-engine/tsconfig.json && npx tsc -p tsconfig.scripts.json
 
-FROM node:24-alpine
+FROM node:26-alpine
 RUN apk upgrade --no-cache && addgroup -S chrono && adduser -S chrono -G chrono
 WORKDIR /app
 COPY package.json package-lock.json ./
