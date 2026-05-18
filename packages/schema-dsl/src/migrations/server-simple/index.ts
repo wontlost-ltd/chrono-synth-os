@@ -61,6 +61,7 @@ export { v068_migration } from './v068.js';
 export { v069_migration } from './v069.js';
 export { v070_migration } from './v070.js';
 export { v071_migration } from './v071.js';
+export { v072_migration } from './v072.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -126,6 +127,7 @@ import { v068_migration } from './v068.js';
 import { v069_migration } from './v069.js';
 import { v070_migration } from './v070.js';
 import { v071_migration } from './v071.js';
+import { v072_migration } from './v072.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -191,4 +193,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v069_migration,
   v070_migration,
   v071_migration,
+  v072_migration,
 ];
