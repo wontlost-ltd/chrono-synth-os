@@ -81,4 +81,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v071_pg', aliases: { postgres: 'v071' }, classification: 'pg-only', notes: 'pgvector + HNSW + trigger' },
   { canonical: 'v072_pg', aliases: { postgres: 'v072' }, classification: 'disabled', notes: 'pgvector stage 7 — ships when ramp completes' },
   { canonical: 'v071_sqlite_devices_token', aliases: { postgres: 'v073', 'sqlite-sql': 'v071' }, classification: 'schema-simple', notes: 'EP-3.5 token invalidation; alias skew' },
+  { canonical: 'v072_onboarding_v2', aliases: { postgres: 'v074', 'sqlite-sql': 'v072' }, classification: 'schema-simple', notes: 'W2.1 agent-governance onboarding; PG skips v072(disabled)/v073(devices)' },
 ];

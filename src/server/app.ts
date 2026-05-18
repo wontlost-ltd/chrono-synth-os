@@ -53,6 +53,7 @@ import { registerDashboardRoutes } from './routes/dashboards.js';
 import { registerPosRoutes } from './routes/pos.js';
 import { registerDecisionRoutes } from './routes/decisions.js';
 import { registerOnboardingRoutes } from './routes/onboarding.js';
+import { registerOnboardingV2Routes } from './routes/onboarding-v2.js';
 import { registerVisualizationRoutes } from './routes/visualization.js';
 import { registerPrivacyRoutes } from './routes/privacy.js';
 import { registerTaskRoutes } from './routes/tasks.js';
@@ -546,6 +547,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerPosRoutes(app, deps.os, tenantFactory);
   registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
   registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
+  registerOnboardingV2Routes(app, config, db, services.organization);
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory, config);
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });

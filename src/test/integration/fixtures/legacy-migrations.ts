@@ -832,6 +832,20 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "ALTER TABLE devices ADD COLUMN is_invalid_at INTEGER",
       "CREATE INDEX IF NOT EXISTS idx_devices_invalid ON devices(is_invalid_at) WHERE is_invalid_at IS NOT NULL"
     ]
+  },
+  {
+    "version": "v072",
+    "description": "W2.1: agent-governance onboarding (org/agent/policy/synthetic/audit)",
+    "sql": [
+      "ALTER TABLE onboarding_sessions ADD COLUMN user_id TEXT",
+      "ALTER TABLE onboarding_sessions ADD COLUMN organization_id TEXT",
+      "ALTER TABLE onboarding_sessions ADD COLUMN agent_id TEXT",
+      "ALTER TABLE onboarding_sessions ADD COLUMN completed_at INTEGER",
+      "CREATE INDEX IF NOT EXISTS idx_onboarding_sessions_user ON onboarding_sessions(tenant_id, user_id) WHERE user_id IS NOT NULL",
+      "CREATE TABLE IF NOT EXISTS onboarding_synthetic_invocations (\n      invocation_id TEXT PRIMARY KEY REFERENCES tool_invocations(id) ON DELETE CASCADE,\n      session_id TEXT NOT NULL,\n      created_at INTEGER NOT NULL\n    )",
+      "CREATE INDEX IF NOT EXISTS idx_onboarding_synthetic_session ON onboarding_synthetic_invocations(session_id)",
+      "ALTER TABLE users ADD COLUMN onboarded_at INTEGER"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1644,6 +1658,20 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_invalid_at BIGINT",
       "CREATE INDEX IF NOT EXISTS idx_devices_invalid ON devices(is_invalid_at) WHERE is_invalid_at IS NOT NULL"
+    ]
+  },
+  {
+    "version": "v074",
+    "description": "W2.1: agent-governance onboarding (org/agent/policy/synthetic/audit)",
+    "sql": [
+      "ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS user_id TEXT",
+      "ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS organization_id TEXT",
+      "ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS agent_id TEXT",
+      "ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS completed_at BIGINT",
+      "CREATE INDEX IF NOT EXISTS idx_onboarding_sessions_user ON onboarding_sessions(tenant_id, user_id) WHERE user_id IS NOT NULL",
+      "CREATE TABLE IF NOT EXISTS onboarding_synthetic_invocations (\n      invocation_id TEXT PRIMARY KEY REFERENCES tool_invocations(id) ON DELETE CASCADE,\n      session_id TEXT NOT NULL,\n      created_at BIGINT NOT NULL\n    )",
+      "CREATE INDEX IF NOT EXISTS idx_onboarding_synthetic_session ON onboarding_synthetic_invocations(session_id)",
+      "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at BIGINT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
