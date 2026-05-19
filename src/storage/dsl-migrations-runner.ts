@@ -113,14 +113,40 @@ function addSqliteSafeMarkers(
 
   for (let i = 0; i < migration.operations.length; i++) {
     const operation = migration.operations[i];
-    if (operation.kind === 'add-column' && operation.safeIfTableExists && version !== 'v071') {
-      marked[i] = `/* safe:add-column:${operation.table}:${operation.column.name} */ ${marked[i]}`;
-    } else if (
+    // add-column markers are emitted by SqliteSqlRenderer when safeIfTableExists
+    // is set; the runner no longer duplicates them here.
+    if (
       operation.kind === 'create-index'
       && version === 'v063'
       && operation.index.name === 'idx_persona_knowledge_fp'
     ) {
       marked[i] = `/* safe:if-table-exists:${operation.index.table} */ ${marked[i]}`;
+    }
+    // v072 (W2.1 onboarding): partial index + FK-bearing table depend on
+    // `onboarding_sessions` + `tool_invocations` existing. The legacy migrations
+    // test simulates a v047-onwards bootstrap that omits those tables, so guard
+    // the create-* ops with the same safe markers the SQLite runner already
+    // honours.
+    if (
+      operation.kind === 'create-index'
+      && version === 'v072'
+      && operation.index.name === 'idx_onboarding_sessions_user'
+    ) {
+      marked[i] = `/* safe:if-table-exists:onboarding_sessions */ ${marked[i]}`;
+    }
+    if (
+      operation.kind === 'create-table'
+      && version === 'v072'
+      && operation.table.name === 'onboarding_synthetic_invocations'
+    ) {
+      marked[i] = `/* safe:if-table-exists:tool_invocations */ ${marked[i]}`;
+    }
+    if (
+      operation.kind === 'create-index'
+      && version === 'v072'
+      && operation.index.name === 'idx_onboarding_synthetic_session'
+    ) {
+      marked[i] = `/* safe:if-table-exists:tool_invocations */ ${marked[i]}`;
     }
   }
 

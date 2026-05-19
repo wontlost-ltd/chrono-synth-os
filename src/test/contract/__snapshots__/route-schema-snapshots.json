@@ -299,6 +299,36 @@
       "hash": "76cbd8f918211ea79b025086d6e0f8d8bcd75a128315d4663da6fca2b9ee8411"
     }
   ],
+  "onboarding-v2.ts": [
+    {
+      "name": "OnboardingV2AgentSchema",
+      "hash": "8a4788ad90728433b0ad7e02977b48807d14aeccef4202da0265f02417fbf060"
+    },
+    {
+      "name": "OnboardingV2CompleteSchema",
+      "hash": "27fb8ddfe3b3dff5b644909b7f9459ec6bc13efaf8ccc548ed3597135ab7be11"
+    },
+    {
+      "name": "OnboardingV2OrganizationSchema",
+      "hash": "234e9486142ce17bdd80f96660370866270ee094e454f39caefdb45eab354575"
+    },
+    {
+      "name": "OnboardingV2PolicySchema",
+      "hash": "3ad27a9ee7a734e555ca76938035aa4bfe3d6fc6a4707f23b505886e2e1538b8"
+    },
+    {
+      "name": "OnboardingV2SkipSchema",
+      "hash": "ba4b9b6ac7a75b213cf2dbd28be40b72c6a596578f216b57aac8a67519b1c804"
+    },
+    {
+      "name": "OnboardingV2StartSchema",
+      "hash": "8d7d5e23b454edcf308cf2d220347c39de4360c4d4a55c58f355d0009ad01da3"
+    },
+    {
+      "name": "OnboardingV2SyntheticSchema",
+      "hash": "dccbebd69e42b938794d8907390b6a0b1156bfc43e4e0462da4b474ba52d515f"
+    }
+  ],
   "onboarding.ts": [
     {
       "name": "OnboardingImportSchema",
