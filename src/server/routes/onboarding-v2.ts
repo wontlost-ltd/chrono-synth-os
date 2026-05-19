@@ -9,52 +9,21 @@
 
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { OrganizationService } from '../../enterprise/organization-service.js';
 import { OnboardingV2Service } from '../../onboarding/onboarding-v2-service.js';
 import { ToolPermissionService } from '../../agent/tool-permission-service.js';
 import { ValidationError, ErrorCode } from '../../errors/index.js';
-
-const StartSchema = z.object({}).passthrough();
-
-const OrganizationSchema = z.object({
-  sessionId: z.string().min(1),
-  organizationName: z.string().min(1).max(120),
-});
-
-const AgentSchema = z.object({
-  sessionId: z.string().min(1),
-  agentName: z.string().min(1).max(120),
-  llmProvider: z.enum(['openai', 'anthropic']).nullable().optional(),
-  llmApiKey: z.string().max(512).nullable().optional(),
-});
-
-const PolicySchema = z.object({
-  sessionId: z.string().min(1),
-  agentId: z.string().min(1),
-  policies: z.array(z.object({
-    toolId: z.string().min(1),
-    /* scope 与 ToolScope kernel 类型对齐：read/write/execute */
-    scope: z.enum(['read', 'write', 'execute']),
-    decision: z.enum(['allow', 'deny', 'confirm']),
-  })).min(1).max(20),
-});
-
-const SyntheticSchema = z.object({
-  sessionId: z.string().min(1),
-  agentId: z.string().min(1),
-});
-
-const CompleteSchema = z.object({
-  sessionId: z.string().min(1),
-});
-
-const SkipSchema = z.object({
-  sessionId: z.string().min(1),
-  currentStep: z.number().int().min(1).max(5),
-});
+import {
+  OnboardingV2StartSchema,
+  OnboardingV2OrganizationSchema,
+  OnboardingV2AgentSchema,
+  OnboardingV2PolicySchema,
+  OnboardingV2SyntheticSchema,
+  OnboardingV2CompleteSchema,
+  OnboardingV2SkipSchema,
+} from '../schemas/api-schemas.js';
 
 export function registerOnboardingV2Routes(
   app: FastifyInstance,
@@ -75,7 +44,7 @@ export function registerOnboardingV2Routes(
 
   /* POST /api/v1/onboarding/v2/start */
   app.post('/api/v1/onboarding/v2/start', async (request, reply) => {
-    StartSchema.parse(request.body ?? {});
+    OnboardingV2StartSchema.parse(request.body ?? {});
     const userId = requireUserId(request);
     const session = service.start(request.tenantId, userId);
     return reply.status(session.resumed ? 200 : 201).send({ data: session });
@@ -83,7 +52,7 @@ export function registerOnboardingV2Routes(
 
   /* POST /api/v1/onboarding/v2/organization */
   app.post('/api/v1/onboarding/v2/organization', async (request, reply) => {
-    const body = OrganizationSchema.parse(request.body);
+    const body = OnboardingV2OrganizationSchema.parse(request.body);
     const userId = requireUserId(request);
 
     /* 幂等：如果 session 已绑定 org，直接复用，不再创建新 org */
@@ -111,7 +80,7 @@ export function registerOnboardingV2Routes(
    * 再串起来，避免阻塞引导流程的可演示性。
    */
   app.post('/api/v1/onboarding/v2/agent', async (request, reply) => {
-    const body = AgentSchema.parse(request.body);
+    const body = OnboardingV2AgentSchema.parse(request.body);
     const userId = requireUserId(request);
 
     /* 检查 session 状态：当前 step 必须 ≥ 2 */
@@ -158,7 +127,7 @@ export function registerOnboardingV2Routes(
 
   /* POST /api/v1/onboarding/v2/policy */
   app.post('/api/v1/onboarding/v2/policy', async (request, reply) => {
-    const body = PolicySchema.parse(request.body);
+    const body = OnboardingV2PolicySchema.parse(request.body);
     const userId = requireUserId(request);
     let granted = 0;
     for (const policy of body.policies) {
@@ -184,7 +153,7 @@ export function registerOnboardingV2Routes(
    * Step 4: 服务端写 3 行假 invocation，让用户立刻看到审计日志样子。
    */
   app.post('/api/v1/onboarding/v2/synthetic-invocation', async (request, reply) => {
-    const body = SyntheticSchema.parse(request.body);
+    const body = OnboardingV2SyntheticSchema.parse(request.body);
     const userId = requireUserId(request);
 
     const drafts = service.buildSyntheticInvocations(body.agentId, userId);
@@ -215,7 +184,7 @@ export function registerOnboardingV2Routes(
 
   /* POST /api/v1/onboarding/v2/complete */
   app.post('/api/v1/onboarding/v2/complete', async (request, reply) => {
-    const body = CompleteSchema.parse(request.body);
+    const body = OnboardingV2CompleteSchema.parse(request.body);
     const userId = requireUserId(request);
     const session = service.complete(body.sessionId, request.tenantId, userId);
     return reply.send({ data: { session, completedAt: session.completedAt } });
@@ -226,7 +195,7 @@ export function registerOnboardingV2Routes(
    * 但保留 session 未 complete 标记以便分析跳过 vs 完成的转化漏斗。
    */
   app.post('/api/v1/onboarding/v2/skip', async (request, reply) => {
-    const body = SkipSchema.parse(request.body);
+    const body = OnboardingV2SkipSchema.parse(request.body);
     const userId = requireUserId(request);
     const session = service.skip(body.sessionId, request.tenantId, userId);
     return reply.send({ data: { session, skippedAtStep: body.currentStep } });

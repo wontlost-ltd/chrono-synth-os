@@ -441,6 +441,46 @@ export const OnboardingImportSchema = z.object({
   })).optional(),
 });
 
+/* W2.1 agent-governance onboarding v2 (5-step wizard) */
+export const OnboardingV2StartSchema = z.object({}).passthrough();
+
+export const OnboardingV2OrganizationSchema = z.object({
+  sessionId: z.string().min(1),
+  organizationName: z.string().min(1).max(120),
+});
+
+export const OnboardingV2AgentSchema = z.object({
+  sessionId: z.string().min(1),
+  agentName: z.string().min(1).max(120),
+  llmProvider: z.enum(['openai', 'anthropic']).nullable().optional(),
+  llmApiKey: z.string().max(512).nullable().optional(),
+});
+
+export const OnboardingV2PolicySchema = z.object({
+  sessionId: z.string().min(1),
+  agentId: z.string().min(1),
+  policies: z.array(z.object({
+    toolId: z.string().min(1),
+    /* scope 与 ToolScope kernel 类型对齐：read/write/execute */
+    scope: z.enum(['read', 'write', 'execute']),
+    decision: z.enum(['allow', 'deny', 'confirm']),
+  })).min(1).max(20),
+});
+
+export const OnboardingV2SyntheticSchema = z.object({
+  sessionId: z.string().min(1),
+  agentId: z.string().min(1),
+});
+
+export const OnboardingV2CompleteSchema = z.object({
+  sessionId: z.string().min(1),
+});
+
+export const OnboardingV2SkipSchema = z.object({
+  sessionId: z.string().min(1),
+  currentStep: z.number().int().min(1).max(5),
+});
+
 /* 人生模拟 */
 export const CreateLifeSimulationSchema = z.object({
   paths: z.array(z.object({

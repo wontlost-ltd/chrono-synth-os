@@ -12,6 +12,7 @@
     { "path": "./packages/sync-engine/tsconfig.test.json" },
     { "path": "./packages/design-tokens" },
     { "path": "./packages/kernel-testkit" },
+    { "path": "./packages/schema-dsl" },
     { "path": "./packages/adapter-web" },
     { "path": "./packages/adapter-tauri" },
     { "path": "./packages/adapter-react-native" },

@@ -23,5 +23,16 @@
     "composite": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    // Schema-dsl integration tests have their own compilation pipeline
+    // (tsconfig.integration.json) because they import @wontlost-ltd/schema-dsl
+    // via relative path into packages/schema-dsl/src — outside src rootDir.
+    "src/test/integration/schema-dsl-*.test.ts",
+    "src/test/integration/dsl-runner-roundtrip.test.ts",
+    "src/test/integration/fixtures/legacy-migrations.ts",
+    "src/test/integration/_setup-pg-databases.ts",
+    "src/test/integration/better-sqlite3.d.ts"
+  ]
 }

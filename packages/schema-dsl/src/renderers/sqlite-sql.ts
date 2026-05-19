@@ -42,7 +42,15 @@ export class SqliteSqlRenderer implements Renderer<'sqlite-sql'> {
     if (operation.kind === 'create-table') return [this.renderTable(operation.table)];
     if (operation.kind === 'create-index') return [this.renderIndex(operation.index)];
     if (operation.kind === 'add-column') {
-      return [`ALTER TABLE ${operation.table} ADD COLUMN ${this.renderColumn(operation.column)}`];
+      // SQLite doesn't support ALTER TABLE ADD COLUMN IF NOT EXISTS or skip-on-missing-table.
+      // Emit "safe:" comment markers that the runtime runner
+      // (execSqliteWithSafeMarkers in dsl-migrations-runner.ts) parses to skip when
+      // the table is missing or the column already exists.
+      const sql = `ALTER TABLE ${operation.table} ADD COLUMN ${this.renderColumn(operation.column)}`;
+      if (operation.safeIfTableExists || operation.ifNotExists) {
+        return [`/* safe:add-column:${operation.table}:${operation.column.name} */ ${sql}`];
+      }
+      return [sql];
     }
     if (operation.kind === 'drop-table') {
       return [`DROP TABLE${operation.ifExists ? ' IF EXISTS' : ''} ${operation.table}`];
