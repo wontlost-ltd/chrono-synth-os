@@ -34,7 +34,11 @@ jobs:
           # CI_RUNNER_LABELS (multi-GB cache uploads, ~10min overhead).
       - run: npm ci
       - name: Build core packages
-        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+        # schema-dsl is required by src/storage/dsl-migrations-runner.ts;
+        # without its dist, tsc -b tsconfig.src.json cannot resolve
+        # `@wontlost-ltd/schema-dsl`. Pre-existing CI gap exposed when
+        # local builds happen to work via the root tsconfig.json references.
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - name: Build main source
         run: npx tsc -b tsconfig.src.json
       - run: npm run build
@@ -56,7 +60,11 @@ jobs:
           # No `cache: npm` — same rationale as build-and-test (see commit fadcec4).
       - run: npm ci
       - name: Build core packages
-        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+        # schema-dsl is required by src/storage/dsl-migrations-runner.ts;
+        # without its dist, tsc -b tsconfig.src.json cannot resolve
+        # `@wontlost-ltd/schema-dsl`. Pre-existing CI gap exposed when
+        # local builds happen to work via the root tsconfig.json references.
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - name: Build main source
         run: npx tsc -b tsconfig.src.json
       - run: npm run build
@@ -136,7 +144,11 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build core packages
-        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+        # schema-dsl is required by src/storage/dsl-migrations-runner.ts;
+        # without its dist, tsc -b tsconfig.src.json cannot resolve
+        # `@wontlost-ltd/schema-dsl`. Pre-existing CI gap exposed when
+        # local builds happen to work via the root tsconfig.json references.
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - name: Build main source
         run: npx tsc -b tsconfig.src.json
       - run: npm run build
