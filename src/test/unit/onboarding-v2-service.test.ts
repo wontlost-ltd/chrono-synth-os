@@ -154,4 +154,51 @@ describe('OnboardingV2Service', () => {
       assert.equal(row?.completed_at, null);
     });
   });
+
+  describe('telemetry (P1-K)', () => {
+    /* Verify the SOC2 evidence side-effect; metrics are exported via OTel
+     * and are harder to assert in-process. The evidence rows are the
+     * load-bearing contract: SOC2 audits depend on them. */
+    function evidenceForTenant(): Array<{ evidence_type: string }> {
+      return db.prepare<{ evidence_type: string }>(
+        `SELECT evidence_type FROM compliance_evidence
+          WHERE tenant_id = ? AND control_id = 'CC1.5'
+          ORDER BY collected_at ASC`,
+      ).all(TENANT);
+    }
+
+    it('start() 写入 onboarding_started 证据行', () => {
+      svc.start(TENANT, USER);
+      const rows = evidenceForTenant();
+      assert.deepEqual(rows.map(r => r.evidence_type), ['onboarding_started']);
+    });
+
+    it('完整 5 步走完 -> evidence 包含每一步 + completed', () => {
+      const session = svc.start(TENANT, USER);
+      svc.recordOrganizationStep(session.id, TENANT, 'org-x');
+      svc.recordAgentStep(session.id, TENANT, 'agent-x');
+      svc.recordPolicyStep(session.id, TENANT);
+      svc.recordSyntheticStep(session.id, TENANT, []);
+      svc.complete(session.id, TENANT, USER);
+      const types = evidenceForTenant().map(r => r.evidence_type);
+      /* 5 个 step_completed + 1 个 started + 1 个 completed = 7 */
+      assert.equal(types.filter(t => t === 'onboarding_step_completed').length, 5);
+      assert.ok(types.includes('onboarding_started'));
+      assert.ok(types.includes('onboarding_completed'));
+    });
+
+    it('skip 写入 onboarding_skipped 证据并记录 lastStep', () => {
+      const session = svc.start(TENANT, USER);
+      svc.recordOrganizationStep(session.id, TENANT, 'org-x');
+      svc.skip(session.id, TENANT, USER);
+      const rows = db.prepare<{ evidence_type: string; payload_json: string }>(
+        `SELECT evidence_type, payload_json FROM compliance_evidence
+          WHERE tenant_id = ? AND control_id = 'CC1.5' AND evidence_type = 'onboarding_skipped'`,
+      ).all(TENANT);
+      assert.equal(rows.length, 1);
+      const payload = JSON.parse(rows[0].payload_json) as { lastStep: number };
+      /* skip 在 step 1 完成（→ current_step=2）后发生，所以 lastStep=2 */
+      assert.equal(payload.lastStep, 2);
+    });
+  });
 });

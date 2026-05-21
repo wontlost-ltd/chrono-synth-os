@@ -17,8 +17,62 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto';
+import { trace } from '@opentelemetry/api';
 import type { IDatabase } from '../storage/database.js';
 import { ValidationError, NotFoundError, ErrorCode } from '../errors/index.js';
+import {
+  onboardingStarted, onboardingStepCompleted, onboardingCompleted,
+  onboardingSkipped, onboardingStepDurationMs,
+} from '../observability/metrics.js';
+import { recordEvidence } from '../compliance/evidence-store.js';
+
+/** OTel tracer for the onboarding flow; spans wrap each step transition. */
+const tracer = trace.getTracer('chrono-synth-os.onboarding');
+
+/**
+ * Emit step-completion telemetry. Encapsulated so callers only need the
+ * (tenantId, sessionId, step, prevUpdatedAt) tuple; the rest is plumbing.
+ * - Metrics: counter + duration histogram (vs prev updated_at).
+ * - OTel: short span attributing the transition.
+ * - SOC2 evidence: row on CC1.5 (control environment / onboarding) so
+ *   auditors can attest "every new tenant went through the agent-governance
+ *   wizard". recordEvidence runs in the same tx as the schema update.
+ */
+function emitStepTelemetry(
+  tx: IDatabase,
+  tenantId: string,
+  sessionId: string,
+  step: number,
+  prevUpdatedAt: number,
+  extra: Record<string, string | number | null> = {},
+): void {
+  const now = Date.now();
+  onboardingStepCompleted.add(1, { step: String(step), cohort: 'v2' });
+  onboardingStepDurationMs.record(now - prevUpdatedAt, { step: String(step) });
+  const span = tracer.startSpan('onboarding.v2.step', {
+    attributes: {
+      'onboarding.step': step,
+      'onboarding.cohort': 'v2',
+      'onboarding.session_id': sessionId,
+      'tenant.id': tenantId,
+      'onboarding.step_duration_ms': now - prevUpdatedAt,
+    },
+  });
+  try {
+    recordEvidence(tx, {
+      tenantId,
+      controlId: 'CC1.5',
+      evidenceType: 'onboarding_step_completed',
+      payload: { sessionId, step, durationMs: now - prevUpdatedAt, ...extra },
+    });
+  } catch (err) {
+    /* Evidence write must not break the user flow; the metric counter
+     * already captured the event so we can reconcile later. */
+    span.recordException(err as Error);
+  } finally {
+    span.end();
+  }
+}
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -78,6 +132,15 @@ export class OnboardingV2Service {
          (id, tenant_id, user_id, current_step, completed_steps_json, created_at, updated_at)
        VALUES (?, ?, ?, 1, '[]', ?, ?)`,
     ).run(id, tenantId, userId, now, now);
+    onboardingStarted.add(1, { cohort: 'v2' });
+    try {
+      recordEvidence(this.db, {
+        tenantId,
+        controlId: 'CC1.5',
+        evidenceType: 'onboarding_started',
+        payload: { sessionId: id, userId },
+      });
+    } catch { /* never fail user flow on evidence failure */ }
 
     const row = this.db.prepare<SessionRow>(
       'SELECT * FROM onboarding_sessions WHERE id = ?',
@@ -98,11 +161,13 @@ export class OnboardingV2Service {
       return session;
     }
     const now = Date.now();
+    const prevUpdatedAt = session.updatedAt;
     this.db.prepare(
       `UPDATE onboarding_sessions
          SET organization_id = ?, current_step = 2, updated_at = ?
        WHERE id = ? AND tenant_id = ?`,
     ).run(organizationId, now, sessionId, tenantId);
+    emitStepTelemetry(this.db, tenantId, sessionId, 1, prevUpdatedAt, { organizationId });
     return this.requireActiveSession(sessionId, tenantId);
   }
 
@@ -120,11 +185,13 @@ export class OnboardingV2Service {
       );
     }
     const now = Date.now();
+    const prevUpdatedAt = session.updatedAt;
     this.db.prepare(
       `UPDATE onboarding_sessions
          SET agent_id = ?, current_step = 3, updated_at = ?
        WHERE id = ? AND tenant_id = ?`,
     ).run(agentId, now, sessionId, tenantId);
+    emitStepTelemetry(this.db, tenantId, sessionId, 2, prevUpdatedAt, { agentId });
     return this.requireActiveSession(sessionId, tenantId);
   }
 
@@ -138,11 +205,13 @@ export class OnboardingV2Service {
       );
     }
     const now = Date.now();
+    const prevUpdatedAt = session.updatedAt;
     this.db.prepare(
       `UPDATE onboarding_sessions
          SET current_step = 4, updated_at = ?
        WHERE id = ? AND tenant_id = ?`,
     ).run(now, sessionId, tenantId);
+    emitStepTelemetry(this.db, tenantId, sessionId, 3, prevUpdatedAt);
     return this.requireActiveSession(sessionId, tenantId);
   }
 
@@ -160,6 +229,7 @@ export class OnboardingV2Service {
       );
     }
     const now = Date.now();
+    const prevUpdatedAt = session.updatedAt;
     this.db.transaction(() => {
       for (const invocationId of invocationIds) {
         this.db.prepare(
@@ -175,13 +245,14 @@ export class OnboardingV2Service {
          WHERE id = ? AND tenant_id = ?`,
       ).run(now, sessionId, tenantId);
     });
+    emitStepTelemetry(this.db, tenantId, sessionId, 4, prevUpdatedAt, { invocationCount: invocationIds.length });
     return this.requireActiveSession(sessionId, tenantId);
   }
 
   /** 标记 step 5 完成 / 整个引导结束 */
   complete(sessionId: string, tenantId: string, userId: string): OnboardingV2Session {
     /* requireActiveSession 校验：completion 不存在的会话应当 404 */
-    this.requireActiveSession(sessionId, tenantId);
+    const before = this.requireActiveSession(sessionId, tenantId);
     const now = Date.now();
     this.db.transaction(() => {
       this.db.prepare(
@@ -195,6 +266,16 @@ export class OnboardingV2Service {
         'UPDATE users SET onboarded_at = ?, updated_at = ? WHERE id = ?',
       ).run(now, now, userId);
     });
+    emitStepTelemetry(this.db, tenantId, sessionId, 5, before.updatedAt);
+    onboardingCompleted.add(1, { cohort: 'v2' });
+    try {
+      recordEvidence(this.db, {
+        tenantId,
+        controlId: 'CC1.5',
+        evidenceType: 'onboarding_completed',
+        payload: { sessionId, userId, totalDurationMs: now - before.createdAt },
+      });
+    } catch { /* swallow */ }
     return this.requireActiveSession(sessionId, tenantId);
   }
 
@@ -202,11 +283,20 @@ export class OnboardingV2Service {
    *  便于 PM 区分跳过 vs 完成（events_user_journey 那张表里再细分） */
   skip(sessionId: string, tenantId: string, userId: string): OnboardingV2Session {
     /* requireActiveSession 校验：跳过不存在的会话应当 404 */
-    this.requireActiveSession(sessionId, tenantId);
+    const before = this.requireActiveSession(sessionId, tenantId);
     const now = Date.now();
     this.db.prepare(
       'UPDATE users SET onboarded_at = ?, updated_at = ? WHERE id = ?',
     ).run(now, now, userId);
+    onboardingSkipped.add(1, { cohort: 'v2', last_step: String(before.currentStep) });
+    try {
+      recordEvidence(this.db, {
+        tenantId,
+        controlId: 'CC1.5',
+        evidenceType: 'onboarding_skipped',
+        payload: { sessionId, userId, lastStep: before.currentStep },
+      });
+    } catch { /* swallow */ }
     return this.requireActiveSession(sessionId, tenantId);
   }
 

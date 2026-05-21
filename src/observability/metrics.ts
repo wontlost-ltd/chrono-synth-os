@@ -80,3 +80,31 @@ export const conversationQuotaExceeded = meter.createCounter('chrono_conversatio
 export const conversationPiiRedacted = meter.createCounter('chrono_conversation_pii_redacted_total', {
   description: 'PII 脱敏命中次数',
 });
+
+/* ─────────────── P1-K Onboarding 漏斗指标 ─────────────── */
+
+/** 引导会话启动总数（label: cohort=v2） */
+export const onboardingStarted = meter.createCounter('chrono_onboarding_started_total', {
+  description: '引导会话启动次数',
+});
+
+/** 各步完成总数（labels: step=1..5, cohort） */
+export const onboardingStepCompleted = meter.createCounter('chrono_onboarding_step_completed_total', {
+  description: '引导单步完成总数（5 步漏斗 PM 看板）',
+});
+
+/** 引导完成总数（complete = 走到底；skip 单独记） */
+export const onboardingCompleted = meter.createCounter('chrono_onboarding_completed_total', {
+  description: '引导完整走完的会话数',
+});
+
+/** 引导主动跳过总数 */
+export const onboardingSkipped = meter.createCounter('chrono_onboarding_skipped_total', {
+  description: '用户主动跳过引导的会话数',
+});
+
+/** 单步完成耗时（毫秒；label: step） */
+export const onboardingStepDurationMs = meter.createHistogram('chrono_onboarding_step_duration_ms', {
+  description: '引导单步耗时（毫秒），用于 PRD 的 5 分钟预算监控',
+  unit: 'ms',
+});
