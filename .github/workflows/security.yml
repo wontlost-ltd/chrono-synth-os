@@ -50,6 +50,73 @@ jobs:
           # 的仓库会触发 4 次重试后报 warning，污染日志。
           # 输入定义见 github/codeql-action src/database-upload.ts。
           upload-database: false
+      # SARIF severity gate — fail CI on HIGH/CRITICAL CodeQL findings.
+      # Without Advanced Security, SARIF is artifact-only by default; this step
+      # replaces what GitHub Code Scanning would otherwise gate. See
+      # `.claude/runbooks/p0-a-acceptance.md` for context.
+      #
+      # SARIF v2.1.0 structure (per CodeQL output):
+      #   security-severity lives on rule metadata:
+      #     runs[].tool.driver.rules[].properties["security-severity"]
+      #   results reference the rule via ruleId or ruleIndex.
+      # This step joins each result to its rule, reads the rule's severity,
+      # and gates HIGH+ (≥ 7.0 on the CVSS-aligned 0-10 scale).
+      #
+      # severity scale (CodeQL convention):
+      #   9.0-10.0 critical, 7.0-8.9 high, 4.0-6.9 medium, 0.1-3.9 low.
+      # Findings whose rule has no security-severity (quality queries etc.) are skipped.
+      - name: SARIF severity gate (HIGH+ blocks merge)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          SARIF_FILES=(sarif-results/*.sarif)
+          if [ ${#SARIF_FILES[@]} -eq 0 ]; then
+            echo "::error::No SARIF output found at sarif-results/*.sarif"
+            exit 1
+          fi
+          # Build [run -> ruleId -> severity] lookup then join with results.
+          # Per SARIF spec, a result identifies its rule via either:
+          #   - .ruleId (string)
+          #   - .ruleIndex (integer index into run.tool.driver.rules[])
+          # We handle both. If a rule has no security-severity property the
+          # finding is excluded from the gate.
+          FILTER='
+            [ .[]
+              | (.runs // [])[]
+              | . as $run
+              | ($run.tool.driver.rules // []) as $rules
+              | ($run.results // [])[]
+              | . as $r
+              | ( if   $r.ruleIndex != null then $rules[$r.ruleIndex]
+                  elif $r.ruleId    != null then ($rules[] | select(.id == $r.ruleId) | . )
+                  else null end
+                ) as $rule
+              | ($rule.properties["security-severity"] // null) as $sev_str
+              | select($sev_str != null)
+              | ($sev_str | tonumber) as $sev
+              | select($sev >= 7.0)
+              | { ruleId: ($r.ruleId // $rule.id // "unknown"),
+                  severity: $sev,
+                  file: ($r.locations[0].physicalLocation.artifactLocation.uri // "n/a"),
+                  message: ($r.message.text // "") }
+            ]
+          '
+          jq -s "$FILTER" "${SARIF_FILES[@]}" > codeql-high-plus.json
+          HIGH_PLUS=$(jq 'length' codeql-high-plus.json)
+          echo "CodeQL HIGH+ findings: ${HIGH_PLUS}"
+          jq '.' codeql-high-plus.json
+          if [ "${HIGH_PLUS}" -gt 0 ]; then
+            echo "::error::CodeQL gate failed: ${HIGH_PLUS} HIGH/CRITICAL finding(s). See codeql-high-plus-${{ github.sha }} artifact."
+            exit 1
+          fi
+      - name: Upload CodeQL severity gate output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-high-plus-${{ github.sha }}
+          path: codeql-high-plus.json
+          retention-days: 30
+          if-no-files-found: warn
       - name: Upload SARIF as artifact
         if: always()
         uses: actions/upload-artifact@v7
@@ -59,11 +126,15 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-  # Pinned to GitHub-hosted Ubuntu: trufflesecurity/trufflehog@main runs
-  # via `docker run`, and our macOS self-hosted runner uses podman without
-  # a `docker` CLI shim. Could be unblocked by installing `docker` CLI to
-  # alias podman, but trufflehog is light enough (~10s) that it's not worth
-  # the maintenance cost.
+  # Pinned to GitHub-hosted Ubuntu: trufflesecurity/trufflehog runs via
+  # `docker run`, and our macOS self-hosted runner uses podman without a
+  # `docker` CLI shim. Could be unblocked by installing `docker` CLI to alias
+  # podman, but trufflehog is light enough (~10s) that it's not worth the
+  # maintenance cost.
+  #
+  # Action pinned to a release tag (not @main) per P0-A supply-chain hardening.
+  # Bump via dependabot or manual review of trufflehog changelogs. Bumped
+  # 2026-05-21 to v3.95.3.
   secrets-scan:
     name: Secrets scan (trufflehog)
     runs-on: ubuntu-latest
@@ -73,7 +144,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: TruffleHog filesystem scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@v3.95.3
         with:
           path: ./
           extra_args: --results=verified,unknown

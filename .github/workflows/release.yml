@@ -8,11 +8,19 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
+      # contents: read   — checkout the source
+      # packages: write  — push to ghcr.io
+      # id-token: write  — required for cosign keyless OIDC signing (sigstore)
+      # attestations: write — write SLSA build provenance attestations
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     outputs:
       image-tag: ${{ steps.meta.outputs.version }}
+      image-digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v6
 
@@ -42,7 +50,8 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
 
-      - uses: docker/build-push-action@v7
+      - id: build
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -50,6 +59,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # provenance: true writes build attestation to the registry (SLSA build L3).
+          # sbom: true writes the SBOM attestation alongside the image.
+          provenance: true
+          sbom: true
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -58,6 +71,69 @@ jobs:
           format: table
           exit-code: '1'
           severity: CRITICAL,HIGH
+
+      # ── P1-D: cosign keyless image signing ──
+      #
+      # Why keyless: GH OIDC + Fulvio short-lived certs avoid the need to
+      # provision and rotate long-lived private keys. The Kyverno policy
+      # `require-image-signature` in chrono-synth-deploy expects the
+      # certificate identity to match the workflow URL — see policy spec
+      # `subjectRegExp`. If we ever switch to keyed mode we'd add the public
+      # key as a ConfigMap and update Kyverno accordingly.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign image with cosign (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          # Sign by digest, not by tag — tags are mutable, digests aren't.
+          # `${{ steps.build.outputs.digest }}` is the immutable sha256:... from
+          # the registry, returned by docker/build-push-action@v7.
+          cosign sign --yes \
+            ghcr.io/wontlost-ltd/chrono-synth-os@${{ steps.build.outputs.digest }}
+
+      # ── SBOM attestation ──
+      #
+      # Generate the SBOM with anchore/sbom-action (already used by security.yml)
+      # then attach it to the image as a cosign attestation. Downstream
+      # verifiers can run `cosign verify-attestation --type spdxjson ...`
+      # to retrieve and pin the SBOM that was current at release time.
+      - name: Generate SBOM (SPDX-JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/wontlost-ltd/chrono-synth-os@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attest SBOM to image
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdxjson \
+            ghcr.io/wontlost-ltd/chrono-synth-os@${{ steps.build.outputs.digest }}
+
+      # ── SLSA build provenance attestation ──
+      #
+      # GitHub-native attestation: the GH attestations API records that
+      # `ghcr.io/wontlost-ltd/chrono-synth-os@sha256:...` was built by
+      # *this* workflow run, signed by Fulcio under the GH identity. Verifiable
+      # with `gh attestation verify` or `cosign verify-attestation`.
+      - name: Attest build provenance (SLSA)
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/wontlost-ltd/chrono-synth-os
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Upload SBOM as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: chrono-synth-os-sbom-${{ github.sha }}
+          path: sbom.spdx.json
+          retention-days: 90
 
   dispatch-deploy:
     runs-on: ubuntu-latest

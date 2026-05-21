@@ -63,13 +63,61 @@ const authSchema = z.object({
   requireDbKeys: z.boolean().default(false),
 });
 
+/**
+ * JWT 配置 — 支持对称（HS256/HS384/HS512）与非对称（RS256/ES256）算法。
+ *
+ * 非对称模式（RS256/ES256）要求设置 privateKey + publicKey + kid，
+ * 允许应用暴露 JWKS endpoint 并支持 key rollover。详 P0-D 验收。
+ */
+
+/**
+ * Key lifecycle state (P0-D #1).
+ *
+ *   active      — can sign new tokens; published in JWKS; verifies tokens.
+ *   grace       — verify-only (rollover window); published in JWKS but no new sign.
+ *   retired     — fully removed; verifies nothing; not in JWKS.
+ *   compromised — deny-list; identical to retired but also blocks any existing token
+ *                 with this kid (instant revocation; surveys deny-list before verify).
+ *
+ * Invariants:
+ *   - exactly ONE active key at any time
+ *   - multiple grace keys permitted (rollover overlap)
+ *   - retired/compromised never serve verify
+ */
+const jwtKeyStateEnum = z.enum(['active', 'grace', 'retired', 'compromised']);
+
+const jwtKeyEntrySchema = z.object({
+  kid: z.string().min(1),
+  state: jwtKeyStateEnum,
+  algorithm: z.enum(['HS256', 'HS384', 'HS512', 'RS256', 'ES256']),
+  /* PEM (asymmetric) or shared secret (symmetric). Empty allowed for retired/compromised. */
+  privateKey: z.string().default(''),
+  publicKey: z.string().default(''),
+  secret: z.string().default(''),
+});
+
 const jwtSchema = z.object({
   enabled: z.boolean().default(false),
   secret: z.string().default('change-me-in-production'),
   issuer: z.string().default('chrono-synth-os'),
   accessTtlMs: z.coerce.number().int().default(15 * 60 * 1000),       /* 15 分钟 */
   refreshTtlMs: z.coerce.number().int().default(7 * 24 * 60 * 60 * 1000), /* 7 天 */
-  algorithm: z.enum(['HS256', 'HS384', 'HS512']).default('HS256'),
+  algorithm: z.enum(['HS256', 'HS384', 'HS512', 'RS256', 'ES256']).default('HS256'),
+  /* PEM-encoded; required when algorithm starts with 'RS' or 'ES'. Backward
+   * compat: when jwt.keys is empty, jwt-auth synthesises a single-key array
+   * from these fields. */
+  privateKey: z.string().default(''),
+  publicKey: z.string().default(''),
+  /* Active key identifier embedded in JWT header; lets clients pick the
+   * right entry from /.well-known/jwks.json. Defaults to a stable hash of
+   * the public key in the loader if blank. */
+  kid: z.string().default(''),
+  /* Multi-key state machine. When non-empty, jwt-auth uses these instead of
+   * the single-key fields above. Exactly one entry must be `active`.
+   *
+   * Persisting + rotating these at runtime is in-memory only for v7.3 P0-D
+   * scope; DB-backed persistence ships with P1-M (break-glass admin). */
+  keys: z.array(jwtKeyEntrySchema).default([]),
 });
 
 const redisSchema = z.object({
@@ -452,6 +500,7 @@ export const AppConfigSchema = z.object({
   jwt: jwtSchema.default({
     enabled: false, secret: 'change-me-in-production', issuer: 'chrono-synth-os',
     accessTtlMs: 15 * 60 * 1000, refreshTtlMs: 7 * 24 * 60 * 60 * 1000, algorithm: 'HS256',
+    privateKey: '', publicKey: '', kid: '', keys: [],
   }),
   redis: redisSchema.default({ enabled: false, url: 'redis://localhost:6379', keyPrefix: 'chrono:', tls: false }),
   stripe: stripeSchema.default({ enabled: false, secretKey: '', webhookSecret: '', publishableKey: '' }),
@@ -652,6 +701,10 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_JWT_ACCESS_TTL_MS:        (v) => { deepSet(env, 'jwt.accessTtlMs', parseInt(v, 10)); },
     CHRONO_JWT_REFRESH_TTL_MS:       (v) => { deepSet(env, 'jwt.refreshTtlMs', parseInt(v, 10)); },
     CHRONO_JWT_ALGORITHM:            (v) => { deepSet(env, 'jwt.algorithm', v); },
+    /* PEM-encoded keys; usually set via secrets manager mount, not env. */
+    CHRONO_JWT_PRIVATE_KEY:          (v) => { deepSet(env, 'jwt.privateKey', v); },
+    CHRONO_JWT_PUBLIC_KEY:           (v) => { deepSet(env, 'jwt.publicKey', v); },
+    CHRONO_JWT_KID:                  (v) => { deepSet(env, 'jwt.kid', v); },
     CHRONO_REDIS_ENABLED:            (v) => { deepSet(env, 'redis.enabled', v === 'true'); },
     CHRONO_REDIS_URL:                (v) => { deepSet(env, 'redis.url', v); },
     CHRONO_REDIS_KEY_PREFIX:         (v) => { deepSet(env, 'redis.keyPrefix', v); },
@@ -797,8 +850,37 @@ export function loadConfig(overrides?: DeepPartial<AppConfig>, configPath?: stri
 
   const parsed = AppConfigSchema.parse(merged);
 
-  if (parsed.jwt.enabled && parsed.jwt.secret === 'change-me-in-production') {
-    throw new Error('jwt.enabled=true 时必须设置非默认的 jwt.secret');
+  const jwtIsAsymmetric = parsed.jwt.algorithm.startsWith('RS') || parsed.jwt.algorithm.startsWith('ES');
+  if (parsed.jwt.enabled && !jwtIsAsymmetric && parsed.jwt.secret === 'change-me-in-production') {
+    throw new Error('jwt.enabled=true 时（对称算法）必须设置非默认的 jwt.secret');
+  }
+  if (parsed.jwt.enabled && jwtIsAsymmetric && parsed.jwt.keys.length === 0) {
+    /* Legacy single-key mode validation. When jwt.keys is non-empty, the
+     * per-entry validation below takes over. */
+    if (!parsed.jwt.privateKey || !parsed.jwt.publicKey) {
+      throw new Error(`jwt.enabled=true 且 algorithm=${parsed.jwt.algorithm} 时必须设置 jwt.privateKey 和 jwt.publicKey（PEM）`);
+    }
+  }
+  if (parsed.jwt.enabled && parsed.jwt.keys.length > 0) {
+    /* Multi-key mode: exactly one active. */
+    const activeCount = parsed.jwt.keys.filter(k => k.state === 'active').length;
+    if (activeCount !== 1) {
+      throw new Error(`jwt.keys 中必须恰有 1 个 state=active 的 key（当前 ${activeCount} 个）`);
+    }
+    /* Each non-retired/compromised key needs material to verify (and active needs sign material). */
+    for (const k of parsed.jwt.keys) {
+      if (k.state === 'retired' || k.state === 'compromised') continue;
+      const isAsym = k.algorithm.startsWith('RS') || k.algorithm.startsWith('ES');
+      if (isAsym && !k.publicKey) {
+        throw new Error(`jwt.keys[kid=${k.kid}] state=${k.state} algorithm=${k.algorithm} 必须设置 publicKey`);
+      }
+      if (k.state === 'active' && isAsym && !k.privateKey) {
+        throw new Error(`jwt.keys[kid=${k.kid}] state=active algorithm=${k.algorithm} 必须设置 privateKey`);
+      }
+      if (!isAsym && !k.secret) {
+        throw new Error(`jwt.keys[kid=${k.kid}] state=${k.state} algorithm=${k.algorithm} 必须设置 secret`);
+      }
+    }
   }
   if (parsed.encryption.enabled && parsed.encryption.masterKey === 'change-me-in-production-32chars!') {
     throw new Error('encryption.enabled=true 时必须设置有效的 encryption.masterKey');

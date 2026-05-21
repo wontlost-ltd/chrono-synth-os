@@ -6,14 +6,32 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-progress runs of this workflow for the same ref. Saves runner
+# minutes when a PR is force-pushed or a new commit lands quickly.
+# main runs (push) are never cancelled because main pushes are rare and the
+# audit trail matters; PR re-pushes are.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Sqlite-backed build + tests. This is the back-compat baseline (also runs on
+  # macOS self-hosted runners when CI_RUNNER_LABELS is set). The canonical
+  # Phase 1A acceptance path is the `test-postgres` job below — see plan v7.3
+  # §2.1 P0-B. The PG job depends on this one (needs: build-and-test) so we
+  # still gate compile + sqlite suite first.
   build-and-test:
+    name: Build & tests (sqlite fallback)
     runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
+          # No `cache: npm` — see commit fadcec4: setup-node npm caching is
+          # toxic on the macOS self-hosted runner this job can target via
+          # CI_RUNNER_LABELS (multi-GB cache uploads, ~10min overhead).
       - run: npm ci
       - name: Build core packages
         run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
@@ -28,12 +46,14 @@ jobs:
 
   contract-and-kernel:
     runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    timeout-minutes: 30
     needs: build-and-test
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
+          # No `cache: npm` — same rationale as build-and-test (see commit fadcec4).
       - run: npm ci
       - name: Build core packages
         run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
@@ -52,6 +72,7 @@ jobs:
   # podman, which doesn't speak the buildkit gRPC protocol the action uses).
   docker-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: build-and-test
     steps:
       - uses: actions/checkout@v6
@@ -72,12 +93,20 @@ jobs:
           exit-code: '1'
           severity: CRITICAL,HIGH
 
+  # PostgreSQL is the canonical Phase 1A acceptance path (plan v7.3 §2.1 P0-B).
+  # The `build-and-test` job above runs the same npm scripts on sqlite as a
+  # back-compat baseline; the truth-of-record for "287/307 integration tests
+  # pass" is this job. Local validation 2026-05-21: 307/307 passed against
+  # pgvector/pgvector:pg17.
+  #
   # Pinned to GitHub-hosted Ubuntu: workflow `services:` blocks are a
   # Linux-only Actions feature (the runner orchestrates them via Docker).
   # macOS runners don't support services and would skip the postgres
   # container entirely, leading to confusing connection refused errors.
   test-postgres:
+    name: Tests (PostgreSQL — canonical Phase 1A path)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: build-and-test
     services:
       postgres:
@@ -92,20 +121,28 @@ jobs:
           POSTGRES_PASSWORD: test
         ports: ['5432:5432']
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # Set at job scope so every step (typecheck/build/test/test:ops) inherits.
+      # PG-only tests detect TEST_POSTGRES_URL and run; sqlite-only fallback is
+      # invoked only when this var is absent (see src/test/integration/postgres.test.ts).
+      TEST_POSTGRES_URL: postgres://test:test@localhost:5432/chrono_test
+      CHRONO_DB_DRIVER: postgres
+      CHRONO_DB_CONNECTION_STRING: postgres://test:test@localhost:5432/chrono_test
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: '.nvmrc'
+          cache: npm
       - run: npm ci
       - name: Build core packages
         run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - name: Build main source
         run: npx tsc -b tsconfig.src.json
       - run: npm run build
-      - name: Run PostgreSQL integration tests
-        run: npm run test:integration
-        env:
-          TEST_POSTGRES_URL: postgres://test:test@localhost:5432/chrono_test
-          CHRONO_DB_DRIVER: postgres
-          CHRONO_DB_CONNECTION_STRING: postgres://test:test@localhost:5432/chrono_test
+      - run: npm run typecheck
+      - name: Run full test suite (PostgreSQL)
+        # Equivalent to `npm run test` but with PG env. Includes 10 PG-gated
+        # integration tests that are skipped in the sqlite job above.
+        run: npm run test
+      - run: npm run test:ops

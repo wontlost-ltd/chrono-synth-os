@@ -130,7 +130,10 @@ function profileToManifestV1(
       ? inferKmsProvider(profile.kmsKeyRef)
       : 'platform';
 
-  const storage = config.db.connectionString
+  // Storage primary picks the driver-correct source. Without the driver
+  // check, a stray CHRONO_DB_CONNECTION_STRING (e.g. CI Postgres env in a
+  // sqlite test) would corrupt the SQLite manifest with a postgres URL.
+  const storage = config.db.driver === 'postgres' && config.db.connectionString
     ? { primary: config.db.connectionString }
     : { primary: config.db.path };
 

@@ -9,6 +9,8 @@ import type { Query, Command } from '../../ports/query.js';
 export const AUDIT_QUERY_BY_ID = 'audit.byId' as const;
 export const AUDIT_QUERY_LIST = 'audit.list' as const;
 export const AUDIT_QUERY_COUNT = 'audit.count' as const;
+export const AUDIT_QUERY_CHAIN_TAIL = 'audit.chainTail' as const;
+export const AUDIT_QUERY_CHAIN_RANGE = 'audit.chainRange' as const;
 
 /* ── Command Kinds ── */
 
@@ -38,6 +40,13 @@ export interface AuditLogRow {
   target_type: string | null;
   target_id: string | null;
   payload_json: string | null;
+  /* Hash-chain columns added by P0-E. NULL on rows recorded before the
+   * chain was rolled out; the verifier treats those as the genesis prefix
+   * and only enforces continuity over the contiguous suffix that has
+   * non-NULL hashes. */
+  chain_seq: number | null;
+  prev_hash: string | null;
+  record_hash: string | null;
 }
 
 /* ── 参数类型 ── */
@@ -83,6 +92,10 @@ export interface AuditRecordRequestParams {
   actorId: string | null;
   actionType: string;
   payloadJson: string | null;
+  /** Hash-chain inputs computed by the application layer before INSERT. */
+  chainSeq: number;
+  prevHash: string;
+  recordHash: string;
 }
 
 export interface AuditRecordBusinessParams {
@@ -98,6 +111,26 @@ export interface AuditRecordBusinessParams {
   targetType: string;
   targetId: string;
   payloadJson: string | null;
+  /** Hash-chain inputs computed by the application layer before INSERT. */
+  chainSeq: number;
+  prevHash: string;
+  recordHash: string;
+}
+
+export interface AuditChainTailParams {
+  tenantId: string;
+}
+
+export interface AuditChainRangeParams {
+  tenantId: string;
+  fromSeq?: number | null;
+  toSeq?: number | null;
+  limit?: number;
+}
+
+export interface AuditChainTailRow {
+  chain_seq: number;
+  record_hash: string;
 }
 
 /* ── Query 工厂 ── */
@@ -126,4 +159,12 @@ export function auditCmdRecordBusiness(params: AuditRecordBusinessParams): Comma
 
 export function auditCmdEnsureSchema(): Command<undefined> {
   return { kind: AUDIT_CMD_ENSURE_SCHEMA, params: undefined };
+}
+
+export function auditQueryChainTail(tenantId: string): Query<AuditChainTailRow | null, AuditChainTailParams> {
+  return { kind: AUDIT_QUERY_CHAIN_TAIL, params: { tenantId } };
+}
+
+export function auditQueryChainRange(params: AuditChainRangeParams): Query<AuditLogRow, AuditChainRangeParams> {
+  return { kind: AUDIT_QUERY_CHAIN_RANGE, params };
 }

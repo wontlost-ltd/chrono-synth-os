@@ -1673,5 +1673,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_onboarding_synthetic_session ON onboarding_synthetic_invocations(session_id)",
       "ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarded_at BIGINT"
     ]
+  },
+  {
+    "version": "v075",
+    "description": "P0-E: append-only hash chain on audit_log",
+    "sql": [
+      "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS chain_seq BIGINT",
+      "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS prev_hash TEXT",
+      "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS record_hash TEXT"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

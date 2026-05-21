@@ -95,10 +95,22 @@ describe('TenantEnterpriseProfileService', () => {
       assert.equal(manifest.region, 'eu-central-1');
     });
 
-    it('manifest storage.primary 来自 config.db.path（SQLite）', () => {
+    it('manifest storage.primary 来自 config.db.path 而非 connectionString（SQLite）', () => {
       const db = createMemoryDatabase();
       runDslSqliteMigrations(db);
-      const config = loadConfig({ region: 'local', db: { path: '/data/chrono.db' } });
+      // Deliberately seed an inconsistent config where a PG-style
+      // connectionString coexists with driver=sqlite (the failure mode
+      // discovered during P0-B PG CI rollout). Pre-fix, getManifest used
+      // bare `connectionString` truthy and would corrupt the SQLite
+      // manifest with the leaked PG URL.
+      const config = loadConfig({
+        region: 'local',
+        db: {
+          driver: 'sqlite',
+          path: '/data/chrono.db',
+          connectionString: 'postgres://leaked.example.com:5432/chrono_test',
+        },
+      });
       const service = new TenantEnterpriseProfileService(db, config);
 
       const manifest = service.getManifest('default');
