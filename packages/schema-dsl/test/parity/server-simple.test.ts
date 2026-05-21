@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { SERVER_SIMPLE_MIGRATIONS } from '../../src/migrations/server-simple/index.js';
 
 describe('server-simple coverage', () => {
-  it('covers v001-v075 simple migrations (raw 9 + PG-only v071/v072 deferred; v074=W2.1 onboarding; v075=P0-E audit hash chain)', () => {
+  it('covers v001-v076 simple migrations (raw 9 + PG-only v071/v072 deferred; v074=W2.1 onboarding; v075=P0-E audit hash chain; v076=P1-F SOC2 evidence)', () => {
     const versions = SERVER_SIMPLE_MIGRATIONS
       .map(migration => migration.aliases.postgres ?? migration.aliases['sqlite-sql'])
       .filter((version): version is string => Boolean(version))
@@ -17,7 +17,7 @@ describe('server-simple coverage', () => {
       'v043', 'v044', 'v045', 'v046', 'v048', 'v049', 'v050', 'v051', 'v053',
       'v054', 'v055', 'v056', 'v057', 'v058', 'v059', 'v060', 'v061', 'v062',
       'v063', 'v064', 'v065', 'v066', 'v067', 'v068', 'v069', 'v070', 'v073',
-      'v074', 'v075',
+      'v074', 'v075', 'v076',
     ]);
   });
 });

@@ -1683,5 +1683,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS record_hash TEXT",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_log_chain_unique ON audit_log(tenant_id, chain_seq) WHERE chain_seq IS NOT NULL"
     ]
+  },
+  {
+    "version": "v076",
+    "description": "P1-F-basic: SOC2 evidence collection table",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS compliance_evidence (\n      id TEXT PRIMARY KEY,\n      tenant_id TEXT NOT NULL,\n      control_id TEXT NOT NULL,\n      evidence_type TEXT NOT NULL,\n      collector TEXT NOT NULL DEFAULT 'system',\n      payload_json TEXT NOT NULL,\n      payload_sha256 TEXT NOT NULL,\n      collected_at BIGINT NOT NULL,\n      period_start BIGINT,\n      period_end BIGINT,\n      metadata_json TEXT\n    )",
+      "CREATE INDEX IF NOT EXISTS idx_compliance_evidence_lookup ON compliance_evidence(tenant_id, control_id, collected_at)",
+      "CREATE INDEX IF NOT EXISTS idx_compliance_evidence_period ON compliance_evidence(tenant_id, period_start, period_end)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

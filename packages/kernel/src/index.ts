@@ -57,6 +57,7 @@ export * from './domain/billing/index.js';
 export * from './domain/observability/index.js';
 export * from './domain/config/index.js';
 export * from './domain/audit/index.js';
+export * from './domain/compliance/index.js';
 export * from './domain/multi-tenant/index.js';
 export * from './domain/recovery/index.js';
 export * from './domain/meta/index.js';
