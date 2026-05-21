@@ -1692,5 +1692,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_compliance_evidence_lookup ON compliance_evidence(tenant_id, control_id, collected_at)",
       "CREATE INDEX IF NOT EXISTS idx_compliance_evidence_period ON compliance_evidence(tenant_id, period_start, period_end)"
     ]
+  },
+  {
+    "version": "v077",
+    "description": "P1-N: legal holds registry",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS legal_holds (\n      id TEXT PRIMARY KEY,\n      tenant_id TEXT NOT NULL,\n      subject TEXT NOT NULL CHECK(subject IN ('tenant','user','persona')),\n      subject_id TEXT,\n      reason TEXT NOT NULL,\n      created_by TEXT NOT NULL,\n      created_at BIGINT NOT NULL,\n      released_at BIGINT,\n      released_by TEXT\n    )",
+      "CREATE INDEX IF NOT EXISTS idx_legal_holds_active ON legal_holds(tenant_id, subject, subject_id) WHERE released_at IS NULL"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

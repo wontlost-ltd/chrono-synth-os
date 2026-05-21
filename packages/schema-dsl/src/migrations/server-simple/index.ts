@@ -64,6 +64,7 @@ export { v071_migration } from './v071.js';
 export { v072_migration } from './v072.js';
 export { v073_audit_hash_chain } from './v073.js';
 export { v074_soc2_evidence } from './v074.js';
+export { v075_legal_holds } from './v075.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -132,6 +133,7 @@ import { v071_migration } from './v071.js';
 import { v072_migration } from './v072.js';
 import { v073_audit_hash_chain } from './v073.js';
 import { v074_soc2_evidence } from './v074.js';
+import { v075_legal_holds } from './v075.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -200,4 +202,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v072_migration,
   v073_audit_hash_chain,
   v074_soc2_evidence,
+  v075_legal_holds,
 ];
