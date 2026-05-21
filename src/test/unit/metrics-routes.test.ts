@@ -27,6 +27,7 @@ function createStatement<T>(handler: (...params: SqlValue[]) => T | T[] | undefi
 function createBigIntMetricsDb(): IDatabase {
   registerCoreSelfExecutors();
   const db: IDatabase = {
+    dialect: 'sqlite',
     exec() {},
     close() {},
     transaction<T>(fn: () => T): T {

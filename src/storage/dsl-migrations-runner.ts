@@ -148,6 +148,17 @@ function addSqliteSafeMarkers(
     ) {
       marked[i] = `/* safe:if-table-exists:tool_invocations */ ${marked[i]}`;
     }
+    /* v073 (P0-E audit hash chain) ships a UNIQUE partial index on
+     * audit_log(tenant_id, chain_seq). The legacy-migrations test
+     * fixture starts from v047 and never creates audit_log via v002,
+     * so guard the index with the same marker pattern. */
+    if (
+      operation.kind === 'create-index'
+      && version === 'v073'
+      && operation.index.name === 'idx_audit_log_chain_unique'
+    ) {
+      marked[i] = `/* safe:if-table-exists:audit_log */ ${marked[i]}`;
+    }
   }
 
   return marked;

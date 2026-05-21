@@ -16,6 +16,8 @@ export interface JwtPayload {
   readonly role: UserRole;
   /** 当前订阅计划 ID（用于计划感知限流） */
   readonly planId?: string;
+  /** JWT ID — sign 时注入；deny-list 按此撤销单条 token（P0-D #1 deny-jti 端点） */
+  readonly jti?: string;
   /** 签发时间（Unix 秒） */
   readonly iat: number;
   /** 过期时间（Unix 秒） */

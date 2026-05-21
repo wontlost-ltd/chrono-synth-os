@@ -232,12 +232,17 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
     assert.equal(res.statusCode, 403, `expected 403 not ${res.statusCode}: ${res.body}`);
   });
 
-  it('admin POST /api/v1/auth/keys/rotate transitions KeyRing state + updates JWKS', async () => {
-    /* Promote a user to admin in DB. Bypass via direct DB access on the OS. */
+  it('admin POST /api/v1/auth/keys/rotate refuses signing-key change with 409 RESTART_REQUIRED', async () => {
+    /* After the dual code review, the rotate endpoint refuses any rotation
+     * that would shift the signing-effective active kid. This is the
+     * correct contract: fastify-jwt captures its signer at register() time;
+     * silently moving "active" while continuing to sign with the old key
+     * would publish a JWKS the server cannot honour, breaking every newly
+     * issued token at client verification. Operators must update jwt.keys
+     * config and restart instead. */
     const newPair = rsa();
     const db = (os as unknown as { getDatabase(): { prepare(s: string): { run(...args: unknown[]): unknown } } }).getDatabase();
     db.prepare(`UPDATE users SET role = 'admin' WHERE email = 'multi-kid-1@example.com'`).run();
-    /* Re-login to get a fresh admin-role token. */
     const login = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
@@ -253,46 +258,57 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
       payload: {
         newActiveKid: 'kid-2',
         addNew: [{
-          kid: 'kid-2',
-          state: 'grace',  /* will be promoted by rotate */
-          algorithm: 'RS256',
-          privateKey: newPair.priv,
-          publicKey: newPair.pub,
-          secret: '',
+          kid: 'kid-2', state: 'grace', algorithm: 'RS256',
+          privateKey: newPair.priv, publicKey: newPair.pub, secret: '',
         }],
       },
+    });
+    assert.equal(rotate.statusCode, 409, `expected 409 RESTART_REQUIRED, got ${rotate.statusCode}: ${rotate.body}`);
+    const body = JSON.parse(rotate.body) as { code: string; bootActiveKid: string; requestedNewActiveKid: string };
+    assert.equal(body.code, 'AUTH_ROTATE_RESTART_REQUIRED');
+    assert.equal(body.bootActiveKid, 'kid-1');
+    assert.equal(body.requestedNewActiveKid, 'kid-2');
+  });
+
+  it('admin POST /api/v1/auth/keys/rotate ACCEPTS a no-op rotate that only changes oldActiveNewState', async () => {
+    /* The legitimate Phase-1A use case: mark the current active key's state
+     * (rotate where newActiveKid === current active, no signing change).
+     * This is useful for adjusting grace/retired metadata without restart. */
+    const db = (os as unknown as { getDatabase(): { prepare(s: string): { run(...args: unknown[]): unknown } } }).getDatabase();
+    db.prepare(`UPDATE users SET role = 'admin' WHERE email = 'multi-kid-1@example.com'`).run();
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: 'multi-kid-1@example.com', password: 'password123' },
+    });
+    const adminToken = JSON.parse(login.body).data.accessToken as string;
+
+    /* No-op rotate: newActiveKid = bootActiveKid (kid-1). */
+    const rotate = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/keys/rotate',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { newActiveKid: 'kid-1' },
     });
     assert.ok(rotate.statusCode >= 200 && rotate.statusCode < 300, `rotate: ${rotate.statusCode} ${rotate.body}`);
     const body = JSON.parse(rotate.body) as {
       activeKid: string;
-      snapshot: { active: { kid: string }; graceKeys: Array<{ kid: string }> };
+      snapshot: { active: { kid: string; hasPrivateKey: boolean; hasPublicKey: boolean } };
     };
-    /* KeyRing state has rotated. */
-    assert.equal(body.activeKid, 'kid-2');
-    assert.equal(body.snapshot.active.kid, 'kid-2');
-    assert.deepEqual(body.snapshot.graceKeys.map(g => g.kid), ['kid-1']);
-
-    /* JWKS now publishes both kid-1 (grace) and kid-2 (active). */
-    const jwks = await app.inject({ method: 'GET', url: '/.well-known/jwks.json' });
-    const jbody = JSON.parse(jwks.body) as { keys: Array<{ kid: string }> };
-    const kids = jbody.keys.map(k => k.kid).sort();
-    assert.deepEqual(kids, ['kid-1', 'kid-2'],
-      'JWKS must publish both grace + active keys after rotation');
-
-    /* P0-D #1 limitation: sign-time key is baked into fastify-jwt at register
-     * time. New tokens still sign with kid-1 until process restart. P1-M will
-     * make this hot. Verify by signing one more token: */
-    const reg2 = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/register',
-      payload: { email: 'post-rotate@example.com', password: 'password123' },
-    });
-    const postToken = JSON.parse(reg2.body).data.accessToken as string;
-    const postHeader = JSON.parse(Buffer.from(postToken.split('.')[0]!, 'base64url').toString('utf-8'));
-    /* Sign-time still kid-1 (the active key at app.register time).
-     * Documented limitation; rotated tokens require app restart. */
-    assert.equal(postHeader.kid, 'kid-1',
-      'P0-D #1 intermediate: sign-time kid is baked at boot. Document + plan P1-M.');
+    assert.equal(body.activeKid, 'kid-1');
+    /* SECURITY: the rotate response must NEVER contain raw key material.
+     * snapshot is a JwtKeyView (kid/state/algorithm/has{Private,Public}Key)
+     * only — privateKey/publicKey/secret never leave KeyRing. */
+    const serialised = rotate.body;
+    assert.ok(!serialised.includes('-----BEGIN'),
+      'rotate response leaked PEM key material');
+    assert.ok(!serialised.includes('"privateKey"'),
+      'rotate response leaked privateKey field');
+    assert.ok(!serialised.includes('"secret"'),
+      'rotate response leaked secret field');
+    /* The view has the redaction-safe boolean flags instead. */
+    assert.equal(typeof body.snapshot.active.hasPrivateKey, 'boolean');
+    assert.equal(typeof body.snapshot.active.hasPublicKey, 'boolean');
   });
 });
 

@@ -163,9 +163,15 @@ export class AuthService {
     const planId = sub?.plan_id ?? 'free';
     /* iat/exp are injected by @fastify/jwt during sign() but the typed
      * surface still requires them; supply only the application claims
-     * and let the runtime backfill timestamps. */
+     * and let the runtime backfill timestamps.
+     *
+     * jti is required for deny-list-based revocation (P0-D #1). Without it,
+     * /api/v1/auth/keys/deny-jti could not target tokens issued by this
+     * service. We use randomUUID() rather than a sequence to avoid leaking
+     * issuance ordering. */
     const signPayload = {
       sub: userId, tenantId, role: role as JwtPayload['role'], planId,
+      jti: randomUUID(),
     } as JwtPayload;
     const accessToken = app.jwt.sign(signPayload);
 

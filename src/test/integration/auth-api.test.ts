@@ -59,6 +59,25 @@ describe('认证 API 集成测试', () => {
       assert.ok(body.data.expiresIn);
     });
 
+    it('access token payload carries jti (enables deny-list revocation per P0-D #1 review)', async () => {
+      /* Without jti the /api/v1/auth/keys/deny-jti endpoint cannot target
+       * tokens issued by AuthService — the deny-list would be a no-op for
+       * the primary token surface. The dual code review flagged this; we
+       * assert here that every registration mints a token with a non-empty
+       * jti so future logout/incident flows can revoke it. */
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        payload: { email: 'jti-check@example.com', password: 'password123' },
+      });
+      assert.equal(res.statusCode, 201);
+      const accessToken = JSON.parse(res.body).data.accessToken as string;
+      const [, payloadB64] = accessToken.split('.');
+      const payload = JSON.parse(Buffer.from(payloadB64!, 'base64url').toString('utf-8'));
+      assert.ok(typeof payload.jti === 'string' && payload.jti.length > 0,
+        `access token missing jti claim; got payload ${JSON.stringify(payload)}`);
+    });
+
     it('跨站前端来源时 refresh cookie 使用 SameSite=None', async () => {
       const res = await app.inject({
         method: 'POST',

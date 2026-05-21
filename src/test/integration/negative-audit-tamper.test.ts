@@ -166,6 +166,34 @@ describe('P0-E negative — audit hash chain tamper detection', () => {
     assert.equal(result.totalChecked, 3);
   });
 
+  it('partial UNIQUE index on (tenant_id, chain_seq) rejects forged duplicate seq', () => {
+    /* DB-level safeguard for the concurrent-writer race flagged by review:
+     * even if two writers somehow read the same tail (advisory lock missed,
+     * SQLite under some hypothetical worker config), the partial UNIQUE
+     * index makes the second INSERT fail with a constraint violation. The
+     * caller can then retry, but the chain itself stays coherent. */
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    ensureAuditLogColumns(db);
+    seedAuditRows(db, 3);
+
+    /* Attempt to forge a duplicate seq=2 row directly via SQL (bypassing
+     * the store). The partial UNIQUE index must reject it. */
+    assert.throws(() => {
+      db.prepare<void>(
+        `INSERT INTO audit_log (
+          id, tenant_id, event_kind, timestamp, created_at,
+          method, path, request_id, status_code, latency_ms,
+          api_key_hash, user_id, user_email,
+          actor_type, actor_id, action_type, target_type, target_id, payload_json,
+          chain_seq, prev_hash, record_hash
+        ) VALUES ('forged-id','tenant-a','request',1,1,'GET','/forged','rf',200,0,
+          NULL, NULL, NULL, NULL, NULL, 'read', NULL, NULL, NULL,
+          2, ?, ?)`,
+      ).run('0'.repeat(64), 'f'.repeat(64));
+    }, /UNIQUE|constraint/i, 'partial UNIQUE index must reject duplicate (tenant_id, chain_seq)');
+  });
+
   it('per-tenant chains are independent', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);

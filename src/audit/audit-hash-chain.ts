@@ -102,14 +102,29 @@ export interface VerifiableRow extends AuditHashInput {
 }
 
 /**
- * 顺序遍历 rows（按 chain_seq 升序）校验链完整性。
+ * Sequentially verify chain integrity over `rows` (ascending by chain_seq).
  *
- * 调用方负责按 chain_seq 升序传入。该函数不做排序，避免在大数据集上引入隐式 O(n log n)。
+ * `start` lets the caller resume verification mid-chain — necessary for the
+ * range API where we only fetch [fromSeq, toSeq]: without it the walker
+ * compares against GENESIS_HASH/seq=1 and reports spurious breaks. Callers
+ * must seed `expectedPrev` with the `record_hash` of row `fromSeq - 1`, or
+ * leave it as GENESIS when starting at seq 1.
+ *
+ * No sorting — the caller passes already-sorted rows. Avoids implicit
+ * O(n log n) on large tails.
  */
-export function verifyChain(rows: readonly VerifiableRow[]): ChainVerifyResult {
+export interface VerifyChainStart {
+  expectedSeq?: number;
+  expectedPrev?: string;
+}
+
+export function verifyChain(
+  rows: readonly VerifiableRow[],
+  start: VerifyChainStart = {},
+): ChainVerifyResult {
   const breaks: ChainBreak[] = [];
-  let expectedPrev = GENESIS_HASH;
-  let expectedSeq = 1;
+  let expectedPrev = start.expectedPrev ?? GENESIS_HASH;
+  let expectedSeq = start.expectedSeq ?? 1;
 
   for (const row of rows) {
     if (row.chainSeq !== expectedSeq) {

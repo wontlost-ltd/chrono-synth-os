@@ -3,7 +3,7 @@ import type { SyncWriteUnitOfWork, AuditLogRow as KernelAuditLogRow } from '@chr
 import {
   auditQueryById, auditQueryList, auditQueryCount,
   auditCmdRecordRequest, auditCmdRecordBusiness, auditCmdEnsureSchema,
-  auditQueryChainTail, auditQueryChainRange,
+  auditQueryChainTail, auditQueryChainRange, auditCmdChainAcquireLock,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import {
@@ -93,9 +93,19 @@ export function hashApiKey(apiKey: string | undefined): string | null {
  * 在事务内读取当前 tenant 的链尾（最大 chain_seq 行的 record_hash + chain_seq）。
  * 首次插入时返回 GENESIS_HASH 与 seq 0；调用方据此推导新行的 chainSeq = tail.seq + 1。
  *
- * 同事务读尾 + 写入 = 串行；多副本/多并发写入需依赖 DB 隔离级别（PG 默认 RC + 主键冲突）。
- * Phase 1A SQLite 单写线程模型下天然安全；PG 多副本场景 P1-F-ext 升级到 SELECT FOR UPDATE。
+ * Concurrency: callers must hold the per-tenant chain lock (see
+ * `acquireChainLock`) before invoking this. On PG that lock is
+ * `pg_advisory_xact_lock(hashtext(tenant_id))`; on SQLite the engine's
+ * single-writer serialisation suffices. Without the lock, two concurrent
+ * writers can read the same tail and INSERT colliding chain_seq values —
+ * the partial UNIQUE index would reject one of them at COMMIT, but the
+ * resulting `23505` error has to be retried by the caller. We prefer the
+ * lock-first path because it's cheaper than the rollback + retry loop.
  */
+function acquireChainLock(tx: SyncWriteUnitOfWork, tenantId: string): void {
+  tx.execute(auditCmdChainAcquireLock(tenantId));
+}
+
 function readChainTail(tx: SyncWriteUnitOfWork, tenantId: string): { seq: number; hash: string } {
   const row = tx.queryOne(auditQueryChainTail(tenantId));
   if (!row) return { seq: 0, hash: GENESIS_HASH };
@@ -106,6 +116,7 @@ export function recordRequestAuditLog(tx: SyncWriteUnitOfWork, input: RequestAud
   registerCoreSelfExecutors();
   const createdAt = input.createdAt ?? Date.now();
   const id = randomUUID();
+  acquireChainLock(tx, input.tenantId);
   const tail = readChainTail(tx, input.tenantId);
   const chainSeq = tail.seq + 1;
   const prevHash = tail.hash;
@@ -161,6 +172,7 @@ export function recordBusinessAuditLog(tx: SyncWriteUnitOfWork, input: BusinessA
   registerCoreSelfExecutors();
   const createdAt = input.createdAt ?? Date.now();
   const id = randomUUID();
+  acquireChainLock(tx, input.tenantId);
   const tail = readChainTail(tx, input.tenantId);
   const chainSeq = tail.seq + 1;
   const prevHash = tail.hash;
@@ -254,7 +266,30 @@ export function verifyAuditChain(
       payloadJson: row.payload_json,
       recordHash: row.record_hash as string,
     }));
-  return verifyChain(verifiable);
+  /* Seed the walker correctly when the caller verifies a partial range —
+   * without this the verifier compares the first row's prev_hash to GENESIS
+   * and reports a spurious mismatch. We fetch the predecessor row to learn
+   * the expected previous hash; if the predecessor doesn't exist the range
+   * is invalid (caller asked for seq > tail). */
+  let start: { expectedSeq?: number; expectedPrev?: string } | undefined;
+  if (verifiable.length > 0 && verifiable[0].chainSeq > 1) {
+    const firstSeq = verifiable[0].chainSeq;
+    const predecessor = tx.queryMany(auditQueryChainRange({
+      tenantId,
+      fromSeq: firstSeq - 1,
+      toSeq: firstSeq - 1,
+      limit: 1,
+    }));
+    if (predecessor.length === 1 && predecessor[0].record_hash !== null) {
+      start = { expectedSeq: firstSeq, expectedPrev: predecessor[0].record_hash };
+    } else {
+      /* Predecessor missing or has NULL hash — anchor at the first row
+       * and report nothing (the gap, if any, is genuinely undetectable
+       * from this range alone). */
+      start = { expectedSeq: firstSeq, expectedPrev: verifiable[0].prevHash };
+    }
+  }
+  return verifyChain(verifiable, start);
 }
 
 export function queryAuditLog(tx: SyncWriteUnitOfWork, options: QueryAuditLogOptions): AuditLogRecord[] {

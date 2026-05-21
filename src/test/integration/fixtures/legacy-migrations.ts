@@ -1680,7 +1680,8 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS chain_seq BIGINT",
       "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS prev_hash TEXT",
-      "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS record_hash TEXT"
+      "ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS record_hash TEXT",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_log_chain_unique ON audit_log(tenant_id, chain_seq) WHERE chain_seq IS NOT NULL"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

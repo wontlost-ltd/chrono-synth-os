@@ -17,6 +17,7 @@ export const AUDIT_QUERY_CHAIN_RANGE = 'audit.chainRange' as const;
 export const AUDIT_CMD_RECORD_REQUEST = 'audit.recordRequest' as const;
 export const AUDIT_CMD_RECORD_BUSINESS = 'audit.recordBusiness' as const;
 export const AUDIT_CMD_ENSURE_SCHEMA = 'audit.ensureSchema' as const;
+export const AUDIT_CMD_CHAIN_ACQUIRE_LOCK = 'audit.chainAcquireLock' as const;
 
 /* ── 行类型 ── */
 
@@ -133,6 +134,10 @@ export interface AuditChainTailRow {
   record_hash: string;
 }
 
+export interface AuditChainAcquireLockParams {
+  tenantId: string;
+}
+
 /* ── Query 工厂 ── */
 
 export function auditQueryById(tenantId: string, id: string): Query<AuditLogRow | null, AuditByIdParams> {
@@ -167,4 +172,14 @@ export function auditQueryChainTail(tenantId: string): Query<AuditChainTailRow |
 
 export function auditQueryChainRange(params: AuditChainRangeParams): Query<AuditLogRow, AuditChainRangeParams> {
   return { kind: AUDIT_QUERY_CHAIN_RANGE, params };
+}
+
+/**
+ * Per-tenant transaction lock for chain append serialisation. On PG this
+ * emits `SELECT pg_advisory_xact_lock(hashtext(tenant_id))`; on SQLite
+ * it's a no-op because the engine is single-writer. Must be called
+ * inside the same transaction as the subsequent tail read + insert.
+ */
+export function auditCmdChainAcquireLock(tenantId: string): Command<AuditChainAcquireLockParams> {
+  return { kind: AUDIT_CMD_CHAIN_ACQUIRE_LOCK, params: { tenantId } };
 }

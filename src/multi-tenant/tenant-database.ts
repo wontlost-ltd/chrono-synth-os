@@ -292,6 +292,9 @@ class TenantStatement<T = unknown> implements IPreparedStatement<T> {
  * 包装 IDatabase，自动为租户表的 SQL 注入 tenant_id
  */
 export class TenantDatabase implements IDatabase {
+  /** Delegate dialect to the wrapped DB — tenant scoping is dialect-agnostic. */
+  get dialect(): 'sqlite' | 'postgres' { return this.inner.dialect; }
+
   constructor(
     private readonly inner: IDatabase,
     private readonly tenantId: string,

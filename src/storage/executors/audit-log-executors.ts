@@ -8,11 +8,13 @@ import type {
   AuditLogRow, AuditByIdParams, AuditListParams, AuditCountParams,
   AuditRecordRequestParams, AuditRecordBusinessParams,
   AuditChainTailParams, AuditChainTailRow, AuditChainRangeParams,
+  AuditChainAcquireLockParams,
 } from '@chrono/kernel';
 import {
   AUDIT_QUERY_BY_ID, AUDIT_QUERY_LIST, AUDIT_QUERY_COUNT,
   AUDIT_QUERY_CHAIN_TAIL, AUDIT_QUERY_CHAIN_RANGE,
   AUDIT_CMD_RECORD_REQUEST, AUDIT_CMD_RECORD_BUSINESS, AUDIT_CMD_ENSURE_SCHEMA,
+  AUDIT_CMD_CHAIN_ACQUIRE_LOCK,
 } from '@chrono/kernel';
 
 const AUDIT_SELECT = `
@@ -121,12 +123,18 @@ export function registerAuditLogExecutors(): void {
     try {
       db.prepare<void>('UPDATE audit_log SET created_at = timestamp WHERE created_at = 0').run();
     } catch { /* ignore */ }
-    /* Index for tail lookup; same statement runs idempotently on both engines. */
+    /* UNIQUE partial index — DB-level guard against concurrent writers
+     * landing the same (tenant_id, chain_seq). Without this, two PG
+     * backends can both read tail=N and both insert seq=N+1. The WHERE
+     * clause leaves legacy NULL-hash rows out of the constraint.
+     *
+     * Both SQLite (>=3.8.0) and PostgreSQL support partial unique
+     * indexes with the same syntax. */
     try {
       db.prepare<void>(
-        'CREATE INDEX IF NOT EXISTS idx_audit_log_chain ON audit_log(tenant_id, chain_seq)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_log_chain_unique ON audit_log(tenant_id, chain_seq) WHERE chain_seq IS NOT NULL',
       ).run();
-    } catch { /* ignore */ }
+    } catch { /* ignore — already exists or engine missing partial index support */ }
     return { rowsAffected: 0 };
   });
 
@@ -157,6 +165,17 @@ export function registerAuditLogExecutors(): void {
         WHERE tenant_id = ? AND chain_seq IS NOT NULL
         ORDER BY chain_seq DESC LIMIT 1`,
     ).get(p.tenantId) ?? null;
+  });
+
+  registerCommand<AuditChainAcquireLockParams>(AUDIT_CMD_CHAIN_ACQUIRE_LOCK, (db, p) => {
+    /* Serialise concurrent chain appends per tenant. On PG we lean on
+     * `pg_advisory_xact_lock(hashtext(text))` — auto-released at tx end,
+     * no DB row touched, scales to many tenants. SQLite is single-writer
+     * so its lock is the implicit BEGIN; no extra statement needed. */
+    if (db.dialect === 'postgres') {
+      db.prepare<void>('SELECT pg_advisory_xact_lock(hashtext(?))').run(p.tenantId);
+    }
+    return { rowsAffected: 0 };
   });
 
   registerQuery<AuditLogRow[], AuditChainRangeParams>(AUDIT_QUERY_CHAIN_RANGE, (db, p) => {

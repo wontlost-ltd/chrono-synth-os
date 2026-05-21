@@ -131,6 +131,12 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
   /* Build (or synthesise from legacy single-key) the KeyRing. */
   let keyRing: KeyRing;
   let activeKid: string;
+  /* Boot-time active kid — fastify-jwt's `secret` is captured at register()
+   * time and cannot be changed without restart. Rotate that would change the
+   * *signing-effective* active key must be refused (409 RESTART_REQUIRED);
+   * otherwise JWKS would advertise a key the server cannot actually sign with,
+   * causing every newly issued token to fail verification at the client. See
+   * the rotate endpoint below for the gate. */
   if (multiKid) {
     keyRing = new KeyRing(config.jwt.keys as JwtKeyEntry[]);
     activeKid = keyRing.activeKid();
@@ -149,6 +155,7 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
     keyRing = new KeyRing([entry]);
     activeKid = synthKid;
   }
+  const bootActiveKid = activeKid;
 
   /* Sign-side key: always the currently active key.
    *
@@ -293,6 +300,24 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
       });
     }
     const body = parseResult.data;
+    /* Gate: refuse rotations that would change the signing-effective active
+     * kid. fastify-jwt captured its signing key at register() time; we can
+     * only change the *advertised* (JWKS) active kid and the *verify-side*
+     * KeyRing state in-process. If a rotate moved active away from
+     * bootActiveKid, JWKS clients would converge on the new key, but
+     * newly-issued tokens would still be signed with the boot key → every
+     * client rejects every fresh token. This is exactly the failure mode
+     * the dual reviewers flagged as Critical. Force operator to do
+     * config update + restart instead. */
+    if (body.newActiveKid !== bootActiveKid) {
+      return reply.status(409).send({
+        error: 'RotateError',
+        code: 'AUTH_ROTATE_RESTART_REQUIRED',
+        message: 'Rotating to a different active key requires updating jwt.keys config and restarting the process. The in-process rotate endpoint can only mark existing keys grace/retired/compromised — not change signing.',
+        bootActiveKid,
+        requestedNewActiveKid: body.newActiveKid,
+      });
+    }
     try {
       keyRing.rotate({
         newActiveKid: body.newActiveKid,
@@ -308,11 +333,11 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
     /* IMPORTANT: refresh the cached `activeKid` decorator so subsequent
      * introspection (logs, tests) reflects the rotation. */
     (app as unknown as { jwtKid: string }).jwtKid = keyRing.activeKid();
-    request.log.info({
-      newActive: keyRing.activeKid(),
-      snapshot: keyRing.snapshot(),
-    }, 'JWT KeyRing rotated');
-    return { ok: true, activeKid: keyRing.activeKid(), snapshot: keyRing.snapshot() };
+    /* snapshot() returns JwtKeyView only — privateKey/publicKey/secret never
+     * leave KeyRing; safe to log + return to admin. */
+    const snapshot = keyRing.snapshot();
+    request.log.info({ newActive: keyRing.activeKid(), snapshot }, 'JWT KeyRing rotated');
+    return { ok: true, activeKid: keyRing.activeKid(), snapshot };
   });
 
   /* POST /api/v1/auth/keys/deny-jti — explicit revocation of a single token.
@@ -359,13 +384,9 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
       }
     },
   }, async () => {
-    /* Return snapshot WITHOUT secret material — only kid/state/algorithm. */
-    return {
-      active: { kid: keyRing.snapshot().active.kid, state: 'active', algorithm: keyRing.snapshot().active.algorithm },
-      graceKeys: keyRing.snapshot().graceKeys.map(e => ({ kid: e.kid, state: e.state, algorithm: e.algorithm })),
-      retiredKids: keyRing.snapshot().retiredKids,
-      compromisedKids: keyRing.snapshot().compromisedKids,
-    };
+    /* snapshot() returns JwtKeyView only — privateKey/publicKey/secret never
+     * leave KeyRing. The type system enforces redaction; no manual stripping. */
+    return keyRing.snapshot();
   });
 
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {

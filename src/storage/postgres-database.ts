@@ -330,6 +330,7 @@ const TIMEOUT_MS = 30_000;
  * 主线程使用 Atomics.wait 等待结果（不阻塞 Worker 事件循环）
  */
 export class PostgresDatabase implements IDatabase {
+  readonly dialect = 'postgres' as const;
   private readonly worker: Worker;
   private _closed = false;
   private nextMsgId = 1;

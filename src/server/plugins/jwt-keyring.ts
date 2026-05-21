@@ -32,11 +32,38 @@ export interface JwtKeyEntry {
   secret: string;      /* shared secret; empty for asymmetric */
 }
 
+/**
+ * Public, redaction-safe view of a single key.
+ *
+ * Why: every diagnostic surface (logs, /keys, /keys/rotate response, tests)
+ * must be safe to dump. We don't trust callers to "remember to strip
+ * privateKey" — the type system enforces it instead. The full
+ * `JwtKeyEntry` (with key material) is intentionally accessible ONLY via
+ * `KeyRing.signEntry()` / `verifyEntry()` for crypto operations.
+ */
+export interface JwtKeyView {
+  kid: string;
+  state: JwtKeyState;
+  algorithm: JwtAlgorithm;
+  hasPrivateKey: boolean;
+  hasPublicKey: boolean;
+}
+
 export interface KeyRingSnapshot {
-  active: JwtKeyEntry;
-  graceKeys: JwtKeyEntry[];
+  active: JwtKeyView;
+  graceKeys: JwtKeyView[];
   retiredKids: string[];
   compromisedKids: string[];
+}
+
+function toKeyView(e: JwtKeyEntry): JwtKeyView {
+  return {
+    kid: e.kid,
+    state: e.state,
+    algorithm: e.algorithm,
+    hasPrivateKey: e.privateKey.length > 0,
+    hasPublicKey: e.publicKey.length > 0,
+  };
 }
 
 /**
@@ -197,12 +224,19 @@ export class KeyRing {
     e.state = 'compromised';
   }
 
-  /** Convenience: derive a snapshot view (for diagnostics / logs / tests). */
+  /**
+   * Redaction-safe diagnostic view. Returns `JwtKeyView` (no privateKey /
+   * publicKey / secret). Safe to log, return from admin endpoints, or
+   * embed in test assertions. Crypto operations must use signEntry() /
+   * verifyEntry() instead.
+   */
   snapshot(): KeyRingSnapshot {
     const all = Array.from(this.keys.values());
+    const active = all.find(e => e.state === 'active');
+    if (!active) throw new Error('KeyRing.snapshot: invariant violated — no active key');
     return {
-      active: all.find(e => e.state === 'active')!,
-      graceKeys: all.filter(e => e.state === 'grace'),
+      active: toKeyView(active),
+      graceKeys: all.filter(e => e.state === 'grace').map(toKeyView),
       retiredKids: all.filter(e => e.state === 'retired').map(e => e.kid),
       compromisedKids: all.filter(e => e.state === 'compromised').map(e => e.kid),
     };

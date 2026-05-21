@@ -25,6 +25,10 @@ export type SqlValue = null | number | bigint | string;
  * 通过 prepare()/exec() 直接走 SQL。
  */
 export interface IDatabase extends SyncWriteUnitOfWork {
+  /** Underlying SQL dialect. Lets dialect-sensitive code (advisory locks,
+   * partial indexes, regex syntax) branch without importing the concrete
+   * Sqlite/Postgres classes (which would form a cycle). */
+  readonly dialect: 'sqlite' | 'postgres';
   exec(sql: string): void;
   prepare<T = unknown>(sql: string): IPreparedStatement<T>;
   close(): void;
@@ -41,6 +45,7 @@ const MIN_SQLITE_VERSION = '3.24.0';
 
 /** node:sqlite 实现 */
 export class SqliteDatabase implements IDatabase {
+  readonly dialect = 'sqlite' as const;
   private readonly db: DatabaseSync;
 
   constructor(path: string) {

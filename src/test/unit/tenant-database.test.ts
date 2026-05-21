@@ -205,6 +205,7 @@ describe('TenantDatabase', () => {
     let capturedParams: SqlValue[] = [];
 
     const spyDb: IDatabase = {
+      dialect: 'sqlite',
       exec() {},
       close() {},
       transaction<T>(fn: () => T): T {
@@ -249,6 +250,7 @@ describe('TenantDatabase', () => {
     let capturedParams: SqlValue[] = [];
 
     const spyDb: IDatabase = {
+      dialect: 'sqlite',
       exec() {},
       close() {},
       transaction<T>(fn: () => T): T {

@@ -40,9 +40,22 @@ export const v073_audit_hash_chain: Migration = defineMigration({
       safeIfTableExists: true,
       column: { name: 'record_hash', type: 'text' },
     },
-    /* Note: idx_audit_log_chain is not created here because some legacy
-     * fixtures skip the v002 audit_log table creation. The runtime
-     * ensureAuditLogColumns() call (jwt-auth.ts boot path) creates it
-     * idempotently on real deployments. */
+    /* Partial UNIQUE index on (tenant_id, chain_seq) enforces no-duplicate
+     * sequence numbers per tenant — the only DB-level safeguard against
+     * the read-tail-then-insert race under concurrent writers. WHERE
+     * chain_seq IS NOT NULL leaves legacy rows alone. The runner tags
+     * this op with safe:if-table-exists in case the legacy bootstrap
+     * fixture skipped v002. */
+    {
+      kind: 'create-index',
+      index: {
+        name: 'idx_audit_log_chain_unique',
+        table: 'audit_log',
+        columns: ['tenant_id', 'chain_seq'],
+        unique: true,
+        ifNotExists: true,
+        where: 'chain_seq IS NOT NULL',
+      },
+    },
   ],
 });
