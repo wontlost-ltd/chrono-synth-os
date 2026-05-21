@@ -19,6 +19,7 @@ import { loadConfig } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
+import { registerA11yHeaders } from './plugins/a11y-headers.js';
 import { registerRequestId } from './plugins/request-id.js';
 import { registerRateLimit } from './plugins/rate-limit.js';
 import { registerMetrics } from './plugins/metrics.js';
@@ -205,6 +206,18 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 错误处理（在路由之前注册，以捕获路由中的错误） */
   registerErrorHandler(app);
+
+  /* a11y-friendly response headers — Vary: Accept-Language for future
+   * localised responses, Preference-Applied for reduced-motion ack.
+   *
+   * NOT WIRED YET: the current Fastify onSend-hook implementation
+   * conflicts with the idempotency-replay path (reply.send() from
+   * inside preHandler races with our reply.header()). Until P1-AY-ext
+   * refactors the plugin to attach headers at route registration time,
+   * the helper remains available as a library function for routes that
+   * need it explicitly. See `src/server/plugins/a11y-headers.ts` for
+   * the implementation and the runbook for the deferred design. */
+  void registerA11yHeaders;
 
   /* 多租户 OS 工厂 */
   const db = deps.db ?? deps.os.getDatabase();
