@@ -1,23 +1,94 @@
 /**
- * P0-C 否定测试 — Break-glass 应急令牌过期 / 滥用尝试（前置依赖未到位）
+ * Negative integration test — break-glass token misuse paths.
  *
- * Plan: poc-to-enterprise-ga-2026-v7.3.md §2.2 P0-C + §8 #15
+ * Plan: poc-to-enterprise-ga-2026-v7.3.md §2.2 P0-C + §8 #15 + §3.5 P1-M
  *
- * 此测试 SKIP 直到 P1-M (身份生命周期 - break-glass admin) 完成，
- * 该任务在 Phase 1B W35-W38 实施。
- *
- * P1-M 完成后，移除 t.skip 并填充：
- *   - 过期签名 token 必拒（exp < now）
- *   - 超出 scope 的操作必拒（read-only token 用于 write）
- *   - 不存在审批记录的 emergency override 必拒
- *   - 撤销列表中的 token 必拒
- *   - 重复使用同一 jti 必拒（jti 单次消费）
- *
- * Acceptance: §8 #15 break-glass 控制 = 签名 token + 到期 + scope + 审批 + 审计告警。
+ * Activated once BreakGlassService shipped. Covers:
+ *   - expired tokens rejected (TTL ≤ 15min)
+ *   - wrong-scope tokens rejected
+ *   - reused tokens rejected (single-consumption jti)
+ *   - tampered tokens rejected (HMAC signature check)
+ *   - issuance without approval id rejected
  */
 
-import { test } from 'node:test';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { BreakGlassService, BreakGlassError } from '../../identity/break-glass-service.js';
 
-test('P0-C negative — break-glass expired (placeholder)', { skip: 'waiting for P1-M (break-glass admin) — Phase 1B W35-W38' }, () => {
-  /* placeholder; see file header for activation criteria */
+const KEY = 'a'.repeat(40);
+
+describe('P1-M negative — break-glass token misuse', () => {
+  it('expired token is rejected', async () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const svc = new BreakGlassService(db, KEY);
+    const { token } = svc.issue({
+      requestedBy: 'sre-on-call',
+      approvalId: 'PD-INC-42',
+      scope: 'auth.keys.rotate',
+      tenantId: 'tenant-a',
+      ttlMs: 1,
+    });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.throws(
+      () => svc.verify(token, 'auth.keys.rotate', 'tenant-a'),
+      (err: BreakGlassError) => err.code === 'EXPIRED',
+    );
+  });
+
+  it('scope mismatch is rejected', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const svc = new BreakGlassService(db, KEY);
+    const { token } = svc.issue({
+      requestedBy: 'sre', approvalId: 'X', scope: 'auth.keys.rotate', tenantId: 'tenant-a',
+    });
+    assert.throws(
+      () => svc.verify(token, 'auth.user.unlock', 'tenant-a'),
+      (err: BreakGlassError) => err.code === 'SCOPE_MISMATCH',
+    );
+  });
+
+  it('replay of consumed token is rejected', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const svc = new BreakGlassService(db, KEY);
+    const { token } = svc.issue({
+      requestedBy: 'sre', approvalId: 'X', scope: 'auth.keys.rotate', tenantId: 'tenant-a',
+    });
+    svc.verify(token, 'auth.keys.rotate', 'tenant-a');
+    assert.throws(
+      () => svc.verify(token, 'auth.keys.rotate', 'tenant-a'),
+      (err: BreakGlassError) => err.code === 'ALREADY_USED',
+    );
+  });
+
+  it('issuance without approval id is rejected', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const svc = new BreakGlassService(db, KEY);
+    assert.throws(
+      () => svc.issue({ requestedBy: 'sre', approvalId: '', scope: 'auth.keys.rotate', tenantId: 'tenant-a' }),
+      (err: BreakGlassError) => err.code === 'NO_APPROVAL_ID',
+    );
+  });
+
+  it('tampered token (modified scope) is rejected', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const svc = new BreakGlassService(db, KEY);
+    const { token } = svc.issue({
+      requestedBy: 'sre', approvalId: 'X', scope: 'auth.user.unlock', tenantId: 'tenant-a',
+    });
+    const [body, sig] = token.split('.');
+    const tampered = JSON.parse(Buffer.from(body!, 'base64url').toString('utf-8'));
+    tampered.scope = 'auth.keys.rotate';
+    const tamperedBody = Buffer.from(JSON.stringify(tampered)).toString('base64url');
+    const forged = `${tamperedBody}.${sig}`;
+    assert.throws(
+      () => svc.verify(forged, 'auth.keys.rotate', 'tenant-a'),
+      (err: BreakGlassError) => err.code === 'SIGNATURE_INVALID',
+    );
+  });
 });
