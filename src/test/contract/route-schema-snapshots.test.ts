@@ -19,6 +19,14 @@ const routeModuleFiles = readdirSync(routeDirectory)
   .filter((file) => file.endsWith('.ts'))
   .sort();
 
+/* Plugins that register HTTP endpoints inline (rather than via dedicated
+ * route modules). These ship their own zod schemas; we still want shape
+ * changes to surface in the contract snapshot — otherwise admin surfaces
+ * can drift unnoticed. The schema name extraction skips plugins that
+ * don't use `*Schema.parse|safeParse` pattern. */
+const pluginsDirectory = resolve(process.cwd(), 'src', 'server', 'plugins');
+const pluginModuleFiles = ['jwt-auth.ts'];
+
 type SchemaEntry = { name: string; hash: string };
 type RouteModuleSnapshot = Record<string, SchemaEntry[]>;
 
@@ -55,20 +63,27 @@ describe('Route Schema Snapshots', () => {
       routeModuleFiles.map(async (sourceFile) => {
         const baseName = sourceFile.replace(/\.ts$/, '');
         const imported = await import(`../../server/routes/${baseName}.js`);
-        return { sourceFile, imported };
+        return { sourceFile, imported, sourcePath: resolve(routeDirectory, sourceFile), requireRegister: true };
+      }),
+    );
+    const pluginModules = await Promise.all(
+      pluginModuleFiles.map(async (sourceFile) => {
+        const baseName = sourceFile.replace(/\.ts$/, '');
+        const imported = await import(`../../server/plugins/${baseName}.js`);
+        return { sourceFile: `plugins/${sourceFile}`, imported, sourcePath: resolve(pluginsDirectory, sourceFile), requireRegister: false };
       }),
     );
 
     const actual: RouteModuleSnapshot = Object.fromEntries(
-      routeModules.map(({ sourceFile, imported }) => {
-        assert.ok(
-          Object.entries(imported).some(
-            ([name, value]) => name.startsWith('register') && typeof value === 'function',
-          ),
-          `${sourceFile} 应导出至少一个 register* 路由函数`,
-        );
-
-        const sourcePath = resolve(routeDirectory, sourceFile);
+      [...routeModules, ...pluginModules].map(({ sourceFile, imported, sourcePath, requireRegister }) => {
+        if (requireRegister) {
+          assert.ok(
+            Object.entries(imported).some(
+              ([name, value]) => name.startsWith('register') && typeof value === 'function',
+            ),
+            `${sourceFile} 应导出至少一个 register* 路由函数`,
+          );
+        }
         const schemaNames = extractSchemaNames(readFileSync(sourcePath, 'utf8'));
         const entries = schemaNames.map((name) => {
           const schema = schemaRegistry[name];

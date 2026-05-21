@@ -10,7 +10,6 @@
 import { createHash, createPublicKey } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
-import { z } from 'zod';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
 import {
@@ -19,24 +18,7 @@ import {
   type JwtKeyEntry,
 } from './jwt-keyring.js';
 import { createJtiDenyList, type JtiDenyList } from './jwt-deny-list.js';
-
-/** Runtime schemas for admin endpoints — defence in depth vs malformed bodies. */
-const RotateBodySchema = z.object({
-  newActiveKid: z.string().min(1),
-  oldActiveNewState: z.enum(['grace', 'retired', 'compromised']).optional(),
-  addNew: z.array(z.object({
-    kid: z.string().min(1),
-    state: z.enum(['active', 'grace', 'retired', 'compromised']),
-    algorithm: z.enum(['HS256', 'HS384', 'HS512', 'RS256', 'ES256']),
-    privateKey: z.string().default(''),
-    publicKey: z.string().default(''),
-    secret: z.string().default(''),
-  })).optional(),
-});
-const DenyJtiBodySchema = z.object({
-  jti: z.string().min(1),
-  expiresAtMs: z.number().int().positive(),
-});
+import { JwtRotateBodySchema, JwtDenyJtiBodySchema } from '../schemas/api-schemas.js';
 
 /** Wrap `createPublicKey` so the JWKS handler has a single, mockable entry. */
 function createPublicKeyObject(pem: string): ReturnType<typeof createPublicKey> {
@@ -291,7 +273,7 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
       }
     },
   }, async (request, reply) => {
-    const parseResult = RotateBodySchema.safeParse(request.body);
+    const parseResult = JwtRotateBodySchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.status(400).send({
         error: 'ValidationError',
@@ -359,7 +341,7 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
       }
     },
   }, async (request, reply) => {
-    const parseResult = DenyJtiBodySchema.safeParse(request.body);
+    const parseResult = JwtDenyJtiBodySchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.status(400).send({
         error: 'ValidationError',

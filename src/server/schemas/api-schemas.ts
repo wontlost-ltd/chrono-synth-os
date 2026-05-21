@@ -884,3 +884,28 @@ export const AnalyticsBatchSchema = z.object({
   events: z.array(AnalyticsEventSchema).min(1).max(200),
   sessionId: z.string().min(8).max(128).optional(),
 });
+
+/* ── JWT KeyRing admin endpoints (P0-D #1) ──
+ * Defined here so the contract snapshot test detects shape changes; the
+ * actual routes live in src/server/plugins/jwt-auth.ts because they share
+ * the KeyRing/DenyList instances built during plugin registration. */
+
+const JwtKeyEntrySchema = z.object({
+  kid: z.string().min(1),
+  state: z.enum(['active', 'grace', 'retired', 'compromised']),
+  algorithm: z.enum(['HS256', 'HS384', 'HS512', 'RS256', 'ES256']),
+  privateKey: z.string().default(''),
+  publicKey: z.string().default(''),
+  secret: z.string().default(''),
+});
+
+export const JwtRotateBodySchema = z.object({
+  newActiveKid: z.string().min(1),
+  oldActiveNewState: z.enum(['grace', 'retired', 'compromised']).optional(),
+  addNew: z.array(JwtKeyEntrySchema).optional(),
+});
+
+export const JwtDenyJtiBodySchema = z.object({
+  jti: z.string().min(1),
+  expiresAtMs: z.number().int().positive(),
+});

@@ -556,5 +556,15 @@
       "hash": "1cb787be092698c2027d15e3db50d6a26158fe20becfbefc83d77ddfd9b91b70"
     }
   ],
-  "visualization.ts": []
+  "visualization.ts": [],
+  "plugins/jwt-auth.ts": [
+    {
+      "name": "JwtDenyJtiBodySchema",
+      "hash": "77445f2f6573497a533832442090c496e8e534786379d3c85259558270d2f111"
+    },
+    {
+      "name": "JwtRotateBodySchema",
+      "hash": "95b974ad99dfe3207da51f44698138e7e6b83dd4a5ba1232ebbb8903bea73a9b"
+    }
+  ]
 }
