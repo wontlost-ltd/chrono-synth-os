@@ -85,4 +85,6 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v073_audit_hash_chain', aliases: { postgres: 'v075', 'sqlite-sql': 'v073' }, classification: 'schema-simple', notes: 'P0-E: audit_log append-only hash chain columns' },
   { canonical: 'v074_soc2_evidence', aliases: { postgres: 'v076', 'sqlite-sql': 'v074' }, classification: 'schema-simple', notes: 'P1-F-basic: SOC2 evidence collection table' },
   { canonical: 'v075_legal_holds', aliases: { postgres: 'v077', 'sqlite-sql': 'v075' }, classification: 'schema-simple', notes: 'P1-N: legal holds registry' },
+  { canonical: 'v076_break_glass_jti_consumptions', aliases: { postgres: 'v078', 'sqlite-sql': 'v076' }, classification: 'schema-simple', notes: 'P1-M v2: durable break-glass JTI replay ledger' },
+  { canonical: 'v077_audit_chain_anchors', aliases: { postgres: 'v079', 'sqlite-sql': 'v077' }, classification: 'schema-simple', notes: 'P0-E v2: KMS-signed audit chain tail anchors' },
 ];

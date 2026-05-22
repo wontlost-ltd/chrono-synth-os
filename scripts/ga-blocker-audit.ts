@@ -29,13 +29,16 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { ReleaseManifestV1Schema } from '@chrono/contracts';
 
 const ROOT = resolve(process.cwd());
 
 interface ArtifactCheck {
-  kind: 'file' | 'test' | 'config' | 'external';
+  kind: 'file' | 'test' | 'config' | 'external' | 'release-manifest';
   path: string;
   desc: string;
+  /** release-manifest 检查默认 opt-in：CHRONO_RELEASE_MANIFEST_PATH 未设置时跳过。 */
+  optional?: boolean;
 }
 
 interface Blocker {
@@ -45,7 +48,27 @@ interface Blocker {
   artifacts: ArtifactCheck[];
 }
 
+/* 发布清单路径来自环境变量，便于 release pipeline 注入；未设置时
+ * 该项报告为 external（在本仓外追踪），不阻断 OS 侧审计。
+ *
+ * 严格 GA 模式：REQUIRE_RELEASE_MANIFEST=1 时即使路径未设置也按"缺失
+ * 必备产物"处理，使 CI release gate 能强制要求 manifest 存在并通过
+ * Zod 校验。 */
+const RELEASE_MANIFEST_PATH = process.env.CHRONO_RELEASE_MANIFEST_PATH ?? '';
+const REQUIRE_RELEASE_MANIFEST = process.env.REQUIRE_RELEASE_MANIFEST === '1';
+
 const BLOCKERS: Blocker[] = [
+  { id: '#0', category: '发布清单契约 (Release Manifest v1)', stage: '1A', artifacts: [
+    { kind: 'file', path: 'packages/contracts/src/release/release-manifest.ts', desc: 'ReleaseManifestV1 Zod 契约' },
+    {
+      kind: 'release-manifest',
+      path: RELEASE_MANIFEST_PATH || 'dist/release-manifest.json',
+      desc: 'pipeline-produced release manifest',
+      /* dev/local 模式：未设置路径时 optional；GA release CI 设置
+       * REQUIRE_RELEASE_MANIFEST=1 后立即转为强制项。 */
+      optional: !RELEASE_MANIFEST_PATH && !REQUIRE_RELEASE_MANIFEST,
+    },
+  ]},
   { id: '#1', category: '合规证据基础 (P1-F-basic)', stage: '1A', artifacts: [
     { kind: 'file', path: 'src/compliance/evidence-store.ts', desc: 'EvidenceStore service' },
     { kind: 'file', path: 'packages/schema-dsl/src/migrations/server-simple/v074.ts', desc: 'compliance_evidence table migration' },
@@ -187,8 +210,27 @@ interface AuditResult {
 
 function checkArtifact(a: ArtifactCheck): { ok: boolean | 'external'; detail: string } {
   if (a.kind === 'external') return { ok: 'external', detail: 'tracked outside this repo' };
+  if (a.kind === 'release-manifest' && a.optional) {
+    return { ok: 'external', detail: 'release manifest not produced in this build (set CHRONO_RELEASE_MANIFEST_PATH to validate)' };
+  }
   const full = resolve(ROOT, a.path);
   if (!existsSync(full)) return { ok: false, detail: `missing: ${a.path}` };
+  if (a.kind === 'release-manifest') {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(full, 'utf-8'));
+      const result = ReleaseManifestV1Schema.safeParse(parsed);
+      if (!result.success) {
+        const issues = result.error.issues
+          .map(issue => `${issue.path.join('.') || '<root>'}: ${issue.message}`)
+          .join('; ');
+        return { ok: false, detail: `release manifest invalid: ${a.path} (${issues})` };
+      }
+      return { ok: true, detail: a.path };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, detail: `release manifest unreadable: ${a.path} (${message})` };
+    }
+  }
   if (a.kind === 'test') {
     /* Verify the test file has at least one describe()/it() */
     const src = readFileSync(full, 'utf-8');

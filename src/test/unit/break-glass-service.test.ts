@@ -129,7 +129,7 @@ describe('BreakGlassService.verify — refusal paths', () => {
     svc.verify(token, 'auth.keys.rotate', 't1');
     assert.throws(
       () => svc.verify(token, 'auth.keys.rotate', 't1'),
-      (err: BreakGlassError) => err.code === 'ALREADY_USED',
+      (err: BreakGlassError) => err.code === 'REPLAY_DETECTED',
     );
   });
 
@@ -159,7 +159,7 @@ describe('BreakGlassService — evidence trail', () => {
     const outcomes = rows
       .filter(r => r.evidenceType === 'break_glass_use')
       .map(r => (r.payload as { outcome: string }).outcome);
-    assert.deepEqual(outcomes.sort(), ['already_used', 'consumed', 'scope_mismatch', 'tenant_mismatch']);
+    assert.deepEqual(outcomes.sort(), ['consumed', 'replay_detected', 'scope_mismatch', 'tenant_mismatch']);
   });
 });
 

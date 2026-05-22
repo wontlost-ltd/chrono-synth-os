@@ -29,6 +29,8 @@ import { generatePrefixedId } from './utils/id-generator.js';
 import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
 import { TaskQueue } from './queue/task-queue.js';
+import { FeatureFlagService } from './feature-flags/feature-flag-service.js';
+import { AuditChainAnchorService, type AuditChainKmsProvider } from './audit/audit-chain-anchor-service.js';
 
 export interface ChronoSynthOSConfig {
   /** 数据库实例（默认内存） */
@@ -51,6 +53,12 @@ export interface ChronoSynthOSConfig {
   skipMigrations?: boolean;
   /** 租户 ID（用于事件租户隔离，默认 'default'） */
   tenantId?: string;
+  /** 审计链 KMS 尾锚后台任务配置；未提供 kmsProvider 时不启动锚定 */
+  auditChainAnchors?: {
+    kmsProvider?: AuditChainKmsProvider;
+    featureFlags?: FeatureFlagService;
+    intervalMs?: number;
+  };
 }
 
 export class ChronoSynthOS {
@@ -64,6 +72,8 @@ export class ChronoSynthOS {
   readonly patternExtractor: MemoryPatternExtractor;
   readonly lifeSimulation: LifeSimulationService;
   readonly queue: TaskQueue;
+  /** Phase 1B 可选：开启 audit chain KMS 锚定时存在 */
+  readonly auditChainAnchors: AuditChainAnchorService | undefined;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -117,6 +127,24 @@ export class ChronoSynthOS {
       lifeSimStore, this.queue, lifeSimEngine, this.bus,
       () => compilePersonaState(this.core),
     );
+
+    /* 可选：注入 KmsProvider 后开启审计链尾签名。flag 默认关闭，
+     * 即使注入了 provider，feature flag 也必须显式开启才会签名。 */
+    if (config.auditChainAnchors?.kmsProvider) {
+      const anchorDeps: ConstructorParameters<typeof AuditChainAnchorService>[0] = {
+        db: this.db,
+        kmsProvider: config.auditChainAnchors.kmsProvider,
+        featureFlags: config.auditChainAnchors.featureFlags ?? new FeatureFlagService(),
+        clock: this.clock,
+        logger: this.logger,
+      };
+      if (config.auditChainAnchors.intervalMs !== undefined) {
+        anchorDeps.intervalMs = config.auditChainAnchors.intervalMs;
+      }
+      this.auditChainAnchors = new AuditChainAnchorService(anchorDeps);
+    } else {
+      this.auditChainAnchors = undefined;
+    }
   }
 
   /** 获取数据库实例 */
@@ -141,6 +169,7 @@ export class ChronoSynthOS {
 
   /** 启动系统 */
   start(): void {
+    this.auditChainAnchors?.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -324,6 +353,7 @@ export class ChronoSynthOS {
     if (this.stopped) return;
     this.stopped = true;
     try {
+      this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');
     } finally {

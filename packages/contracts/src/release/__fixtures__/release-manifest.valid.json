@@ -1,0 +1,47 @@
+{
+  "manifestVersion": "v1",
+  "releaseId": "6f9e7d18-4f72-4b30-b2f7-5e9c8d120a45",
+  "gitSha": "0123456789abcdef0123456789abcdef01234567",
+  "builtAt": "2026-05-23T00:00:00Z",
+  "artifacts": [
+    {
+      "name": "chrono-synth-os",
+      "kind": "container",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "size": 104857600
+    },
+    {
+      "name": "chrono-synth-os-sbom",
+      "kind": "sbom",
+      "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "size": 65536
+    }
+  ],
+  "signatures": [
+    {
+      "subject": "ghcr.io/wontlost/chrono-synth-os@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signedBy": "https://token.actions.githubusercontent.com",
+      "signatureRef": "ghcr.io/wontlost/chrono-synth-os:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sig",
+      "alg": "cosign-keyless-oidc"
+    }
+  ],
+  "sbomRef": "dist/chrono-synth-os.spdx.json",
+  "slsaProvenance": {
+    "predicateType": "https://slsa.dev/provenance/v1",
+    "ref": "dist/chrono-synth-os.intoto.jsonl"
+  },
+  "featureFlagSnapshot": {
+    "billingUsageOutbox": true,
+    "dualWriteFlushWorker": false,
+    "runtimeRecoveryWorker": true
+  },
+  "migrations": {
+    "headVersion": 76,
+    "expectedAfter": [76]
+  },
+  "compatibilities": {
+    "webMinVersion": "2.0.0",
+    "desktopMinVersion": "2.0.0",
+    "schemaMinVersion": 76
+  }
+}

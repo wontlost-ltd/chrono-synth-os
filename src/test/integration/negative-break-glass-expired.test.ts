@@ -60,7 +60,7 @@ describe('P1-M negative — break-glass token misuse', () => {
     svc.verify(token, 'auth.keys.rotate', 'tenant-a');
     assert.throws(
       () => svc.verify(token, 'auth.keys.rotate', 'tenant-a'),
-      (err: BreakGlassError) => err.code === 'ALREADY_USED',
+      (err: BreakGlassError) => err.code === 'REPLAY_DETECTED',
     );
   });
 

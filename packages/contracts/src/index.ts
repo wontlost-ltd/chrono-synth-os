@@ -4,4 +4,5 @@ export * from './conflict/index.js';
 export * from './portability/index.js';
 export * from './ppf/index.js';
 export * from './copy/index.js';
+export * from './release/index.js';
 export * from './design-tokens.js';

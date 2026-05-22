@@ -9,3 +9,4 @@ export * from './collaboration-queries.js';
 export * from './mobile-device-queries.js';
 export * from './device-avatar-queries.js';
 export * from './avatar-snapshot-queries.js';
+export * from './break-glass-queries.js';

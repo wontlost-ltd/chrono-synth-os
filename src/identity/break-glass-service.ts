@@ -29,8 +29,15 @@
  */
 
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import {
+  insertBreakGlassConsumption,
+  pruneOldBreakGlassConsumptions,
+  toBreakGlassInsertResult,
+  toBreakGlassPruneResult,
+} from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
 import { recordEvidence } from '../compliance/evidence-store.js';
+import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export type BreakGlassScope =
   | 'auth.keys.rotate'
@@ -65,7 +72,7 @@ export class BreakGlassError extends Error {
     | 'EXPIRED'
     | 'SCOPE_MISMATCH'
     | 'TENANT_MISMATCH'
-    | 'ALREADY_USED'
+    | 'REPLAY_DETECTED'
     | 'NO_APPROVAL_ID'
     | 'TTL_TOO_LONG',
     message: string,
@@ -75,24 +82,22 @@ export class BreakGlassError extends Error {
   }
 }
 
-interface UsedJtiRow {
-  jti: string;
-  consumed_at: number;
-  consumed_by: string;
-}
-
 /**
- * Stateful service — needs to remember consumed jtis. We store them in
- * a small in-memory map for the process; jti deny-list (P0-D) handles
- * cross-process via DB.
+ * DB-backed service — JTI consumption is enforced by the
+ * UNIQUE(tenant_id, jti) index on break_glass_jti_consumptions
+ * (migration v076). 任何共享同一数据库的实例都会看到一致的"已消费"
+ * 视图，所以同一令牌不可能在两个 Pod 上各使用一次。
  *
- * For v1 break-glass tokens are single-process: an on-call SRE requests
- * one, uses it within 15 min on the same app instance. Cross-instance
- * use needs the DB-backed deny-list which P1-M v2 adds.
+ * 设计要点：
+ *   - 消费 = INSERT ... ON CONFLICT DO NOTHING；rowsAffected===1 视为
+ *     首次消费成功，否则视为重放并拒绝；
+ *   - tenantId 为空（平台级 break-glass）时，使用 'platform' 作为
+ *     分区键，保证唯一索引仍然有效；
+ *   - 周期性裁剪由 pruneExpiredCadenced() 每分钟最多触发一次，删除
+ *     超出 2× MAX_TTL_MS 的旧消费记录以避免账本无界增长。
  */
 export class BreakGlassService {
-  private readonly consumedJtis = new Map<string, UsedJtiRow>();
-  /** Periodic-eviction guard: removes consumed jtis older than 2× MAX_TTL. */
+  /** Periodic-eviction guard: avoid running the prune query every call. */
   private lastGc = Date.now();
 
   constructor(
@@ -103,6 +108,8 @@ export class BreakGlassService {
     if (!signingKey || signingKey.length < 32) {
       throw new Error('break-glass signing key must be ≥32 chars');
     }
+    /* 注册 break-glass 命令执行器（幂等，重复注册由 registerCoreSelfExecutors 内部跳过） */
+    registerCoreSelfExecutors();
   }
 
   /**
@@ -160,8 +167,13 @@ export class BreakGlassService {
    * tampering / expiry / scope mismatch / reuse. Writes a CC6.1 evidence
    * row recording the outcome (success or refusal + reason).
    */
-  verify(token: string, requiredScope: BreakGlassScope, requestedTenantId: string): BreakGlassPayload {
-    this.gc();
+  verify(
+    token: string,
+    requiredScope: BreakGlassScope,
+    requestedTenantId: string,
+    options: { requestIp?: string | null } = {},
+  ): BreakGlassPayload {
+    this.pruneExpiredCadenced();
     let payload: BreakGlassPayload;
     try {
       payload = this.deserialise(token);
@@ -182,33 +194,85 @@ export class BreakGlassService {
       this.writeUseEvidence(payload.tenantId, 'tenant_mismatch', requiredScope, payload);
       throw new BreakGlassError('TENANT_MISMATCH', `token tenant=${payload.tenantId} but request tenant=${requestedTenantId}`);
     }
-    if (this.consumedJtis.has(payload.jti)) {
-      this.writeUseEvidence(payload.tenantId, 'already_used', requiredScope, payload);
-      throw new BreakGlassError('ALREADY_USED', `break-glass token ${payload.jti} was already consumed`);
-    }
-    /* Atomic-ish consume — single thread per process, so the
-     * read-then-set above is fine. Cross-process needs DB jti table
-     * (P1-M v2). */
-    this.consumedJtis.set(payload.jti, {
-      jti: payload.jti, consumed_at: now, consumed_by: payload.requestedBy,
+
+    /* 原子消费：INSERT ... ON CONFLICT DO NOTHING + 成功路径同事务
+     * 写 CC6.1 evidence。两者绑定后即使消费成功、evidence 失败也会
+     * 回滚 JTI 插入，确保"消费即审计"的不可分语义。重放分支不需要
+     * 包在事务里（无写入）。 */
+    const partitionTenant = payload.tenantId || 'platform';
+    const consumed = this.db.transaction(() => {
+      const insertResult = this.db.execute(insertBreakGlassConsumption({
+        id: randomUUID(),
+        tenantId: partitionTenant,
+        jti: payload.jti,
+        scope: payload.scope,
+        consumedAt: new Date(now).toISOString(),
+        consumedBy: payload.requestedBy || null,
+        requestIp: options.requestIp ?? null,
+        auditSeq: null,
+      }));
+      const ok = toBreakGlassInsertResult(insertResult.rowsAffected).inserted;
+      if (ok) {
+        /* recordEvidence 抛错时事务回滚，JTI 不被消费 — 保护审计不可缺失。 */
+        this.recordUseEvidenceOrThrow(payload.tenantId, 'consumed', requiredScope, payload);
+      }
+      return ok;
     });
-    this.writeUseEvidence(payload.tenantId, 'consumed', requiredScope, payload);
+
+    if (!consumed) {
+      /* 重放：DB 已记录原始消费 + audit row；此次只写本次拒绝的证据。
+       * 这里允许 best-effort（evidence 失败时不抛），与历史拒绝行为一致。 */
+      this.writeUseEvidence(payload.tenantId, 'replay_detected', requiredScope, payload);
+      throw new BreakGlassError('REPLAY_DETECTED', `break-glass token ${payload.jti} was already consumed`);
+    }
     return payload;
   }
 
-  private gc(): void {
+  /**
+   * 与 writeUseEvidence 不同：本函数抛异常以便上层事务回滚。
+   * 仅在"成功消费"路径调用 —— 让 evidence 写入成为不可缺失的副作用。
+   */
+  private recordUseEvidenceOrThrow(
+    tenantId: string,
+    outcome: 'consumed',
+    requiredScope: BreakGlassScope,
+    payload: BreakGlassPayload,
+  ): void {
+    recordEvidence(this.db, {
+      tenantId: tenantId || 'platform',
+      controlId: 'CC6.1',
+      evidenceType: 'break_glass_use',
+      payload: {
+        outcome,
+        requiredScope,
+        jti: payload.jti,
+        scope: payload.scope,
+        requestedBy: payload.requestedBy,
+        approvalId: payload.approvalId,
+      },
+      metadata: { collector_id: 'break-glass-service' },
+    });
+  }
+
+  /** 清理 2× MAX_TTL 之前的旧消费记录，避免账本无界增长。返回删除行数。 */
+  pruneExpired(now = Date.now()): number {
+    const cutoff = new Date(now - 2 * MAX_TTL_MS);
+    const result = this.db.execute(pruneOldBreakGlassConsumptions(cutoff));
+    return toBreakGlassPruneResult(result.rowsAffected).rows;
+  }
+
+  private pruneExpiredCadenced(): void {
     const now = Date.now();
     if (now - this.lastGc < 60_000) return;
     this.lastGc = now;
-    const cutoff = now - 2 * MAX_TTL_MS;
-    for (const [jti, row] of this.consumedJtis) {
-      if (row.consumed_at < cutoff) this.consumedJtis.delete(jti);
-    }
+    try {
+      this.pruneExpired(now);
+    } catch { /* 裁剪失败不应阻塞 verify；下次再试 */ }
   }
 
   private writeUseEvidence(
     tenantId: string,
-    outcome: 'consumed' | 'expired' | 'scope_mismatch' | 'tenant_mismatch' | 'already_used' | 'invalid_format',
+    outcome: 'consumed' | 'expired' | 'scope_mismatch' | 'tenant_mismatch' | 'replay_detected' | 'invalid_format',
     requiredScope: BreakGlassScope,
     payload: BreakGlassPayload | null,
   ): void {
