@@ -148,6 +148,44 @@ export class KeyRing {
   }
 
   /**
+   * Apply remote state transitions in-place. Use case: periodic reload
+   * sees that another pod has marked kid X as retired/compromised; we
+   * mirror that locally without altering active. Promoting a new active
+   * key is intentionally NOT supported here — that requires a restart
+   * (signer is captured at fastify-jwt register time).
+   *
+   * Revocation monotonicity: once a local key is retired or compromised,
+   * a remote snapshot CANNOT resurrect it back into grace/active. This
+   * prevents a stale or replayed DB snapshot from un-revoking a key that
+   * was deliberately blocked. The only valid downgrade from
+   * retired/compromised is "more revoked" (retired→compromised).
+   *
+   * Returns the set of kids whose state changed.
+   */
+  applyRemoteStates(remote: ReadonlyMap<string, JwtKeyState>): string[] {
+    const changed: string[] = [];
+    for (const [kid, remoteState] of remote) {
+      const local = this.keys.get(kid);
+      if (!local) continue;
+      if (local.state === remoteState) continue;
+      /* Refuse to demote the active key via this path. */
+      if (kid === this.activeKidValue && remoteState !== 'active') continue;
+      /* Promotions of non-active keys to active are also not allowed here. */
+      if (remoteState === 'active' && kid !== this.activeKidValue) continue;
+      /* Monotonic revocation: a locally revoked key cannot be resurrected
+       * by a remote snapshot. Only retired→compromised is allowed
+       * (escalation of revocation severity). */
+      if (local.state === 'retired' || local.state === 'compromised') {
+        const escalateToCompromised = local.state === 'retired' && remoteState === 'compromised';
+        if (!escalateToCompromised) continue;
+      }
+      local.state = remoteState;
+      changed.push(kid);
+    }
+    return changed;
+  }
+
+  /**
    * Rotate keys.
    *
    * @param newActive   - new key to mark as active (must already exist OR be in addNew)

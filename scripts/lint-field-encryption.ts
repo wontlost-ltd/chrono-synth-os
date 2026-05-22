@@ -34,6 +34,14 @@ import { join, resolve } from 'node:path';
 const ROOT = resolve(process.cwd());
 const MIGRATIONS_DIR = join(ROOT, 'packages/schema-dsl/src/migrations');
 const EXECUTORS_DIR = join(ROOT, 'src/storage/executors');
+/**
+ * 额外加密入口：某些表的列在执行器之外的服务层用 FieldEncryption 加解密，
+ * 例如 jwt_signing_keys 通过 src/server/plugins/jwt-key-store.ts。这里
+ * 显式登记这些目录，让 lint 扫到对应的加密调用点。
+ */
+const ADDITIONAL_ENCRYPTION_DIRS = [
+  join(ROOT, 'src/server/plugins'),
+];
 
 const SENSITIVE_NAME_PATTERNS: RegExp[] = [
   /(^|_)password($|_)/i,
@@ -131,20 +139,23 @@ function scanMigrations(): Array<{ file: string; line: number; table: string; co
 
 /** Verify the column has an encryption call site somewhere in executors. */
 function isColumnEncrypted(column: string): boolean {
-  const files = walk(EXECUTORS_DIR, p => p.endsWith('.ts'));
-  for (const file of files) {
-    const src = readFileSync(file, 'utf8');
-    /* Looking for either:
-     *   - `encrypt(...).column = ` patterns
-     *   - direct references to FieldEncryption with the column name
-     *   - `encryptedField('column', ...)` helper calls
-     * v1 of the lint accepts ANY mention of the column name inside a
-     * file that imports FieldEncryption — false negatives are better
-     * than false positives at this stage. */
-    if (!src.includes('FieldEncryption') && !src.includes('encrypt')) continue;
-    /* match either bare identifier or string literal */
-    const pattern = new RegExp(`\\b${column}\\b`);
-    if (pattern.test(src)) return true;
+  const dirs = [EXECUTORS_DIR, ...ADDITIONAL_ENCRYPTION_DIRS];
+  for (const dir of dirs) {
+    const files = walk(dir, p => p.endsWith('.ts'));
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      /* Looking for either:
+       *   - `encrypt(...).column = ` patterns
+       *   - direct references to FieldEncryption with the column name
+       *   - `encryptedField('column', ...)` helper calls
+       * v1 of the lint accepts ANY mention of the column name inside a
+       * file that imports FieldEncryption — false negatives are better
+       * than false positives at this stage. */
+      if (!src.includes('FieldEncryption') && !src.includes('encrypt')) continue;
+      /* match either bare identifier or string literal */
+      const pattern = new RegExp(`\\b${column}\\b`);
+      if (pattern.test(src)) return true;
+    }
   }
   return false;
 }

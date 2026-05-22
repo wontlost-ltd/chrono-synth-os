@@ -103,7 +103,29 @@ function resolveKid(config: AppConfig): string {
   return createHash('sha256').update(seed).digest('hex').slice(0, 16);
 }
 
-export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): Promise<void> {
+/**
+ * 可选注入：JwtKeyStore 用于把 KeyRing 持久化到 jwt_signing_keys。
+ * 若提供：
+ *   - boot 时优先尝试从 DB 装载已有 ring；
+ *   - 若 DB 为空，按 config 构造 ring 并 persist 回去；
+ *   - rotate API 成功后同步 persist，保证多实例最终一致。
+ * 不提供时回退到既有的纯内存路径（向后兼容）。
+ */
+export interface JwtAuthDeps {
+  keyStore?: import('./jwt-key-store.js').JwtKeyStore;
+  /**
+   * 多实例 key-state 同步周期（毫秒）。默认 60s：每个 Pod 每分钟从
+   * jwt_signing_keys 拉一次最新快照，把退役/封禁状态在所有节点统一。
+   * 设置为 0 关闭轮询（单实例 / 仅启动加载场景）。
+   */
+  reloadIntervalMs?: number;
+}
+
+export async function registerJwtAuth(
+  app: FastifyInstance,
+  config: AppConfig,
+  deps: JwtAuthDeps = {},
+): Promise<void> {
   app.decorate('jwtEnabled', config.jwt.enabled);
   if (!config.jwt.enabled) return;
 
@@ -113,29 +135,58 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
   /* Build (or synthesise from legacy single-key) the KeyRing. */
   let keyRing: KeyRing;
   let activeKid: string;
+  /* 1) 优先从 DB 装载持久化的 ring（多实例同步入口）。 */
+  if (deps.keyStore) {
+    const restored = deps.keyStore.loadKeyRing();
+    if (restored) {
+      keyRing = restored;
+      activeKid = restored.activeKid();
+    } else {
+      keyRing = null as unknown as KeyRing;
+      activeKid = '';
+    }
+  } else {
+    keyRing = null as unknown as KeyRing;
+    activeKid = '';
+  }
   /* Boot-time active kid — fastify-jwt's `secret` is captured at register()
    * time and cannot be changed without restart. Rotate that would change the
    * *signing-effective* active key must be refused (409 RESTART_REQUIRED);
    * otherwise JWKS would advertise a key the server cannot actually sign with,
    * causing every newly issued token to fail verification at the client. See
    * the rotate endpoint below for the gate. */
-  if (multiKid) {
-    keyRing = new KeyRing(config.jwt.keys as JwtKeyEntry[]);
-    activeKid = keyRing.activeKid();
-  } else {
-    /* Legacy single-key path: synthesise a single-entry KeyRing so the
-     * downstream code paths are uniform. */
-    const synthKid = resolveKid(config);
-    const entry: JwtKeyEntry = {
-      kid: synthKid,
-      state: 'active',
-      algorithm: config.jwt.algorithm,
-      privateKey: config.jwt.privateKey,
-      publicKey: config.jwt.publicKey,
-      secret: isAsymmetric ? '' : config.jwt.secret,
-    };
-    keyRing = new KeyRing([entry]);
-    activeKid = synthKid;
+  /* 2) DB 未提供或为空 → 从 config 构造，并 persist 一次作为种子。 */
+  if (!keyRing) {
+    if (multiKid) {
+      keyRing = new KeyRing(config.jwt.keys as JwtKeyEntry[]);
+      activeKid = keyRing.activeKid();
+    } else {
+      /* Legacy single-key path: synthesise a single-entry KeyRing so the
+       * downstream code paths are uniform. */
+      const synthKid = resolveKid(config);
+      const entry: JwtKeyEntry = {
+        kid: synthKid,
+        state: 'active',
+        algorithm: config.jwt.algorithm,
+        privateKey: config.jwt.privateKey,
+        publicKey: config.jwt.publicKey,
+        secret: isAsymmetric ? '' : config.jwt.secret,
+      };
+      keyRing = new KeyRing([entry]);
+      activeKid = synthKid;
+    }
+    /* Seed-persist on cold boot, so subsequent reloads are stable across
+     * restarts and pods. GA 模式：keyStore 已注入但 persist 失败 → 直接
+     * 抛出，让 boot 失败而不是无声地降级为内存模式。这样 K8s 会重启
+     * Pod，运维能在日志里看到真正的 JWT 持久化问题。 */
+    if (deps.keyStore) {
+      try {
+        deps.keyStore.persistKeyRing(keyRing);
+      } catch (err) {
+        app.log.error({ err }, 'jwt-key-store: seed persist failed; refusing to boot in degraded mode');
+        throw new Error(`JWT KeyRing seed persistence failed: ${(err as Error).message}`);
+      }
+    }
   }
   const bootActiveKid = activeKid;
 
@@ -158,9 +209,14 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
    *     restart (acceptable for incident-response drill). */
   const activeSignEntry = keyRing.signEntry();
   const activeIsAsym = activeSignEntry.algorithm.startsWith('RS') || activeSignEntry.algorithm.startsWith('ES');
+  /* legacySecret 选取规则：始终把 keyRing.signEntry() 视作权威，避免
+   * "DB 已有持久化的 ring 但 fastify-jwt 仍签 config.jwt.secret" 这种
+   * 漂移。仅当 ring 派生自单 key + 同步对称密钥为空时回退到 config 旧路径，
+   * 保护早期未配 keys 的部署。 */
+  const symmetricSecret = activeSignEntry.secret || config.jwt.secret;
   const legacySecret = activeIsAsym
     ? { private: activeSignEntry.privateKey, public: activeSignEntry.publicKey }
-    : (multiKid ? activeSignEntry.secret : config.jwt.secret);
+    : symmetricSecret;
   /* `isAsymmetric` and `buildSignKeyObject` are still referenced below for
    * JWKS shape decisions; satisfy the no-unused-vars lint. */
   void isAsymmetric;
@@ -201,6 +257,30 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
   app.decorate('jwtKid', activeKid);
   app.decorate('jwtKeyRing', keyRing);
   app.decorate('jwtDenyList', denyList);
+
+  /* 多实例 key-state 同步：每个 Pod 周期 reload，把其它实例的退役/封禁
+   * 状态在 ≤reloadIntervalMs 内推到本 Pod。fastify-jwt 的 sign secret
+   * 仍受 bootActiveKid 锁定（不可热换 signer），但 verify 侧的
+   * retired/compromised 视图会跟着刷新，立刻拒绝被吊销的 token。 */
+  const reloadIntervalMs = deps.reloadIntervalMs ?? 60_000;
+  if (deps.keyStore && reloadIntervalMs > 0) {
+    const timer = setInterval(() => {
+      try {
+        const fresh = deps.keyStore?.reloadKeyRing();
+        if (!fresh) return;
+        const remoteStates = new Map<string, import('./jwt-keyring.js').JwtKeyState>();
+        for (const entry of fresh.allEntries()) remoteStates.set(entry.kid, entry.state);
+        const changed = keyRing.applyRemoteStates(remoteStates);
+        if (changed.length > 0) {
+          app.log.info({ kids: changed }, 'jwt-key-store: remote state transitions applied');
+        }
+      } catch (err) {
+        app.log.warn({ err }, 'jwt-key-store: periodic reload failed');
+      }
+    }, reloadIntervalMs);
+    timer.unref?.();
+    app.addHook('onClose', async () => clearInterval(timer));
+  }
 
   /* /.well-known/jwks.json — RFC 7517 JWKS endpoint.
    *
@@ -300,8 +380,16 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
         requestedNewActiveKid: body.newActiveKid,
       });
     }
+    /* Persist-first 旋转：
+     *   1) 克隆当前 ring；
+     *   2) 在克隆上跑 rotate；
+     *   3) 若 keyStore 已配置，先 persist 克隆 → 失败则 503，原 ring 不变；
+     *   4) 持久化成功（或无 store）后再把克隆原子换给现役 keyRing。
+     * 这样保证：每个 pod 在 200 响应前后，DB 与内存视图一致；任何
+     * 持久化失败都阻止响应 200，避免多实例分裂。 */
+    const candidate = new KeyRing(keyRing.allEntries());
     try {
-      keyRing.rotate({
+      candidate.rotate({
         newActiveKid: body.newActiveKid,
         oldActiveNewState: body.oldActiveNewState,
         addNew: body.addNew as JwtKeyEntry[] | undefined,
@@ -312,6 +400,44 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
         message: (err as Error).message,
       });
     }
+    if (deps.keyStore) {
+      try {
+        /* Merge metadata: load existing rows; for entries whose state
+         * differs from the candidate ring, refresh stateChangedAt to now. */
+        const prevMeta = deps.keyStore.loadMetadata();
+        const nowIso = new Date().toISOString();
+        const refreshedMeta = new Map(prevMeta);
+        for (const entry of candidate.allEntries()) {
+          const prev = prevMeta.get(entry.kid);
+          const oldEntry = keyRing.allEntries().find(e => e.kid === entry.kid);
+          const stateChanged = !oldEntry || oldEntry.state !== entry.state;
+          if (stateChanged) {
+            refreshedMeta.set(entry.kid, {
+              createdAt: prev?.createdAt ?? nowIso,
+              stateChangedAt: nowIso,
+              retiredAt: entry.state === 'retired' || entry.state === 'compromised' ? nowIso : null,
+            });
+          }
+        }
+        deps.keyStore.persistKeyRing(candidate, { metadata: refreshedMeta });
+      } catch (err) {
+        request.log.error({ err }, 'jwt-key-store: persist on rotate failed; refusing to apply');
+        return reply.status(503).send({
+          error: 'RotateError',
+          code: 'AUTH_ROTATE_PERSIST_FAILED',
+          message: 'Persisting the rotated key ring failed; rotation aborted to avoid pod-level drift. Retry or check the key store.',
+        });
+      }
+    }
+    /* Persisted (or no store) → apply same rotate to the live ring.
+     * 由于 KeyRing.rotate() 是同事务式的（成功/异常都不留半步状态），
+     * candidate 上能成功 rotate 的输入在 live ring 上也能成功；这里
+     * 重放可以避免暴露内部字段（不需要 Object.assign 私有属性）。 */
+    keyRing.rotate({
+      newActiveKid: body.newActiveKid,
+      oldActiveNewState: body.oldActiveNewState,
+      addNew: body.addNew as JwtKeyEntry[] | undefined,
+    });
     /* IMPORTANT: refresh the cached `activeKid` decorator so subsequent
      * introspection (logs, tests) reflects the rotation. */
     (app as unknown as { jwtKid: string }).jwtKid = keyRing.activeKid();

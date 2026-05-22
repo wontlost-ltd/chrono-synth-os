@@ -19,6 +19,7 @@ import { UserProfileService } from '../identity/user-profile-service.js';
 import { OrganizationService } from '../enterprise/organization-service.js';
 import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-profile-service.js';
 import { ScimProvisioningService } from '../enterprise/scim-provisioning-service.js';
+import { recordEvidence } from '../compliance/evidence-store.js';
 import { AdminControlPlaneService } from '../enterprise/admin-control-plane-service.js';
 import { ApiKeyService } from '../billing/api-key-service.js';
 import { ConfigService } from '../config/config-service.js';
@@ -62,7 +63,25 @@ export function buildAppServices(
     userProfile: new UserProfileService(tx),
     organization: new OrganizationService(tx),
     tenantProfile: new TenantEnterpriseProfileService(tx, appConfig, logger),
-    scim: new ScimProvisioningService(tx),
+    scim: new ScimProvisioningService(
+      tx,
+      ({ tenantId, evidenceType, payload }) => {
+        /* SCIM 操作发出 SOC2 CC6.1 证据：覆盖 provisioning + deprovisioning。 */
+        recordEvidence(db, {
+          tenantId,
+          controlId: 'CC6.1',
+          evidenceType,
+          payload,
+          metadata: { collector_id: 'scim-provisioning-service' },
+        });
+      },
+      ({ tenantId, evidenceType, error }) => {
+        /* 证据写入失败 → 结构化日志，便于 SRE 监控 CC6.1 漏报。 */
+        logger?.error('ScimProvisioning', 'CC6.1 evidence write failed', {
+          tenantId, evidenceType, error: error.message,
+        });
+      },
+    ),
     adminControlPlane: new AdminControlPlaneService(tx),
     apiKey: new ApiKeyService(tx),
     config: new ConfigService(db, appConfig),

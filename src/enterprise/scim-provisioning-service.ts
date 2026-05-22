@@ -19,6 +19,27 @@ import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { StateError, ErrorCode } from '../errors/index.js';
 import { IdentityService } from '../identity/identity-service.js';
 
+/**
+ * SCIM 操作发出的 CC6.1 证据签名。调用方通常注入 `recordEvidence` 的
+ * 适配函数：传 tenantId/payload 进来，由调用方决定写入哪个 db 实例。
+ * 故意做成可选 — 单元测试不必关心证据通道；生产路由必须接入。
+ */
+export type ScimEvidenceRecorder = (input: {
+  tenantId: string;
+  evidenceType: 'scim_user_provisioned' | 'scim_user_deprovisioned';
+  payload: Record<string, unknown>;
+}) => void;
+
+/**
+ * 证据写入失败可观测性回调。recorder 抛错时本服务调用此 sink 把结构化
+ * 失败上报到日志/指标/DLQ，避免静默丢失 CC6.1 证据。
+ */
+export type ScimEvidenceFailureSink = (failure: {
+  tenantId: string;
+  evidenceType: 'scim_user_provisioned' | 'scim_user_deprovisioned';
+  error: Error;
+}) => void;
+
 function toScimUser(row: Pick<ScimUserRow, 'id' | 'email' | 'created_at' | 'updated_at'>) {
   return {
     schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
@@ -46,8 +67,28 @@ export interface ScimCreateInput {
 }
 
 export class ScimProvisioningService {
-  constructor(private readonly tx: SyncWriteUnitOfWork) {
+  constructor(
+    private readonly tx: SyncWriteUnitOfWork,
+    private readonly evidenceRecorder?: ScimEvidenceRecorder,
+    private readonly evidenceFailureSink?: ScimEvidenceFailureSink,
+  ) {
     registerCoreSelfExecutors();
+  }
+
+  private safeRecordEvidence(input: Parameters<ScimEvidenceRecorder>[0]): void {
+    if (!this.evidenceRecorder) return;
+    try {
+      this.evidenceRecorder(input);
+    } catch (err) {
+      /* evidence 写入失败不阻塞 SCIM 主流程，但必须可观测：
+       * GA 要求 CC6.1 证据 100% 覆盖，所以静默吞错会破坏审计完整性。
+       * 失败通过 evidenceFailureSink 报到日志 / metrics / DLQ。 */
+      this.evidenceFailureSink?.({
+        tenantId: input.tenantId,
+        evidenceType: input.evidenceType,
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
   }
 
   listUsers(tenantId: string, input: ScimListInput) {
@@ -87,6 +128,14 @@ export class ScimProvisioningService {
     identityService.ensureForUser(userId, tenantId, input.displayName);
 
     const row = this.tx.queryOne(scimQueryUserById(userId));
+    this.safeRecordEvidence({
+      tenantId,
+      evidenceType: 'scim_user_provisioned',
+      payload: {
+        userId, email: input.email, displayName: input.displayName,
+        isNew: !existing, provisionedAt: now,
+      },
+    });
     return { user: toScimUser(row!), isNew: !existing };
   }
 
@@ -114,6 +163,11 @@ export class ScimProvisioningService {
       );
     }
 
+    this.safeRecordEvidence({
+      tenantId,
+      evidenceType: 'scim_user_deprovisioned',
+      payload: { userId, deprovisionedAt: Date.now() },
+    });
     return true;
   }
 }

@@ -87,4 +87,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v075_legal_holds', aliases: { postgres: 'v077', 'sqlite-sql': 'v075' }, classification: 'schema-simple', notes: 'P1-N: legal holds registry' },
   { canonical: 'v076_break_glass_jti_consumptions', aliases: { postgres: 'v078', 'sqlite-sql': 'v076' }, classification: 'schema-simple', notes: 'P1-M v2: durable break-glass JTI replay ledger' },
   { canonical: 'v077_audit_chain_anchors', aliases: { postgres: 'v079', 'sqlite-sql': 'v077' }, classification: 'schema-simple', notes: 'P0-E v2: KMS-signed audit chain tail anchors' },
+  { canonical: 'v078_jwt_signing_keys', aliases: { postgres: 'v080', 'sqlite-sql': 'v078' }, classification: 'schema-simple', notes: 'P0-D #2: durable JWT signing key ring with state machine' },
 ];

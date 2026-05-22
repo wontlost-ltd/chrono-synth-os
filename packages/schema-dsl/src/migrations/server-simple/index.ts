@@ -67,6 +67,7 @@ export { v074_soc2_evidence } from './v074.js';
 export { v075_legal_holds } from './v075.js';
 export { v076_break_glass_jti_consumptions } from './v076.js';
 export { v077_audit_chain_anchors } from './v077.js';
+export { v078_jwt_signing_keys } from './v078.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -138,6 +139,7 @@ import { v074_soc2_evidence } from './v074.js';
 import { v075_legal_holds } from './v075.js';
 import { v076_break_glass_jti_consumptions } from './v076.js';
 import { v077_audit_chain_anchors } from './v077.js';
+import { v078_jwt_signing_keys } from './v078.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -209,4 +211,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v075_legal_holds,
   v076_break_glass_jti_consumptions,
   v077_audit_chain_anchors,
+  v078_jwt_signing_keys,
 ];

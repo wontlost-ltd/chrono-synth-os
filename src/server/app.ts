@@ -29,6 +29,7 @@ import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerCsrf } from './plugins/csrf.js';
 import { registerJwtAuth } from './plugins/jwt-auth.js';
+import { JwtKeyStore } from './plugins/jwt-key-store.js';
 import { registerIdempotency } from './plugins/idempotency.js';
 import { registerRedis } from './plugins/redis.js';
 import { registerTenantDecorator, registerTenantHook } from './plugins/tenant.js';
@@ -184,7 +185,22 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerObservability(app, config);
 
   /* 异步插件 */
-  await registerJwtAuth(app, config);
+  /* P0-D #2: 注入 jwt_signing_keys 持久化层。若 config 配了
+   * encryption.enabled=true，则私钥/对称密钥落库前用 FieldEncryption
+   * 加密；否则降级为明文（带 lint:field-encryption 警告）。 */
+  const jwtKeyStoreDb = deps.db ?? deps.os.getDatabase();
+  const jwtFieldCrypto = config.encryption.enabled
+    ? new ConversationFieldEncryption(config.encryption)
+    : undefined;
+  const jwtKeyStoreOptions: { fieldCrypto?: ConversationFieldEncryption; keyRef?: string } = {};
+  if (jwtFieldCrypto) {
+    jwtKeyStoreOptions.fieldCrypto = jwtFieldCrypto;
+    /* 用配置中的 defaultKeyRef（默认 'master'），让 jwt_signing_keys
+     * 的密文与平台 keyring rotation 周期对齐。 */
+    if (config.encryption.defaultKeyRef) jwtKeyStoreOptions.keyRef = config.encryption.defaultKeyRef;
+  }
+  const jwtKeyStore = new JwtKeyStore(jwtKeyStoreDb, jwtKeyStoreOptions);
+  await registerJwtAuth(app, config, { keyStore: jwtKeyStore });
   registerTenantHook(app);  /* 在 JWT 之后注册，确保 request.user 已填充 */
   /* CSRF guard registered BEFORE idempotency so it can short-circuit
    * with 403 before idempotency tries to cache the reply.send(). Only
