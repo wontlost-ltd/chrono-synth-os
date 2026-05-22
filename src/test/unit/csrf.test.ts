@@ -43,7 +43,7 @@ describe('CSRF plugin', () => {
     try {
       const res = await app.inject({
         method: 'POST', url: '/api/v1/auth/refresh',
-        headers: { cookie: 'refresh_token=abc' },
+        headers: { cookie: 'chrono_refresh=abc' },
       });
       assert.equal(res.statusCode, 403);
       const body = JSON.parse(res.body) as { code: string };
@@ -56,7 +56,7 @@ describe('CSRF plugin', () => {
     try {
       const res = await app.inject({
         method: 'POST', url: '/api/v1/auth/refresh',
-        headers: { cookie: 'refresh_token=abc; csrf_token=tok-1' },
+        headers: { cookie: 'chrono_refresh=abc; csrf_token=tok-1' },
       });
       assert.equal(res.statusCode, 403);
     } finally { await app.close(); }
@@ -68,7 +68,7 @@ describe('CSRF plugin', () => {
       const res = await app.inject({
         method: 'POST', url: '/api/v1/auth/refresh',
         headers: {
-          cookie: 'refresh_token=abc; csrf_token=tok-1',
+          cookie: 'chrono_refresh=abc; csrf_token=tok-1',
           'x-csrf-token': 'tok-2-evil',
         },
       });
@@ -82,7 +82,7 @@ describe('CSRF plugin', () => {
       const res = await app.inject({
         method: 'POST', url: '/api/v1/auth/refresh',
         headers: {
-          cookie: 'refresh_token=abc; csrf_token=valid-tok',
+          cookie: 'chrono_refresh=abc; csrf_token=valid-tok',
           'x-csrf-token': 'valid-tok',
         },
       });
@@ -96,7 +96,7 @@ describe('CSRF plugin', () => {
       /* /api/v1/other not in protectedPathPrefixes; should pass through */
       const res = await app.inject({
         method: 'POST', url: '/api/v1/other',
-        headers: { cookie: 'refresh_token=abc' },
+        headers: { cookie: 'chrono_refresh=abc' },
       });
       assert.equal(res.statusCode, 200);
     } finally { await app.close(); }

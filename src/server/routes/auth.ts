@@ -6,6 +6,7 @@
  * POST /api/v1/auth/logout   — 登出（吊销刷新令牌）
  */
 
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
@@ -27,7 +28,8 @@ type RefreshCookieRequest = {
 };
 
 type RefreshCookieReply = {
-  header: (key: string, value: string) => void;
+  header: (key: string, value: string | string[]) => void;
+  getHeader: (key: string) => string | string[] | number | undefined;
 };
 
 /** 从请求中提取 refreshToken：优先 cookie，回退到 body */
@@ -121,6 +123,37 @@ function resolveRefreshCookiePolicy(
   return { sameSite: 'None', secure: true };
 }
 
+/**
+ * CSRF token cookie — non-HttpOnly so the SPA can read the value and
+ * echo it in the X-CSRF-Token header for the double-submit guard
+ * (src/server/plugins/csrf.ts). Same Path/SameSite/Secure profile as
+ * the refresh cookie so a CDN/proxy attaches them together. Value is
+ * random-per-issuance — clients MUST re-read after each refresh
+ * because the server doesn't promise stability across renewals.
+ */
+const CSRF_COOKIE_NAME = 'csrf_token';
+
+function generateCsrfToken(): string {
+  return createHash('sha256').update(randomUUID() + Date.now().toString()).digest('hex').slice(0, 32);
+}
+
+/**
+ * Append a Set-Cookie header without overwriting any prior Set-Cookie
+ * the reply already carries. Fastify's reply.header() replaces the
+ * value; the underlying Node raw response supports array-valued
+ * Set-Cookie, so we read-append-write via the typed header surface.
+ */
+function appendCookie(reply: RefreshCookieReply, cookie: string): void {
+  const existing = reply.getHeader('set-cookie');
+  if (existing === undefined) {
+    reply.header('Set-Cookie', cookie);
+  } else if (Array.isArray(existing)) {
+    reply.header('Set-Cookie', [...existing, cookie]);
+  } else {
+    reply.header('Set-Cookie', [String(existing), cookie]);
+  }
+}
+
 export function setRefreshCookie(
   request: RefreshCookieRequest,
   reply: RefreshCookieReply,
@@ -130,17 +163,30 @@ export function setRefreshCookie(
 ): void {
   const maxAgeSec = Math.floor(maxAgeMs / 1000);
   const policy = resolveRefreshCookiePolicy(request, config);
-  reply.header(
-    'Set-Cookie',
+  appendCookie(
+    reply,
     `${REFRESH_COOKIE_NAME}=${token}; HttpOnly; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=${maxAgeSec}${policy.secure ? '; Secure' : ''}`,
+  );
+  /* Issue paired csrf_token cookie — NOT HttpOnly so SPA can read it.
+   * Same SameSite/Secure profile so a cross-site proxy can't strip
+   * one without the other; matching Max-Age keeps the two cookies in
+   * lockstep so the guard never refuses on csrf_token expiry while
+   * refresh is still valid. */
+  appendCookie(
+    reply,
+    `${CSRF_COOKIE_NAME}=${generateCsrfToken()}; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=${maxAgeSec}${policy.secure ? '; Secure' : ''}`,
   );
 }
 
 function clearRefreshCookie(request: RefreshCookieRequest, reply: RefreshCookieReply, config: AppConfig): void {
   const policy = resolveRefreshCookiePolicy(request, config);
-  reply.header(
-    'Set-Cookie',
+  appendCookie(
+    reply,
     `${REFRESH_COOKIE_NAME}=; HttpOnly; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=0${policy.secure ? '; Secure' : ''}`,
+  );
+  appendCookie(
+    reply,
+    `${CSRF_COOKIE_NAME}=; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=0${policy.secure ? '; Secure' : ''}`,
   );
 }
 

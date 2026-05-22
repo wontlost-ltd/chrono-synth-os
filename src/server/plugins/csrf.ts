@@ -48,7 +48,10 @@ export interface CsrfOptions {
 export const DEFAULT_CSRF_OPTIONS: CsrfOptions = {
   cookieName: 'csrf_token',
   headerName: 'x-csrf-token',
-  triggerCookieName: 'refresh_token',
+  /* MUST match the actual refresh cookie issued by routes/auth.ts; the
+   * earlier 'refresh_token' default was a contract drift bug — the
+   * guard never triggered because the cookie was named differently. */
+  triggerCookieName: 'chrono_refresh',
   protectedPathPrefixes: ['/api/v1/auth/refresh', '/api/v1/auth/logout'],
   safeMethods: ['GET', 'HEAD', 'OPTIONS'],
 };

@@ -268,7 +268,7 @@ export async function registerJwtAuth(app: FastifyInstance, config: AppConfig): 
         return reply.status(403).send({
           error: 'AuthorizationError',
           code: 'AUTH_INSUFFICIENT_ROLE',
-          message: 'POST /api/v1/auth/keys/rotate requires admin role (P1-M will replace with break-glass)',
+          message: 'This operation requires admin role.',
         });
       }
     },

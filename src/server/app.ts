@@ -27,6 +27,7 @@ import { registerWebSocket } from './plugins/websocket.js';
 import { registerCors } from './plugins/cors.js';
 import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
+import { registerCsrf } from './plugins/csrf.js';
 import { registerJwtAuth } from './plugins/jwt-auth.js';
 import { registerIdempotency } from './plugins/idempotency.js';
 import { registerRedis } from './plugins/redis.js';
@@ -185,6 +186,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 异步插件 */
   await registerJwtAuth(app, config);
   registerTenantHook(app);  /* 在 JWT 之后注册，确保 request.user 已填充 */
+  /* CSRF guard registered BEFORE idempotency so it can short-circuit
+   * with 403 before idempotency tries to cache the reply.send(). Only
+   * affects cookie-authenticated state-changing requests on the
+   * /api/v1/auth/refresh + /api/v1/auth/logout paths. */
+  registerCsrf(app);
   registerIdempotency(app, deps.db ?? deps.os.getDatabase(), config);
   await registerAuth0(app, config);
   await registerRedis(app, config);

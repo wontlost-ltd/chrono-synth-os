@@ -99,6 +99,30 @@ describe('认证 API 集成测试', () => {
       assert.match(setCookie, /; Secure/);
     });
 
+    it('issues both chrono_refresh (HttpOnly) and csrf_token (non-HttpOnly) cookies', async () => {
+      /* Confirms the CSRF closed-loop: server hands the SPA a readable
+       * csrf_token cookie alongside the HttpOnly refresh — the double-
+       * submit guard depends on the SPA being able to echo this value
+       * in the X-CSRF-Token header. Without this issuance the guard
+       * would unconditionally refuse cookie-auth state-changing
+       * requests (chronoSPA / mobile auth refresh flow blocked). */
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        payload: { email: 'csrf-issuance@example.com', password: 'password123' },
+      });
+      assert.equal(res.statusCode, 201);
+      const raw = res.headers['set-cookie'];
+      const cookies = Array.isArray(raw) ? raw : raw ? [raw] : [];
+      const refreshCookie = cookies.find(c => c.startsWith('chrono_refresh='));
+      const csrfCookie = cookies.find(c => c.startsWith('csrf_token='));
+      assert.ok(refreshCookie, `chrono_refresh cookie missing; cookies=${JSON.stringify(cookies)}`);
+      assert.ok(csrfCookie, `csrf_token cookie missing; cookies=${JSON.stringify(cookies)}`);
+      assert.match(refreshCookie, /HttpOnly/, 'refresh cookie must remain HttpOnly');
+      assert.equal(csrfCookie.includes('HttpOnly'), false,
+        'csrf_token cookie must NOT be HttpOnly — the SPA needs to read it for header echo');
+    });
+
     it('localhost 不同端口调试时 refresh cookie 保持 SameSite=Lax', async () => {
       const res = await app.inject({
         method: 'POST',
