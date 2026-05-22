@@ -60,7 +60,11 @@ describe('Rate limit → 429 mapping', () => {
     };
     assert.equal(body.code, 'RATE_LIMIT_EXCEEDED');
     assert.equal(body.error, 'RateLimitError');
-    assert.match(body.message, /\d+\s*秒/);
+    /* Stable contract: code + structured retryAfter. message is now
+     * locale-resolved via the i18n catalog (P1-E-ext v2 wiring), so we
+     * no longer assert on its exact text — clients pin to code, not
+     * to the human-readable string. */
+    assert.ok(typeof body.message === 'string' && body.message.length > 0);
     assert.ok(typeof body.retryAfter === 'number' && body.retryAfter > 0,
       'retryAfter should be a positive number of seconds');
   });
