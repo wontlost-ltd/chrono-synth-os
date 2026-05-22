@@ -19,9 +19,9 @@
   ],
   "signatures": [
     {
-      "subject": "ghcr.io/wontlost/chrono-synth-os@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "subject": "ghcr.io/wontlost-ltd/chrono-synth-os@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "signedBy": "https://token.actions.githubusercontent.com",
-      "signatureRef": "ghcr.io/wontlost/chrono-synth-os:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sig",
+      "signatureRef": "ghcr.io/wontlost-ltd/chrono-synth-os:sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sig",
       "alg": "cosign-keyless-oidc"
     }
   ],
