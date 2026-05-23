@@ -27,6 +27,7 @@
     "check:kernel-purity": "bash scripts/check-forbidden-imports.sh",
     "lint:field-encryption": "node dist/scripts/lint-field-encryption.js",
     "audit:ga-blockers": "node dist/scripts/ga-blocker-audit.js",
+    "ga:check": "node dist/scripts/ga-check.js",
     "test": "npm run test:unit && npm run test:integration",
     "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run check:forbidden-imports && npm run lint:field-encryption",
     "start": "node dist/main.js",
