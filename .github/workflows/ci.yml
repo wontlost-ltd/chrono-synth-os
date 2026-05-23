@@ -76,6 +76,63 @@ jobs:
         run: npm run test:contract
       - name: Kernel purity — forbidden imports
         run: npm run check:forbidden-imports
+      - name: schema-dsl parity (simple migrations)
+        run: npm run test:schema-dsl-parity:simple
+      - name: schema-dsl parity (raw migrations)
+        run: npm run test:schema-dsl-parity:raw
+      - name: schema-dsl parity (desktop sqlite-rust)
+        run: npm run test:schema-dsl-parity:desktop
+
+  # GA aggregate gate. Mirrors what `npm run test:golden` runs at the
+  # end of its chain — the ga:check script handles §8 #1-28 artifact
+  # presence + cross-cutting lints. In CI we run it WITHOUT
+  # --require-siblings because OS-only checkouts can't pull the three
+  # sibling repos; their lints run in their own CI workflows.
+  #
+  # Some of the underlying steps (check:forbidden-imports,
+  # lint:field-encryption) are also executed by the build-and-test
+  # and contract-and-kernel jobs above. That's intentional: ga:check
+  # is the GA-gate contract and must remain self-contained — running
+  # it gives a clean "all GA blockers green or not" signal independent
+  # of which other CI job happened to also exercise the underlying
+  # script. The ~2s overhead is negligible vs. the audit clarity.
+  ga-check:
+    name: GA aggregate gate (§8 #1-28 + cross-cutting lints)
+    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - run: npm ci
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
+      - run: npm run build
+      - name: GA blocker artifact audit (§8 #1-28)
+        # Standalone signal: even if ga:check below changes its
+        # composition, this line stays a stable "did we ship the
+        # §8 artifacts" indicator. CI parsers downstream can grep it.
+        run: npm run audit:ga-blockers
+      - name: ga:check — aggregate GA gate
+        # --out=ga-check.json keeps stdout clean of the npm banner
+        # so the structured report file can be uploaded as an artifact
+        # for human inspection on failure.
+        # Default mode (non-strict): missing sibling repos are skipped
+        # cleanly. Release CI uses CHRONO_GA_REQUIRE_SIBLINGS=1; that's
+        # not appropriate here because OS-only checkouts don't fetch
+        # the sibling repos.
+        run: node dist/scripts/ga-check.js --out=ga-check.json
+      - name: Upload ga:check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ga-check-report
+          path: ga-check.json
+          retention-days: 30
 
   # Pinned to GitHub-hosted Ubuntu: docker/setup-buildx-action requires
   # buildkit, which isn't available on a macOS self-hosted runner (only
