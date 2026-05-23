@@ -29,7 +29,7 @@
     "audit:ga-blockers": "node dist/scripts/ga-blocker-audit.js",
     "ga:check": "node dist/scripts/ga-check.js",
     "test": "npm run test:unit && npm run test:integration",
-    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run check:forbidden-imports && npm run lint:field-encryption",
+    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run ga:check",
     "start": "node dist/main.js",
     "start:observability-worker": "node dist/main-observability-worker.js",
     "dev": "npm run build && node dist/main.js",

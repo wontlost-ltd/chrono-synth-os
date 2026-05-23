@@ -15,7 +15,13 @@
 - [ ] Local `npm whoami` returns the expected user
 - [ ] Working tree clean: `git status` shows no uncommitted changes
 - [ ] Branch up-to-date with `origin/main`
-- [ ] All tests green: `npm run test:golden`
+- [ ] All tests green: `CHRONO_GA_REQUIRE_SIBLINGS=1 npm run test:golden`
+      — strict mode requires the three sibling repos (chrono-synth-web,
+      chrono-synth-desktop, chrono-synth-deploy) to be checked out
+      side-by-side. Plain `npm run test:golden` is fine for kernel-only
+      verification, but a kernel release that depends on cross-repo
+      contracts (release-manifest, CSRF cookie name, Kyverno policies)
+      MUST run strict to catch sibling drift.
 - [ ] PPF v1 spec checksum has not changed since freeze (verify against `docs/ppf/v1/spec.md` and `docs/ppf/v1/test-vectors/minimal-valid.json`)
 - [x] **EP-4.1 third-party interop sign-off** — `docs/ppf/v1/interop-report.md` records the Python reference implementation passing all v1 vectors; cross-impl SHA-256 pin asserted in both test suites. Spec freeze gate met.
 
