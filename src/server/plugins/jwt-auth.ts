@@ -17,6 +17,7 @@ import {
   buildSignKeyObject,
   type JwtKeyEntry,
 } from './jwt-keyring.js';
+import { createDynamicSigner, createDynamicVerifier } from './jwt-dynamic-crypto.js';
 import { createJtiDenyList, type JtiDenyList } from './jwt-deny-list.js';
 import { JwtRotateBodySchema, JwtDenyJtiBodySchema } from '../schemas/api-schemas.js';
 
@@ -76,6 +77,12 @@ declare module 'fastify' {
     jwtKeyRing?: KeyRing;
     /** In-memory JTI deny-list — undefined when jwt.enabled=false. */
     jwtDenyList?: JtiDenyList;
+    /**
+     * 动态签名器：每次调用从 KeyRing 现取 active key，支持热轮换。
+     * 与历史 `app.jwt.sign()` 同步签名形态保持一致，但不被 fastify-jwt
+     * register-time 的 secret 锁住。GA §8 #1 Critical 修复入口。
+     */
+    jwtSign?: (payload: JwtPayload) => string;
   }
 }
 
@@ -149,12 +156,11 @@ export async function registerJwtAuth(
     keyRing = null as unknown as KeyRing;
     activeKid = '';
   }
-  /* Boot-time active kid — fastify-jwt's `secret` is captured at register()
-   * time and cannot be changed without restart. Rotate that would change the
-   * *signing-effective* active key must be refused (409 RESTART_REQUIRED);
-   * otherwise JWKS would advertise a key the server cannot actually sign with,
-   * causing every newly issued token to fail verification at the client. See
-   * the rotate endpoint below for the gate. */
+  /* GA §8 #1: 启动时记录 boot 时的 active kid，仅用于诊断与 token
+   * verification 的 legacy 兜底（不带 kid 的旧 token 用 bootEntry 验证）。
+   * 签发侧不再受 boot key 锁定 —— 使用 createDynamicSigner() 在每次签发
+   * 时从 KeyRing 现取 active key，让 /api/v1/auth/keys/rotate 真正实现
+   * 进程内热轮换。 */
   /* 2) DB 未提供或为空 → 从 config 构造，并 persist 一次作为种子。 */
   if (!keyRing) {
     if (multiKid) {
@@ -188,34 +194,27 @@ export async function registerJwtAuth(
       }
     }
   }
+  const bootEntry = keyRing.signEntry();
   const bootActiveKid = activeKid;
 
-  /* Sign-side key: always the currently active key.
+  /* Sign-side: dynamic signer drives the GA §8 #1 hot-rotation contract.
    *
-   * Why not a secret-callback for multi-kid verify?
-   *   fastify-jwt's `secret` callback would let us route verify-time keys
-   *   by `kid`, BUT the existing `app.jwt.sign(payload)` synchronous API
-   *   in auth-service.ts requires a synchronously-resolvable secret. With a
-   *   callback, sign returns a Promise — silently breaking every call site.
-   *   Refactoring all sign call sites is out of P0-D #1 scope; deferred to
-   *   P1-M (DB-backed key store with a proper sign/verify abstraction).
+   * fastify-jwt 的 `secret` 在 register() 时被捕获，无法热换。为了让
+   * /api/v1/auth/keys/rotate 真正在进程内改变签发密钥，我们让
+   * app.jwtSign(payload) 走 createDynamicSigner —— 每次签发都从
+   * keyRing.signEntry() 现取，配合按 kid LRU 缓存复用 fast-jwt signer。
    *
-   * Pragmatic intermediate state (this commit):
-   *   - KeyRing tracks lifecycle in-memory; rotate endpoint updates it.
-   *   - JWKS endpoint publishes active+grace keys → external verifiers can
-   *     validate tokens signed under EITHER kid (forward-compatible).
-   *   - This process signs with the single active key, baked into the
-   *     fastify-jwt static secret. Rotating sign-time requires an app
-   *     restart (acceptable for incident-response drill). */
-  const activeSignEntry = keyRing.signEntry();
-  const activeIsAsym = activeSignEntry.algorithm.startsWith('RS') || activeSignEntry.algorithm.startsWith('ES');
-  /* legacySecret 选取规则：始终把 keyRing.signEntry() 视作权威，避免
-   * "DB 已有持久化的 ring 但 fastify-jwt 仍签 config.jwt.secret" 这种
-   * 漂移。仅当 ring 派生自单 key + 同步对称密钥为空时回退到 config 旧路径，
-   * 保护早期未配 keys 的部署。 */
-  const symmetricSecret = activeSignEntry.secret || config.jwt.secret;
+   * 同时保留 fastify-jwt register，仅用于：
+   *   - 兼容 legacy `app.jwt.sign(payload)` 与 `request.jwtVerify()` 仍存在的
+   *     测试夹具（生产代码已迁移到 app.jwtSign / dynamicVerify）。
+   *   - JWKS 算法白名单计算 (`allowedAlgos`)。
+   *
+   * legacySecret 仍指向 boot active 仅作 fastify-jwt 字段占位，生产流量
+   * 不再依赖它来签发或验证。 */
+  const activeIsAsym = bootEntry.algorithm.startsWith('RS') || bootEntry.algorithm.startsWith('ES');
+  const symmetricSecret = bootEntry.secret || config.jwt.secret;
   const legacySecret = activeIsAsym
-    ? { private: activeSignEntry.privateKey, public: activeSignEntry.publicKey }
+    ? { private: bootEntry.privateKey, public: bootEntry.publicKey }
     : symmetricSecret;
   /* `isAsymmetric` and `buildSignKeyObject` are still referenced below for
    * JWKS shape decisions; satisfy the no-unused-vars lint. */
@@ -253,10 +252,24 @@ export async function registerJwtAuth(
     },
   });
 
+  /* GA §8 #1: 注册基于 KeyRing 的动态签名/验证器。
+   * - dynamicSign 每次取 keyRing.signEntry()，热轮换后立刻命中新 active key。
+   * - dynamicVerify 按 token header.kid 取 keyRing.verifyEntry()，未带 kid 的
+   *   legacy token 用 bootEntry 兜底。 */
+  const dynamicSign = createDynamicSigner(keyRing, {
+    issuer: config.jwt.issuer,
+    expiresInSeconds: Math.floor(config.jwt.accessTtlMs / 1000),
+  });
+  const dynamicVerify = createDynamicVerifier<JwtPayload>(keyRing, {
+    allowedIssuer: config.jwt.issuer,
+    bootEntry,
+  });
+
   /* Expose state for route handlers and tests. */
   app.decorate('jwtKid', activeKid);
   app.decorate('jwtKeyRing', keyRing);
   app.decorate('jwtDenyList', denyList);
+  app.decorate('jwtSign', dynamicSign);
 
   /* 多实例 key-state 同步：每个 Pod 周期 reload，把其它实例的退役/封禁
    * 状态在 ≤reloadIntervalMs 内推到本 Pod。fastify-jwt 的 sign secret
@@ -362,24 +375,11 @@ export async function registerJwtAuth(
       });
     }
     const body = parseResult.data;
-    /* Gate: refuse rotations that would change the signing-effective active
-     * kid. fastify-jwt captured its signing key at register() time; we can
-     * only change the *advertised* (JWKS) active kid and the *verify-side*
-     * KeyRing state in-process. If a rotate moved active away from
-     * bootActiveKid, JWKS clients would converge on the new key, but
-     * newly-issued tokens would still be signed with the boot key → every
-     * client rejects every fresh token. This is exactly the failure mode
-     * the dual reviewers flagged as Critical. Force operator to do
-     * config update + restart instead. */
-    if (body.newActiveKid !== bootActiveKid) {
-      return reply.status(409).send({
-        error: 'RotateError',
-        code: 'AUTH_ROTATE_RESTART_REQUIRED',
-        message: 'Rotating to a different active key requires updating jwt.keys config and restarting the process. The in-process rotate endpoint can only mark existing keys grace/retired/compromised — not change signing.',
-        bootActiveKid,
-        requestedNewActiveKid: body.newActiveKid,
-      });
-    }
+    /* GA §8 #1: 取消 AUTH_ROTATE_RESTART_REQUIRED 硬关。
+     * createDynamicSigner 让每次签发都从 keyRing.signEntry() 现取，rotate
+     * 之后无需重启即可让新签发的 token 用新 active key 签名；JWKS 与
+     * verify 路径也同步切换。bootActiveKid 仅留作诊断字段（response
+     * 仍带回，便于运维确认轮换前的状态）。 */
     /* Persist-first 旋转：
      *   1) 克隆当前 ring；
      *   2) 在克隆上跑 rotate；
@@ -563,8 +563,12 @@ export async function registerJwtAuth(
       }
     }
 
+    /* GA §8 #1: 使用 dynamicVerify 按 token header.kid 选验证密钥，
+     * 让轮换后用新 active key 签发的 token 在本进程内立即可验证；旧的
+     * fastify-jwt 静态验证仅作为 KeyRing 不可用时的 defensive 兜底。 */
     try {
-      await request.jwtVerify();
+      const payload = dynamicVerify(bearer);
+      (request as FastifyRequest & { user?: JwtPayload }).user = payload;
     } catch {
       return reply.status(401).send({
         error: 'AuthenticationError',
@@ -573,7 +577,7 @@ export async function registerJwtAuth(
       });
     }
 
-    /* JTI deny-list check — must run AFTER jwtVerify populates request.user. */
+    /* JTI deny-list check — must run AFTER dynamicVerify populates request.user. */
     const user = (request as FastifyRequest & { user?: { jti?: string } }).user;
     const jti = user?.jti;
     if (jti && denyList.isDenied(jti)) {

@@ -173,7 +173,9 @@ export class AuthService {
       sub: userId, tenantId, role: role as JwtPayload['role'], planId,
       jti: randomUUID(),
     } as JwtPayload;
-    const accessToken = app.jwt.sign(signPayload);
+    /* GA §8 #1: 优先用 app.jwtSign（KeyRing 动态签名器，支持热轮换）。
+     * 仅在 fastify-jwt 仍占主导的旧版部署里回退到 app.jwt.sign。 */
+    const accessToken = app.jwtSign ? app.jwtSign(signPayload) : app.jwt.sign(signPayload);
 
     const refreshToken = randomUUID();
     const tokenHash = hashToken(refreshToken);

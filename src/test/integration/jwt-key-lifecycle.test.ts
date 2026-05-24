@@ -232,14 +232,13 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
     assert.equal(res.statusCode, 403, `expected 403 not ${res.statusCode}: ${res.body}`);
   });
 
-  it('admin POST /api/v1/auth/keys/rotate refuses signing-key change with 409 RESTART_REQUIRED', async () => {
-    /* After the dual code review, the rotate endpoint refuses any rotation
-     * that would shift the signing-effective active kid. This is the
-     * correct contract: fastify-jwt captures its signer at register() time;
-     * silently moving "active" while continuing to sign with the old key
-     * would publish a JWKS the server cannot honour, breaking every newly
-     * issued token at client verification. Operators must update jwt.keys
-     * config and restart instead. */
+  it('admin POST /api/v1/auth/keys/rotate hot-rotates signing key + new tokens verify under the new kid', async () => {
+    /* GA §8 #1: 取消 AUTH_ROTATE_RESTART_REQUIRED 硬关后，rotate 现在
+     * 应当在进程内热换签发密钥。验证步骤：
+     *   1) 旋转到一个新的 kid（addNew）。
+     *   2) 重新登录，得到一个新的 access token。
+     *   3) 解码 token header，确认 kid 已是新 active。
+     *   4) 用该 token 调用受保护接口，dynamicVerify 应当接受。 */
     const newPair = rsa();
     const db = (os as unknown as { getDatabase(): { prepare(s: string): { run(...args: unknown[]): unknown } } }).getDatabase();
     db.prepare(`UPDATE users SET role = 'admin' WHERE email = 'multi-kid-1@example.com'`).run();
@@ -263,11 +262,31 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
         }],
       },
     });
-    assert.equal(rotate.statusCode, 409, `expected 409 RESTART_REQUIRED, got ${rotate.statusCode}: ${rotate.body}`);
-    const body = JSON.parse(rotate.body) as { code: string; bootActiveKid: string; requestedNewActiveKid: string };
-    assert.equal(body.code, 'AUTH_ROTATE_RESTART_REQUIRED');
-    assert.equal(body.bootActiveKid, 'kid-1');
-    assert.equal(body.requestedNewActiveKid, 'kid-2');
+    assert.ok(rotate.statusCode >= 200 && rotate.statusCode < 300,
+      `expected 2xx hot-rotate, got ${rotate.statusCode}: ${rotate.body}`);
+    const rotateBody = JSON.parse(rotate.body) as { activeKid: string };
+    assert.equal(rotateBody.activeKid, 'kid-2');
+
+    /* 重新签发：登录拿一个新 token，header.kid 应是 kid-2。 */
+    const relogin = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: 'multi-kid-1@example.com', password: 'password123' },
+    });
+    assert.ok(relogin.statusCode >= 200 && relogin.statusCode < 300,
+      `relogin: ${relogin.statusCode} ${relogin.body}`);
+    const newToken = JSON.parse(relogin.body).data.accessToken as string;
+    const newHeader = JSON.parse(Buffer.from(newToken.split('.')[0]!, 'base64url').toString('utf-8')) as { kid?: string };
+    assert.equal(newHeader.kid, 'kid-2', 'rotation must change signing kid in-process');
+
+    /* 验证：用新 token 访问受保护接口，dynamicVerify 应放行。 */
+    const me = await app.inject({
+      method: 'GET',
+      url: '/api/v1/users/me',
+      headers: { authorization: `Bearer ${newToken}` },
+    });
+    assert.ok(me.statusCode >= 200 && me.statusCode < 400,
+      `protected endpoint rejected new-kid token: ${me.statusCode} ${me.body}`);
   });
 
   it('admin POST /api/v1/auth/keys/rotate ACCEPTS a no-op rotate that only changes oldActiveNewState', async () => {
