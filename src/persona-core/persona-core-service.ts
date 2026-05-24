@@ -4,37 +4,9 @@ import {
   pcoreCmdActivatePersona,
   pcoreCmdApproveTransfer,
   pcoreCmdCompleteTransfer,
-  pcoreCmdAcceptMarketplaceTaskAssignment,
-  pcoreCmdAcceptTaskAssignment,
-  pcoreCmdAcceptTaskResult,
   pcoreCmdApplyGovernanceEvent,
-  pcoreCmdCompleteMarketplaceTask,
-  pcoreCmdCompleteRuntimeSession,
   pcoreCmdCreateFork,
-  pcoreCmdCreateRuntimeSession,
-  pcoreCmdCreateTaskApplication,
-  pcoreCmdCreateTaskAssignment,
-  pcoreCmdCreateTaskResult,
-  pcoreCmdCreateWalletSettlement,
-  pcoreCmdDisputeTaskAssignment,
-  pcoreCmdDisputeTaskResult,
-  pcoreCmdEvaluateRuntimeSession,
-  pcoreCmdExecuteRuntimeSession,
-  pcoreCmdLinkTaskAssignmentRuntimeSession,
-  pcoreCmdMarkTaskApplicationsAssigned,
-  pcoreCmdPlanRuntimeSession,
-  pcoreCmdRetryRuntimeSession,
-  pcoreCmdRejectTaskApplication,
-  pcoreCmdRejectTaskAssignment,
-  pcoreCmdRejectTaskResult,
-  pcoreCmdReopenMarketplaceTask,
-  pcoreCmdSettlePersonaWallet,
-  pcoreCmdStartTaskAssignment,
-  pcoreCmdSubmitTaskAssignment,
-  pcoreCmdTimeoutRuntimeSession,
-  pcoreCmdTouchMarketplaceTask,
   pcoreCmdUpdatePersonaKnowledgeSync,
-  pcoreCmdUpdatePersonaTaskAccepted,
   pcoreCmdCreateKnowledgeItem,
   pcoreCmdCreatePersona,
   pcoreCmdCreateTransfer,
@@ -62,32 +34,19 @@ import {
   pcoreQueryRecentMarketplaceTasks,
   pcoreQueryRecentMemories,
   pcoreQueryReputationHistory,
-  pcoreQueryRuntimeSession,
   pcoreQuerySummariesByOwner,
-  pcoreQueryTaskApplication,
-  pcoreQueryTimedOutRuntimeSessions,
   pcoreQuerySummaryByOwner,
   pcoreQueryTransferById,
   pcoreQueryTransferByPersonaId,
   pcoreQueryTransfersByPersona,
-  pcoreQueryMarketplaceTasksByTenant,
-  pcoreQueryMarketplaceTaskById,
   pcoreQueryPersonaExists,
   pcoreQueryForkExists,
-  pcoreQueryTaskAssignmentById,
-  pcoreQueryLatestTaskAssignmentByTask,
-  pcoreQueryLatestTaskAssignmentForPersonaTask,
-  pcoreQueryLatestTaskResultByAssignment,
   pcoreQueryPersonaById,
   pcoreQueryTransferAccess,
   pcoreQueryUserExists,
   pcoreQueryRankingTaskStats,
   pcoreQueryRankingTaskStatsUncategorized,
   pcoreQueryLastActiveAt,
-  pcoreCmdPublishMarketplaceTask,
-  pcoreCmdAcceptMarketplaceTaskLegacy,
-  pcoreCmdCompleteTaskWalletUpdate,
-  pcoreCmdCompleteTaskPersonaUpdate,
   pcoreCmdInsertReputationHistory,
   pcoreCmdInsertGrowthEvent,
   type PcorePersonaRow,
@@ -95,13 +54,8 @@ import {
   type PcoreKnowledgeRow,
   type PcoreGrowthEventRow,
   type PcoreGovernanceEventRow,
-  type PcoreMarketplaceTaskRow,
   type PcoreTransferRow,
   type PcoreReputationHistoryRow,
-  type PcoreTaskApplicationRow,
-  type PcoreTaskAssignmentRow,
-  type PcoreRuntimeSessionRow,
-  type PcoreTaskResultRow,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
@@ -114,7 +68,6 @@ import {
   fromMinor,
   round,
   safeJsonParse,
-  toMinor,
 } from './persona-core-utils.js';
 import { PersonaMemoryService, type PersonaMemoryContext } from './persona-memory-service.js';
 import { PersonaWalletService, walletFromRow, type PersonaWalletContext } from './persona-wallet-service.js';
@@ -123,18 +76,15 @@ import {
   type PersonaGovernanceContext,
 } from './persona-governance-service.js';
 import {
-  ACTIVE_RUNTIME_STATES,
-  computeRuntimeTimeoutAt,
-  isRuntimeTerminalState,
-  nextRuntimeRetryState,
-  shouldRetryRuntimeSession,
-} from './runtime-state-machine.js';
+  PersonaMarketplaceService,
+  taskFromRow,
+  type PersonaMarketplaceContext,
+} from './persona-marketplace-service.js';
+/* Runtime state machine helpers moved to PersonaMarketplaceService. */
 import type {
   AddGovernanceEventInput,
   AddPersonaKnowledgeInput,
   AddPersonaMemoryInput,
-  AppealGovernanceCaseInput,
-  ApplyGovernanceActionInput,
   ApplyTaskInput,
   ApprovePersonaTransferInput,
   AssignTaskInput,
@@ -148,8 +98,11 @@ import type {
   DisputeTaskInput,
   EconomyAnalytics,
   EvaluatePersonaLifecycleInput,
+  AppealGovernanceCaseInput,
+  ApplyGovernanceActionInput,
   GovernanceAction,
   GovernanceCase,
+  OpenGovernanceCaseInput,
   MarketplaceAnalytics,
   MarketplaceTask,
   PersonaCore,
@@ -184,7 +137,6 @@ import type {
   TaskWalletSettlement,
   TaskResult,
   RejectSubmittedTaskInput,
-  OpenGovernanceCaseInput,
   WalletPayoutRequest,
   WalletTransaction,
 } from './types.js';
@@ -201,13 +153,11 @@ type PersonaForkRow = PcoreForkRow;
 type PersonaKnowledgeRow = PcoreKnowledgeRow;
 type PersonaGrowthEventRow = PcoreGrowthEventRow;
 type PersonaGovernanceEventRow = PcoreGovernanceEventRow;
-type MarketplaceTaskRow = PcoreMarketplaceTaskRow;
+/* MarketplaceTaskRow alias removed — extracted to PersonaMarketplaceService. */
 type PersonaTransferRow = PcoreTransferRow;
 type ReputationHistoryRow = PcoreReputationHistoryRow;
-type TaskApplicationRow = PcoreTaskApplicationRow;
-type TaskAssignmentRow = PcoreTaskAssignmentRow;
-type RuntimeSessionRow = PcoreRuntimeSessionRow;
-type TaskResultRow = PcoreTaskResultRow;
+/* TaskApplicationRow / TaskAssignmentRow / RuntimeSessionRow /
+ * TaskResultRow aliases removed — all extracted to PersonaMarketplaceService. */
 /* GovernanceCaseRow / GovernanceActionRow aliases removed —
  * governance rows are only mapped inside PersonaGovernanceService now. */
 /* WalletTransactionRow / WalletPayoutRequestRow /
@@ -306,29 +256,8 @@ function governanceEventFromRow(row: PersonaGovernanceEventRow): PersonaGovernan
   };
 }
 
-function taskFromRow(row: MarketplaceTaskRow): MarketplaceTask {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    publisherUserId: row.publisher_user_id,
-    assigneePersonaId: row.assignee_persona_id,
-    assigneeForkId: row.assignee_fork_id,
-    assigneePersonaName: row.assignee_persona_name ?? null,
-    title: row.title,
-    description: row.description,
-    category: row.category as MarketplaceTask['category'],
-    reward: Number(row.reward),
-    currency: row.currency,
-    status: row.status as MarketplaceTask['status'],
-    qualityScore: row.quality_score === null ? null : Number(row.quality_score),
-    growthDelta: row.growth_delta === null ? null : Number(row.growth_delta),
-    publishedAt: Number(row.published_at),
-    acceptedAt: row.accepted_at === null ? null : Number(row.accepted_at),
-    completedAt: row.completed_at === null ? null : Number(row.completed_at),
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
-  };
-}
+/* taskFromRow moved to PersonaMarketplaceService and re-imported above
+ * for the listPersonas/getPersonaDetail recent-tasks projection. */
 
 function transferFromRow(row: PersonaTransferRow): PersonaTransfer {
   return {
@@ -357,75 +286,8 @@ function reputationHistoryFromRow(row: ReputationHistoryRow): PersonaReputationH
   };
 }
 
-function taskApplicationFromRow(row: TaskApplicationRow): TaskApplication {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    taskId: row.task_id,
-    personaId: row.persona_id,
-    rankingScore: Number(row.ranking_score),
-    status: row.status as TaskApplication['status'],
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
-  };
-}
-
-function taskAssignmentFromRow(row: TaskAssignmentRow): TaskAssignment {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    taskId: row.task_id,
-    personaId: row.persona_id,
-    applicationId: row.application_id,
-    runtimeSessionId: row.runtime_session_id,
-    status: row.status as TaskAssignment['status'],
-    assignedAt: Number(row.assigned_at),
-    startedAt: row.started_at === null ? null : Number(row.started_at),
-    submittedAt: row.submitted_at === null ? null : Number(row.submitted_at),
-    completedAt: row.completed_at === null ? null : Number(row.completed_at),
-  };
-}
-
-function runtimeSessionFromRow(row: RuntimeSessionRow): RuntimeSession {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    personaId: row.persona_id,
-    taskId: row.task_id,
-    assignmentId: row.assignment_id,
-    state: row.state as RuntimeSession['state'],
-    retryCount: Number(row.retry_count),
-    timeoutAt: row.timeout_at === null ? null : Number(row.timeout_at),
-    plan: safeJsonParse<{ steps: string[] } | null>(row.plan_json, null),
-    artifacts: safeJsonParse<Array<{ type: string; uri: string }>>(row.artifacts_json, []),
-    evaluation: safeJsonParse<Record<string, unknown> | null>(row.evaluation_json, null),
-    resultSummary: safeJsonParse<Record<string, unknown> | null>(row.result_summary_json, null),
-    error: safeJsonParse<Record<string, unknown> | null>(row.error_json, null),
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
-    completedAt: row.completed_at === null ? null : Number(row.completed_at),
-  };
-}
-
-function taskResultFromRow(row: TaskResultRow): TaskResult {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    taskId: row.task_id,
-    assignmentId: row.assignment_id,
-    resultUri: row.result_uri,
-    evaluation: safeJsonParse<Record<string, unknown>>(row.evaluation_json, {}),
-    qualityScore: row.quality_score === null ? null : Number(row.quality_score),
-    clientRating: row.client_rating === null ? null : Number(row.client_rating),
-    status: row.status as TaskResult['status'],
-    rejectionReason: row.rejection_reason,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
-    acceptedAt: row.accepted_at === null ? null : Number(row.accepted_at),
-    rejectedAt: row.rejected_at === null ? null : Number(row.rejected_at),
-    disputedAt: row.disputed_at === null ? null : Number(row.disputed_at),
-  };
-}
+/* taskApplicationFromRow / taskAssignmentFromRow / runtimeSessionFromRow
+ * / taskResultFromRow moved to PersonaMarketplaceService. */
 
 /* governanceCaseFromRow / governanceActionFromRow moved into
  * PersonaGovernanceService as part of the Step 16c split. */
@@ -447,13 +309,12 @@ export class PersonaCoreService {
    */
   private readonly memoryService: PersonaMemoryService;
   /**
-   * Wallet sub-service — Step 16b second cut. Owns wallet read paths,
-   * wallet payout flow, and the wallet-transaction journal write path.
-   * The settleTaskPayment + task-completion methods still live in this
-   * file (cross-domain with task / governance), but they route their
-   * wallet writes through `this.walletService.insertWalletTransaction`
-   * + `this.walletService.getWalletByPersonaId(...)` so there's a
-   * single write path. */
+   * Wallet sub-service — Step 16b. Owns wallet read paths, wallet
+   * payout flow, and the wallet-transaction journal write path.
+   * settleTaskPayment moved to PersonaMarketplaceService in Step 16d,
+   * but it still reaches the wallet write path through the
+   * MarketplaceWalletHook so there's a single write source for
+   * `pcoreCmdInsertWalletTransaction`. */
   private readonly walletService: PersonaWalletService;
   /**
    * Governance sub-service — Step 16c third cut. Owns case + action
@@ -462,6 +323,14 @@ export class PersonaCoreService {
    * this service via `this.governanceService.insertGovernanceEvent`
    * to share a single write path for the governance event row. */
   private readonly governanceService: PersonaGovernanceService;
+  /**
+   * Marketplace sub-service — Step 16d, the final cut of the §8
+   * Step 16 split. Owns tasks, applications, assignments, runtime
+   * sessions, result lifecycle, disputes, and settlement. Reaches
+   * into the other sub-services via typed hooks (wallet, memory,
+   * governance) — see PersonaMarketplaceContext.
+   */
+  private readonly marketplaceService: PersonaMarketplaceService;
 
   constructor(
     private readonly tx: SyncWriteUnitOfWork,
@@ -520,6 +389,30 @@ export class PersonaCoreService {
       memoryHook: this.memoryService,
     };
     this.governanceService = new PersonaGovernanceService(tx, governanceContext);
+    /* Marketplace sub-service context. The marketplace cluster
+     * reaches into wallet (settlement + journal), memory (audit
+     * trail), and governance (reward events on high-quality
+     * completion + dispute case creation), so the hooks are typed
+     * slices of those sibling sub-services rather than passing the
+     * full instances. */
+    const marketplaceContext: PersonaMarketplaceContext = {
+      getPersonaDetail: (t, o, p) => this.getPersonaDetail(t, o, p),
+      getPersonaById: (t, p) => this.getPersonaById(t, p),
+      personaExists: (t, o, p) => this.personaExists(t, o, p),
+      forkBelongsToPersona: (t, p, f) => this.forkBelongsToPersona(t, p, f),
+      isTerminalStatus: (status) => this.isTerminalStatus(status),
+      insertGrowthEvent: (input) => this.insertGrowthEvent(input),
+      insertReputationHistory: (t, p, from, to, reason) =>
+        this.insertReputationHistory(t, p, from, to, reason),
+      walletHook: this.walletService,
+      memoryHook: this.memoryService,
+      governanceHook: this.governanceService,
+    };
+    this.marketplaceService = new PersonaMarketplaceService(
+      tx,
+      marketplaceContext,
+      this.runtimeSessionTimeoutMs,
+    );
   }
 
   private getEncryption(tenantId: string): FieldEncryption | undefined {
@@ -1410,883 +1303,6 @@ export class PersonaCoreService {
     return this.walletService.requestWalletPayout(input);
   }
 
-  settleTaskPayment(input: SettleTaskPaymentInput): TaskWalletSettlement | null {
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.publisherUserId !== input.actorUserId || !task.assigneePersonaId) return null;
-
-    const assignment = this.getTaskAssignmentById(input.tenantId, input.assignmentId);
-    if (!assignment || assignment.taskId !== input.taskId || assignment.personaId !== task.assigneePersonaId) return null;
-
-    const wallet = this.walletService.getWalletByPersonaId(input.tenantId, assignment.personaId);
-    if (!wallet || wallet.status !== 'active') return null;
-
-    const existing = this.walletService.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
-    if (existing) return existing;
-
-    const totalAmountMinor = Math.round(input.totalAmountMinor);
-    if (totalAmountMinor <= 0) return null;
-
-    const ownerPct = Math.round(input.split.ownerPct);
-    const personaPct = Math.round(input.split.personaPct);
-    const platformPct = Math.round(input.split.platformPct);
-    if (ownerPct + personaPct + platformPct !== 100) return null;
-
-    const {
-      ownerAmountMinor,
-      personaAmountMinor,
-      platformAmountMinor,
-    } = this.computeSettlementSplit(totalAmountMinor, ownerPct, personaPct, platformPct);
-    const now = Date.now();
-    const settlementId = generatePrefixedId('ws');
-    const settlementLatencyMs = Math.max(0, now - (assignment.submittedAt ?? assignment.assignedAt));
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateWalletSettlement({
-        id: settlementId,
-        tenantId: input.tenantId,
-        walletId: wallet.id,
-        taskId: input.taskId,
-        assignmentId: input.assignmentId,
-        totalAmountMinor,
-        currency: input.currency,
-        ownerPct,
-        personaPct,
-        platformPct,
-        ownerAmountMinor,
-        personaAmountMinor,
-        platformAmountMinor,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdSettlePersonaWallet({
-        tenantId: input.tenantId,
-        walletId: wallet.id,
-        ownerAmount: fromMinor(ownerAmountMinor),
-        personaAmount: fromMinor(personaAmountMinor),
-        currency: input.currency,
-        now,
-      }));
-
-      this.walletService.insertWalletTransaction({
-        tenantId: input.tenantId,
-        walletId: wallet.id,
-        transactionType: 'task_payment',
-        amountMinor: totalAmountMinor,
-        currency: input.currency,
-        referenceType: 'wallet_settlement',
-        referenceId: settlementId,
-      });
-      this.walletService.insertWalletTransaction({
-        tenantId: input.tenantId,
-        walletId: wallet.id,
-        transactionType: 'platform_fee',
-        amountMinor: -platformAmountMinor,
-        currency: input.currency,
-        referenceType: 'wallet_settlement',
-        referenceId: settlementId,
-      });
-      this.walletService.insertWalletTransaction({
-        tenantId: input.tenantId,
-        walletId: wallet.id,
-        transactionType: 'persona_reserve',
-        amountMinor: -personaAmountMinor,
-        currency: input.currency,
-        referenceType: 'wallet_settlement',
-        referenceId: settlementId,
-      });
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'wallet.settlement_completed',
-        partitionKey: wallet.id,
-        payload: {
-          settlementId,
-          walletId: wallet.id,
-          taskId: input.taskId,
-          assignmentId: input.assignmentId,
-          personaId: assignment.personaId,
-          totalAmountMinor,
-          currency: input.currency,
-          latencyMs: settlementLatencyMs,
-          updatedAt: now,
-        },
-      });
-
-      this.recordBusinessAudit({
-        tenantId: input.tenantId,
-        actorId: input.actorUserId,
-        actionType: 'wallet.settlement',
-        targetType: 'wallet_settlement',
-        targetId: settlementId,
-        createdAt: now,
-        payload: {
-          walletId: wallet.id,
-          taskId: input.taskId,
-          assignmentId: input.assignmentId,
-          totalAmountMinor,
-          currency: input.currency,
-          ownerAmountMinor,
-          personaAmountMinor,
-          platformAmountMinor,
-        },
-      });
-    });
-
-    return this.walletService.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
-  }
-
-  findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
-    const row = this.tx.queryOne(pcoreQueryTaskApplication({ tenantId, taskId, personaId }));
-    return row ? taskApplicationFromRow(row) : null;
-  }
-
-  applyToTask(input: ApplyTaskInput): TaskApplication | null {
-    const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
-    if (!persona || persona.status !== 'active') return null;
-
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.status !== 'open') return null;
-
-    if (this.findTaskApplication(input.tenantId, input.taskId, input.personaId)) {
-      return null;
-    }
-
-    const now = Date.now();
-    const applicationId = generatePrefixedId('tapp');
-    const rankingScore = this.computePersonaTaskRanking(persona, task);
-
-    this.tx.execute(pcoreCmdCreateTaskApplication({
-      id: applicationId,
-      tenantId: input.tenantId,
-      taskId: input.taskId,
-      personaId: input.personaId,
-      rankingScore,
-      now,
-    }));
-
-    this.memoryService.insertMemory({
-      tenantId: input.tenantId,
-      personaId: input.personaId,
-      kind: 'task',
-      summary: `申请市场任务: ${task.title}`,
-      content: {
-        taskId: task.id,
-        category: task.category,
-        rankingScore,
-      },
-      importance: 0.52,
-    });
-
-    return this.findTaskApplication(input.tenantId, input.taskId, input.personaId);
-  }
-
-  assignTask(input: AssignTaskInput): TaskAssignment | null {
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.status !== 'open' || task.publisherUserId !== input.actorUserId) return null;
-
-    const persona = this.getPersonaById(input.tenantId, input.personaId);
-    if (!persona || persona.status !== 'active') return null;
-
-    const application = this.findTaskApplication(input.tenantId, input.taskId, input.personaId);
-    if (!application || application.status !== 'submitted') return null;
-    const latestAssignment = this.getLatestTaskAssignmentByTask(input.tenantId, input.taskId);
-    if (latestAssignment && !['rejected', 'completed'].includes(latestAssignment.status)) return null;
-
-    const now = Date.now();
-    const assignmentId = generatePrefixedId('tas');
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateTaskAssignment({
-        id: assignmentId,
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        personaId: input.personaId,
-        applicationId: application.id,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdMarkTaskApplicationsAssigned({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        applicationId: application.id,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdAcceptMarketplaceTaskAssignment({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        personaId: input.personaId,
-        now,
-      }));
-
-      this.memoryService.insertMemory({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        kind: 'task',
-        summary: `被指派市场任务: ${task.title}`,
-        content: {
-          taskId: task.id,
-          assignmentId,
-        reward: task.reward,
-      },
-      importance: 0.74,
-      });
-
-      this.recordBusinessAudit({
-        tenantId: input.tenantId,
-        actorId: input.actorUserId,
-        actionType: 'task.assignment',
-        targetType: 'task_assignment',
-        targetId: assignmentId,
-        createdAt: now,
-        payload: {
-          taskId: input.taskId,
-          personaId: input.personaId,
-          applicationId: application.id,
-        },
-      });
-    });
-
-    return this.getTaskAssignmentById(input.tenantId, assignmentId);
-  }
-
-  createRuntimeSession(input: CreateRuntimeSessionInput): RuntimeSession | null {
-    const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
-    if (!persona || persona.status !== 'active') return null;
-
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.assigneePersonaId !== input.personaId) return null;
-
-    const assignment = this.getLatestTaskAssignmentForPersonaAndTask(input.tenantId, input.personaId, input.taskId);
-    if (!assignment || !['assigned', 'in_progress', 'submitted'].includes(assignment.status)) return null;
-
-    const now = Date.now();
-    const sessionId = generatePrefixedId('rs');
-    const timeoutAt = computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs);
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateRuntimeSession({
-        id: sessionId,
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        taskId: input.taskId,
-        assignmentId: assignment.id,
-        timeoutAt,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdLinkTaskAssignmentRuntimeSession({
-        tenantId: input.tenantId,
-        assignmentId: assignment.id,
-        sessionId,
-      }));
-    });
-
-    return this.getRuntimeSession(input.tenantId, input.ownerUserId, sessionId);
-  }
-
-  getRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const row = this.tx.queryOne(pcoreQueryRuntimeSession({ tenantId, sessionId }));
-    if (!row || !this.personaExists(tenantId, ownerUserId, row.persona_id)) return null;
-    return runtimeSessionFromRow(row);
-  }
-
-  planRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const session = this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-    if (!session || isRuntimeTerminalState(session.state)) return null;
-
-    const task = this.getMarketplaceTask(tenantId, session.taskId);
-    if (!task) return null;
-
-    const plan = {
-      steps: [
-        `Inspect task requirements for ${task.title}`,
-        `Run ${task.category} workflow on approved tools`,
-        'Package artifacts and summarize outcome',
-        'Prepare evaluation and submission package',
-      ],
-    };
-
-    const now = Date.now();
-    this.tx.execute(pcoreCmdPlanRuntimeSession({
-      tenantId,
-      sessionId,
-      planJson: JSON.stringify(plan),
-      now,
-      timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
-    }));
-
-    return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-  }
-
-  executeRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const session = this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-    if (!session || !['PLAN', 'EXECUTE'].includes(session.state)) return null;
-
-    const task = this.getMarketplaceTask(tenantId, session.taskId);
-    if (!task) return null;
-
-    const now = Date.now();
-    const artifacts = [
-      { type: 'text', uri: `runtime://${session.id}/artifact.json` },
-    ];
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdExecuteRuntimeSession({
-        tenantId,
-        sessionId,
-        artifactsJson: JSON.stringify(artifacts),
-        now,
-        timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
-      }));
-
-      if (session.assignmentId) {
-        this.tx.execute(pcoreCmdStartTaskAssignment({
-          tenantId,
-          assignmentId: session.assignmentId,
-          now,
-        }));
-      }
-    });
-
-    this.memoryService.insertMemory({
-      tenantId,
-      personaId: session.personaId,
-      kind: 'task',
-      summary: `运行任务执行环节: ${task.title}`,
-      content: {
-        taskId: task.id,
-        sessionId: session.id,
-        artifactCount: artifacts.length,
-      },
-      importance: 0.58,
-    });
-
-    return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-  }
-
-  evaluateRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const session = this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-    if (!session || session.state !== 'EVALUATE') return null;
-
-    const evaluation = {
-      summary: 'Execution artifacts evaluated',
-      artifact_count: session.artifacts.length,
-      ready_for_completion: true,
-    };
-
-    const now = Date.now();
-    this.tx.execute(pcoreCmdEvaluateRuntimeSession({
-      tenantId,
-      sessionId,
-      evaluationJson: JSON.stringify(evaluation),
-      now,
-      timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
-    }));
-
-    return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-  }
-
-  completeRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
-    const session = this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-    if (!session || isRuntimeTerminalState(session.state) || !['EVALUATE', 'MEMORY_UPDATE', 'REPUTATION_UPDATE'].includes(session.state)) return null;
-
-    const task = this.getMarketplaceTask(tenantId, session.taskId);
-    if (!task) return null;
-
-    const now = Date.now();
-    const resultSummary = {
-      success: true,
-      memory_records_created: 1,
-      task_id: task.id,
-    };
-
-    this.tx.transaction(() => {
-      this.memoryService.insertMemory({
-        tenantId,
-        personaId: session.personaId,
-        kind: 'task',
-        summary: `完成 runtime 会话: ${task.title}`,
-        content: {
-          taskId: task.id,
-          sessionId: session.id,
-          state: session.state,
-        },
-        importance: 0.63,
-      });
-
-      this.tx.execute(pcoreCmdCompleteRuntimeSession({
-        tenantId,
-        sessionId,
-        resultSummaryJson: JSON.stringify(resultSummary),
-        now,
-      }));
-
-      this.publishObservability({
-        tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'runtime.completed',
-        partitionKey: session.id,
-        payload: {
-          sessionId: session.id,
-          personaId: session.personaId,
-          taskId: session.taskId,
-          durationMs: Math.max(0, now - session.createdAt),
-          updatedAt: now,
-        },
-      });
-    });
-
-    return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
-  }
-
-  recoverTimedOutRuntimeSessions(input: {
-    now: number;
-    sessionTimeoutMs: number;
-    maxRetries: number;
-    limit?: number;
-  }): { scanned: number; recovered: number; timedOut: number } {
-    const rows = this.tx.queryMany(pcoreQueryTimedOutRuntimeSessions({
-      now: input.now,
-      limit: input.limit ?? 100,
-    }));
-
-    let recovered = 0;
-    let timedOut = 0;
-
-    for (const row of rows) {
-      const state = row.state as RuntimeSession['state'];
-      if (!ACTIVE_RUNTIME_STATES.has(state)) continue;
-
-      const errorPayload = {
-        code: 'runtime_timeout',
-        previousState: state,
-        detectedAt: input.now,
-        retryCount: Number(row.retry_count),
-      };
-
-      if (shouldRetryRuntimeSession(Number(row.retry_count), input.maxRetries)) {
-        this.tx.execute(pcoreCmdRetryRuntimeSession({
-          tenantId: row.tenant_id,
-          sessionId: row.id,
-          state: nextRuntimeRetryState(state),
-          timeoutAt: computeRuntimeTimeoutAt(input.now, input.sessionTimeoutMs),
-          now: input.now,
-          errorJson: JSON.stringify(errorPayload),
-        }));
-        recovered++;
-        continue;
-      }
-
-      this.tx.execute(pcoreCmdTimeoutRuntimeSession({
-        tenantId: row.tenant_id,
-        sessionId: row.id,
-        now: input.now,
-        errorJson: JSON.stringify(errorPayload),
-      }));
-      timedOut++;
-    }
-
-    return {
-      scanned: rows.length,
-      recovered,
-      timedOut,
-    };
-  }
-
-  submitTaskResult(input: SubmitTaskResultInput): TaskResult | null {
-    const assignment = this.getTaskAssignmentById(input.tenantId, input.assignmentId);
-    if (!assignment || assignment.taskId !== input.taskId) return null;
-    if (!this.personaExists(input.tenantId, input.ownerUserId, assignment.personaId)) return null;
-    if (!['assigned', 'in_progress', 'rejected'].includes(assignment.status)) return null;
-
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.assigneePersonaId !== assignment.personaId) return null;
-
-    const now = Date.now();
-    const resultId = generatePrefixedId('tr');
-    const evaluation = input.evaluation ?? {};
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateTaskResult({
-        id: resultId,
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        assignmentId: input.assignmentId,
-        resultUri: input.resultUri,
-        evaluationJson: JSON.stringify(evaluation),
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdSubmitTaskAssignment({
-        tenantId: input.tenantId,
-        assignmentId: input.assignmentId,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdTouchMarketplaceTask({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        now,
-      }));
-
-      this.recordBusinessAudit({
-        tenantId: input.tenantId,
-        actorId: input.ownerUserId,
-        actionType: 'task.submission',
-        targetType: 'task_result',
-        targetId: resultId,
-        createdAt: now,
-        payload: {
-          taskId: input.taskId,
-          assignmentId: input.assignmentId,
-          resultUri: input.resultUri,
-        },
-      });
-    });
-
-    this.memoryService.insertMemory({
-      tenantId: input.tenantId,
-      personaId: assignment.personaId,
-      kind: 'task',
-      summary: `提交任务结果: ${task.title}`,
-      content: {
-        taskId: task.id,
-        assignmentId: assignment.id,
-        resultId,
-        resultUri: input.resultUri,
-      },
-      importance: 0.67,
-    });
-
-    return this.getLatestTaskResultByAssignment(input.tenantId, input.assignmentId);
-  }
-
-  acceptSubmittedTask(input: AcceptSubmittedTaskInput): { task: MarketplaceTask; assignment: TaskAssignment; result: TaskResult } | null {
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.publisherUserId !== input.actorUserId || !task.assigneePersonaId) return null;
-
-    const assignment = this.getLatestTaskAssignmentByTask(input.tenantId, input.taskId);
-    if (!assignment || assignment.status !== 'submitted') return null;
-
-    const result = this.getLatestTaskResultByAssignment(input.tenantId, assignment.id);
-    if (!result || result.status !== 'submitted') return null;
-
-    const persona = this.getPersonaById(input.tenantId, assignment.personaId);
-    if (!persona || this.isTerminalStatus(persona.status)) return null;
-
-    const now = Date.now();
-    const qualityScore = clamp(input.qualityScore, 0, 1);
-    const clientRating = Math.round(clamp(input.clientRating, 1, 5));
-    const rewardSignal = Math.max(task.reward, 1) / 100;
-    const growthDelta = round(rewardSignal * (0.6 + qualityScore));
-    const reputationDelta = round((qualityScore - 0.5) * 8 + rewardSignal * 3 + (clientRating - 3) * 0.8);
-    const totalAmountMinor = toMinor(task.reward);
-    const split = { ownerPct: 60, personaPct: 20, platformPct: 20 };
-    const {
-      ownerAmountMinor,
-      personaAmountMinor,
-      platformAmountMinor,
-    } = this.computeSettlementSplit(totalAmountMinor, split.ownerPct, split.personaPct, split.platformPct);
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdAcceptTaskResult({
-        tenantId: input.tenantId,
-        resultId: result.id,
-        qualityScore,
-        clientRating,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdAcceptTaskAssignment({
-        tenantId: input.tenantId,
-        assignmentId: assignment.id,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdCompleteMarketplaceTask({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        qualityScore,
-        growthDelta,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdUpdatePersonaTaskAccepted({
-        tenantId: input.tenantId,
-        personaId: assignment.personaId,
-        growthDelta,
-        reputationDelta,
-        now,
-      }));
-
-      this.insertReputationHistory(
-        input.tenantId,
-        assignment.personaId,
-        persona.reputation,
-        persona.reputation + reputationDelta,
-        `task_accepted:${task.id}`,
-      );
-
-      this.insertGrowthEvent({
-        tenantId: input.tenantId,
-        personaId: assignment.personaId,
-        taskId: task.id,
-        eventType: 'task_completed',
-        growthDelta,
-        reputationDelta,
-        trainingDelta: 0,
-        payload: {
-          ownerAmountMinor,
-          personaAmountMinor,
-          platformAmountMinor,
-          qualityScore,
-          clientRating,
-          resultId: result.id,
-        },
-      });
-
-      this.memoryService.insertMemory({
-        tenantId: input.tenantId,
-        personaId: assignment.personaId,
-        kind: 'task',
-        summary: `任务结果被客户验收: ${task.title}`,
-        content: {
-          taskId: task.id,
-          assignmentId: assignment.id,
-          resultId: result.id,
-          qualityScore,
-          clientRating,
-          ownerAmountMinor,
-          personaAmountMinor,
-          platformAmountMinor,
-        },
-        importance: clamp(0.68 + qualityScore * 0.18, 0, 1),
-      });
-
-      if (qualityScore >= 0.85) {
-        this.governanceService.insertGovernanceEvent({
-          tenantId: input.tenantId,
-          personaId: assignment.personaId,
-          eventType: 'reward',
-          severity: 2,
-          summary: `高质量任务被验收: ${task.title}`,
-          payload: { taskId: task.id, qualityScore, clientRating },
-          actorUserId: input.actorUserId,
-        });
-      }
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'task.outcome',
-        partitionKey: task.id,
-        payload: {
-          taskId: task.id,
-          assignmentId: assignment.id,
-          personaId: assignment.personaId,
-          outcome: 'accepted',
-          terminal: true,
-          success: true,
-          qualityScore,
-          clientRating,
-          updatedAt: now,
-        },
-      });
-
-      this.recordBusinessAudit({
-        tenantId: input.tenantId,
-        actorId: input.actorUserId,
-        actionType: 'task.acceptance',
-        targetType: 'task_result',
-        targetId: result.id,
-        createdAt: now,
-        payload: {
-          taskId: task.id,
-          assignmentId: assignment.id,
-          personaId: assignment.personaId,
-          qualityScore,
-          clientRating,
-        },
-      });
-    });
-
-    const settlement = this.settleTaskPayment({
-      tenantId: input.tenantId,
-      actorUserId: input.actorUserId,
-      taskId: task.id,
-      assignmentId: assignment.id,
-      totalAmountMinor,
-      currency: task.currency,
-      split,
-    });
-    if (!settlement) return null;
-
-    const nextTask = this.getMarketplaceTask(input.tenantId, input.taskId);
-    const nextAssignment = this.getTaskAssignmentById(input.tenantId, assignment.id);
-    const nextResult = this.getLatestTaskResultByAssignment(input.tenantId, assignment.id);
-    if (!nextTask || !nextAssignment || !nextResult) return null;
-
-    return {
-      task: nextTask,
-      assignment: nextAssignment,
-      result: nextResult,
-    };
-  }
-
-  rejectSubmittedTask(input: RejectSubmittedTaskInput): { task: MarketplaceTask; assignment: TaskAssignment; result: TaskResult } | null {
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.publisherUserId !== input.actorUserId) return null;
-
-    const assignment = this.getLatestTaskAssignmentByTask(input.tenantId, input.taskId);
-    if (!assignment || assignment.status !== 'submitted') return null;
-
-    const result = this.getLatestTaskResultByAssignment(input.tenantId, assignment.id);
-    if (!result || result.status !== 'submitted') return null;
-
-    const now = Date.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdRejectTaskResult({
-        tenantId: input.tenantId,
-        resultId: result.id,
-        reason: input.reason,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdRejectTaskAssignment({
-        tenantId: input.tenantId,
-        assignmentId: assignment.id,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdRejectTaskApplication({
-        tenantId: input.tenantId,
-        applicationId: assignment.applicationId,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdReopenMarketplaceTask({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        now,
-      }));
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'task.outcome',
-        partitionKey: task.id,
-        payload: {
-          taskId: task.id,
-          assignmentId: assignment.id,
-          personaId: assignment.personaId,
-          outcome: 'rejected',
-          terminal: true,
-          success: false,
-          updatedAt: now,
-        },
-      });
-    });
-
-    this.memoryService.insertMemory({
-      tenantId: input.tenantId,
-      personaId: assignment.personaId,
-      kind: 'task',
-      summary: `任务结果被拒绝: ${task.title}`,
-      content: {
-        taskId: task.id,
-        assignmentId: assignment.id,
-        resultId: result.id,
-        reason: input.reason,
-      },
-      importance: 0.72,
-    });
-
-    const nextTask = this.getMarketplaceTask(input.tenantId, input.taskId);
-    const nextAssignment = this.getTaskAssignmentById(input.tenantId, assignment.id);
-    const nextResult = this.getLatestTaskResultByAssignment(input.tenantId, assignment.id);
-    if (!nextTask || !nextAssignment || !nextResult) return null;
-
-    return {
-      task: nextTask,
-      assignment: nextAssignment,
-      result: nextResult,
-    };
-  }
-
-  disputeTask(input: DisputeTaskInput): { task: MarketplaceTask; assignment: TaskAssignment; result: TaskResult | null; governanceCase: GovernanceCase } | null {
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.publisherUserId !== input.actorUserId || !task.assigneePersonaId) return null;
-
-    const assignment = this.getLatestTaskAssignmentByTask(input.tenantId, input.taskId);
-    if (!assignment || !['submitted', 'accepted'].includes(assignment.status)) return null;
-
-    const result = this.getLatestTaskResultByAssignment(input.tenantId, assignment.id);
-    const governanceCase = this.openGovernanceCase({
-      tenantId: input.tenantId,
-      actorUserId: input.actorUserId,
-      personaId: task.assigneePersonaId,
-      taskId: task.id,
-      triggerType: 'task_dispute',
-      severity: 'medium',
-      details: { reason: input.reason, taskId: task.id, assignmentId: assignment.id },
-    });
-    if (!governanceCase) return null;
-
-    const now = Date.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdDisputeTaskAssignment({
-        tenantId: input.tenantId,
-        assignmentId: assignment.id,
-        now,
-      }));
-
-      if (result) {
-        this.tx.execute(pcoreCmdDisputeTaskResult({
-          tenantId: input.tenantId,
-          resultId: result.id,
-          now,
-        }));
-      }
-
-      this.tx.execute(pcoreCmdTouchMarketplaceTask({
-        tenantId: input.tenantId,
-        taskId: task.id,
-        now,
-      }));
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'task.outcome',
-        partitionKey: task.id,
-        payload: {
-          taskId: task.id,
-          assignmentId: assignment.id,
-          personaId: assignment.personaId,
-          outcome: 'disputed',
-          terminal: true,
-          success: false,
-          updatedAt: now,
-        },
-      });
-    });
-
-    const nextTask = this.getMarketplaceTask(input.tenantId, input.taskId);
-    const nextAssignment = this.getTaskAssignmentById(input.tenantId, assignment.id);
-    const nextResult = result ? this.getLatestTaskResultByAssignment(input.tenantId, assignment.id) : null;
-    const nextCase = this.governanceService.getGovernanceCaseById(input.tenantId, governanceCase.id);
-    if (!nextTask || !nextAssignment || !nextCase) return null;
-
-    return {
-      task: nextTask,
-      assignment: nextAssignment,
-      result: nextResult,
-      governanceCase: nextCase,
-    };
-  }
-
   /* ── Governance domain (delegated to PersonaGovernanceService — Step 16c) ──
    * Public methods are thin pass-throughs; the still-in-core methods
    * (addGovernanceEvent / disputeTask) call into the same sub-service
@@ -2310,185 +1326,95 @@ export class PersonaCoreService {
     return this.governanceService.appealGovernanceCase(input);
   }
 
+  /* ── Marketplace domain (delegated to PersonaMarketplaceService — Step 16d, final cut) ──
+   * Tasks, applications, assignments, runtime sessions, result
+   * lifecycle, disputes, and settlement all live in the sub-service.
+   * The facade exposes thin pass-throughs so API consumers + test
+   * fixtures that mock PersonaCoreService keep working unchanged. */
+
+  settleTaskPayment(input: SettleTaskPaymentInput): TaskWalletSettlement | null {
+    return this.marketplaceService.settleTaskPayment(input);
+  }
+
+  findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
+    return this.marketplaceService.findTaskApplication(tenantId, taskId, personaId);
+  }
+
+  applyToTask(input: ApplyTaskInput): TaskApplication | null {
+    return this.marketplaceService.applyToTask(input);
+  }
+
+  assignTask(input: AssignTaskInput): TaskAssignment | null {
+    return this.marketplaceService.assignTask(input);
+  }
+
+  createRuntimeSession(input: CreateRuntimeSessionInput): RuntimeSession | null {
+    return this.marketplaceService.createRuntimeSession(input);
+  }
+
+  getRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
+    return this.marketplaceService.getRuntimeSession(tenantId, ownerUserId, sessionId);
+  }
+
+  planRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
+    return this.marketplaceService.planRuntimeSession(tenantId, ownerUserId, sessionId);
+  }
+
+  executeRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
+    return this.marketplaceService.executeRuntimeSession(tenantId, ownerUserId, sessionId);
+  }
+
+  evaluateRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
+    return this.marketplaceService.evaluateRuntimeSession(tenantId, ownerUserId, sessionId);
+  }
+
+  completeRuntimeSession(tenantId: string, ownerUserId: string, sessionId: string): RuntimeSession | null {
+    return this.marketplaceService.completeRuntimeSession(tenantId, ownerUserId, sessionId);
+  }
+
+  recoverTimedOutRuntimeSessions(input: {
+    now: number;
+    sessionTimeoutMs: number;
+    maxRetries: number;
+    limit?: number;
+  }): { scanned: number; recovered: number; timedOut: number } {
+    return this.marketplaceService.recoverTimedOutRuntimeSessions(input);
+  }
+
+  submitTaskResult(input: SubmitTaskResultInput): TaskResult | null {
+    return this.marketplaceService.submitTaskResult(input);
+  }
+
+  acceptSubmittedTask(input: AcceptSubmittedTaskInput): { task: MarketplaceTask; assignment: TaskAssignment; result: TaskResult } | null {
+    return this.marketplaceService.acceptSubmittedTask(input);
+  }
+
+  rejectSubmittedTask(input: RejectSubmittedTaskInput): { task: MarketplaceTask; assignment: TaskAssignment; result: TaskResult } | null {
+    return this.marketplaceService.rejectSubmittedTask(input);
+  }
+
+  disputeTask(input: DisputeTaskInput): { task: MarketplaceTask; assignment: TaskAssignment; result: TaskResult | null; governanceCase: GovernanceCase } | null {
+    return this.marketplaceService.disputeTask(input);
+  }
+
   publishTask(input: PublishMarketplaceTaskInput): MarketplaceTask {
-    const now = Date.now();
-    const taskId = generatePrefixedId('mkt');
-    this.tx.execute(pcoreCmdPublishMarketplaceTask({
-      id: taskId,
-      tenantId: input.tenantId,
-      publisherUserId: input.publisherUserId,
-      title: input.title,
-      description: input.description,
-      category: input.category ?? 'general',
-      reward: input.reward,
-      currency: input.currency ?? 'CRED',
-      now,
-    }));
-    return this.getMarketplaceTask(input.tenantId, taskId)!;
+    return this.marketplaceService.publishTask(input);
   }
 
   listMarketplaceTasks(tenantId: string, status?: MarketplaceTask['status']): MarketplaceTask[] {
-    return this.tx.queryMany(pcoreQueryMarketplaceTasksByTenant({ tenantId, status })).map(taskFromRow);
+    return this.marketplaceService.listMarketplaceTasks(tenantId, status);
   }
 
   getMarketplaceTaskById(tenantId: string, taskId: string): MarketplaceTask | null {
-    return this.getMarketplaceTask(tenantId, taskId);
+    return this.marketplaceService.getMarketplaceTaskById(tenantId, taskId);
   }
 
   acceptTask(input: AcceptMarketplaceTaskInput): MarketplaceTask | null {
-    const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
-    if (!persona || persona.status !== 'active') return null;
-    if (input.forkId && !this.forkBelongsToPersona(input.tenantId, input.personaId, input.forkId)) return null;
-
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.status !== 'open') return null;
-
-    const now = Date.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdAcceptMarketplaceTaskLegacy({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        personaId: input.personaId,
-        forkId: input.forkId ?? null,
-        now,
-      }));
-
-      this.memoryService.insertMemory({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        forkId: input.forkId,
-        kind: 'task',
-        summary: `接受市场任务: ${task.title}`,
-        content: { taskId: task.id, reward: task.reward, category: task.category },
-        importance: 0.7,
-      });
-    });
-
-    return this.getMarketplaceTask(input.tenantId, input.taskId);
+    return this.marketplaceService.acceptTask(input);
   }
 
   completeTask(input: CompleteMarketplaceTaskInput): { task: MarketplaceTask; wallet: PersonaWallet; persona: PersonaCoreDetail } | null {
-    const task = this.getMarketplaceTask(input.tenantId, input.taskId);
-    if (!task || task.status !== 'accepted' || !task.assigneePersonaId) return null;
-    const personaId = task.assigneePersonaId;
-    const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, personaId);
-    if (!persona || this.isTerminalStatus(persona.status)) return null;
-
-    const now = Date.now();
-    const qualityScore = clamp(input.qualityScore, 0, 1);
-    const ownerTrainingHours = Math.max(0, input.ownerTrainingHours ?? 0);
-    const rewardSignal = Math.max(task.reward, 1) / 100;
-    const growthDelta = round(rewardSignal * (0.6 + qualityScore) + ownerTrainingHours * 0.15);
-    const reputationDelta = round((qualityScore - 0.5) * 8 + rewardSignal * 3);
-    const payout = round(task.reward * Math.max(qualityScore, 0.2), 2);
-    const tokenReward = round(growthDelta * 8, 2);
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCompleteMarketplaceTask({
-        tenantId: input.tenantId,
-        taskId: input.taskId,
-        qualityScore,
-        growthDelta,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdCompleteTaskWalletUpdate({
-        tenantId: input.tenantId,
-        personaId,
-        payout,
-        tokenReward,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdCompleteTaskPersonaUpdate({
-        tenantId: input.tenantId,
-        personaId,
-        growthDelta,
-        reputationDelta,
-        ownerTrainingHours,
-        now,
-      }));
-
-      this.insertReputationHistory(
-        input.tenantId,
-        personaId,
-        persona.reputation,
-        persona.reputation + reputationDelta,
-        `task_completed:${task.id}`,
-      );
-
-      this.insertGrowthEvent({
-        tenantId: input.tenantId,
-        personaId,
-        taskId: task.id,
-        eventType: 'task_completed',
-        growthDelta,
-        reputationDelta,
-        trainingDelta: ownerTrainingHours,
-        payload: {
-          reward: task.reward,
-          payout,
-          tokenReward,
-          qualityScore,
-          category: task.category,
-        },
-      });
-
-      this.memoryService.insertMemory({
-        tenantId: input.tenantId,
-        personaId,
-        forkId: task.assigneeForkId ?? undefined,
-        kind: 'task',
-        summary: `完成市场任务: ${task.title}`,
-        content: {
-          taskId: task.id,
-          reward: task.reward,
-          payout,
-          qualityScore,
-          ownerTrainingHours,
-        },
-        importance: clamp(0.65 + qualityScore * 0.2, 0, 1),
-      });
-
-      if (qualityScore >= 0.85) {
-        this.governanceService.insertGovernanceEvent({
-          tenantId: input.tenantId,
-          personaId,
-          eventType: 'reward',
-          severity: 2,
-          summary: `高质量完成任务: ${task.title}`,
-          payload: { taskId: task.id, qualityScore },
-          actorUserId: input.ownerUserId,
-        });
-      }
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'task.outcome',
-        partitionKey: task.id,
-        payload: {
-          taskId: task.id,
-          personaId,
-          outcome: 'completed',
-          terminal: true,
-          success: true,
-          qualityScore,
-          updatedAt: now,
-        },
-      });
-    });
-
-    const nextTask = this.getMarketplaceTask(input.tenantId, task.id);
-    const wallet = this.getWallet(input.tenantId, input.ownerUserId, personaId);
-    const nextPersona = this.getPersonaDetail(input.tenantId, input.ownerUserId, personaId);
-    if (!nextTask || !wallet || !nextPersona) return null;
-
-    return {
-      task: nextTask,
-      wallet,
-      persona: nextPersona,
-    };
+    return this.marketplaceService.completeTask(input);
   }
 
   private personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean {
@@ -2499,30 +1425,11 @@ export class PersonaCoreService {
     return Boolean(this.tx.queryOne(pcoreQueryForkExists({ tenantId, personaId, forkId })));
   }
 
-  private getMarketplaceTask(tenantId: string, taskId: string): MarketplaceTask | null {
-    const row = this.tx.queryOne(pcoreQueryMarketplaceTaskById({ tenantId, taskId }));
-    return row ? taskFromRow(row as MarketplaceTaskRow) : null;
-  }
-
-  private getTaskAssignmentById(tenantId: string, assignmentId: string): TaskAssignment | null {
-    const row = this.tx.queryOne(pcoreQueryTaskAssignmentById({ tenantId, assignmentId }));
-    return row ? taskAssignmentFromRow(row as TaskAssignmentRow) : null;
-  }
-
-  private getLatestTaskAssignmentByTask(tenantId: string, taskId: string): TaskAssignment | null {
-    const row = this.tx.queryOne(pcoreQueryLatestTaskAssignmentByTask({ tenantId, taskId }));
-    return row ? taskAssignmentFromRow(row as TaskAssignmentRow) : null;
-  }
-
-  private getLatestTaskAssignmentForPersonaAndTask(tenantId: string, personaId: string, taskId: string): TaskAssignment | null {
-    const row = this.tx.queryOne(pcoreQueryLatestTaskAssignmentForPersonaTask({ tenantId, personaId, taskId }));
-    return row ? taskAssignmentFromRow(row as TaskAssignmentRow) : null;
-  }
-
-  private getLatestTaskResultByAssignment(tenantId: string, assignmentId: string): TaskResult | null {
-    const row = this.tx.queryOne(pcoreQueryLatestTaskResultByAssignment({ tenantId, assignmentId }));
-    return row ? taskResultFromRow(row as TaskResultRow) : null;
-  }
+  /* Marketplace privates (getMarketplaceTask / getTaskAssignmentById /
+   * getLatestTaskAssignmentByTask /
+   * getLatestTaskAssignmentForPersonaAndTask /
+   * getLatestTaskResultByAssignment) moved to
+   * PersonaMarketplaceService as part of the Step 16d split. */
 
   /* getGovernanceCaseById / getGovernanceActionById moved to
    * PersonaGovernanceService as part of the Step 16c split. The
@@ -2623,20 +1530,8 @@ export class PersonaCoreService {
     return round(taskSignal * 0.35 + reputationSignal * 0.3 + growthSignal * 0.2 + responseSignal * 0.15, 4);
   }
 
-  private computeSettlementSplit(totalAmountMinor: number, ownerPct: number, personaPct: number, _platformPct: number): {
-    ownerAmountMinor: number;
-    personaAmountMinor: number;
-    platformAmountMinor: number;
-  } {
-    const ownerAmountMinor = Math.floor(totalAmountMinor * ownerPct / 100);
-    const personaAmountMinor = Math.floor(totalAmountMinor * personaPct / 100);
-    const platformAmountMinor = totalAmountMinor - ownerAmountMinor - personaAmountMinor;
-    return {
-      ownerAmountMinor,
-      personaAmountMinor,
-      platformAmountMinor,
-    };
-  }
+  /* computeSettlementSplit moved to PersonaMarketplaceService (used
+   * by settleTaskPayment, which is now in the sub-service). */
 
   private currentMetricDate(now = new Date()): string {
     return now.toISOString().slice(0, 10);
@@ -2657,16 +1552,10 @@ export class PersonaCoreService {
     };
   }
 
-  private computePersonaTaskRanking(persona: PersonaCoreDetail, task: MarketplaceTask): number {
-    const stats = this.getRankingTaskStats(persona.tenantId, persona.id, task.category);
-    return this.computeRankingScore(
-      persona.reputation,
-      persona.growthIndex,
-      stats.completedTasks,
-      stats.avgQuality,
-      stats.responseSpeed,
-    );
-  }
+  /* computePersonaTaskRanking moved to PersonaMarketplaceService (used
+   * by applyToTask, which is now in the sub-service). The ranking
+   * helpers it depends on (getRankingTaskStats + computeRankingScore)
+   * stay in core because listTopPersonas also uses them. */
 
   /* severityToLevel / resolvePersonaStatusForAction /
    * reputationDeltaForAction / governanceEventTypeForAction moved to
