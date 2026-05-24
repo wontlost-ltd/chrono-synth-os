@@ -88,4 +88,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v076_break_glass_jti_consumptions', aliases: { postgres: 'v078', 'sqlite-sql': 'v076' }, classification: 'schema-simple', notes: 'P1-M v2: durable break-glass JTI replay ledger' },
   { canonical: 'v077_audit_chain_anchors', aliases: { postgres: 'v079', 'sqlite-sql': 'v077' }, classification: 'schema-simple', notes: 'P0-E v2: KMS-signed audit chain tail anchors' },
   { canonical: 'v078_jwt_signing_keys', aliases: { postgres: 'v080', 'sqlite-sql': 'v078' }, classification: 'schema-simple', notes: 'P0-D #2: durable JWT signing key ring with state machine' },
+  { canonical: 'v079_audit_chain_anchor_failures', aliases: { postgres: 'v081', 'sqlite-sql': 'v079' }, classification: 'schema-simple', notes: 'GA §8 #1: persist KMS anchor failures as evidence rows' },
 ];

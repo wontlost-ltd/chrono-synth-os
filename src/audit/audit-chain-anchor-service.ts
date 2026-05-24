@@ -101,6 +101,48 @@ interface AnchorSqlRow {
   signed_at: string;
 }
 
+/**
+ * GA §8 #1: KMS 锚定失败 evidence 行。每次 sign 出错都写一行，运维侧的
+ * 监控面读 `WHERE recovered_at IS NULL` 计 fresh failures 来驱动告警。
+ */
+export interface AuditChainAnchorFailureRow {
+  id: string;
+  tenantId: string;
+  fromSeq: number;
+  toSeq: number;
+  tailHash: string;
+  errorCode: AuditChainAnchorErrorCode;
+  errorMessage: string;
+  attemptedAt: string;
+  recoveredAt: string | null;
+}
+
+interface AnchorFailureSqlRow {
+  id: string;
+  tenant_id: string;
+  from_seq: number | bigint;
+  to_seq: number | bigint;
+  tail_hash: string;
+  error_code: string;
+  error_message: string;
+  attempted_at: string;
+  recovered_at: string | null;
+}
+
+/**
+ * 错误分类枚举。Dashboard 用这个值切分饼图（timeout 占比 / 网络占比），
+ * 进而决定是 KMS 端 SLA 抖动还是网络问题。
+ */
+export type AuditChainAnchorErrorCode = 'timeout' | 'refused' | 'network' | 'internal';
+
+function classifyKmsError(err: Error): AuditChainAnchorErrorCode {
+  const message = err.message.toLowerCase();
+  if (message.includes('timed out') || message.includes('timeout')) return 'timeout';
+  if (message.includes('refused') || message.includes('denied') || message.includes('permission')) return 'refused';
+  if (message.includes('network') || message.includes('econn') || message.includes('socket') || message.includes('dns')) return 'network';
+  return 'internal';
+}
+
 export class AuditChainAnchorService {
   private readonly db: IDatabase;
   private readonly kmsProvider: AuditChainKmsProvider;
@@ -189,12 +231,32 @@ export class AuditChainAnchorService {
       try {
         signed = await this.signWithTimeout(payload);
       } catch (err) {
-        /* KMS 失败不阻塞其它租户；记录后跳过本租户，靠下次定时再试。
-         * 包含超时 / 拒绝 / 网络错误 — 都视为暂时不可用，由监控指标
-         * 反映新鲜度（详见 SignTimeoutMs）。 */
+        /* GA §8 #1: KMS 失败不再仅写 error log。落 evidence 行 +
+         * audit_chain_anchor_failures，让监控面能在不读日志的情况下
+         * 计算"被跳过的锚"。不阻塞其它租户；下一次 interval 会自动重试。 */
+        const error = err as Error;
+        const errorCode = classifyKmsError(error);
         this.logger.error('AuditChainAnchor', 'KMS 签名失败，跳过该租户的锚定', {
-          tenantId: partitionTenant, fromSeq, toSeq, error: (err as Error).message,
+          tenantId: partitionTenant, fromSeq, toSeq, errorCode, error: error.message,
         });
+        try {
+          this.insertAnchorFailure({
+            id: randomUUID(),
+            tenantId: rawTenantId,
+            fromSeq,
+            toSeq,
+            tailHash,
+            errorCode,
+            errorMessage: error.message,
+            attemptedAt: new Date(this.clock.now()).toISOString(),
+            recoveredAt: null,
+          });
+        } catch (writeErr) {
+          /* evidence 表本身写失败极少见；不要因为副作用失败放大主路径噪声。 */
+          this.logger.error('AuditChainAnchor', '锚定失败 evidence 行写入失败', {
+            tenantId: partitionTenant, error: (writeErr as Error).message,
+          });
+        }
         continue;
       }
       const signature = Buffer.isBuffer(signed.signature)
@@ -215,10 +277,75 @@ export class AuditChainAnchorService {
 
       if (inserted) {
         anchored.push({ tenantId: partitionTenant, toSeq, keyId: signed.keyId });
+        /* GA §8 #1: 锚定成功后给同租户、覆盖窗口里的失败 evidence 行
+         * 打 recovered_at 戳，让 dashboard 自动从 "open failures" 里淘汰
+         * 已自愈的条目，避免告警长期挂着。 */
+        try {
+          this.markFailuresRecovered(rawTenantId, toSeq, new Date(this.clock.now()).toISOString());
+        } catch (clearErr) {
+          this.logger.error('AuditChainAnchor', '清算 anchor failures 失败', {
+            tenantId: partitionTenant, error: (clearErr as Error).message,
+          });
+        }
       }
     }
 
     return { anchored, skipped };
+  }
+
+  /**
+   * 读最近 N 条仍 open 的失败 evidence 行（recovered_at IS NULL）。
+   * 监控面 / 运维脚本读这个接口生成告警；count 直接驱动 SLO 计数器。
+   */
+  listOpenAnchorFailures(limit = 100): AuditChainAnchorFailureRow[] {
+    const rows = this.db.prepare<AnchorFailureSqlRow>(
+      `SELECT id, tenant_id, from_seq, to_seq, tail_hash, error_code, error_message, attempted_at, recovered_at
+         FROM audit_chain_anchor_failures
+        WHERE recovered_at IS NULL
+        ORDER BY attempted_at DESC
+        LIMIT ?`,
+    ).all(limit);
+    return rows.map(anchorFailureFromRow);
+  }
+
+  /** 读某租户的失败历史（含已自愈），用于审计追溯。 */
+  listAnchorFailuresForTenant(tenantId: string, limit = 100): AuditChainAnchorFailureRow[] {
+    const rows = this.db.prepare<AnchorFailureSqlRow>(
+      `SELECT id, tenant_id, from_seq, to_seq, tail_hash, error_code, error_message, attempted_at, recovered_at
+         FROM audit_chain_anchor_failures
+        WHERE tenant_id = ?
+        ORDER BY attempted_at DESC
+        LIMIT ?`,
+    ).all(tenantId, limit);
+    return rows.map(anchorFailureFromRow);
+  }
+
+  private insertAnchorFailure(row: AuditChainAnchorFailureRow): void {
+    this.db.prepare<void>(
+      `INSERT INTO audit_chain_anchor_failures
+         (id, tenant_id, from_seq, to_seq, tail_hash, error_code, error_message, attempted_at, recovered_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      row.id,
+      row.tenantId,
+      row.fromSeq,
+      row.toSeq,
+      row.tailHash,
+      row.errorCode,
+      row.errorMessage,
+      row.attemptedAt,
+      row.recoveredAt,
+    );
+  }
+
+  private markFailuresRecovered(tenantId: string, throughToSeq: number, recoveredAt: string): void {
+    /* 标 to_seq <= 当前成功锚的 to_seq 的所有 open 行为已恢复；后续锚
+     * 跨越同一窗口也会反复清算，UPDATE 是幂等的。 */
+    this.db.prepare<void>(
+      `UPDATE audit_chain_anchor_failures
+          SET recovered_at = ?
+        WHERE tenant_id = ? AND to_seq <= ? AND recovered_at IS NULL`,
+    ).run(recoveredAt, tenantId, throughToSeq);
   }
 
   /**
@@ -309,5 +436,19 @@ export function anchorFromRow(row: AnchorSqlRow): AuditChainAnchorRow {
     keyId: row.key_id,
     alg: row.alg,
     signedAt: row.signed_at,
+  };
+}
+
+function anchorFailureFromRow(row: AnchorFailureSqlRow): AuditChainAnchorFailureRow {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    fromSeq: Number(row.from_seq),
+    toSeq: Number(row.to_seq),
+    tailHash: row.tail_hash,
+    errorCode: row.error_code as AuditChainAnchorErrorCode,
+    errorMessage: row.error_message,
+    attemptedAt: row.attempted_at,
+    recoveredAt: row.recovered_at,
   };
 }

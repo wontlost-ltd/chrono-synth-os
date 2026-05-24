@@ -292,6 +292,70 @@ describe('P0-E v2 — audit chain KMS anchors', () => {
     assert.equal(raced, 'completed', 'triggerOnce must complete within KMS hard timeout');
   });
 
+  it('persists a failure evidence row when KMS sign throws (GA §8 #1)', async () => {
+    /* 失败应当写一行 audit_chain_anchor_failures，errorCode 按异常文本分类，
+     * recovered_at 留空；listOpenAnchorFailures() 应该看到该行。 */
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    seedAuditRows(db, 3);
+
+    const flags = new FeatureFlagService();
+    flags.setEnabled('audit.kms-sign-chain-tail', true);
+    flags.setRolloutPercent('audit.kms-sign-chain-tail', 100);
+
+    class RefusedKms implements AuditChainKmsProvider {
+      async sign(): Promise<{ keyId: string; signature: string; alg: string }> {
+        throw new Error('KMS request was refused: permission denied');
+      }
+    }
+    const service = createService(db, flags, new RefusedKms());
+    const result = await service.triggerOnce();
+    assert.equal(result.anchored.length, 0);
+
+    const open = service.listOpenAnchorFailures();
+    assert.equal(open.length, 1);
+    assert.equal(open[0]!.tenantId, TENANT);
+    assert.equal(open[0]!.errorCode, 'refused');
+    assert.equal(open[0]!.recoveredAt, null);
+    assert.ok(open[0]!.errorMessage.toLowerCase().includes('refused'));
+  });
+
+  it('marks failure evidence as recovered once a later anchor succeeds (GA §8 #1)', async () => {
+    /* 先失败再成功：成功锚定后，上一次的失败行应被 markFailuresRecovered
+     * 打上 recovered_at，从 open 列表里淘汰。 */
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    seedAuditRows(db, 3);
+
+    const flags = new FeatureFlagService();
+    flags.setEnabled('audit.kms-sign-chain-tail', true);
+    flags.setRolloutPercent('audit.kms-sign-chain-tail', 100);
+
+    let throwOnce = true;
+    class FlakyKms extends TestKmsProvider {
+      override async sign(payload: Buffer): Promise<{ keyId: string; signature: string; alg: string }> {
+        if (throwOnce) {
+          throwOnce = false;
+          throw new Error('connection refused by KMS endpoint');
+        }
+        return super.sign(payload);
+      }
+    }
+    const service = createService(db, flags, new FlakyKms());
+    /* 第 1 次：失败 → 写 evidence */
+    await service.triggerOnce();
+    assert.equal(service.listOpenAnchorFailures().length, 1);
+
+    /* 第 2 次：成功 → 清算 evidence */
+    const second = await service.triggerOnce();
+    assert.equal(second.anchored.length, 1);
+    assert.equal(service.listOpenAnchorFailures().length, 0);
+
+    const history = service.listAnchorFailuresForTenant(TENANT);
+    assert.equal(history.length, 1);
+    assert.ok(history[0]!.recoveredAt !== null);
+  });
+
   it('binds the signature to (tenant, fromSeq, toSeq, tailHash) — replaying the same tailHash on another window is rejected', async () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
