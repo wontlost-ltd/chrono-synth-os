@@ -10,11 +10,7 @@ import {
   pcoreCmdApplyGovernanceEvent,
   pcoreCmdCompleteMarketplaceTask,
   pcoreCmdCompleteRuntimeSession,
-  pcoreCmdAppealGovernanceCase,
-  pcoreCmdApplyGovernanceActionToPersona,
   pcoreCmdCreateFork,
-  pcoreCmdCreateGovernanceAction,
-  pcoreCmdCreateGovernanceCase,
   pcoreCmdCreateRuntimeSession,
   pcoreCmdCreateTaskApplication,
   pcoreCmdCreateTaskAssignment,
@@ -39,7 +35,6 @@ import {
   pcoreCmdTouchMarketplaceTask,
   pcoreCmdUpdatePersonaKnowledgeSync,
   pcoreCmdUpdatePersonaTaskAccepted,
-  pcoreCmdUpdateGovernanceCaseAction,
   pcoreCmdCreateKnowledgeItem,
   pcoreCmdCreatePersona,
   pcoreCmdCreateTransfer,
@@ -58,7 +53,6 @@ import {
   pcoreQueryForksByPersona,
   pcoreQueryGovernanceEventCount,
   pcoreQueryGovernancePenaltyCount,
-  pcoreQueryGovernanceCasesByPersona,
   pcoreQueryMarketplaceAnalytics,
   pcoreQueryMemoryCount,
   pcoreQueryPendingTransfer,
@@ -84,8 +78,6 @@ import {
   pcoreQueryLatestTaskAssignmentByTask,
   pcoreQueryLatestTaskAssignmentForPersonaTask,
   pcoreQueryLatestTaskResultByAssignment,
-  pcoreQueryGovernanceCaseById,
-  pcoreQueryGovernanceActionById,
   pcoreQueryPersonaById,
   pcoreQueryTransferAccess,
   pcoreQueryUserExists,
@@ -98,7 +90,6 @@ import {
   pcoreCmdCompleteTaskPersonaUpdate,
   pcoreCmdInsertReputationHistory,
   pcoreCmdInsertGrowthEvent,
-  pcoreCmdInsertGovernanceEvent,
   type PcorePersonaRow,
   type PcoreForkRow,
   type PcoreKnowledgeRow,
@@ -111,8 +102,6 @@ import {
   type PcoreTaskAssignmentRow,
   type PcoreRuntimeSessionRow,
   type PcoreTaskResultRow,
-  type PcoreGovernanceCaseRow,
-  type PcoreGovernanceActionRow,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
@@ -129,6 +118,10 @@ import {
 } from './persona-core-utils.js';
 import { PersonaMemoryService, type PersonaMemoryContext } from './persona-memory-service.js';
 import { PersonaWalletService, walletFromRow, type PersonaWalletContext } from './persona-wallet-service.js';
+import {
+  PersonaGovernanceService,
+  type PersonaGovernanceContext,
+} from './persona-governance-service.js';
 import {
   ACTIVE_RUNTIME_STATES,
   computeRuntimeTimeoutAt,
@@ -156,9 +149,7 @@ import type {
   EconomyAnalytics,
   EvaluatePersonaLifecycleInput,
   GovernanceAction,
-  GovernanceActionType,
   GovernanceCase,
-  GovernanceCaseSeverity,
   MarketplaceAnalytics,
   MarketplaceTask,
   PersonaCore,
@@ -217,8 +208,8 @@ type TaskApplicationRow = PcoreTaskApplicationRow;
 type TaskAssignmentRow = PcoreTaskAssignmentRow;
 type RuntimeSessionRow = PcoreRuntimeSessionRow;
 type TaskResultRow = PcoreTaskResultRow;
-type GovernanceCaseRow = PcoreGovernanceCaseRow;
-type GovernanceActionRow = PcoreGovernanceActionRow;
+/* GovernanceCaseRow / GovernanceActionRow aliases removed —
+ * governance rows are only mapped inside PersonaGovernanceService now. */
 /* WalletTransactionRow / WalletPayoutRequestRow /
  * WalletSettlementRow aliases removed — the rows are only mapped
  * inside PersonaWalletService now. */
@@ -436,35 +427,8 @@ function taskResultFromRow(row: TaskResultRow): TaskResult {
   };
 }
 
-function governanceCaseFromRow(row: GovernanceCaseRow): GovernanceCase {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    personaId: row.persona_id,
-    taskId: row.task_id,
-    triggerType: row.trigger_type,
-    severity: row.severity as GovernanceCase['severity'],
-    status: row.status as GovernanceCase['status'],
-    details: safeJsonParse<Record<string, unknown>>(row.details_json, {}),
-    appeal: safeJsonParse<Record<string, unknown> | null>(row.appeal_json, null),
-    openedAt: Number(row.opened_at),
-    resolvedAt: row.resolved_at === null ? null : Number(row.resolved_at),
-    appealedAt: row.appealed_at === null ? null : Number(row.appealed_at),
-  };
-}
-
-function governanceActionFromRow(row: GovernanceActionRow): GovernanceAction {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    caseId: row.case_id,
-    actionType: row.action_type as GovernanceAction['actionType'],
-    durationSeconds: row.duration_seconds === null ? null : Number(row.duration_seconds),
-    details: safeJsonParse<Record<string, unknown>>(row.details_json, {}),
-    actorUserId: row.actor_user_id,
-    createdAt: Number(row.created_at),
-  };
-}
+/* governanceCaseFromRow / governanceActionFromRow moved into
+ * PersonaGovernanceService as part of the Step 16c split. */
 
 /* walletTransactionFromRow / walletPayoutRequestFromRow /
  * walletSettlementFromRow moved into PersonaWalletService as part
@@ -491,6 +455,13 @@ export class PersonaCoreService {
    * + `this.walletService.getWalletByPersonaId(...)` so there's a
    * single write path. */
   private readonly walletService: PersonaWalletService;
+  /**
+   * Governance sub-service — Step 16c third cut. Owns case + action
+   * + appeal lifecycle. Still-in-core lifecycle methods
+   * (addGovernanceEvent / markDeceased / evaluateLifecycle) call into
+   * this service via `this.governanceService.insertGovernanceEvent`
+   * to share a single write path for the governance event row. */
+  private readonly governanceService: PersonaGovernanceService;
 
   constructor(
     private readonly tx: SyncWriteUnitOfWork,
@@ -533,6 +504,22 @@ export class PersonaCoreService {
       this.encryption,
       this.encryptionResolver,
     );
+    /* Governance sub-service context. Wires the lookups + side-effects
+     * the governance domain needs but doesn't own (persona lookup,
+     * persona-state writes, memory hook). The memoryHook passes
+     * through to `this.memoryService.insertMemory` so the governance
+     * service can write into the audit memory trail without taking a
+     * direct dependency on PersonaMemoryService. */
+    const governanceContext: PersonaGovernanceContext = {
+      personaExists: (t, o, p) => this.personaExists(t, o, p),
+      getPersonaById: (t, p) => this.getPersonaById(t, p),
+      toLegacyStatus: (status) => this.toLegacyStatus(status),
+      insertGrowthEvent: (input) => this.insertGrowthEvent(input),
+      insertReputationHistory: (t, p, from, to, reason) =>
+        this.insertReputationHistory(t, p, from, to, reason),
+      memoryHook: this.memoryService,
+    };
+    this.governanceService = new PersonaGovernanceService(tx, governanceContext);
   }
 
   private getEncryption(tenantId: string): FieldEncryption | undefined {
@@ -858,7 +845,7 @@ export class PersonaCoreService {
 
       this.tx.execute(pcoreCmdCompleteTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
-      this.insertGovernanceEvent({
+      this.governanceService.insertGovernanceEvent({
         tenantId: input.tenantId,
         personaId: input.personaId,
         eventType: 'transfer',
@@ -1262,7 +1249,7 @@ export class PersonaCoreService {
     }
 
     this.tx.transaction(() => {
-      this.insertGovernanceEvent({
+      this.governanceService.insertGovernanceEvent({
         tenantId: input.tenantId,
         personaId: input.personaId,
         eventType: input.eventType,
@@ -2079,7 +2066,7 @@ export class PersonaCoreService {
       });
 
       if (qualityScore >= 0.85) {
-        this.insertGovernanceEvent({
+        this.governanceService.insertGovernanceEvent({
           tenantId: input.tenantId,
           personaId: assignment.personaId,
           eventType: 'reward',
@@ -2289,7 +2276,7 @@ export class PersonaCoreService {
     const nextTask = this.getMarketplaceTask(input.tenantId, input.taskId);
     const nextAssignment = this.getTaskAssignmentById(input.tenantId, assignment.id);
     const nextResult = result ? this.getLatestTaskResultByAssignment(input.tenantId, assignment.id) : null;
-    const nextCase = this.getGovernanceCaseById(input.tenantId, governanceCase.id);
+    const nextCase = this.governanceService.getGovernanceCaseById(input.tenantId, governanceCase.id);
     if (!nextTask || !nextAssignment || !nextCase) return null;
 
     return {
@@ -2300,260 +2287,27 @@ export class PersonaCoreService {
     };
   }
 
+  /* ── Governance domain (delegated to PersonaGovernanceService — Step 16c) ──
+   * Public methods are thin pass-throughs; the still-in-core methods
+   * (addGovernanceEvent / disputeTask) call into the same sub-service
+   * via `this.governanceService.{insertGovernanceEvent, severityToLevel,
+   * openGovernanceCase, getGovernanceCaseById}` so the governance
+   * write path stays single-sourced. */
+
   listGovernanceCases(tenantId: string, ownerUserId: string, personaId: string): GovernanceCase[] | null {
-    if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return this.tx.queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })).map(governanceCaseFromRow);
+    return this.governanceService.listGovernanceCases(tenantId, ownerUserId, personaId);
   }
 
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null {
-    const persona = this.getPersonaById(input.tenantId, input.personaId);
-    if (!persona) return null;
-
-    const now = Date.now();
-    const caseId = generatePrefixedId('gcase');
-    const details = input.details ?? {};
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateGovernanceCase({
-        id: caseId,
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        taskId: input.taskId ?? null,
-        triggerType: input.triggerType,
-        severity: input.severity,
-        detailsJson: JSON.stringify(details),
-        now,
-      }));
-
-      this.insertGovernanceEvent({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        eventType: 'review',
-        severity: this.severityToLevel(input.severity),
-        summary: `治理案件开启: ${input.triggerType}`,
-        payload: {
-          caseId,
-          taskId: input.taskId ?? null,
-          ...details,
-        },
-        actorUserId: input.actorUserId,
-      });
-
-      this.memoryService.insertMemory({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        kind: 'governance',
-        summary: `治理案件开启: ${input.triggerType}`,
-        content: {
-          caseId,
-          severity: input.severity,
-          ...details,
-        },
-        importance: clamp(0.5 + this.severityToLevel(input.severity) * 0.08, 0, 1),
-      });
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'governance.case_opened',
-        partitionKey: caseId,
-        payload: {
-          caseId,
-          personaId: input.personaId,
-          taskId: input.taskId ?? null,
-          triggerType: input.triggerType,
-          severity: input.severity,
-          updatedAt: now,
-        },
-      });
-
-      this.recordBusinessAudit({
-        tenantId: input.tenantId,
-        actorId: input.actorUserId,
-        actionType: 'governance.case.opened',
-        targetType: 'governance_case',
-        targetId: caseId,
-        createdAt: now,
-        payload: {
-          personaId: input.personaId,
-          taskId: input.taskId ?? null,
-          triggerType: input.triggerType,
-          severity: input.severity,
-        },
-      });
-    });
-
-    return this.getGovernanceCaseById(input.tenantId, caseId);
+    return this.governanceService.openGovernanceCase(input);
   }
 
   applyGovernanceAction(input: ApplyGovernanceActionInput): { governanceCase: GovernanceCase; action: GovernanceAction; personaStatus: PersonaCore['status'] } | null {
-    const governanceCase = this.getGovernanceCaseById(input.tenantId, input.caseId);
-    if (!governanceCase || governanceCase.status === 'resolved') return null;
-
-    const persona = this.getPersonaById(input.tenantId, governanceCase.personaId);
-    if (!persona) return null;
-
-    const now = Date.now();
-    const actionId = generatePrefixedId('gact');
-    const nextStatus = this.resolvePersonaStatusForAction(persona.status, input.actionType);
-    const caseStatus: GovernanceCase['status'] = input.actionType === 'reinstate' ? 'resolved' : 'action_applied';
-    const severityLevel = this.severityToLevel(governanceCase.severity);
-    const reputationDelta = this.reputationDeltaForAction(input.actionType, severityLevel);
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateGovernanceAction({
-        id: actionId,
-        tenantId: input.tenantId,
-        caseId: input.caseId,
-        actionType: input.actionType,
-        durationSeconds: input.durationSeconds ?? null,
-        detailsJson: JSON.stringify(input.details ?? {}),
-        actorUserId: input.actorUserId,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdUpdateGovernanceCaseAction({
-        tenantId: input.tenantId,
-        caseId: input.caseId,
-        status: caseStatus,
-        resolvedAt: caseStatus === 'resolved' ? now : null,
-      }));
-
-      this.tx.execute(pcoreCmdApplyGovernanceActionToPersona({
-        tenantId: input.tenantId,
-        personaId: governanceCase.personaId,
-        reputationDelta,
-        nextStatus,
-        legacyStatus: this.toLegacyStatus(nextStatus),
-        now,
-      }));
-
-      this.insertGovernanceEvent({
-        tenantId: input.tenantId,
-        personaId: governanceCase.personaId,
-        eventType: this.governanceEventTypeForAction(input.actionType),
-        severity: severityLevel,
-        summary: `治理动作执行: ${input.actionType}`,
-        payload: {
-          caseId: input.caseId,
-          actionId,
-          durationSeconds: input.durationSeconds ?? null,
-          ...(input.details ?? {}),
-        },
-        actorUserId: input.actorUserId,
-      });
-
-      this.memoryService.insertMemory({
-        tenantId: input.tenantId,
-        personaId: governanceCase.personaId,
-        kind: 'governance',
-        summary: `治理动作执行: ${input.actionType}`,
-        content: {
-          caseId: input.caseId,
-          actionId,
-          nextStatus,
-          ...(input.details ?? {}),
-        },
-        importance: clamp(0.55 + severityLevel * 0.08, 0, 1),
-      });
-
-      if (reputationDelta !== 0) {
-        this.insertGrowthEvent({
-          tenantId: input.tenantId,
-          personaId: governanceCase.personaId,
-          eventType: 'governance',
-          growthDelta: 0,
-          reputationDelta,
-          trainingDelta: 0,
-          payload: {
-            caseId: input.caseId,
-            actionType: input.actionType,
-          },
-        });
-
-        this.insertReputationHistory(
-          input.tenantId,
-          governanceCase.personaId,
-          persona.reputation,
-          persona.reputation + reputationDelta,
-          `governance_action:${input.actionType}`,
-        );
-      }
-
-      this.publishObservability({
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'governance.action_applied',
-        partitionKey: input.caseId,
-        payload: {
-          caseId: input.caseId,
-          actionId,
-          personaId: governanceCase.personaId,
-          actionType: input.actionType,
-          previousStatus: governanceCase.status,
-          caseStatus,
-          updatedAt: now,
-        },
-      });
-
-      this.recordBusinessAudit({
-        tenantId: input.tenantId,
-        actorId: input.actorUserId,
-        actionType: 'governance.action',
-        targetType: 'governance_action',
-        targetId: actionId,
-        createdAt: now,
-        payload: {
-          caseId: input.caseId,
-          personaId: governanceCase.personaId,
-          actionType: input.actionType,
-          nextStatus,
-        },
-      });
-    });
-
-    const nextCase = this.getGovernanceCaseById(input.tenantId, input.caseId);
-    const nextAction = this.getGovernanceActionById(input.tenantId, actionId);
-    if (!nextCase || !nextAction) return null;
-
-    return {
-      governanceCase: nextCase,
-      action: nextAction,
-      personaStatus: nextStatus,
-    };
+    return this.governanceService.applyGovernanceAction(input);
   }
 
   appealGovernanceCase(input: AppealGovernanceCaseInput): GovernanceCase | null {
-    const governanceCase = this.getGovernanceCaseById(input.tenantId, input.caseId);
-    if (!governanceCase) return null;
-
-    const persona = this.getPersonaById(input.tenantId, governanceCase.personaId);
-    if (!persona || persona.ownerUserId !== input.actorUserId) return null;
-
-    const now = Date.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdAppealGovernanceCase({
-        tenantId: input.tenantId,
-        caseId: input.caseId,
-        appealJson: JSON.stringify(input.details ?? {}),
-        now,
-      }));
-
-      this.insertGovernanceEvent({
-        tenantId: input.tenantId,
-        personaId: governanceCase.personaId,
-        eventType: 'review',
-        severity: this.severityToLevel(governanceCase.severity),
-        summary: '提交治理申诉',
-        payload: {
-          caseId: input.caseId,
-          ...(input.details ?? {}),
-        },
-        actorUserId: input.actorUserId,
-      });
-    });
-
-    return this.getGovernanceCaseById(input.tenantId, input.caseId);
+    return this.governanceService.appealGovernanceCase(input);
   }
 
   publishTask(input: PublishMarketplaceTaskInput): MarketplaceTask {
@@ -2697,7 +2451,7 @@ export class PersonaCoreService {
       });
 
       if (qualityScore >= 0.85) {
-        this.insertGovernanceEvent({
+        this.governanceService.insertGovernanceEvent({
           tenantId: input.tenantId,
           personaId,
           eventType: 'reward',
@@ -2770,15 +2524,10 @@ export class PersonaCoreService {
     return row ? taskResultFromRow(row as TaskResultRow) : null;
   }
 
-  private getGovernanceCaseById(tenantId: string, caseId: string): GovernanceCase | null {
-    const row = this.tx.queryOne(pcoreQueryGovernanceCaseById({ tenantId, caseId }));
-    return row ? governanceCaseFromRow(row as GovernanceCaseRow) : null;
-  }
-
-  private getGovernanceActionById(tenantId: string, actionId: string): GovernanceAction | null {
-    const row = this.tx.queryOne(pcoreQueryGovernanceActionById({ tenantId, actionId }));
-    return row ? governanceActionFromRow(row as GovernanceActionRow) : null;
-  }
+  /* getGovernanceCaseById / getGovernanceActionById moved to
+   * PersonaGovernanceService as part of the Step 16c split. The
+   * still-in-core disputeTask calls through
+   * `this.governanceService.getGovernanceCaseById(...)`. */
 
   private getPersonaById(tenantId: string, personaId: string): PersonaCore | null {
     const row = this.tx.queryOne(pcoreQueryPersonaById({ tenantId, personaId }));
@@ -2919,70 +2668,12 @@ export class PersonaCoreService {
     );
   }
 
-  private severityToLevel(severity: GovernanceCaseSeverity): number {
-    switch (severity) {
-      case 'critical':
-        return 5;
-      case 'high':
-        return 4;
-      case 'medium':
-        return 3;
-      case 'low':
-      default:
-        return 1;
-    }
-  }
-
-  private resolvePersonaStatusForAction(
-    currentStatus: PersonaCore['status'],
-    actionType: GovernanceActionType,
-  ): PersonaCore['status'] {
-    switch (actionType) {
-      case 'temporary_restriction':
-        return 'restricted';
-      case 'temporary_suspension':
-        return 'suspended';
-      case 'termination':
-        return 'deceased';
-      case 'reinstate':
-        return 'active';
-      case 'warning':
-      default:
-        return currentStatus;
-    }
-  }
-
-  private reputationDeltaForAction(actionType: GovernanceActionType, severityLevel: number): number {
-    switch (actionType) {
-      case 'warning':
-        return round(-0.8 * severityLevel);
-      case 'temporary_restriction':
-        return round(-1.5 * severityLevel);
-      case 'temporary_suspension':
-        return round(-2.1 * severityLevel);
-      case 'termination':
-        return round(-4 * severityLevel);
-      case 'reinstate':
-        return round(1.2 * severityLevel);
-      default:
-        return 0;
-    }
-  }
-
-  private governanceEventTypeForAction(actionType: GovernanceActionType): PersonaGovernanceEvent['eventType'] {
-    switch (actionType) {
-      case 'warning':
-        return 'warning';
-      case 'temporary_restriction':
-      case 'temporary_suspension':
-        return 'restriction';
-      case 'termination':
-        return 'death';
-      case 'reinstate':
-      default:
-        return 'review';
-    }
-  }
+  /* severityToLevel / resolvePersonaStatusForAction /
+   * reputationDeltaForAction / governanceEventTypeForAction moved to
+   * PersonaGovernanceService. The still-in-core methods that need
+   * `severityToLevel` (settleTaskPayment / submitTaskResult /
+   * addGovernanceEvent's severity coercion) reach it via
+   * `this.governanceService.severityToLevel(...)`. */
 
   private resolveLastActiveAt(tenantId: string, personaId: string, fallback: number): number {
     const row = this.tx.queryOne(pcoreQueryLastActiveAt({ tenantId, personaId })) as {
@@ -3044,26 +2735,8 @@ export class PersonaCoreService {
     });
   }
 
-  private insertGovernanceEvent(input: {
-    tenantId: string;
-    personaId: string;
-    eventType: PersonaGovernanceEvent['eventType'];
-    severity: number;
-    summary: string;
-    payload: Record<string, unknown>;
-    actorUserId: string | null;
-  }): void {
-    const now = Date.now();
-    this.tx.execute(pcoreCmdInsertGovernanceEvent({
-      id: generatePrefixedId('pgov'),
-      tenantId: input.tenantId,
-      personaId: input.personaId,
-      eventType: input.eventType,
-      severity: input.severity,
-      summary: input.summary,
-      payloadJson: JSON.stringify(input.payload),
-      actorUserId: input.actorUserId,
-      now,
-    }));
-  }
+  /* insertGovernanceEvent moved to PersonaGovernanceService. The
+   * still-in-core methods that write governance events (addGovernanceEvent,
+   * settleTaskPayment, submitTaskResult, etc.) call through
+   * `this.governanceService.insertGovernanceEvent(...)`. */
 }
