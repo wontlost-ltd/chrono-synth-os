@@ -63,12 +63,7 @@ import {
   pcoreQueryGovernanceCasesByPersona,
   pcoreQueryMarketplaceAnalytics,
   pcoreQueryMemoryCount,
-  pcoreQueryMemoryEdges,
-  pcoreQueryMemoryKindCounts,
-  pcoreQueryMemoryNodeIds,
-  pcoreQueryMemoryRelationCounts,
   pcoreQueryPendingTransfer,
-  pcoreQueryPersonaMemories,
   pcoreQueryRecentGovernanceEvents,
   pcoreQueryRecentGrowthEvents,
   pcoreQueryRecentKnowledge,
@@ -113,11 +108,9 @@ import {
   pcoreCmdInsertReputationHistory,
   pcoreCmdInsertGrowthEvent,
   pcoreCmdInsertGovernanceEvent,
-  pcoreCmdInsertMemory,
   type PcorePersonaRow,
   type PcoreWalletRow,
   type PcoreForkRow,
-  type PcoreMemoryRow,
   type PcoreKnowledgeRow,
   type PcoreGrowthEventRow,
   type PcoreGovernanceEventRow,
@@ -139,6 +132,15 @@ import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability
 import { ensureAuditLogColumns, recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { PersonaCognitiveMemoryGraph } from './persona-cognitive-memory.js';
+/* Shared utilities extracted in the Step 16 split. */
+import {
+  clamp,
+  fromMinor,
+  round,
+  safeJsonParse,
+  toMinor,
+} from './persona-core-utils.js';
+import { PersonaMemoryService, type PersonaMemoryContext } from './persona-memory-service.js';
 import {
   ACTIVE_RUNTIME_STATES,
   computeRuntimeTimeoutAt,
@@ -174,7 +176,6 @@ import type {
   PersonaCore,
   PersonaCoreDetail,
   PersonaCoreSummary,
-  PersonaCognitiveMemoryKind,
   PersonaFork,
   PersonaGraphQueryInput,
   PersonaGraphQueryResult,
@@ -185,7 +186,6 @@ import type {
   PersonaLifecycleEvaluation,
   PersonaMemory,
   PersonaMemorySearchResult,
-  PersonaMemorySensitivity,
   PersonaOperatingState,
   PersonaAnalytics,
   PersonaRankingEntry,
@@ -217,7 +217,8 @@ import type {
 type PersonaCoreRow = PcorePersonaRow;
 type PersonaWalletRow = PcoreWalletRow;
 type PersonaForkRow = PcoreForkRow;
-type PersonaMemoryRow = PcoreMemoryRow;
+/* PersonaMemoryRow alias removed — only used by the extracted
+ * PersonaMemoryService. */
 type PersonaKnowledgeRow = PcoreKnowledgeRow;
 type PersonaGrowthEventRow = PcoreGrowthEventRow;
 type PersonaGovernanceEventRow = PcoreGovernanceEventRow;
@@ -234,31 +235,8 @@ type WalletTransactionRow = PcoreWalletTransactionRow;
 type WalletPayoutRequestRow = PcoreWalletPayoutRequestRow;
 type WalletSettlementRow = PcoreWalletSettlementRow;
 
-function safeJsonParse<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function round(value: number, digits = 4): number {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function toMinor(value: number): number {
-  return Math.round(value * 100);
-}
-
-function fromMinor(value: number): number {
-  return round(value / 100, 4);
-}
+/* Shared utilities moved to ./persona-core-utils.ts as part of the
+ * Step 16 split — see imports at the top of this file. */
 
 function personaFromRow(row: PersonaCoreRow): PersonaCore {
   return {
@@ -314,16 +292,7 @@ function forkFromRow(row: PersonaForkRow): PersonaFork {
   };
 }
 
-function normalizeMemorySensitivity(value: string | null | undefined): PersonaMemorySensitivity {
-  switch (value) {
-    case 'encrypted':
-    case 'owner-restricted':
-      return value;
-    case 'private':
-    default:
-      return 'private';
-  }
-}
+/* normalizeMemorySensitivity moved to ./persona-core-utils.ts. */
 
 function knowledgeFromRow(row: PersonaKnowledgeRow): PersonaKnowledgeItem {
   return {
@@ -572,6 +541,17 @@ function walletSettlementFromRow(row: WalletSettlementRow): TaskWalletSettlement
 export class PersonaCoreService {
   private readonly encryption?: FieldEncryption;
   private readonly runtimeSessionTimeoutMs: number;
+  /**
+   * Memory-domain sub-service. The facade delegates all memory CRUD
+   * + search + graph methods to this instance. Internal cross-domain
+   * methods (e.g. `addKnowledge`) also call into the same instance
+   * so the memory write path is single-sourced.
+   *
+   * Step 16 split: the first of three planned sub-services. The
+   * marketplace + governance domains stay inline in this file for
+   * now and will follow the same pattern in subsequent passes.
+   */
+  private readonly memoryService: PersonaMemoryService;
 
   constructor(
     private readonly tx: SyncWriteUnitOfWork,
@@ -583,6 +563,23 @@ export class PersonaCoreService {
     this.encryption = encryption?.isEnabled ? encryption : undefined;
     this.runtimeSessionTimeoutMs = runtimeSessionTimeoutMs;
     ensureAuditLogColumns(tx);
+    /* Context bag for the memory service. Bound to `this` so the
+     * sub-service can call into facade-owned lifecycle guards
+     * (getPersonaDetail / isTerminalStatus / forkBelongsToPersona)
+     * without a circular constructor dependency. */
+    const memoryContext: PersonaMemoryContext = {
+      getPersonaDetail: (tenantId, ownerUserId, personaId) =>
+        this.getPersonaDetail(tenantId, ownerUserId, personaId),
+      isTerminalStatus: (status) => this.isTerminalStatus(status),
+      forkBelongsToPersona: (tenantId, personaId, forkId) =>
+        this.forkBelongsToPersona(tenantId, personaId, forkId),
+    };
+    this.memoryService = new PersonaMemoryService(
+      tx,
+      memoryContext,
+      this.encryption,
+      this.encryptionResolver,
+    );
   }
 
   private getEncryption(tenantId: string): FieldEncryption | undefined {
@@ -665,7 +662,7 @@ export class PersonaCoreService {
           now,
         }));
 
-        this.insertMemory({
+        this.memoryService.insertMemory({
           tenantId: input.tenantId,
           personaId,
           kind: 'knowledge',
@@ -675,7 +672,7 @@ export class PersonaCoreService {
           skipCognitiveProjection: true,
         });
 
-        this.projectKnowledgeItem({
+        this.memoryService.projectKnowledgeItem({
           tenantId: input.tenantId,
           personaId,
           knowledgeItemId: knowledgeId,
@@ -735,7 +732,7 @@ export class PersonaCoreService {
 
     const forks = this.tx.queryMany(pcoreQueryForksByPersona({ tenantId, personaId })).map(forkFromRow);
 
-    const recentMemories = this.tx.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })).map((row) => this.memoryFromRow(row));
+    const recentMemories = this.tx.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })).map((row) => this.memoryService.memoryFromRow(row));
 
     const knowledgeItems = this.tx.queryMany(pcoreQueryRecentKnowledge({ tenantId, personaId })).map(knowledgeFromRow);
 
@@ -792,7 +789,7 @@ export class PersonaCoreService {
     this.tx.transaction(() => {
       this.tx.execute(pcoreCmdActivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -814,7 +811,7 @@ export class PersonaCoreService {
     this.tx.transaction(() => {
       this.tx.execute(pcoreCmdDeactivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -852,7 +849,7 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -921,7 +918,7 @@ export class PersonaCoreService {
         actorUserId: input.approverUserId,
       });
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -1141,7 +1138,7 @@ export class PersonaCoreService {
       now,
     }));
 
-    this.insertMemory({
+    this.memoryService.insertMemory({
       tenantId: input.tenantId,
       personaId: input.personaId,
       kind: 'governance',
@@ -1157,21 +1154,14 @@ export class PersonaCoreService {
     return this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
   }
 
-  addMemory(input: AddPersonaMemoryInput): PersonaMemory | null {
-    const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
-    if (!persona || this.isTerminalStatus(persona.status)) return null;
-    if (input.forkId && !this.forkBelongsToPersona(input.tenantId, input.personaId, input.forkId)) return null;
+  /* ── Memory domain (delegated to PersonaMemoryService) ─────────
+   * These delegations are intentionally thin so test fixtures + API
+   * routes that mock `PersonaCoreService` keep working without
+   * change. The sub-service owns the per-method behaviour; the
+   * facade owns the public name. */
 
-    return this.insertMemory({
-      tenantId: input.tenantId,
-      personaId: input.personaId,
-      forkId: input.forkId,
-      kind: input.kind,
-      sensitivity: input.sensitivity,
-      summary: input.summary,
-      content: input.content ?? {},
-      importance: clamp(input.importance ?? 0.5, 0, 1),
-    });
+  addMemory(input: AddPersonaMemoryInput): PersonaMemory | null {
+    return this.memoryService.addMemory(input);
   }
 
   listPersonaMemories(
@@ -1184,18 +1174,7 @@ export class PersonaCoreService {
       cursor?: number;
     },
   ): PersonaMemory[] | null {
-    const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
-    if (!persona) return null;
-
-    const limit = Math.max(1, Math.min(100, options?.limit ?? 20));
-    const rows = this.tx.queryMany(pcoreQueryPersonaMemories({
-      tenantId,
-      personaId,
-      kind: options?.kind,
-      cursor: options?.cursor,
-      limit,
-    }));
-    return rows.map((row) => this.memoryFromRow(row));
+    return this.memoryService.listPersonaMemories(tenantId, ownerUserId, personaId, options);
   }
 
   searchPersonaMemories(
@@ -1205,54 +1184,11 @@ export class PersonaCoreService {
     query: string,
     limit = 5,
   ): PersonaMemorySearchResult[] | null {
-    const memories = this.listPersonaMemories(tenantId, ownerUserId, personaId, { limit: 200 });
-    if (!memories) return null;
-
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return [];
-    const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
-
-    return memories
-      .map((memory) => {
-        const searchable = `${memory.summary} ${JSON.stringify(memory.content)}`.toLowerCase();
-        const hitCount = tokens.reduce((count, token) => count + (searchable.includes(token) ? 1 : 0), 0);
-        const score = tokens.length === 0 ? 0 : round((hitCount / tokens.length) * 0.8 + memory.importance * 0.2, 4);
-        return {
-          memoryId: memory.id,
-          score,
-          contentText: memory.summary,
-          createdAt: memory.createdAt,
-        } satisfies PersonaMemorySearchResult;
-      })
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score || b.createdAt - a.createdAt)
-      .slice(0, Math.max(1, Math.min(50, limit)));
+    return this.memoryService.searchPersonaMemories(tenantId, ownerUserId, personaId, query, limit);
   }
 
   getPersonaGraphSummary(tenantId: string, ownerUserId: string, personaId: string): PersonaGraphSummary | null {
-    const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
-    if (!persona) return null;
-
-    const state = this.getCognitive(tenantId).buildState(tenantId, personaId);
-    const kindRows = this.tx.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId }));
-    const relationRows = this.tx.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId }));
-
-    const memoryKindCounts: Record<PersonaCognitiveMemoryKind, number> = {
-      episodic: 0,
-      semantic: 0,
-      procedural: 0,
-    };
-    for (const row of kindRows) {
-      memoryKindCounts[row.kind as PersonaCognitiveMemoryKind] = Number(row.count);
-    }
-
-    return {
-      totalNodes: state.totalMemories,
-      totalEdges: state.totalEdges,
-      workingMemorySize: state.workingMemory.length,
-      memoryKindCounts,
-      relationCounts: Object.fromEntries(relationRows.map((row) => [row.relation, Number(row.count)])),
-    };
+    return this.memoryService.getPersonaGraphSummary(tenantId, ownerUserId, personaId);
   }
 
   queryPersonaGraph(
@@ -1261,40 +1197,7 @@ export class PersonaCoreService {
     personaId: string,
     input: PersonaGraphQueryInput,
   ): PersonaGraphQueryResult | null {
-    const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
-    if (!persona) return null;
-
-    const limit = Math.max(1, Math.min(50, input.limit ?? 12));
-    const nodeRows = this.tx.queryMany(pcoreQueryMemoryNodeIds({
-      tenantId,
-      personaId,
-      memoryId: input.memoryId,
-      kind: input.kind,
-      limit,
-    }));
-    const nodes = nodeRows
-      .map((row) => this.getCognitive(tenantId).getMemory(tenantId, personaId, row.id))
-      .filter((row): row is NonNullable<typeof row> => Boolean(row));
-
-    if (nodes.length === 0) {
-      return { nodes: [], edges: [] };
-    }
-
-    const edges = this.tx.queryMany(pcoreQueryMemoryEdges({
-      tenantId,
-      personaId,
-      nodeIds: nodes.map((node) => node.id),
-      relation: input.relation,
-    })).map((row) => ({
-      tenantId: row.tenant_id,
-      personaId: row.persona_id,
-      source: row.source,
-      target: row.target,
-      strength: Number(row.strength),
-      relation: row.relation,
-    }));
-
-    return { nodes, edges };
+    return this.memoryService.queryPersonaGraph(tenantId, ownerUserId, personaId, input);
   }
 
   addKnowledge(input: AddPersonaKnowledgeInput): PersonaCoreDetail | null {
@@ -1322,7 +1225,7 @@ export class PersonaCoreService {
         fingerprint: input.fingerprint ?? null,
       }));
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'knowledge',
@@ -1332,7 +1235,7 @@ export class PersonaCoreService {
         skipCognitiveProjection: true,
       });
 
-      this.projectKnowledgeItem({
+      this.memoryService.projectKnowledgeItem({
         tenantId: input.tenantId,
         personaId: input.personaId,
         knowledgeItemId: knowledgeId,
@@ -1416,7 +1319,7 @@ export class PersonaCoreService {
         actorUserId: input.ownerUserId,
       });
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -1763,7 +1666,7 @@ export class PersonaCoreService {
       now,
     }));
 
-    this.insertMemory({
+    this.memoryService.insertMemory({
       tenantId: input.tenantId,
       personaId: input.personaId,
       kind: 'task',
@@ -1818,7 +1721,7 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'task',
@@ -1948,7 +1851,7 @@ export class PersonaCoreService {
       }
     });
 
-    this.insertMemory({
+    this.memoryService.insertMemory({
       tenantId,
       personaId: session.personaId,
       kind: 'task',
@@ -2001,7 +1904,7 @@ export class PersonaCoreService {
     };
 
     this.tx.transaction(() => {
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId,
         personaId: session.personaId,
         kind: 'task',
@@ -2144,7 +2047,7 @@ export class PersonaCoreService {
       });
     });
 
-    this.insertMemory({
+    this.memoryService.insertMemory({
       tenantId: input.tenantId,
       personaId: assignment.personaId,
       kind: 'task',
@@ -2245,7 +2148,7 @@ export class PersonaCoreService {
         },
       });
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: assignment.personaId,
         kind: 'task',
@@ -2387,7 +2290,7 @@ export class PersonaCoreService {
       });
     });
 
-    this.insertMemory({
+    this.memoryService.insertMemory({
       tenantId: input.tenantId,
       personaId: assignment.personaId,
       kind: 'task',
@@ -2524,7 +2427,7 @@ export class PersonaCoreService {
         actorUserId: input.actorUserId,
       });
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -2628,7 +2531,7 @@ export class PersonaCoreService {
         actorUserId: input.actorUserId,
       });
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: governanceCase.personaId,
         kind: 'governance',
@@ -2784,7 +2687,7 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId: input.personaId,
         forkId: input.forkId,
@@ -2865,7 +2768,7 @@ export class PersonaCoreService {
         },
       });
 
-      this.insertMemory({
+      this.memoryService.insertMemory({
         tenantId: input.tenantId,
         personaId,
         forkId: task.assigneeForkId ?? undefined,
@@ -3227,194 +3130,10 @@ export class PersonaCoreService {
     );
   }
 
-  private insertMemory(input: {
-    tenantId: string;
-    personaId: string;
-    forkId?: string;
-    kind: PersonaMemory['kind'];
-    sensitivity?: PersonaMemorySensitivity;
-    summary: string;
-    content: Record<string, unknown>;
-    importance: number;
-    skipCognitiveProjection?: boolean;
-  }): PersonaMemory {
-    const now = Date.now();
-    const memoryId = generatePrefixedId('pmem');
-    const sensitivity = normalizeMemorySensitivity(input.sensitivity);
-    const ownerRestricted = sensitivity === 'owner-restricted';
-    const isEncrypted = Boolean(this.getEncryption(input.tenantId)) && (sensitivity === 'encrypted' || ownerRestricted);
-    const storedSummary = isEncrypted ? this.encryptString(input.summary, input.tenantId) : input.summary;
-    const storedContent = JSON.stringify(input.content);
-    const storedContentJson = isEncrypted ? this.encryptString(storedContent, input.tenantId) : storedContent;
-    this.tx.execute(pcoreCmdInsertMemory({
-      id: memoryId,
-      tenantId: input.tenantId,
-      personaId: input.personaId,
-      forkId: input.forkId ?? null,
-      kind: input.kind,
-      sensitivity,
-      isEncrypted: isEncrypted ? 1 : 0,
-      ownerRestricted: ownerRestricted ? 1 : 0,
-      summary: storedSummary,
-      contentJson: storedContentJson,
-      importance: clamp(input.importance, 0, 1),
-      now,
-    }));
-
-    const memory: PersonaMemory = {
-      id: memoryId,
-      tenantId: input.tenantId,
-      personaId: input.personaId,
-      forkId: input.forkId ?? null,
-      kind: input.kind,
-      sensitivity,
-      isEncrypted,
-      ownerRestricted,
-      summary: input.summary,
-      content: input.content,
-      importance: clamp(input.importance, 0, 1),
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    if (!input.skipCognitiveProjection) {
-      this.projectEventMemory(memory);
-    }
-
-    return memory;
-  }
-
-  private projectEventMemory(memory: PersonaMemory): void {
-    this.getCognitive(memory.tenantId).projectMemory({
-      tenantId: memory.tenantId,
-      personaId: memory.personaId,
-      forkId: memory.forkId,
-      sourceMemoryId: memory.id,
-      kind: this.mapEventKindToCognitive(memory.kind),
-      content: this.buildEventProjectionContent(memory.summary, memory.content),
-      valence: this.estimateEventValence(memory),
-      salience: clamp(memory.importance, 0.1, 1),
-    });
-  }
-
-  private projectKnowledgeItem(input: {
-    tenantId: string;
-    personaId: string;
-    knowledgeItemId: string;
-    title: string;
-    content: string;
-    confidence: number;
-  }): void {
-    this.getCognitive(input.tenantId).projectMemory({
-      tenantId: input.tenantId,
-      personaId: input.personaId,
-      knowledgeItemId: input.knowledgeItemId,
-      kind: 'semantic',
-      content: `${input.title}\n${input.content}`.trim(),
-      valence: 0.1,
-      salience: clamp(0.35 + input.confidence * 0.55, 0.2, 1),
-    });
-  }
-
-  private mapEventKindToCognitive(kind: PersonaMemory['kind']): PersonaCognitiveMemoryKind {
-    switch (kind) {
-      case 'knowledge':
-        return 'semantic';
-      case 'training':
-        return 'procedural';
-      case 'interaction':
-      case 'task':
-      case 'governance':
-      default:
-        return 'episodic';
-    }
-  }
-
-  private estimateEventValence(memory: PersonaMemory): number {
-    if (memory.kind === 'training') return 0.2;
-    if (memory.kind === 'knowledge') return 0.1;
-
-    if (memory.kind === 'task') {
-      const qualityScore = this.getNumericField(memory.content, 'qualityScore');
-      if (qualityScore !== undefined) {
-        return clamp((qualityScore - 0.5) * 1.6, -1, 1);
-      }
-      return 0.4;
-    }
-
-    if (memory.kind === 'governance') {
-      const eventType = typeof memory.content.eventType === 'string' ? memory.content.eventType : '';
-      if (eventType === 'reward') return 0.7;
-      if (eventType === 'warning' || eventType === 'review') return -0.35;
-      if (eventType === 'restriction') return -0.75;
-      if (eventType === 'death' || eventType === 'transfer') return -0.9;
-      return -0.2;
-    }
-
-    return 0.25;
-  }
-
-  private getNumericField(content: Record<string, unknown>, key: string): number | undefined {
-    const value = content[key];
-    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-  }
-
-  private buildEventProjectionContent(summary: string, content: Record<string, unknown>): string {
-    const lines = Object.entries(content)
-      .filter(([, value]) => value !== null && value !== undefined && value !== '')
-      .slice(0, 6)
-      .map(([key, value]) => `${key}: ${this.stringifyProjectionValue(value)}`);
-    return lines.length > 0 ? `${summary}\n${lines.join('\n')}` : summary;
-  }
-
-  private stringifyProjectionValue(value: unknown): string {
-    if (typeof value === 'string') return value;
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    if (Array.isArray(value)) return value.map((item) => this.stringifyProjectionValue(item)).join(', ');
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  }
-
-  private memoryFromRow(row: PersonaMemoryRow): PersonaMemory {
-    const sensitivity = normalizeMemorySensitivity(row.sensitivity);
-    const isEncrypted = Boolean(row.is_encrypted);
-    const ownerRestricted = Boolean(row.owner_restricted) || sensitivity === 'owner-restricted';
-    const summary = isEncrypted ? this.decryptString(row.summary, row.tenant_id) : row.summary;
-    const contentJson = isEncrypted ? this.decryptString(row.content_json, row.tenant_id) : row.content_json;
-    return {
-      id: row.id,
-      tenantId: row.tenant_id,
-      personaId: row.persona_id,
-      forkId: row.fork_id,
-      kind: row.kind as PersonaMemory['kind'],
-      sensitivity,
-      isEncrypted,
-      ownerRestricted,
-      summary,
-      content: safeJsonParse<Record<string, unknown>>(contentJson, {}),
-      importance: Number(row.importance),
-      createdAt: Number(row.created_at),
-      updatedAt: Number(row.updated_at),
-    };
-  }
-
-  private encryptString(value: string, tenantId: string): string {
-    const encryption = this.getEncryption(tenantId);
-    return encryption ? encryption.encrypt(value) : value;
-  }
-
-  private decryptString(value: string, tenantId: string): string {
-    const encryption = this.getEncryption(tenantId);
-    if (!encryption) return value;
-    try {
-      return encryption.decrypt(value);
-    } catch {
-      return value;
-    }
-  }
+  /* Memory write + projection helpers extracted to
+   * PersonaMemoryService as part of the Step 16 split. The facade
+   * delegates via `this.memoryService.{insertMemory,projectKnowledgeItem,
+   * memoryFromRow}` so the SQL write path stays single-sourced. */
 
   private insertGrowthEvent(input: {
     tenantId: string;
