@@ -19,7 +19,6 @@ import {
   pcoreCmdCreateTaskApplication,
   pcoreCmdCreateTaskAssignment,
   pcoreCmdCreateTaskResult,
-  pcoreCmdCreateWalletPayoutRequest,
   pcoreCmdCreateWalletSettlement,
   pcoreCmdDisputeTaskAssignment,
   pcoreCmdDisputeTaskResult,
@@ -41,7 +40,6 @@ import {
   pcoreCmdUpdatePersonaKnowledgeSync,
   pcoreCmdUpdatePersonaTaskAccepted,
   pcoreCmdUpdateGovernanceCaseAction,
-  pcoreCmdUpdateWalletBalance,
   pcoreCmdCreateKnowledgeItem,
   pcoreCmdCreatePersona,
   pcoreCmdCreateTransfer,
@@ -78,9 +76,6 @@ import {
   pcoreQueryTransferById,
   pcoreQueryTransferByPersonaId,
   pcoreQueryTransfersByPersona,
-  pcoreQueryWalletByIdForOwner,
-  pcoreQueryWalletByPersona,
-  pcoreQueryWalletTransactions,
   pcoreQueryMarketplaceTasksByTenant,
   pcoreQueryMarketplaceTaskById,
   pcoreQueryPersonaExists,
@@ -92,9 +87,6 @@ import {
   pcoreQueryGovernanceCaseById,
   pcoreQueryGovernanceActionById,
   pcoreQueryPersonaById,
-  pcoreQueryWalletByPersonaId,
-  pcoreQueryWalletPayoutRequestById,
-  pcoreQueryWalletSettlementByAssignmentId,
   pcoreQueryTransferAccess,
   pcoreQueryUserExists,
   pcoreQueryRankingTaskStats,
@@ -104,12 +96,10 @@ import {
   pcoreCmdAcceptMarketplaceTaskLegacy,
   pcoreCmdCompleteTaskWalletUpdate,
   pcoreCmdCompleteTaskPersonaUpdate,
-  pcoreCmdInsertWalletTransaction,
   pcoreCmdInsertReputationHistory,
   pcoreCmdInsertGrowthEvent,
   pcoreCmdInsertGovernanceEvent,
   type PcorePersonaRow,
-  type PcoreWalletRow,
   type PcoreForkRow,
   type PcoreKnowledgeRow,
   type PcoreGrowthEventRow,
@@ -123,9 +113,6 @@ import {
   type PcoreTaskResultRow,
   type PcoreGovernanceCaseRow,
   type PcoreGovernanceActionRow,
-  type PcoreWalletTransactionRow,
-  type PcoreWalletPayoutRequestRow,
-  type PcoreWalletSettlementRow,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
@@ -141,6 +128,7 @@ import {
   toMinor,
 } from './persona-core-utils.js';
 import { PersonaMemoryService, type PersonaMemoryContext } from './persona-memory-service.js';
+import { PersonaWalletService, walletFromRow, type PersonaWalletContext } from './persona-wallet-service.js';
 import {
   ACTIVE_RUNTIME_STATES,
   computeRuntimeTimeoutAt,
@@ -208,14 +196,14 @@ import type {
   OpenGovernanceCaseInput,
   WalletPayoutRequest,
   WalletTransaction,
-  WalletTransactionType,
 } from './types.js';
 
 /* Row types are aliased to the kernel-side interfaces. Kernel rows use
  * `readonly` on every property and store narrowed enums as `string`; the
  * service is the authoritative narrower at the FromRow boundary helpers. */
 type PersonaCoreRow = PcorePersonaRow;
-type PersonaWalletRow = PcoreWalletRow;
+/* PersonaWalletRow alias removed — wallet rows are only mapped
+ * inside PersonaWalletService now. */
 type PersonaForkRow = PcoreForkRow;
 /* PersonaMemoryRow alias removed — only used by the extracted
  * PersonaMemoryService. */
@@ -231,9 +219,9 @@ type RuntimeSessionRow = PcoreRuntimeSessionRow;
 type TaskResultRow = PcoreTaskResultRow;
 type GovernanceCaseRow = PcoreGovernanceCaseRow;
 type GovernanceActionRow = PcoreGovernanceActionRow;
-type WalletTransactionRow = PcoreWalletTransactionRow;
-type WalletPayoutRequestRow = PcoreWalletPayoutRequestRow;
-type WalletSettlementRow = PcoreWalletSettlementRow;
+/* WalletTransactionRow / WalletPayoutRequestRow /
+ * WalletSettlementRow aliases removed — the rows are only mapped
+ * inside PersonaWalletService now. */
 
 /* Shared utilities moved to ./persona-core-utils.ts as part of the
  * Step 16 split — see imports at the top of this file. */
@@ -257,21 +245,10 @@ function personaFromRow(row: PersonaCoreRow): PersonaCore {
   };
 }
 
-function walletFromRow(row: PersonaWalletRow): PersonaWallet {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    personaId: row.persona_id,
-    walletAddress: row.wallet_address,
-    balance: Number(row.balance),
-    tokenBalance: Number(row.token_balance),
-    currency: row.currency ?? 'CRED',
-    status: (row.status ?? 'active') as PersonaWallet['status'],
-    lastSettledAt: row.last_settled_at === null ? null : Number(row.last_settled_at),
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at),
-  };
-}
+/* walletFromRow now lives in persona-wallet-service.ts as part of
+ * the Step 16b split. Re-imported above so listPersonas and
+ * getPersonaDetail still synthesize wallet snapshots from joined
+ * rows without re-implementing the mapping. */
 
 function forkFromRow(row: PersonaForkRow): PersonaFork {
   /* Kernel rows store narrowed enums as plain strings (the Query type
@@ -489,54 +466,11 @@ function governanceActionFromRow(row: GovernanceActionRow): GovernanceAction {
   };
 }
 
-function walletTransactionFromRow(row: WalletTransactionRow): WalletTransaction {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    walletId: row.wallet_id,
-    transactionType: row.transaction_type as WalletTransaction['transactionType'],
-    amountMinor: Number(row.amount_minor),
-    currency: row.currency,
-    referenceType: row.reference_type,
-    referenceId: row.reference_id,
-    createdAt: Number(row.created_at),
-  };
-}
-
-function walletPayoutRequestFromRow(row: WalletPayoutRequestRow): WalletPayoutRequest {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    walletId: row.wallet_id,
-    amountMinor: Number(row.amount_minor),
-    currency: row.currency,
-    status: row.status as WalletPayoutRequest['status'],
-    requestedByUserId: row.requested_by_user_id,
-    createdAt: Number(row.created_at),
-    completedAt: row.completed_at === null ? null : Number(row.completed_at),
-  };
-}
-
-function walletSettlementFromRow(row: WalletSettlementRow): TaskWalletSettlement {
-  return {
-    id: row.id,
-    tenantId: row.tenant_id,
-    walletId: row.wallet_id,
-    taskId: row.task_id,
-    assignmentId: row.assignment_id,
-    totalAmountMinor: Number(row.total_amount_minor),
-    currency: row.currency,
-    ownerPct: Number(row.owner_pct),
-    personaPct: Number(row.persona_pct),
-    platformPct: Number(row.platform_pct),
-    ownerAmountMinor: Number(row.owner_amount_minor),
-    personaAmountMinor: Number(row.persona_amount_minor),
-    platformAmountMinor: Number(row.platform_amount_minor),
-    status: row.status as TaskWalletSettlement['status'],
-    createdAt: Number(row.created_at),
-    completedAt: row.completed_at === null ? null : Number(row.completed_at),
-  };
-}
+/* walletTransactionFromRow / walletPayoutRequestFromRow /
+ * walletSettlementFromRow moved into PersonaWalletService as part
+ * of the Step 16b split. The only mapper still used in this file
+ * is walletFromRow (above), called by listPersonas + getPersonaDetail
+ * to synthesise a wallet snapshot from a joined query row. */
 
 export class PersonaCoreService {
   private readonly encryption?: FieldEncryption;
@@ -545,13 +479,18 @@ export class PersonaCoreService {
    * Memory-domain sub-service. The facade delegates all memory CRUD
    * + search + graph methods to this instance. Internal cross-domain
    * methods (e.g. `addKnowledge`) also call into the same instance
-   * so the memory write path is single-sourced.
-   *
-   * Step 16 split: the first of three planned sub-services. The
-   * marketplace + governance domains stay inline in this file for
-   * now and will follow the same pattern in subsequent passes.
+   * so the memory write path is single-sourced. (Step 16 first cut.)
    */
   private readonly memoryService: PersonaMemoryService;
+  /**
+   * Wallet sub-service — Step 16b second cut. Owns wallet read paths,
+   * wallet payout flow, and the wallet-transaction journal write path.
+   * The settleTaskPayment + task-completion methods still live in this
+   * file (cross-domain with task / governance), but they route their
+   * wallet writes through `this.walletService.insertWalletTransaction`
+   * + `this.walletService.getWalletByPersonaId(...)` so there's a
+   * single write path. */
+  private readonly walletService: PersonaWalletService;
 
   constructor(
     private readonly tx: SyncWriteUnitOfWork,
@@ -577,6 +516,20 @@ export class PersonaCoreService {
     this.memoryService = new PersonaMemoryService(
       tx,
       memoryContext,
+      this.encryption,
+      this.encryptionResolver,
+    );
+    /* Wallet sub-service context. The wallet service only needs the
+     * persona-existence + owner check; it does not need detail or
+     * status because the wallet operations gate on wallet.status
+     * (active/suspended) rather than persona lifecycle. */
+    const walletContext: PersonaWalletContext = {
+      personaExists: (tenantId, ownerUserId, personaId) =>
+        this.personaExists(tenantId, ownerUserId, personaId),
+    };
+    this.walletService = new PersonaWalletService(
+      tx,
+      walletContext,
       this.encryption,
       this.encryptionResolver,
     );
@@ -1450,65 +1403,24 @@ export class PersonaCoreService {
     };
   }
 
+  /* ── Wallet domain (delegated to PersonaWalletService — Step 16b) ──
+   * Public methods are thin pass-throughs so API consumers and test
+   * fixtures that mock PersonaCoreService keep working unchanged. */
+
   getWallet(tenantId: string, ownerUserId: string, personaId: string): PersonaWallet | null {
-    if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    const row = this.tx.queryOne(pcoreQueryWalletByPersona({ tenantId, personaId }));
-    return row ? walletFromRow(row) : null;
+    return this.walletService.getWallet(tenantId, ownerUserId, personaId);
   }
 
   getWalletByIdForOwner(tenantId: string, ownerUserId: string, walletId: string): PersonaWallet | null {
-    const row = this.tx.queryOne(pcoreQueryWalletByIdForOwner({ tenantId, walletId }));
-    if (!row || row.owner_user_id !== ownerUserId) return null;
-    return walletFromRow(row);
+    return this.walletService.getWalletByIdForOwner(tenantId, ownerUserId, walletId);
   }
 
   listWalletTransactions(tenantId: string, ownerUserId: string, walletId: string): WalletTransaction[] | null {
-    const wallet = this.getWalletByIdForOwner(tenantId, ownerUserId, walletId);
-    if (!wallet) return null;
-    return this.tx.queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })).map(walletTransactionFromRow);
+    return this.walletService.listWalletTransactions(tenantId, ownerUserId, walletId);
   }
 
   requestWalletPayout(input: RequestWalletPayoutInput): WalletPayoutRequest | null {
-    const wallet = this.getWalletByIdForOwner(input.tenantId, input.ownerUserId, input.walletId);
-    if (!wallet || wallet.status !== 'active') return null;
-
-    const amountMinor = Math.max(0, Math.round(input.amountMinor));
-    if (amountMinor <= 0 || amountMinor > toMinor(wallet.balance)) return null;
-
-    const now = Date.now();
-    const payoutId = generatePrefixedId('wpr');
-    const nextBalanceMinor = toMinor(wallet.balance) - amountMinor;
-
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateWalletPayoutRequest({
-        id: payoutId,
-        tenantId: input.tenantId,
-        walletId: input.walletId,
-        amountMinor,
-        currency: wallet.currency,
-        requestedByUserId: input.ownerUserId,
-        now,
-      }));
-
-      this.tx.execute(pcoreCmdUpdateWalletBalance({
-        tenantId: input.tenantId,
-        walletId: input.walletId,
-        balance: fromMinor(nextBalanceMinor),
-        now,
-      }));
-
-      this.insertWalletTransaction({
-        tenantId: input.tenantId,
-        walletId: input.walletId,
-        transactionType: 'owner_payout',
-        amountMinor: -amountMinor,
-        currency: wallet.currency,
-        referenceType: 'wallet_payout_request',
-        referenceId: payoutId,
-      });
-    });
-
-    return this.getWalletPayoutRequestById(input.tenantId, payoutId);
+    return this.walletService.requestWalletPayout(input);
   }
 
   settleTaskPayment(input: SettleTaskPaymentInput): TaskWalletSettlement | null {
@@ -1518,10 +1430,10 @@ export class PersonaCoreService {
     const assignment = this.getTaskAssignmentById(input.tenantId, input.assignmentId);
     if (!assignment || assignment.taskId !== input.taskId || assignment.personaId !== task.assigneePersonaId) return null;
 
-    const wallet = this.getWalletByPersonaId(input.tenantId, assignment.personaId);
+    const wallet = this.walletService.getWalletByPersonaId(input.tenantId, assignment.personaId);
     if (!wallet || wallet.status !== 'active') return null;
 
-    const existing = this.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
+    const existing = this.walletService.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
     if (existing) return existing;
 
     const totalAmountMinor = Math.round(input.totalAmountMinor);
@@ -1568,7 +1480,7 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.insertWalletTransaction({
+      this.walletService.insertWalletTransaction({
         tenantId: input.tenantId,
         walletId: wallet.id,
         transactionType: 'task_payment',
@@ -1577,7 +1489,7 @@ export class PersonaCoreService {
         referenceType: 'wallet_settlement',
         referenceId: settlementId,
       });
-      this.insertWalletTransaction({
+      this.walletService.insertWalletTransaction({
         tenantId: input.tenantId,
         walletId: wallet.id,
         transactionType: 'platform_fee',
@@ -1586,7 +1498,7 @@ export class PersonaCoreService {
         referenceType: 'wallet_settlement',
         referenceId: settlementId,
       });
-      this.insertWalletTransaction({
+      this.walletService.insertWalletTransaction({
         tenantId: input.tenantId,
         walletId: wallet.id,
         transactionType: 'persona_reserve',
@@ -1634,7 +1546,7 @@ export class PersonaCoreService {
       });
     });
 
-    return this.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
+    return this.walletService.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
   }
 
   findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
@@ -2873,55 +2785,11 @@ export class PersonaCoreService {
     return row ? personaFromRow(row as PersonaCoreRow) : null;
   }
 
-  private getWalletByPersonaId(tenantId: string, personaId: string): PersonaWallet | null {
-    const row = this.tx.queryOne(pcoreQueryWalletByPersonaId({ tenantId, personaId }));
-    return row ? walletFromRow(row as PersonaWalletRow) : null;
-  }
-
-  private getWalletPayoutRequestById(tenantId: string, payoutId: string): WalletPayoutRequest | null {
-    const row = this.tx.queryOne(pcoreQueryWalletPayoutRequestById({ tenantId, payoutId }));
-    return row ? walletPayoutRequestFromRow(row as WalletPayoutRequestRow) : null;
-  }
-
-  private getWalletSettlementByAssignmentId(tenantId: string, assignmentId: string): TaskWalletSettlement | null {
-    const row = this.tx.queryOne(pcoreQueryWalletSettlementByAssignmentId({ tenantId, assignmentId }));
-    return row ? walletSettlementFromRow(row as WalletSettlementRow) : null;
-  }
-
-  private insertWalletTransaction(input: {
-    tenantId: string;
-    walletId: string;
-    transactionType: WalletTransactionType;
-    amountMinor: number;
-    currency: string;
-    referenceType?: string | null;
-    referenceId?: string | null;
-  }): WalletTransaction {
-    const now = Date.now();
-    const id = generatePrefixedId('wtx');
-    this.tx.execute(pcoreCmdInsertWalletTransaction({
-      id,
-      tenantId: input.tenantId,
-      walletId: input.walletId,
-      transactionType: input.transactionType,
-      amountMinor: Math.round(input.amountMinor),
-      currency: input.currency,
-      referenceType: input.referenceType ?? null,
-      referenceId: input.referenceId ?? null,
-      now,
-    }));
-    return {
-      id,
-      tenantId: input.tenantId,
-      walletId: input.walletId,
-      transactionType: input.transactionType,
-      amountMinor: Math.round(input.amountMinor),
-      currency: input.currency,
-      referenceType: input.referenceType ?? null,
-      referenceId: input.referenceId ?? null,
-      createdAt: now,
-    };
-  }
+  /* Wallet helpers (getWalletByPersonaId / getWalletPayoutRequestById /
+   * getWalletSettlementByAssignmentId / insertWalletTransaction)
+   * moved to PersonaWalletService as part of the Step 16b split.
+   * Internal callers go through `this.walletService.*` so the wallet
+   * read+write paths remain single-sourced. */
 
   private getTransferById(tenantId: string, transferId: string): PersonaTransferRow | null {
     return this.tx.queryOne(pcoreQueryTransferById({ tenantId, transferId })) as PersonaTransferRow | null;
