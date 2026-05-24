@@ -24,10 +24,22 @@
 
 import { createHash } from 'node:crypto';
 
+import type { EventBus } from '../events/event-bus.js';
+
 /**
  * Add new flags here. Each flag is type-safe; callers can only ask
  * about declared keys. Description doubles as the audit-facing
  * documentation.
+ *
+ * Two flag families coexist here:
+ *   - server-side flags ('agent.*', 'billing.*', 'memory.*', etc.) —
+ *     consulted by background workers / API handlers via `isEnabled()`.
+ *   - web-side flags ('web.*') — surface UI toggles. The web app reads
+ *     these via the SSE + bootstrap provider in chrono-synth-web/src/
+ *     providers/FeatureFlagProvider.tsx. Adding a new web flag is a
+ *     two-step process: register it here AND add the corresponding
+ *     `FeatureFlagId` in chrono-synth-web/src/lib/featureFlags.ts so
+ *     the consumer type-check stays honest.
  */
 export const FEATURE_FLAGS = {
   'agent.long-context-mode': {
@@ -49,6 +61,33 @@ export const FEATURE_FLAGS = {
   'onboarding.synthetic-invocations': {
     description: 'Inject 3 synthetic tool invocations during onboarding step 4',
     defaultEnabled: true,
+  },
+  /* Web flags — consumed by chrono-synth-web. Default values intentionally
+   * match the web's `DEFAULTS` map so a deployment with no admin
+   * intervention behaves like the static-only build. */
+  'web.cmdk.enabled': {
+    description: 'Command palette (Cmd-K) in chrono-synth-web AppShell',
+    defaultEnabled: true,
+  },
+  'web.changelog.drawer.enabled': {
+    description: 'In-app changelog drawer entry point in AppShell',
+    defaultEnabled: true,
+  },
+  'web.onboarding.checklist.enabled': {
+    description: 'Onboarding checklist widget on dashboard',
+    defaultEnabled: true,
+  },
+  'web.onboarding.aha_moment.enabled': {
+    description: 'Aha-moment celebration animation during onboarding',
+    defaultEnabled: false,
+  },
+  'web.analytics.tracking.enabled': {
+    description: 'Client-side analytics tracking (page views, events)',
+    defaultEnabled: true,
+  },
+  'web.experimental.values_health_dashboard': {
+    description: 'Experimental values-health visualisation in PersonaHealth',
+    defaultEnabled: false,
   },
 } as const;
 
@@ -82,8 +121,13 @@ function bucket(flag: FlagKey, tenantId: string): number {
 
 export class FeatureFlagService {
   private readonly state = new Map<FlagKey, FlagState>();
+  /* Optional bus — when set, every mutation emits 'feature-flag:changed'
+   * so the SSE route (and any other consumers) can push the new state.
+   * Tests can construct without a bus to avoid event plumbing. */
+  private readonly bus: EventBus | undefined;
 
-  constructor() {
+  constructor(opts: { bus?: EventBus } = {}) {
+    this.bus = opts.bus;
     /* Initialise every declared flag with its default-enabled state +
      * empty overrides. Callers can later flip via mutators below. */
     for (const key of Object.keys(FEATURE_FLAGS) as FlagKey[]) {
@@ -95,6 +139,17 @@ export class FeatureFlagService {
         tenantDenylist: new Set(),
       });
     }
+  }
+
+  private emitChanged(flag: FlagKey): void {
+    if (!this.bus) return;
+    const s = this.state.get(flag)!;
+    this.bus.emit('feature-flag:changed', {
+      flag,
+      enabled: s.enabled,
+      rolloutPercent: s.rolloutPercent,
+      killed: s.killed,
+    });
   }
 
   /**
@@ -127,6 +182,7 @@ export class FeatureFlagService {
 
   setEnabled(flag: FlagKey, enabled: boolean): void {
     this.state.get(flag)!.enabled = enabled;
+    this.emitChanged(flag);
   }
 
   setRolloutPercent(flag: FlagKey, percent: number): void {
@@ -134,6 +190,7 @@ export class FeatureFlagService {
       throw new Error(`rolloutPercent must be in [0, 100]; got ${percent}`);
     }
     this.state.get(flag)!.rolloutPercent = Math.round(percent);
+    this.emitChanged(flag);
   }
 
   /**
@@ -143,23 +200,32 @@ export class FeatureFlagService {
    */
   kill(flag: FlagKey): void {
     this.state.get(flag)!.killed = true;
+    this.emitChanged(flag);
   }
 
   /** Undo the kill switch (e.g. after fixing the upstream issue). */
   revive(flag: FlagKey): void {
     this.state.get(flag)!.killed = false;
+    this.emitChanged(flag);
   }
 
   allowTenant(flag: FlagKey, tenantId: string): void {
     const s = this.state.get(flag)!;
     s.tenantAllowlist.add(tenantId);
     s.tenantDenylist.delete(tenantId);
+    /* Per-tenant overrides change the final decision for affected
+     * tenants. Emit a generic flag change so SSE subscribers recompute
+     * against their own tenantId — tenant override membership is NOT
+     * leaked (the payload carries only global state; per-tenant
+     * resolution happens server-side via isEnabled()). */
+    this.emitChanged(flag);
   }
 
   denyTenant(flag: FlagKey, tenantId: string): void {
     const s = this.state.get(flag)!;
     s.tenantDenylist.add(tenantId);
     s.tenantAllowlist.delete(tenantId);
+    this.emitChanged(flag);
   }
 
   /** Diagnostic for admin dashboards. */

@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { FeatureFlagService, FEATURE_FLAGS, type FlagKey } from '../../feature-flags/feature-flag-service.js';
+import { EventBus } from '../../events/event-bus.js';
 
 const ANY_FLAG: FlagKey = 'agent.long-context-mode';
 
@@ -153,5 +154,68 @@ describe('FeatureFlagService — snapshots', () => {
     const svc = new FeatureFlagService();
     const all = svc.snapshotAll();
     assert.equal(all.length, Object.keys(FEATURE_FLAGS).length);
+  });
+});
+
+describe('FeatureFlagService — bus events', () => {
+  it('emits feature-flag:changed on setEnabled', () => {
+    const bus = new EventBus();
+    const svc = new FeatureFlagService({ bus });
+    const events: Array<{ flag: string; enabled: boolean }> = [];
+    bus.on('feature-flag:changed', (p) => { events.push(p); });
+
+    svc.setEnabled(ANY_FLAG, true);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.flag, ANY_FLAG);
+    assert.equal(events[0]?.enabled, true);
+  });
+
+  it('emits on kill + revive (incident response)', () => {
+    const bus = new EventBus();
+    const svc = new FeatureFlagService({ bus });
+    let killedCount = 0;
+    bus.on('feature-flag:changed', (p) => { if (p.killed) killedCount += 1; });
+
+    svc.kill(ANY_FLAG);
+    svc.revive(ANY_FLAG);
+    /* kill emits killed=true, revive emits killed=false → only the
+     * first event has killed=true. */
+    assert.equal(killedCount, 1);
+  });
+
+  it('emits on allow/denyTenant so SSE clients recompute per-tenant', () => {
+    /* The payload doesn't carry tenant IDs (tenant override membership
+     * stays server-private). SSE consumers see a generic change event
+     * and re-run isEnabled() against their own tenantId. */
+    const bus = new EventBus();
+    const svc = new FeatureFlagService({ bus });
+    let count = 0;
+    bus.on('feature-flag:changed', (p) => {
+      count += 1;
+      /* Generic shape only — no tenant info. */
+      assert.equal('tenantId' in p, false);
+    });
+
+    svc.allowTenant(ANY_FLAG, 'tenant-a');
+    svc.denyTenant(ANY_FLAG, 'tenant-b');
+    assert.equal(count, 2);
+  });
+
+  it('emits rolloutPercent updates', () => {
+    const bus = new EventBus();
+    const svc = new FeatureFlagService({ bus });
+    const captured: number[] = [];
+    bus.on('feature-flag:changed', (p) => { captured.push(p.rolloutPercent); });
+
+    svc.setRolloutPercent(ANY_FLAG, 25);
+    svc.setRolloutPercent(ANY_FLAG, 75);
+    assert.deepEqual(captured, [25, 75]);
+  });
+
+  it('no-bus constructor still works (back-compat)', () => {
+    const svc = new FeatureFlagService();
+    /* Should not throw even though there's no bus to emit on. */
+    svc.setEnabled(ANY_FLAG, true);
+    assert.equal(svc.snapshot(ANY_FLAG).enabled, true);
   });
 });

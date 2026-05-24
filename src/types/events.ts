@@ -71,6 +71,11 @@ export interface SystemEventMap {
   'life:simulation-completed': TenantTagged<{ simulationId: string }>;
   'life:simulation-failed': TenantTagged<{ simulationId: string; error: string }>;
 
+  /* Feature flag 状态变更事件。
+   * 推送给 web 侧 FeatureFlagProvider，用于 kill-switch 立刻生效。
+   * 不带 tenantId — 平台级配置变更，所有租户都需要感知。 */
+  'feature-flag:changed': { flag: string; enabled: boolean; rolloutPercent: number; killed: boolean };
+
   /* 系统级事件 */
   'system:snapshot-created': TenantTagged<{ snapshot: SystemSnapshot }>;
   'system:snapshot-restored': TenantTagged<{ snapshotId: string }>;

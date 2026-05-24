@@ -74,6 +74,10 @@ export class ChronoSynthOS {
   readonly queue: TaskQueue;
   /** Phase 1B 可选：开启 audit chain KMS 锚定时存在 */
   readonly auditChainAnchors: AuditChainAnchorService | undefined;
+  /** 平台级 feature flag 服务；web 与后端 worker 共享同一份决策来源。
+   *  Web 通过 /api/v1/feature-flags/{bootstrap,stream} 消费，
+   *  后端 worker 通过 isEnabled() 直接查询。 */
+  readonly featureFlags: FeatureFlagService;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -95,6 +99,11 @@ export class ChronoSynthOS {
 
     /* 创建事件总线 */
     this.bus = new EventBus();
+
+    /* Feature flag 服务，bus 注入后 mutation 自动广播。
+     * 单例确保 web SSE 推送的状态与后端 worker 的 isEnabled() 决策
+     * 来自同一来源。 */
+    this.featureFlags = new FeatureFlagService({ bus: this.bus });
 
     /* 更新闸门（需在 MetaRegulationLayer 之前初始化，供其使用） */
     this.updateGate = new UpdateGate(this.db, this.clock, config.updateGateConfig, this.logger);
@@ -134,7 +143,9 @@ export class ChronoSynthOS {
       const anchorDeps: ConstructorParameters<typeof AuditChainAnchorService>[0] = {
         db: this.db,
         kmsProvider: config.auditChainAnchors.kmsProvider,
-        featureFlags: config.auditChainAnchors.featureFlags ?? new FeatureFlagService(),
+        /* 共享同一实例：admin 端通过 /api/v1/feature-flags 翻转
+         * audit.kms-sign-chain-tail 时，anchor service 立即感知。 */
+        featureFlags: config.auditChainAnchors.featureFlags ?? this.featureFlags,
         clock: this.clock,
         logger: this.logger,
       };
