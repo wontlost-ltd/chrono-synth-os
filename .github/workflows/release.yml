@@ -30,8 +30,18 @@ jobs:
           node-version-file: '.nvmrc'
 
       - run: npm ci
-      - run: npm run typecheck
+
+      # Mirror ci.yml's pre-build order: workspace packages must be built
+      # before src/ can typecheck (they're consumed via `@chrono/kernel` etc.).
+      # Without this, npm run typecheck fails immediately with TS2307
+      # "Cannot find module '@chrono/kernel'".
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
+
       - run: npm run build
+      - run: npm run typecheck
       - run: npm run test
 
       - uses: docker/setup-buildx-action@v4
