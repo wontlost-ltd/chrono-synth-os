@@ -195,7 +195,11 @@ export async function registerJwtAuth(
     }
   }
   const bootEntry = keyRing.signEntry();
-  const bootActiveKid = activeKid;
+  /* GA §8 #1: 记录 boot 时 active kid，仅用于 ops 可观察性。dynamicSigner
+   * 在每次签发时从 keyRing.signEntry() 现取 active key，rotate 之后无需
+   * 重启即可切换签发；这条日志让运维在 incident response 时能快速核对
+   * 启动状态。 */
+  app.log.info({ bootActiveKid: activeKid, algorithm: bootEntry.algorithm }, 'jwt-auth: boot active kid recorded');
 
   /* Sign-side: dynamic signer drives the GA §8 #1 hot-rotation contract.
    *
