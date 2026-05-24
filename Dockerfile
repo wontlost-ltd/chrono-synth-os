@@ -13,6 +13,7 @@ COPY packages/kernel-testkit/package.json packages/kernel-testkit/
 COPY packages/adapter-web/package.json packages/adapter-web/
 COPY packages/adapter-tauri/package.json packages/adapter-tauri/
 COPY packages/adapter-react-native/package.json packages/adapter-react-native/
+COPY packages/schema-dsl/package.json packages/schema-dsl/
 COPY packages/tsconfig.base.json packages/
 COPY tsconfig.src.json tsconfig.scripts.json ./
 RUN npm ci
@@ -46,6 +47,12 @@ RUN npx tsc -p packages/adapter-tauri/tsconfig.json
 COPY packages/adapter-react-native/src packages/adapter-react-native/src
 COPY packages/adapter-react-native/tsconfig.json packages/adapter-react-native/
 RUN npx tsc -p packages/adapter-react-native/tsconfig.json
+
+# @wontlost-ltd/schema-dsl 是 src/storage/dsl-migrations-runner.ts 的依赖；
+# Dockerfile 要在 RUN tsc -p tsconfig.src.json 之前把它的 dist/ 准备好。
+COPY packages/schema-dsl/src packages/schema-dsl/src
+COPY packages/schema-dsl/tsconfig.json packages/schema-dsl/
+RUN npx tsc -p packages/schema-dsl/tsconfig.json
 
 COPY src/ src/
 COPY scripts/ scripts/
