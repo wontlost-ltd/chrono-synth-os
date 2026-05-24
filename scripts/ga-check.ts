@@ -117,6 +117,30 @@ const STEPS: readonly StepDecl[] = [
     args: ['run', 'lint:field-encryption', '--silent'],
     desc: 'P1-H field-encryption coverage across executors + plugins',
   },
+  {
+    id: 'os.codegen-design-tokens-check',
+    repo: 'os',
+    repoPath: OS_ROOT,
+    command: 'npm',
+    args: ['run', 'codegen:design-tokens:check', '--silent'],
+    desc: 'design-token CSS output is in sync with source-of-truth',
+  },
+  {
+    id: 'os.lint-contrast',
+    repo: 'os',
+    repoPath: OS_ROOT,
+    command: 'npm',
+    args: ['run', 'lint:contrast', '--silent'],
+    desc: 'WCAG AA/AAA contrast lint across all three themes',
+  },
+  {
+    id: 'os.sync-vendor-check',
+    repo: 'os',
+    repoPath: OS_ROOT,
+    command: 'npm',
+    args: ['run', 'sync:vendor:check', '--silent'],
+    desc: 'vendored sibling packages match OS source',
+  },
 
   /* Sibling repos. Optional so a CI run scoped to OS alone still
    * exits 0 — but if the sibling IS present, it must pass. */
