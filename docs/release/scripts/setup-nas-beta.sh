@@ -260,6 +260,25 @@ step3_env_file() {
     return 0
   fi
 
+  # postgres 只在首次启动（data 卷为空）才用 .env 的 POSTGRES_PASSWORD
+  # 初始化 user。如果 data/postgres 不空 + .env 是新生成的，旧用户密码
+  # 和 .env 新密码不匹配，backend 启动会撞 "password authentication failed
+  # for user chrono"。检测到 data/postgres 非空就 abort，让用户显式决定
+  # 是清数据还是手动同步密码。
+  if [[ -d data/postgres ]] && [[ -n "$(ls -A data/postgres 2>/dev/null || true)" ]]; then
+    die "data/postgres/ 已有 postgres 数据，但 .env 即将生成新 POSTGRES_PASSWORD。
+新密码与旧数据里 chrono user 不匹配，backend 会启动失败。
+
+选项：
+  (a) 清空 postgres data 重新初始化（beta 内测推荐 — 零业务数据损失）：
+        sudo docker compose down
+        sudo rm -rf data/postgres && sudo mkdir -p data/postgres
+        bash ${0##*/} --force . ${BETA_DOMAIN} '<CF_TUNNEL_TOKEN>'
+
+  (b) 手动同步：先在 postgres 容器里 ALTER USER chrono PASSWORD '...'，
+      然后用旧密码值手写 .env，跑本脚本不带 --force。"
+  fi
+
   local pg_pass enc_key
   pg_pass="$(openssl rand -hex 24)"
   enc_key="$(openssl rand -hex 32)"
