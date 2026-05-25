@@ -104,7 +104,7 @@ jobs:
       # `subjectRegExp`. If we ever switch to keyed mode we'd add the public
       # key as a ConfigMap and update Kyverno accordingly.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign image with cosign (keyless)
         env:
