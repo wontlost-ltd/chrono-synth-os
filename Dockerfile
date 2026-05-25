@@ -77,6 +77,10 @@ COPY packages/kernel/package.json packages/kernel/
 COPY packages/data-plane/package.json packages/data-plane/
 COPY packages/design-tokens/package.json packages/design-tokens/
 COPY packages/sync-engine/package.json packages/sync-engine/
+# schema-dsl 是 src/storage/dsl-migrations-runner.ts 的运行时依赖；缺它
+# 容器一启动就 ERR_MODULE_NOT_FOUND 然后崩。npm ci 需要 package.json
+# 才会建工作区软链。
+COPY packages/schema-dsl/package.json packages/schema-dsl/
 RUN npm ci --omit=dev && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Copy built package dists so workspace symlinks resolve at runtime
 COPY --from=builder /app/packages/contracts/dist packages/contracts/dist
@@ -84,6 +88,7 @@ COPY --from=builder /app/packages/kernel/dist packages/kernel/dist
 COPY --from=builder /app/packages/data-plane/dist packages/data-plane/dist
 COPY --from=builder /app/packages/design-tokens/dist packages/design-tokens/dist
 COPY --from=builder /app/packages/sync-engine/dist packages/sync-engine/dist
+COPY --from=builder /app/packages/schema-dsl/dist packages/schema-dsl/dist
 COPY --from=builder /app/dist/ dist/
 RUN mkdir -p /app/data && chown -R chrono:chrono /app
 VOLUME /app/data
