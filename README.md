@@ -1,15 +1,46 @@
 # ChronoSynth OS
 
+**Backend + portable kernel that powers two products from one codebase.**
+
+> 🧭 Two products live here. See [ADR-0046](docs/adr/0046-dual-product-companion.md)
+> for the decision and [`docs/plan/companion-roadmap.md`](docs/plan/companion-roadmap.md)
+> for the timeline. Detailed go-to-market narrative for each is in
+> [`.claude/gtm/01-pr-faq.md`](.claude/gtm/01-pr-faq.md).
+
+### Product 1 — ChronoSynth (Enterprise) · GA in progress
+
 **The governance layer for enterprise AI agents.**
 
 When your team ships LangChain / CrewAI / OpenAI Agents SDK into production,
-ChronoSynth OS is the backend that controls which tools each agent can call,
+ChronoSynth is the backend that controls which tools each agent can call,
 records every invocation to an immutable audit log, and detects when an
 agent's behavior drifts from its policy baseline. Self-hosted via Helm or
 run as SaaS — your data, your KMS keys, your audit retention.
 
-> Why this exists, who it's for, what's in / out of scope: see
-> [`.claude/gtm/01-pr-faq.md`](.claude/gtm/01-pr-faq.md).
+Hosts: `chrono-synth-web` (console) + `chrono-synth-desktop` (Tauri, for
+compliance officers / security researchers) + Helm chart in
+`chrono-synth-deploy`.
+
+### Product 2 — ChronoCompanion (Consumer) · Phase 2 — planning
+
+**Your self-learning, self-adapting, self-evolving digital companion.**
+
+Same kernel — `@chrono/kernel` (OSS, MIT) — wrapped in a consumer-facing
+mobile + web + desktop experience. The persona's core values, memory graph,
+and value-alignment engine become a personal companion that grows with you,
+adapts to your context, and (with your permission) learns from signals like
+HealthKit / Screen Time / app usage.
+
+Hosts: `apps/companion-web/` + `apps/mobile/` (Expo + RN) + `apps/desktop/`
+(Tauri, companion mode).
+
+### Why both, why now
+
+The kernel — `@chrono/kernel` — solves the same problem twice: tracking how
+a persona's values, memories, and decisions evolve over time. For
+enterprise, that's "agent drift detection". For consumers, that's "personal
+growth visualisation". One internal engine; two product surfaces; ADR-0046
+locks the split.
 
 The agent-governance product is built on top of a portable persona kernel
 (`@chrono/kernel`, MIT) — a TypeScript domain core for persona identity,
