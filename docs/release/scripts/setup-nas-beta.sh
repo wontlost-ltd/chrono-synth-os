@@ -44,7 +44,11 @@ SCRIPT_VERSION="v2.0.0-beta.2"
 OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.2"
 WEB_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.2"
 CLOUDFLARED_IMAGE="cloudflare/cloudflared:latest"
-POSTGRES_IMAGE="postgres:16-alpine"
+# pgvector/pgvector:pg16 = postgres 16 预装 pgvector C extension。
+# chrono-synth-os 的 DSL 迁移含 CREATE EXTENSION vector（向量召回 ANN 索引），
+# 标准 postgres:16-alpine 没装 pgvector → backend 启动时迁移失败：
+#   Error: extension "vector" is not available
+POSTGRES_IMAGE="pgvector/pgvector:pg16"
 GHCR_USER="jet-pang"
 
 DEPLOY_DIR=""
@@ -319,7 +323,7 @@ step4_compose() {
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: chrono
