@@ -257,26 +257,30 @@ step3_env_file() {
     return 0
   fi
 
-  local pg_pass enc_key priv_inline pub_inline
+  local pg_pass enc_key
   pg_pass="$(openssl rand -hex 24)"
   enc_key="$(openssl rand -hex 32)"
-  priv_inline="$(awk '{printf "%s\\n", $0}' jwt-keys/kid-1.priv.pem)"
-  pub_inline="$(awk '{printf "%s\\n", $0}' jwt-keys/kid-1.pub.pem)"
+
+  # ⚠️ JWT PEM 不再嵌入 .env，理由：
+  # docker compose 把 .env 当字面字符串注入容器 env。多行 PEM 在 .env 里
+  # 只能用 \n 字面量（不能内嵌真换行），但 docker compose 不会还原 \n —
+  # 容器收到的就是字面 "\n"，fast-jwt 报 "PEM section not found"。
+  # 改用 volume 挂载 jwt-keys/ 到容器，backend 的 command shell wrapper
+  # 用 cat 读文件（保留真换行）后 export 成 env。
 
   cat > .env <<EOF
 # 生成时间: $(date -Iseconds)
 # 脚本版本: setup-nas-beta.sh ($SCRIPT_VERSION)
 #
-# ⚠️  此文件含密钥 + tunnel token。永远不要 commit / 不要分享。chmod 600 已锁。
+# ⚠️  此文件含密码 + tunnel token。永远不要 commit / 不要分享。chmod 600 已锁。
+#     JWT PEM 文件单独放在 jwt-keys/ 目录，通过 docker volume 挂载，
+#     不在本 .env 里。
 
 BETA_DOMAIN=${BETA_DOMAIN}
 POSTGRES_PASSWORD=${pg_pass}
 CHRONO_FIELD_ENC_MASTER_KEY=${enc_key}
 
-# JWT
 CHRONO_JWT_KID=kid-1
-CHRONO_JWT_PRIVATE_KEY=${priv_inline}
-CHRONO_JWT_PUBLIC_KEY=${pub_inline}
 
 # Cloudflare Tunnel
 # 这是 cloudflared 连 CF 边缘需要的凭据；token 失效就重新生成
@@ -287,14 +291,11 @@ EOF
   log "✓ 写 .env（chmod 600）"
   log "  POSTGRES_PASSWORD 已生成（24 byte hex）"
   log "  CHRONO_FIELD_ENC_MASTER_KEY 已生成（32 byte hex）"
-  log "  CHRONO_JWT_PRIVATE_KEY 已嵌入"
+  log "  CHRONO_JWT_KID=kid-1（PEM 走 volume 挂载，不嵌入 .env）"
   log "  CF_TUNNEL_TOKEN 已嵌入（长度 ${#CF_TUNNEL_TOKEN}）"
 
   grep -q '^BETA_DOMAIN=' .env || die ".env 自检失败：缺 BETA_DOMAIN"
   grep -q '^CF_TUNNEL_TOKEN=' .env || die ".env 自检失败：缺 CF_TUNNEL_TOKEN"
-  [[ $(grep -c '^CHRONO_JWT_PRIVATE_KEY=' .env) -eq 1 ]] \
-    || die ".env 自检失败：CHRONO_JWT_PRIVATE_KEY 行数不对"
-  grep -q 'BEGIN PRIVATE KEY' .env || die ".env 自检失败：私钥字符串没正确嵌入"
   log "✓ .env 自检通过"
 }
 
@@ -360,8 +361,9 @@ services:
       CHRONO_JWT_ACCESS_TTL_MS: '900000'
       CHRONO_JWT_REFRESH_TTL_MS: '2592000000'
       CHRONO_JWT_KID: ${CHRONO_JWT_KID}
-      CHRONO_JWT_PRIVATE_KEY: ${CHRONO_JWT_PRIVATE_KEY}
-      CHRONO_JWT_PUBLIC_KEY: ${CHRONO_JWT_PUBLIC_KEY}
+      # CHRONO_JWT_PRIVATE_KEY / PUBLIC_KEY 不放 env，因为 docker compose
+      # 不会还原 .env 文件里的 \n 字面量。改用 volume 挂载 PEM 文件，并
+      # 在下面 entrypoint 把文件读成真换行 env（cat 保留换行符）。
       CHRONO_AUTH_ENABLED: 'true'
       # CORS：浏览器禁止 wildcard "*" + credentials=true 同时存在（CORS spec），
       # 后端代码主动拒绝这种配置。CF Tunnel 模式下 web 和 backend 同源
@@ -374,6 +376,19 @@ services:
       CHRONO_QUEUE_ENABLED: 'true'
     volumes:
       - ./data/os:/app/data
+      # PEM 通过文件挂载，避免 docker compose 多行 env 转义陷阱。
+      # 只读、不写、容器内位置约定在 /run/secrets/jwt-keys/。
+      - ./jwt-keys:/run/secrets/jwt-keys:ro
+    # Entrypoint shell wrapper：用 cat 把 PEM 文件读成 env（保留真换行
+    # 符），然后 exec 原镜像的 CMD（node dist/main.js）。-e 让任一步骤
+    # 失败时容器立刻退出而不是带着空 env 继续启动崩溃。
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        export CHRONO_JWT_PRIVATE_KEY="$$(cat /run/secrets/jwt-keys/kid-1.priv.pem)"
+        export CHRONO_JWT_PUBLIC_KEY="$$(cat /run/secrets/jwt-keys/kid-1.pub.pem)"
+        exec node dist/main.js
     ports:
       - "127.0.0.1:3000:3000"   # 仅本地调试
 
