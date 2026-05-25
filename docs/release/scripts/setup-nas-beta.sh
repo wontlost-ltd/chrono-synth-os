@@ -356,7 +356,11 @@ services:
       CHRONO_JWT_PRIVATE_KEY: ${CHRONO_JWT_PRIVATE_KEY}
       CHRONO_JWT_PUBLIC_KEY: ${CHRONO_JWT_PUBLIC_KEY}
       CHRONO_AUTH_ENABLED: 'true'
-      CHRONO_CORS_ORIGIN: 'true'
+      # CORS：浏览器禁止 wildcard "*" + credentials=true 同时存在（CORS spec），
+      # 后端代码主动拒绝这种配置。CF Tunnel 模式下 web 和 backend 同源
+      # (https://${BETA_DOMAIN})，前端默认相对路径访问 /api/*，CORS 实际
+      # 不会触发。这里仍显式 allow 自家域名 + credentials 作为安全默认。
+      CHRONO_CORS_ORIGIN: https://${BETA_DOMAIN}
       CHRONO_CORS_CREDENTIALS: 'true'
       # NODE_ENV=production 时 life-simulation 路由要求 queue.enabled=true，
       # 否则注册路由直接抛错。beta 单 NAS 跑 in-process queue 即可。
@@ -376,6 +380,16 @@ services:
       # 的就是 https://${BETA_DOMAIN}，浏览器对 /api/* 走相对路径即可）。
       CHRONO_WEB_API_BASE_URL: https://${BETA_DOMAIN}
       CHRONO_WEB_ENVIRONMENT: beta
+    # web image 的 nginx.conf 引用了 enterprise 全栈才有的 upstream
+    # (observability-worker / prometheus / grafana)。Beta 单 NAS 部署不
+    # 跑这些 service，但 nginx startup 阶段对所有 upstream 做 DNS 解析，
+    # 找不到就 emerg crash。把这些名字都指向 backend（不会被实际访问，
+    # location 路径只在前端用户访问 /worker /prometheus /grafana 时才命中），
+    # 让 nginx 启动通过。
+    extra_hosts:
+      - "observability-worker:127.0.0.1"
+      - "prometheus:127.0.0.1"
+      - "grafana:127.0.0.1"
     ports:
       - "127.0.0.1:8080:8080"   # 仅本地调试
 
