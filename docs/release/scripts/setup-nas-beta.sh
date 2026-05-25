@@ -397,6 +397,12 @@ YAML
 
   chmod 644 docker-compose.yml
   log "✓ 写 docker-compose.yml"
+
+  # docker bind-mount 要求源路径在 up 之前已存在，否则 postgres / backend
+  # 容器一启动就 "Bind mount failed" 拒启。提前 mkdir，避免用户在 step 6
+  # 之后撞坑。
+  mkdir -p data/postgres data/os
+  log "✓ 预创建 data/postgres + data/os（docker bind mount 必需）"
 }
 
 # ──────────────────────────────────────────────────────────────
