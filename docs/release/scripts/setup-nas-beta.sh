@@ -41,7 +41,7 @@ set -o pipefail
 # ──────────────────────────────────────────────────────────────
 
 SCRIPT_VERSION="v2.0.0-beta.2"
-OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.1"
+OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.2"
 WEB_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.2"
 CLOUDFLARED_IMAGE="cloudflare/cloudflared:latest"
 POSTGRES_IMAGE="postgres:16-alpine"
@@ -334,7 +334,7 @@ services:
       retries: 5
 
   backend:
-    image: ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.1
+    image: ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.2
     restart: unless-stopped
     depends_on:
       postgres:
@@ -358,6 +358,9 @@ services:
       CHRONO_AUTH_ENABLED: 'true'
       CHRONO_CORS_ORIGIN: 'true'
       CHRONO_CORS_CREDENTIALS: 'true'
+      # NODE_ENV=production 时 life-simulation 路由要求 queue.enabled=true，
+      # 否则注册路由直接抛错。beta 单 NAS 跑 in-process queue 即可。
+      CHRONO_QUEUE_ENABLED: 'true'
     volumes:
       - ./data/os:/app/data
     ports:
