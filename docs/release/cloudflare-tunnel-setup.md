@@ -124,17 +124,59 @@ API 不 bypass 的话 CF 会缓存 GET 返回，登录态会跨用户漏。
 
 ## 第 7 步：回 NAS 跑 setup-nas-beta.sh
 
-把第 3 步复制的 token 作为第三个参数：
+脚本只需要单文件，**不需要把整个 chrono-synth-os 仓 clone 到 NAS**。
+任选下面一条路径：
+
+### 选项 A（推荐 — 直接拉脚本，不 clone 仓库）
 
 ```bash
-cd /volume2/docker/chrono-synth-os
-bash docs/release/scripts/setup-nas-beta.sh \
+# 把脚本放到 NAS 上你方便管理的目录（不必和部署目录同级）
+mkdir -p /volume2/docker/scripts
+cd /volume2/docker/scripts
+
+# 从 GitHub main 直接拉脚本
+curl -fsSLO https://raw.githubusercontent.com/wontlost-ltd/chrono-synth-os/main/docs/release/scripts/setup-nas-beta.sh
+chmod +x setup-nas-beta.sh
+
+# 跑（部署目录 + 公网域名 + CF Tunnel token）
+bash setup-nas-beta.sh \
   /volume2/docker/chrono-beta \
   chrono-synth-beta.wontlost.com \
   '<贴你的 CF Tunnel token>'
 ```
 
-> ⚠️ token 用单引号包，避免 shell 把里面的 `$` 当变量展开。
+> 如果 GitHub 仓库是 private，`curl` 需要 PAT 认证：
+> ```bash
+> curl -fsSL -H "Authorization: token <你的 PAT>" \
+>   -o setup-nas-beta.sh \
+>   https://raw.githubusercontent.com/wontlost-ltd/chrono-synth-os/main/docs/release/scripts/setup-nas-beta.sh
+> ```
+
+### 选项 B（如果你想保留更新能力 — sparse-checkout 仓库）
+
+只 clone 仓库里的 `docs/release/` 目录，避免拉 100MB 源码：
+
+```bash
+cd /volume2/docker
+git clone --filter=blob:none --no-checkout \
+  https://github.com/wontlost-ltd/chrono-synth-os.git
+cd chrono-synth-os
+git sparse-checkout init --cone
+git sparse-checkout set docs/release
+git checkout main
+
+# 跑脚本（路径从仓库根开始）
+bash docs/release/scripts/setup-nas-beta.sh \
+  /volume2/docker/chrono-beta \
+  chrono-synth-beta.wontlost.com \
+  '<贴你的 CF Tunnel token>'
+
+# 未来同步最新脚本 + 文档：
+git pull origin main
+```
+
+> ⚠️ **token 一定要用单引号包**，避免 shell 把里面的 `$` 当变量展开导致 token 损坏。
+> CF Tunnel token 长度通常 200+ 字符，复制时确认没截断。
 
 脚本跑完后：
 
