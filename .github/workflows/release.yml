@@ -145,7 +145,7 @@ jobs:
       # *this* workflow run, signed by Fulcio under the GH identity. Verifiable
       # with `gh attestation verify` or `cosign verify-attestation`.
       - name: Attest build provenance (SLSA)
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ghcr.io/wontlost-ltd/chrono-synth-os
           subject-digest: ${{ steps.build.outputs.digest }}
