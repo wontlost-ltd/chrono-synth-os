@@ -1,54 +1,62 @@
 #!/usr/bin/env bash
 #
-# setup-nas-beta.sh — Bootstrap chrono-synth v2.0.0-beta.1 on a Synology NAS.
+# setup-nas-beta.sh — Bootstrap chrono-synth v2.0.0-beta on a Synology NAS via Cloudflare Tunnel.
 #
 # 配套：docs/release/v2.0.0-beta.1-nas-quickstart.md
-# 目标：把 quick-start 第 2~5 步的全部命令固化成一个 idempotent 脚本。
-#       你审一遍这个文件、bash 执行、贴 log。脚本不上行任何东西，
-#       密钥不离开 NAS，所有 sudo 由你显式触发。
+#       docs/release/cloudflare-tunnel-setup.md（CF dashboard 配置步骤）
+#
+# 架构（公网域名 + CF Tunnel）：
+#   浏览器 → CF edge (TLS) → CF Tunnel → cloudflared (NAS, docker) → web:8080 (nginx)
+#                                                                       │
+#                                                              proxy_pass /api/* 到 backend:3000
+#
+#   NAS 上不开 80/443 公网端口；web/backend 仅 bind 127.0.0.1。
 #
 # 用法：
 #   chmod +x setup-nas-beta.sh
-#   bash setup-nas-beta.sh /volume2/docker/chrono-beta chrono-beta.example.com
-#                          └── 部署目录 ────┘ └── BETA_DOMAIN ─────┘
+#   bash setup-nas-beta.sh /volume2/docker/chrono-beta chrono-synth-beta.wontlost.com <CF_TUNNEL_TOKEN>
+#                          └── 部署目录 ────┘ └── 公网域名 ──────────────┘ └── CF Tunnel token ─┘
 #
-#   如果暂无域名，第二个参数填 NAS 内网 IP（如 192.168.1.10），脚本会自动
-#   切到 Caddy tls internal 模式。
+# CF Tunnel token 来源：Cloudflare Zero Trust → Networks → Tunnels → 你建的 tunnel → "Install connector"
+#                       页面上有一长串 "eyJhIjoi..." 字符串；复制粘贴整个串作为第三个参数。
 #
 # 安全约定：
 #   - 已有 .env / 已有密钥 / 已有 docker-compose.yml：默认 SKIP 不覆盖。
-#   - 强制重新生成：传 --force（注意会清密钥但不动 data/）
-#   - 整段执行 tee 到 ./beta-setup.log；密钥内容不进 log
+#   - 强制重新生成：传 --force（会清密钥 + .env 但不动 data/）
+#   - 整段执行 tee 到 ./beta-setup.log；密钥 / token 内容不进 log
 #
 # 退出码：
-#   0  全部步骤完成（不代表服务起来了；起服务由你 docker compose up）
+#   0  全部步骤完成
 #   1  前置条件缺失（docker、openssl、awk 等）
 #   2  网络问题（GHCR pull 失败）
 #   3  用户输入错误（参数格式 / 路径不可写）
 #   4  生成或写文件失败
 #
 
-set -u  # 未定义变量立刻报错
+set -u
 set -o pipefail
 
 # ──────────────────────────────────────────────────────────────
 # 全局变量 + 参数解析
 # ──────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION="v2.0.0-beta.1"
+SCRIPT_VERSION="v2.0.0-beta.2"
 OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.1"
-WEB_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.1"
+WEB_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.2"
+CLOUDFLARED_IMAGE="cloudflare/cloudflared:latest"
+POSTGRES_IMAGE="postgres:16-alpine"
 GHCR_USER="jet-pang"
 
 DEPLOY_DIR=""
 BETA_DOMAIN=""
+CF_TUNNEL_TOKEN=""
 FORCE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force) FORCE=1; shift ;;
     --help|-h)
-      sed -n '2,30p' "$0"
+      sed -n '2,40p' "$0"
       exit 0
       ;;
     -*)
@@ -58,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     *)
       if [[ -z "$DEPLOY_DIR" ]]; then DEPLOY_DIR="$1"
       elif [[ -z "$BETA_DOMAIN" ]]; then BETA_DOMAIN="$1"
+      elif [[ -z "$CF_TUNNEL_TOKEN" ]]; then CF_TUNNEL_TOKEN="$1"
       else
         echo "多余参数: $1" >&2
         exit 3
@@ -67,16 +76,37 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "$DEPLOY_DIR" || -z "$BETA_DOMAIN" ]]; then
-  echo "用法: bash setup-nas-beta.sh <deploy-dir> <beta-domain>" >&2
-  echo "示例: bash setup-nas-beta.sh /volume2/docker/chrono-beta chrono-beta.example.com" >&2
+if [[ -z "$DEPLOY_DIR" || -z "$BETA_DOMAIN" || -z "$CF_TUNNEL_TOKEN" ]]; then
+  cat >&2 <<EOF
+用法: bash setup-nas-beta.sh <deploy-dir> <beta-domain> <cf-tunnel-token>
+
+示例:
+  bash setup-nas-beta.sh \\
+    /volume2/docker/chrono-beta \\
+    chrono-synth-beta.wontlost.com \\
+    eyJhIjoiYWJjZGVmZ2hpams...（一长串 token）
+
+CF Tunnel token 在 Cloudflare Zero Trust dashboard → Networks → Tunnels
+→ 选你建的 tunnel → "Install connector" 页面里复制。
+
+如果还没建 tunnel，先看 docs/release/cloudflare-tunnel-setup.md。
+EOF
   exit 3
 fi
 
-# 探测 BETA_DOMAIN 是 IP 还是域名（决定 Caddy 用 tls internal 还是真证书）
-USE_INTERNAL_TLS=0
+# 简单校验 token 格式（CF tunnel token 是 base64 编码的 JSON，至少 100 字符）
+if [[ ${#CF_TUNNEL_TOKEN} -lt 100 ]]; then
+  echo "❌ CF_TUNNEL_TOKEN 看起来太短（${#CF_TUNNEL_TOKEN} 字符）。" >&2
+  echo "   正确的 token 应该是一长串 eyJhIjoi... 起头的 base64 字符串，通常 200+ 字符。" >&2
+  exit 3
+fi
+
+# 简单校验 BETA_DOMAIN 是 FQDN（不能是 IP）
 if [[ "$BETA_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  USE_INTERNAL_TLS=1
+  echo "❌ BETA_DOMAIN 不能是 IP 地址。" >&2
+  echo "   CF Tunnel 必须配真域名（如 chrono-synth-beta.wontlost.com）。" >&2
+  echo "   如果你想用 IP / 内网测试，看旧版 quickstart 的 tls internal fallback。" >&2
+  exit 3
 fi
 
 LOG_FILE="${DEPLOY_DIR}/beta-setup.log"
@@ -86,7 +116,6 @@ LOG_FILE="${DEPLOY_DIR}/beta-setup.log"
 # ──────────────────────────────────────────────────────────────
 
 log() {
-  # 普通信息：进 stdout + log
   local msg="$1"
   echo "[$(date '+%H:%M:%S')] $msg" | tee -a "$LOG_FILE"
 }
@@ -100,13 +129,6 @@ die() {
   echo "[$(date '+%H:%M:%S')] ❌ $1" | tee -a "$LOG_FILE" >&2
   echo "中止。详见 $LOG_FILE" >&2
   exit "$code"
-}
-
-# 把命令输出 tee 到 log，同时回显
-run() {
-  log "$ $*"
-  "$@" 2>&1 | tee -a "$LOG_FILE"
-  return "${PIPESTATUS[0]}"
 }
 
 # 检查文件是否存在 + 决定 SKIP / OVERWRITE / FORCE
@@ -124,6 +146,8 @@ should_write() {
   return 0
 }
 
+DOCKER_CMD="docker"
+
 # ──────────────────────────────────────────────────────────────
 # Step 0: 前置环境检查
 # ──────────────────────────────────────────────────────────────
@@ -133,41 +157,35 @@ step0_preflight() {
 
   for cmd in docker openssl awk sed grep; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-      die "缺少命令: $cmd"
+      die "缺少命令: $cmd" 1
     fi
   done
   log "✓ docker / openssl / awk / sed / grep 都在"
 
-  # docker daemon 可访问？
   if ! docker info >/dev/null 2>&1; then
     if sudo -n docker info >/dev/null 2>&1; then
       warn "docker daemon 需要 sudo —— 后续 docker 命令会自动加 sudo"
       DOCKER_CMD="sudo docker"
     else
-      die "docker daemon 不可访问。把当前用户加到 docker 组，或确保 sudo 不需要密码"
+      die "docker daemon 不可访问。把当前用户加到 docker 组，或确保 sudo 不需要密码" 1
     fi
-  else
-    DOCKER_CMD="docker"
   fi
   log "✓ docker daemon 可访问（用 \"$DOCKER_CMD\"）"
 
-  # docker compose v2
   if ! $DOCKER_CMD compose version >/dev/null 2>&1; then
-    die "docker compose v2 不可用。Synology Container Manager 通常自带，老版本 docker-compose 不行"
+    die "docker compose v2 不可用。Synology Container Manager 通常自带" 1
   fi
   log "✓ docker compose v2 可用"
 
-  # GHCR 已登录？
   if ! grep -q '"https://ghcr.io"' "${HOME}/.docker/config.json" 2>/dev/null \
-     && ! sudo test -f /root/.docker/config.json; then
+     && ! sudo test -f /root/.docker/config.json 2>/dev/null; then
     warn "未检测到 ghcr.io 登录态。如果 pull 失败，先跑："
     warn "    echo '<PAT>' | $DOCKER_CMD login ghcr.io -u ${GHCR_USER} --password-stdin"
   else
     log "✓ ghcr.io 登录态已缓存"
   fi
 
-  # 部署目录可写？
-  mkdir -p "$DEPLOY_DIR" || die "无法创建 $DEPLOY_DIR（权限不足？）" 3
+  mkdir -p "$DEPLOY_DIR" || die "无法创建 $DEPLOY_DIR" 3
   if [[ ! -w "$DEPLOY_DIR" ]]; then
     die "$DEPLOY_DIR 不可写" 3
   fi
@@ -176,21 +194,22 @@ step0_preflight() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# Step 1: docker pull image（验证 GHCR 访问 + 缓存到本地）
+# Step 1: docker pull 所有 image
 # ──────────────────────────────────────────────────────────────
 
 step1_pull_images() {
   log "========= Step 1: 拉取 image ========="
-  log "OS:  $OS_IMAGE"
-  log "Web: $WEB_IMAGE"
+  log "OS:          $OS_IMAGE"
+  log "Web:         $WEB_IMAGE"
+  log "cloudflared: $CLOUDFLARED_IMAGE"
+  log "postgres:    $POSTGRES_IMAGE"
 
-  if ! $DOCKER_CMD pull "$OS_IMAGE" 2>&1 | tee -a "$LOG_FILE"; then
-    die "拉取 $OS_IMAGE 失败。GHCR 没登录？PAT 没 read:packages 权限？" 2
-  fi
-  if ! $DOCKER_CMD pull "$WEB_IMAGE" 2>&1 | tee -a "$LOG_FILE"; then
-    die "拉取 $WEB_IMAGE 失败" 2
-  fi
-  log "✓ 两个 image 拉取成功"
+  for img in "$OS_IMAGE" "$WEB_IMAGE" "$CLOUDFLARED_IMAGE" "$POSTGRES_IMAGE"; do
+    if ! $DOCKER_CMD pull "$img" 2>&1 | tee -a "$LOG_FILE"; then
+      die "拉取 $img 失败。GHCR 没登录？PAT 没 read:packages 权限？" 2
+    fi
+  done
+  log "✓ 全部 image 拉取成功"
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -213,9 +232,8 @@ step2_jwt_keys() {
     log "✓ 生成 kid-1 RS256 keypair（priv: 0600, pub: 0644）"
   fi
 
-  # 完整性校验
   if ! openssl rsa -in jwt-keys/kid-1.priv.pem -check -noout >/dev/null 2>&1; then
-    die "kid-1.priv.pem 校验失败（文件被改坏了？传 --force 重生）"
+    die "kid-1.priv.pem 校验失败（用 --force 重生）"
   fi
   log "✓ 密钥完整性 OK"
 }
@@ -228,14 +246,13 @@ step3_env_file() {
   log "========= Step 3: 写 .env ========="
 
   if ! should_write .env; then
-    log "保留你现有的 .env（包含先前生成的密码 + 密钥）"
+    log "保留你现有的 .env"
     return 0
   fi
 
   local pg_pass enc_key priv_inline pub_inline
   pg_pass="$(openssl rand -hex 24)"
   enc_key="$(openssl rand -hex 32)"
-  # PEM 多行 -> 单行 \n 字面量
   priv_inline="$(awk '{printf "%s\\n", $0}' jwt-keys/kid-1.priv.pem)"
   pub_inline="$(awk '{printf "%s\\n", $0}' jwt-keys/kid-1.pub.pem)"
 
@@ -243,32 +260,34 @@ step3_env_file() {
 # 生成时间: $(date -Iseconds)
 # 脚本版本: setup-nas-beta.sh ($SCRIPT_VERSION)
 #
-# ⚠️  此文件含密钥。永远不要 commit / 不要分享。chmod 600 已锁。
+# ⚠️  此文件含密钥 + tunnel token。永远不要 commit / 不要分享。chmod 600 已锁。
 
 BETA_DOMAIN=${BETA_DOMAIN}
 POSTGRES_PASSWORD=${pg_pass}
-
-# SQLCipher / 字段加密的 master key
 CHRONO_FIELD_ENC_MASTER_KEY=${enc_key}
 
-# JWT 单 key 模式：legacy CHRONO_JWT_PRIVATE_KEY/PUBLIC_KEY（PEM 字符串）。
-# v2.0.0-beta.1 之后 rotate API 不再需要重启即可热换 active key。
+# JWT
 CHRONO_JWT_KID=kid-1
 CHRONO_JWT_PRIVATE_KEY=${priv_inline}
 CHRONO_JWT_PUBLIC_KEY=${pub_inline}
+
+# Cloudflare Tunnel
+# 这是 cloudflared 连 CF 边缘需要的凭据；token 失效就重新生成
+CF_TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
 EOF
 
   chmod 600 .env
   log "✓ 写 .env（chmod 600）"
-  log "  POSTGRES_PASSWORD 已生成（24 byte hex，不显示）"
-  log "  CHRONO_FIELD_ENC_MASTER_KEY 已生成（32 byte hex，不显示）"
-  log "  CHRONO_JWT_PRIVATE_KEY 已嵌入 PEM 字符串"
+  log "  POSTGRES_PASSWORD 已生成（24 byte hex）"
+  log "  CHRONO_FIELD_ENC_MASTER_KEY 已生成（32 byte hex）"
+  log "  CHRONO_JWT_PRIVATE_KEY 已嵌入"
+  log "  CF_TUNNEL_TOKEN 已嵌入（长度 ${#CF_TUNNEL_TOKEN}）"
 
-  # 自检
-  grep -q '^BETA_DOMAIN=' .env || die ".env 校验失败：缺 BETA_DOMAIN"
+  grep -q '^BETA_DOMAIN=' .env || die ".env 自检失败：缺 BETA_DOMAIN"
+  grep -q '^CF_TUNNEL_TOKEN=' .env || die ".env 自检失败：缺 CF_TUNNEL_TOKEN"
   [[ $(grep -c '^CHRONO_JWT_PRIVATE_KEY=' .env) -eq 1 ]] \
-    || die ".env 校验失败：CHRONO_JWT_PRIVATE_KEY 行数不对"
-  grep -q 'BEGIN PRIVATE KEY' .env || die ".env 校验失败：私钥字符串没正确嵌入"
+    || die ".env 自检失败：CHRONO_JWT_PRIVATE_KEY 行数不对"
+  grep -q 'BEGIN PRIVATE KEY' .env || die ".env 自检失败：私钥字符串没正确嵌入"
   log "✓ .env 自检通过"
 }
 
@@ -284,11 +303,19 @@ step4_compose() {
   fi
 
   cat > docker-compose.yml <<'YAML'
-# 由 setup-nas-beta.sh 生成。修改前请理解：
+# 由 setup-nas-beta.sh 生成。
+#
+# 架构：CF Tunnel 模式，NAS 不开 80/443 公网端口。
+#
+# 关键约束：
 # - service name 'backend' 不能改：chrono-synth-web 的 nginx.conf 写死
-#   proxy_pass http://backend:3000，改名会导致 /api/* 全部 502
-# - 端口 127.0.0.1:3000 / 127.0.0.1:8080 故意只 bind 本地，对外走 caddy
-# - data/ 卷不要随便 rm —— 那里有 postgres + sqlite + caddy 证书
+#   proxy_pass http://backend:3000，改名 → /api/* 全部 502。
+# - 'web' 是 cloudflared 的 upstream，service name 必须叫 web（或同步改
+#   CF Tunnel 配置里的 service URL）。
+# - backend/web 仅 bind 127.0.0.1（如果要本地直接调用 backend 调试用），
+#   CF Tunnel 走 docker 内部网络到 web:8080，不需要公网端口。
+# - postgres 不暴露任何端口，只在 docker network 内被 backend 访问。
+# - data/ 卷不要随便 rm —— 那里有 postgres + sqlite。
 
 services:
   postgres:
@@ -334,34 +361,35 @@ services:
     volumes:
       - ./data/os:/app/data
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3000:3000"   # 仅本地调试
 
   web:
-    image: ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.1
+    image: ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.2
     restart: unless-stopped
     depends_on:
       - backend
     environment:
+      # web 端 runtime config：API base URL 走同源（CF Tunnel 后浏览器看到
+      # 的就是 https://${BETA_DOMAIN}，浏览器对 /api/* 走相对路径即可）。
       CHRONO_WEB_API_BASE_URL: https://${BETA_DOMAIN}
       CHRONO_WEB_ENVIRONMENT: beta
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8080:8080"   # 仅本地调试
 
-  caddy:
-    image: caddy:2-alpine
+  cloudflared:
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
     depends_on:
-      - backend
       - web
-    ports:
-      - "443:443"
-      - "80:80"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./data/caddy/data:/data
-      - ./data/caddy/config:/config
+    # CF Tunnel 用 token 模式启动：
+    # - 配置（routing rules、public hostname、service URL）从 CF dashboard 拉取
+    # - 本地不需要 config.yml
+    # - 多个实例可以用同一 token 做 HA（CF 自动 round-robin）
+    command: tunnel --no-autoupdate run
     environment:
-      BETA_DOMAIN: ${BETA_DOMAIN}
+      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN}
+      # 让 cloudflared 启动时打印 service URL 检查，方便排错
+      TUNNEL_METRICS: 0.0.0.0:60123
 YAML
 
   chmod 644 docker-compose.yml
@@ -369,77 +397,12 @@ YAML
 }
 
 # ──────────────────────────────────────────────────────────────
-# Step 5: 写 Caddyfile
+# Step 5: docker compose config 静态校验
 # ──────────────────────────────────────────────────────────────
 
-step5_caddyfile() {
-  log "========= Step 5: 写 Caddyfile ========="
+step5_validate() {
+  log "========= Step 5: 校验 compose 配置 ========="
 
-  if ! should_write Caddyfile; then
-    return 0
-  fi
-
-  if [[ "$USE_INTERNAL_TLS" -eq 1 ]]; then
-    log "BETA_DOMAIN=$BETA_DOMAIN 是 IP，启用 tls internal（自签证书）"
-    cat > Caddyfile <<'CADDY'
-:443 {
-    tls internal
-    encode gzip
-
-    handle /api/v1/feature-flags/stream {
-        reverse_proxy backend:3000 {
-            transport http {
-                read_timeout 24h
-            }
-            flush_interval -1
-        }
-    }
-    handle /.well-known/jwks.json { reverse_proxy backend:3000 }
-    handle /api/* { reverse_proxy backend:3000 }
-    handle /healthz { reverse_proxy backend:3000 }
-    handle /readyz { reverse_proxy backend:3000 }
-    handle { reverse_proxy web:8080 }
-}
-
-:80 {
-    redir https://{host}{uri} permanent
-}
-CADDY
-  else
-    log "BETA_DOMAIN=$BETA_DOMAIN 是域名，Caddy 会向 Let's Encrypt 申请真证书"
-    cat > Caddyfile <<CADDY
-{\$BETA_DOMAIN} {
-    encode gzip
-
-    handle /api/v1/feature-flags/stream {
-        reverse_proxy backend:3000 {
-            transport http {
-                read_timeout 24h
-            }
-            flush_interval -1
-        }
-    }
-    handle /.well-known/jwks.json { reverse_proxy backend:3000 }
-    handle /api/* { reverse_proxy backend:3000 }
-    handle /healthz { reverse_proxy backend:3000 }
-    handle /readyz { reverse_proxy backend:3000 }
-    handle { reverse_proxy web:8080 }
-}
-CADDY
-  fi
-
-  chmod 644 Caddyfile
-  log "✓ 写 Caddyfile"
-}
-
-# ──────────────────────────────────────────────────────────────
-# Step 6: docker compose config 静态校验
-# ──────────────────────────────────────────────────────────────
-
-step6_validate() {
-  log "========= Step 6: 校验 compose 配置 ========="
-
-  # 不连 daemon，纯解析校验
   if ! $DOCKER_CMD compose --env-file .env config -q 2>&1 | tee -a "$LOG_FILE"; then
     die "docker compose config 校验失败 —— .env 或 yaml 有语法错"
   fi
@@ -447,18 +410,17 @@ step6_validate() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# Step 7: 打印验收命令
+# Step 6: 打印验收命令
 # ──────────────────────────────────────────────────────────────
 
-step7_report() {
-  log "========= Step 7: 完成。下一步由你执行 ========="
-  # shellcheck disable=SC2012  # ls 仅作为 final report 显示固定文件，无注入风险
+step6_report() {
+  log "========= Step 6: 完成。下一步由你执行 ========="
+  # shellcheck disable=SC2012
   cat <<EOF | tee -a "$LOG_FILE"
 
   目录 ${DEPLOY_DIR} 已就绪。文件清单：
     .env                  $(ls -la .env 2>/dev/null | awk '{print $1, $5}')
     docker-compose.yml    $(ls -la docker-compose.yml 2>/dev/null | awk '{print $1, $5}')
-    Caddyfile             $(ls -la Caddyfile 2>/dev/null | awk '{print $1, $5}')
     jwt-keys/kid-1.*      $(ls jwt-keys/ 2>/dev/null | tr '\n' ' ')
 
   下一步（你手动跑）：
@@ -466,21 +428,31 @@ step7_report() {
   1) 启动栈：
        $DOCKER_CMD compose up -d
 
-  2) 等所有 service healthy（30-60s）：
+  2) 看 4 个 service 启动（postgres + backend + web + cloudflared）：
        $DOCKER_CMD compose ps
+       期望 4 行都是 healthy / running。
 
-  3) 看 backend 日志确认 schema 迁移成功 + KeyRing 装载：
-       $DOCKER_CMD compose logs backend | grep -iE "(migration|KeyRing|listening)"
+  3) 看 cloudflared 日志确认 tunnel 已连上 CF edge：
+       $DOCKER_CMD compose logs cloudflared | grep -iE "(connection|registered|ready)"
+       期望看到 "Registered tunnel connection" × 4（CF 通常开 4 条 HA 连接）。
 
-  4) 跑验收（NAS-01）：
-       curl -sk https://${BETA_DOMAIN}/healthz
-       curl -sk https://${BETA_DOMAIN}/readyz
-       curl -sk https://${BETA_DOMAIN}/.well-known/jwks.json | head -50
+  4) 看 backend 日志确认 schema 迁移 + JWT KeyRing 装载：
+       $DOCKER_CMD compose logs backend | grep -iE "(migration|KeyRing|listening|active kid)"
 
-  5) JWT 热轮换验证（NAS-03，这是 §8 #1 Critical 修复的实战验证）：
+  5) 跑公网验收（从你 Mac / 手机，不是 NAS）：
+       curl -s https://${BETA_DOMAIN}/healthz
+       curl -s https://${BETA_DOMAIN}/readyz
+       curl -s https://${BETA_DOMAIN}/.well-known/jwks.json | head -50
+       浏览器打开 https://${BETA_DOMAIN}/login
+
+  6) JWT 热轮换验证（§8 #1 Critical 修复实战 — NAS-03 用例）：
        详 docs/release/v2.0.0-beta.1-nas-quickstart.md 第 5 步
 
   全程日志: $LOG_FILE
+
+  ⚠️  如果 cloudflared 日志报 "Authorization failed"，说明 CF_TUNNEL_TOKEN
+      错了。回 CF dashboard 重新复制 token，重跑：
+        bash setup-nas-beta.sh --force $DEPLOY_DIR $BETA_DOMAIN <new-token>
 
 EOF
 }
@@ -490,19 +462,17 @@ EOF
 # ──────────────────────────────────────────────────────────────
 
 main() {
-  # 必须先 mkdir 再 tee log
   mkdir -p "$DEPLOY_DIR" || { echo "无法创建 $DEPLOY_DIR" >&2; exit 3; }
-  : > "$LOG_FILE"  # truncate
-  log "setup-nas-beta.sh 启动 — DEPLOY_DIR=$DEPLOY_DIR, BETA_DOMAIN=$BETA_DOMAIN, FORCE=$FORCE"
+  : > "$LOG_FILE"
+  log "setup-nas-beta.sh 启动 — DEPLOY_DIR=$DEPLOY_DIR, BETA_DOMAIN=$BETA_DOMAIN, FORCE=$FORCE, CF_TUNNEL_TOKEN=<隐藏 ${#CF_TUNNEL_TOKEN} 字符>"
 
   step0_preflight
   step1_pull_images
   step2_jwt_keys
   step3_env_file
   step4_compose
-  step5_caddyfile
-  step6_validate
-  step7_report
+  step5_validate
+  step6_report
 
   log "✅ setup-nas-beta.sh 结束（exit 0）"
 }
