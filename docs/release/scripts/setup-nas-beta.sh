@@ -234,9 +234,12 @@ step2_jwt_keys() {
     openssl rsa -in jwt-keys/kid-1.priv.pem -pubout \
       -out jwt-keys/kid-1.pub.pem 2>>"$LOG_FILE" \
       || die "openssl rsa 提取公钥失败"
+    # 私钥严格 0600 留在主机；通过让 backend 容器以 root 跑读这份文件。
+    # 见 compose 中 backend service 的 user: "0" 设置 + entrypoint wrapper。
+    chmod 700 jwt-keys
     chmod 600 jwt-keys/kid-1.priv.pem
     chmod 644 jwt-keys/kid-1.pub.pem
-    log "✓ 生成 kid-1 RS256 keypair（priv: 0600, pub: 0644）"
+    log "✓ 生成 kid-1 RS256 keypair（dir 0700, priv 0600, pub 0644）"
   fi
 
   if ! openssl rsa -in jwt-keys/kid-1.priv.pem -check -noout >/dev/null 2>&1; then
@@ -347,6 +350,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # ⚠️ beta 临时配置：以 root (uid=0) 跑容器进程，让 entrypoint 能读
+    # /run/secrets/jwt-keys/kid-1.priv.pem（host 上是 0600 root:root）。
+    # OS image 内置 USER chrono 是生产强化措施；GA 会通过让 image 支持
+    # CHRONO_JWT_PRIVATE_KEY_FILE env + 内部 setuid 解决，本 beta 先妥协。
+    user: "0"
     environment:
       CHRONO_DB_DRIVER: postgres
       CHRONO_DB_CONNECTION_STRING: postgres://chrono:${POSTGRES_PASSWORD}@postgres:5432/chrono
