@@ -128,7 +128,7 @@ jobs:
         run: node dist/scripts/ga-check.js --out=ga-check.json
       - name: Upload ga:check report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ga-check-report
           path: ga-check.json
