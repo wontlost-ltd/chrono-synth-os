@@ -704,6 +704,17 @@ function fromEnv(): Record<string, unknown> {
     /* PEM-encoded keys; usually set via secrets manager mount, not env. */
     CHRONO_JWT_PRIVATE_KEY:          (v) => { deepSet(env, 'jwt.privateKey', v); },
     CHRONO_JWT_PUBLIC_KEY:           (v) => { deepSet(env, 'jwt.publicKey', v); },
+    /* *_FILE variants — read PEM from a file path instead of inline env.
+     * Container deployments should prefer these so the PEM stays as a
+     * file mount (with strict 0600 host-side perms) and the process can
+     * run as a non-root user. docker compose env handling does not
+     * preserve newlines in multi-line PEM strings (\n becomes literal
+     * "\n"), so inline env requires entrypoint cat-wrapper indirection
+     * which then requires root to read 0600 files. _FILE eliminates
+     * both problems. Failure to read the file is fatal (rather than
+     * silently empty) so misconfigured deployments fail loud. */
+    CHRONO_JWT_PRIVATE_KEY_FILE: (v) => { deepSet(env, 'jwt.privateKey', readFileSync(v, 'utf-8')); },
+    CHRONO_JWT_PUBLIC_KEY_FILE:  (v) => { deepSet(env, 'jwt.publicKey', readFileSync(v, 'utf-8')); },
     CHRONO_JWT_KID:                  (v) => { deepSet(env, 'jwt.kid', v); },
     CHRONO_REDIS_ENABLED:            (v) => { deepSet(env, 'redis.enabled', v === 'true'); },
     CHRONO_REDIS_URL:                (v) => { deepSet(env, 'redis.url', v); },

@@ -69,7 +69,10 @@ COPY packages/sync-engine/tsconfig.json packages/sync-engine/
 RUN npx tsc -p packages/sync-engine/tsconfig.json && npx tsc -p tsconfig.scripts.json
 
 FROM node:26-alpine
-RUN apk upgrade --no-cache && addgroup -S chrono && adduser -S chrono -G chrono
+# Fixed uid 1001 for chrono user — lets bind-mounted secrets on the host
+# match a predictable uid for non-root deployments (e.g. setup-nas-beta.sh
+# chowns jwt-keys/ to uid 1001 so backend can read PEM as non-root).
+RUN apk upgrade --no-cache && addgroup -S -g 1001 chrono && adduser -S -u 1001 -G chrono chrono
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/contracts/package.json packages/contracts/

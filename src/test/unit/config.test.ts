@@ -96,6 +96,37 @@ describe('配置系统', () => {
     assert.equal(config.db.path, ':memory:');
   });
 
+  it('CHRONO_JWT_PRIVATE_KEY_FILE / PUBLIC_KEY_FILE 从文件路径读 PEM', async () => {
+    /* 容器部署推荐 _FILE 形态：私钥仍 0600 强保护，且容器进程可以
+     * 非 root 跑（host 文件给容器内 uid 可读即可）。
+     * Regression test for NAS beta deployment where backend user: "0"
+     * was a Major security workaround. */
+    const { writeFileSync, mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const tmp = mkdtempSync(join(tmpdir(), 'jwt-file-test-'));
+    const privPath = join(tmp, 'kid-1.priv.pem');
+    const pubPath = join(tmp, 'kid-1.pub.pem');
+    /* 假 PEM 内容，仅测试 env 是否读了文件 — schema 不解析 PEM。 */
+    writeFileSync(privPath, '-----BEGIN PRIVATE KEY-----\nFAKE_PRIV_BODY\n-----END PRIVATE KEY-----\n');
+    writeFileSync(pubPath, '-----BEGIN PUBLIC KEY-----\nFAKE_PUB_BODY\n-----END PUBLIC KEY-----\n');
+
+    setEnv('CHRONO_JWT_PRIVATE_KEY_FILE', privPath);
+    setEnv('CHRONO_JWT_PUBLIC_KEY_FILE', pubPath);
+    setEnv('CHRONO_JWT_ENABLED', 'false');  /* avoid asym validation */
+
+    const config = loadConfig();
+    assert.match(config.jwt.privateKey, /BEGIN PRIVATE KEY/);
+    assert.match(config.jwt.privateKey, /FAKE_PRIV_BODY/);
+    assert.match(config.jwt.publicKey, /BEGIN PUBLIC KEY/);
+    assert.match(config.jwt.publicKey, /FAKE_PUB_BODY/);
+    /* 真换行被保留（不是 \n 字面量字符串） */
+    assert.ok(config.jwt.privateKey.includes('\n'), 'PEM 真换行未保留');
+
+    rmSync(tmp, { recursive: true });
+  });
+
   it('默认 key ref 不存在于 keyring 时拒绝加载', () => {
     assert.throws(() => loadConfig({
       server: { publicUrl: 'https://api.example.test' },

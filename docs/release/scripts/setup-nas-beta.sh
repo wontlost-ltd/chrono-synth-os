@@ -40,8 +40,8 @@ set -o pipefail
 # 全局变量 + 参数解析
 # ──────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION="v2.0.0-beta.3"
-OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.3"
+SCRIPT_VERSION="v2.0.0-beta.4"
+OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.4"
 WEB_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.3"
 CLOUDFLARED_IMAGE="cloudflare/cloudflared:latest"
 # docker.io/pgvector/pgvector:pg17 = postgres 17 预装 pgvector C extension。
@@ -234,12 +234,20 @@ step2_jwt_keys() {
     openssl rsa -in jwt-keys/kid-1.priv.pem -pubout \
       -out jwt-keys/kid-1.pub.pem 2>>"$LOG_FILE" \
       || die "openssl rsa 提取公钥失败"
-    # 私钥严格 0600 留在主机；通过让 backend 容器以 root 跑读这份文件。
-    # 见 compose 中 backend service 的 user: "0" 设置 + entrypoint wrapper。
+    # 私钥严格 0600 留在主机 + chown 给 OS image 内置的 chrono uid (1001)。
+    # OS Dockerfile 把 chrono uid 固定为 1001 让 bind-mount 在 host 端
+    # 用同样 uid 时容器进程能直接读，不需要 user: "0" 也不需要 entrypoint
+    # cat wrapper。GA 安全要求（backend 不以 root 跑）的根因修复。
     chmod 700 jwt-keys
     chmod 600 jwt-keys/kid-1.priv.pem
     chmod 644 jwt-keys/kid-1.pub.pem
-    log "✓ 生成 kid-1 RS256 keypair（dir 0700, priv 0600, pub 0644）"
+    if command -v chown >/dev/null 2>&1; then
+      # 用 sudo 是因为 host 上的 chrono 用户大概率没有 uid 1001；
+      # bind mount 用 docker 自己的 uid namespace，宿主用 sudo chown 即可。
+      sudo chown -R 1001:1001 jwt-keys 2>/dev/null \
+        || warn "chown 1001:1001 失败 — 检查 sudo 权限；如果 backend 报 EACCES 读 PEM，手动 sudo chown -R 1001:1001 jwt-keys"
+    fi
+    log "✓ 生成 kid-1 RS256 keypair（dir 0700, priv 0600, pub 0644, owner uid=1001）"
   fi
 
   if ! openssl rsa -in jwt-keys/kid-1.priv.pem -check -noout >/dev/null 2>&1; then
@@ -364,16 +372,14 @@ services:
       retries: 5
 
   backend:
-    image: ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.3
+    image: ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.4
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    # ⚠️ beta 临时配置：以 root (uid=0) 跑容器进程，让 entrypoint 能读
-    # /run/secrets/jwt-keys/kid-1.priv.pem（host 上是 0600 root:root）。
-    # OS image 内置 USER chrono 是生产强化措施；GA 会通过让 image 支持
-    # CHRONO_JWT_PRIVATE_KEY_FILE env + 内部 setuid 解决，本 beta 先妥协。
-    user: "0"
+    # 用 image 内置的非 root user (chrono uid=100+)，不再 user: "0"。
+    # PEM 通过 _FILE env 读，OS image v2.0.0-beta.4+ 在 config loader
+    # 里 readFileSync 同步加载，不需要 entrypoint wrapper / 不需要 root。
     environment:
       CHRONO_DB_DRIVER: postgres
       CHRONO_DB_CONNECTION_STRING: postgres://chrono:${POSTGRES_PASSWORD}@postgres:5432/chrono
@@ -388,9 +394,10 @@ services:
       CHRONO_JWT_ACCESS_TTL_MS: '900000'
       CHRONO_JWT_REFRESH_TTL_MS: '2592000000'
       CHRONO_JWT_KID: ${CHRONO_JWT_KID}
-      # CHRONO_JWT_PRIVATE_KEY / PUBLIC_KEY 不放 env，因为 docker compose
-      # 不会还原 .env 文件里的 \n 字面量。改用 volume 挂载 PEM 文件，并
-      # 在下面 entrypoint 把文件读成真换行 env（cat 保留换行符）。
+      # PEM 走文件挂载 + _FILE env，避免 docker compose .env 多行
+      # 转义陷阱（\n 字面量），同时让容器非 root 跑（GA 安全要求）。
+      CHRONO_JWT_PRIVATE_KEY_FILE: /run/secrets/jwt-keys/kid-1.priv.pem
+      CHRONO_JWT_PUBLIC_KEY_FILE: /run/secrets/jwt-keys/kid-1.pub.pem
       CHRONO_AUTH_ENABLED: 'true'
       # CORS：浏览器禁止 wildcard "*" + credentials=true 同时存在（CORS spec），
       # 后端代码主动拒绝这种配置。CF Tunnel 模式下 web 和 backend 同源
@@ -403,19 +410,7 @@ services:
       CHRONO_QUEUE_ENABLED: 'true'
     volumes:
       - ./data/os:/app/data
-      # PEM 通过文件挂载，避免 docker compose 多行 env 转义陷阱。
-      # 只读、不写、容器内位置约定在 /run/secrets/jwt-keys/。
       - ./jwt-keys:/run/secrets/jwt-keys:ro
-    # Entrypoint shell wrapper：用 cat 把 PEM 文件读成 env（保留真换行
-    # 符），然后 exec 原镜像的 CMD（node dist/main.js）。-e 让任一步骤
-    # 失败时容器立刻退出而不是带着空 env 继续启动崩溃。
-    entrypoint:
-      - /bin/sh
-      - -ec
-      - |
-        export CHRONO_JWT_PRIVATE_KEY="$$(cat /run/secrets/jwt-keys/kid-1.priv.pem)"
-        export CHRONO_JWT_PUBLIC_KEY="$$(cat /run/secrets/jwt-keys/kid-1.pub.pem)"
-        exec node dist/main.js
     ports:
       - "127.0.0.1:3000:3000"   # 仅本地调试
 
