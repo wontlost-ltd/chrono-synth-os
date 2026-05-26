@@ -168,13 +168,19 @@ export function setRefreshCookie(
     `${REFRESH_COOKIE_NAME}=${token}; HttpOnly; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=${maxAgeSec}${policy.secure ? '; Secure' : ''}`,
   );
   /* Issue paired csrf_token cookie — NOT HttpOnly so SPA can read it.
+   * Path=/ (NOT /api/v1/auth) because document.cookie in browsers only
+   * surfaces cookies whose Path is a prefix of the current document URL;
+   * with the previous Path=/api/v1/auth, the SPA running at / could
+   * never read csrf_token → getCsrfToken() returned null → /auth/refresh
+   * sent no X-CSRF-Token → 403 → silent forced re-login.
+   *
    * Same SameSite/Secure profile so a cross-site proxy can't strip
    * one without the other; matching Max-Age keeps the two cookies in
    * lockstep so the guard never refuses on csrf_token expiry while
    * refresh is still valid. */
   appendCookie(
     reply,
-    `${CSRF_COOKIE_NAME}=${generateCsrfToken()}; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=${maxAgeSec}${policy.secure ? '; Secure' : ''}`,
+    `${CSRF_COOKIE_NAME}=${generateCsrfToken()}; Path=/; SameSite=${policy.sameSite}; Max-Age=${maxAgeSec}${policy.secure ? '; Secure' : ''}`,
   );
 }
 
@@ -184,9 +190,11 @@ function clearRefreshCookie(request: RefreshCookieRequest, reply: RefreshCookieR
     reply,
     `${REFRESH_COOKIE_NAME}=; HttpOnly; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=0${policy.secure ? '; Secure' : ''}`,
   );
+  /* Path must match the one used in setRefreshCookie (Path=/) so the
+   * browser actually clears the cookie. */
   appendCookie(
     reply,
-    `${CSRF_COOKIE_NAME}=; Path=/api/v1/auth; SameSite=${policy.sameSite}; Max-Age=0${policy.secure ? '; Secure' : ''}`,
+    `${CSRF_COOKIE_NAME}=; Path=/; SameSite=${policy.sameSite}; Max-Age=0${policy.secure ? '; Secure' : ''}`,
   );
 }
 
