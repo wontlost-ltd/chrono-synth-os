@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 64" role="img" aria-label="ChronoSynth">
+  <title>ChronoSynth</title>
+  <defs>
+    <linearGradient id="hourglass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8 8)">
+    <path d="M0 0h32v6L18 24l14 18v6H0v-6l14-18L0 6z" fill="url(#hourglass)"/>
+    <circle cx="16" cy="14" r="1.8" fill="#FBBF24"/>
+    <circle cx="16" cy="34" r="1.8" fill="#FBBF24"/>
+  </g>
+  <text x="52" y="42" font-family="Inter, system-ui, -apple-system, sans-serif" font-weight="700" font-size="28" fill="#F1F5F9" letter-spacing="-0.5">Chrono</text>
+  <text x="166" y="42" font-family="Inter, system-ui, -apple-system, sans-serif" font-weight="300" font-size="28" fill="#F1F5F9" letter-spacing="-0.5">Synth</text>
+</svg>

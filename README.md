@@ -1,3 +1,29 @@
+<p align="center">
+  <img src="assets/brand/wordmark.svg#gh-light-mode-only" alt="ChronoSynth" width="320" />
+  <img src="assets/brand/wordmark-dark.svg#gh-dark-mode-only" alt="ChronoSynth" width="320" />
+</p>
+
+<p align="center">
+  <b>Governance for production AI agents.</b><br>
+  Per-tool permissions · Immutable audit · Drift detection
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/adr/0046-dual-product-companion.md">ADR-0046</a> ·
+  <a href="https://chronosynth.com">Website</a>
+</p>
+
+<!-- OG / social preview metadata (GitHub uses social preview image from repo settings;
+     these tags help when README HTML is rendered by other crawlers) -->
+<meta property="og:title" content="ChronoSynth — Governance for production AI agents">
+<meta property="og:description" content="Per-tool permissions, immutable audit, drift detection. Built for AI teams that need to ship without breaking compliance.">
+<meta property="og:image" content="https://raw.githubusercontent.com/wontlost-ltd/chrono-synth-os/main/assets/brand/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+
+---
+
 # ChronoSynth OS
 
 **Backend + portable kernel that powers two products from one codebase.**

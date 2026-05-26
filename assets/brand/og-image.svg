@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="ChronoSynth — Governance for production AI agents">
+  <title>ChronoSynth — Governance for production AI agents</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#A78BFA"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.15" r="0.6">
+      <stop offset="0" stop-color="#7C3AED" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#7C3AED" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <g transform="translate(80 120)">
+    <g transform="translate(0 0)">
+      <path d="M0 0h120v22L70 80l50 60v22H0v-22l50-60L0 22z" fill="url(#hg)"/>
+      <circle cx="60" cy="48" r="6" fill="#FBBF24"/>
+      <circle cx="60" cy="112" r="6" fill="#FBBF24"/>
+    </g>
+    <text x="160" y="100" font-family="Inter, system-ui, sans-serif" font-weight="700" font-size="84" fill="#F1F5F9" letter-spacing="-2">Chrono</text>
+    <text x="510" y="100" font-family="Inter, system-ui, sans-serif" font-weight="300" font-size="84" fill="#F1F5F9" letter-spacing="-2">Synth</text>
+  </g>
+
+  <text x="80" y="380" font-family="Inter, system-ui, sans-serif" font-weight="600" font-size="48" fill="#E2E8F0" letter-spacing="-1">Governance for production AI agents.</text>
+
+  <g transform="translate(80 460)" font-family="Inter, system-ui, sans-serif" font-size="24" fill="#94A3B8">
+    <g transform="translate(0 0)">
+      <circle cx="8" cy="-8" r="6" fill="#60A5FA"/>
+      <text x="24" y="0">Per-tool permissions</text>
+    </g>
+    <g transform="translate(330 0)">
+      <circle cx="8" cy="-8" r="6" fill="#A78BFA"/>
+      <text x="24" y="0">Immutable audit</text>
+    </g>
+    <g transform="translate(620 0)">
+      <circle cx="8" cy="-8" r="6" fill="#FBBF24"/>
+      <text x="24" y="0">Drift detection</text>
+    </g>
+  </g>
+
+  <text x="80" y="560" font-family="Inter, system-ui, sans-serif" font-size="20" fill="#64748B" letter-spacing="0.5">chronosynth.com</text>
+</svg>

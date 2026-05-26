@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ChronoSynth">
+  <title>ChronoSynth</title>
+  <defs>
+    <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E3A8A"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <g transform="translate(144 96)">
+    <path d="M0 0h224v40L130 160l94 120v40H0v-40l94-120L0 40z" fill="url(#hg)"/>
+    <circle cx="112" cy="100" r="14" fill="#FBBF24"/>
+    <circle cx="112" cy="220" r="14" fill="#FBBF24"/>
+  </g>
+</svg>
