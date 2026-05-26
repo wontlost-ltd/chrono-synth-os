@@ -60,14 +60,32 @@
 - [ ] 用旧 token（kid-OLD）继续访问，应仍能通过（grace 状态）
 - [ ] 把 KID_OLD 标 retired，旧 token 应被拒绝 401
 
-#### NAS-04 KMS 锚定失败 evidence（Major 修复验证）
-- [ ] 临时把 KMS endpoint 改成不可达地址（hosts 文件改 DNS）
-- [ ] 等 60s（一个 anchor interval）
-- [ ] 查询 `SELECT COUNT(*) FROM audit_chain_anchor_failures WHERE recovered_at IS NULL`，应 ≥ 1
-- [ ] 查询 error_code 应是 `network` 或 `timeout`
-- [ ] 恢复 KMS endpoint，再等 60s
-- [ ] 查 `WHERE recovered_at IS NULL` 应回到 0
-- [ ] 查同一行 `recovered_at IS NOT NULL`
+#### NAS-04 KMS 锚定失败 evidence（Major 修复验证）— **deferred**
+
+**状态**：deferred 到接入真实 KMS 的 staging 环境
+
+**为什么 NAS 内测不验**：
+- `audit-chain-anchor-service` 只在 `main.ts` 收到 `auditChainAnchors.kmsProvider`
+  时启动。默认部署不带 KMS provider → anchor service 完全不运行 → 无失败行可写
+- NAS 单 NAS beta 部署没接真 KMS（AWS KMS / GCP KMS / 自建 vault），加这一条
+  会让 NAS 部署链路明显偏离 GA 生产形态
+- §8 #1 Major 修复（commit `f799ac1`）已在单元 + 集成测试中验证：
+  - `audit-chain-anchor-service.test.ts` 12/12 pass
+  - 含 "persists evidence row when KMS sign throws" + "marks recovered once
+    later anchor succeeds" 两条核心路径
+- 真实生产触发场景是 production KMS 间歇故障，不是 day-1 部署能复现
+
+**真要验时怎么做**（OCI 多 pod / 后续 staging）：
+1. 部署一个真实 KMS（推荐 OCI Vault / AWS KMS / HashiCorp Vault dev mode）
+2. 在 `main.ts` 启动时把 `kmsProvider` 注入 `ChronoSynthOS` config
+3. 开启 feature flag：`audit.kms-sign-chain-tail` = true
+4. 触发一些 audit 写入（任何 API 请求都会写）
+5. 模拟 KMS 不可达（防火墙规则 / 服务停掉）→ 等 anchor interval 过完
+6. 查 `audit_chain_anchor_failures` 表
+7. 恢复 KMS → 再等 → 查 `recovered_at`
+
+**回归保护**：见 src/test/integration/audit-kms-anchor.test.ts 第 12 个 case。
+任何 anchor service 改动如果破坏 evidence 路径都会被 CI test 拦截。
 
 #### NAS-05 长跑稳定性（24h）
 - [ ] 启动后 24 小时观察：
