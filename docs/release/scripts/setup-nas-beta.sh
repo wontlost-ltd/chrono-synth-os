@@ -40,8 +40,8 @@ set -o pipefail
 # 全局变量 + 参数解析
 # ──────────────────────────────────────────────────────────────
 
-SCRIPT_VERSION="v2.0.0-beta.6"
-OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.5"
+SCRIPT_VERSION="v2.0.0-beta.7"
+OS_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-beta.7"
 WEB_IMAGE="ghcr.io/wontlost-ltd/chrono-synth-web:2.0.0-beta.6"
 CLOUDFLARED_IMAGE="cloudflare/cloudflared:latest"
 # docker.io/pgvector/pgvector:pg17 = postgres 17 预装 pgvector C extension。
