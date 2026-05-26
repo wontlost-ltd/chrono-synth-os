@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "ChronoSynth",
-    "slug": "chrono-synth",
-    "version": "1.0.0",
+    "name": "ChronoCompanion",
+    "slug": "chrono-companion",
+    "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "scheme": "chronosynth",
+    "scheme": "chronocompanion",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -15,14 +15,14 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.chronosynth.app"
+      "bundleIdentifier": "com.wontlost.companion"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1E3A8A"
       },
-      "package": "com.chronosynth.app"
+      "package": "com.wontlost.companion"
     },
     "plugins": ["expo-router", "expo-secure-store"]
   }

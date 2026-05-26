@@ -1,0 +1,9 @@
+{
+  "name": "@chrono/companion-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ChronoCompanion web host — placeholder (see docs/plan/companion-roadmap.md Phase 2.2)",
+  "scripts": {
+    "noop": "echo 'companion-web is a Phase 0 placeholder; no scripts yet'"
+  }
+}
