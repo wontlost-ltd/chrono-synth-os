@@ -227,6 +227,25 @@ step2_jwt_keys() {
   log "========= Step 2: JWT 密钥 ========="
   mkdir -p jwt-keys
 
+  # 校验私钥时如果 owner 不是当前 user，自动用 sudo 跑 openssl —— PEM
+  # 可能是上次部署以 root 写出的 0600 root:root，当前 user 没读权限。
+  # 用 stat -c %u 检查所有者；任一系统命令缺失就 fallback 到普通 openssl。
+  validate_priv_pem() {
+    local owner_uid current_uid
+    current_uid="$(id -u)"
+    if command -v stat >/dev/null 2>&1; then
+      owner_uid="$(stat -c '%u' jwt-keys/kid-1.priv.pem 2>/dev/null || echo "$current_uid")"
+    else
+      owner_uid="$current_uid"
+    fi
+    if [[ "$owner_uid" != "$current_uid" && "$current_uid" -ne 0 ]]; then
+      # owner 是别人（很可能 root 或 1001），用 sudo 读
+      sudo openssl rsa -in jwt-keys/kid-1.priv.pem -check -noout >/dev/null 2>&1
+    else
+      openssl rsa -in jwt-keys/kid-1.priv.pem -check -noout >/dev/null 2>&1
+    fi
+  }
+
   if should_write jwt-keys/kid-1.priv.pem; then
     openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
       -out jwt-keys/kid-1.priv.pem 2>>"$LOG_FILE" \
@@ -234,23 +253,22 @@ step2_jwt_keys() {
     openssl rsa -in jwt-keys/kid-1.priv.pem -pubout \
       -out jwt-keys/kid-1.pub.pem 2>>"$LOG_FILE" \
       || die "openssl rsa 提取公钥失败"
-    # 私钥严格 0600 留在主机 + chown 给 OS image 内置的 chrono uid (1001)。
-    # OS Dockerfile 把 chrono uid 固定为 1001 让 bind-mount 在 host 端
-    # 用同样 uid 时容器进程能直接读，不需要 user: "0" 也不需要 entrypoint
-    # cat wrapper。GA 安全要求（backend 不以 root 跑）的根因修复。
     chmod 700 jwt-keys
     chmod 600 jwt-keys/kid-1.priv.pem
     chmod 644 jwt-keys/kid-1.pub.pem
-    if command -v chown >/dev/null 2>&1; then
-      # 用 sudo 是因为 host 上的 chrono 用户大概率没有 uid 1001；
-      # bind mount 用 docker 自己的 uid namespace，宿主用 sudo chown 即可。
-      sudo chown -R 1001:1001 jwt-keys 2>/dev/null \
-        || warn "chown 1001:1001 失败 — 检查 sudo 权限；如果 backend 报 EACCES 读 PEM，手动 sudo chown -R 1001:1001 jwt-keys"
-    fi
-    log "✓ 生成 kid-1 RS256 keypair（dir 0700, priv 0600, pub 0644, owner uid=1001）"
+    log "✓ 生成 kid-1 RS256 keypair（dir 0700, priv 0600, pub 0644）"
   fi
 
-  if ! openssl rsa -in jwt-keys/kid-1.priv.pem -check -noout >/dev/null 2>&1; then
+  # 私钥 owner 必须是 1001（OS image 内的 chrono uid），让 bind mount 进
+  # 容器后非 root 进程能读。每次跑都强制 chown（idempotent），即便密钥已
+  # 存在 — 防止之前部署以 root 写出的 PEM 留下 root:root 拒读。
+  if command -v chown >/dev/null 2>&1; then
+    sudo chown -R 1001:1001 jwt-keys 2>/dev/null \
+      || warn "chown 1001:1001 失败 — 检查 sudo 权限；如果 backend 报 EACCES 读 PEM，手动 sudo chown -R 1001:1001 jwt-keys"
+  fi
+  log "✓ jwt-keys/ owner=1001:1001（OS image chrono uid，容器非 root 读 PEM 必需）"
+
+  if ! validate_priv_pem; then
     die "kid-1.priv.pem 校验失败（用 --force 重生）"
   fi
   log "✓ 密钥完整性 OK"
