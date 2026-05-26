@@ -906,6 +906,13 @@ describe('API Key 认证', () => {
 
     const readyRes = await app.inject({ method: 'GET', url: '/readyz' });
     assert.equal(readyRes.statusCode, 200);
+
+    /* JWKS 端点（RFC 8615 well-known）。两个中间件 — jwt-auth 与 auth —
+     * 都必须豁免它，否则外部 JWT 验签消费者拿不到公钥。Regression test
+     * for NAS deployment where auth.ts had a different PUBLIC_PATHS
+     * list than jwt-auth.ts and JWKS returned 401 AUTH_MISSING_KEY. */
+    const jwksRes = await app.inject({ method: 'GET', url: '/.well-known/jwks.json' });
+    assert.notEqual(jwksRes.statusCode, 401, 'JWKS 不应被 API Key 拦截');
   });
 
   it('/metrics 端点需要 API Key', async () => {

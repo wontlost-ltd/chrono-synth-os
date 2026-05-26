@@ -15,8 +15,16 @@ import type { IDatabase } from '../../storage/database.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
-/** 不需要认证的路径前缀（仅健康检查端点豁免，指标端点需认证） */
-const PUBLIC_PATHS = new Set(['/healthz', '/readyz', '/api/v1/mcp/capabilities']);
+/** 不需要认证的路径前缀（仅健康检查 + JWKS 端点豁免，指标端点需认证）。
+ *  ⚠️ 必须与 jwt-auth.ts 的 PUBLIC_PATHS 保持一致 — 一个豁免另一个不豁免
+ *  会导致中间件链上一个放行、下一个拦截，公共端点 (例如 JWKS) 会被
+ *  API Key 拦截器以 AUTH_MISSING_KEY 拒掉。 */
+const PUBLIC_PATHS = new Set([
+  '/healthz',
+  '/readyz',
+  '/api/v1/mcp/capabilities',
+  '/.well-known/jwks.json',
+]);
 
 function isPublicPath(url: string): boolean {
   for (const p of PUBLIC_PATHS) {
