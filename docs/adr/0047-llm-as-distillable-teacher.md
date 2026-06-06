@@ -151,6 +151,38 @@ cognitive_model_patch | response_template | narrative_patch` — carrying
   model. We bound the claim to "reason/decide/converse-within-known-scope
   offline," not "match GPT offline."
 
+## Implementation status (2026-06-06)
+
+D1/D2 phase-1 + the distillation pipeline (D3) are implemented and pass
+`test:golden`:
+
+- **Autonomous mode + offline responder** (D1/D2): `DecisionEngine`
+  `mode: autonomous|growth` (LLMProvider optional); `OfflineConversationResponder`
+  replaces the static fallback, reusing `ValueGuard.literalMatch` + output
+  self-check.
+- **Distillation pipeline** (D3): `distilled_artifacts` table (DSL v080 SQLite
+  / v082 Postgres); `DistilledArtifactStore` (tenant+persona-scoped, optimistic
+  concurrency); `ArtifactCompiler` (value_shift → value-store, memory_edge →
+  memory-graph, narrative_patch → narrative, response_template → procedural
+  memory); `DistillationService` (ingest → validate → `canAutoCompile` gate →
+  snapshot → compile → state-machine transition → audit), wired into
+  `ChronoSynthOS.distillation`; governance API
+  `/api/v1/persona-core/:id/distillation/{candidates,artifacts,:id/approve,:id/reject}`
+  (JWT + owner + object-level authz + rate-limited).
+
+**Deferred to follow-up PRs** (intentional, not gaps):
+
+- `UpdateGate` extension to L2/L3 — distillation currently gates via its own
+  state machine + `canAutoCompile`; merging with `UpdateGate` is future.
+- Per-persona compile mutex — `compileApproved` rolls back via the global
+  `restoreFromSnapshot`; acceptable under single-process synchronous core
+  writes, but a per-tenant/persona write lock is required before multi-instance
+  concurrent core writers.
+- `response_template` dedicated template store — currently lands as a
+  `procedural` memory (subject to decay/eviction); a versioned template table
+  with intent index is future.
+- Local Ollama layer-2 adapter (D2 layer 2); Companion dual-mode UX.
+
 ## Related
 
 - [0001 — Kernel has zero runtime dependencies](0001-kernel-zero-runtime-deps.md)

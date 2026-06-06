@@ -174,15 +174,19 @@ export class DistillationService {
       return undefined;
     }
 
+    /* 编译已应用到核心。推进工件到 compiled——这一步无论是返回 false（并发/未命中）
+     * 还是抛异常（DB 锁/连接错误），都必须补偿：回滚核心写 + 标记终态，
+     * 否则会留下"核心已变更 + 工件悬挂 approved"的不一致。 */
     const compiledAt = this.deps.clock.now();
-    if (!this.deps.store.setStatus(personaId, artifact.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt)) {
-      /* 状态被并发改动：回滚已应用的核心写，并把工件推进到终态 rejected，
-       * 不留 approved 悬挂（否则可被重复编译）。approved→rejected 是合法转移。
-       * 注意：此 setStatus 仍带 expectedStatus='approved'——若是因并发已离开 approved
-       * 则此次更新不命中（rowsAffected=0），不会误改他方推进后的状态。 */
-      this.deps.snapshotGuard.rollback(snapshotId);
-      this.deps.store.setStatus(personaId, artifact.id, 'approved', 'rejected', 'compiled but status advance failed; rolled back', null);
-      this.deps.logger.warn(LAYER, `编译后状态推进失败，已回滚并标记 rejected: ${artifact.id}`);
+    let advanced = false;
+    try {
+      advanced = this.deps.store.setStatus(personaId, artifact.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt);
+    } catch (err) {
+      this.compensateAfterCompile(personaId, artifact.id, snapshotId, `status advance threw: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+    if (!advanced) {
+      this.compensateAfterCompile(personaId, artifact.id, snapshotId, 'status advance not applied (concurrent change)');
       return undefined;
     }
 
@@ -192,6 +196,26 @@ export class DistillationService {
     });
     this.deps.logger.info(LAYER, `工件已编译进内核: ${artifact.id} [${artifact.kind}] — ${outcome.applied}`);
     return compiled;
+  }
+
+  /**
+   * 编译已应用但工件状态未能推进到 compiled 时的补偿：回滚核心写 + best-effort
+   * 标记 rejected（approved→rejected 合法）。两步都记录成败，不静默失败。
+   */
+  private compensateAfterCompile(personaId: string, artifactId: string, snapshotId: string, why: string): void {
+    let restored = false;
+    try {
+      restored = this.deps.snapshotGuard.rollback(snapshotId);
+    } catch (err) {
+      this.deps.logger.error(LAYER, `补偿回滚抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+    let marked = false;
+    try {
+      marked = this.deps.store.setStatus(personaId, artifactId, 'approved', 'rejected', `rolled back: ${why}`, null);
+    } catch (err) {
+      this.deps.logger.error(LAYER, `补偿标记 rejected 抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+    this.deps.logger.warn(LAYER, `编译后补偿(${why}): rollback=${restored ? 'ok' : 'FAILED'} reject=${marked ? 'ok' : 'FAILED'} — ${artifactId}`);
   }
 }
 
