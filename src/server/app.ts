@@ -81,6 +81,7 @@ import { MemorySearchTool } from '../agent/tools/memory-search-tool.js';
 import { MemoryAddTool } from '../agent/tools/memory-add-tool.js';
 import { KnowledgeQueryTool } from '../agent/tools/knowledge-query-tool.js';
 import { DecisionRecordTool } from '../agent/tools/decision-record-tool.js';
+import { MarketplaceTool } from '../agent/tools/marketplace-tool.js';
 import { WebSearchTool } from '../agent/tools/web-search-tool.js';
 import { CalendarTool } from '../agent/tools/calendar-tool.js';
 import { EmailTool } from '../agent/tools/email-tool.js';
@@ -502,6 +503,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   toolRegistry.register(new MemoryAddTool(bulkImportPersonaCoreService));
   toolRegistry.register(new KnowledgeQueryTool(conversationService.getRetriever()));
   toolRegistry.register(new DecisionRecordTool(bulkImportPersonaCoreService));
+  /* ADR-0048：人才市场经济行为工具（apply/submit 走 pipeline 治理） */
+  toolRegistry.register(new MarketplaceTool(bulkImportPersonaCoreService));
   /* P3-C 外部工具适配器 */
   toolRegistry.register(new WebSearchTool({
     provider: config.agent.webSearch.provider,
