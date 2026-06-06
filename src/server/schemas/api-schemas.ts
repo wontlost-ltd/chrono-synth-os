@@ -909,3 +909,8 @@ export const JwtDenyJtiBodySchema = z.object({
   jti: z.string().min(1),
   expiresAtMs: z.number().int().positive(),
 });
+
+/* ADR-0047 蒸馏治理：拒绝工件需带原因 */
+export const DistillationRejectBodySchema = z.object({
+  reason: z.string().min(1).max(500),
+});

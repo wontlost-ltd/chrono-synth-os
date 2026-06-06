@@ -81,6 +81,8 @@ export interface SystemEventMap {
   'system:snapshot-restored': TenantTagged<{ snapshotId: string }>;
   'system:evolution-completed': TenantTagged<{ mergedVersionIds: readonly string[]; diffReport: EvolutionDiffReport }>;
   'system:patterns-extracted': TenantTagged<{ count: number }>;
+  /** ADR-0047：蒸馏工件编译进核心状态 */
+  'system:artifact-compiled': TenantTagged<{ artifactId: string; personaId: string; kind: string }>;
   'system:started': TenantTagged<{ timestamp: number }>;
   'system:stopping': TenantTagged<{ timestamp: number }>;
 }

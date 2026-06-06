@@ -100,6 +100,7 @@ import { PersonaTemplateService } from '../enterprise/persona-template-service.j
 import { ConversationService } from '../conversation/conversation-service.js';
 import { ConversationRetentionWorker } from '../conversation/conversation-retention-worker.js';
 import { registerConversationRoutes } from './routes/conversation.js';
+import { registerDistillationRoutes } from './routes/distillation.js';
 import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
@@ -604,6 +605,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     personaCore: bulkImportPersonaCoreService,
     subscriptionGate,
     db,
+  });
+  /* ADR-0047：蒸馏治理端点（审查/审批/拒绝自我修改工件） */
+  registerDistillationRoutes(app, {
+    distillation: deps.os.distillation,
+    personaCore: bulkImportPersonaCoreService,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
