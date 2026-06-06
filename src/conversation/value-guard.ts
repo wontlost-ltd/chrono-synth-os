@@ -32,10 +32,12 @@ export const PRE_BLOCK_RESPONSE = '该话题超出我的服务范围，已为您
 export const POST_REDACT_RESPONSE = '抱歉，这部分内容需要人工同事处理，我无法提供详细回答。';
 export const NEEDS_CONFIRMATION_RESPONSE = '该操作需要您确认后才能执行。请确认后重试。';
 
-/* 货币与金额识别正则：CNY/USD/EUR 符号 + 阿拉伯数字（含小数、千位分隔、k/万/m/亿） */
-const AMOUNT_PATTERN = /(?:[¥￥$€£]\s*[\d,.]+(?:\s*(?:k|m|w|万|亿))?|[\d,.]+\s*(?:元|美元|港币|欧元|英镑|usd|cny|eur|gbp|hkd|rmb))/giu;
+/* 货币与金额识别正则：CNY/USD/EUR 符号 + 阿拉伯数字（含小数、千位分隔、k/万/m/亿）
+ * 注意：不加 g 标志——这两个正则仅用于 containsAmount() 的 .test()，全局正则的
+ * lastIndex 状态会导致同一文本重复 .test() 交替命中/漏判（安全判定不稳定）。 */
+const AMOUNT_PATTERN = /(?:[¥￥$€£]\s*[\d,.]+(?:\s*(?:k|m|w|万|亿))?|[\d,.]+\s*(?:元|美元|港币|欧元|英镑|usd|cny|eur|gbp|hkd|rmb))/iu;
 /* 百分比 */
-const PERCENT_PATTERN = /[\d]+\s*(?:%|％|百分之[\d]+|个点)/g;
+const PERCENT_PATTERN = /[\d]+\s*(?:%|％|百分之[\d]+|个点)/;
 /* 数值范围限定词 */
 const RANGE_KEYWORDS = ['超过', '超出', '高于', '低于', '不少于', '至少', 'more than', 'over', 'above', 'beyond', 'exceed', 'greater than'];
 

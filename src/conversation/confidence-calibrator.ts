@@ -88,7 +88,12 @@ export function calibrateConfidence(input: CalibrationInput): CalibratedConfiden
   if (input.llmFallback) {
     score -= 0.4;
     intervalWidth = 0.25;
-    factors.push({ name: 'llm_fallback', weight: 0.4, contribution: -0.4, detail: 'LLM unreachable, template response' });
+    /* ADR-0047：区分自主离线回应（人格落地）与无能力时的静态降级 */
+    if (input.guardAction === 'autonomous_response') {
+      factors.push({ name: 'autonomous_response', weight: 0.4, contribution: -0.4, detail: 'offline deterministic response (no LLM)' });
+    } else {
+      factors.push({ name: 'llm_fallback', weight: 0.4, contribution: -0.4, detail: 'LLM unreachable, template response' });
+    }
   }
   if (input.quotaExceeded) {
     score -= 0.4;

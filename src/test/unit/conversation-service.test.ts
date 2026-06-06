@@ -196,16 +196,103 @@ describe('ConversationService (生产级)', () => {
     assert.doesNotMatch(resp.response, /竞品产品价格/);
   });
 
-  it('LLM 调用失败 → 降级响应（不抛错），guardAction=llm_fallback', async () => {
+  it('LLM 调用失败 → 自主模式离线回应（ADR-0047），guardAction=autonomous_response', async () => {
     llm.throwError = new Error('429 rate limit');
     const resp = await service.submit({
       tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
       sessionId: 's', messageId: 'm-fall', externalUserId: 'eu',
       content: '请问',
     });
-    assert.equal(resp.guardAction, 'llm_fallback');
-    assert.equal(resp.response, FALLBACK_RESPONSE);
-    assert.ok(resp.confidence.score < 0.5, 'LLM 失败时 confidence 应较低');
+    /* ADR-0047：不再返回静态道歉，而是由确定性离线回应器据人格生成回应 */
+    assert.equal(resp.guardAction, 'autonomous_response');
+    assert.notEqual(resp.response, FALLBACK_RESPONSE, '应为人格落地回应而非静态道歉');
+    assert.ok(resp.response.includes('我是客服'), '离线回应应落地到 persona 叙事');
+    assert.ok(resp.confidence.score < 0.5, '离线回应 confidence 应较低');
+  });
+
+  it('ADR-0047 D2：无 LLM 构造对话服务，直接离线回应（不调 LLM）', async () => {
+    const db = os.getDatabase();
+    /* 省略 llm：构造级 no-LLM runtime */
+    const offlineService = new ConversationService({
+      tx: db,
+      personaCoreService,
+      logger: new SilentLogger(),
+    });
+    const resp = await offlineService.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-no-llm', messageId: 'm-no-llm', externalUserId: 'eu',
+      content: '你好',
+    });
+    assert.equal(resp.guardAction, 'autonomous_response', '无 LLM 时应直接自主回应');
+    assert.notEqual(resp.response, FALLBACK_RESPONSE);
+    assert.ok(resp.response.includes('我是客服'), '应落地到 persona 叙事');
+    /* 关键：StubLLM 从未被调用（本服务根本没有 llm） */
+    assert.equal(llm.chatCallCount, 0, '不应触碰任何 LLM');
+  });
+
+  it('post-confirmation LLM 成功输出泄露 never_discuss → postCheck 重写（安全必修）', async () => {
+    /* 先拿确认 token */
+    const first = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-conf-leak', messageId: 'm1', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+    });
+    const token = first.confirmationToken!;
+    /* 确认后 LLM 成功，但输出泄露 never_discuss 主题"竞品产品价格" */
+    llm.response = '顺便告诉你，竞品产品价格比我们高 30%。';
+    const second = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-conf-leak', messageId: 'm2', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+      confirmationToken: token,
+    });
+    assert.equal(second.guardAction, 'post_redact', '确认后路径也必须跑 postCheck');
+    assert.doesNotMatch(second.response, /竞品产品价格/, '泄露内容必须被重写');
+    assert.ok(second.guardReason && second.guardReason !== 'post-confirmation execution', 'post_redact 应更新 guardReason 为泄露原因');
+  });
+
+  it('确认后路径 LLM 失败 → 同样走 autonomous_response（ADR-0047）', async () => {
+    /* 先触发 require_confirmation 拿 token */
+    const first = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-conf-fail', messageId: 'm1', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+    });
+    const token = first.confirmationToken!;
+    /* 确认重发，但此时 LLM 故障 */
+    llm.throwError = new Error('503 unavailable');
+    const second = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-conf-fail', messageId: 'm2', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+      confirmationToken: token,
+    });
+    assert.equal(second.guardAction, 'autonomous_response', '确认后 LLM 失败也应离线回应而非静态道歉');
+    assert.notEqual(second.response, FALLBACK_RESPONSE);
+    assert.equal(second.shouldEscalate, true, '确认后路径仍标注升级');
+  });
+
+  it('离线回应输出仍经 PII 脱敏（narrative 含手机号也被脱敏）', async () => {
+    const db = os.getDatabase();
+    /* 构造一个叙事中含手机号的 persona，离线回应会拼接该叙事 → 必须脱敏 */
+    const piiPersona = personaCoreService.createPersona({
+      tenantId: TEST_TENANT_ID,
+      ownerUserId: TEST_USER_ID,
+      displayName: 'PII Persona',
+      profile: { narrative: '我是客服，专线 13800138000。', behaviorBoundaries: [] },
+    });
+    const offlineService = new ConversationService({
+      tx: db, personaCoreService, logger: new SilentLogger(), /* 无 LLM → 直接离线 */
+    });
+    const resp = await offlineService.submit({
+      tenantId: TEST_TENANT_ID, personaId: piiPersona.id, ownerUserId: TEST_USER_ID,
+      sessionId: 's-pii-off', messageId: 'm-pii', externalUserId: 'eu',
+      content: '你好',
+    });
+    assert.equal(resp.guardAction, 'autonomous_response');
+    /* 叙事里的手机号必须在输出侧被 redactPii 脱敏，且替换为 [REDACTED_PHONE] */
+    assert.doesNotMatch(resp.response, /13800138000/, '离线输出中的 PII 必须被脱敏');
+    assert.match(resp.response, /\[REDACTED_PHONE\]/, '应替换为脱敏占位符（证明确实脱敏而非恰好不含）');
   });
 
   it('persona 不存在抛 PersonaNotFoundForConversationError', async () => {

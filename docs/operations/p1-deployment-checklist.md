@@ -68,7 +68,7 @@
 |--------|------|------|
 | [ ] OpenTelemetry exporter | `CHRONO_OBSERVABILITY_ENABLED=true` `CHRONO_OBSERVABILITY_OTLP_ENDPOINT=...` | 启动后 OTLP collector 收到 metrics |
 | [ ] Prometheus scrape | `/metrics/prometheus` 可达，配置 metrics API key | scrape job 正常 |
-| [ ] 关键 P1 指标告警 | – | 配置告警：<br>• `chrono_conversation_llm_failures_total` rate > 0.1/min<br>• `chrono_conversation_quota_exceeded_total` rate > 0.01/min<br>• `chrono_conversation_messages_total{guard_action="pre_block"}` rate > 0.05/min |
+| [ ] 关键 P1 指标告警 | – | 配置告警：<br>• `chrono_conversation_llm_failures_total` rate > 0.1/min<br>• `chrono_conversation_quota_exceeded_total` rate > 0.01/min<br>• `chrono_conversation_messages_total{guard_action="pre_block"}` rate > 0.05/min<br>• （ADR-0047）`chrono_conversation_messages_total{guard_action="autonomous_response"}` 占比异常升高 → 提示 LLM 不可达或未配置，数字人正退化到离线确定性回应 |
 | [ ] 日志 JSON 格式 | `CHRONO_LOG_JSON=true` | 日志聚合系统可正确解析 |
 | [ ] 日志级别 info 或 warn | `CHRONO_LOG_LEVEL=info` | debug 仅在调试时开启 |
 | [ ] tracing sampler 0.1–1.0 | `CHRONO_OBSERVABILITY_SAMPLE_RATE=0.1` | 高流量场景采样率不应过高 |

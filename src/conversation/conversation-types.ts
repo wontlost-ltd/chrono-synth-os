@@ -6,8 +6,13 @@
 
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 
-/** ValueGuard 决策动作 */
-export type GuardAction = 'pre_block' | 'post_redact' | 'escalate' | 'needs_confirmation' | 'quota_exceeded' | 'llm_fallback' | null;
+/**
+ * ValueGuard 决策动作。
+ * - llm_fallback：LLM 不可达且无离线人格回应能力时的服务降级（静态道歉）。
+ * - autonomous_response：ADR-0047 自主模式，由确定性离线回应器据人格/知识生成，
+ *   非故障，区别于 llm_fallback。
+ */
+export type GuardAction = 'pre_block' | 'post_redact' | 'escalate' | 'needs_confirmation' | 'quota_exceeded' | 'llm_fallback' | 'autonomous_response' | null;
 
 /** 调用方提供的对话历史片段 */
 export interface ConversationHistoryEntry {

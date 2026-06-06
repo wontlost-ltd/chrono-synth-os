@@ -32,24 +32,54 @@ import {
 
 export type { DecisionProgress };
 
+/**
+ * 推理模式（ADR-0047）。
+ * - autonomous：确定性内核为主路径，完全不调用 LLM，离线可用。
+ * - growth：LLM 增强（生成备选、模拟、解释），失败时回退规则引擎。
+ *
+ * 默认 growth，保持既有调用方行为不变。
+ */
+export type ReasoningMode = 'autonomous' | 'growth';
+
 export interface DecisionEngineOptions {
   readonly onProgress?: (progress: DecisionProgress) => void;
+  /** 推理模式，缺省 'growth'（向后兼容） */
+  readonly mode?: ReasoningMode;
 }
 
 const LAYER = 'DecisionEngine';
 
 export class DecisionEngine {
+  /**
+   * @param llm LLM 提供方。ADR-0047 D1：autonomous-only runtime 可传 undefined
+   *   实现"无 LLM 构造"；此时仅 autonomous 模式可用，growth 模式会抛清晰错误。
+   *   growth 模式（默认）必须注入 llm。
+   */
   constructor(
     private readonly core: CoreRhythmLayer,
     private readonly retrieval: RetrievalService,
-    private readonly llm: LLMProvider,
+    private readonly llm: LLMProvider | undefined,
     private readonly clock: Clock,
     private readonly logger: Logger,
     private readonly config: SimulationConfig,
     private readonly ruleEngine?: RuleEngine,
   ) {}
 
+  /** growth 路径取 LLM；未注入时抛清晰错误（autonomous-only 构造的预期失败） */
+  private requireLlm(): LLMProvider {
+    if (!this.llm) {
+      throw new Error('growth 模式需要 LLMProvider，但未注入（autonomous-only 构造）。请用 mode:"autonomous" 或注入 llm');
+    }
+    return this.llm;
+  }
+
   async evaluate(decisionCase: DecisionCase, options?: DecisionEngineOptions): Promise<DecisionResult> {
+    /* ADR-0047：autonomous 模式下确定性内核是一等主路径，不触碰 LLM。 */
+    if (options?.mode === 'autonomous') {
+      return this.evaluateAutonomous(decisionCase, options);
+    }
+
+    /* growth 模式：LLM 增强，失败回退规则引擎（保留既有韧性）。 */
     try {
       return await this.evaluateWithLLM(decisionCase, options);
     } catch (err) {
@@ -62,6 +92,22 @@ export class DecisionEngine {
     }
   }
 
+  /**
+   * 自主模式评估（ADR-0047）：纯确定性规则引擎，零 LLM 调用。
+   * 规则引擎在此处是主路径而非降级回退；离线/无 LLM 时数字人据此决策。
+   */
+  private evaluateAutonomous(decisionCase: DecisionCase, options?: DecisionEngineOptions): DecisionResult {
+    if (!this.ruleEngine) {
+      throw new Error('autonomous 模式需要 RuleEngine，但未注入');
+    }
+    options?.onProgress?.({ progress: 0.1, stage: 'autonomous' });
+    const state = compilePersonaState(this.core);
+    const result = this.ruleEngine.evaluate(decisionCase, state);
+    options?.onProgress?.({ progress: 1, stage: 'autonomous:done' });
+    this.logger.info(LAYER, `自主模式决策完成（无 LLM）: ${decisionCase.id} → 「${result.recommendedAlternative}」`);
+    return result;
+  }
+
   private async evaluateWithLLM(decisionCase: DecisionCase, options?: DecisionEngineOptions): Promise<DecisionResult> {
     this.logger.info(LAYER, `开始决策模拟: ${decisionCase.id}`);
     const state = compilePersonaState(this.core);
@@ -70,7 +116,7 @@ export class DecisionEngine {
 
     let queryEmbedding: number[] = [];
     try {
-      const embeddings = await this.llm.embed([query]);
+      const embeddings = await this.requireLlm().embed([query]);
       queryEmbedding = embeddings[0] ?? [];
     } catch (err) {
       this.logger.warn(LAYER, '查询向量获取失败，退化为图检索', err);
@@ -158,7 +204,7 @@ export class DecisionEngine {
     ].join('\n\n');
 
     try {
-      const res = await this.llm.chat(
+      const res = await this.requireLlm().chat(
         [{ role: 'system', content: system }, { role: 'user', content: user }],
         { responseFormat: 'json' },
       );
@@ -230,7 +276,7 @@ export class DecisionEngine {
     let confidence = DEFAULT_CONFIDENCE;
 
     try {
-      const res = await this.llm.chat(
+      const res = await this.requireLlm().chat(
         [{ role: 'system', content: system }, { role: 'user', content: user }],
         { responseFormat: 'json' },
       );
@@ -305,7 +351,7 @@ export class DecisionEngine {
     ].join('\n\n');
 
     try {
-      const res = await this.llm.chat(
+      const res = await this.requireLlm().chat(
         [{ role: 'system', content: system }, { role: 'user', content: user }],
         { responseFormat: 'json' },
       );

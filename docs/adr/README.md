@@ -77,6 +77,7 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 44 | [Kubernetes NetworkPolicy: default-deny + per-workload allow](0044-networkpolicy-default-deny.md) | Accepted |
 | 45 | [Pod Security Admission: `restricted` enforce + dev reverse-assertion](0045-psa-restricted-with-reverse-assertion.md) | Accepted |
 | 46 | [Dual-product split: Enterprise governance + ChronoCompanion (C-end)](0046-dual-product-companion.md) | Accepted |
+| 47 | [The LLM is a distillable teacher, not a runtime dependency](0047-llm-as-distillable-teacher.md) | Accepted |
 
 The first 31 records were back-filled in P1.5 to cover kernel
 architecture, storage, agent layer, deployment, and product policy.
@@ -90,5 +91,5 @@ NetworkPolicy default-deny, PSA restricted) that landed across
 the precedent of ADR-0020/0021: scope field names the actual repo
 path; the os repo serves as the organisation-level ADR registry.
 
-New decisions land as 0047+ following the same MADR-lite template
+New decisions land as 0048+ following the same MADR-lite template
 (see `0001-kernel-zero-runtime-deps.md`).

@@ -32,6 +32,7 @@ import { generatePrefixedId } from '../utils/id-generator.js';
 import { ConversationStore } from './conversation-store.js';
 import { ConversationKnowledgeRetriever } from './conversation-knowledge-retriever.js';
 import { PersonaPromptBuilder } from './persona-prompt-builder.js';
+import { OfflineConversationResponder } from './offline-conversation-responder.js';
 import { ValueGuard, PRE_BLOCK_RESPONSE, NEEDS_CONFIRMATION_RESPONSE } from './value-guard.js';
 import { ConfirmationTokenStore } from './confirmation-token-store.js';
 import { ConversationAuditPublisher } from './audit-publisher.js';
@@ -66,7 +67,12 @@ export const QUOTA_EXCEEDED_RESPONSE = '当前对话流量已达上限，请稍�
 
 export interface ConversationServiceDeps {
   tx: SyncWriteUnitOfWork;
-  llm: LLMProvider;
+  /**
+   * LLM 提供方。ADR-0047 D2：可省略以构造"无 cloud LLM 的对话 runtime"——
+   * 此时每条消息直接走确定性离线回应（autonomous_response），不调用 LLM、
+   * 不触发 circuit breaker / 失败指标。注入则为 growth 模式（LLM-first）。
+   */
+  llm?: LLMProvider;
   personaCoreService: PersonaCoreService;
   logger: Logger;
   encryption?: FieldEncryption;
@@ -126,6 +132,7 @@ export class ConversationService {
   private readonly store: ConversationStore;
   private readonly retriever: ConversationKnowledgeRetriever;
   private readonly promptBuilder: PersonaPromptBuilder;
+  private readonly offlineResponder: OfflineConversationResponder;
   private readonly guard: ValueGuard;
   private readonly confirmationStore: ConfirmationTokenStore;
   private readonly auditPublisher: ConversationAuditPublisher;
@@ -138,6 +145,8 @@ export class ConversationService {
     this.retriever = new ConversationKnowledgeRetriever(deps.tx, deps.retrieverOptions);
     this.promptBuilder = new PersonaPromptBuilder();
     this.guard = new ValueGuard({ ...deps.guardOptions, logger: deps.logger });
+    /* 离线回应器复用 ValueGuard 的确定性 literalMatch，保证离线/在线边界规则同源 */
+    this.offlineResponder = new OfflineConversationResponder(this.guard);
     this.confirmationStore = new ConfirmationTokenStore(deps.tx);
     this.auditPublisher = new ConversationAuditPublisher(deps.tx, deps.logger);
     this.circuitBreaker = deps.circuitBreaker ?? new CircuitBreaker({
@@ -263,8 +272,8 @@ export class ConversationService {
         quotaExceeded: true,
         retentionClass: input.retentionClass ?? 'standard',
       });
+      /* persistOutcome 内已 recordMetric，此处只补 quota 专项计数器，避免双计 */
       conversationQuotaExceeded.add(1, { tenant: input.tenantId });
-      this.recordMetric('quota_exceeded', Date.now() - startedAt);
       return toConversationResponse(message);
     }
 
@@ -299,11 +308,12 @@ export class ConversationService {
     let assistantOutput = llmResult.content;
     let promptTokens = llmResult.promptTokens;
     let completionTokens = llmResult.completionTokens;
-    let llmFallback = llmResult.fallback;
+    const llmFallback = llmResult.fallback;
 
-    /* Step 7: postCheck */
+    /* Step 7: postCheck（或 ADR-0047 自主模式离线回应） */
     let guardAction: GuardAction = null;
     let guardReason: string | null = null;
+    let autonomousEscalate = false;
     if (!llmFallback) {
       const postResult = await this.guard.postCheck(assistantOutput, profileBundle.boundaries);
       if (postResult.action === 'post_redact' && postResult.redactedContent) {
@@ -312,8 +322,19 @@ export class ConversationService {
         guardReason = postResult.reason ?? 'never_discuss leaked';
       }
     } else {
-      guardAction = 'llm_fallback';
-      guardReason = llmResult.failureReason ?? 'llm unreachable';
+      /* ADR-0047：LLM 不可达时，由确定性离线回应器据人格 + 已检索知识生成回应，
+       * 而非返回静态道歉。这是"自主模式"，非故障。 */
+      const offline = this.offlineResponder.respond({
+        narrative: profileBundle.narrative,
+        boundaries: profileBundle.boundaries,
+        userInput: sanitizedInput,
+        relevantKnowledge,
+        history: this.sanitizeHistory(input.history),
+      });
+      assistantOutput = offline.content;
+      autonomousEscalate = offline.shouldEscalate;
+      guardAction = 'autonomous_response';
+      guardReason = `offline:${offline.kind} (llm ${llmResult.failureReason ?? 'unreachable'})`;
     }
 
     /* assistant 输出脱敏：避免 LLM 把用户 PII 反射回来 */
@@ -328,27 +349,14 @@ export class ConversationService {
       guardReason = preResult.reason ?? 'always_escalate matched';
     }
 
-    /* 记 LLM 成本 */
-    if (this.deps.costTracker && promptTokens + completionTokens > 0) {
-      try {
-        this.deps.costTracker.record(input.tenantId, 'conversation', 'conversation', promptTokens, completionTokens);
-      } catch (err) {
-        this.deps.logger.warn('ConversationService', `cost recording failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    if (this.deps.tokenBudget && promptTokens + completionTokens > 0) {
-      try {
-        this.deps.tokenBudget.recordUsage(input.tenantId, promptTokens + completionTokens);
-      } catch (err) {
-        this.deps.logger.warn('ConversationService', `token budget recording failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
+    /* 记 LLM 成本 + token budget */
+    this.recordLlmTokenAccounting(input.tenantId, promptTokens, completionTokens);
 
     /* Step 8+9：持久化 + 审计 + 指标 */
     const message = this.persistOutcome(input, {
       assistantOutput,
       memoriesUsed: relevantKnowledge,
-      shouldEscalate: escalateFromInput || guardAction === 'escalate',
+      shouldEscalate: escalateFromInput || guardAction === 'escalate' || autonomousEscalate,
       guardAction,
       guardReason,
       durationMs: Date.now() - startedAt,
@@ -378,7 +386,7 @@ export class ConversationService {
   ): Promise<ConversationResponse> {
     /* 当前实现：直接 submit；后续可扩展为流式 LLM 拼装路径 */
     const response = await this.submit(input);
-    if (response.guardAction === null || response.guardAction === 'escalate' || response.guardAction === 'post_redact' || response.guardAction === 'llm_fallback') {
+    if (response.guardAction === null || response.guardAction === 'escalate' || response.guardAction === 'post_redact' || response.guardAction === 'llm_fallback' || response.guardAction === 'autonomous_response') {
       const text = response.response;
       const CHUNK = 32;
       for (let i = 0; i < text.length; i += CHUNK) {
@@ -419,6 +427,27 @@ export class ConversationService {
     confirmationReason: string | undefined,
     startedAt: number,
   ): Promise<ConversationResponse> {
+    /* 与主路径一致：确认后仍需配额检查（否则确认即可绕过 quota 交付并计费） */
+    const quotaCheck = this.checkQuota(input.tenantId);
+    if (!quotaCheck.allowed) {
+      const message = this.persistOutcome(input, {
+        assistantOutput: QUOTA_EXCEEDED_RESPONSE,
+        memoriesUsed: [],
+        shouldEscalate: true,
+        guardAction: 'quota_exceeded',
+        guardReason: quotaCheck.reason ?? 'quota exceeded',
+        durationMs: Date.now() - startedAt,
+        promptTokens: 0,
+        completionTokens: 0,
+        llmFallback: false,
+        quotaExceeded: true,
+        retentionClass: input.retentionClass ?? 'standard',
+      });
+      /* 与主路径一致的 quota 专项计数器（recordMetric 已在 persistOutcome 内） */
+      conversationQuotaExceeded.add(1, { tenant: input.tenantId });
+      return toConversationResponse(message);
+    }
+
     const sanitizedInputResult = redactPii(input.content);
     if (sanitizedInputResult.redactedCount > 0) {
       conversationPiiRedacted.add(sanitizedInputResult.redactedCount, { side: 'input' });
@@ -440,18 +469,42 @@ export class ConversationService {
       { role: 'system', content: promptParts.system },
       ...promptParts.messages,
     ]);
+    const llmFallback = llmResult.fallback;
     let assistantOutput = llmResult.content;
-    let llmFallback = llmResult.fallback;
+    let guardAction: GuardAction = llmFallback ? 'autonomous_response' : 'escalate';
+    let guardReason: string = confirmationReason ?? 'post-confirmation execution';
+    /* ADR-0047：确认后路径同样在 LLM 不可达时走确定性离线回应，而非静态道歉。 */
+    if (llmFallback) {
+      const offline = this.offlineResponder.respond({
+        narrative: profileBundle.narrative,
+        boundaries: profileBundle.boundaries,
+        userInput: sanitizedInputResult.text,
+        relevantKnowledge,
+        history: this.sanitizeHistory(input.history),
+      });
+      assistantOutput = offline.content;
+    } else {
+      /* LLM 成功：与主路径一致，必须跑 postCheck 防 never_discuss 泄露 */
+      const postResult = await this.guard.postCheck(assistantOutput, profileBundle.boundaries);
+      if (postResult.action === 'post_redact' && postResult.redactedContent) {
+        assistantOutput = postResult.redactedContent;
+        guardAction = 'post_redact';
+        guardReason = postResult.reason ?? 'never_discuss leaked';
+      }
+    }
+    /* 与主路径一致：记 LLM token 成本/budget（离线 fallback 时 token=0 自动跳过） */
+    this.recordLlmTokenAccounting(input.tenantId, llmResult.promptTokens, llmResult.completionTokens);
     const sanitizedOutput = redactPii(assistantOutput);
     assistantOutput = sanitizedOutput.text;
-
-    const guardAction: GuardAction = llmFallback ? 'llm_fallback' : 'escalate';
+    if (sanitizedOutput.redactedCount > 0) {
+      conversationPiiRedacted.add(sanitizedOutput.redactedCount, { side: 'output' });
+    }
     const message = this.persistOutcome(input, {
       assistantOutput,
       memoriesUsed: relevantKnowledge,
       shouldEscalate: true,
       guardAction,
-      guardReason: confirmationReason ?? 'post-confirmation execution',
+      guardReason,
       durationMs: Date.now() - startedAt,
       promptTokens: llmResult.promptTokens,
       completionTokens: llmResult.completionTokens,
@@ -471,11 +524,17 @@ export class ConversationService {
     fallback: boolean;
     failureReason?: string;
   }> {
+    /* ADR-0047 D2：未配置 LLM → 直接进入自主模式，不调用 LLM、不污染 circuit breaker
+     * 与失败指标。返回 fallback=true 让下游走 OfflineConversationResponder。 */
+    if (!this.deps.llm) {
+      return { content: '', promptTokens: 0, completionTokens: 0, fallback: true, failureReason: 'no_llm_configured' };
+    }
+    const llm = this.deps.llm;
     let lastErr: Error | undefined;
     for (let attempt = 0; attempt <= this.llmRetryLimit; attempt++) {
       try {
         const resp = await this.circuitBreaker.execute(async () =>
-          this.deps.llm.chat(messages, {
+          llm.chat(messages, {
             temperature: DEFAULT_TEMPERATURE,
             maxTokens: DEFAULT_MAX_TOKENS,
           }),
@@ -630,12 +689,15 @@ export class ConversationService {
 
     this.recordMetric(outcome.guardAction, outcome.durationMs);
 
-    /* P1-D: 计费用量上报 —— 仅在确实消耗了 LLM 资源的路径上报（pre_block /
-     * needs_confirmation / quota_exceeded 不计费） */
+    /* P1-D: 计费用量上报 —— 按"已交付一条 persona 消息"计费（pre_block /
+     * needs_confirmation / quota_exceeded 未交付，不计费）。autonomous_response
+     * （ADR-0047 离线回应）虽未消耗 LLM token，但仍是已交付消息，按 per-message
+     * 口径计费，与 llm_fallback 一致。 */
     const billable = outcome.guardAction === null
       || outcome.guardAction === 'escalate'
       || outcome.guardAction === 'post_redact'
-      || outcome.guardAction === 'llm_fallback';
+      || outcome.guardAction === 'llm_fallback'
+      || outcome.guardAction === 'autonomous_response';
     if (billable) {
       this.recordBillableUsage(input.tenantId, 1);
     }
@@ -664,6 +726,26 @@ export class ConversationService {
   private recordMetric(action: GuardAction, durationMs: number): void {
     conversationMessagesTotal.add(1, { guard_action: action ?? 'none' });
     conversationDurationMs.record(durationMs, { guard_action: action ?? 'none' });
+  }
+
+  /** 记录 LLM token 成本与 token budget 用量（主路径与确认后路径共用） */
+  private recordLlmTokenAccounting(tenantId: string, promptTokens: number, completionTokens: number): void {
+    const total = promptTokens + completionTokens;
+    if (total <= 0) return;
+    if (this.deps.costTracker) {
+      try {
+        this.deps.costTracker.record(tenantId, 'conversation', 'conversation', promptTokens, completionTokens);
+      } catch (err) {
+        this.deps.logger.warn('ConversationService', `cost recording failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (this.deps.tokenBudget) {
+      try {
+        this.deps.tokenBudget.recordUsage(tenantId, total);
+      } catch (err) {
+        this.deps.logger.warn('ConversationService', `token budget recording failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 }
 

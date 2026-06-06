@@ -54,6 +54,20 @@ describe('ConfidenceCalibrator', () => {
     assert.ok(c.factors.some((f) => f.name === 'llm_fallback'));
   });
 
+  it('autonomous_response（ADR-0047）→ 低 confidence 但 factor 区分于 llm_fallback', () => {
+    const c = calibrateConfidence({
+      memoriesUsed: [],
+      guardAction: 'autonomous_response',
+      shouldEscalate: false,
+      llmFallback: true,
+      quotaExceeded: false,
+      completionTokens: 0,
+    });
+    assert.ok(c.score < 0.5, '离线自主回应 confidence 应较低');
+    assert.ok(c.factors.some((f) => f.name === 'autonomous_response'), '应标注 autonomous_response factor');
+    assert.ok(!c.factors.some((f) => f.name === 'llm_fallback'), '不应误标为 llm_fallback');
+  });
+
   it('quota_exceeded → score 大幅下降', () => {
     const c = calibrateConfidence({
       memoriesUsed: [],
