@@ -17,6 +17,7 @@ import type { Clock } from '../utils/clock.js';
 import type { DistilledArtifactStore } from '../storage/distilled-artifact-store.js';
 import type { ArtifactCompiler } from './artifact-compiler.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { distillationCompensationFailures } from '../observability/metrics.js';
 import {
   validateArtifact, canAutoCompile, canTransition,
   DEFAULT_DISTILLATION_POLICY,
@@ -168,9 +169,8 @@ export class DistillationService {
     const outcome = this.deps.compiler.compile(artifact);
 
     if (!outcome.ok) {
-      const restored = this.deps.snapshotGuard.rollback(snapshotId);
-      this.deps.store.setStatus(personaId, artifact.id, 'approved', 'rejected', `compile failed: ${outcome.reason}`, null);
-      this.deps.logger.warn(LAYER, `编译失败已回滚(${restored ? 'ok' : 'FAILED'}): ${artifact.id} — ${outcome.reason}`);
+      /* 编译失败：与编译后失败走同一安全补偿（rollback/reject 各自 try/catch） */
+      this.compensateAfterCompile(personaId, artifact.id, snapshotId, `compile failed: ${outcome.reason}`);
       return undefined;
     }
 
@@ -208,12 +208,18 @@ export class DistillationService {
       restored = this.deps.snapshotGuard.rollback(snapshotId);
     } catch (err) {
       this.deps.logger.error(LAYER, `补偿回滚抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
+      distillationCompensationFailures.add(1, { step: 'rollback' });
     }
     let marked = false;
     try {
       marked = this.deps.store.setStatus(personaId, artifactId, 'approved', 'rejected', `rolled back: ${why}`, null);
     } catch (err) {
       this.deps.logger.error(LAYER, `补偿标记 rejected 抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+    /* reject 未命中（rowsAffected=0 且未抛）通常是并发已离开 approved——非不一致；
+     * 但 reject 标记彻底失败（未 marked）意味着工件可能悬挂，计入需巡检指标。 */
+    if (!marked) {
+      distillationCompensationFailures.add(1, { step: 'reject' });
     }
     this.deps.logger.warn(LAYER, `编译后补偿(${why}): rollback=${restored ? 'ok' : 'FAILED'} reject=${marked ? 'ok' : 'FAILED'} — ${artifactId}`);
   }

@@ -112,7 +112,7 @@ describe('DistillationService compile compensation (ADR-0047)', () => {
     assert.equal(store.artifact.status, 'compiled');
   });
 
-  it('补偿时回滚自身抛异常也不冒泡（best-effort，记录后继续）', () => {
+  it('补偿时回滚自身抛异常也不冒泡（best-effort），但 reject 仍被尝试并落终态', () => {
     const store = new MockStore();
     store.compiledBehavior = 'throw';
     const guard: SnapshotGuard = { snapshot: () => 'snap-1', rollback: () => { throw new Error('rollback also failed'); } };
@@ -120,5 +120,8 @@ describe('DistillationService compile compensation (ADR-0047)', () => {
     /* 不应抛出——补偿是 best-effort，吞掉并记录 */
     const r = svc.approve('p1', 'dart-x');
     assert.equal(r.ok, false);
+    /* 回滚失败不阻止 reject 尝试：artifact 仍落终态 rejected，不悬挂 approved */
+    assert.ok(store.setStatusCalls.some((c) => c.to === 'rejected'), 'reject 仍应被尝试');
+    assert.equal(store.artifact.status, 'rejected');
   });
 });
