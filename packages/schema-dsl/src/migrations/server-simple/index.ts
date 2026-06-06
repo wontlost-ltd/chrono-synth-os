@@ -69,6 +69,7 @@ export { v076_break_glass_jti_consumptions } from './v076.js';
 export { v077_audit_chain_anchors } from './v077.js';
 export { v078_jwt_signing_keys } from './v078.js';
 export { v079_audit_chain_anchor_failures } from './v079.js';
+export { v080_distilled_artifacts } from './v080.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -142,6 +143,7 @@ import { v076_break_glass_jti_consumptions } from './v076.js';
 import { v077_audit_chain_anchors } from './v077.js';
 import { v078_jwt_signing_keys } from './v078.js';
 import { v079_audit_chain_anchor_failures } from './v079.js';
+import { v080_distilled_artifacts } from './v080.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -215,4 +217,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v077_audit_chain_anchors,
   v078_jwt_signing_keys,
   v079_audit_chain_anchor_failures,
+  v080_distilled_artifacts,
 ];
