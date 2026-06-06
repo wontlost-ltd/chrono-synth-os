@@ -244,8 +244,15 @@ function validatePayloadShape(kind: ArtifactKind, payload: unknown): string[] {
       }
       return [];
     }
+    case 'narrative_patch': {
+      const p = payload as { narrative?: unknown } | null;
+      if (!p || typeof p.narrative !== 'string' || p.narrative.trim().length === 0) {
+        return ['narrative_patch payload requires non-empty narrative'];
+      }
+      return [];
+    }
     default:
-      /* 其余 kind 的载荷形状在后续 PR 接入编译器时补充校验 */
+      /* 其余 kind（rule / *_patch）的载荷形状在后续 PR 接入编译器时补充校验 */
       return [];
   }
 }

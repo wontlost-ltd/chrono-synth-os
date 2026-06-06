@@ -34,6 +34,13 @@ function requireJwtUser(request: FastifyRequest): JwtPayload {
   return user;
 }
 
+/* 限流 key：按 tenant+persona 维度，防 artifactId 枚举/审批风暴 */
+function perPersonaKey(request: FastifyRequest): string {
+  const params = request.params as { personaId?: string };
+  const tenant = request.tenantId ?? 'default';
+  return `${tenant}:distill:${params.personaId ?? 'unknown'}`;
+}
+
 function assertPersonaOwnership(
   personaCore: PersonaCoreService,
   tenantId: string,
@@ -91,9 +98,10 @@ export function registerDistillationRoutes(app: FastifyInstance, services: Disti
     },
   );
 
-  /* POST 审批 → 编译进内核 */
+  /* POST 审批 → 编译进内核（高影响治理操作，限流） */
   app.post<{ Params: { personaId: string; artifactId: string } }>(
     '/api/v1/persona-core/:personaId/distillation/:artifactId/approve',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: perPersonaKey } } },
     async (request, reply) => {
       const user = requireJwtUser(request);
       const { personaId, artifactId } = request.params;
@@ -107,15 +115,16 @@ export function registerDistillationRoutes(app: FastifyInstance, services: Disti
     },
   );
 
-  /* POST 拒绝 */
+  /* POST 拒绝（限流） */
   app.post<{ Params: { personaId: string; artifactId: string } }>(
     '/api/v1/persona-core/:personaId/distillation/:artifactId/reject',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: perPersonaKey } } },
     async (request, reply) => {
       const user = requireJwtUser(request);
       const { personaId, artifactId } = request.params;
       assertPersonaOwnership(personaCore, request.tenantId, user.sub, personaId);
       const body = DistillationRejectBodySchema.parse(request.body);
-      const result = distillation.reject(artifactId, body.reason);
+      const result = distillation.reject(personaId, artifactId, body.reason);
       if (!result.ok) {
         const status = result.reason === 'artifact not found' ? 404 : 409;
         return reply.status(status).send({ error: { code: 'DISTILL_REJECT_FAILED', message: result.reason } });

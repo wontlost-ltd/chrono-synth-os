@@ -79,7 +79,7 @@ describe('Distillation pipeline (ADR-0047)', () => {
     });
     assert.equal(ing.status, 'pending');
     if (ing.status !== 'pending') return;
-    const rj = os.distillation.reject(ing.artifact.id, 'too aggressive');
+    const rj = os.distillation.reject('p1', ing.artifact.id, 'too aggressive');
     assert.equal(rj.ok, true);
     assert.equal(os.core.values.getById(v.id)?.weight, 0.4);
     assert.equal(os.distillation.listCandidates('p1').length, 0);
@@ -128,6 +128,39 @@ describe('Distillation pipeline (ADR-0047)', () => {
       confidence: 0.85, evidence: EV,
     });
     assert.equal(emitted?.kind, 'value_shift');
+  });
+
+  it('跨 persona 越权：persona-B 不能 approve persona-A 的工件（IDOR 防护）', () => {
+    const v = os.core.addValue('focus', 0.4);
+    const ing = os.distillation.ingest('persona-A', {
+      kind: 'value_shift', source: 'reflection',
+      payload: { valueId: v.id, currentWeight: 0.4, suggestedWeight: 0.9, delta: 0.5, patternAgrees: true },
+      confidence: 0.95, evidence: EV,
+    });
+    assert.equal(ing.status, 'pending');
+    if (ing.status !== 'pending') return;
+    /* 用 persona-B 的作用域去审批 persona-A 的工件 → 必须 not found（对象级授权） */
+    const ap = os.distillation.approve('persona-B', ing.artifact.id);
+    assert.equal(ap.ok, false);
+    if (!ap.ok) assert.equal(ap.reason, 'artifact not found');
+    /* persona-A 的工件未受影响，核心权重未变 */
+    assert.equal(os.core.values.getById(v.id)?.weight, 0.4);
+    /* 正确作用域可见 */
+    assert.equal(os.distillation.listCandidates('persona-A').length, 1);
+    assert.equal(os.distillation.listCandidates('persona-B').length, 0);
+  });
+
+  it('跨 persona 越权：persona-B 不能 reject persona-A 的工件', () => {
+    const v = os.core.addValue('focus', 0.4);
+    const ing = os.distillation.ingest('persona-A', {
+      kind: 'value_shift', source: 'reflection',
+      payload: { valueId: v.id, currentWeight: 0.4, suggestedWeight: 0.9, delta: 0.5, patternAgrees: true },
+      confidence: 0.95, evidence: EV,
+    });
+    if (ing.status !== 'pending') return assert.fail('expected pending');
+    const rj = os.distillation.reject('persona-B', ing.artifact.id, 'malicious');
+    assert.equal(rj.ok, false);
+    if (!rj.ok) assert.equal(rj.reason, 'artifact not found');
   });
 
   it('工件持久化跨实例可查（审计历史）', () => {

@@ -44,10 +44,11 @@ export class DistilledArtifactStore {
   }
 
   /**
-   * 推进状态（乐观并发：仅当当前状态 = expectedStatus 才更新）。
+   * 推进状态（乐观并发 + 对象级授权：仅当 id+tenant+persona+当前状态全匹配才更新）。
    * 返回是否成功（rowsAffected > 0）。
    */
   setStatus(
+    personaId: string,
     id: string,
     expectedStatus: ArtifactStatus,
     next: ArtifactStatus,
@@ -57,6 +58,7 @@ export class DistilledArtifactStore {
     const result = this.tx.execute(distillCmdSetStatus({
       id,
       tenantId: this.tenantId,
+      personaId,
       expectedStatus,
       status: next,
       reason,
@@ -65,8 +67,9 @@ export class DistilledArtifactStore {
     return result.rowsAffected > 0;
   }
 
-  getById(id: string): DistilledArtifact | undefined {
-    const row = this.tx.queryOne(distillQueryById(id));
+  /** 按 id 读取，但强制 tenant + persona 归属（防 IDOR 越权） */
+  getById(personaId: string, id: string): DistilledArtifact | undefined {
+    const row = this.tx.queryOne(distillQueryById({ id, tenantId: this.tenantId, personaId }));
     return row ? this.toArtifact(row) : undefined;
   }
 

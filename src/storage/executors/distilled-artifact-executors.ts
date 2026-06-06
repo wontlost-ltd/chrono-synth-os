@@ -9,6 +9,7 @@ import type {
   DistillSetStatusParams,
   DistillByPersonaParams,
   DistillByStatusParams,
+  DistillByIdScopedParams,
 } from '@chrono/kernel';
 import {
   DISTILL_QUERY_BY_ID, DISTILL_QUERY_BY_PERSONA, DISTILL_QUERY_BY_STATUS,
@@ -18,10 +19,11 @@ import {
 export function registerDistilledArtifactExecutors(): void {
   /* ── Queries ── */
 
-  registerQuery<DistilledArtifactRow | null, string>(DISTILL_QUERY_BY_ID, (db, id) => {
+  /* 对象级授权：id 必须同时匹配 tenant + persona，防 IDOR 越权 */
+  registerQuery<DistilledArtifactRow | null, DistillByIdScopedParams>(DISTILL_QUERY_BY_ID, (db, p) => {
     return db.prepare<DistilledArtifactRow>(
-      'SELECT * FROM distilled_artifacts WHERE id = ?',
-    ).get(id) ?? null;
+      'SELECT * FROM distilled_artifacts WHERE id = ? AND tenant_id = ? AND persona_id = ?',
+    ).get(p.id, p.tenantId, p.personaId) ?? null;
   });
 
   registerQuery<DistilledArtifactRow[], DistillByPersonaParams>(DISTILL_QUERY_BY_PERSONA, (db, p) => {
@@ -53,8 +55,8 @@ export function registerDistilledArtifactExecutors(): void {
     const result = db.prepare<void>(
       `UPDATE distilled_artifacts
        SET status = ?, reason = COALESCE(?, reason), compiled_at = ?
-       WHERE id = ? AND tenant_id = ? AND status = ?`,
-    ).run(p.status, p.reason, p.compiledAt, p.id, p.tenantId, p.expectedStatus);
+       WHERE id = ? AND tenant_id = ? AND persona_id = ? AND status = ?`,
+    ).run(p.status, p.reason, p.compiledAt, p.id, p.tenantId, p.personaId, p.expectedStatus);
     return { rowsAffected: result.changes };
   });
 }

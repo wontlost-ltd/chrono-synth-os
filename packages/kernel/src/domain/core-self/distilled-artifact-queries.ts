@@ -52,12 +52,21 @@ export interface DistillInsertParams {
 export interface DistillSetStatusParams {
   id: string;
   tenantId: string;
+  /** 对象级授权：必须匹配工件所属 persona，防跨 persona/tenant 越权（IDOR） */
+  personaId: string;
   /** 期望的当前状态（乐观并发：仅当当前状态匹配才推进） */
   expectedStatus: string;
   status: string;
   reason: string | null;
   /** 进入 compiled 时写入；其余传 null */
   compiledAt: number | null;
+}
+
+/** 按 id + tenant + persona 精确定位单件工件（对象级授权） */
+export interface DistillByIdScopedParams {
+  id: string;
+  tenantId: string;
+  personaId: string;
 }
 
 export interface DistillByPersonaParams {
@@ -73,8 +82,8 @@ export interface DistillByStatusParams {
 
 /* ── Query 工厂 ── */
 
-export function distillQueryById(id: string): Query<DistilledArtifactRow | null, string> {
-  return { kind: DISTILL_QUERY_BY_ID, params: id };
+export function distillQueryById(params: DistillByIdScopedParams): Query<DistilledArtifactRow | null, DistillByIdScopedParams> {
+  return { kind: DISTILL_QUERY_BY_ID, params };
 }
 
 export function distillQueryByPersona(params: DistillByPersonaParams): Query<DistilledArtifactRow, DistillByPersonaParams> {

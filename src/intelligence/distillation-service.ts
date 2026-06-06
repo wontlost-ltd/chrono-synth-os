@@ -110,9 +110,9 @@ export class DistillationService {
     return { status: 'pending', artifact };
   }
 
-  /** 人工审批：candidate → approved → 编译（带快照/回滚） */
+  /** 人工审批：candidate → approved → 编译（带快照/回滚）。personaId 强制对象级授权 */
   approve(personaId: string, artifactId: string): ReviewResult {
-    const artifact = this.deps.store.getById(artifactId);
+    const artifact = this.deps.store.getById(personaId, artifactId);
     if (!artifact) return { ok: false, reason: 'artifact not found' };
     if (artifact.status !== 'candidate') {
       return { ok: false, reason: `cannot approve from status ${artifact.status}` };
@@ -121,8 +121,8 @@ export class DistillationService {
     if (problems.length > 0) {
       return { ok: false, reason: `invalid artifact: ${problems.join('; ')}` };
     }
-    /* candidate → approved（乐观并发持久化） */
-    if (!this.deps.store.setStatus(artifactId, 'candidate', 'approved', 'manually approved', null)) {
+    /* candidate → approved（乐观并发 + 对象级授权持久化） */
+    if (!this.deps.store.setStatus(personaId, artifactId, 'candidate', 'approved', 'manually approved', null)) {
       return { ok: false, reason: 'status changed concurrently' };
     }
     const compiled = this.compileApproved(personaId, { ...artifact, status: 'approved' });
@@ -131,14 +131,14 @@ export class DistillationService {
       : { ok: false, reason: 'compile failed and rolled back' };
   }
 
-  /** 人工拒绝：candidate → rejected */
-  reject(artifactId: string, reason: string): ReviewResult {
-    const artifact = this.deps.store.getById(artifactId);
+  /** 人工拒绝：candidate → rejected。personaId 强制对象级授权 */
+  reject(personaId: string, artifactId: string, reason: string): ReviewResult {
+    const artifact = this.deps.store.getById(personaId, artifactId);
     if (!artifact) return { ok: false, reason: 'artifact not found' };
     if (!canTransition(artifact.status, 'rejected')) {
       return { ok: false, reason: `cannot reject from status ${artifact.status}` };
     }
-    if (!this.deps.store.setStatus(artifactId, artifact.status, 'rejected', reason, null)) {
+    if (!this.deps.store.setStatus(personaId, artifactId, artifact.status, 'rejected', reason, null)) {
       return { ok: false, reason: 'status changed concurrently' };
     }
     this.deps.logger.info(LAYER, `工件已拒绝: ${artifactId} (${reason})`);
@@ -155,30 +155,34 @@ export class DistillationService {
 
   /** 自动编译路径：candidate → approved → compiled（带快照/回滚） */
   private compileAndPersist(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
-    if (!this.deps.store.setStatus(artifact.id, 'candidate', 'approved', 'auto-approved', null)) {
+    if (!this.deps.store.setStatus(personaId, artifact.id, 'candidate', 'approved', 'auto-approved', null)) {
       this.deps.logger.warn(LAYER, `自动编译前置状态推进失败: ${artifact.id}`);
       return undefined;
     }
     return this.compileApproved(personaId, { ...artifact, status: 'approved' });
   }
 
-  /** approved → compiled：快照 → 编译 → 失败回滚 + 标记 rejected */
+  /** approved → compiled：快照 → 编译 → 失败回滚 + 标记终态（rejected/rolled_back） */
   private compileApproved(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
     const snapshotId = this.deps.snapshotGuard.snapshot();
     const outcome = this.deps.compiler.compile(artifact);
 
     if (!outcome.ok) {
       const restored = this.deps.snapshotGuard.rollback(snapshotId);
-      this.deps.store.setStatus(artifact.id, 'approved', 'rejected', `compile failed: ${outcome.reason}`, null);
+      this.deps.store.setStatus(personaId, artifact.id, 'approved', 'rejected', `compile failed: ${outcome.reason}`, null);
       this.deps.logger.warn(LAYER, `编译失败已回滚(${restored ? 'ok' : 'FAILED'}): ${artifact.id} — ${outcome.reason}`);
       return undefined;
     }
 
     const compiledAt = this.deps.clock.now();
-    if (!this.deps.store.setStatus(artifact.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt)) {
-      /* 状态被并发改动：回滚已应用的核心写，避免"编译生效但记录未推进" */
+    if (!this.deps.store.setStatus(personaId, artifact.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt)) {
+      /* 状态被并发改动：回滚已应用的核心写，并把工件推进到终态 rejected，
+       * 不留 approved 悬挂（否则可被重复编译）。approved→rejected 是合法转移。
+       * 注意：此 setStatus 仍带 expectedStatus='approved'——若是因并发已离开 approved
+       * 则此次更新不命中（rowsAffected=0），不会误改他方推进后的状态。 */
       this.deps.snapshotGuard.rollback(snapshotId);
-      this.deps.logger.warn(LAYER, `编译后状态推进失败，已回滚: ${artifact.id}`);
+      this.deps.store.setStatus(personaId, artifact.id, 'approved', 'rejected', 'compiled but status advance failed; rolled back', null);
+      this.deps.logger.warn(LAYER, `编译后状态推进失败，已回滚并标记 rejected: ${artifact.id}`);
       return undefined;
     }
 
