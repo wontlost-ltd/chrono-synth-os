@@ -143,6 +143,12 @@ import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
 import { LlmKnowledgeSource } from '../knowledge/sources/llm-source.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import { ModelRouter } from '../intelligence/model-router.js';
+import { DecisionEngine } from '../intelligence/decision-engine.js';
+import { RuleEngine } from '../intelligence/rule-engine.js';
+import { RetrievalService } from '../intelligence/retrieval-service.js';
+import { InMemoryEmbeddingIndex } from '../intelligence/embedding-index-memory.js';
+import { PersonaEarningService } from '../intelligence/persona-earning-service.js';
+import { registerEarningRoutes } from './routes/earning.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -538,6 +544,29 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   });
   const mcpServer = new ChronoMcpServer(toolRegistry, toolInvocationPipeline, deps.os.getLogger());
 
+  /* ADR-0048：自主挣钱编排服务。决策走 autonomous 模式（确定性，rule-engine 为主，
+   * 不调 LLM），故 embedding index 仅为构造满足、autonomous 路径不查询。 */
+  const earningEmbeddingIndex = new InMemoryEmbeddingIndex(
+    tx, deps.os.getClock(), conversationLlmRouter, config.intelligence.embeddingModel,
+  );
+  const earningDecisionEngine = new DecisionEngine(
+    deps.os.core,
+    new RetrievalService(deps.os.core.memories, earningEmbeddingIndex),
+    conversationLlmRouter,
+    deps.os.getClock(),
+    deps.os.getLogger(),
+    config.intelligence.simulation,
+    new RuleEngine(deps.os.getClock(), config.ruleEngine, deps.os.getLogger()),
+  );
+  const personaEarningService = new PersonaEarningService({
+    personaCore: bulkImportPersonaCoreService,
+    decisionEngine: earningDecisionEngine,
+    pipeline: toolInvocationPipeline,
+    bus: deps.os.bus,
+    clock: deps.os.getClock(),
+    logger: deps.os.getLogger(),
+  });
+
   /* F2/F3：用户级 OAuth resolver 工厂（每个请求构造独立 resolver） */
   const oauthResolverFactory = createUserOauthTokenResolverFactory({
     tokens: userOauthTokenService,
@@ -612,6 +641,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* ADR-0047：蒸馏治理端点（审查/审批/拒绝自我修改工件） */
   registerDistillationRoutes(app, {
     distillation: deps.os.distillation,
+    personaCore: bulkImportPersonaCoreService,
+  });
+  /* ADR-0048：自主挣钱治理端点（触发周期 / work feed / 钱包视图） */
+  registerEarningRoutes(app, {
+    earning: personaEarningService,
     personaCore: bulkImportPersonaCoreService,
   });
   registerAdminDeploymentRoutes(app, db, config);

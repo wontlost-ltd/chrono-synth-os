@@ -552,9 +552,9 @@ describe('MCP API 集成测试', () => {
     assert.equal(json.to, 'someone@example.com');
   });
 
-  /* ── tools/list 返回 8 个内置工具（5 内部 + 3 外部）─────────── */
+  /* ── tools/list 返回 9 个内置工具（5 内部 + 3 外部 + ADR-0048 marketplace）─── */
 
-  it('tools/list 返回 8 个内置工具', async () => {
+  it('tools/list 返回 9 个内置工具', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/mcp',
@@ -568,6 +568,7 @@ describe('MCP API 集成测试', () => {
       'decision.record',
       'email.send',
       'knowledge.query',
+      'marketplace.act',
       'memory.add',
       'memory.search',
       'persona.get_context',
@@ -580,6 +581,9 @@ describe('MCP API 集成测试', () => {
     assert.equal(email.highRisk, true);
     const webSearch = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'web_search');
     assert.equal(webSearch.highRisk, false);
+    /* ADR-0048：marketplace 经济行为工具为高风险（强制确认） */
+    const marketplace = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'marketplace.act');
+    assert.equal(marketplace.highRisk, true);
   });
 
   it('调用历史可通过 admin REST 查询', async () => {
