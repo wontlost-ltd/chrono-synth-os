@@ -183,6 +183,34 @@ describe('ToolPermissionService', () => {
     } finally { db.close(); }
   });
 
+  it('dailyCostCents 累加当天 success 成本，忽略 failed（ADR-0048 budget gate）', () => {
+    const { db, service } = makeService();
+    try {
+      const now = Date.now();
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        invokerType: 'mcp', invokerId: 'c1', status: 'success',
+        inputHash: '1', outputSizeBytes: 0, errorMessage: null,
+        costCents: 30, durationMs: 1, confirmationTokenId: null, invokedAt: now,
+      });
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        invokerType: 'mcp', invokerId: 'c1', status: 'success',
+        inputHash: '2', outputSizeBytes: 0, errorMessage: null,
+        costCents: 12, durationMs: 1, confirmationTokenId: null, invokedAt: now,
+      });
+      service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        invokerType: 'mcp', invokerId: 'c1', status: 'failed',
+        inputHash: '3', outputSizeBytes: 0, errorMessage: 'err',
+        costCents: 99, durationMs: 1, confirmationTokenId: null, invokedAt: now,
+      });
+      assert.equal(service.dailyCostCents('default', 'p1', 'web_search', now), 42);
+      /* 无任何记录的工具返回 0（不抛、不 NULL） */
+      assert.equal(service.dailyCostCents('default', 'p1', 'email', now), 0);
+    } finally { db.close(); }
+  });
+
   it('listPendingByUser 仅返回当前用户的 pending_confirmation', () => {
     const { db, service } = makeService();
     try {
