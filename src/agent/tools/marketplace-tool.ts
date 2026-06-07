@@ -95,6 +95,7 @@ export class MarketplaceTool implements ToolAdapter {
       ownerUserId,
       personaId: ctx.personaId,
       taskId,
+      actor: 'autonomous', /* 经 pipeline 的自主经济行为（ADR-0048 溯源） */
     });
     if (!application) {
       throw new ValidationError('申请失败：任务不可申请或已申请/persona 非 active', ErrorCode.STATE_INVALID_TRANSITION);
@@ -112,6 +113,7 @@ export class MarketplaceTool implements ToolAdapter {
       taskId,
       assignmentId,
       resultUri,
+      actor: 'autonomous', /* 经 pipeline 的自主经济行为（ADR-0048 溯源） */
     });
     if (!result) {
       throw new ValidationError('提交失败：assignment 状态不允许或归属不符', ErrorCode.STATE_INVALID_TRANSITION);

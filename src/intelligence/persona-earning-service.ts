@@ -91,9 +91,17 @@ export class PersonaEarningService {
     let applied = 0, reviewQueued = 0, skipped = 0;
 
     for (const task of openTasks.slice(0, maxTasks)) {
-      /* 自己不能接自己发布的任务（AML/自接自发 guard 的第一道，policy 内还有更多） */
+      /* 自己不能接自己发布的任务（AML/自接自发 guard 第一道） */
       if (task.publisherUserId === input.ownerUserId) {
         outcomes.push({ taskId: task.id, title: task.title, decision: 'skipped', reasons: ['cannot accept self-published task'] });
+        skipped++;
+        continue;
+      }
+
+      /* AML/滥用 guard 第二道：publisher 异常（高取消率/刷单嫌疑）→ 拒接 */
+      const amlReason = this.amlBlockReason(input, task);
+      if (amlReason) {
+        outcomes.push({ taskId: task.id, title: task.title, decision: 'forbidden', reasons: [`AML: ${amlReason}`] });
         skipped++;
         continue;
       }
@@ -205,12 +213,17 @@ export class PersonaEarningService {
     return tasks.filter((t) => t.assigneePersonaId === input.personaId && t.status === 'accepted').length;
   }
 
-  /** 今日已接单累计报酬（accepted 状态任务的 reward 和） */
+  /** 今日（24h 滚动窗口）已接单累计报酬：仅计本 persona 在窗口内 acceptedAt 的任务。
+   * 注意：并发触发 earning cycle 的精确防超 cap 需 DB 级 per-persona lease（多实例
+   * 部署前必须加，见 ADR-0048）；当前单进程同步执行下按窗口统计已足够。 */
   private computeTodayExposure(input: EarningCycleInput): number {
+    const windowStart = this.deps.clock.now() - 86_400_000;
     const detail = this.deps.personaCore.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
     const tasks = detail?.marketplaceTasks ?? [];
     return tasks
-      .filter((t) => t.assigneePersonaId === input.personaId && t.status === 'accepted')
+      .filter((t) => t.assigneePersonaId === input.personaId
+        && t.status === 'accepted'
+        && (t.acceptedAt ?? 0) >= windowStart)
       .reduce((sum, t) => sum + t.reward, 0);
   }
 
@@ -226,10 +239,42 @@ export class PersonaEarningService {
     return !tasks.some((t) => t.publisherUserId === publisherUserId && t.assigneePersonaId === input.personaId);
   }
 
-  private recentFailureStreak(_input: EarningCycleInput): number {
-    /* 失败/争议历史的精确统计在 E-5 接入 reputation history 后增强；
-     * 当前以 0 起步（无失败记录），熔断仍由 policy 的其他硬约束保障。 */
-    return 0;
+  /**
+   * 近期连续失败数（熔断信号）：从该 persona 的任务历史统计 cancelled 任务
+   * + completed 但 qualityScore 偏低（<0.4）的任务。这些代表"做砸/被取消"。
+   * 用于 policy 的 failureStreakBreaker（连续失败则暂停 earning cycle）。
+   */
+  private recentFailureStreak(input: EarningCycleInput): number {
+    const detail = this.deps.personaCore.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
+    const tasks = (detail?.marketplaceTasks ?? [])
+      .filter((t) => t.assigneePersonaId === input.personaId)
+      .slice()
+      .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)); /* 最近在前 */
+    let streak = 0;
+    for (const t of tasks) {
+      const failed = t.status === 'cancelled'
+        || (t.status === 'completed' && (t.qualityScore ?? 1) < 0.4);
+      if (failed) streak++;
+      else if (t.status === 'completed') break; /* 遇到成功（高质量）则连续中断 */
+    }
+    return streak;
+  }
+
+  /**
+   * AML/滥用 guard（ADR-0048 D1）：返回拦截原因（非空即拦），用于在准入前否决。
+   * 覆盖：① 与该 publisher 争议/取消率过高 ② 同 publisher 异常重复低报酬刷单嫌疑。
+   * （自接自发已在主循环单独拦截。）
+   */
+  private amlBlockReason(input: EarningCycleInput, task: MarketplaceTask): string | null {
+    const detail = this.deps.personaCore.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
+    const tasks = (detail?.marketplaceTasks ?? []).filter((t) => t.publisherUserId === task.publisherUserId);
+    if (tasks.length >= 3) {
+      const cancelled = tasks.filter((t) => t.status === 'cancelled').length;
+      if (cancelled / tasks.length > 0.5) {
+        return `publisher ${task.publisherUserId} 取消率过高 (${cancelled}/${tasks.length})`;
+      }
+    }
+    return null;
   }
 }
 

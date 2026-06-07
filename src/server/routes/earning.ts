@@ -81,7 +81,8 @@ export function registerEarningRoutes(app: FastifyInstance, services: EarningRou
     },
   );
 
-  /* 工资钱包视图（只读：余额 + 流水）。提现入口不在此（D2 必人工确认） */
+  /* 工资钱包视图（只读：余额 + token + 提现政策）。提现入口不在此（D2 必人工确认）。
+   * 明细流水走既有 listWalletTransactions 路径。 */
   app.get<{ Params: { personaId: string } }>(
     '/api/v1/persona-core/:personaId/earning/wallet',
     async (request, reply) => {

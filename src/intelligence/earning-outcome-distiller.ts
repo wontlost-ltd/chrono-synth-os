@@ -34,6 +34,8 @@ export interface EarningOutcomeInput {
   readonly payout: number;
   /** owner 配置的"该 category → 价值 id + 当前权重"映射；缺省则不产 value_shift */
   readonly targetValue?: { readonly valueId: string; readonly currentWeight: number };
+  /** 可选：把本次任务记忆与既有记忆关联（产 memory_edge 候选，ADR-0048 D5） */
+  readonly linkMemory?: { readonly sourceId: string; readonly targetId: string; readonly relation: string };
 }
 
 export interface DistillEarningResult {
@@ -58,37 +60,50 @@ export class EarningOutcomeDistiller {
       this.logger?.info('EarningOutcomeDistiller', `质量 ${quality} <0.5，不产成长候选: task=${input.taskId}`);
       return { candidatesIngested: 0, results: [] };
     }
-    if (!input.targetValue) {
-      this.logger?.info('EarningOutcomeDistiller', `无 category→value 映射，跳过 value_shift: ${input.category}`);
-      return { candidatesIngested: 0, results: [] };
-    }
 
     const evidence: ArtifactEvidence[] = [
       /* 任务完成本身是一条经历记忆；质量分作为统计 pattern 信号 */
       { type: 'memory', id: `task:${input.taskId}`, score: quality },
       { type: 'pattern', id: `earning:${input.category}`, score: Math.min(1, input.payout / 100) },
     ];
-
-    /* delta 随质量缩放，封顶在自动编译阈值内；强信号(质量≥0.8)才 patternAgrees=true。 */
-    const { valueId, currentWeight } = input.targetValue;
-    const delta = round(MAX_GROWTH_DELTA * quality, 4);
-    const suggestedWeight = clamp01(round(currentWeight + delta, 4));
-    const actualDelta = round(suggestedWeight - currentWeight, 4);
-    const patternAgrees = quality >= STRONG_SIGNAL_QUALITY;
-    /* 置信度：强信号给 0.85（可走自动编译），否则 0.7（待人工审批） */
+    const patternAgrees = quality >= STRONG_SIGNAL_QUALITY; /* 强信号(≥0.8)→ 可自动编译 */
     const confidence = patternAgrees ? 0.85 : 0.7;
+    const results: IngestResult[] = [];
 
-    const result = this.distillation.ingest(input.personaId, {
-      kind: 'value_shift',
-      source: 'conversation', /* 任务执行属"经历沉淀"，归 conversation 来源类别 */
-      payload: { valueId, currentWeight, suggestedWeight, delta: actualDelta, patternAgrees },
-      confidence,
-      evidence,
-    });
+    /* ① value_shift：仅当有 category→value 映射时 */
+    if (input.targetValue) {
+      const { valueId, currentWeight } = input.targetValue;
+      const suggestedWeight = clamp01(round(currentWeight + MAX_GROWTH_DELTA * quality, 4));
+      const actualDelta = round(suggestedWeight - currentWeight, 4);
+      const r = this.distillation.ingest(input.personaId, {
+        kind: 'value_shift',
+        source: 'conversation',
+        payload: { valueId, currentWeight, suggestedWeight, delta: actualDelta, patternAgrees },
+        confidence,
+        evidence,
+      });
+      results.push(r);
+      this.logger?.info('EarningOutcomeDistiller', `收益蒸馏 → value_shift ${valueId} Δ${actualDelta} status=${r.status}`);
+    }
 
-    this.logger?.info('EarningOutcomeDistiller',
-      `收益蒸馏 task=${input.taskId} quality=${quality} → value_shift ${valueId} Δ${actualDelta} status=${result.status}`);
-    return { candidatesIngested: 1, results: [result] };
+    /* ② memory_edge：仅当 owner 提供了记忆关联（ADR-0048 D5） */
+    if (input.linkMemory && input.linkMemory.sourceId !== input.linkMemory.targetId) {
+      const { sourceId, targetId, relation } = input.linkMemory;
+      const r = this.distillation.ingest(input.personaId, {
+        kind: 'memory_edge',
+        source: 'conversation',
+        payload: { sourceId, targetId, relation, strength: clamp01(quality) },
+        confidence,
+        evidence,
+      });
+      results.push(r);
+      this.logger?.info('EarningOutcomeDistiller', `收益蒸馏 → memory_edge ${sourceId}->${targetId} status=${r.status}`);
+    }
+
+    if (results.length === 0) {
+      this.logger?.info('EarningOutcomeDistiller', `无 value 映射且无记忆关联，未产候选: ${input.category}`);
+    }
+    return { candidatesIngested: results.length, results };
   }
 }
 

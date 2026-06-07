@@ -132,4 +132,53 @@ describe('PersonaEarningService (ADR-0048)', () => {
     assert.equal(r.scanned, 0);
     assert.equal(r.applied, 0);
   });
+
+  it('近期连续失败达熔断阈值 → forbidden（真实失败史，非硬编码 0）', async () => {
+    /* 历史：2 个 cancelled 任务（连续失败 2 ≥ breaker 2）→ 准入 forbidden */
+    const failHistory = [
+      { id: 'h1', category: 'research', status: 'cancelled', assigneePersonaId: PERSONA, publisherUserId: 'pub_x', reward: 10, updatedAt: 200 },
+      { id: 'h2', category: 'research', status: 'cancelled', assigneePersonaId: PERSONA, publisherUserId: 'pub_x', reward: 10, updatedAt: 100 },
+    ];
+    const h = harnessWithHistory({ openTasks: [mkTask()], decision: '接受任务', history: failHistory });
+    const r = await h.svc.runEarningCycle(input);
+    assert.equal(r.applied, 0);
+    assert.match(JSON.stringify(r.outcomes), /failure streak|forbidden/);
+  });
+
+  it('publisher 高取消率 → AML forbidden', async () => {
+    /* 与 pub_aml 4 个任务、3 个 cancelled（取消率 75%>50%）→ AML 拦截 */
+    const amlHistory = [
+      { id: 'a1', category: 'research', status: 'cancelled', assigneePersonaId: PERSONA, publisherUserId: 'pub_aml', reward: 10, updatedAt: 400 },
+      { id: 'a2', category: 'research', status: 'cancelled', assigneePersonaId: PERSONA, publisherUserId: 'pub_aml', reward: 10, updatedAt: 300 },
+      { id: 'a3', category: 'research', status: 'cancelled', assigneePersonaId: PERSONA, publisherUserId: 'pub_aml', reward: 10, updatedAt: 200 },
+      { id: 'a4', category: 'research', status: 'completed', qualityScore: 0.9, assigneePersonaId: PERSONA, publisherUserId: 'pub_aml', reward: 10, updatedAt: 100 },
+    ];
+    const h = harnessWithHistory({ openTasks: [mkTask({ publisherUserId: 'pub_aml' })], decision: '接受任务', history: amlHistory });
+    const r = await h.svc.runEarningCycle(input);
+    assert.equal(r.applied, 0);
+    assert.match(JSON.stringify(r.outcomes), /AML/);
+  });
 });
+
+/* 带任务历史的 harness（用于失败熔断/AML 测试） */
+function harnessWithHistory(opts: { openTasks: Record<string, unknown>[]; decision: string; history: Record<string, unknown>[] }): Harness {
+  let applyCalls = 0;
+  let reviewEvents = 0;
+  const bus = new EventBus();
+  bus.on('system:earning-review-requested', () => { reviewEvents++; });
+  const personaCore = {
+    getPersonaDetail: () => ({ id: PERSONA, status: 'active', reputation: 10, marketplaceTasks: opts.history }),
+    listMarketplaceTasks: () => opts.openTasks,
+  } as unknown as PersonaCoreService;
+  const decisionEngine = {
+    evaluate: async () => ({ caseId: 'c', recommendedAlternative: opts.decision, rankedOptions: [], simulatedAt: 1 }),
+  } as unknown as DecisionEngine;
+  const pipeline = {
+    invoke: async (req: { arguments: { action: string } }) => {
+      if (req.arguments.action === 'apply') applyCalls++;
+      return { ok: true, invocationId: 'i', result: { content: [], costCents: 0, outputSizeBytes: 0 } };
+    },
+  } as unknown as ToolInvocationPipeline;
+  const svc = new PersonaEarningService({ personaCore, decisionEngine, pipeline, bus, clock: new TestClock(1000), logger: new SilentLogger() });
+  return { svc, get applyCalls() { return applyCalls; }, get reviewEvents() { return reviewEvents; } };
+}

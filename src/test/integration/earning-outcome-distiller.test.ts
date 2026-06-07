@@ -61,6 +61,34 @@ describe('EarningOutcomeDistiller (ADR-0048 D5)', () => {
     assert.equal(r.candidatesIngested, 0);
   });
 
+  it('提供 linkMemory → 额外产 memory_edge 候选（ADR D5）', () => {
+    const v = os.core.addValue('diligence', 0.5);
+    const m1 = os.core.addMemory('episodic', 'task A', 0.5, 0.7);
+    const m2 = os.core.addMemory('semantic', 'skill B', 0.3, 0.6);
+    const r = os.earningDistiller.distill({
+      tenantId: 'default', personaId: 'p1', taskId: 'mkt_e', category: 'research',
+      qualityScore: 0.9, payout: 40,
+      targetValue: { valueId: v.id, currentWeight: 0.5 },
+      linkMemory: { sourceId: m1.id, targetId: m2.id, relation: 'reinforced_by' },
+    });
+    /* value_shift + memory_edge 两个候选 */
+    assert.equal(r.candidatesIngested, 2);
+    const kinds = os.distillation.listByPersona('p1').map((a) => a.kind).sort();
+    assert.deepEqual(kinds, ['memory_edge', 'value_shift']);
+  });
+
+  it('无 value 映射但有 linkMemory → 仅产 memory_edge', () => {
+    const m1 = os.core.addMemory('episodic', 'A', 0.5, 0.7);
+    const m2 = os.core.addMemory('semantic', 'B', 0.3, 0.6);
+    const r = os.earningDistiller.distill({
+      tenantId: 'default', personaId: 'p1', taskId: 'mkt_e2', category: 'coding',
+      qualityScore: 0.9, payout: 30,
+      linkMemory: { sourceId: m1.id, targetId: m2.id, relation: 'reinforced_by' },
+    });
+    assert.equal(r.candidatesIngested, 1);
+    assert.equal(os.distillation.listByPersona('p1')[0].kind, 'memory_edge');
+  });
+
   it('收益蒸馏候选进入审计历史', () => {
     const v = os.core.addValue('diligence', 0.5);
     os.earningDistiller.distill({
