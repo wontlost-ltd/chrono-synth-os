@@ -33,6 +33,7 @@ import { DistillationService } from './intelligence/distillation-service.js';
 import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
 import { PersonaLeaseStore } from './storage/persona-lease-store.js';
+import { ResponseTemplateStore } from './storage/response-template-store.js';
 import { TaskQueue } from './queue/task-queue.js';
 import { FeatureFlagService } from './feature-flags/feature-flag-service.js';
 import { AuditChainAnchorService, type AuditChainKmsProvider } from './audit/audit-chain-anchor-service.js';
@@ -82,6 +83,8 @@ export class ChronoSynthOS {
   readonly earningDistiller: EarningOutcomeDistiller;
   /** ADR-0047/0048：per-persona 并发锁（compile mutex + earning lease，多实例 gating） */
   readonly personaLeases: PersonaLeaseStore;
+  /** ADR-0047：响应模板专用持久表（版本化、不衰减；取代会衰减的 procedural memory） */
+  readonly responseTemplates: ResponseTemplateStore;
   readonly queue: TaskQueue;
   /** Phase 1B 可选：开启 audit chain KMS 锚定时存在 */
   readonly auditChainAnchors: AuditChainAnchorService | undefined;
@@ -151,7 +154,9 @@ export class ChronoSynthOS {
     /* ADR-0047 蒸馏管线：候选 → 校验 → 门控 → 编译进核心（带快照/回滚）。
      * snapshotGuard 复用编排器的事务级 createSnapshot/restoreFromSnapshot。 */
     const artifactStore = new DistilledArtifactStore(this.db, this.tenantId);
-    const artifactCompiler = new ArtifactCompiler(this.core, this.logger);
+    /* ADR-0047：response_template 编译进专用持久表（版本化、不衰减），而非会被衰减驱逐的 procedural memory。 */
+    this.responseTemplates = new ResponseTemplateStore(this.db, this.tenantId);
+    const artifactCompiler = new ArtifactCompiler(this.core, this.logger, this.responseTemplates, this.clock);
     /* ADR-0047/0048 多实例 gating：并发锁，供租户级全局 compile mutex 与 per-persona
      * earning lease 共用（同一个 store，不同 scope）。 */
     this.personaLeases = new PersonaLeaseStore(this.db, this.tenantId);

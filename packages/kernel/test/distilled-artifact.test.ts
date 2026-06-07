@@ -138,6 +138,23 @@ describe('validateArtifact', () => {
     }));
     assert.ok(problems.some((p) => p.includes('response_template')));
   });
+
+  it('response_template 空 intent 被拒（intent 是检索/版本键）', () => {
+    const problems = validateArtifact(makeArtifact({
+      kind: 'response_template',
+      payload: { intent: '', template: '有内容' },
+    }));
+    assert.ok(problems.some((p) => p.includes('response_template')));
+  });
+
+  it('response_template 纯空白 intent/template 被拒（trim 后为空）', () => {
+    assert.ok(validateArtifact(makeArtifact({
+      kind: 'response_template', payload: { intent: '   ', template: '有内容' },
+    })).length > 0);
+    assert.ok(validateArtifact(makeArtifact({
+      kind: 'response_template', payload: { intent: 'greeting', template: '   ' },
+    })).length > 0);
+  });
 });
 
 describe('canAutoCompile (ADR-0047 D3)', () => {

@@ -188,9 +188,19 @@ D1/D2 phase-1 + the distillation pipeline (D3) are implemented and pass
   injected as an optional `leaseStore` (absent ⇒ single-process synchronous
   semantics, backward compatible). TTL is sound only while the critical section
   ≪ TTL; compile runs fully synchronously, so this holds with wide margin.
-- `response_template` dedicated template store — currently lands as a
-  `procedural` memory (subject to decay/eviction); a versioned template table
-  with intent index is future.
+- `response_template` dedicated template store — DONE. Previously compiled into
+  a `procedural` memory, which decays and is evicted (kindFactor 0.3 decay,
+  salience-floor + capacity eviction) — "learned then forgotten", violating the
+  distillation persistence guarantee. Now `ArtifactCompiler` writes
+  `response_template` into a dedicated, **non-decaying, versioned**
+  `response_templates` table (DSL v082 / Postgres v084; composite PK
+  `(tenant_id, persona_id, intent, version)` keeps history) via
+  `ResponseTemplateStore` (`upsert` appends `maxVersion+1`, `getLatestByIntent`
+  is the future conversation-consumer contract entry). Version computation is
+  race-free because compile runs under the tenant-global compile lease.
+  Note: a **producer** (a distiller that emits `response_template` candidates)
+  and a **consumer** (conversation lookup by intent) are still future — this
+  lands the durable persistence substrate ahead of them (deliberate, per owner).
 - Local Ollama layer-2 adapter (D2 layer 2); Companion dual-mode UX.
 
 ## Related

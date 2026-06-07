@@ -44,6 +44,8 @@ const TENANT_TABLES = [
   'persona_governance_events', 'persona_growth_events',
   'persona_memories', 'persona_knowledge_items',
   'marketplace_tasks', 'persona_forks', 'persona_wallets', 'persona_core',
+  /* ADR-0047/0048：蒸馏工件、并发租约、响应模板均为 tenant/persona 数据，须随租户导出/擦除 */
+  'distilled_artifacts', 'persona_leases', 'response_templates',
   'decision_feedbacks', 'decision_runs', 'decision_cases',
   'onboarding_sessions', 'llm_usage',
   'life_simulations',
@@ -126,6 +128,17 @@ const POST_TENANT_RELATED_TABLES: Array<{
 ];
 
 const TENANT_TABLE_SET: ReadonlySet<string> = new Set(TENANT_TABLES);
+
+/**
+ * 隐私导出/擦除覆盖的全部表名（直查 + 子查询关联 + 后置关联）。
+ * 导出供完整性 guard 测试：断言每张 tenant-scoped DSL 表都在此集合中，
+ * 防止新增表悄悄漏掉导出/擦除（GDPR 数据生命周期）。
+ */
+export const PRIVACY_COVERED_TABLES: ReadonlySet<string> = new Set<string>([
+  ...TENANT_TABLES,
+  ...RELATED_TABLES.map((r) => r.name),
+  ...POST_TENANT_RELATED_TABLES.map((r) => r.name),
+]);
 
 function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');

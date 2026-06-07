@@ -236,7 +236,7 @@ export class DistillationService {
   /** 编译主体：持有 compile 锁（如启用）期间执行。 */
   private compileApprovedLocked(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
     const snapshotId = this.deps.snapshotGuard.snapshot();
-    const outcome = this.deps.compiler.compile(artifact);
+    const outcome = this.deps.compiler.compile(personaId, artifact);
 
     if (!outcome.ok) {
       /* 编译失败：与编译后失败走同一安全补偿（rollback/reject 各自 try/catch） */

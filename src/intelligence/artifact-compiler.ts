@@ -9,8 +9,9 @@
  *   - value_shift        → CoreRhythmLayer.updateValueParams（权重）
  *   - memory_edge        → CoreRhythmLayer.linkMemories（记忆图边）
  *   - narrative_patch    → CoreRhythmLayer.updateNarrative（叙事重写）
- *   - response_template  → 作为 procedural 记忆落库（离线回应器可检索；
- *                          不新增表，复用记忆图作为确定性模板载体）
+ *   - response_template  → ResponseTemplateStore 专用持久表（版本化、不衰减）。
+ *                          原先落 procedural 记忆会被衰减/驱逐（「学了会忘」），
+ *                          违背蒸馏持久性，故 ADR-0047 改为专用表（需注入 templates）。
  *
  * 其余 kind（rule / decision_style_patch / cognitive_model_patch）目前不编译，
  * 返回 unsupported——它们停留在 approved/pending 待后续 PR 接专用编译路径，
@@ -22,6 +23,8 @@
 
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { Logger } from '../utils/logger.js';
+import type { ResponseTemplateStore } from '../storage/response-template-store.js';
+import type { Clock } from '../utils/clock.js';
 import type {
   DistilledArtifact,
   ValueShiftPayload,
@@ -44,13 +47,17 @@ export class ArtifactCompiler {
   constructor(
     private readonly core: CoreRhythmLayer,
     private readonly logger?: Logger,
+    /** response_template 专用持久表（ADR-0047）；未注入时该 kind 不可编译，显式失败。 */
+    private readonly templates?: ResponseTemplateStore,
+    private readonly clock?: Clock,
   ) {}
 
   /**
    * 编译单件工件到核心状态。调用方应仅对已通过校验且处于可编译状态的工件调用。
+   * personaId 用于对象级落库（response_template 按 persona 持久化）。
    * 返回成败；失败不抛错（让上层按批次决定是否回滚）。
    */
-  compile(artifact: DistilledArtifact): CompileOutcome {
+  compile(personaId: string, artifact: DistilledArtifact): CompileOutcome {
     try {
       switch (artifact.kind) {
         case 'value_shift':
@@ -60,7 +67,7 @@ export class ArtifactCompiler {
         case 'narrative_patch':
           return this.compileNarrativePatch(artifact.payload as NarrativePatchPayload);
         case 'response_template':
-          return this.compileResponseTemplate(artifact.payload as ResponseTemplatePayload);
+          return this.compileResponseTemplate(personaId, artifact.id, artifact.payload as ResponseTemplatePayload);
         default:
           return { ok: false, reason: `unsupported artifact kind for compile: ${artifact.kind}` };
       }
@@ -96,12 +103,14 @@ export class ArtifactCompiler {
     return { ok: true, applied: 'narrative updated' };
   }
 
-  private compileResponseTemplate(p: ResponseTemplatePayload): CompileOutcome {
-    /* 模板以 procedural 记忆落库：内容携带 intent 前缀，离线回应器检索时可命中。
-     * valence=0（中性），salience 中高（0.6）以便被工作记忆/检索优先。 */
-    const content = `[template:${p.intent}] ${p.template}`;
-    const node = this.core.addMemory('procedural', content, 0, 0.6);
-    this.logger?.info(LAYER, `已编译 response_template: intent=${p.intent} → memory ${node.id}`);
-    return { ok: true, applied: `template intent=${p.intent} as memory ${node.id}` };
+  private compileResponseTemplate(personaId: string, artifactId: string, p: ResponseTemplatePayload): CompileOutcome {
+    /* 落专用持久表（版本化、不衰减），而非会被衰减/驱逐的 procedural memory。
+     * 同 intent 追加新版本，溯源到来源工件。需注入 templates store + clock。 */
+    if (!this.templates || !this.clock) {
+      return { ok: false, reason: 'response_template store not configured (ResponseTemplateStore + Clock required)' };
+    }
+    const version = this.templates.appendVersion(personaId, p.intent, p.template, artifactId, this.clock.now());
+    this.logger?.info(LAYER, `已编译 response_template: intent=${p.intent} → v${version}（专用表，持久）`);
+    return { ok: true, applied: `template intent=${p.intent} v${version}` };
   }
 }
