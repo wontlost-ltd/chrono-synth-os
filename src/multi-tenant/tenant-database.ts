@@ -34,6 +34,17 @@ const TENANT_TABLES = new Set([
   'platform_dlq_events',
   /* ADR-0047/0048：蒸馏工件、并发租约、响应模板均为 tenant 数据 */
   'distilled_artifacts', 'persona_leases', 'response_templates',
+  /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
+  'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
+  'observability_outbox', 'observability_rollups', 'observability_processed_events',
+  'export_jobs', 'event_ledger', 'persona_core_ledger_outbox', 'projection_store',
+  'conflict_inbox', 'import_jobs', 'import_commit_tokens', 'tenant_key_versions',
+  'tenant_vault_audit', 'tenant_storage_bindings', 'drift_analysis_log',
+  'persona_templates', 'bulk_knowledge_import_jobs', 'conversation_messages',
+  'conversation_confirmation_tokens', 'tool_permissions', 'agency_authorizations',
+  'tool_invocations', 'user_oauth_tokens', 'events_user_journey', 'core_values_snapshot',
+  'compliance_evidence', 'legal_holds', 'break_glass_jti_consumptions',
+  'audit_chain_anchors', 'audit_chain_anchor_failures', 'api_keys', 'kms_key_audit',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */
@@ -41,8 +52,8 @@ const SINGLETON_TABLES = new Set([
   'narrative', 'decision_style', 'cognitive_model',
 ]);
 
-/** 所有受租户影响的表 */
-const ALL_TENANT_TABLES = new Set([...TENANT_TABLES, ...SINGLETON_TABLES]);
+/** 所有受租户影响的表（含单行表）。导出供完整性 ratchet 测试核对覆盖。 */
+export const ALL_TENANT_TABLES = new Set([...TENANT_TABLES, ...SINGLETON_TABLES]);
 
 /**
  * 判断 SQL 是否涉及租户表

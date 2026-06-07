@@ -335,8 +335,8 @@ const API_DOCS = {
     {
       method: 'DELETE',
       path: '/api/v1/privacy/data',
-      description: '删除当前租户所有数据（GDPR 合规，按 tenant_id 隔离，仅 admin）',
-      response_schema: { data: '{ deleted: true, timestamp: number }' },
+      description: '删除当前租户所有数据（GDPR 合规，按 tenant_id 隔离，仅 admin）。存在 active legal hold 时擦除被阻断（GDPR Art.17(3)(b)），返回 409 + blocked 结果，须先释放 hold。',
+      response_schema: { data: '{ deleted: true, blocked: false, timestamp } | { deleted: false, blocked: true, reason, blockingHoldId }（后者 HTTP 409）' },
     },
     {
       method: 'GET',

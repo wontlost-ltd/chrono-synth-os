@@ -508,6 +508,23 @@ describe('可视化与隐私 API 集成测试', () => {
       assert.equal(db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM avatars').get()?.count ?? 0, 0);
       assert.equal(db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM device_avatars').get()?.count ?? 0, 0);
     });
+
+    it('active legal hold → 返回 409 且不删除（GDPR Art.17(3)(b)）', async () => {
+      os.core.addValue('诚信', 0.8);
+      const db = os.getDatabase();
+      db.prepare<void>(
+        `INSERT INTO legal_holds (id, tenant_id, subject, subject_id, reason, created_by, created_at, released_at, released_by)
+         VALUES ('lh_route', 'default', 'tenant', NULL, 'litigation', 'admin', ?, NULL, NULL)`,
+      ).run(Date.now());
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/v1/privacy/data' });
+      assert.equal(res.statusCode, 409, 'active hold 应返回 409');
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.blocked, true);
+      assert.equal(body.data.deleted, false);
+      /* 数据未删 */
+      assert.equal(os.core.values.getAll().size, 1, 'hold 期间不得删除');
+    });
   });
 
   describe('GET /api/v1/privacy/audit-trail', () => {
