@@ -201,7 +201,19 @@ D1/D2 phase-1 + the distillation pipeline (D3) are implemented and pass
   Note: a **producer** (a distiller that emits `response_template` candidates)
   and a **consumer** (conversation lookup by intent) are still future — this
   lands the durable persistence substrate ahead of them (deliberate, per owner).
-- Local Ollama layer-2 adapter (D2 layer 2); Companion dual-mode UX.
+- Local Ollama layer-2 adapter (D2 layer 2) — provider DONE + usable. The
+  `ModelRouter` `ollama` provider (chat `/api/chat`, embed `/api/embed`, default
+  `http://localhost:11434`, no API key) is implemented, tested (HTTP-stubbed),
+  and documented (`.env.example`). Fixed a real defect: embedding-provider
+  injection was gated on `apiKey` being truthy, which silently disabled semantic
+  retrieval / value-guard / memory embeddings for keyless local providers — now
+  gated on `intelligenceProvidesEmbeddings(config)` (true for `ollama`). So
+  `CHRONO_INTELLIGENCE_PROVIDER=ollama` is a fully working single provider.
+  STILL FUTURE (needs a product decision): the D2 *three-layer routing* semantics
+  — a provider chain / fallback order (cloud unavailable → local → deterministic)
+  or a "local model only surface-rewrites the deterministic offline response"
+  adapter. Today it is single-configured-provider, not a layered chain.
+- Companion dual-mode UX.
 
 ## Related
 

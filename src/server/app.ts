@@ -15,7 +15,7 @@ import { NodeEventPublisher } from '../events/node-event-publisher.js';
 import { NodeUnitOfWorkFactory } from '../storage/node-unit-of-work.js';
 import type { UnitOfWorkFactory } from '@chrono/kernel';
 import type { FieldCrypto } from '@chrono/data-plane';
-import { loadConfig } from '../config/schema.js';
+import { loadConfig, intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
@@ -465,10 +465,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     billingOutbox: p1dBillingOutbox,
     stripeCustomerLookup: config.stripe.enabled ? stripeCustomerLookup : undefined,
     guardOptions: {
-      embeddingProvider: config.intelligence.apiKey ? conversationLlmRouter : undefined,
+      /* 按 provider 真实 embedding 能力判断（无 key 的 ollama 也算；anthropic 不支持则不注入），而非 apiKey 真值 */
+      embeddingProvider: intelligenceProvidesEmbeddings(config) ? conversationLlmRouter : undefined,
     },
     retrieverOptions: {
-      embeddingProvider: config.intelligence.apiKey ? conversationLlmRouter : undefined,
+      embeddingProvider: intelligenceProvidesEmbeddings(config) ? conversationLlmRouter : undefined,
       logger: deps.os.getLogger(),
     },
   });
