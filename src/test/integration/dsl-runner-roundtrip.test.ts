@@ -107,6 +107,8 @@ interface SqliteSchemaDump {
 }
 
 class BetterSqliteDatabaseAdapter implements IDatabase {
+  readonly dialect = 'sqlite' as const;
+
   constructor(private readonly db: BetterSqliteDatabase) {}
 
   exec(sql: string): void {

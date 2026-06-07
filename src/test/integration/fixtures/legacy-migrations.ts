@@ -846,6 +846,77 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_onboarding_synthetic_session ON onboarding_synthetic_invocations(session_id)",
       "/* safe:add-column:users:onboarded_at */ ALTER TABLE users ADD COLUMN onboarded_at INTEGER"
     ]
+  },
+  {
+    "version": "v073",
+    "description": "P0-E: append-only hash chain on audit_log",
+    "sql": [
+      "/* safe:add-column:audit_log:chain_seq */ ALTER TABLE audit_log ADD COLUMN chain_seq INTEGER",
+      "/* safe:add-column:audit_log:prev_hash */ ALTER TABLE audit_log ADD COLUMN prev_hash TEXT",
+      "/* safe:add-column:audit_log:record_hash */ ALTER TABLE audit_log ADD COLUMN record_hash TEXT",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_log_chain_unique ON audit_log(tenant_id, chain_seq) WHERE chain_seq IS NOT NULL"
+    ]
+  },
+  {
+    "version": "v074",
+    "description": "P1-F-basic: SOC2 evidence collection table",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS compliance_evidence (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    control_id TEXT NOT NULL,\n    evidence_type TEXT NOT NULL,\n    collector TEXT NOT NULL DEFAULT 'system',\n    payload_json TEXT NOT NULL,\n    payload_sha256 TEXT NOT NULL,\n    collected_at INTEGER NOT NULL,\n    period_start INTEGER,\n    period_end INTEGER,\n    metadata_json TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_compliance_evidence_lookup ON compliance_evidence(tenant_id, control_id, collected_at)",
+      "CREATE INDEX IF NOT EXISTS idx_compliance_evidence_period ON compliance_evidence(tenant_id, period_start, period_end)"
+    ]
+  },
+  {
+    "version": "v075",
+    "description": "P1-N: legal_holds table for litigation / regulatory hold tracking",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS legal_holds (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    subject TEXT NOT NULL CHECK(subject IN ('tenant','user','persona')),\n    subject_id TEXT,\n    reason TEXT NOT NULL,\n    created_by TEXT NOT NULL,\n    created_at INTEGER NOT NULL,\n    released_at INTEGER,\n    released_by TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_legal_holds_active ON legal_holds(tenant_id, subject, subject_id) WHERE released_at IS NULL"
+    ]
+  },
+  {
+    "version": "v076",
+    "description": "P1-M v2: durable break-glass JTI consumption ledger",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS break_glass_jti_consumptions (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    jti TEXT NOT NULL,\n    token_scope TEXT NOT NULL,\n    consumed_at TEXT NOT NULL,\n    consumed_by TEXT,\n    request_ip TEXT,\n    audit_seq INTEGER\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_break_glass_jti_unique ON break_glass_jti_consumptions(tenant_id, jti)",
+      "CREATE INDEX IF NOT EXISTS idx_break_glass_jti_consumed_at ON break_glass_jti_consumptions(consumed_at)"
+    ]
+  },
+  {
+    "version": "v077",
+    "description": "P0-E v2: KMS-signed audit chain tail anchors",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS audit_chain_anchors (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    from_seq INTEGER NOT NULL,\n    to_seq INTEGER NOT NULL,\n    tail_hash TEXT NOT NULL,\n    signature TEXT NOT NULL,\n    key_id TEXT NOT NULL,\n    alg TEXT NOT NULL,\n    signed_at TEXT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_chain_anchors_unique_tail ON audit_chain_anchors(tenant_id, to_seq, tail_hash)",
+      "CREATE INDEX IF NOT EXISTS idx_audit_chain_anchors_latest ON audit_chain_anchors(tenant_id, to_seq)"
+    ]
+  },
+  {
+    "version": "v078",
+    "description": "P0-D #2: durable jwt_signing_keys with KeyRing state machine",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS jwt_signing_keys (\n    kid TEXT PRIMARY KEY,\n    state TEXT NOT NULL CHECK(state IN ('active','grace','retired','compromised')),\n    algorithm TEXT NOT NULL,\n    private_key TEXT NOT NULL DEFAULT '',\n    public_key TEXT NOT NULL DEFAULT '',\n    secret TEXT NOT NULL DEFAULT '',\n    created_at TEXT NOT NULL,\n    state_changed_at TEXT NOT NULL,\n    retired_at TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_jwt_signing_keys_state ON jwt_signing_keys(state)"
+    ]
+  },
+  {
+    "version": "v079",
+    "description": "GA §8 #1: persist KMS anchor failures as evidence rows",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS audit_chain_anchor_failures (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    from_seq INTEGER NOT NULL,\n    to_seq INTEGER NOT NULL,\n    tail_hash TEXT NOT NULL,\n    error_code TEXT NOT NULL,\n    error_message TEXT NOT NULL,\n    attempted_at TEXT NOT NULL,\n    recovered_at TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_audit_chain_anchor_failures_open ON audit_chain_anchor_failures(tenant_id, recovered_at)",
+      "CREATE INDEX IF NOT EXISTS idx_audit_chain_anchor_failures_attempted ON audit_chain_anchor_failures(attempted_at)"
+    ]
+  },
+  {
+    "version": "v080",
+    "description": "ADR-0047: persist distillation artifacts (gated LLM→core pipeline)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS distilled_artifacts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('rule', 'value_shift', 'memory_edge', 'decision_style_patch', 'cognitive_model_patch', 'response_template', 'narrative_patch')),\n    source TEXT NOT NULL CHECK(source IN ('reflection', 'conversation', 'knowledge_import', 'onboarding')),\n    payload TEXT NOT NULL,\n    confidence REAL NOT NULL DEFAULT 0,\n    evidence TEXT NOT NULL DEFAULT '[]',\n    status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate', 'approved', 'compiled', 'rejected', 'rolled_back')),\n    reason TEXT,\n    created_at INTEGER NOT NULL,\n    compiled_at INTEGER\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_persona ON distilled_artifacts(tenant_id, persona_id)",
+      "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_status ON distilled_artifacts(tenant_id, persona_id, status)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1699,6 +1770,50 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS legal_holds (\n      id TEXT PRIMARY KEY,\n      tenant_id TEXT NOT NULL,\n      subject TEXT NOT NULL CHECK(subject IN ('tenant','user','persona')),\n      subject_id TEXT,\n      reason TEXT NOT NULL,\n      created_by TEXT NOT NULL,\n      created_at BIGINT NOT NULL,\n      released_at BIGINT,\n      released_by TEXT\n    )",
       "CREATE INDEX IF NOT EXISTS idx_legal_holds_active ON legal_holds(tenant_id, subject, subject_id) WHERE released_at IS NULL"
+    ]
+  },
+  {
+    "version": "v078",
+    "description": "P1-M v2: durable break-glass JTI consumption ledger",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS break_glass_jti_consumptions (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    jti TEXT NOT NULL,\n    token_scope TEXT NOT NULL,\n    consumed_at TEXT NOT NULL,\n    consumed_by TEXT,\n    request_ip TEXT,\n    audit_seq BIGINT\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_break_glass_jti_unique ON break_glass_jti_consumptions (tenant_id, jti)",
+      "CREATE INDEX IF NOT EXISTS idx_break_glass_jti_consumed_at ON break_glass_jti_consumptions (consumed_at)"
+    ]
+  },
+  {
+    "version": "v079",
+    "description": "P0-E v2: KMS-signed audit chain tail anchors",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS audit_chain_anchors (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    from_seq BIGINT NOT NULL,\n    to_seq BIGINT NOT NULL,\n    tail_hash TEXT NOT NULL,\n    signature TEXT NOT NULL,\n    key_id TEXT NOT NULL,\n    alg TEXT NOT NULL,\n    signed_at TEXT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_chain_anchors_unique_tail ON audit_chain_anchors (tenant_id, to_seq, tail_hash)",
+      "CREATE INDEX IF NOT EXISTS idx_audit_chain_anchors_latest ON audit_chain_anchors (tenant_id, to_seq)"
+    ]
+  },
+  {
+    "version": "v080",
+    "description": "P0-D #2: durable jwt_signing_keys with KeyRing state machine",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS jwt_signing_keys (\n    kid TEXT PRIMARY KEY,\n    state TEXT NOT NULL CHECK(state IN ('active','grace','retired','compromised')),\n    algorithm TEXT NOT NULL,\n    private_key TEXT NOT NULL DEFAULT '',\n    public_key TEXT NOT NULL DEFAULT '',\n    secret TEXT NOT NULL DEFAULT '',\n    created_at TEXT NOT NULL,\n    state_changed_at TEXT NOT NULL,\n    retired_at TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_jwt_signing_keys_state ON jwt_signing_keys (state)"
+    ]
+  },
+  {
+    "version": "v081",
+    "description": "GA §8 #1: persist KMS anchor failures as evidence rows",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS audit_chain_anchor_failures (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    from_seq BIGINT NOT NULL,\n    to_seq BIGINT NOT NULL,\n    tail_hash TEXT NOT NULL,\n    error_code TEXT NOT NULL,\n    error_message TEXT NOT NULL,\n    attempted_at TEXT NOT NULL,\n    recovered_at TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_audit_chain_anchor_failures_open ON audit_chain_anchor_failures (tenant_id, recovered_at)",
+      "CREATE INDEX IF NOT EXISTS idx_audit_chain_anchor_failures_attempted ON audit_chain_anchor_failures (attempted_at)"
+    ]
+  },
+  {
+    "version": "v082",
+    "description": "ADR-0047: persist distillation artifacts (gated LLM→core pipeline)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS distilled_artifacts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('rule', 'value_shift', 'memory_edge', 'decision_style_patch', 'cognitive_model_patch', 'response_template', 'narrative_patch')),\n    source TEXT NOT NULL CHECK(source IN ('reflection', 'conversation', 'knowledge_import', 'onboarding')),\n    payload TEXT NOT NULL,\n    confidence DOUBLE PRECISION NOT NULL DEFAULT 0,\n    evidence TEXT NOT NULL DEFAULT '[]',\n    status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate', 'approved', 'compiled', 'rejected', 'rolled_back')),\n    reason TEXT,\n    created_at BIGINT NOT NULL,\n    compiled_at BIGINT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_persona ON distilled_artifacts (tenant_id, persona_id)",
+      "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_status ON distilled_artifacts (tenant_id, persona_id, status)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
