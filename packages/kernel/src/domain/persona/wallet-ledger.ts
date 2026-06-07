@@ -80,6 +80,18 @@ export const WALLET_DIRECTION_MATRIX: Readonly<Record<WalletTransactionType, Wal
 };
 
 /**
+ * 按方向矩阵给出某 transactionType 的**带符号金额**（credit 正、debit 负）。
+ *
+ * 单一事实来源：任何「按 type 决定符号」的写入方（结算、对账修复）都应调用本函数，
+ * 而非各自硬编码正负，避免与 WALLET_DIRECTION_MATRIX 漂移。
+ * @param magnitude 金额绝对值（正整数，最小货币单位）
+ */
+export function signedAmountForTransaction(transactionType: WalletTransactionType, magnitude: number): number {
+  const abs = Math.abs(magnitude);
+  return WALLET_DIRECTION_MATRIX[transactionType] === 'debit' ? -abs : abs;
+}
+
+/**
  * 钱包变更安全守卫（纯函数，ADR-0048 D2 铁律）。
  *
  * 入参约定：本守卫的 `amountMinor` 是**绝对值（必须为正）**，方向由独立的 `direction`
@@ -87,15 +99,16 @@ export const WALLET_DIRECTION_MATRIX: Readonly<Record<WalletTransactionType, Wal
  * `Math.abs(amount)` 作为 amountMinor。守卫不看符号，只看 direction 字段。
  *
  * 规则：
- *   - amountMinor 必须为正（符号由 direction 字段表达，不靠负数）。
+ *   - amountMinor 必须为**正整数**（最小货币单位，分；不接受小数——否则 0.4 会过守卫
+ *     却被下游 round 成 0，凭空蒸发资金）。符号由 direction 字段表达，不靠负数。
  *   - transactionType ↔ direction 必须与 WALLET_DIRECTION_MATRIX 一致——杜绝语义错配
  *     （如 owner_payout 当 credit、task_payment 当 debit），这是钱的正确性铁律。
  *   - debit：autonomous actor 一律拒绝；只有 human / system（代表人类确认的
  *     已审批操作）允许。credit：任何 actor 都允许（赚钱无限制方向）。
  */
 export function assertWalletMutationAllowed(intent: WalletMutationIntent): WalletGuardResult {
-  if (!Number.isFinite(intent.amountMinor) || intent.amountMinor <= 0) {
-    return { allowed: false, reason: 'amountMinor must be a positive number' };
+  if (!Number.isInteger(intent.amountMinor) || intent.amountMinor <= 0) {
+    return { allowed: false, reason: 'amountMinor must be a positive integer (minor currency unit)' };
   }
   const expectedDirection = WALLET_DIRECTION_MATRIX[intent.transactionType];
   if (intent.direction !== expectedDirection) {

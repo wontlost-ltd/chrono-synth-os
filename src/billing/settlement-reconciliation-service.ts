@@ -12,6 +12,7 @@ import {
   settleQueryTenantsWithSettlements, settleQueryRunsByTenant,
   settleCmdDeleteSettlementTransactions, settleCmdInsertTransaction,
   settleCmdDeleteOrphanTransactions, settleCmdInsertRun,
+  signedAmountForTransaction,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
@@ -39,20 +40,22 @@ function toIso(value: number): string {
 }
 
 function buildExpectedLedger(settlement: SettlementRow): ExpectedLedgerEntry[] {
+  /* 符号统一由 signedAmountForTransaction(方向矩阵)给出，不再硬编码正负——
+   * 与 PersonaWalletService 写入路径共用同一事实来源，杜绝对账期望与实际写入漂移。 */
   return [
     {
       transactionType: 'task_payment',
-      amountMinor: Number(settlement.total_amount_minor),
+      amountMinor: signedAmountForTransaction('task_payment', Number(settlement.total_amount_minor)),
       currency: settlement.currency,
     },
     {
       transactionType: 'platform_fee',
-      amountMinor: -Number(settlement.platform_amount_minor),
+      amountMinor: signedAmountForTransaction('platform_fee', Number(settlement.platform_amount_minor)),
       currency: settlement.currency,
     },
     {
       transactionType: 'persona_reserve',
-      amountMinor: -Number(settlement.persona_amount_minor),
+      amountMinor: signedAmountForTransaction('persona_reserve', Number(settlement.persona_amount_minor)),
       currency: settlement.currency,
     },
   ];

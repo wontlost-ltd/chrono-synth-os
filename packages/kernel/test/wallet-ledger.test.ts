@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   assertWalletMutationAllowed,
   isDebitTransactionType,
+  signedAmountForTransaction,
   type WalletMutationIntent,
 } from '../src/domain/persona/wallet-ledger.js';
 
@@ -39,6 +40,14 @@ describe('assertWalletMutationAllowed (ADR-0048 D2)', () => {
     assert.equal(assertWalletMutationAllowed(intent({ amountMinor: 0 })).allowed, false);
     assert.equal(assertWalletMutationAllowed(intent({ amountMinor: -50 })).allowed, false);
     assert.equal(assertWalletMutationAllowed(intent({ amountMinor: NaN })).allowed, false);
+  });
+
+  it('amountMinor 非整数被拒（防 0.4 过守卫被 round 成 0 蒸发资金）', () => {
+    const r = assertWalletMutationAllowed(intent({ amountMinor: 0.4 }));
+    assert.equal(r.allowed, false);
+    if (!r.allowed) assert.match(r.reason, /integer/);
+    assert.equal(assertWalletMutationAllowed(intent({ amountMinor: 99.99 })).allowed, false);
+    assert.equal(assertWalletMutationAllowed(intent({ amountMinor: 100 })).allowed, true);
   });
 
   /* ── type ↔ direction 矩阵（ADR-0048 钱的正确性铁律） ── */
@@ -83,5 +92,19 @@ describe('isDebitTransactionType', () => {
   });
   it('task_payment 非 debit（入账 credit）', () => {
     assert.equal(isDebitTransactionType('task_payment'), false);
+  });
+});
+
+describe('signedAmountForTransaction（方向矩阵单一事实来源）', () => {
+  it('credit type 返回正、debit type 返回负，幅度取绝对值', () => {
+    assert.equal(signedAmountForTransaction('task_payment', 500), 500);   /* credit → + */
+    assert.equal(signedAmountForTransaction('platform_fee', 50), -50);    /* debit → - */
+    assert.equal(signedAmountForTransaction('owner_payout', 300), -300);
+    assert.equal(signedAmountForTransaction('persona_reserve', 360), -360);
+    assert.equal(signedAmountForTransaction('refund', 100), -100);
+  });
+  it('传入负幅度也按矩阵定符号（不被调用方符号干扰）', () => {
+    assert.equal(signedAmountForTransaction('task_payment', -500), 500);
+    assert.equal(signedAmountForTransaction('platform_fee', -50), -50);
   });
 });
