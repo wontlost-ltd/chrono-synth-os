@@ -89,7 +89,7 @@ function csrfHeaders(): Record<string, string> {
  *   - 'refreshed'：拿到新 accessToken，会话已更新。
  *   - 'failed'：refresh 真实失败（cookie 过期/无效），应清会话回登录。
  *   - 'superseded'：期间发生了 login/logout（epoch 变），本次结果作废；**不得**清会话
- *     （已有更新的权威会话），调用方应放弃本次重试但保留当前会话。
+ *     （已有更新的权威会话）。调用方据此不得清会话，可用当前会话重试或放弃。
  * 用三态而非 boolean 是为消除「discarded 与 failed 同为 false」导致调用方误清新会话的歧义。
  */
 export type RefreshOutcome = 'refreshed' | 'failed' | 'superseded';

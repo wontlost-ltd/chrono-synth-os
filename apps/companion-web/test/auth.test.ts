@@ -12,6 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { decide401Action } from '../src/api-retry.ts';
 
 interface FetchCall {
   url: string;
@@ -137,12 +138,56 @@ test('epoch 守卫：logout 后到达的陈旧 refresh 结果不把会话写回'
   assert.equal(auth.isAuthenticated(), false, 'logout 后不得被在途 refresh 恢复登录');
 });
 
-/* api.ts 的 401 重试链不在此单测：companion-web 用 .js import 说明符（Vite/tsc-bundler 解析），
- * Node 原生 strip-only 不会把 './auth.js' 改写到 './auth.ts'，无法 bare `node --test` 加载 api.ts。
- * 改用「以 auth.ts 三态契约保证 api.ts 正确性」：
- *   - 上面三个测试已证 tryRefresh 返回 'refreshed' / 'failed' / 'superseded'，且 'superseded'
- *     不写回、不 clearSession（陈旧 refresh 不恢复登录）。
- *   - api.ts 仅在 outcome==='failed' 时不重试（此时 clearSession 已在 auth.ts 内做），
- *     'refreshed'/'superseded' 都重试且**不**在调用方 clearSession——因此不存在「陈旧 401
- *     清掉新会话」的路径（该路径已被三态 enum 从结构上消除）。
- * 经 api.ts 的端到端 race 验证留待 companion-web 接入 vitest/jsdom 后补（README 已记）。 */
+test('tryRefresh failed 路径：refresh 非 ok / 畸形 body / fetch 抛错 → failed 且同 epoch 清会话', async () => {
+  /* 非 ok */
+  {
+    const auth = await import('../src/auth.ts?fail1' as string);
+    (globalThis as { document?: { cookie: string } }).document = { cookie: 'csrf_token=c' };
+    (globalThis as { fetch?: unknown }).fetch = async (url: string) =>
+      url.includes('/auth/login')
+        ? ({ ok: true, status: 200, json: async () => ({ data: { accessToken: 'a', tenantId: 't' } }) } as Response)
+        : ({ ok: false, status: 401, json: async () => ({}) } as Response);
+    await auth.login('e@test.com', 'pw');
+    assert.equal(await auth.tryRefresh(), 'failed');
+    assert.equal(auth.isAuthenticated(), false, 'failed 应清会话');
+  }
+  /* 畸形 body（ok 但缺 token） */
+  {
+    const auth = await import('../src/auth.ts?fail2' as string);
+    (globalThis as { document?: { cookie: string } }).document = { cookie: 'csrf_token=c' };
+    (globalThis as { fetch?: unknown }).fetch = async (url: string) =>
+      url.includes('/auth/login')
+        ? ({ ok: true, status: 200, json: async () => ({ data: { accessToken: 'a', tenantId: 't' } }) } as Response)
+        : ({ ok: true, status: 200, json: async () => ({ data: {} }) } as Response);
+    await auth.login('f@test.com', 'pw');
+    assert.equal(await auth.tryRefresh(), 'failed', '畸形 body 应 failed');
+    assert.equal(auth.isAuthenticated(), false);
+  }
+  /* fetch 抛错 */
+  {
+    const auth = await import('../src/auth.ts?fail3' as string);
+    (globalThis as { document?: { cookie: string } }).document = { cookie: 'csrf_token=c' };
+    let phase = 'login';
+    (globalThis as { fetch?: unknown }).fetch = async (url: string) => {
+      if (url.includes('/auth/login')) { phase = 'refresh'; return { ok: true, status: 200, json: async () => ({ data: { accessToken: 'a', tenantId: 't' } }) } as Response; }
+      if (phase === 'refresh') throw new Error('network down');
+      return { ok: true, status: 200, json: async () => ({ data: {} }) } as Response;
+    };
+    await auth.login('g@test.com', 'pw');
+    assert.equal(await auth.tryRefresh(), 'failed', 'fetch 抛错应 failed');
+    assert.equal(auth.isAuthenticated(), false);
+  }
+});
+
+test('decide401Action：会话身份决定刷新还是「陈旧 401」用当前会话重试', () => {
+  /* 同一会话（token 未变）→ refresh */
+  assert.equal(decide401Action('tok-A', 'tok-A'), 'refresh');
+  /* 发请求时未登录、现仍未登录 → refresh（让 refresh 流程判定 failed） */
+  assert.equal(decide401Action(null, null), 'refresh');
+  /* 关键 round-5 残窗：发请求用旧 token，期间 login 换了新 token → 陈旧 401，用当前会话重试，不 refresh */
+  assert.equal(decide401Action('tok-old', 'tok-new'), 'retry-current');
+  /* 发请求时已登录，期间 logout（现为 null）→ 陈旧 401，retry-current（不 refresh、不清会话） */
+  assert.equal(decide401Action('tok-old', null), 'retry-current');
+  /* 发请求时未登录，期间 login → 也是会话身份变化，retry-current */
+  assert.equal(decide401Action(null, 'tok-new'), 'retry-current');
+});

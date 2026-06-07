@@ -69,6 +69,10 @@ via Vite and self-typechecks via `npm run typecheck`.
 
 ## Next (roadmap Phase 2.2+)
 
+- Vitest/jsdom lane for `api.ts` end-to-end 401-retry tests (the auth session
+  layer + `decide401Action` are unit-tested today via `node --test`; the full
+  `fetchMe()`→401→refresh chain isn't, because `api.ts` uses `.js` import
+  specifiers that bare `node --test` can't resolve)
 - Silent re-auth on boot via the refresh cookie (so a page refresh keeps the session)
 - Service worker for offline
 - `tokens.companion.*` design-token namespace

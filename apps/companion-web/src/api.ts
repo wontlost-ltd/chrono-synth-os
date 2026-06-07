@@ -13,6 +13,7 @@ import {
   type CompanionGrowthV1,
 } from '@chrono/contracts';
 import { getSession, tryRefresh } from './auth.js';
+import { decide401Action } from './api-retry.js';
 
 /** 鉴权失败（未登录 / 续期失败 / plan 不符）——UI 据此回登录页或提示切换账号。 */
 export class ApiAuthError extends Error {
@@ -35,23 +36,27 @@ function authedHeaders(): Record<string, string> {
   return headers;
 }
 
-/** GET + 统一信封 { data: T }；401 时刷新重试一次。403 直接抛（plan/权限问题，刷新无济于事）。 */
+/** GET + 统一信封 { data: T }；401 时按会话身份决策刷新/重试。403 直接抛（plan/权限，刷新无益）。 */
 async function getData(url: string): Promise<unknown> {
+  const sentToken = getSession()?.accessToken ?? null;
   let res = await fetch(url, { method: 'GET', credentials: 'include', headers: authedHeaders() });
 
   if (res.status === 401) {
-    const outcome = await tryRefresh();
-    if (outcome === 'refreshed' || outcome === 'superseded') {
-      /* refreshed：用新 token 重试。superseded：期间已有更新的会话（login/logout），用当前
-       * 会话重试一次；**不**因这次旧 401 清会话（否则会误清刚登录的新会话）。 */
+    const action = decide401Action(sentToken, getSession()?.accessToken ?? null);
+    if (action === 'refresh') {
+      const outcome = await tryRefresh();
+      if (outcome === 'refreshed' || outcome === 'superseded') {
+        res = await fetch(url, { method: 'GET', credentials: 'include', headers: authedHeaders() });
+      }
+      /* outcome==='failed' 不重试，按 401 处理（auth.ts 已对**本会话**清理）。 */
+    } else {
+      /* 陈旧 401（会话已被并发 login/logout 换掉）：用当前会话重试一次，绝不 refresh/清会话。 */
       res = await fetch(url, { method: 'GET', credentials: 'include', headers: authedHeaders() });
     }
-    /* outcome === 'failed' 时不重试，下方按 401 处理（auth.ts 已 clearSession）。 */
   }
 
   if (res.status === 401) {
-    /* 走到这里：要么 refresh failed（会话已清），要么 superseded 重试仍 401。
-     * 不在此处无条件 clearSession——避免清掉期间产生的新会话；失败清理已由 auth.ts 内做。 */
+    /* 不在此处 clearSession——避免清掉期间产生的新会话；本会话失败清理已由 auth.ts 内做。 */
     throw new ApiAuthError(401);
   }
   if (res.status === 403) {
