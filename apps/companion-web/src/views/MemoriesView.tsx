@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CompanionMemoryV1 } from '@chrono/contracts';
 import { fetchMemories, ApiAuthError } from '../api.js';
+import { canLoadPage } from '../pagination-guard.js';
 
 const PAGE_SIZE = 20;
 
@@ -16,11 +17,20 @@ export function MemoriesView(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  /* in-flight 同步锁（ref，不受闭包/渲染滞后影响）：同一时刻只允许一个分页请求，
+   * 杜绝快速双击重复追加同一页、以及乱序响应交错累积（Codex 审查必修）。 */
+  const inFlightRef = useRef(false);
+  /* 已加载到的页码用 ref 持有，避免 loadPage 依赖 state 闭包导致的 next 计算滞后。 */
+  const loadedPageRef = useRef(0);
+
   const loadPage = useCallback(async (next: number) => {
+    if (!canLoadPage(inFlightRef.current, loadedPageRef.current, next)) return;
+    inFlightRef.current = true;
     try {
       if (next === 1) setStatus('loading'); else setLoadingMore(true);
       const res = await fetchMemories(next, PAGE_SIZE);
       setItems((prev) => (next === 1 ? res.items : [...prev, ...res.items]));
+      loadedPageRef.current = next;
       setPage(next);
       setTotalPages(res.pagination.totalPages);
       setTotal(res.pagination.total);
@@ -35,6 +45,7 @@ export function MemoriesView(): JSX.Element {
       setStatus('error');
     } finally {
       setLoadingMore(false);
+      inFlightRef.current = false;
     }
   }, []);
 

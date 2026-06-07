@@ -13,6 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decide401Action } from '../src/api-retry.ts';
+import { canLoadPage } from '../src/pagination-guard.ts';
 
 interface FetchCall {
   url: string;
@@ -177,6 +178,21 @@ test('tryRefresh failed 路径：refresh 非 ok / 畸形 body / fetch 抛错 →
     assert.equal(await auth.tryRefresh(), 'failed', 'fetch 抛错应 failed');
     assert.equal(auth.isAuthenticated(), false);
   }
+});
+
+test('canLoadPage：in-flight 锁 + 顺序下一页（杜绝双击/乱序重复追加）', () => {
+  /* 首页恒可加载（无在飞时） */
+  assert.equal(canLoadPage(false, 0, 1), true);
+  /* 在飞时一律拒绝（快速双击的第二次） */
+  assert.equal(canLoadPage(true, 0, 1), false);
+  assert.equal(canLoadPage(true, 2, 3), false);
+  /* 顺序下一页允许 */
+  assert.equal(canLoadPage(false, 1, 2), true);
+  assert.equal(canLoadPage(false, 2, 3), true);
+  /* 跳页 / 重复当前页 / 乱序 拒绝 */
+  assert.equal(canLoadPage(false, 1, 3), false, '跳页拒绝');
+  assert.equal(canLoadPage(false, 2, 2), false, '重复当前页拒绝');
+  assert.equal(canLoadPage(false, 3, 2), false, '回退页拒绝');
 });
 
 test('decide401Action：会话身份决定刷新还是「陈旧 401」用当前会话重试', () => {

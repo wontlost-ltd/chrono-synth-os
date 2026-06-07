@@ -126,7 +126,9 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
       assert.equal(r.statusCode, 201, r.body);
     }
 
-    /* pageSize=2 → 第 1 页 2 条，total=3，totalPages=2 */
+    /* pageSize=2 → 第 1 页 2 条，total=3，totalPages=2。
+     * 注意：TestClock 固定时钟，3 条 createdAt 相同——正好压测「同一时间戳分页稳定性」：
+     * 无 id tie-breaker 时 page1/page2 可能重复/漏项。 */
     const res = await app.inject({
       method: 'GET', url: '/api/v1/companion/me/memories?page=1&pageSize=2', headers,
     });
@@ -137,8 +139,12 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     assert.equal(list.pagination.page, 1);
     assert.equal(list.pagination.pageSize, 2);
     assert.equal(list.pagination.totalPages, 2);
-    /* 单条形状与 /me 的 recentMemories 同源 */
+    /* 单条形状与 /me 的 recentMemories 同源；且不泄漏企业治理字段 */
     assert.ok(typeof list.items[0].content === 'string' && list.items[0].id.length > 0);
+    const leaked = list.items.flatMap((m) => Object.keys(m)).filter(
+      (k) => ['confidenceScore', 'sourceKind', 'unverified', 'decayLambda', 'accessCount', 'lastAccessedAt'].includes(k),
+    );
+    assert.deepEqual(leaked, [], `C 端记忆不应泄漏治理字段: ${leaked.join(',')}`);
 
     /* 第 2 页 1 条 */
     const res2 = await app.inject({
@@ -146,6 +152,10 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     });
     const list2 = CompanionMemoryListV1Schema.parse(JSON.parse(res2.body).data);
     assert.equal(list2.items.length, 1, '第 2 页应有 1 条');
+
+    /* 稳定分页：page1 ∪ page2 = 3 条且 id 互不重复（同时间戳下证明 tie-breaker 生效） */
+    const ids = [...list.items, ...list2.items].map((m) => m.id);
+    assert.equal(new Set(ids).size, 3, `page1/page2 的 id 应无重复且覆盖全部 3 条，实际 ids=${ids.join(',')}`);
   });
 
   it('GET /companion/me/memories 空态 → items=[] total=0', async () => {
@@ -156,6 +166,24 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     const list = CompanionMemoryListV1Schema.parse(JSON.parse(res.body).data);
     assert.deepEqual(list.items, []);
     assert.equal(list.pagination.total, 0);
+  });
+
+  it('GET /companion/me/memories 租户隔离：A 看不到 B 的记忆', async () => {
+    const a = await registerAndGetAuth(app, 'companion-tenant-a@test.com');
+    const b = await registerAndGetAuth(app, 'companion-tenant-b@test.com');
+    const hA = { authorization: `Bearer ${a.accessToken}`, 'x-tenant-id': a.tenantId };
+    const hB = { authorization: `Bearer ${b.accessToken}`, 'x-tenant-id': b.tenantId };
+    assert.notEqual(a.tenantId, b.tenantId, '两个注册用户应属不同租户');
+
+    await app.inject({ method: 'POST', url: '/api/v1/memories', headers: hA, payload: { kind: 'episodic', content: 'A 的秘密', valence: 0, salience: 0.5 } });
+    await app.inject({ method: 'POST', url: '/api/v1/memories', headers: hB, payload: { kind: 'episodic', content: 'B 的秘密', valence: 0, salience: 0.5 } });
+
+    const listA = CompanionMemoryListV1Schema.parse(
+      JSON.parse((await app.inject({ method: 'GET', url: '/api/v1/companion/me/memories', headers: hA })).body).data,
+    );
+    const contentsA = listA.items.map((m) => m.content);
+    assert.ok(contentsA.includes('A 的秘密'), 'A 应看到自己的记忆');
+    assert.ok(!contentsA.includes('B 的秘密'), 'A 不应看到 B 的记忆（租户隔离）');
   });
 
   it('plan 门控：enterprise 账号访问 /companion/me/memories → 403', async () => {
