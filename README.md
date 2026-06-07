@@ -351,4 +351,13 @@ chrono-synth-os/               # monorepo 根
 
 ## 许可证
 
-MIT
+本仓库采用**双许可**（见 [ADR-0022](docs/adr/0022-mit-kernel-agpl-enterprise.md)）：
+
+| 范围 | 许可证 | 说明 |
+| --- | --- | --- |
+| **可复用库** —— `@chrono/kernel`、`@chrono/contracts`、`@chrono/data-plane`、`@chrono/sync-engine`、`@chrono/design-tokens`、`@chrono/adapter-*`、`@chrono/kernel-testkit`、`@wontlost-ltd/schema-dsl`（各包 `packages/*/LICENSE`） | **MIT** | 把人格引擎嵌入自己的产品零摩擦，无需合规评审。 |
+| **运行时服务** —— 仓库根 + `src/**`（服务端、计费、SSO、管理面、SLO 等）及消费级应用壳 `apps/*`（根 `LICENSE`） | **AGPL-3.0-or-later** | 网络分发触发源码开放（AGPL §13），防 SaaS 竞品 fork 后闭源重托管。 |
+
+- 仅嵌入 MIT 库（如 `npm i @chrono/kernel`）→ 受 MIT 约束，可自由商用。
+- 自托管完整服务并对外提供网络访问 → 受 AGPL-3.0 约束，须公开你的修改。
+- 需要在不接受 AGPL 的环境中商用服务端 → 提供**商业授权**（按 deal 协商）；kernel 始终保持 MIT，无需商业授权即可在其上构建。商业授权请联系 [ryan.pang@wontlost.com](mailto:ryan.pang@wontlost.com)。
