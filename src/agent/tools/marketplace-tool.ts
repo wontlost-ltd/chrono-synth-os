@@ -27,9 +27,12 @@ export class MarketplaceTool implements ToolAdapter {
     id: 'marketplace.act',
     displayName: 'Marketplace Action',
     description: '数字人在人才市场的经济行为：list_open / get_task / apply / submit（提现等 debit 不在此工具）',
-    /* 高风险：apply/submit 是经济承诺。pipeline 据此强制二次确认，
-     * 除非该 (persona, tool) 的 ToolPermission 显式放宽。 */
-    highRisk: true,
+    /* 不在工具元数据层静态标 highRisk——否则所有 action（含低风险 apply）都被强制
+     * 二次确认，自主接单永远卡在 pending_confirmation（ADR-0048 治理设计）。
+     * 风险分级交给上游 EarningPolicyEngine（高 reward/首 category/新 publisher →
+     * needs_human_review，根本不会走到自主 apply）+ owner 的 ToolPermission
+     * requireConfirmation（owner 可对 submit 等对外动作要求确认）。 */
+    highRisk: false,
     defaultTimeoutMs: 15_000,
     defaultMaxPerDay: 200,
     inputSchema: {
