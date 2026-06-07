@@ -77,4 +77,36 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
     });
     assert.equal(tx.amountMinor, -25);
   });
+
+  /* ── 方向矩阵在真实写路径生效（ADR-0048）：type 与金额符号语义错配被拒 ── */
+
+  it('owner_payout 正数（应是 debit 却当 credit 入账）被拒——即便 system actor', () => {
+    assert.throws(
+      () => wallet.insertWalletTransaction({
+        tenantId: 'default', walletId, transactionType: 'owner_payout',
+        amountMinor: 500, currency: 'CRED', actorType: 'system',
+      }),
+      /direction matrix|must be debit/,
+    );
+  });
+
+  it('task_payment 负数（应是 credit 却当 debit）被拒', () => {
+    assert.throws(
+      () => wallet.insertWalletTransaction({
+        tenantId: 'default', walletId, transactionType: 'task_payment',
+        amountMinor: -500, currency: 'CRED', actorType: 'human',
+      }),
+      /direction matrix|must be credit/,
+    );
+  });
+
+  it('persona_reserve 正数（应是 debit）被拒——修正后矩阵生效', () => {
+    assert.throws(
+      () => wallet.insertWalletTransaction({
+        tenantId: 'default', walletId, transactionType: 'persona_reserve',
+        amountMinor: 360, currency: 'CRED', actorType: 'system',
+      }),
+      /direction matrix|must be debit/,
+    );
+  });
 });

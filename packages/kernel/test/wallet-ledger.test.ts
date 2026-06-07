@@ -40,16 +40,48 @@ describe('assertWalletMutationAllowed (ADR-0048 D2)', () => {
     assert.equal(assertWalletMutationAllowed(intent({ amountMinor: -50 })).allowed, false);
     assert.equal(assertWalletMutationAllowed(intent({ amountMinor: NaN })).allowed, false);
   });
+
+  /* ── type ↔ direction 矩阵（ADR-0048 钱的正确性铁律） ── */
+
+  it('每种 transactionType 的合法方向通过', () => {
+    const legal: Array<[WalletMutationIntent['transactionType'], WalletMutationIntent['direction'], WalletMutationIntent['actorType']]> = [
+      ['task_payment', 'credit', 'system'],
+      ['platform_fee', 'debit', 'system'],
+      ['owner_payout', 'debit', 'human'],
+      ['persona_reserve', 'debit', 'system'],
+      ['refund', 'debit', 'human'],
+    ];
+    for (const [transactionType, direction, actorType] of legal) {
+      const r = assertWalletMutationAllowed(intent({ transactionType, direction, actorType }));
+      assert.equal(r.allowed, true, `${transactionType} ${direction} 应合法`);
+    }
+  });
+
+  it('方向错配一律拒绝（杜绝语义错配，如 owner_payout 当 credit 入账）', () => {
+    const illegal: Array<[WalletMutationIntent['transactionType'], WalletMutationIntent['direction']]> = [
+      ['owner_payout', 'credit'],    /* 提现不能是入账 */
+      ['platform_fee', 'credit'],    /* 平台费不能是入账 */
+      ['persona_reserve', 'credit'], /* 预留不能是入账 */
+      ['refund', 'credit'],          /* 退款不能是入账 */
+      ['task_payment', 'debit'],     /* 任务报酬不能是出账 */
+    ];
+    for (const [transactionType, direction] of illegal) {
+      const r = assertWalletMutationAllowed(intent({ transactionType, direction, actorType: 'system' }));
+      assert.equal(r.allowed, false, `${transactionType} ${direction} 应被拒`);
+      if (!r.allowed) assert.match(r.reason, /direction matrix|must be/);
+    }
+  });
 });
 
 describe('isDebitTransactionType', () => {
-  it('owner_payout/platform_fee/refund 为 debit', () => {
+  it('owner_payout/platform_fee/refund/persona_reserve 为 debit', () => {
     assert.equal(isDebitTransactionType('owner_payout'), true);
     assert.equal(isDebitTransactionType('platform_fee'), true);
     assert.equal(isDebitTransactionType('refund'), true);
+    /* persona_reserve 实际结算写入是负数（debit）——修正旧 helper 的错误分类 */
+    assert.equal(isDebitTransactionType('persona_reserve'), true);
   });
-  it('task_payment/persona_reserve 非 debit（入账）', () => {
+  it('task_payment 非 debit（入账 credit）', () => {
     assert.equal(isDebitTransactionType('task_payment'), false);
-    assert.equal(isDebitTransactionType('persona_reserve'), false);
   });
 });
