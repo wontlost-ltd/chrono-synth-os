@@ -65,6 +65,13 @@ export interface ToolMetadata {
 export interface ToolAdapter {
   readonly metadata: ToolMetadata;
   /**
+   * 可选：按 action/参数 动态判定本次调用是否高风险（ADR-0048）。
+   * 返回 true → pipeline 强制二次确认（叠加在 metadata.highRisk 之上）。
+   * 用于"同工具不同 action 风险不同"——如 marketplace.apply 低风险免确认、
+   * marketplace.submit 是对外承诺需确认。缺省时仅按 metadata.highRisk。
+   */
+  isHighRisk?(args: Record<string, unknown>): boolean;
+  /**
    * 执行工具。pipeline 已完成所有前置检查（权限、配额、确认、断路器）。
    * 实现方只负责：读取 arguments → 调用底层 API → 返回 ToolInvocationResult。
    * 抛出异常 → pipeline 捕获并记录为 status=failed/timeout。

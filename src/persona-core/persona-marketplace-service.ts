@@ -844,8 +844,9 @@ export class PersonaMarketplaceService {
 
       recordBusinessAuditLog(this.tx, {
         tenantId: input.tenantId,
-        actorType: 'user',
-        actorId: input.ownerUserId,
+        /* ADR-0048：自主提交审计为 system（系统代 persona 经 pipeline 执行） */
+        actorType: input.actor === 'autonomous' ? 'system' : 'user',
+        actorId: input.actor === 'autonomous' ? assignment.personaId : input.ownerUserId,
         actionType: 'task.submission',
         targetType: 'task_result',
         targetId: resultId,
@@ -854,6 +855,7 @@ export class PersonaMarketplaceService {
           taskId: input.taskId,
           assignmentId: input.assignmentId,
           resultUri: input.resultUri,
+          actor: input.actor ?? 'human',
         },
       });
     });

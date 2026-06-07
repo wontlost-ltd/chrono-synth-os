@@ -138,8 +138,17 @@ cycle on consecutive rejections / disputes / reputation collapse.
 
 - Real economic risk surface. Mitigated by: tool-ization, earning
   policy, credit-only wallet, human approval for high/critical, circuit
-  breakers, full audit. Multi-instance concurrent core writers still
-  need the per-persona compile mutex noted in ADR-0047.
+  breakers, full audit.
+- **Deployment constraint (hard):** the earning cycle is safe only under a
+  **single-process synchronous core writer**. Daily-reward-exposure is
+  computed from a 24h window over accepted tasks, which is correct
+  single-process but racy across instances. Before any multi-instance
+  deployment that runs earning cycles, a **DB-level per-persona earning
+  lease** (unique running cycle per persona, compare-and-set) is REQUIRED —
+  otherwise two concurrent cycles can both read stale exposure and exceed
+  the daily cap. This is in addition to the per-persona compile mutex noted
+  in ADR-0047. Not implemented yet; tracked as the gating item for
+  multi-instance earning.
 - The deterministic skill router covers a bounded set of task
   categories; categories without a router stay human-or-skip until a
   router exists.

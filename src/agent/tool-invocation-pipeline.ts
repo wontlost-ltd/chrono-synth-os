@@ -148,9 +148,10 @@ export class ToolInvocationPipeline {
       }
     }
 
-    /* 6. Confirmation gate */
+    /* 6. Confirmation gate（含 action 级动态风险：ADR-0048） */
+    const actionHighRisk = adapter.isHighRisk?.(request.arguments) ?? false;
     const requireConfirmation =
-      adapter.metadata.highRisk || permission.constraints.requireConfirmation === true;
+      adapter.metadata.highRisk || actionHighRisk || permission.constraints.requireConfirmation === true;
     if (requireConfirmation) {
       const decision = this.handleConfirmation(request, adapter);
       if (decision !== null) return decision;

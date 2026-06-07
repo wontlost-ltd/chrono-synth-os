@@ -111,6 +111,36 @@ describe('Autonomous earning E2E (ADR-0048, real pipeline)', () => {
     assert.equal(result.applied, 0);
     assert.ok(result.reviewQueued >= 1);
   });
+
+  it('action 级风险：apply 免确认，submit 需确认（pending_confirmation）', async () => {
+    const db = os.getDatabase();
+    const registry = new ToolRegistry();
+    registry.register(new MarketplaceTool(core));
+    const pipeline = new ToolInvocationPipeline({
+      tx: db, registry, logger: new SilentLogger(),
+      permissions: new ToolPermissionService(db),
+      authorizations: new AgencyAuthorizationService(db),
+      confirmationStore: new ConfirmationTokenStore(db),
+    });
+    const taskId = publishResearchTask(20);
+
+    /* apply：低风险，不需 confirmation → 直接成功 */
+    const applyRes = await pipeline.invoke({
+      tenantId: TENANT, personaId: workerPersonaId, toolId: 'marketplace.act',
+      invokerType: 'internal', invokerId: 'test', invokerUserId: null,
+      arguments: { action: 'apply', ownerUserId: ownerId, taskId },
+    });
+    assert.equal(applyRes.ok, true, 'apply 应免确认直接成功');
+
+    /* submit：高风险（对外承诺）→ pipeline 要求确认 */
+    const submitRes = await pipeline.invoke({
+      tenantId: TENANT, personaId: workerPersonaId, toolId: 'marketplace.act',
+      invokerType: 'internal', invokerId: 'test', invokerUserId: null,
+      arguments: { action: 'submit', ownerUserId: ownerId, taskId, assignmentId: 'tas_x' },
+    });
+    assert.equal(submitRes.ok, false, 'submit 应需确认');
+    if (!submitRes.ok) assert.equal(submitRes.status, 'pending_confirmation');
+  });
 });
 
 /** 制造一条已完成的 research 任务历史（worker 接过同 publisher 的活） */

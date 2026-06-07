@@ -52,6 +52,12 @@ export class MarketplaceTool implements ToolAdapter {
 
   constructor(private readonly personaCore: PersonaCoreService) {}
 
+  /** ADR-0048 action 级风险：submit 是对外交付承诺 → 高风险需确认；
+   * apply/list_open/get_task 低风险（apply 准入由 EarningPolicyEngine 上游门控）。 */
+  isHighRisk(args: Record<string, unknown>): boolean {
+    return args.action === 'submit';
+  }
+
   async invoke(ctx: ToolInvocationContext): Promise<ToolInvocationResult> {
     const action = stringArg(ctx.arguments, 'action') as MarketplaceAction;
     if (!ACTIONS.includes(action)) {
