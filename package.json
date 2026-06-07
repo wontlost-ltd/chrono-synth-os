@@ -36,8 +36,9 @@
     "sync:vendor": "npm run build:design-tokens --silent && bash scripts/sync-vendored-packages.sh",
     "sync:vendor:check": "npm run build:design-tokens --silent && bash scripts/sync-vendored-packages.sh --check",
     "lint:contrast": "npm run build:design-tokens --silent && node scripts/lint-contrast-ratio.mjs",
+    "check:licenses": "node scripts/check-license-boundary.mjs",
     "test": "npm run test:unit && npm run test:integration",
-    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run ga:check",
+    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run ga:check && npm run check:licenses",
     "start": "node dist/main.js",
     "start:observability-worker": "node dist/main-observability-worker.js",
     "dev": "npm run build && node dist/main.js",
@@ -49,7 +50,7 @@
     "hybrid-os",
     "identity"
   ],
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "devDependencies": {
     "@types/node": "^25.9.1",
     "@types/pg": "^8.16.0",
