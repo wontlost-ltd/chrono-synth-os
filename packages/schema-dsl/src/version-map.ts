@@ -91,4 +91,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v079_audit_chain_anchor_failures', aliases: { postgres: 'v081', 'sqlite-sql': 'v079' }, classification: 'schema-simple', notes: 'GA §8 #1: persist KMS anchor failures as evidence rows' },
   { canonical: 'v080_distilled_artifacts', aliases: { postgres: 'v082', 'sqlite-sql': 'v080' }, classification: 'schema-simple', notes: 'ADR-0047: gated LLM→core distillation artifact pipeline' },
   { canonical: 'v081_persona_leases', aliases: { postgres: 'v083', 'sqlite-sql': 'v081' }, classification: 'schema-simple', notes: 'ADR-0047/0048: per-persona concurrency lease (earning + compile)' },
+  { canonical: 'v082_response_templates', aliases: { postgres: 'v084', 'sqlite-sql': 'v082' }, classification: 'schema-simple', notes: 'ADR-0047: durable versioned response templates (replaces decaying procedural memory)' },
 ];

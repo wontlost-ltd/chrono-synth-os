@@ -32,6 +32,8 @@ const TENANT_TABLES = new Set([
   'governance_cases', 'governance_actions',
   'wallet_transactions', 'wallet_payout_requests', 'wallet_settlements',
   'platform_dlq_events',
+  /* ADR-0047/0048：蒸馏工件、并发租约、响应模板均为 tenant 数据 */
+  'distilled_artifacts', 'persona_leases', 'response_templates',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */

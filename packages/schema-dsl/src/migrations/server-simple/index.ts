@@ -71,6 +71,7 @@ export { v078_jwt_signing_keys } from './v078.js';
 export { v079_audit_chain_anchor_failures } from './v079.js';
 export { v080_distilled_artifacts } from './v080.js';
 export { v081_persona_leases } from './v081.js';
+export { v082_response_templates } from './v082.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -146,6 +147,7 @@ import { v078_jwt_signing_keys } from './v078.js';
 import { v079_audit_chain_anchor_failures } from './v079.js';
 import { v080_distilled_artifacts } from './v080.js';
 import { v081_persona_leases } from './v081.js';
+import { v082_response_templates } from './v082.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -221,4 +223,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v079_audit_chain_anchor_failures,
   v080_distilled_artifacts,
   v081_persona_leases,
+  v082_response_templates,
 ];

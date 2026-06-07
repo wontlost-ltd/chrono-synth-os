@@ -239,7 +239,9 @@ function validatePayloadShape(kind: ArtifactKind, payload: unknown): string[] {
     }
     case 'response_template': {
       const p = payload as Partial<ResponseTemplatePayload> | null;
-      if (!p || typeof p.intent !== 'string' || typeof p.template !== 'string' || p.template.length === 0) {
+      /* intent 是检索键 + 版本序列键，空串会污染序列；template 空则无意义。两者都须非空（trim 后）。 */
+      if (!p || typeof p.intent !== 'string' || p.intent.trim().length === 0
+        || typeof p.template !== 'string' || p.template.trim().length === 0) {
         return ['response_template payload requires non-empty intent and template'];
       }
       return [];

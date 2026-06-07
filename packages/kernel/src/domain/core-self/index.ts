@@ -25,3 +25,4 @@ export * from './persona-os-types.js';
 export * from './add-on-types.js';
 export * from './distilled-artifact-types.js';
 export * from './distilled-artifact-queries.js';
+export * from './response-template-types.js';

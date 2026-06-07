@@ -46,7 +46,8 @@ class MockStore {
 }
 
 function buildService(store: MockStore, compileOutcome: CompileOutcome, guard: SnapshotGuard) {
-  const compiler = { compile: () => compileOutcome } as unknown as ArtifactCompiler;
+  /* 签名与真实 compile(personaId, artifact) 对齐，防未来签名漂移被 mock 掩盖 */
+  const compiler = { compile: (_personaId: string, _artifact: DistilledArtifact) => compileOutcome } as unknown as ArtifactCompiler;
   return new DistillationService({
     store: store as unknown as DistilledArtifactStore,
     compiler,

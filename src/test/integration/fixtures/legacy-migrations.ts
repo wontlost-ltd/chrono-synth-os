@@ -925,6 +925,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS persona_leases (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    purpose TEXT NOT NULL CHECK(purpose IN ('earning', 'compile')),\n    holder_token TEXT NOT NULL,\n    acquired_at INTEGER NOT NULL,\n    expires_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, purpose)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_persona_leases_expires ON persona_leases(expires_at)"
     ]
+  },
+  {
+    "version": "v082",
+    "description": "ADR-0047: durable versioned response_templates (replaces decaying procedural memory)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS response_templates (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    intent TEXT NOT NULL,\n    template TEXT NOT NULL,\n    version INTEGER NOT NULL DEFAULT 1,\n    artifact_id TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, intent, version)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_response_templates_intent ON response_templates(tenant_id, persona_id, intent, version)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1830,6 +1838,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS persona_leases (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    purpose TEXT NOT NULL CHECK(purpose IN ('earning', 'compile')),\n    holder_token TEXT NOT NULL,\n    acquired_at BIGINT NOT NULL,\n    expires_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, purpose)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_persona_leases_expires ON persona_leases (expires_at)"
+    ]
+  },
+  {
+    "version": "v084",
+    "description": "ADR-0047: durable versioned response_templates (replaces decaying procedural memory)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS response_templates (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    intent TEXT NOT NULL,\n    template TEXT NOT NULL,\n    version INTEGER NOT NULL DEFAULT 1,\n    artifact_id TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, intent, version)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_response_templates_intent ON response_templates (tenant_id, persona_id, intent, version)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
