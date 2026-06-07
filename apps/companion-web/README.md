@@ -14,6 +14,7 @@ A minimal-but-real React SPA proving the "same kernel, C-end shell" loop:
 
 | Screen | Reads | Shows |
 |--------|-------|-------|
+| 登录 (Login) | `POST /api/v1/auth/login` | email/password → holds access token in memory, sends `Authorization: Bearer` |
 | 我的数字人 (Home) | `GET /api/v1/companion/me` | narrative + top values + recent memories |
 | 成长 (Growth) | `GET /api/v1/companion/me/growth` | persona **drift rendered as「你最近探索的方向」**, not "policy violation" |
 
@@ -27,7 +28,7 @@ Enterprise console renders as a governance alert is re-framed here as exploratio
 |-------|--------|
 | Framework | React 18.3.1 + Vite 8 |
 | Types | `@chrono/contracts` (`companion-me.v1` / `companion-growth.v1`) — end-to-end type-safe, response validated at runtime against the same Zod schema the backend serializes with |
-| Auth | existing cookie/JWT session (shared backend); backend plan-gate rejects `enterprise` accounts |
+| Auth | `/api/v1/auth/login` → access token held in memory + `Authorization: Bearer`; 401 auto-refreshes once via the refresh cookie. Backend gate rejects `enterprise` plan **and** API-key principals (companion is user-session only). |
 | PWA | `manifest.webmanifest` + maskable icon (service worker: follow-up) |
 | Brand | independent dark palette in `src/styles.css`; migrate to `tokens.companion.*` design-token namespace when the slice expands |
 
@@ -45,7 +46,9 @@ npm run build        # production bundle → dist/
 ```
 
 Run the backend (`chrono-synth-os`) separately; the dev server proxies `/api`
-to it. Log in with a non-enterprise account to see your digital human.
+to it. Log in with a non-enterprise account to see your digital human. The
+access token lives in memory only (a page refresh requires re-login; silent
+re-auth via the refresh cookie on boot is a follow-up).
 
 ## Build independence
 
@@ -61,7 +64,7 @@ via Vite and self-typechecks via `npm run typecheck`.
 
 ## Next (roadmap Phase 2.2+)
 
-- Login screen (currently relies on existing session + auth-error prompt)
+- Silent re-auth on boot via the refresh cookie (so a page refresh keeps the session)
 - Service worker for offline
 - `tokens.companion.*` design-token namespace
 - Memory detail / persona tuning screens

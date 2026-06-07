@@ -110,6 +110,20 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     assert.equal(res.statusCode, 403, `expected 403 for enterprise plan, got ${res.statusCode}: ${res.body}`);
   });
 
+  it('plan 门控：API-key 主体（apikey:* sub）访问 companion → 403', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-apikey@test.com');
+    /* 模拟 API-key 主体：sub 以 apikey: 前缀，planId=free（静态 key 形态） */
+    const apiKeyToken = (app as unknown as {
+      jwt: { sign: (payload: Record<string, unknown>) => string };
+    }).jwt.sign({
+      sub: `apikey:${auth.userId}`, tenantId: auth.tenantId, role: 'service', planId: 'free',
+    });
+    const headers = { authorization: `Bearer ${apiKeyToken}`, 'x-tenant-id': auth.tenantId };
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
+    assert.equal(res.statusCode, 403, `expected 403 for api-key principal, got ${res.statusCode}: ${res.body}`);
+  });
+
   it('未授权访问 companion → 401/403', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me' });
     assert.ok(res.statusCode === 401 || res.statusCode === 403, `expected 401/403, got ${res.statusCode}`);

@@ -11,6 +11,7 @@ export interface AsyncState<T> {
 /**
  * 极简一次性取数 hook（本切片不引入 TanStack Query —— chrono-synth-web 才是
  * query 客户端的事实来源；companion 扩展到列表/缓存时再对齐其约定）。
+ * `alive` flag 防止卸载后 setState；StrictMode 开发期双调用对只读 GET 无害。
  */
 export function useAsync<T>(loader: () => Promise<T>, deps: readonly unknown[] = []): AsyncState<T> {
   const [state, setState] = useState<AsyncState<T>>({ status: 'loading' });

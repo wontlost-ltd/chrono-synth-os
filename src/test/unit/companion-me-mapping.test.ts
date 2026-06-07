@@ -45,8 +45,8 @@ describe('toCompanionMemory', () => {
 });
 
 describe('driftReportToGrowth（企业 drift → C 端探索语义）', () => {
-  it('无报告（无基线）→「还在认识你」空态', () => {
-    const out = driftReportToGrowth(null);
+  it('无报告（从未分析）→「还在认识你」空态', () => {
+    const out = driftReportToGrowth(null, false);
     assert.equal(out.hasBaseline, false);
     assert.equal(out.analyzedAt, null);
     assert.equal(out.overallIntensity, 'steady');
@@ -54,14 +54,26 @@ describe('driftReportToGrowth（企业 drift → C 端探索语义）', () => {
     assert.equal(out.schemaVersion, 'companion-growth.v1');
   });
 
+  it('有报告但无可对比基线（单快照，hasComparisonBaseline=false）→ 空态，但保留 analyzedAt', () => {
+    /* 复现 PersonaDriftAnalyzer 单快照分支：baselineSnapshotId 非 null 但其实没有历史基线 */
+    const singleSnapshotReport: DriftReport = {
+      reportId: 'r', tenantId: 't', baselineSnapshotId: 'snap-current', analyzedAt: 7,
+      valueDrifts: [], overallDriftScore: 0, alertLevel: 'ok',
+    };
+    const out = driftReportToGrowth(singleSnapshotReport, false);
+    assert.equal(out.hasBaseline, false, '单快照不算基线');
+    assert.equal(out.analyzedAt, 7);
+    assert.deepEqual(out.directions, []);
+  });
+
   it('alertLevel 映射成探索强度：ok→steady, warning→exploring, critical→leaping', () => {
     const mk = (level: DriftReport['alertLevel']): DriftReport => ({
       reportId: 'r', tenantId: 't', baselineSnapshotId: 'snap', analyzedAt: 5,
       valueDrifts: [], overallDriftScore: 0, alertLevel: level,
     });
-    assert.equal(driftReportToGrowth(mk('ok')).overallIntensity, 'steady');
-    assert.equal(driftReportToGrowth(mk('warning')).overallIntensity, 'exploring');
-    assert.equal(driftReportToGrowth(mk('critical')).overallIntensity, 'leaping');
+    assert.equal(driftReportToGrowth(mk('ok'), true).overallIntensity, 'steady');
+    assert.equal(driftReportToGrowth(mk('warning'), true).overallIntensity, 'exploring');
+    assert.equal(driftReportToGrowth(mk('critical'), true).overallIntensity, 'leaping');
   });
 
   it('delta 符号→方向：正=toward，负=away，零=steady；magnitude=|delta| 夹到 0..1', () => {
@@ -75,7 +87,7 @@ describe('driftReportToGrowth（企业 drift → C 端探索语义）', () => {
         { valueId: 'd', label: '越界', baseline: 0.0, current: 1.0, delta: 1.5, alertLevel: 'critical' },
       ],
     };
-    const out = driftReportToGrowth(report);
+    const out = driftReportToGrowth(report, true);
     assert.equal(out.hasBaseline, true);
     assert.equal(out.analyzedAt, 5);
     /* 按 magnitude 降序：d(1.0 夹取) > a(0.3)=b(0.3) > c(0) */
@@ -88,13 +100,5 @@ describe('driftReportToGrowth（企业 drift → C 端探索语义）', () => {
     assert.equal(byId.b.direction, 'away');
     assert.equal(byId.c.direction, 'steady');
     assert.equal(byId.c.magnitude, 0);
-  });
-
-  it('baselineSnapshotId 为 null 但有报告 → hasBaseline=false', () => {
-    const report: DriftReport = {
-      reportId: 'r', tenantId: 't', baselineSnapshotId: null, analyzedAt: 5,
-      valueDrifts: [], overallDriftScore: 0, alertLevel: 'ok',
-    };
-    assert.equal(driftReportToGrowth(report).hasBaseline, false);
   });
 });

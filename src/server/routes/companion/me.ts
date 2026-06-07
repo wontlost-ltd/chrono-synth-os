@@ -84,15 +84,22 @@ function valueDriftToDirection(d: ValueDrift): ExplorationDirectionV1 {
 }
 
 /**
- * DriftReport → C 端成长视图。report 为 null（尚无基线快照）时返回「还在认识你」空态。
- * directions 按 magnitude 降序，让前端直接渲染「走得最远的方向」在最前。
+ * DriftReport → C 端成长视图。
+ *
+ * `hasBaseline` **不能**用 report.baselineSnapshotId !== null 判断：PersonaDriftAnalyzer 在
+ * 只有 1 个快照时仍会持久化一份 baselineSnapshotId=该快照、valueDrifts=[] 的报告（那个
+ * 快照是「当前」而非「历史基线」）。真正的基线需要 ≥2 个快照做对比，故由调用方传入
+ * hasComparisonBaseline（快照数 ≥ 2）。report 为 null（从未分析）时一律空态。
  */
-export function driftReportToGrowth(report: DriftReport | null): CompanionGrowthV1 {
-  if (!report) {
+export function driftReportToGrowth(
+  report: DriftReport | null,
+  hasComparisonBaseline: boolean,
+): CompanionGrowthV1 {
+  if (!report || !hasComparisonBaseline) {
     return {
       schemaVersion: 'companion-growth.v1',
       hasBaseline: false,
-      analyzedAt: null,
+      analyzedAt: report?.analyzedAt ?? null,
       overallIntensity: 'steady',
       directions: [],
     };
@@ -102,11 +109,20 @@ export function driftReportToGrowth(report: DriftReport | null): CompanionGrowth
     .sort((a, b) => b.magnitude - a.magnitude);
   return {
     schemaVersion: 'companion-growth.v1',
-    hasBaseline: report.baselineSnapshotId !== null,
+    hasBaseline: true,
     analyzedAt: report.analyzedAt,
     overallIntensity: alertLevelToIntensity(report.alertLevel),
     directions,
   };
+}
+
+/** 统计租户快照数（与 PersonaDriftAnalyzer.analyze 的 WHERE 一致），用于判断是否有可对比基线。 */
+export function countTenantSnapshots(db: IDatabase, tenantId: string): number {
+  const row = db.prepare<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM snapshots
+      WHERE tenant_id = ? OR (tenant_id IS NULL AND ? = 'default')`,
+  ).get(tenantId, tenantId);
+  return row?.n ?? 0;
 }
 
 /* ── 路由注册 ──────────────────────────────────────────────────── */
@@ -125,11 +141,23 @@ export function registerCompanionRoutes(
   }
 
   /**
-   * Plan 门控：companion 面向 C 端，enterprise 账号不应进入 companion UI（避免治理用户误入）。
-   * 与 roadmap Phase 2.1「/api/v1/companion/* 要求账号 plan ≠ enterprise」一致。
+   * Companion 访问门控（C 端专属）：
+   *   1. 仅用户会话可用——拒绝 API-key 主体（apikey:* sub）。API-key 面向服务端集成/企业
+   *      自动化，且静态 key 被强制 planId='free'（plugins/auth.ts），不应打开个人版 UI。
+   *   2. enterprise plan 账号走企业控制台，不进 companion UI。
+   * 与 roadmap Phase 2.1「/api/v1/companion/* 要求账号 plan ≠ enterprise」一致并收紧。
+   *
+   * 说明：plan 取自 JWT 的 planId，正常登录/刷新会嵌入当前订阅 plan。陈旧 token 的 plan
+   * 时效性是平台级 token 策略问题（非本路由职责）；这里做显式的主体类型 + plan 双重拒绝。
    */
-  function assertCompanionPlan(request: FastifyRequest): void {
+  function assertCompanionAccess(request: FastifyRequest): void {
     const user = request.user as JwtPayload | undefined;
+    if (user?.sub?.startsWith('apikey:')) {
+      throw new AuthorizationError(
+        'companion 接口仅支持个人用户会话，不支持 API Key 访问',
+        ErrorCode.AUTH_INSUFFICIENT_ROLE,
+      );
+    }
     if (user?.planId === 'enterprise') {
       throw new AuthorizationError(
         'companion 接口面向个人版账号；enterprise 账号请使用企业控制台',
@@ -145,7 +173,7 @@ export function registerCompanionRoutes(
 
   /* GET /api/v1/companion/me —「我的数字人」主页 */
   app.get('/api/v1/companion/me', async (request) => {
-    assertCompanionPlan(request);
+    assertCompanionAccess(request);
     const core = getOS(request).core;
 
     const allValues = [...core.values.getAll().values()];
@@ -174,10 +202,12 @@ export function registerCompanionRoutes(
 
   /* GET /api/v1/companion/me/growth —「你最近探索的方向」（drift 的 C 端渲染） */
   app.get('/api/v1/companion/me/growth', async (request) => {
-    assertCompanionPlan(request);
+    assertCompanionAccess(request);
     const thresholds = resolveDriftThresholds(db, driftThresholdFallback);
     const analyzer = new PersonaDriftAnalyzer(db, thresholds);
     const report = analyzer.getLatest(request.tenantId);
-    return { data: CompanionGrowthV1Schema.parse(driftReportToGrowth(report)) };
+    /* ≥2 个快照才算有可对比的历史基线（单快照报告的 baselineSnapshotId 是「当前」快照）。 */
+    const hasComparisonBaseline = countTenantSnapshots(db, request.tenantId) >= 2;
+    return { data: CompanionGrowthV1Schema.parse(driftReportToGrowth(report, hasComparisonBaseline)) };
   });
 }
