@@ -103,7 +103,8 @@ export function registerMemoryExecutors(): void {
   registerQuery<MemPaginatedResult, MemPaginatedParams>(MEM_QUERY_PAGINATED, (db, params) => {
     const total = db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes').get()?.count ?? 0;
     /* 稳定排序：created_at 之外加 id 作为 tie-breaker，避免同一毫秒多条记忆在 LIMIT/OFFSET
-     * 跨页时顺序不定导致重复或漏项（id 为单调唯一主键）。 */
+     * 跨页时顺序不定导致重复或漏项。id 是 memory_nodes 主键（唯一，UUID——非单调，故同毫秒内
+     * 不保证「后创建排前」，但能确保**稳定全序**，这正是分页去重/不漏所需。 */
     const rows = db.prepare<MemoryRow>(
       'SELECT * FROM memory_nodes ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
     ).all(params.limit, params.offset);
