@@ -1,6 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig, AppConfigSchema } from '../../config/index.js';
+import { loadConfig, AppConfigSchema, intelligenceProvidesEmbeddings } from '../../config/index.js';
 
 describe('配置系统', () => {
   const savedEnv: Record<string, string | undefined> = {};
@@ -37,6 +37,28 @@ describe('配置系统', () => {
     assert.equal(config.db.path, './test.db');
     assert.equal(config.server.host, '127.0.0.1');
     assert.equal(config.server.port, 8080);
+  });
+
+  describe('intelligenceProvidesEmbeddings（ADR-0047 Ollama layer-2 embedding gate）', () => {
+    it('ollama 无 apiKey → true（本地 provider 不需 key 即可 embedding，修复静默禁用 bug）', () => {
+      const config = loadConfig({ intelligence: { provider: 'ollama', baseUrl: 'http://localhost:11434' } });
+      assert.equal(config.intelligence.apiKey, undefined);
+      assert.equal(intelligenceProvidesEmbeddings(config), true);
+    });
+
+    it('openai 无 apiKey → false，有 apiKey → true', () => {
+      assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'openai' } })), false);
+      assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'openai', apiKey: 'sk-x' } })), true);
+    });
+
+    it('anthropic 即便有 apiKey → false（无 embedding 接口，不注入会抛错的 provider）', () => {
+      assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'anthropic' } })), false);
+      assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'anthropic', apiKey: 'sk-ant' } })), false);
+    });
+
+    it('mock 维持原行为（按 apiKey gate）：无 key → false', () => {
+      assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'mock' } })), false);
+    });
   });
 
   it('环境变量覆盖默认值', () => {

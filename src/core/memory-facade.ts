@@ -6,6 +6,7 @@
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import type { AppConfig } from '../config/schema.js';
+import { intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { IDatabase } from '../storage/database.js';
 import type { MemoryNode, MemoryEdge, MemoryKind, ActivationResult, ConsolidationResult, EvictionResult, WorkingMemorySlot } from '../types/core-self.js';
 import type { PersonaMemorySensitivity } from '../persona-core/types.js';
@@ -106,7 +107,8 @@ export class MemoryFacade {
   }
 
   private getEmbeddingIndex(tenantOS: ChronoSynthOS, tenantId: string): EmbeddingIndex | undefined {
-    if (!this.config?.intelligence.apiKey) return undefined;
+    /* 按 provider 真实 embedding 能力判断（无 key 的 ollama 也算；anthropic 不支持则不注入），而非 apiKey 真值 */
+    if (!this.config || !intelligenceProvidesEmbeddings(this.config)) return undefined;
     const cached = this.embeddingIndexes.get(tenantId);
     if (cached) {
       this.embeddingIndexes.delete(tenantId);

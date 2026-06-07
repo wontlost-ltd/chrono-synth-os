@@ -599,6 +599,30 @@ export const AppConfigSchema = z.object({
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
+/**
+ * 该 intelligence 配置是否能产出 embedding（决定是否注入 embedding provider）。
+ *
+ * 按 **provider 的真实 embedding 能力** 判断，而非简单看 `apiKey 是否存在`：
+ *   - `ollama`：本地 provider，无需 apiKey 即可走 /api/embed → true。
+ *     （原先按 apiKey gate 会让 provider='ollama' 的语义检索/value-guard/记忆 embedding
+ *      被静默关闭——ADR-0047 Ollama layer-2 的真实缺陷。）
+ *   - `openai`：支持 embedding，但需 apiKey → Boolean(apiKey)。
+ *   - `anthropic`：**不支持 embedding 接口**（ModelRouter.embed 会抛错）→ 恒 false。
+ *     即便有 apiKey 也不应注入一个 embed 必抛的 provider（修正既有隐患，避免 helper 名义
+ *     与实际能力不符）。
+ *   - `mock`：哈希向量无实际语义价值，维持原 apiKey gate（不在无 key 默认路径平白启用）。
+ */
+export function intelligenceProvidesEmbeddings(config: AppConfig): boolean {
+  const { provider, apiKey } = config.intelligence;
+  switch (provider) {
+    case 'ollama': return true;
+    case 'anthropic': return false; /* Anthropic 无 embedding 接口 */
+    case 'openai': return Boolean(apiKey);
+    case 'mock': return Boolean(apiKey);
+    default: return Boolean(apiKey);
+  }
+}
+
 /** 从环境变量读取配置（CHRONO_ 前缀） */
 function fromEnv(): Record<string, unknown> {
   const env: Record<string, unknown> = {};
