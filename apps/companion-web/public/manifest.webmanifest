@@ -1,0 +1,12 @@
+{
+  "name": "ChronoCompanion",
+  "short_name": "Companion",
+  "description": "你的自学习数字人",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1420",
+  "theme_color": "#5b8def",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
