@@ -24,9 +24,12 @@ export function registerPrivacyRoutes(
     return { data: service.exportData(request.tenantId) };
   });
 
-  /* DELETE /api/v1/privacy/data — GDPR Right to Erasure（仅 admin，限流: 1 次/分钟） */
-  app.delete('/api/v1/privacy/data', { preHandler: requireRole('admin'), config: { rateLimit: { max: 1, timeWindow: '1 minute' } } }, async (request) => {
-    return { data: service.eraseData(request.tenantId) };
+  /* DELETE /api/v1/privacy/data — GDPR Right to Erasure（仅 admin，限流: 1 次/分钟）。
+   * active legal hold 期间擦除被阻断（GDPR Art.17(3)(b)）→ 返回 409 Conflict。 */
+  app.delete('/api/v1/privacy/data', { preHandler: requireRole('admin'), config: { rateLimit: { max: 1, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const result = service.eraseData(request.tenantId);
+    if (result.blocked) reply.code(409);
+    return { data: result };
   });
 
   /* GET /api/v1/privacy/audit-trail — 租户审计日志（分页） */

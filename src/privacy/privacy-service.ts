@@ -26,6 +26,7 @@ import {
   listExportJobs as listExportJobRows,
 } from './export-job-store.js';
 import { createImportTokenStore, type ImportTokenStore } from './import-token-store.js';
+import { LegalHoldService } from './legal-hold-service.js';
 import { createObjectStorageClient, createTenantObjectStorageClient } from './object-storage-client.js';
 import type { ObjectStorageClient } from './object-storage-client.js';
 
@@ -46,6 +47,13 @@ const TENANT_TABLES = [
   'marketplace_tasks', 'persona_forks', 'persona_wallets', 'persona_core',
   /* ADR-0047/0048：蒸馏工件、并发租约、响应模板均为 tenant/persona 数据，须随租户导出/擦除 */
   'distilled_artifacts', 'persona_leases', 'response_templates',
+  /* GDPR 补齐（A 类：标准业务/配置/派生数据，无敏感凭证列，无保留义务） */
+  'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
+  'observability_outbox', 'observability_rollups', 'observability_processed_events',
+  'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',
+  'import_jobs', 'tenant_key_versions', 'tenant_storage_bindings', 'drift_analysis_log',
+  'persona_templates', 'bulk_knowledge_import_jobs', 'conversation_messages',
+  'events_user_journey', 'core_values_snapshot',
   'decision_feedbacks', 'decision_runs', 'decision_cases',
   'onboarding_sessions', 'llm_usage',
   'life_simulations',
@@ -85,6 +93,63 @@ const RELATED_TABLES: Array<{
     name: 'refresh_tokens',
     exportSql: 'SELECT id, user_id, is_revoked, expires_at, created_at FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)',
     deleteSql: 'DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)',
+    params: (t) => [t],
+  },
+  /* ── GDPR 补齐（B 类：含凭证/令牌/校验列，导出脱敏；擦除照常 WHERE tenant_id） ── */
+  {
+    /* api_keys.key_hash 是凭证校验材料，导出省略 */
+    name: 'api_keys',
+    exportSql: 'SELECT id, tenant_id, plan_id, is_revoked, created_at FROM api_keys WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM api_keys WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* import_commit_tokens.token 是单次提交 bearer，导出省略 */
+    name: 'import_commit_tokens',
+    exportSql: 'SELECT tenant_id, import_id, manifest_checksum, expires_at, created_at FROM import_commit_tokens WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM import_commit_tokens WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* user_oauth_tokens：access/refresh token 加密列必须省略，仅导出元数据 */
+    name: 'user_oauth_tokens',
+    exportSql: 'SELECT id, tenant_id, user_id, provider, scope, access_expires_at, granted_at, updated_at, revoked_at, revocation_reason FROM user_oauth_tokens WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM user_oauth_tokens WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* tool_permissions.revocation_key 是带外撤销 bearer，导出省略 */
+    name: 'tool_permissions',
+    exportSql: 'SELECT id, tenant_id, persona_id, tool_id, scope, constraints_json, granted_by, granted_at, expires_at, revoked_at, revocation_reason FROM tool_permissions WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM tool_permissions WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* agency_authorizations.revocation_key 同上，导出省略 */
+    name: 'agency_authorizations',
+    exportSql: 'SELECT id, tenant_id, persona_id, principal_user_id, scope, scope_description, allowed_tools_json, denied_tools_json, status, granted_at, expires_at, revoked_at, revocation_reason FROM agency_authorizations WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM agency_authorizations WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* tool_invocations.input_hash 是校验材料、confirmation_token_id 关联 bearer，导出省略 */
+    name: 'tool_invocations',
+    exportSql: 'SELECT id, tenant_id, persona_id, tool_id, invoker_type, invoker_id, status, output_size_bytes, error_message, cost_cents, duration_ms, invoked_at, completed_at, invoker_user_id FROM tool_invocations WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM tool_invocations WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* conversation_confirmation_tokens.id 是 bearer token、input_hash 是校验材料，导出省略 */
+    name: 'conversation_confirmation_tokens',
+    exportSql: 'SELECT tenant_id, persona_id, session_id, external_user_id, requested_topic, requested_rule, issued_at, expires_at, consumed_at FROM conversation_confirmation_tokens WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM conversation_confirmation_tokens WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
+    /* export_jobs：download_url 可能是签名 bearer URL、pack_json 是临时导出产物，导出省略 */
+    name: 'export_jobs',
+    exportSql: 'SELECT id, tenant_id, state, percent, eta_ms, created_at, completed_at, error_code, warnings FROM export_jobs WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM export_jobs WHERE tenant_id = ?',
     params: (t) => [t],
   },
   {
@@ -130,15 +195,52 @@ const POST_TENANT_RELATED_TABLES: Array<{
 const TENANT_TABLE_SET: ReadonlySet<string> = new Set(TENANT_TABLES);
 
 /**
+ * C 类：保留豁免表（GDPR Art.17(3)(b)：为遵守法律义务/审计完整性而保留）。
+ * **从不擦除**——擦除会破坏审计链完整性、移除法律/合规证据或瓦解 legal hold。
+ * 导出按需：含个人数据的审计记录数据主体有知情权（exportSql 给出）；纯系统完整性
+ * 数据（hash chain 锚点）不入 DSAR 导出（exportSql = null）。
+ *
+ * ⚠️ 这些表的 erase 豁免不等于「数据主体无删除权」——而是删除权让位于更高位的法律
+ * 义务（审计/诉讼保留）。逐表理由见 .claude/context-gdpr-tables.json 的 retentionBasis。
+ */
+const RETENTION_EXEMPT_TABLES: Array<{ name: string; exportSql: string | null }> = [
+  /* KMS 密钥操作审计——安全问责记录，保留 */
+  { name: 'kms_key_audit', exportSql: 'SELECT * FROM kms_key_audit WHERE tenant_id = ?' },
+  /* 租户保险库操作审计——BYOK/BYOS 访问问责，保留 */
+  { name: 'tenant_vault_audit', exportSql: 'SELECT * FROM tenant_vault_audit WHERE tenant_id = ?' },
+  /* SOC2 合规证据——审计保留 + 完整性校验，保留 */
+  { name: 'compliance_evidence', exportSql: 'SELECT * FROM compliance_evidence WHERE tenant_id = ?' },
+  /* legal hold 登记表——存在目的就是阻止删除，擦除它将瓦解 hold，保留 */
+  { name: 'legal_holds', exportSql: 'SELECT * FROM legal_holds WHERE tenant_id = ?' },
+  /* 紧急 break-glass token 消费台账——安全审计 + 重放防护，保留 */
+  { name: 'break_glass_jti_consumptions', exportSql: 'SELECT * FROM break_glass_jti_consumptions WHERE tenant_id = ?' },
+  /* 审计 hash-chain 锚点——擦除破坏防篡改完整性；纯系统数据不导出，保留 */
+  { name: 'audit_chain_anchors', exportSql: null },
+  /* 审计 hash-chain 锚定失败证据——同上完整性监控，保留 */
+  { name: 'audit_chain_anchor_failures', exportSql: null },
+];
+
+/**
  * 隐私导出/擦除覆盖的全部表名（直查 + 子查询关联 + 后置关联）。
  * 导出供完整性 guard 测试：断言每张 tenant-scoped DSL 表都在此集合中，
- * 防止新增表悄悄漏掉导出/擦除（GDPR 数据生命周期）。
+ * 防止新增表悄悄漏掉导出/擦除（GDPR 数据生命周期）。注意 RETENTION_EXEMPT 表
+ * 单独登记（保留不擦除），不计入「会被擦除」的 covered 集。
  */
 export const PRIVACY_COVERED_TABLES: ReadonlySet<string> = new Set<string>([
   ...TENANT_TABLES,
   ...RELATED_TABLES.map((r) => r.name),
   ...POST_TENANT_RELATED_TABLES.map((r) => r.name),
 ]);
+
+/** C 类保留豁免表名（导出可能有，擦除一定没有）。供 ratchet 测试承认。 */
+export const PRIVACY_RETENTION_EXEMPT_TABLES: ReadonlySet<string> = new Set<string>(
+  RETENTION_EXEMPT_TABLES.map((r) => r.name),
+);
+
+/** eraseData 结果（判别联合）：blocked=true 表示 active legal hold 阻断、零删除。 */
+export type EraseResult =
+  | { deleted: true; blocked: false; tenantId: string; timestamp: number; tablesAffected: Record<string, number> }
+  | { deleted: false; blocked: true; tenantId: string; timestamp: number; reason: string; blockingHoldId: string; tablesAffected: Record<string, number> };
 
 function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
@@ -288,6 +390,12 @@ export class PrivacyService {
       const rows = transformExportRows(rel.name, exportQuery(db, rel.exportSql, rel.params(tenantId)), encryption);
       if (rows.length > 0) tables[rel.name] = rows;
     }
+    /* C 类保留豁免：导出（数据主体知情权）但绝不擦除；纯系统完整性表 exportSql=null 跳过 */
+    for (const ex of RETENTION_EXEMPT_TABLES) {
+      if (!ex.exportSql) continue;
+      const rows = transformExportRows(ex.name, exportQuery(db, ex.exportSql, [tenantId]), encryption);
+      if (rows.length > 0) tables[ex.name] = rows;
+    }
 
     return {
       exportId,
@@ -315,8 +423,26 @@ export class PrivacyService {
     };
   }
 
-  eraseData(tenantId: string) {
+  eraseData(tenantId: string): EraseResult {
     const db = this.os.getDatabase();
+
+    /* GDPR Art.17(3)(b)：active legal hold（诉讼/监管保留）期间禁止删除该租户数据。
+     * 保守语义（findBlockingHold）：任一 active hold 即阻断整租户擦除——宁可不删，不可
+     * 误删受保留义务保护的数据。否则会出现「保留了 legal_holds 表却删掉它要保护的数据」
+     * 的自相矛盾。需先释放 hold 才能擦除。 */
+    const blockingHold = new LegalHoldService(db).findBlockingHold(tenantId, 'tenant', null);
+    if (blockingHold) {
+      return {
+        deleted: false,
+        blocked: true as const,
+        tenantId,
+        timestamp: this.os.getClock().now(),
+        reason: `legal hold active: ${blockingHold.id} on ${blockingHold.subject}${blockingHold.subjectId ? ':' + blockingHold.subjectId : ''} (${blockingHold.reason})`,
+        blockingHoldId: blockingHold.id,
+        tablesAffected: {} as Record<string, number>,
+      };
+    }
+
     const deletedCounts: Record<string, number> = {};
 
     db.transaction(() => {
@@ -340,6 +466,7 @@ export class PrivacyService {
 
     return {
       deleted: true,
+      blocked: false as const,
       tenantId,
       timestamp: this.os.getClock().now(),
       tablesAffected: deletedCounts,
