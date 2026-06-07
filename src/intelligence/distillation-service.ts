@@ -15,12 +15,14 @@ import type { EventBus } from '../events/event-bus.js';
 import type { Logger } from '../utils/logger.js';
 import type { Clock } from '../utils/clock.js';
 import type { DistilledArtifactStore } from '../storage/distilled-artifact-store.js';
+import type { PersonaLeaseStore, LeaseHandle } from '../storage/persona-lease-store.js';
 import type { ArtifactCompiler } from './artifact-compiler.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { distillationCompensationFailures } from '../observability/metrics.js';
 import {
   validateArtifact, canAutoCompile, canTransition,
   DEFAULT_DISTILLATION_POLICY,
+  GLOBAL_LEASE_PERSONA_ID,
   type DistilledArtifact,
   type DistillationPolicy,
   type ArtifactKind,
@@ -30,6 +32,8 @@ import {
 } from '@chrono/kernel';
 
 const LAYER = 'DistillationService';
+/* compile mutex 存活时长：远大于单次编译耗时，仅在持有者崩溃后供抢占。 */
+const COMPILE_LEASE_TTL_MS = 60_000;
 
 /** 蒸馏候选输入（调用方提供；service 负责赋 id/createdAt/status） */
 export interface CandidateInput {
@@ -66,6 +70,13 @@ export interface DistillationServiceDeps {
   logger: Logger;
   tenantId?: string;
   policy?: DistillationPolicy;
+  /**
+   * 租户级全局 compile mutex（ADR-0047 多实例 gating item）。可选：未注入时为
+   * 单进程同步语义（向后兼容）；注入后用 GLOBAL_LEASE_PERSONA_ID 串行化整个租户的
+   * 编译（**非 per-persona**——restoreFromSnapshot 回滚的是 system-global 快照，
+   * 不同 persona 的并发编译也会互相覆盖，故必须全局互斥）。
+   */
+  leaseStore?: PersonaLeaseStore;
 }
 
 export class DistillationService {
@@ -102,6 +113,10 @@ export class DistillationService {
 
     if (canAutoCompile(artifact, this.policy)) {
       const compiled = this.compileAndPersist(personaId, artifact);
+      if (compiled === 'lease_busy') {
+        /* 全局 compile 锁被占：工件已 approved 落库，留待重试编译，按 pending 返回（非失败） */
+        return { status: 'pending', artifact: { ...artifact, status: 'approved' } };
+      }
       if (compiled) return { status: 'compiled', artifact: compiled };
       /* 编译失败已回滚 + 标记 rejected；返回 pending 语义不准确，按 rejected 返回 */
       return { status: 'rejected', reason: 'auto-compile failed and rolled back', problems: [] };
@@ -111,10 +126,28 @@ export class DistillationService {
     return { status: 'pending', artifact };
   }
 
-  /** 人工审批：candidate → approved → 编译（带快照/回滚）。personaId 强制对象级授权 */
+  /**
+   * 人工审批：candidate → approved → 编译（带快照/回滚）。personaId 强制对象级授权。
+   *
+   * 同时是 lease_busy 后的**重试入口**：若工件已是 approved（上一次因全局 compile 锁
+   * 被占而 left-approved），再次调用本方法会跳过 candidate→approved，直接重试编译。
+   * 这样「artifact left approved for retry」是可执行的——锁释放后重新 approve 即编译。
+   */
   approve(personaId: string, artifactId: string): ReviewResult {
     const artifact = this.deps.store.getById(personaId, artifactId);
     if (!artifact) return { ok: false, reason: 'artifact not found' };
+
+    /* 已 approved：lease_busy 后的重试路径——直接重编译，不再走 candidate→approved。
+     * 防御性再校验：保持「compiled 必须来自合法工件」不变量（approved 理论上已校验过，
+     * 但重试入口独立，显式校验避免被绕过）。 */
+    if (artifact.status === 'approved') {
+      const retryProblems = validateArtifact(artifact);
+      if (retryProblems.length > 0) {
+        return { ok: false, reason: `invalid artifact: ${retryProblems.join('; ')}` };
+      }
+      return this.finishCompile(personaId, this.compileApproved(personaId, artifact));
+    }
+
     if (artifact.status !== 'candidate') {
       return { ok: false, reason: `cannot approve from status ${artifact.status}` };
     }
@@ -126,7 +159,16 @@ export class DistillationService {
     if (!this.deps.store.setStatus(personaId, artifactId, 'candidate', 'approved', 'manually approved', null)) {
       return { ok: false, reason: 'status changed concurrently' };
     }
-    const compiled = this.compileApproved(personaId, { ...artifact, status: 'approved' });
+    return this.finishCompile(personaId, this.compileApproved(personaId, { ...artifact, status: 'approved' }));
+  }
+
+  /** 把 compileApproved 的三态结果（编译件 / lease_busy / undefined）映射为 ReviewResult。 */
+  private finishCompile(_personaId: string, compiled: DistilledArtifact | 'lease_busy' | undefined): ReviewResult {
+    if (compiled === 'lease_busy') {
+      /* 全局 compile 锁被占：工件已 approved，留待重试（再次 approve 即重编译）；
+       * 区分于真实失败，不误导审计 */
+      return { ok: false, reason: 'compile lease busy; artifact left approved for retry' };
+    }
     return compiled
       ? { ok: true, artifact: compiled }
       : { ok: false, reason: 'compile failed and rolled back' };
@@ -155,7 +197,7 @@ export class DistillationService {
   }
 
   /** 自动编译路径：candidate → approved → compiled（带快照/回滚） */
-  private compileAndPersist(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
+  private compileAndPersist(personaId: string, artifact: DistilledArtifact): DistilledArtifact | 'lease_busy' | undefined {
     if (!this.deps.store.setStatus(personaId, artifact.id, 'candidate', 'approved', 'auto-approved', null)) {
       this.deps.logger.warn(LAYER, `自动编译前置状态推进失败: ${artifact.id}`);
       return undefined;
@@ -163,8 +205,36 @@ export class DistillationService {
     return this.compileApproved(personaId, { ...artifact, status: 'approved' });
   }
 
-  /** approved → compiled：快照 → 编译 → 失败回滚 + 标记终态（rejected/rolled_back） */
-  private compileApproved(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
+  /**
+   * approved → compiled，受 **租户级全局 compile mutex** 保护（ADR-0047 多实例 gating）。
+   *
+   * 锁粒度是全局而非 per-persona：编译走 system-global 的 createSnapshot/
+   * restoreFromSnapshot（快照覆盖 coreSelf + 全部 personas + 全部 conflicts），
+   * 所以不同 persona 的并发编译也必须互斥——否则两个 persona 各持一把 per-persona
+   * 锁仍会互相覆盖全局快照。用 GLOBAL_LEASE_PERSONA_ID 让全租户编译竞争同一把锁。
+   * 锁覆盖快照→编译→状态推进→补偿全程。未注入 leaseStore = 单进程同步语义。
+   * 拿不到锁说明另一实例/另一 persona 正在编译，返回 'lease_busy'（工件留 approved 待重试）。
+   */
+  private compileApproved(personaId: string, artifact: DistilledArtifact): DistilledArtifact | 'lease_busy' | undefined {
+    if (!this.deps.leaseStore) {
+      return this.compileApprovedLocked(personaId, artifact);
+    }
+    const handle: LeaseHandle | null = this.deps.leaseStore.acquire(
+      GLOBAL_LEASE_PERSONA_ID, 'compile', this.deps.clock.now(), COMPILE_LEASE_TTL_MS,
+    );
+    if (!handle) {
+      this.deps.logger.warn(LAYER, `编译延后：全局 compile 锁被占用，另一编译进行中（persona=${personaId}）`);
+      return 'lease_busy';
+    }
+    try {
+      return this.compileApprovedLocked(personaId, artifact);
+    } finally {
+      this.deps.leaseStore.release(handle);
+    }
+  }
+
+  /** 编译主体：持有 compile 锁（如启用）期间执行。 */
+  private compileApprovedLocked(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
     const snapshotId = this.deps.snapshotGuard.snapshot();
     const outcome = this.deps.compiler.compile(artifact);
 

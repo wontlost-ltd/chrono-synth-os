@@ -56,6 +56,7 @@ import { registerBulkImportExecutors } from './bulk-import-executors.js';
 import { registerToolPermissionExecutors } from './tool-permission-executors.js';
 import { registerUserOauthTokenExecutors } from './user-oauth-token-executors.js';
 import { registerBreakGlassExecutors } from './break-glass-executors.js';
+import { registerPersonaLeaseExecutors } from './persona-lease-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -86,6 +87,7 @@ import {
   TPERM_QUERY_BY_PERSONA_TOOL,
   UOAUTH_QUERY_BY_USER_PROVIDER_SCOPE,
   BG_CMD_INSERT_CONSUMPTION,
+  PERSONA_LEASE_QUERY_GET,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -148,6 +150,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(TPERM_QUERY_BY_PERSONA_TOOL)) registerToolPermissionExecutors();
   if (!resolveQueryExecutor(UOAUTH_QUERY_BY_USER_PROVIDER_SCOPE)) registerUserOauthTokenExecutors();
   if (!resolveCommandExecutor(BG_CMD_INSERT_CONSUMPTION)) registerBreakGlassExecutors();
+  if (!resolveQueryExecutor(PERSONA_LEASE_QUERY_GET)) registerPersonaLeaseExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

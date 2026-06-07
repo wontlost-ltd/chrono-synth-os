@@ -917,6 +917,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_persona ON distilled_artifacts(tenant_id, persona_id)",
       "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_status ON distilled_artifacts(tenant_id, persona_id, status)"
     ]
+  },
+  {
+    "version": "v081",
+    "description": "ADR-0047/0048: per-persona concurrency lease (earning cycle + compile mutex)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS persona_leases (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    purpose TEXT NOT NULL CHECK(purpose IN ('earning', 'compile')),\n    holder_token TEXT NOT NULL,\n    acquired_at INTEGER NOT NULL,\n    expires_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, purpose)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_persona_leases_expires ON persona_leases(expires_at)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1814,6 +1822,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS distilled_artifacts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('rule', 'value_shift', 'memory_edge', 'decision_style_patch', 'cognitive_model_patch', 'response_template', 'narrative_patch')),\n    source TEXT NOT NULL CHECK(source IN ('reflection', 'conversation', 'knowledge_import', 'onboarding')),\n    payload TEXT NOT NULL,\n    confidence DOUBLE PRECISION NOT NULL DEFAULT 0,\n    evidence TEXT NOT NULL DEFAULT '[]',\n    status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate', 'approved', 'compiled', 'rejected', 'rolled_back')),\n    reason TEXT,\n    created_at BIGINT NOT NULL,\n    compiled_at BIGINT\n  )",
       "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_persona ON distilled_artifacts (tenant_id, persona_id)",
       "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_status ON distilled_artifacts (tenant_id, persona_id, status)"
+    ]
+  },
+  {
+    "version": "v083",
+    "description": "ADR-0047/0048: per-persona concurrency lease (earning cycle + compile mutex)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS persona_leases (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    purpose TEXT NOT NULL CHECK(purpose IN ('earning', 'compile')),\n    holder_token TEXT NOT NULL,\n    acquired_at BIGINT NOT NULL,\n    expires_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, purpose)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_persona_leases_expires ON persona_leases (expires_at)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

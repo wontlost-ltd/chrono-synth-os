@@ -174,10 +174,20 @@ D1/D2 phase-1 + the distillation pipeline (D3) are implemented and pass
 
 - `UpdateGate` extension to L2/L3 — distillation currently gates via its own
   state machine + `canAutoCompile`; merging with `UpdateGate` is future.
-- Per-persona compile mutex — `compileApproved` rolls back via the global
-  `restoreFromSnapshot`; acceptable under single-process synchronous core
-  writes, but a per-tenant/persona write lock is required before multi-instance
-  concurrent core writers.
+- Compile mutex — DONE, and it is **tenant-global, not per-persona**.
+  `compileApproved` rolls back via the global `restoreFromSnapshot` (the snapshot
+  captures coreSelf + ALL personas + ALL conflicts), so concurrent compiles for
+  *different* personas must also be mutually exclusive — a per-persona lock would
+  miss that. It is guarded by a compile lease taken on a tenant-global sentinel
+  (`GLOBAL_LEASE_PERSONA_ID`), wrapping the whole snapshot→compile→advance→
+  compensate critical section; any concurrent compile in the tenant is deferred
+  (returns `lease_busy`, artifact left `approved`) and retried by calling
+  `approve()` again once the lock frees. Shared mechanism with ADR-0048's
+  *per-persona* earning lease: `persona_leases` (DSL v081 / Postgres v083) +
+  `PersonaLeaseStore` (compare-and-set, TTL takeover, holder-token isolation),
+  injected as an optional `leaseStore` (absent ⇒ single-process synchronous
+  semantics, backward compatible). TTL is sound only while the critical section
+  ≪ TTL; compile runs fully synchronously, so this holds with wide margin.
 - `response_template` dedicated template store — currently lands as a
   `procedural` memory (subject to decay/eviction); a versioned template table
   with intent index is future.

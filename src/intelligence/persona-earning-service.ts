@@ -15,6 +15,7 @@ import type { Clock } from '../utils/clock.js';
 import type { EventBus } from '../events/event-bus.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { ToolInvocationPipeline } from '../agent/tool-invocation-pipeline.js';
+import type { PersonaLeaseStore } from '../storage/persona-lease-store.js';
 import type { DecisionEngine } from './decision-engine.js';
 import {
   evaluateEarningAdmission,
@@ -27,6 +28,9 @@ import {
 
 const LAYER = 'PersonaEarningService';
 const MARKETPLACE_TOOL_ID = 'marketplace.act';
+/* earning lease 存活时长：远大于单周期耗时（秒级），仅在持有者崩溃后供抢占。
+ * ADR-0048：多实例下用它把「读 24h exposure → 申请」串行化，防双双超 daily cap。 */
+const EARNING_LEASE_TTL_MS = 120_000;
 
 /** 一个 persona 的挣钱周期所需上下文 */
 export interface EarningCycleInput {
@@ -63,6 +67,12 @@ export interface PersonaEarningDeps {
   bus: EventBus;
   clock: Clock;
   logger: Logger;
+  /**
+   * per-persona earning lease（ADR-0048 多实例 gating item）。可选：未注入时为
+   * 单进程同步语义（向后兼容）；注入后多实例会把每个 persona 的挣钱周期串行化，
+   * 避免两个并发周期各自读到 stale 的 24h exposure 而双双超 daily cap。
+   */
+  leaseStore?: PersonaLeaseStore;
 }
 
 export class PersonaEarningService {
@@ -73,14 +83,36 @@ export class PersonaEarningService {
    * autonomous 准入且决策 accept 才经工具管线申请。返回每个任务的处置。
    */
   async runEarningCycle(input: EarningCycleInput): Promise<EarningCycleResult> {
-    const policy = input.policy ?? DEFAULT_EARNING_POLICY;
-    const maxTasks = Math.max(1, input.maxTasksPerCycle ?? 3);
-
     const persona = this.deps.personaCore.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
     if (!persona || persona.status !== 'active') {
       this.deps.logger.info(LAYER, `挣钱周期跳过：persona 不存在或非 active (${input.personaId})`);
       return emptyResult();
     }
+
+    /* 多实例 gating（ADR-0048）：获取该 persona 的 earning 锁，把「读 exposure → 申请」
+     * 整段串行化。拿不到锁说明另一实例正在为该 persona 跑周期，本次跳过（非错误）。
+     * 未注入 leaseStore = 单进程同步语义，直接执行（向后兼容）。 */
+    if (!this.deps.leaseStore) {
+      return this.runCycleBody(input, persona);
+    }
+    const result = await this.deps.leaseStore.withLease(
+      input.personaId, 'earning', this.deps.clock.now(), EARNING_LEASE_TTL_MS,
+      () => this.runCycleBody(input, persona),
+    );
+    if (result === undefined) {
+      this.deps.logger.info(LAYER, `挣钱周期跳过：earning 锁被占用，另一实例正在处理 (${input.personaId})`);
+      return emptyResult();
+    }
+    return result;
+  }
+
+  /** 周期主体：持有 earning 锁（如启用）期间执行，读 exposure → 决策 → 申请。 */
+  private async runCycleBody(
+    input: EarningCycleInput,
+    persona: { status: string; reputation: number },
+  ): Promise<EarningCycleResult> {
+    const policy = input.policy ?? DEFAULT_EARNING_POLICY;
+    const maxTasks = Math.max(1, input.maxTasksPerCycle ?? 3);
 
     const openTasks = this.deps.personaCore.listMarketplaceTasks(input.tenantId, 'open');
     const snapshot = this.buildPersonaSnapshot(input, persona);
