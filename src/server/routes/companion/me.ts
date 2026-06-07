@@ -152,9 +152,11 @@ export function registerCompanionRoutes(
    */
   function assertCompanionAccess(request: FastifyRequest): void {
     const user = request.user as JwtPayload | undefined;
-    if (user?.sub?.startsWith('apikey:')) {
+    /* 主体类型门：API-key 主体（apikey:* sub）+ service 角色都不是个人用户会话。
+     * 双重判定（sub 前缀 + role）避免未来某条 token 签发路径只满足其一时漏网。 */
+    if (user?.sub?.startsWith('apikey:') || user?.role === 'service') {
       throw new AuthorizationError(
-        'companion 接口仅支持个人用户会话，不支持 API Key 访问',
+        'companion 接口仅支持个人用户会话，不支持 API Key / service 主体访问',
         ErrorCode.AUTH_INSUFFICIENT_ROLE,
       );
     }

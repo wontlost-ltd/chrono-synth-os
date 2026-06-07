@@ -62,13 +62,32 @@ export async function login(email: string, password: string): Promise<void> {
   emit();
 }
 
-/** 用 refresh cookie 换新 accessToken；成功返回 true。失败则清空会话并返回 false。 */
-export async function tryRefresh(): Promise<boolean> {
+/** 读取非 HttpOnly 的 csrf_token cookie（后端 login 写、Path=/，供 SPA 双提交）。 */
+function readCsrfToken(): string | null {
+  for (const part of document.cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === 'csrf_token') return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+/** cookie-auth 的状态变更 POST（refresh/logout）必须带 x-csrf-token（后端 csrf.ts 双提交校验）。 */
+function csrfHeaders(): Record<string, string> {
+  const token = readCsrfToken();
+  return token ? { 'x-csrf-token': token } : {};
+}
+
+/* refresh single-flight：后端每次 refresh 都吊销旧 refresh token，并发 401 若各自 refresh
+ * 会互相作废 → 误登出。用模块级 promise 合并并发 refresh，所有等待者共享同一结果。 */
+let refreshPromise: Promise<boolean> | null = null;
+
+async function doRefresh(): Promise<boolean> {
   try {
     const res = await fetch('/api/v1/auth/refresh', {
       method: 'POST',
       credentials: 'include',
-      headers: { accept: 'application/json' },
+      headers: { accept: 'application/json', ...csrfHeaders() },
     });
     if (!res.ok) { clearSession(); return false; }
     const body = (await res.json()) as { data?: LoginResult };
@@ -82,23 +101,29 @@ export async function tryRefresh(): Promise<boolean> {
   }
 }
 
+/** 用 refresh cookie 换新 accessToken；成功返回 true。并发调用共享同一次 refresh（single-flight）。 */
+export async function tryRefresh(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = doRefresh().finally(() => { refreshPromise = null; });
+  return refreshPromise;
+}
+
 export function clearSession(): void {
   if (session === null) return;
   session = null;
   emit();
 }
 
-/** 登出：通知后端吊销 + 清空本地会话。 */
+/** 登出：通知后端吊销 refresh cookie + 清空本地会话。logout 走 cookie-auth，需带 CSRF header。 */
 export async function logout(): Promise<void> {
   const token = session?.accessToken;
-  clearSession();
+  const headers: Record<string, string> = { ...csrfHeaders() };
+  if (token) headers.authorization = `Bearer ${token}`;
+  /* 先发请求（此时 csrf_token cookie 仍在），再清本地会话。 */
   try {
-    await fetch('/api/v1/auth/logout', {
-      method: 'POST',
-      credentials: 'include',
-      headers: token ? { authorization: `Bearer ${token}` } : {},
-    });
+    await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include', headers });
   } catch {
-    /* 本地已清空，吊销失败可忽略 */
+    /* 吊销失败可忽略：本地仍会清空 */
   }
+  clearSession();
 }

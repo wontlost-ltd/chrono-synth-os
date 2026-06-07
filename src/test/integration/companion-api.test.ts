@@ -95,6 +95,23 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     assert.deepEqual(growth.directions, []);
   });
 
+  it('GET /companion/me/growth 单快照 → hasBaseline=false（单快照不算历史基线）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-onesnap@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    /* 制造恰好 1 个快照：countTenantSnapshots=1 < 2 → 无可对比基线 */
+    const snap = await app.inject({
+      method: 'POST', url: '/api/v1/snapshots', headers, payload: { reason: 'manual' },
+    });
+    assert.equal(snap.statusCode, 201, snap.body);
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/growth', headers });
+    assert.equal(res.statusCode, 200, res.body);
+    const growth = CompanionGrowthV1Schema.parse(JSON.parse(res.body).data);
+    assert.equal(growth.hasBaseline, false, '单快照不应被判为有基线');
+    assert.deepEqual(growth.directions, []);
+  });
+
   it('plan 门控：enterprise 账号访问 companion → 403', async () => {
     const auth = await registerAndGetAuth(app, 'companion-ent@test.com');
     /* 用 enterprise plan 自签 token（注册默认无 planId；这里显式模拟企业账号）。
@@ -122,6 +139,20 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
     assert.equal(res.statusCode, 403, `expected 403 for api-key principal, got ${res.statusCode}: ${res.body}`);
+  });
+
+  it('plan 门控：service 角色（非 apikey sub）访问 companion → 403', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-service@test.com');
+    /* 防御纵深：role=service 但 sub 不带 apikey: 前缀，也应被拒（双重判定） */
+    const serviceToken = (app as unknown as {
+      jwt: { sign: (payload: Record<string, unknown>) => string };
+    }).jwt.sign({
+      sub: auth.userId, tenantId: auth.tenantId, role: 'service', planId: 'free',
+    });
+    const headers = { authorization: `Bearer ${serviceToken}`, 'x-tenant-id': auth.tenantId };
+
+    const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
+    assert.equal(res.statusCode, 403, `expected 403 for service role, got ${res.statusCode}: ${res.body}`);
   });
 
   it('未授权访问 companion → 401/403', async () => {
