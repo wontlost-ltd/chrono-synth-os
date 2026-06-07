@@ -74,15 +74,20 @@ export interface CoreUpdateGatePolicy {
   readonly distilledMemoryEdgeMinEvidence: number;
 }
 
-/** 统一默认 policy（数值与合并前两套默认完全一致，保证行为等价）。 */
-export const DEFAULT_CORE_UPDATE_GATE_POLICY: CoreUpdateGatePolicy = {
+/**
+ * 统一默认 policy（数值与合并前两套默认完全一致，保证行为等价）。
+ * Object.freeze：旧入口默认常量（DEFAULT_DISTILLATION_POLICY / DEFAULT_UPDATE_GATE_CONFIG）
+ * 在模块加载期从本对象**派生快照**字段值；冻结可防运行时误改本 singleton 后与快照动态不一致，
+ * 坐实「单一事实来源」。
+ */
+export const DEFAULT_CORE_UPDATE_GATE_POLICY: CoreUpdateGatePolicy = Object.freeze({
   deterministicL0RequiresConfirmation: true,
   deterministicL1MaxAutoDelta: 0.15,
   distilledValueShiftMinConfidence: 0.8,
   distilledValueShiftMaxDelta: 0.05,
   distilledMemoryEdgeMinConfidence: 0.75,
   distilledMemoryEdgeMinEvidence: 2,
-};
+});
 
 const auto = (reason: string): CoreUpdateGateResult => ({ decision: 'auto', reason });
 const confirm = (reason: string): CoreUpdateGateResult => ({ decision: 'confirm', reason });
