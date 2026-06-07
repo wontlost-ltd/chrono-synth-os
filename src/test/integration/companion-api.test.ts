@@ -19,6 +19,7 @@ import { TestClock } from '../../utils/clock.js';
 import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
+  CompanionMemoryListV1Schema,
 } from '@chrono/contracts';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
@@ -110,6 +111,61 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     const growth = CompanionGrowthV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(growth.hasBaseline, false, '单快照不应被判为有基线');
     assert.deepEqual(growth.directions, []);
+  });
+
+  it('GET /companion/me/memories 分页浏览记忆（含 pagination 元信息）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-mems@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    /* 写 3 条记忆 */
+    for (const content of ['第一段记忆', '第二段记忆', '第三段记忆']) {
+      const r = await app.inject({
+        method: 'POST', url: '/api/v1/memories', headers,
+        payload: { kind: 'episodic', content, valence: 0.2, salience: 0.5 },
+      });
+      assert.equal(r.statusCode, 201, r.body);
+    }
+
+    /* pageSize=2 → 第 1 页 2 条，total=3，totalPages=2 */
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/companion/me/memories?page=1&pageSize=2', headers,
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const list = CompanionMemoryListV1Schema.parse(JSON.parse(res.body).data);
+    assert.equal(list.items.length, 2, '第 1 页应有 2 条');
+    assert.equal(list.pagination.total, 3);
+    assert.equal(list.pagination.page, 1);
+    assert.equal(list.pagination.pageSize, 2);
+    assert.equal(list.pagination.totalPages, 2);
+    /* 单条形状与 /me 的 recentMemories 同源 */
+    assert.ok(typeof list.items[0].content === 'string' && list.items[0].id.length > 0);
+
+    /* 第 2 页 1 条 */
+    const res2 = await app.inject({
+      method: 'GET', url: '/api/v1/companion/me/memories?page=2&pageSize=2', headers,
+    });
+    const list2 = CompanionMemoryListV1Schema.parse(JSON.parse(res2.body).data);
+    assert.equal(list2.items.length, 1, '第 2 页应有 1 条');
+  });
+
+  it('GET /companion/me/memories 空态 → items=[] total=0', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-mems-empty@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/memories', headers });
+    assert.equal(res.statusCode, 200, res.body);
+    const list = CompanionMemoryListV1Schema.parse(JSON.parse(res.body).data);
+    assert.deepEqual(list.items, []);
+    assert.equal(list.pagination.total, 0);
+  });
+
+  it('plan 门控：enterprise 账号访问 /companion/me/memories → 403', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-mems-ent@test.com');
+    const entToken = (app as unknown as {
+      jwt: { sign: (payload: Record<string, unknown>) => string };
+    }).jwt.sign({ sub: auth.userId, tenantId: auth.tenantId, role: 'member', planId: 'enterprise' });
+    const headers = { authorization: `Bearer ${entToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/memories', headers });
+    assert.equal(res.statusCode, 403, `expected 403, got ${res.statusCode}: ${res.body}`);
   });
 
   it('plan 门控：enterprise 账号访问 companion → 403', async () => {

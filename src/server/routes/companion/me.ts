@@ -26,13 +26,17 @@ import {
 import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
+  CompanionMemoryListV1Schema,
   type CompanionMeV1,
   type CompanionValueV1,
   type CompanionMemoryV1,
   type CompanionGrowthV1,
+  type CompanionMemoryListV1,
   type ExplorationIntensityV1,
   type ExplorationDirectionV1,
 } from '@chrono/contracts';
+import { MemoryFacade } from '../../../core/memory-facade.js';
+import { parsePagination } from '../../plugins/pagination.js';
 import type { CoreValue } from '@chrono/kernel';
 import type { MemoryNode } from '@chrono/kernel';
 
@@ -173,6 +177,9 @@ export function registerCompanionRoutes(
     critical: config.safety.drift.criticalThreshold,
   };
 
+  /* 记忆分页读取复用企业版 MemoryFacade（含 confidence 富集 + 租户隔离），C 端只做映射。 */
+  const memoryFacade = new MemoryFacade(os, tenantFactory, config);
+
   /* GET /api/v1/companion/me —「我的数字人」主页 */
   app.get('/api/v1/companion/me', async (request) => {
     assertCompanionAccess(request);
@@ -211,5 +218,19 @@ export function registerCompanionRoutes(
     /* ≥2 个快照才算有可对比的历史基线（单快照报告的 baselineSnapshotId 是「当前」快照）。 */
     const hasComparisonBaseline = countTenantSnapshots(db, request.tenantId) >= 2;
     return { data: CompanionGrowthV1Schema.parse(driftReportToGrowth(report, hasComparisonBaseline)) };
+  });
+
+  /* GET /api/v1/companion/me/memories —「我的记忆」分页浏览（复用 MemoryFacade.listMemories） */
+  app.get('/api/v1/companion/me/memories', async (request) => {
+    assertCompanionAccess(request);
+    const { page, pageSize } = parsePagination(request.query as Record<string, unknown>);
+    const result = memoryFacade.listMemories(request.tenantId, page, pageSize);
+    /* MemoryNodeWithConfidence extends MemoryNode → toCompanionMemory 直接可用（多余字段丢弃）。 */
+    const payload: CompanionMemoryListV1 = {
+      schemaVersion: 'companion-memory-list.v1',
+      items: result.data.map(toCompanionMemory),
+      pagination: result.pagination,
+    };
+    return { data: CompanionMemoryListV1Schema.parse(payload) };
   });
 }
