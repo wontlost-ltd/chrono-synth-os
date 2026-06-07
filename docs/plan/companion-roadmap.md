@@ -10,7 +10,10 @@
 - ✅ `@chrono/contracts` + `@chrono/sync-engine` + `@chrono/design-tokens` 三件套都已发布并消费
 - ⚠️ `apps/mobile` 现有 4 屏 Expo 骨架 + 推送 / 后台同步 / 安全存储 plumbing — 是 PoC
 - ⚠️ `apps/desktop` 现有 178 行 Tauri 骨架 + SQLCipher / CRDT — 是 enterprise PoC，需要加 companion 模式
-- ❌ `apps/companion-web` 不存在 — 需创建
+- ✅ `apps/companion-web` 已建（React 18.3.1 + Vite 8 SPA：登录 + 主页 + 成长 + 记忆 tab，
+  PR #62/#63）；Service Worker 待补
+- ✅ 后端 `/api/v1/companion/{me, me/growth, me/memories}` 已上线（复用慢层 + drift 分析器 +
+  MemoryFacade，plan/主体门控），Phase 2.1 完成（PR #62/#63）
 - ❌ Apple Dev / Google Play 账号 — 需 founder 法律签字注册
 - ❌ Companion 品牌资产（logo / app icon / 商店截图） — 需 marketing
 - ❌ Companion 定价 sub-doc — 待写
@@ -51,19 +54,21 @@
 
 ### 2.1 后端
 
-- [ ] `src/server/routes/companion/` 目录建出
-- [ ] `/api/v1/companion/me` — 当前用户的数字人状态（值 + 记忆 + 叙事摘要）
-- [ ] `/api/v1/companion/me/growth` — "你最近探索的方向" 视图（drift detection
-      数据的 C 端渲染）
-- [ ] `/api/v1/companion/me/memories` — 个人记忆 CRUD（已存在企业版，复用 + 简化）
-- [ ] 路由层 plan 切换：`/api/v1/companion/*` 要求账号 plan ≠ enterprise（避免
-      enterprise 用户误打开 companion UI）
+- [x] `src/server/routes/companion/` 目录建出 (PR #62)
+- [x] `/api/v1/companion/me` — 当前用户的数字人状态（值 + 记忆 + 叙事摘要）(PR #62)
+- [x] `/api/v1/companion/me/growth` — "你最近探索的方向" 视图（drift detection
+      数据的 C 端渲染）(PR #62)
+- [x] `/api/v1/companion/me/memories` — 个人记忆**分页只读浏览**（复用 MemoryFacade.listMemories；
+      写入/删除暂不开放，待 C 端"添加记忆"UX 定义）(PR #63)
+- [x] 路由层 plan 切换：`/api/v1/companion/*` 要求账号 plan ≠ enterprise（并收紧拒绝
+      API-key / service 主体——companion 仅个人会话）(PR #62)
 
 ### 2.2 Web (`apps/companion-web/`)
 
-- [ ] Vite + React 19 + design tokens 启动
-- [ ] 3 屏：登录、我的数字人主页、成长视图
-- [ ] PWA manifest（独立 brand color / icon）
+- [x] Vite + React + design tokens 启动（React **18.3.1** 而非 19——对齐 apps/mobile 既有
+      React，避免一个 monorepo 两个 React 大版本；plugin-react@5 适配 Vite 8）(PR #62)
+- [x] 3 屏：登录、我的数字人主页、成长视图（+ 记忆 tab）(PR #62 / #63)
+- [x] PWA manifest（独立 brand color / icon）(PR #62)
 - [ ] Service Worker（沿用 chrono-synth-web 的策略）
 
 ### 2.3 Mobile (`apps/mobile/` 扩屏)
@@ -152,3 +157,6 @@
 | 2026-05-25 | 代号 `chrono-companion`、bundle id `com.wontlost.companion` | ADR-0046 D1 |
 | 2026-05-25 | 进 `apps/companion-web/` + 扩 `apps/mobile/`，不开新仓 | ADR-0046 D2 |
 | 2026-05-25 | Enterprise GA / Companion GA 互不阻塞 | ADR-0046 D5 |
+| 2026-06-08 | 不冻结企业版、与企业 beta→GA 并行启动 Companion（路径 3 的"建"去掉"冻结"，守 D5）| founder |
+| 2026-06-08 | Companion web 用 React 18.3.1（非 roadmap 写的 19）对齐 apps/mobile，避免双 React 大版本 | 实现取舍 |
+| 2026-06-08 | Phase 2.1 后端完成 + Phase 2.2 web 三屏+记忆 tab 完成（PR #62/#63）；mobile/desktop（2.3/2.4）+ SW 待做 | 进度 |

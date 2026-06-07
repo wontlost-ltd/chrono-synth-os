@@ -73,10 +73,18 @@ body {
 .value__weight { text-align: right; color: var(--c-muted); font-variant-numeric: tabular-nums; }
 
 .memory { display: flex; align-items: center; gap: 10px; }
+.memory--row { gap: 10px; }
 .memory__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .memory__dot--pos { background: var(--c-pos); }
 .memory__dot--neg { background: var(--c-neg); }
-.memory__content { font-size: 15px; }
+.memory__content { font-size: 15px; flex: 1; }
+.memory__kind { font-size: 12px; color: var(--c-muted); flex: none; }
+
+.loadmore {
+  margin-top: 14px; width: 100%; padding: 10px; border: none; border-radius: 999px;
+  background: var(--c-surface-2); color: var(--c-text); font-size: 14px; cursor: pointer;
+}
+.loadmore:disabled { opacity: 0.6; cursor: default; }
 
 .intensity { margin: 0; font-size: 16px; }
 .intensity strong { color: var(--c-brand); }

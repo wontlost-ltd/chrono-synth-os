@@ -1,10 +1,11 @@
 import { useState, useSyncExternalStore } from 'react';
 import { HomeView } from './views/HomeView.js';
 import { GrowthView } from './views/GrowthView.js';
+import { MemoriesView } from './views/MemoriesView.js';
 import { LoginView } from './views/LoginView.js';
 import { subscribeAuth, isAuthenticated, logout } from './auth.js';
 
-type Tab = 'home' | 'growth';
+type Tab = 'home' | 'growth' | 'memories';
 
 /** 订阅外部 auth store，登录/登出时驱动整壳重渲染。 */
 function useAuthed(): boolean {
@@ -52,13 +53,25 @@ export function App(): JSX.Element {
             >
               成长
             </button>
+            <button
+              role="tab" id="tab-memories" aria-controls="panel-memories"
+              aria-selected={tab === 'memories'}
+              className={tab === 'memories' ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
+              onClick={() => setTab('memories')}
+            >
+              记忆
+            </button>
           </nav>
 
           <main className="app__main">
-            {tab === 'home' ? (
+            {tab === 'home' && (
               <div role="tabpanel" id="panel-home" aria-labelledby="tab-home"><HomeView /></div>
-            ) : (
+            )}
+            {tab === 'growth' && (
               <div role="tabpanel" id="panel-growth" aria-labelledby="tab-growth"><GrowthView /></div>
+            )}
+            {tab === 'memories' && (
+              <div role="tabpanel" id="panel-memories" aria-labelledby="tab-memories"><MemoriesView /></div>
             )}
           </main>
         </>

@@ -9,8 +9,10 @@
 import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
+  CompanionMemoryListV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
+  type CompanionMemoryListV1,
 } from '@chrono/contracts';
 import { getSession, tryRefresh } from './auth.js';
 import { decide401Action } from './api-retry.js';
@@ -75,4 +77,9 @@ export async function fetchMe(): Promise<CompanionMeV1> {
 
 export async function fetchGrowth(): Promise<CompanionGrowthV1> {
   return CompanionGrowthV1Schema.parse(await getData('/api/v1/companion/me/growth'));
+}
+
+export async function fetchMemories(page: number, pageSize = 20): Promise<CompanionMemoryListV1> {
+  const url = `/api/v1/companion/me/memories?page=${page}&pageSize=${pageSize}`;
+  return CompanionMemoryListV1Schema.parse(await getData(url));
 }
