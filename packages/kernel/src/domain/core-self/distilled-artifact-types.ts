@@ -8,6 +8,12 @@
  * 零 node:* 依赖（ADR-0001）。本文件只含纯类型与纯函数，不做任何 I/O。
  */
 
+import {
+  decideCoreUpdateGate,
+  DEFAULT_CORE_UPDATE_GATE_POLICY,
+  type CoreUpdateGatePolicy,
+} from './core-update-gate.js';
+
 /** 蒸馏工件种类：LLM 教学输出被编译进内核的目标形态 */
 export type ArtifactKind =
   | 'rule'                  /* if-then 规则 → 规则库 */
@@ -99,12 +105,16 @@ export interface DistillationPolicy {
   readonly memoryEdgeMinEvidence: number;
 }
 
-/** 默认蒸馏策略（与 ADR-0047 D3 一致） */
+/**
+ * 默认蒸馏策略（ADR-0047 D3）。**阈值从统一门控 policy 派生**，不再硬编码——
+ * 这样 distillation 与 UpdateGate 的 distilled 分支阈值是同一个事实来源，改一处即生效，
+ * 杜绝「共享函数但两份默认值」的伪统一漂移。
+ */
 export const DEFAULT_DISTILLATION_POLICY: DistillationPolicy = {
-  valueShiftMinConfidence: 0.8,
-  valueShiftMaxDelta: 0.05,
-  memoryEdgeMinConfidence: 0.75,
-  memoryEdgeMinEvidence: 2,
+  valueShiftMinConfidence: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledValueShiftMinConfidence,
+  valueShiftMaxDelta: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledValueShiftMaxDelta,
+  memoryEdgeMinConfidence: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledMemoryEdgeMinConfidence,
+  memoryEdgeMinEvidence: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledMemoryEdgeMinEvidence,
 };
 
 /** value_shift 工件的载荷形状 */
@@ -275,25 +285,38 @@ export function canAutoCompile(
   const a = artifact as DistilledArtifact; /* validateArtifact 通过后形状可信 */
   if (a.status !== 'candidate') return false;
 
+  /* 自动编译的「门控判定」委托给统一共享层（distilled 来源），杜绝与 UpdateGate 阈值漂移。
+   * 本函数仍负责 distillation 专属前置（candidate 状态 + schema 校验）；阈值来自共享 policy。 */
+  const gatePolicy = distillationPolicyToGatePolicy(policy);
   switch (a.kind) {
     case 'value_shift': {
       const p = a.payload as ValueShiftPayload;
-      return (
-        a.confidence >= policy.valueShiftMinConfidence &&
-        p.patternAgrees === true &&
-        Math.abs(p.delta) <= policy.valueShiftMaxDelta
-      );
+      return decideCoreUpdateGate(
+        { layer: 'L1', sourceClass: 'distilled', delta: p.delta, confidence: a.confidence, patternAgrees: p.patternAgrees },
+        gatePolicy,
+      ).decision === 'auto';
     }
     case 'memory_edge': {
-      return (
-        a.confidence >= policy.memoryEdgeMinConfidence &&
-        a.evidence.length >= policy.memoryEdgeMinEvidence
-      );
+      return decideCoreUpdateGate(
+        { layer: 'MemoryGraph', sourceClass: 'distilled', confidence: a.confidence, evidenceCount: a.evidence.length },
+        gatePolicy,
+      ).decision === 'auto';
     }
     default:
       /* rule / *_patch / response_template / narrative_patch 默认需审批 */
       return false;
   }
+}
+
+/** 把 distillation 专属 policy 适配为统一门控 policy（仅填 distilled 分支字段，deterministic 分支取默认）。 */
+function distillationPolicyToGatePolicy(policy: DistillationPolicy): CoreUpdateGatePolicy {
+  return {
+    ...DEFAULT_CORE_UPDATE_GATE_POLICY,
+    distilledValueShiftMinConfidence: policy.valueShiftMinConfidence,
+    distilledValueShiftMaxDelta: policy.valueShiftMaxDelta,
+    distilledMemoryEdgeMinConfidence: policy.memoryEdgeMinConfidence,
+    distilledMemoryEdgeMinEvidence: policy.memoryEdgeMinEvidence,
+  };
 }
 
 /** 状态推进结果 */

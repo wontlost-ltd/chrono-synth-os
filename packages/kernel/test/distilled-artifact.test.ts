@@ -10,6 +10,7 @@ import {
   type ArtifactStatus,
   type ArtifactEvidence,
 } from '../src/domain/core-self/distilled-artifact-types.js';
+import { DEFAULT_CORE_UPDATE_GATE_POLICY } from '../src/domain/core-self/core-update-gate.js';
 
 function evidence(n: number): ArtifactEvidence[] {
   return Array.from({ length: n }, (_, i) => ({ type: 'pattern' as const, id: `e${i}`, score: 0.6 }));
@@ -227,10 +228,12 @@ describe('canAutoCompile (ADR-0047 D3)', () => {
     })), false);
   });
 
-  it('默认策略阈值符合 ADR-0047', () => {
-    assert.equal(DEFAULT_DISTILLATION_POLICY.valueShiftMinConfidence, 0.8);
-    assert.equal(DEFAULT_DISTILLATION_POLICY.valueShiftMaxDelta, 0.05);
-    assert.equal(DEFAULT_DISTILLATION_POLICY.memoryEdgeMinEvidence, 2);
+  it('默认策略阈值从统一门控 policy 派生（单一事实来源，非重复字面量）', () => {
+    /* 不再在测试层复制 ADR 阈值字面量——对比 canonical policy，避免测试层成为第二份事实来源 */
+    assert.equal(DEFAULT_DISTILLATION_POLICY.valueShiftMinConfidence, DEFAULT_CORE_UPDATE_GATE_POLICY.distilledValueShiftMinConfidence);
+    assert.equal(DEFAULT_DISTILLATION_POLICY.valueShiftMaxDelta, DEFAULT_CORE_UPDATE_GATE_POLICY.distilledValueShiftMaxDelta);
+    assert.equal(DEFAULT_DISTILLATION_POLICY.memoryEdgeMinConfidence, DEFAULT_CORE_UPDATE_GATE_POLICY.distilledMemoryEdgeMinConfidence);
+    assert.equal(DEFAULT_DISTILLATION_POLICY.memoryEdgeMinEvidence, DEFAULT_CORE_UPDATE_GATE_POLICY.distilledMemoryEdgeMinEvidence);
   });
 });
 
