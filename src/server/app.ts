@@ -44,6 +44,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerValueRoutes } from './routes/values.js';
 import { registerMemoryRoutes } from './routes/memories.js';
 import { registerNarrativeRoutes } from './routes/narrative.js';
+import { registerCompanionRoutes } from './routes/companion/me.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -608,6 +609,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
+  registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);

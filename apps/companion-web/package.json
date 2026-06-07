@@ -1,10 +1,27 @@
 {
   "name": "@chrono/companion-web",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.0",
   "license": "AGPL-3.0-or-later",
   "private": true,
-  "description": "ChronoCompanion web host — placeholder (see docs/plan/companion-roadmap.md Phase 2.2)",
+  "type": "module",
+  "description": "ChronoCompanion web host — C 端「我的数字人」(ADR-0046 / roadmap Phase 2.2)",
   "scripts": {
-    "noop": "echo 'companion-web is a Phase 0 placeholder; no scripts yet'"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@chrono/contracts": "*",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^8.0.16"
   }
 }

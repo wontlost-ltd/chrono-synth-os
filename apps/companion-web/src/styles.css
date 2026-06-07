@@ -1,0 +1,90 @@
+/* ChronoCompanion 最小样式（alpha）。品牌色独立于企业版（roadmap：companion 主色发散）。
+ * 扩展期改为消费 @chrono/design-tokens 的 tokens.companion.* 命名空间（见 roadmap 风险表）。 */
+:root {
+  --c-bg: #0f1420;
+  --c-surface: #1a2030;
+  --c-surface-2: #232a3d;
+  --c-text: #e8ecf4;
+  --c-muted: #8a94ab;
+  --c-brand: #5b8def;
+  --c-pos: #4fc08d;
+  --c-neg: #e7796b;
+  --c-radius: 14px;
+  --c-gap: 16px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--c-bg);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+.app__header { position: relative; text-align: center; margin-bottom: 20px; }
+.app__brand { margin: 0; font-size: 22px; letter-spacing: 0.02em; }
+.app__tagline { margin: 4px 0 0; color: var(--c-muted); font-size: 14px; }
+.app__logout {
+  position: absolute; top: 0; right: 0; padding: 6px 12px; border: none;
+  border-radius: 999px; background: var(--c-surface); color: var(--c-muted);
+  font-size: 13px; cursor: pointer;
+}
+
+.view--login { max-width: 360px; margin: 24px auto 0; }
+.login { display: flex; flex-direction: column; gap: 14px; margin: 4px 0 12px; }
+.login__field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--c-muted); }
+.login__field input {
+  padding: 11px 12px; border: 1px solid var(--c-surface-2); border-radius: 10px;
+  background: var(--c-surface-2); color: var(--c-text); font-size: 15px;
+}
+.login__field input:focus { outline: 2px solid var(--c-brand); outline-offset: 1px; }
+.login__error { color: var(--c-neg); font-size: 14px; margin: 0; }
+.login__submit {
+  padding: 12px; border: none; border-radius: 999px; background: var(--c-brand);
+  color: #fff; font-size: 15px; cursor: pointer;
+}
+.login__submit:disabled { opacity: 0.6; cursor: default; }
+
+.tabs { display: flex; gap: 8px; margin-bottom: var(--c-gap); }
+.tabs__btn {
+  flex: 1; padding: 10px 12px; border: none; border-radius: 999px;
+  background: var(--c-surface); color: var(--c-muted); font-size: 15px; cursor: pointer;
+}
+.tabs__btn--active { background: var(--c-brand); color: #fff; }
+
+.view { display: flex; flex-direction: column; gap: var(--c-gap); }
+.card { background: var(--c-surface); border-radius: var(--c-radius); padding: 18px; }
+.card--empty { text-align: center; }
+.card__title { margin: 0 0 12px; font-size: 15px; color: var(--c-muted); font-weight: 600; }
+
+.narrative { margin: 0; font-size: 17px; line-height: 1.6; }
+.overview { margin: 12px 0 0; display: flex; gap: 8px; color: var(--c-muted); font-size: 13px; }
+.muted { color: var(--c-muted); margin: 0; }
+
+.values, .memories, .directions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+
+.value { display: grid; grid-template-columns: 5em 1fr 2.5em; align-items: center; gap: 10px; }
+.value__label { font-size: 15px; }
+.value__bar, .direction__bar { height: 8px; background: var(--c-surface-2); border-radius: 999px; overflow: hidden; }
+.value__fill, .direction__fill { display: block; height: 100%; background: var(--c-brand); }
+.value__weight { text-align: right; color: var(--c-muted); font-variant-numeric: tabular-nums; }
+
+.memory { display: flex; align-items: center; gap: 10px; }
+.memory__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.memory__dot--pos { background: var(--c-pos); }
+.memory__dot--neg { background: var(--c-neg); }
+.memory__content { font-size: 15px; }
+
+.intensity { margin: 0; font-size: 16px; }
+.intensity strong { color: var(--c-brand); }
+.direction { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; }
+.direction__label { font-size: 15px; }
+.direction__desc { color: var(--c-muted); font-size: 13px; }
+.direction__bar { grid-column: 1 / -1; }
+
+.state { padding: 32px 16px; text-align: center; color: var(--c-muted); }
+.state--error { color: var(--c-neg); }
+.state--auth p { margin: 4px 0; }
