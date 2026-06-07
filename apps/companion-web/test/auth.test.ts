@@ -25,10 +25,13 @@ function installEnv(): {
   setCookie: (c: string) => void;
   /** 让下一个 /auth/refresh 响应挂起，返回一个 resolve 函数手动放行（测竞态）。 */
   deferNextRefresh: () => (body: unknown, ok?: boolean) => void;
+  /** 每次 fetch 发出时的同步观察钩子（用于断言「发出请求那一刻」的状态）。 */
+  setOnFetch: (fn: (url: string) => void) => void;
 } {
   const calls: FetchCall[] = [];
   let cookie = '';
   let deferred: { resolve: (r: Response) => void } | null = null;
+  let onFetch: ((url: string) => void) | undefined;
 
   (globalThis as { document?: { cookie: string } }).document = {
     get cookie() { return cookie; },
@@ -46,6 +49,7 @@ function installEnv(): {
   (globalThis as { fetch?: unknown }).fetch = async (url: string, init?: RequestInit) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
     calls.push({ url, method: init?.method ?? 'GET', headers });
+    onFetch?.(url);
     if (url.includes('/auth/refresh') && deferred) {
       return new Promise<Response>((resolve) => { deferred!.resolve = resolve; });
     }
@@ -61,6 +65,7 @@ function installEnv(): {
   return {
     calls,
     setCookie: (c) => { cookie = c; },
+    setOnFetch: (fn) => { onFetch = fn; },
     deferNextRefresh: () => {
       deferred = { resolve: () => {} };
       return (body: unknown, ok = true) => {
@@ -71,7 +76,7 @@ function installEnv(): {
   };
 }
 
-test('logout 携带 x-csrf-token，并在请求之后才清空会话', async () => {
+test('logout 携带 x-csrf-token + Authorization，并在请求发出之后才清空会话', async () => {
   const env = installEnv();
   env.setCookie('csrf_token=csrf-abc; other=x');
   const auth = await import('../src/auth.ts?logout' as string);
@@ -79,11 +84,19 @@ test('logout 携带 x-csrf-token，并在请求之后才清空会话', async () 
   await auth.login('a@test.com', 'pw');
   assert.equal(auth.isAuthenticated(), true);
 
+  /* 断言「发出 logout 请求那一刻」会话仍在（先发请求再清，否则吊销会带不上凭证）。 */
+  let authedAtLogoutFetch: boolean | null = null;
+  env.setOnFetch((url) => {
+    if (url.includes('/auth/logout')) authedAtLogoutFetch = auth.isAuthenticated();
+  });
+
   await auth.logout();
   const logoutCall = env.calls.find((c) => c.url.includes('/auth/logout'));
   assert.ok(logoutCall, 'logout 应发出请求');
   assert.equal(logoutCall.headers['x-csrf-token'], 'csrf-abc', 'logout 必须带 CSRF header');
-  assert.equal(auth.isAuthenticated(), false, 'logout 后会话已清空');
+  assert.equal(logoutCall.headers['authorization'], 'Bearer at-login', 'logout 应带当前 access token');
+  assert.equal(authedAtLogoutFetch, true, '发出 logout 请求时会话必须仍在');
+  assert.equal(auth.isAuthenticated(), false, 'logout 完成后会话已清空');
 });
 
 test('refresh single-flight：并发 tryRefresh 只触发一次 /auth/refresh', async () => {
@@ -101,8 +114,8 @@ test('refresh single-flight：并发 tryRefresh 只触发一次 /auth/refresh', 
 
   const refreshCalls = env.calls.filter((c) => c.url.includes('/auth/refresh'));
   assert.equal(refreshCalls.length, 1, '并发 refresh 只应有一次网络请求');
-  assert.equal(r1, true);
-  assert.equal(r2, true);
+  assert.equal(r1, 'refreshed');
+  assert.equal(r2, 'refreshed');
   assert.equal(refreshCalls[0].headers['x-csrf-token'], 'csrf-zzz', 'refresh 必须带 CSRF header');
 });
 
@@ -120,6 +133,16 @@ test('epoch 守卫：logout 后到达的陈旧 refresh 结果不把会话写回'
 
   release({ data: { accessToken: 'at-stale', tenantId: 't1' } }); // 陈旧 refresh 现在才返回
   const result = await refreshP;
-  assert.equal(result, false, '陈旧 refresh 应被 epoch 守卫丢弃');
+  assert.equal(result, 'superseded', '陈旧 refresh 应被 epoch 守卫标记为 superseded');
   assert.equal(auth.isAuthenticated(), false, 'logout 后不得被在途 refresh 恢复登录');
 });
+
+/* api.ts 的 401 重试链不在此单测：companion-web 用 .js import 说明符（Vite/tsc-bundler 解析），
+ * Node 原生 strip-only 不会把 './auth.js' 改写到 './auth.ts'，无法 bare `node --test` 加载 api.ts。
+ * 改用「以 auth.ts 三态契约保证 api.ts 正确性」：
+ *   - 上面三个测试已证 tryRefresh 返回 'refreshed' / 'failed' / 'superseded'，且 'superseded'
+ *     不写回、不 clearSession（陈旧 refresh 不恢复登录）。
+ *   - api.ts 仅在 outcome==='failed' 时不重试（此时 clearSession 已在 auth.ts 内做），
+ *     'refreshed'/'superseded' 都重试且**不**在调用方 clearSession——因此不存在「陈旧 401
+ *     清掉新会话」的路径（该路径已被三态 enum 从结构上消除）。
+ * 经 api.ts 的端到端 race 验证留待 companion-web 接入 vitest/jsdom 后补（README 已记）。 */

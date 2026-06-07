@@ -84,11 +84,21 @@ function csrfHeaders(): Record<string, string> {
   return token ? { 'x-csrf-token': token } : {};
 }
 
+/**
+ * refresh 结果三态——调用方（api.ts）据此决定是否清会话：
+ *   - 'refreshed'：拿到新 accessToken，会话已更新。
+ *   - 'failed'：refresh 真实失败（cookie 过期/无效），应清会话回登录。
+ *   - 'superseded'：期间发生了 login/logout（epoch 变），本次结果作废；**不得**清会话
+ *     （已有更新的权威会话），调用方应放弃本次重试但保留当前会话。
+ * 用三态而非 boolean 是为消除「discarded 与 failed 同为 false」导致调用方误清新会话的歧义。
+ */
+export type RefreshOutcome = 'refreshed' | 'failed' | 'superseded';
+
 /* refresh single-flight：后端每次 refresh 都吊销旧 refresh token，并发 401 若各自 refresh
  * 会互相作废 → 误登出。用模块级 promise 合并并发 refresh，所有等待者共享同一结果。 */
-let refreshPromise: Promise<boolean> | null = null;
+let refreshPromise: Promise<RefreshOutcome> | null = null;
 
-async function doRefresh(): Promise<boolean> {
+async function doRefresh(): Promise<RefreshOutcome> {
   const startedEpoch = epoch; /* 捕获本次 refresh 的会话世代 */
   try {
     const res = await fetch('/api/v1/auth/refresh', {
@@ -96,23 +106,23 @@ async function doRefresh(): Promise<boolean> {
       credentials: 'include',
       headers: { accept: 'application/json', ...csrfHeaders() },
     });
-    /* 期间发生了 login/logout（epoch 变了）→ 本次 refresh 结果已陈旧，丢弃不写回。 */
-    if (epoch !== startedEpoch) return false;
-    if (!res.ok) { clearSession(); return false; }
+    /* 期间发生了 login/logout（epoch 变了）→ 本次 refresh 结果已陈旧，丢弃不写回也不清会话。 */
+    if (epoch !== startedEpoch) return 'superseded';
+    if (!res.ok) { clearSession(); return 'failed'; }
     const body = (await res.json()) as { data?: LoginResult };
-    if (epoch !== startedEpoch) return false;
-    if (!body.data?.accessToken || !body.data?.tenantId) { clearSession(); return false; }
+    if (epoch !== startedEpoch) return 'superseded';
+    if (!body.data?.accessToken || !body.data?.tenantId) { clearSession(); return 'failed'; }
     session = { accessToken: body.data.accessToken, tenantId: body.data.tenantId };
     emit();
-    return true;
+    return 'refreshed';
   } catch {
-    if (epoch === startedEpoch) clearSession();
-    return false;
+    if (epoch === startedEpoch) { clearSession(); return 'failed'; }
+    return 'superseded';
   }
 }
 
-/** 用 refresh cookie 换新 accessToken；成功返回 true。并发调用共享同一次 refresh（single-flight）。 */
-export async function tryRefresh(): Promise<boolean> {
+/** 用 refresh cookie 换新 accessToken。并发调用共享同一次 refresh（single-flight）。 */
+export async function tryRefresh(): Promise<RefreshOutcome> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = doRefresh().finally(() => { refreshPromise = null; });
   return refreshPromise;
