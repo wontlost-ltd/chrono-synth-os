@@ -1,0 +1,36 @@
+# ChronoSynth OS
+
+> A digital persona workspace. Cultivate AI agents that reflect your values, learn from your decisions, and stay aligned over time. ChronoSynth OS combines a values-aware persona core, counterfactual life simulations, and an extensible memory graph into a single self-hostable platform.
+
+ChronoSynth OS is an authenticated SaaS application. Public-facing routes are limited to the landing pages, login, and registration. The bulk of the surface (personas, simulations, knowledge graph, memory inspection, governance, billing) is gated behind authentication and serves user-specific content.
+
+This site uses end-to-end encryption for sensitive memory content (when enabled), per-tenant data isolation, and field-level encryption (AES-256-GCM) for governance-critical fields. The platform supports SQLite (single-tenant) and Postgres (multi-tenant) backends and ships as a Helm chart for self-hosted deployment.
+
+## Public pages
+
+- [Landing](/): Marketing surface and product overview.
+- [Login](/login): Authenticated entry point. Supports email/password, SSO (OIDC), and SCIM-provisioned enterprise users.
+- [Register](/register): Self-service account creation.
+
+## Documentation
+
+- [Source repositories](https://github.com/wontlost-ltd): Four repositories (`chrono-synth-os`, `chrono-synth-web`, `chrono-synth-desktop`, `chrono-synth-deploy`) hosting backend, web client, Tauri desktop client, and IaC respectively.
+
+## Authenticated areas (require login)
+
+- /dashboard: Personal landing for the authenticated user.
+- /personas: Persona management — fork, snapshot, evolve, retire.
+- /personas/:id/health: Persona health radar covering values, decisions, memory composition, tool mix, and drift.
+- /simulations: Counterfactual life simulations and path comparison.
+- /knowledge-sources: External knowledge ingestion — files, URLs, structured datasets.
+- /agent: Tool permissions, OAuth consent, pending confirmations.
+- /admin: Tenant administration, drift reports, governance.
+- /enterprise: Multi-tenant control plane (admins only).
+- /billing: Subscription management, plan limits, usage meters.
+- /growth: Capability ladder; features unlock as time-of-use accrues.
+- /settings: Theme, language, account preferences.
+
+## Optional
+
+- [Robots](/robots.txt): Crawl directives. Authenticated routes are disallowed.
+- [Service Worker](/sw.js): PWA offline support; no public content cached.

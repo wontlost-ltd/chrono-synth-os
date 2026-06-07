@@ -1,0 +1,106 @@
+name: Chromatic
+
+# Visual regression gate for the design system. Runs on every PR
+# touching component code, styles, tokens, or stories. Uploads the
+# built Storybook to Chromatic, which diffs each story against the
+# accepted baseline on `main` and reports back as a PR check.
+#
+# Failure modes the gate catches:
+#   - design-token tweak ripples into a component (e.g. status.success
+#     darkening makes the StatusBadge AA-contrast regress)
+#   - Tailwind class change that visually shifts a component
+#   - theme variant (dark / high-contrast) breakage from a global edit
+#
+# Onboarding: the project token lives in repo secrets as
+# CHROMATIC_PROJECT_TOKEN. See docs/operations/chromatic-setup.md for
+# initial signup + token rotation steps.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**/*.tsx'
+      - 'src/**/*.ts'
+      - 'src/**/*.css'
+      - 'src/styles/**'
+      - 'packages/design-tokens/**'
+      - '.storybook/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/chromatic.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Gate the actual upload behind a token-presence check. GitHub
+  # Actions doesn't allow `secrets.X` in job-level `if:` directly, so
+  # we promote it to an env var first and read that from the guard.
+  # Net effect: fork PRs are skipped (no secrets) AND the pre-onboarding
+  # window (before the project token is added) is skipped too. Once
+  # the secret lands, the gate goes active automatically without
+  # workflow edits.
+  precheck:
+    name: Visual regression (precheck)
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.guard.outputs.should_run }}
+    steps:
+      - id: guard
+        env:
+          HAS_TOKEN: ${{ secrets.CHROMATIC_PROJECT_TOKEN != '' }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [[ "$IS_FORK_PR" == "true" ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "skipping: fork PR (token not available)"
+            exit 0
+          fi
+          if [[ "$HAS_TOKEN" != "true" ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "skipping: CHROMATIC_PROJECT_TOKEN secret not configured"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+  chromatic:
+    name: Visual regression
+    needs: precheck
+    if: needs.precheck.outputs.should_run == 'true'
+    runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Chromatic uses git history to compute the baseline — fetch
+          # depth 0 so it can locate the merge-base on main.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # Storybook 9 + Vite 8 peer-dep mismatch (SB 9 caps at Vite 7);
+      # the Vite 8 API surface we touch is compatible.
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build Storybook
+        run: npm run build-storybook -- --quiet
+
+      - name: Publish to Chromatic
+        uses: chromaui/action@v13
+        with:
+          projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
+          storybookBuildDir: storybook-static
+          # On `main` push, auto-accept changes so the baseline tracks
+          # the latest merged state. On PRs, surface changes as
+          # reviewable diffs but don't fail the build — humans
+          # accept/reject in the Chromatic UI.
+          autoAcceptChanges: ${{ github.ref == 'refs/heads/main' }}
+          exitZeroOnChanges: true
+          # If a story fails to render at all (JS error / a11y addon
+          # crash), that is a real regression and should red-X.
+          exitOnceUploaded: false

@@ -1,0 +1,117 @@
+/* P3.7 WelcomeIntro — first-run 3-segment narrative.
+ *
+ * The "art" panel is a single CSS gradient blob per segment; we don't
+ * rely on illustration assets so the bundle stays slim. Each segment's
+ * blob has a distinct hue and shape to give visual rhythm.
+ */
+
+.welcome-intro {
+  width: min(560px, 92vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-elevated, #fff);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.welcome-intro-illustration {
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-subtle, #f3f4f6);
+}
+
+.welcome-intro-svg {
+  width: 60%;
+  max-width: 280px;
+  height: auto;
+}
+
+.welcome-intro-content {
+  padding: 24px 28px 16px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.welcome-intro-title {
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--color-text-primary, #111827);
+}
+
+.welcome-intro-body {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.welcome-intro-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px 20px;
+  border-top: 1px solid var(--color-border, #e5e7eb);
+}
+
+.welcome-intro-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.welcome-intro-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border, #d1d5db);
+  transition: background var(--motion-fast, 120ms);
+}
+
+.welcome-intro-dot.active {
+  background: var(--color-primary, #3b82f6);
+}
+
+.welcome-intro-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.welcome-intro-skip {
+  background: transparent;
+  border: none;
+  /* WCAG AA 要求 4.5:1。--color-text-tertiary 在浅灰背景上仅 ~3:1，
+   * 因此 secondary 才是默认值；hover 切到 primary 提升可见反馈。 */
+  color: var(--color-text-secondary, #4b5563);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 12px;
+}
+
+.welcome-intro-skip:hover {
+  color: var(--color-text-primary, #111827);
+}
+
+.welcome-intro-next {
+  background: var(--color-primary, #3b82f6);
+  color: var(--color-on-primary, #fff);
+  border: none;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.welcome-intro-next:hover {
+  opacity: 0.9;
+}
+
+.welcome-intro-next:focus-visible,
+.welcome-intro-skip:focus-visible {
+  outline: 2px solid var(--color-primary, #3b82f6);
+  outline-offset: 2px;
+}

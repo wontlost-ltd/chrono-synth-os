@@ -1,0 +1,63 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - npm
+    groups:
+      types:
+        patterns:
+          - '@types/*'
+      eslint:
+        patterns:
+          - 'eslint*'
+          - '@typescript-eslint/*'
+      react:
+        patterns:
+          - 'react'
+          - 'react-dom'
+          - '@types/react'
+          - '@types/react-dom'
+      tanstack:
+        patterns:
+          - '@tanstack/*'
+      vite:
+        patterns:
+          - 'vite'
+          - 'vitest'
+          - '@vitejs/*'
+      playwright:
+        patterns:
+          - '@playwright/*'
+          - 'playwright'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - github-actions
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+    ignore:
+      # Skip non-LTS Node majors. Odd-numbered Node releases (21, 23, 25...)
+      # have ~6 month support windows; production images track LTS only
+      # (currently 24, next 26 in 2026 Q3).
+      - dependency-name: node
+        versions: ['25', '27', '29']

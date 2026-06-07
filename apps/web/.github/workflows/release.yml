@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'           # GA: v2.0.0
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'         # pre-release: v2.0.0-beta.1 / -rc.2
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run test
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pre-release tags (v2.0.0-beta.1) emit only the full version tag;
+      # they do NOT claim `latest` or `2.0` aliases that GA tags own.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/wontlost-ltd/chrono-synth-web
+          flavor: |
+            latest=${{ !contains(github.ref_name, '-') }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=sha,prefix=sha-
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # GA tags block on CRITICAL+HIGH; pre-release tags block on CRITICAL
+      # only (HIGH findings get reviewed during dogfooding, not gate the build).
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/wontlost-ltd/chrono-synth-web:${{ steps.meta.outputs.version }}
+          format: table
+          exit-code: '1'
+          severity: ${{ contains(github.ref_name, '-') && 'CRITICAL' || 'CRITICAL,HIGH' }}
+
+  # Auto-trigger downstream deploy for GA tags only. Pre-release tags
+  # are explicitly internal-beta and operators promote them manually
+  # after dogfooding clears the checklist.
+  dispatch-deploy:
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'wontlost-ltd',
+              repo: 'chrono-synth-deploy',
+              event_type: 'chrono-web-released',
+              client_payload: {
+                version: '${{ needs.build-and-push.outputs.image-tag }}',
+                sha: '${{ github.sha }}',
+                ref: '${{ github.ref_name }}',
+                actor: '${{ github.actor }}'
+              }
+            });

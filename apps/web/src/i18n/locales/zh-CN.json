@@ -1,0 +1,1519 @@
+{
+  "dashboard": {
+    "title": "人生模拟仪表盘",
+    "inputLabel": "输入模拟 ID:",
+    "load": "加载",
+    "emptyState": "尚未选择模拟",
+    "createNew": "创建新模拟",
+    "loadError": "加载失败: {{message}}",
+    "noData": "无数据",
+    "reselect": "重新选择",
+    "subtitle": "模拟 {{id}}... · {{years}} 年",
+    "switchSimulation": "切换模拟",
+    "recommendedPath": "推荐路径",
+    "compositeScore": "综合评分",
+    "keyMetrics": "关键指标",
+    "confidence": "置信度",
+    "regretProbability": "后悔概率",
+    "retrospective": "回顾分析",
+    "comparePaths": "对比路径",
+    "viewBranches": "查看分支",
+    "stressTest": "压力测试",
+    "milestones": "里程碑",
+    "liveEvents": "实时事件流",
+    "simIdPlaceholder": "lsim_...",
+    "viewAll": "查看所有模拟"
+  },
+  "simulations": {
+    "title": "我的模拟",
+    "subtitle": "查看和管理您的人生模拟",
+    "createNew": "新建模拟",
+    "createFirst": "创建您的第一个模拟",
+    "emptyState": "尚无模拟记录，创建一个开始吧。",
+    "loadError": "加载模拟列表失败: {{message}}",
+    "colId": "模拟 ID",
+    "colStatus": "状态",
+    "colCreated": "创建时间",
+    "colCompleted": "完成时间",
+    "colActions": "操作",
+    "view": "查看结果",
+    "inProgress": "进行中",
+    "pageInfo": "第 {{page}} / {{total}} 页",
+    "prev": "上一页",
+    "next": "下一页",
+    "status": {
+      "pending": "等待中",
+      "running": "运行中",
+      "completed": "已完成",
+      "failed": "失败"
+    }
+  },
+  "statsTable": {
+    "caption": "路径统计汇总",
+    "pathHeader": "路径",
+    "min": "最小值",
+    "max": "最大值",
+    "avg": "平均值",
+    "last": "最新值"
+  },
+  "wizard": {
+    "pathIdRequired": "路径 {{index}} 的 ID 不能为空",
+    "pathNameRequired": "路径 {{index}} 的名称不能为空",
+    "duplicatePathIds": "路径 ID 不能重复",
+    "branchNameRequired": "路径 \"{{label}}\" 中有分支名称为空",
+    "invalidProbability": "分支 \"{{label}}\" 的概率不是有效数字",
+    "probabilityOutOfRange": "分支 \"{{label}}\" 的概率必须在 0-1 之间",
+    "probabilitySumInvalid": "路径 \"{{label}}\" 分支概率之和 ({{sum}}) 应为 1.0",
+    "ageOutOfRange": "年龄必须在 1-120 之间",
+    "horizonOutOfRange": "模拟年数必须在 1-80 之间",
+    "invalidIncome": "路径 \"{{label}}\" 的收入必须是有效的非负数",
+    "invalidSavings": "路径 \"{{label}}\" 的储蓄必须是有效的非负数",
+    "title": "创建人生模拟",
+    "stepSubtitle": "步骤 {{step}}/{{total}}: {{name}}",
+    "stepDefinePaths": "定义路径",
+    "stepBranches": "分支设置",
+    "stepParameters": "参数配置",
+    "stepPreview": "预览提交",
+    "pathLabel": "路径 {{index}}",
+    "delete": "删除",
+    "idLabel": "ID",
+    "nameLabel": "名称",
+    "idPlaceholder": "稳定",
+    "namePlaceholder": "稳定路径",
+    "descriptionLabel": "描述",
+    "descriptionPlaceholder": "保持现状",
+    "addPath": "+ 添加路径",
+    "branchesForPath": "{{label}} 的分支",
+    "branchNamePlaceholder": "分支名称",
+    "probabilityLabel": "概率",
+    "deleteBranchAria": "删除分支 {{label}}",
+    "addBranch": "+ 添加分支",
+    "ageLabel": "年龄",
+    "horizonYearsLabel": "模拟年数",
+    "incomeLabel": "{{label}} 收入",
+    "savingsLabel": "{{label}} 储蓄",
+    "configSummary": "配置摘要",
+    "previous": "上一步",
+    "next": "下一步",
+    "creating": "创建中...",
+    "create": "创建模拟",
+    "createError": "创建模拟失败"
+  },
+  "values": {
+    "title": "价值观管理",
+    "subtitle": "定义和调整人生价值权重",
+    "addSectionTitle": "添加价值观",
+    "nameRequired": "名称不能为空",
+    "weightOutOfRange": "权重必须在 0-1 之间",
+    "addError": "添加价值观失败",
+    "namePlaceholder": "价值观名称",
+    "weightLabel": "权重",
+    "weightAria": "权重: {{value}}",
+    "adding": "添加中...",
+    "add": "添加",
+    "loadError": "加载失败: {{message}}",
+    "emptyState": "尚未添加价值观"
+  },
+  "pathComparison": {
+    "title": "路径对比",
+    "subtitle": "多路径时间序列可视化",
+    "activeMetricLabel": "活跃指标",
+    "loadError": "加载失败: {{message}}",
+    "noData": "无路径数据",
+    "statsSummary": "统计汇总"
+  },
+  "branchExplorer": {
+    "title": "分支结构",
+    "subtitle": "路径分支概率可视化",
+    "pathSelectionLabel": "路径选择",
+    "loadError": "加载失败: {{message}}",
+    "branchGraphTitle": "分支概率图",
+    "noBranchData": "无分支数据",
+    "pathInfoTitle": "路径信息",
+    "timespanLabel": "时间跨度:",
+    "pivotPointLabel": "分支点:",
+    "compositeScoreLabel": "综合评分:",
+    "selectPathPrompt": "选择路径以查看分支结构"
+  },
+  "stressTest": {
+    "title": "压力测试",
+    "subtitle": "模拟极端场景对各路径的影响",
+    "variantNameRequired": "变体名称不能为空",
+    "invalidIncomeFreeze": "收入冻结年数必须是有效的非负数",
+    "invalidMarketDownturn": "市场衰退因子必须在 0-1 之间",
+    "invalidHealthShock": "健康冲击必须在 0-1 之间",
+    "createError": "创建压力测试失败",
+    "formTitle": "运行新压力测试",
+    "variantNameLabel": "变体名称",
+    "incomeFreezeLabel": "收入冻结年数",
+    "marketDownturnLabel": "市场衰退因子",
+    "healthShockLabel": "健康冲击",
+    "running": "运行中...",
+    "run": "运行压力测试",
+    "loadError": "加载失败: {{message}}",
+    "variantLabel": "变体: {{id}}...",
+    "deltaScoreLabel": "{{pathId}} 评分Δ",
+    "noVariants": "尚无压力测试变体"
+  },
+  "milestones": {
+    "title": "里程碑",
+    "subtitle": "关键时间节点事件",
+    "loadError": "加载失败: {{message}}",
+    "noEvents": "此路径无里程碑事件",
+    "startLabel": "起点",
+    "endLabel": "终点",
+    "noData": "无里程碑数据"
+  },
+  "systemStatus": {
+    "title": "系统状态",
+    "subtitle": "API 健康检查和人格状态",
+    "unreachable": "不可达",
+    "unknown": "未知",
+    "uptimeLabel": "运行时间:",
+    "apiDocsLabel": "API 文档",
+    "personaSummaryTitle": "人格状态摘要",
+    "personaError": "无法获取人格状态"
+  },
+  "login": {
+    "emailLabel": "邮箱",
+    "passwordLabel": "密码",
+    "loggingIn": "登录中...",
+    "login": "登录",
+    "noAccount": "还没有账号？",
+    "register": "注册"
+  },
+  "register": {
+    "title": "创建账号",
+    "emailLabel": "邮箱",
+    "passwordLabel": "密码（至少 8 个字符）",
+    "confirmPasswordLabel": "确认密码",
+    "passwordMismatch": "密码不一致",
+    "registering": "注册中...",
+    "registerButton": "注册",
+    "hasAccount": "已有账号？",
+    "login": "登录"
+  },
+  "billing": {
+    "title": "计费管理",
+    "subtitle": "管理订阅计划和用量",
+    "currentPlanTitle": "当前计划",
+    "freePlan": "免费版",
+    "statusLabel": "状态：",
+    "activeStatus": "活跃",
+    "renewalLabel": "下次续费：",
+    "redirecting": "跳转中...",
+    "manageSubscription": "管理订阅",
+    "usageTitle": "本月用量",
+    "simulationsLabel": "模拟次数",
+    "pathsLabel": "路径数",
+    "llmTokensLabel": "LLM Token",
+    "availablePlansTitle": "可用计划",
+    "unlimited": "无限",
+    "currentPlanBadge": "当前计划",
+    "loadError": "加载计费数据失败：{{message}}",
+    "portalError": "打开计费入口失败：{{message}}",
+    "addOnsTitle": "附加服务",
+    "addOnOwned": "已购买",
+    "purchaseAddOn": "购买",
+    "activeAddOnsLabel": "已激活的附加服务：",
+    "addOnsError": "加载附加服务失败：{{message}}",
+    "upgradePlan": "升级",
+    "upgradeError": "升级失败：{{message}}",
+    "addOnsEmpty": "当前暂无附加服务。",
+    "addOnResource": {
+      "simulation": "模拟次数",
+      "paths": "路径数",
+      "llm_tokens": "LLM Token"
+    }
+  },
+  "onboardingV2": {
+    "title": "开始使用 ChronoSynth",
+    "subtitle": "5 步 · 约 3 分钟",
+    "skip": "跳过引导",
+    "continue": "继续",
+    "saving": "保存中…",
+    "starting": "启动中…",
+    "loading": "加载中…",
+    "progressLabel": "引导进度：第 {{step}} / {{total}} 步",
+    "welcome": {
+      "title": "企业 AI 代理一直需要的审计日志。",
+      "description": "我们将引导您注册第一个代理、定义它的可执行范围，并展示审计日志的样子——大约 3 分钟。",
+      "bullet1": "命名您的组织",
+      "bullet2": "注册一个代理并设置策略",
+      "bullet3": "在审计日志中查看一次合成调用",
+      "start": "开始 →"
+    },
+    "org": {
+      "title": "命名您的团队",
+      "description": "这是拥有代理和审计日志的租户。后续可以在 Settings 里重命名。",
+      "nameLabel": "组织名称",
+      "namePlaceholder": "Acme Inc"
+    },
+    "agent": {
+      "title": "注册第一个代理",
+      "description": "代理是由 LLM 驱动的执行者，您将对它的行为进行治理。后续可在仪表盘注册更多。",
+      "nameLabel": "代理名称",
+      "providerLabel": "LLM 提供方",
+      "provider": {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "skip": "暂时跳过（仅工具型代理）"
+      },
+      "keyLabel": "API 密钥",
+      "keyPlaceholder": "sk-…",
+      "keyNote": "我们将用您租户的 KMS 密钥加密存储。后续可在 Settings → Secrets 中轮换。"
+    },
+    "policy": {
+      "title": "定义该代理可以做什么",
+      "description": "代理被允许调用的工具及方式。默认值已合理设置——您可以修改任意行或后续添加。",
+      "scopeLabel": "范围",
+      "decisionLabel": "决策",
+      "scope": {
+        "read": "只读",
+        "write": "写入",
+        "execute": "执行"
+      },
+      "decision": {
+        "allow": "允许",
+        "deny": "拒绝",
+        "confirm": "需确认"
+      }
+    },
+    "synthetic": {
+      "title": "触发一次测试调用",
+      "description": "我们将生成 3 条示例工具调用，让您看到真实代理操作在审计日志中的样子。这是假数据——不会真的调用任何外部工具。",
+      "fire": "运行合成调用 →",
+      "firing": "运行中…",
+      "fired": "✓ 已触发——前往审计日志",
+      "note": "您接入真实代理后，调用会自动出现在这里。"
+    },
+    "audit": {
+      "title": "您的审计日志，实时呈现",
+      "description": "下方是第 4 步生成的 3 条合成事件。合规团队就在这个界面上工作。",
+      "summary": "真实代理调用将实时落到这里。完成！",
+      "done": "打开仪表盘 →",
+      "status": {
+        "success": "成功",
+        "pending": "待确认",
+        "denied": "已拒绝"
+      },
+      "note": {
+        "success": "策略通过，行为已记录。",
+        "pending": "高风险动作需人工确认后才执行。",
+        "denied": "工具不在代理的允许策略中——在网关阶段被拦截。"
+      }
+    },
+    "errors": {
+      "orgNameRequired": "请输入组织名称。",
+      "agentNameRequired": "请为代理输入名称。",
+      "unknown": "出现了一些问题，请重试。"
+    }
+  },
+  "onboarding": {
+    "welcomeTitle": "欢迎使用 ChronoSynth",
+    "welcomeDescription": "ChronoSynth 帮助您模拟和对比人生不同路径的可能结果。让我们开始设置您的第一个模拟。",
+    "getStarted": "开始",
+    "valuesTitle": "定义您的价值观",
+    "valuesDescription": "添加对您最重要的价值维度，并设置权重。这将影响模拟评分。",
+    "valuePlaceholder": "价值观 {{index}}",
+    "weightAria": "权重: {{value}}",
+    "addValue": "+ 添加价值观",
+    "atLeastOneValue": "请至少添加一个价值观",
+    "valueError": "添加价值观失败",
+    "next": "下一步",
+    "simulationTitle": "创建首次模拟",
+    "simulationDescription": "我们将为您创建一个默认模拟，您稍后可以在仪表盘中自定义更多路径和分支。",
+    "createFirstSim": "创建模拟",
+    "simError": "创建模拟失败",
+    "defaultPathLabel": "默认路径",
+    "defaultPathDescription": "初始默认路径",
+    "doneTitle": "设置完成！",
+    "doneDescription": "您的价值观和首次模拟已创建。现在可以前往仪表盘查看结果。",
+    "goToDashboard": "进入仪表盘",
+    "progressLabel": "引导进度：第 {{step}} / {{total}} 步",
+    "back": "上一步",
+    "templateTitle": "选择您的生活方式",
+    "templateDescription": "选择最接近您的模板，我们会为您预设价值观参数。",
+    "templateCareer": "事业型",
+    "templateCareerDesc": "追求职业成就和财务增长",
+    "templateFamily": "家庭型",
+    "templateFamilyDesc": "注重家庭关系和个人成长",
+    "templateExplorer": "探索型",
+    "templateExplorerDesc": "追求自由和丰富的人生体验",
+    "templateCustom": "自定义",
+    "templateCustomDesc": "从零开始定义您的价值观"
+  },
+  "settings": {
+    "title": "设置",
+    "subtitle": "用户资料和账户安全",
+    "profileTitle": "个人资料",
+    "emailLabel": "邮箱",
+    "roleLabel": "角色",
+    "tenantLabel": "租户",
+    "createdAtLabel": "注册时间",
+    "changePasswordTitle": "修改密码",
+    "currentPasswordLabel": "当前密码",
+    "newPasswordLabel": "新密码",
+    "confirmPasswordLabel": "确认新密码",
+    "passwordTooShort": "密码至少 8 个字符",
+    "passwordMismatch": "两次密码不一致",
+    "passwordChangeError": "修改密码失败",
+    "passwordChanged": "密码修改成功",
+    "changePasswordButton": "修改密码",
+    "loadError": "加载失败: {{message}}"
+  },
+  "liveIndicator": {
+    "connected": "已连接",
+    "connecting": "连接中",
+    "disconnected": "已断开"
+  },
+  "liveMetricStream": {
+    "waitingForConnection": "等待 WebSocket 连接...",
+    "waitingForData": "等待数据流...",
+    "chartLabel": "实时指标流图表",
+    "dataTableCaption": "实时指标数据",
+    "timeColumn": "时间",
+    "valueColumn": "数值"
+  },
+  "sidebar": {
+    "dashboard": "仪表盘",
+    "simulations": "我的模拟",
+    "newSimulation": "新建模拟",
+    "values": "价值观",
+    "avatars": "分身管理",
+    "personaCore": "核心人格",
+    "knowledgeSources": "知识源",
+    "marketplace": "任务市场",
+    "billing": "计费",
+    "enterprise": "企业控制台",
+    "settings": "设置",
+    "systemStatus": "系统状态",
+    "adminConfig": "系统配置",
+    "closeNav": "关闭导航",
+    "expand": "展开侧边栏",
+    "collapse": "折叠侧边栏",
+    "mainNav": "主导航",
+    "logout": "退出登录",
+    "groups": {
+      "agents": "智能体与知识",
+      "ops": "运行与治理"
+    }
+  },
+  "appShell": {
+    "skipToMain": "跳转到主要内容",
+    "openNav": "打开导航",
+    "navMenu": "导航菜单"
+  },
+  "featureGate": {
+    "subscriptionRequired": "此功能需要订阅",
+    "upgradePrompt": "升级到订阅版本以解锁全部功能",
+    "viewPlans": "查看计划"
+  },
+  "errorBoundary": {
+    "errorTitle": "页面渲染出错",
+    "unknownError": "未知错误",
+    "retry": "重试",
+    "goHome": "返回首页"
+  },
+  "sso": {
+    "signInWithSSO": "使用 SSO 登录",
+    "enterTenantFirst": "请先输入租户 ID",
+    "processing": "正在处理 SSO 认证...",
+    "missingTokens": "SSO 认证失败：缺少令牌信息",
+    "parseError": "SSO 认证失败：令牌解析错误",
+    "backToLogin": "返回登录",
+    "orDivider": "或",
+    "stateMismatch": "SSO 认证失败：状态校验失败",
+    "tenantIdLabel": "SSO 租户 ID",
+    "tenantIdPlaceholder": "tenant_123 或企业租户标识",
+    "tenantIdHint": "OIDC 登录是租户级别配置。跳转到身份提供商前，请先输入目标租户。"
+  },
+  "sharing": {
+    "title": "分享模拟",
+    "userIdLabel": "用户 ID",
+    "userIdPlaceholder": "输入用户 ID 或邮箱",
+    "permissionLabel": "权限",
+    "invite": "邀请",
+    "currentShares": "当前已分享",
+    "revoke": "撤销",
+    "permission": {
+      "view": "查看",
+      "edit": "编辑",
+      "admin": "管理"
+    }
+  },
+  "adminConfig": {
+    "title": "系统配置",
+    "subtitle": "管理系统运行参数",
+    "noPermission": "需要管理员权限",
+    "loadError": "加载配置失败：{{message}}",
+    "requiresRestart": "需重启",
+    "maskedValue": "已隐藏",
+    "secretPlaceholder": "输入新值以更新",
+    "auditError": "加载变更记录失败：{{message}}",
+    "edit": "编辑",
+    "save": "保存",
+    "cancel": "取消",
+    "saved": "配置已保存",
+    "savedNeedsRestart": "已保存，以下配置需要重启生效：{{keys}}",
+    "editValueAria": "编辑 {{key}} 的值",
+    "auditTitle": "变更记录",
+    "auditKey": "配置项",
+    "auditOldValue": "旧值",
+    "auditNewValue": "新值",
+    "auditChangedBy": "修改人",
+    "auditChangedAt": "修改时间",
+    "noAudit": "暂无变更记录"
+  },
+  "trustBadge": {
+    "ai": "AI 发起",
+    "user": "用户发起",
+    "system": "系统"
+  },
+  "safetyError": {
+    "quotaTitle": "配额已用尽",
+    "rate_limitTitle": "请求过于频繁",
+    "policyTitle": "安全策略违规",
+    "genericTitle": "错误",
+    "retryAfter": "请在 {{seconds}} 秒后重试",
+    "upgradePlan": "升级计划"
+  },
+  "statusBadge": {
+    "active": "活跃",
+    "completed": "已完成",
+    "paused": "暂停",
+    "error": "错误",
+    "syncing": "同步中",
+    "offline": "离线"
+  },
+  "stepper": {
+    "ariaLabel": "步骤进度"
+  },
+  "logTimeline": {
+    "empty": "暂无日志"
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "notFound": "页面未找到",
+    "language": "语言",
+    "offline": "您当前处于离线状态。连接恢复后将自动同步。",
+    "lastSynced": "上次同步: {{time}}",
+    "queuedActions": "{{count}} 个操作待同步",
+    "dismiss": "关闭"
+  },
+  "aria": {
+    "breadcrumb": "面包屑导航",
+    "timeResolution": "时间分辨率",
+    "metricSelection": "指标选择",
+    "timeSeriesChart": "{{metric}} 时间序列图",
+    "timeSeriesData": "{{metric}} 数据",
+    "yearLabel": "年",
+    "stressDeltaChart": "压力测试变化对比图",
+    "stressDeltaData": "压力测试变化数据",
+    "pathColumn": "路径",
+    "scoreColumn": "综合评分 Δ (%)",
+    "regretColumn": "后悔概率 Δ (%)",
+    "changePercent": "变化 (%)",
+    "scoreDelta": "综合评分 Δ",
+    "regretDelta": "后悔概率 Δ",
+    "sankeyChart": "分支概率桑基图",
+    "sankeyData": "分支概率数据",
+    "sourceColumn": "来源",
+    "targetColumn": "目标",
+    "weightColumn": "权重",
+    "probabilityColumn": "概率",
+    "milestoneThreshold": "阈值: {{value}}",
+    "trendUp": "上升趋势",
+    "trendDown": "下降趋势",
+    "trendFlat": "持平"
+  },
+  "avatars": {
+    "title": "分身管理",
+    "subtitle": "管理和配置您的数字分身",
+    "detail": "分身详情",
+    "create": "新建分身",
+    "createTitle": "创建分身",
+    "save": "保存",
+    "view": "查看",
+    "delete": "删除",
+    "confirmDelete": "确定要删除此分身吗？",
+    "labelField": "名称",
+    "labelRequired": "名称不能为空",
+    "kindField": "类型",
+    "loadError": "加载分身列表失败: {{message}}",
+    "emptyState": "尚无分身，创建一个开始吧。",
+    "notFound": "分身不存在",
+    "project": "投影",
+    "colLabel": "名称",
+    "colKind": "类型",
+    "colStatus": "状态",
+    "colCreated": "创建时间",
+    "metricKind": "类型",
+    "metricAutorun": "自动运行",
+    "metricCreated": "创建时间",
+    "autorunOn": "已启用",
+    "autorunOff": "未启用",
+    "autorunStatus": "每 {{interval}} 分钟运行一次",
+    "autorunDisabled": "自动运行未启用",
+    "configAutorun": "配置自动运行",
+    "behaviorTitle": "行为覆盖",
+    "noOverrides": "无自定义覆盖",
+    "noActivity": "暂无活动记录",
+    "tabs": {
+      "overview": "概览",
+      "autorun": "自动运行",
+      "activity": "活动日志"
+    },
+    "kind": {
+      "general": "通用",
+      "work": "工作",
+      "social": "社交",
+      "family": "家庭",
+      "creative": "创造"
+    },
+    "emptyTitle": "暂无 Avatar",
+    "emptyDescription": "Avatar 是基于人格的对话化身，可以配置自动运行和领域知识积累。",
+    "emptyAction": "创建第一个 Avatar"
+  },
+  "knowledgeSources": {
+    "title": "知识源管理",
+    "subtitle": "管理知识来源和同步配置",
+    "detail": "知识源详情",
+    "create": "新建知识源",
+    "createTitle": "创建知识源",
+    "createAndSync": "创建并同步",
+    "sync": "同步",
+    "syncing": "同步中...",
+    "view": "查看",
+    "delete": "删除",
+    "confirmDelete": "确定要删除此知识源吗？",
+    "enabled": "已启用",
+    "disabled": "已停用",
+    "loadError": "加载知识源列表失败: {{message}}",
+    "emptyState": "尚无知识源，创建一个开始吧。",
+    "notFound": "知识源不存在",
+    "colName": "名称",
+    "colType": "类型",
+    "colStatus": "状态",
+    "colLastSync": "最近同步",
+    "colItems": "条目数",
+    "colCreated": "创建时间",
+    "configSection": "配置详情",
+    "nameLabel": "名称",
+    "nameRequired": "名称不能为空",
+    "urlRequired": "URL 不能为空",
+    "promptRequired": "系统提示词不能为空",
+    "pollingLabel": "轮询间隔（分钟）",
+    "pollingDesc": "15-10080 分钟",
+    "manualTextLabel": "文本内容",
+    "fileRefLabel": "文件引用",
+    "systemPromptLabel": "系统提示词",
+    "systemPromptDesc": "定义 LLM 的角色和输出格式",
+    "topicsLabel": "主题列表",
+    "topicsDesc": "每行一个主题",
+    "topicsPlaceholder": "企业会计准则\n增值税计算\n财务报表编制",
+    "itemsPerRunLabel": "每次生成条目数",
+    "itemsPerRunDesc": "1-20 条",
+    "confirmSummary": "配置摘要",
+    "urlLabel": "URL",
+    "steps": {
+      "type": "类型选择",
+      "config": "配置",
+      "confirm": "确认创建"
+    },
+    "emptyTitle": "暂无知识源",
+    "emptyDescription": "连接 RSS、API、文件或手动输入，把外部信息源接入人格的知识库。",
+    "emptyAction": "添加第一个知识源"
+  },
+  "autorun": {
+    "title": "自动运行配置",
+    "runsTitle": "运行历史",
+    "triggerNow": "立即运行",
+    "viewRuns": "查看运行历史",
+    "enabledLabel": "启用自动运行",
+    "on": "已启用",
+    "off": "未启用",
+    "intervalLabel": "运行间隔（分钟）",
+    "intervalDesc": "15-10080 分钟",
+    "driftLabel": "漂移阈值",
+    "driftDesc": "0-1 之间，越低越严格",
+    "reviewLabel": "需要审核",
+    "reviewDesc": "变更需要人工审核后生效",
+    "sourcesLabel": "关联知识源",
+    "sourcesDesc": "选择此分身使用的知识源",
+    "save": "保存配置",
+    "saved": "配置已保存",
+    "saveError": "保存配置失败",
+    "noRuns": "暂无运行记录",
+    "colRunId": "运行 ID",
+    "colStatus": "状态",
+    "colStarted": "开始时间",
+    "colItems": "处理条目",
+    "noRunsEmptyTitle": "该 Avatar 暂无运行记录",
+    "noRunsEmptyDescription": "启用 Avatar 自动运行后，每次调度的运行记录都会出现在这里，包含知识摄入、模式提取和漂移检测的明细。",
+    "noRunsEmptyAction": "查看自动运行配置"
+  },
+  "personas": {
+    "title": "人格管理",
+    "subtitle": "管理人格分支和模拟",
+    "fork": "分叉人格",
+    "forkTitle": "创建人格分叉",
+    "labelField": "名称",
+    "emptyState": "尚无人格分支",
+    "pause": "暂停",
+    "resume": "恢复",
+    "colLabel": "名称",
+    "colStatus": "状态",
+    "colQuota": "资源配额",
+    "colCreated": "创建时间",
+    "emptyTitle": "暂无人格",
+    "emptyDescription": "从模板分支或导入快照来创建第一个人格。每个人格都拥有独立的价值观、记忆和决策风格。",
+    "emptyAction": "创建第一个人格"
+  },
+  "personaCore": {
+    "title": "核心人格",
+    "subtitle": "管理唯一 Persona、本地分叉、知识同步与生命周期",
+    "create": "创建人格",
+    "createTitle": "创建 Persona Core",
+    "fork": "创建分叉",
+    "forkTitle": "创建 Persona 分叉",
+    "knowledgeTitle": "补充知识",
+    "addKnowledge": "新增知识",
+    "view": "查看",
+    "selected": "已选中",
+    "decease": "标记死亡",
+    "deceasePrompt": "请输入终止原因",
+    "detailTitle": "人格详情",
+    "profileTitle": "核心画像",
+    "noSelection": "选择一个人格以查看其钱包、分叉和记忆流。",
+    "noMission": "尚未记录使命描述。",
+    "walletAddress": "钱包地址",
+    "emptyState": "还没有核心人格，先创建一个以启动 OS 2.0 模型。",
+    "emptyForks": "尚未创建分叉。",
+    "emptyKnowledge": "尚未同步知识。",
+    "emptyMemories": "暂无近期记忆。",
+    "emptyGovernance": "暂无治理事件。",
+    "activitySummary": "{{activeForks}} 个分叉 · {{knowledgeCount}} 条知识 · {{activeTaskCount}} 个活跃任务",
+    "metrics": {
+      "personas": "核心人格数",
+      "walletBalance": "钱包余额",
+      "tokenBalance": "Token 余额",
+      "avgGrowth": "平均成长值",
+      "reputation": "声誉值",
+      "trainingInvestment": "训练投入"
+    },
+    "columns": {
+      "name": "名称",
+      "status": "状态",
+      "visibility": "可见性",
+      "growth": "成长值",
+      "reputation": "声誉",
+      "wallet": "钱包",
+      "activity": "活跃度"
+    },
+    "sections": {
+      "forks": "分叉",
+      "knowledge": "知识",
+      "memories": "近期记忆",
+      "governance": "治理"
+    },
+    "form": {
+      "name": "人格名称",
+      "visibility": "可见性",
+      "mission": "使命描述",
+      "traits": "特征（每行一条）",
+      "seedKnowledgeTitle": "初始知识标题",
+      "seedKnowledgeContent": "初始知识内容",
+      "forkName": "分叉名称",
+      "forkType": "分叉类型",
+      "knowledgeTitle": "知识标题",
+      "knowledgeSource": "知识来源",
+      "knowledgeTags": "标签（逗号分隔）",
+      "knowledgeContent": "知识正文"
+    },
+    "status": {
+      "active": "活跃",
+      "restricted": "受限",
+      "deceased": "已死亡",
+      "transferred": "已转移"
+    },
+    "visibility": {
+      "private": "私有",
+      "shared": "共享",
+      "marketplace": "市场公开"
+    },
+    "forkType": {
+      "experimental": "实验分叉",
+      "task": "任务分叉",
+      "social": "社交分叉",
+      "research": "研究分叉",
+      "operations": "运营分叉"
+    },
+    "governance": {
+      "warning": "警告",
+      "reward": "奖励",
+      "restriction": "限制",
+      "review": "复核",
+      "transfer": "转移",
+      "death": "死亡"
+    }
+  },
+  "marketplace": {
+    "title": "任务市场",
+    "subtitle": "发布任务、绑定核心人格执行，并把收益结算到人格钱包",
+    "publish": "发布任务",
+    "publishTitle": "发布 Marketplace 任务",
+    "accept": "接单",
+    "complete": "完成",
+    "completeTitle": "完成任务",
+    "assignPersona": "执行人格",
+    "emptyState": "当前状态下暂无任务。",
+    "unassigned": "未分配",
+    "noPersona": "暂无人格",
+    "metrics": {
+      "visibleTasks": "当前任务数",
+      "totalReward": "总奖励",
+      "activePersona": "当前执行人格"
+    },
+    "columns": {
+      "title": "任务",
+      "category": "分类",
+      "status": "状态",
+      "reward": "奖励",
+      "assignee": "执行者",
+      "updatedAt": "更新时间"
+    },
+    "form": {
+      "title": "任务标题",
+      "description": "任务描述",
+      "category": "任务分类",
+      "reward": "奖励金额",
+      "currency": "货币",
+      "qualityScore": "质量评分",
+      "trainingHours": "Owner 训练时长"
+    },
+    "status": {
+      "open": "待领取",
+      "accepted": "执行中",
+      "completed": "已完成",
+      "cancelled": "已取消"
+    },
+    "category": {
+      "writing": "写作",
+      "coding": "编程",
+      "research": "研究",
+      "operations": "运营",
+      "general": "通用"
+    },
+    "emptyTitle": "暂无市场任务",
+    "emptyDescription": "发布一个市场任务让其他用户的人格协助处理，或浏览已发布的任务接单。",
+    "emptyAction": "发布第一个任务"
+  },
+  "toolPermissions": {
+    "title": "工具权限",
+    "subtitle": "管理 (persona, tool) 粒度的执行授权；revocation 是 soft delete，可追溯",
+    "actions": {
+      "grant": "授予权限",
+      "cancel": "取消",
+      "revoke": "撤销"
+    },
+    "filters": {
+      "personaPlaceholder": "按 personaId 过滤",
+      "statusAll": "全部",
+      "statusActive": "仅活跃",
+      "statusRevoked": "仅已撤销",
+      "countSummary": "{{shown}} / {{total}} 条"
+    },
+    "table": {
+      "persona": "Persona",
+      "tool": "Tool",
+      "scope": "Scope",
+      "constraints": "Constraints",
+      "granted": "Granted",
+      "expires": "Expires",
+      "status": "Status",
+      "actions": "操作"
+    },
+    "statusLabels": {
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked"
+    },
+    "empty": {
+      "noMatch": "没有匹配的权限。"
+    },
+    "prompts": {
+      "revokeReason": "撤销原因（必填）"
+    },
+    "errors": {
+      "loadFailed": "加载失败：{{message}}"
+    },
+    "grantForm": {
+      "title": "授予工具权限",
+      "personaIdLabel": "Persona ID",
+      "toolIdLabel": "Tool ID（如 web_search / calendar / email.send）",
+      "scopeLabel": "Scope",
+      "maxPerDayLabel": "每日最大调用（可选）",
+      "requireConfirmLabel": "调用时强制二次确认（高风险工具自动启用）",
+      "submit": "授予",
+      "submitting": "提交中…",
+      "cancel": "取消"
+    }
+  },
+  "agencyAuthorizations": {
+    "title": "代理授权书",
+    "subtitle": "为 (persona, principalUser) 建立法律层面的代理范围；含可暂停/恢复/撤销生命周期",
+    "actions": {
+      "create": "新建授权书",
+      "cancel": "取消",
+      "suspend": "暂停",
+      "resume": "恢复",
+      "revoke": "撤销"
+    },
+    "filters": {
+      "personaPlaceholder": "输入 personaId 来查询/创建授权书",
+      "enterPersonaTooltip": "先在过滤栏输入 personaId"
+    },
+    "empty": {
+      "enterPersona": "输入 personaId 后查看其代理授权书。",
+      "personaEmpty": "Persona {{personaId}} 尚无授权书。"
+    },
+    "prompts": {
+      "revokeReason": "撤销原因（必填）"
+    },
+    "errors": {
+      "loadFailed": "加载失败：{{message}}"
+    },
+    "card": {
+      "scope": "Scope",
+      "principal": "Principal",
+      "grantedAt": "授权于：{{ts}}",
+      "expiresAt": "过期：{{ts}}",
+      "allowedTools": "允许工具：{{count}}",
+      "deniedTools": "拒绝工具：{{count}}",
+      "revokedNote": "撤销于 {{ts}} — {{reason}}"
+    },
+    "createForm": {
+      "title": "为 Persona {{personaId}} 创建授权书",
+      "principalUserIdLabel": "Principal User ID",
+      "scopeLabel": "Scope",
+      "scopeDescriptionLabel": "Scope 描述（≥10 字符；用作法律证据）",
+      "allowedToolsLabel": "允许工具（逗号分隔，可选）",
+      "allowedToolsPlaceholder": "web_search, calendar",
+      "deniedToolsLabel": "拒绝工具（逗号分隔，可选）",
+      "deniedToolsPlaceholder": "email.send, payment.*",
+      "submit": "创建授权书",
+      "submitting": "提交中…",
+      "cancel": "取消"
+    }
+  },
+  "toolInvocations": {
+    "title": "工具调用历史",
+    "subtitle": "按 persona 查看 tool_invocations 审计；包含成功 / 失败 / 拒绝 / 待确认所有状态",
+    "filters": {
+      "personaPlaceholder": "输入 personaId 查询",
+      "limitLabel": "条数"
+    },
+    "empty": {
+      "enterPersona": "输入 personaId 后查看其工具调用历史。",
+      "personaEmpty": "Persona {{personaId}} 尚无工具调用记录。"
+    },
+    "errors": {
+      "loadFailed": "加载失败：{{message}}"
+    },
+    "table": {
+      "invoked": "Invoked",
+      "tool": "Tool",
+      "invoker": "Invoker",
+      "status": "Status",
+      "duration": "Duration",
+      "output": "Output",
+      "error": "Error",
+      "durationMs": "{{ms}} ms",
+      "outputBytes": "{{bytes}} B"
+    }
+  },
+  "agentOauthGoogle": {
+    "documentTitle": "Google 授权",
+    "title": "Google 账户授权",
+    "subtitle": "授予 Chrono Synth 代表你访问 Calendar / Gmail 的权限；可随时撤销，撤销后任何 agent 调用立即失败",
+    "addSection": {
+      "heading": "添加新授权",
+      "authorize": "授权",
+      "authorizing": "准备中…",
+      "authorized": "已授权",
+      "startError": "授权启动失败：{{message}}"
+    },
+    "list": {
+      "heading": "已授权 scope",
+      "empty": "还没有授权任何 Google scope。",
+      "loadFailed": "加载失败：{{message}}",
+      "revoke": "撤销",
+      "revokeConfirm": "撤销 {{scope}} 授权？所有正在调用此 scope 的 agent 将立即失败。"
+    },
+    "statusLabels": {
+      "active": "Active",
+      "expired": "Expired (refresh on next call)",
+      "revoked": "Revoked"
+    },
+    "table": {
+      "scope": "Scope",
+      "status": "Status",
+      "granted": "Granted",
+      "expires": "Expires"
+    }
+  },
+  "agentConfirmations": {
+    "documentTitle": "待我审批",
+    "title": "待我审批",
+    "subtitle": "高风险工具调用必须经过你的二次确认才会真正执行；30 秒内可撤销整个授权",
+    "statusPending": "待确认",
+    "actions": {
+      "approve": "审批",
+      "reject": "拒绝",
+      "cancel": "取消",
+      "execute": "执行",
+      "executing": "执行中…"
+    },
+    "empty": "没有待审批的工具调用。",
+    "errors": {
+      "loadFailed": "加载失败：{{message}}",
+      "submitFailed": "提交失败：{{message}}",
+      "argsNotObject": "arguments 必须是 JSON 对象",
+      "argsParseFailed": "JSON 解析失败"
+    },
+    "prompts": {
+      "rejectReason": "拒绝原因（可选）"
+    },
+    "fields": {
+      "persona": "Persona",
+      "invoker": "Invoker",
+      "invokedAt": "触发",
+      "inputHash": "Input hash"
+    },
+    "dialog": {
+      "title": "审批工具调用",
+      "tool": "Tool",
+      "persona": "Persona",
+      "hint": "后端为隐私保护不会持久化 arguments；请粘贴最初触发本次调用的参数 JSON。input_hash 不匹配会拒绝。"
+    }
+  },
+  "safetyDrift": {
+    "documentTitle": "AI 安全 — 漂移监测",
+    "title": "AI 安全 / 人格漂移监测",
+    "subtitle": "对比最近两次快照的价值权重变化；超过阈值时写审计 + 触发 webhook",
+    "actions": {
+      "generate": "立即生成报告",
+      "generating": "分析中…"
+    },
+    "cards": {
+      "safetyScore": "安全评分",
+      "safetyScoreValue": "{{score}}/100",
+      "unverifiedMemory": "未验证记忆",
+      "unverifiedMemorySubtitle": "低置信度或来源未知",
+      "recentAlerts": "近期告警 (≠ ok)",
+      "recentAlertsSubtitle": "最近 10 条非正常状态"
+    },
+    "empty": {
+      "noReport": "尚未生成漂移报告。点击右上角「立即生成报告」开始第一次分析。",
+      "noValueDrifts": "本次分析没有可对比的价值变化（可能只有一份快照）。"
+    },
+    "report": {
+      "heading": "最近报告",
+      "generatedAt": "生成于 {{ts}} · 基线 {{baseline}}",
+      "overallScore": "综合漂移分：",
+      "auditWritten": "告警已写入审计 (auditId={{id}})"
+    },
+    "table": {
+      "value": "价值",
+      "baseline": "基线",
+      "current": "当前",
+      "delta": "变化",
+      "alert": "告警"
+    },
+    "recentAlerts": {
+      "heading": "最近告警"
+    }
+  },
+  "setupChecklist": {
+    "title": "上手清单",
+    "subtitle": "已完成 {{completed}} / {{total}}",
+    "collapse": "折叠",
+    "dismiss": "关闭",
+    "completed": "已完成",
+    "progressLabel": "进度 {{progress}}%",
+    "steps": {
+      "createPersona": "创建第一个 persona",
+      "addKnowledge": "注入知识源",
+      "grantTools": "授权工具调用",
+      "firstConversation": "完成第一次对话",
+      "inviteTeam": "邀请团队成员"
+    }
+  },
+  "changelog": {
+    "title": "近期更新",
+    "label": "更新",
+    "openLabel": "打开更新日志",
+    "close": "关闭",
+    "unread": "有未读",
+    "entries": {
+      "0": {
+        "title": "P1.7.2 — 上手清单 + 结构化空态 + 埋点",
+        "body": "· 右下角悬浮上手清单：5 步引导 + 进度条 + 持久化关闭\n· EmptyState 升级：插画 + 标题 + 主/副 CTA（向后兼容）\n· 客户端埋点 + 后端 events_user_journey 落库（v069）"
+      },
+      "1": {
+        "title": "P0.4 / P1.4 — i18n 全量 + 严格 CSP",
+        "body": "· 6 个 admin/agent 页面 zh-CN + en-US 全量翻译\n· 严格 CSP + COOP/COEP/CORP + Trusted Types report-only\n· HSTS 升级到 2 年 + preload"
+      }
+    }
+  },
+  "cmdk": {
+    "placeholder": "搜索命令或路径…",
+    "searchLabel": "命令面板搜索",
+    "resultsLabel": "搜索结果",
+    "empty": "没有匹配的命令。",
+    "help": {
+      "move": "上下移动",
+      "select": "执行",
+      "close": "关闭"
+    },
+    "commands": {
+      "dashboard": "前往：仪表盘",
+      "personas": "前往：Personas",
+      "simulations": "前往：模拟",
+      "values": "前往：核心价值",
+      "knowledge": "前往：知识源",
+      "billing": "前往：账单",
+      "settings": "前往：设置",
+      "toolPermissions": "管理：工具权限",
+      "agencyAuthorizations": "管理：代理授权书",
+      "toolInvocations": "查看：工具调用历史",
+      "safetyDrift": "AI 安全：漂移报告",
+      "adminConfig": "管理：租户配置",
+      "agentOauthGoogle": "Google 账户授权",
+      "agentConfirmations": "待我审批"
+    }
+  },
+  "errorPages": {
+    "notFound": {
+      "documentTitle": "页面未找到",
+      "title": "我们找不到那个页面",
+      "body": "链接可能失效，或者你输入的路径不存在。看看下面这些常用入口。"
+    },
+    "forbidden": {
+      "documentTitle": "没有访问权限",
+      "title": "你没有进入此页面的权限",
+      "body": "此页面仅对管理员开放。如果你认为这是误判，请联系租户管理员。",
+      "backToDashboard": "回到仪表盘"
+    },
+    "suggestions": {
+      "heading": "试试这些",
+      "dashboard": "仪表盘",
+      "personas": "Personas",
+      "simulations": "模拟",
+      "settings": "设置"
+    }
+  },
+  "personaHealth": {
+    "title": "Persona 健康仪表盘",
+    "subtitle": "查看 persona {{personaId}} 的核心价值与活跃度",
+    "disabled": {
+      "title": "此功能正在内测",
+      "message": "健康仪表盘还在开发中。在 localStorage 设置 chrono.flag.experimental.values_health_dashboard=true 即可开启预览。"
+    },
+    "radar": {
+      "heading": "核心价值雷达",
+      "empty": "此 persona 还没有可视化的价值数据。先记录几次决策再回来。",
+      "legend": {
+        "current": "今天",
+        "d7": "7 天前",
+        "d30": "30 天前"
+      }
+    },
+    "decisionTrend": {
+      "heading": "近 30 天决策频次",
+      "empty": "近期没有决策记录。"
+    },
+    "memoryStack": {
+      "heading": "近 30 天记忆增长",
+      "empty": "尚未积累记忆数据。",
+      "legend": {
+        "episodic": "情景",
+        "semantic": "语义",
+        "procedural": "程序"
+      }
+    },
+    "toolMix": {
+      "heading": "近 7 天工具调用占比",
+      "empty": "近一周没有成功的工具调用。"
+    },
+    "driftTimeline": {
+      "heading": "近 90 天漂移历史",
+      "empty": "尚未生成漂移报告。"
+    },
+    "errors": {
+      "loadFailed": "加载失败：{{message}}"
+    }
+  },
+  "growth": {
+    "levels": {
+      "L1": {
+        "label": "新手",
+        "description": "创建 persona、开始第一次对话"
+      },
+      "L2": {
+        "label": "探索者",
+        "description": "解锁模拟实验和记忆图谱"
+      },
+      "L3": {
+        "label": "熟练者",
+        "description": "解锁工具调用和外部授权"
+      },
+      "L4": {
+        "label": "资深用户",
+        "description": "解锁多人格、治理和管理控制台"
+      }
+    },
+    "locked": {
+      "title": "需要 {{level}} 等级才能使用",
+      "body": "继续日常使用即可解锁该功能。",
+      "daysRemaining_one": "还剩 {{count}} 天即可解锁",
+      "daysRemaining_other": "还剩 {{count}} 天即可解锁"
+    },
+    "page": {
+      "title": "你的成长",
+      "subtitle": "等级 {{level}} · 已使用 {{daysOfUse}} 天"
+    },
+    "tree": {
+      "label": "能力进阶",
+      "daysUntilNext_one": "还有 {{count}} 天进入下一个等级",
+      "daysUntilNext_other": "还有 {{count}} 天进入下一个等级",
+      "maxReached": "已达到最高等级。"
+    },
+    "welcome": {
+      "skip": "跳过",
+      "next": "继续",
+      "start": "开始使用",
+      "hello": {
+        "title": "欢迎来到 ChronoSynth",
+        "body": "ChronoSynth 是你个人认知的工作台。我们帮你构建一个数字 persona，反映你的价值观、学习你的决策，并始终与你想要的方向保持一致。"
+      },
+      "persona": {
+        "title": "Persona 是核心单元",
+        "body": "每段对话、每次模拟、每条记忆都归属于某个 persona。先从一个开始 —— 之后可以根据需要分叉或特化。"
+      },
+      "growth": {
+        "title": "能力随使用解锁",
+        "body": "我们不会一上来就把所有高级界面塞给你。随着你使用 ChronoSynth 的时间增长，新工具、模拟和管理功能会在它们真正派上用场时逐步出现。"
+      }
+    },
+    "celebration": {
+      "eyebrow": "升级",
+      "title": "你已达到 {{level}}",
+      "unlocksLabel": "新解锁内容",
+      "dismiss": "太棒了"
+    },
+    "unlocks": {
+      "personas": "Persona 管理",
+      "conversation": "对话",
+      "simulations": "反事实模拟",
+      "memory_graph": "记忆图谱",
+      "agent_tools": "Agent 工具调用",
+      "oauth_authorizations": "外部 OAuth 授权",
+      "multi_persona": "多 persona 编排",
+      "governance": "治理控制",
+      "admin_console": "管理控制台"
+    }
+  },
+  "suggestions": {
+    "firstPersona": {
+      "title": "创建你的第一个 persona",
+      "body": "Persona 是你数字身份的容器，先建一个再开始体验。"
+    },
+    "firstKnowledge": {
+      "title": "添加知识源",
+      "body": "让 persona 知道你的资料，对话才会有深度。"
+    },
+    "viewDrift": {
+      "title": "查看人格漂移报告"
+    },
+    "firstTool": {
+      "title": "授权第一个工具"
+    }
+  },
+  "metric": {
+    "wealth": "财富",
+    "healthIndex": "健康指数",
+    "overallScore": "综合评分",
+    "emotionalValence": "情绪效价",
+    "emotionalStress": "压力",
+    "emotionalFulfillment": "成就感",
+    "emotionalRegret": "后悔",
+    "spouseSecurity": "配偶安全感",
+    "childCost": "育儿成本",
+    "familyPressure": "家庭压力"
+  },
+  "resolution": {
+    "year": "年",
+    "twoYears": "2年",
+    "fiveYears": "5年"
+  },
+  "syncStatus": {
+    "initial_sync": "初始同步中",
+    "online_synced": "已同步",
+    "online_dirty": "有待上传",
+    "syncing": "同步中",
+    "offline_queueing": "离线（排队中）",
+    "offline_readonly": "离线（只读）",
+    "conflict_inbox": "有冲突",
+    "degraded_remote": "远端异常",
+    "reauth_required": "需重新认证",
+    "recovery_required": "需手动恢复"
+  },
+  "chart": {
+    "yearAxis": "年"
+  },
+  "milestone": {
+    "peak": "峰值",
+    "trough": "谷值",
+    "cross_up": "上穿",
+    "cross_down": "下穿"
+  },
+  "conflicts": {
+    "title": "冲突收件箱",
+    "subtitle": "处理跨运行时同步冲突",
+    "refresh": "刷新",
+    "empty": "没有待处理的冲突",
+    "resolving": "处理中",
+    "actions": {
+      "keep_local": "保留本地",
+      "keep_server": "保留服务器",
+      "duplicate": "创建副本",
+      "merge_manually": "手动合并"
+    },
+    "errors": {
+      "loadTitle": "加载冲突收件箱失败",
+      "resolveTitle": "处理冲突失败",
+      "retry": "重试",
+      "UNKNOWN": "出现了未知错误，请稍后重试。如果问题持续，请联系支持。",
+      "AUTH_REQUIRED": "会话已过期，请重新登录后再查看冲突。",
+      "AUTH_FORBIDDEN": "你没有在当前租户内处理冲突的权限。",
+      "STATE_INVALID_TRANSITION": "该冲突已在另一台设备上被处理，收件箱已刷新。",
+      "RATE_LIMIT_EXCEEDED": "请求过于频繁，请稍后再试。"
+    }
+  },
+  "errors": {
+    "missingSimulationId": "缺少 simulationId 参数",
+    "wsReconnectFailed": "WebSocket 重连失败，已达最大尝试次数 ({{max}})",
+    "wsConnectionError": "WebSocket 连接错误"
+  },
+  "theme": {
+    "label": "主题",
+    "choices": {
+      "system": "跟随系统",
+      "light": "浅色",
+      "dark": "深色",
+      "highContrast": "高对比度"
+    }
+  },
+  "enterpriseConsole": {
+    "title": "企业控制台",
+    "subtitle": "在一个地方管理组织、部署配置、控制平面视图与审计证据。",
+    "requiresAdmin": "企业控制台需要管理员账号。",
+    "actions": {
+      "workerHealth": "Worker 健康检查",
+      "prometheus": "Prometheus",
+      "grafana": "Grafana"
+    },
+    "metrics": {
+      "tenant": "租户",
+      "tenantHint": "所有企业操作均基于 JWT 限定的租户",
+      "organizations": "组织",
+      "deploymentMode": "部署模式",
+      "deploymentModeHint": "共享 Kafka 主题命名空间",
+      "auditEvents": "审计事件",
+      "auditEventsHint": "本租户最近的业务审计记录"
+    },
+    "tabs": {
+      "deployment": "部署配置",
+      "organizations": "组织与 RBAC",
+      "control": "控制平面",
+      "vault": "密钥库",
+      "audit": "审计追踪"
+    },
+    "sections": {
+      "currentPosture": {
+        "title": "当前态势",
+        "subtitle": "本租户的专用部署、加密与企业身份态势。"
+      },
+      "deploymentProfile": {
+        "title": "部署配置",
+        "subtitle": "持久化租户部署配置，供 OIDC、SCIM、加密与 Kafka 命名空间路由消费。"
+      },
+      "scimProvisioning": {
+        "title": "SCIM 用户预配",
+        "subtitle": "生成新的 SCIM Bearer 令牌，供 IdP 驱动企业用户预配。"
+      },
+      "organizationsList": {
+        "title": "组织",
+        "subtitle": "为当前租户创建组织并授予企业工作空间角色。"
+      },
+      "createOrganization": {
+        "title": "创建组织",
+        "subtitle": "以当前管理员作为 org_admin，引导一个带默认工作空间的组织。"
+      },
+      "memberships": {
+        "title": "成员与角色绑定",
+        "subtitleSelected": "管理 {{org}} 的成员。",
+        "subtitleEmpty": "请先选择一个组织。"
+      },
+      "personas": { "title": "人格", "subtitle": "当前人格阵列、所有权与钱包态势。" },
+      "tasks": { "title": "任务", "subtitle": "市场任务积压与完成态势。" },
+      "wallets": { "title": "钱包", "subtitle": "人格钱包敞口与结算时效性。" },
+      "governance": { "title": "治理", "subtitle": "未决案件、申诉与最近的审核操作。" },
+      "tenantKeyVersions": {
+        "title": "租户密钥版本",
+        "subtitle": "本租户的平台托管加密密钥。轮转以签发新版本；吊销以下线已泄露的密钥。"
+      },
+      "vaultAudit": {
+        "title": "密钥库操作审计",
+        "subtitle": "针对本租户密钥库的最近 50 次加密操作。"
+      },
+      "businessAudit": {
+        "title": "业务审计追踪",
+        "subtitle": "平台审计记录器近期捕获的敏感操作。"
+      }
+    },
+    "buttons": {
+      "saveProfile": "保存配置",
+      "saving": "保存中...",
+      "generateToken": "生成令牌",
+      "generating": "生成中...",
+      "createOrganization": "创建组织",
+      "creating": "创建中...",
+      "addOrUpdateMember": "添加 / 更新成员",
+      "updating": "更新中...",
+      "rotate": "轮转",
+      "rotating": "轮转中…",
+      "revoke": "吊销",
+      "revoking": "吊销中…",
+      "rotateNamed": "轮转 \"{{ref}}\"",
+      "selected": "已选择",
+      "viewMembers": "查看成员"
+    },
+    "fields": {
+      "organizationName": "组织名称",
+      "slug": "标识符",
+      "defaultWorkspaceName": "默认工作空间名称",
+      "defaultWorkspaceSlug": "默认工作空间标识符",
+      "userEmail": "用户邮箱",
+      "roles": "角色",
+      "deployment": "部署",
+      "deploymentMode": "部署模式",
+      "databaseIsolation": "数据库隔离",
+      "encryptionMode": "加密模式",
+      "kmsKeyReference": "KMS 密钥引用",
+      "enableTenantOidc": "启用租户 OIDC",
+      "issuerUrl": "Issuer URL",
+      "clientId": "Client ID",
+      "clientSecret": "Client Secret",
+      "audience": "Audience",
+      "scope": "Scope",
+      "emailClaim": "Email Claim",
+      "nameClaim": "Name Claim",
+      "kafkaNamespace": "Kafka 命名空间",
+      "encryption": "加密",
+      "ssoScim": "SSO / SCIM",
+      "dbIsolation": "数据库隔离：{{mode}}",
+      "kafkaNamespaceHint": "可观测性主题的运行时路由目标",
+      "encryptionKeyringDefault": "平台托管密钥环",
+      "deploymentLoading": "加载中",
+      "oidcOn": "OIDC 启用",
+      "oidcOff": "OIDC 未启用",
+      "scimReady": "SCIM 就绪",
+      "scimMissing": "无 SCIM 令牌",
+      "updatedAt": "更新于 {{when}}",
+      "oneTimeTokenLabel": "一次性令牌值",
+      "oneTimeTokenHelp": "请立即复制 — 关闭后不会再次显示。",
+      "secretPlaceholder": "留空以保留当前已加密的密钥"
+    },
+    "columns": {
+      "organization": "组织",
+      "slug": "标识符",
+      "defaultWorkspace": "默认工作空间",
+      "created": "创建时间",
+      "email": "邮箱",
+      "roles": "角色",
+      "status": "状态",
+      "joined": "加入时间",
+      "keyRef": "密钥引用",
+      "provider": "提供方",
+      "version": "版本",
+      "revoked": "吊销时间",
+      "operation": "操作",
+      "action": "动作",
+      "actor": "操作者",
+      "target": "目标",
+      "targetType": "目标类型",
+      "timestamp": "时间戳",
+      "time": "时间",
+      "outcome": "结果",
+      "persona": "人格",
+      "owner": "所有者",
+      "wallet": "钱包",
+      "task": "任务",
+      "category": "类别",
+      "reward": "奖励",
+      "balance": "余额",
+      "reserve": "储备",
+      "lastSettled": "上次结算",
+      "trigger": "触发器",
+      "severity": "严重度"
+    },
+    "empty": {
+      "organizations": "暂无组织。",
+      "members": "暂无成员。",
+      "membersAssigned": "尚未分配成员。",
+      "selectOrgFirst": "请创建或选择一个组织以管理成员。",
+      "personas": "未找到人格。",
+      "tasks": "未找到任务。",
+      "wallets": "未找到钱包。",
+      "governance": "未找到治理案件。",
+      "vaultKeys": "未找到密钥版本。首次密钥库操作时会自动生成。",
+      "vaultAudit": "暂无密钥库操作。",
+      "audit": "暂无审计记录。"
+    },
+    "summary": {
+      "total": "总数",
+      "active": "活跃",
+      "restricted": "受限",
+      "deceased": "已注销",
+      "open": "未决",
+      "accepted": "已接受",
+      "completed": "已完成",
+      "wallets": "钱包",
+      "totalBalance": "总余额",
+      "tokenReserve": "令牌储备",
+      "cases": "案件",
+      "actionApplied": "已执行",
+      "appealed": "已申诉"
+    },
+    "errors": {
+      "deploymentLoadFailed": "加载部署配置失败：{{error}}",
+      "vaultKeysLoadFailed": "加载密钥版本失败：{{error}}",
+      "auditLoadFailed": "加载审计日志失败：{{error}}",
+      "organizationsLoadFailed": "加载组织失败：{{error}}",
+      "membersLoadFailed": "加载成员失败：{{error}}"
+    },
+    "metricsActive": {
+      "createFirstOrg": "创建第一个组织以启用 RBAC",
+      "activeOrg": "当前组织：{{org}}"
+    },
+    "success": {
+      "deploymentSaved": "部署配置已保存。",
+      "organizationCreated": "组织 {{name}} 已创建。",
+      "memberBindingsUpdated": "组织成员角色绑定已更新。"
+    }
+  }
+}

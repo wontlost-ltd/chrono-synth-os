@@ -1,0 +1,20 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
+const page = await ctx.newPage();
+await page.goto('http://localhost:5174/login');
+await page.fill('#email', 'admin@beta.test');
+await page.fill('#password', 'password-beta-rotate-test-2026');
+await page.getByRole('button', { name: /^Login$/ }).first().click();
+await page.waitForResponse(r => r.url().includes('/auth/login'));
+await page.waitForTimeout(1500);
+await page.evaluate(() => {
+  history.pushState(null, '', '/admin/tool-permissions');
+  window.dispatchEvent(new PopStateEvent('popstate'));
+  localStorage.setItem('chrono.setup-checklist.v1', JSON.stringify({ dismissed: true, collapsed: true }));
+});
+await page.waitForTimeout(1500);
+const sidebar = page.locator('aside').first();
+await sidebar.screenshot({ path: process.argv[2] });
+await browser.close();
+console.log('done');
