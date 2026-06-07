@@ -20,6 +20,11 @@ interface Session {
 let session: Session | null = null;
 const listeners = new Set<() => void>();
 
+/* 会话 epoch：每次 login 开始 / logout 都自增。在途 refresh 捕获当前 epoch，应用结果前
+ * 校验 epoch 未变——否则该 refresh 已被后续 login/logout 作废（防 refresh-vs-logout/login
+ * 竞态把陈旧会话写回）。single-flight 只解决 refresh-vs-refresh，epoch 解决其余交错。 */
+let epoch = 0;
+
 function emit(): void {
   for (const l of listeners) l();
 }
@@ -45,6 +50,7 @@ interface LoginResult {
 
 /** 登录：成功后持有 accessToken + tenantId 并通知订阅者。 */
 export async function login(email: string, password: string): Promise<void> {
+  epoch += 1; /* 作废任何在途 refresh：本次登录是新的权威会话 */
   const res = await fetch('/api/v1/auth/login', {
     method: 'POST',
     credentials: 'include',
@@ -83,20 +89,24 @@ function csrfHeaders(): Record<string, string> {
 let refreshPromise: Promise<boolean> | null = null;
 
 async function doRefresh(): Promise<boolean> {
+  const startedEpoch = epoch; /* 捕获本次 refresh 的会话世代 */
   try {
     const res = await fetch('/api/v1/auth/refresh', {
       method: 'POST',
       credentials: 'include',
       headers: { accept: 'application/json', ...csrfHeaders() },
     });
+    /* 期间发生了 login/logout（epoch 变了）→ 本次 refresh 结果已陈旧，丢弃不写回。 */
+    if (epoch !== startedEpoch) return false;
     if (!res.ok) { clearSession(); return false; }
     const body = (await res.json()) as { data?: LoginResult };
+    if (epoch !== startedEpoch) return false;
     if (!body.data?.accessToken || !body.data?.tenantId) { clearSession(); return false; }
     session = { accessToken: body.data.accessToken, tenantId: body.data.tenantId };
     emit();
     return true;
   } catch {
-    clearSession();
+    if (epoch === startedEpoch) clearSession();
     return false;
   }
 }
@@ -116,10 +126,11 @@ export function clearSession(): void {
 
 /** 登出：通知后端吊销 refresh cookie + 清空本地会话。logout 走 cookie-auth，需带 CSRF header。 */
 export async function logout(): Promise<void> {
+  epoch += 1; /* 作废任何在途 refresh：登出后 refresh 结果不得把会话写回 */
   const token = session?.accessToken;
   const headers: Record<string, string> = { ...csrfHeaders() };
   if (token) headers.authorization = `Bearer ${token}`;
-  /* 先发请求（此时 csrf_token cookie 仍在），再清本地会话。 */
+  /* 先发请求（此时 csrf_token cookie 仍在，用于完成服务器吊销），再清本地会话。 */
   try {
     await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'include', headers });
   } catch {

@@ -121,6 +121,8 @@ describe('认证 API 集成测试', () => {
       assert.match(refreshCookie, /HttpOnly/, 'refresh cookie must remain HttpOnly');
       assert.equal(csrfCookie.includes('HttpOnly'), false,
         'csrf_token cookie must NOT be HttpOnly — the SPA needs to read it for header echo');
+      assert.match(csrfCookie, /Path=\//,
+        'csrf_token cookie must be Path=/ so a SPA served from / can read it (not scoped to /api/v1/auth)');
     });
 
     it('localhost 不同端口调试时 refresh cookie 保持 SameSite=Lax', async () => {

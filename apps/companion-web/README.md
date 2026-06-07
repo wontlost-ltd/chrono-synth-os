@@ -42,8 +42,13 @@ Enterprise console renders as a governance alert is re-framed here as exploratio
 ```bash
 npm run dev          # Vite dev server; proxies /api → COMPANION_API_TARGET (default http://localhost:3000)
 npm run typecheck    # tsc --noEmit
+npm run test         # node:test (native TS) — auth session-layer unit tests (CSRF / single-flight / epoch)
 npm run build        # production bundle → dist/
 ```
+
+> The auth unit tests run on Node's native TS support (v24+) with stubbed
+> `fetch`/`document`. Like `apps/mobile`/`apps/desktop`, this host runs in its
+> own lane and is not yet wired into the repo's root `test:golden` (follow-up).
 
 Run the backend (`chrono-synth-os`) separately; the dev server proxies `/api`
 to it. Log in with a non-enterprise account to see your digital human. The
