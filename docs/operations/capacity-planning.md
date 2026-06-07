@@ -101,6 +101,13 @@ provider rate limit ≥ 1.5× this number; we throttle gracefully via
 `conversation_quota_exceeded_total` (see metrics) but every throttled
 request is a degraded user experience.
 
+ADR-0047 note: messages served as `guard_action="autonomous_response"`
+(offline deterministic responder — LLM unreachable or not configured)
+consume **no** LLM concurrency but shift load to local retrieval +
+assembly. A no-LLM deployment sizes the LLM budget at zero and instead
+plans for retrieval/CPU. A rising `autonomous_response` share in an
+LLM-backed deployment signals provider degradation, not extra LLM demand.
+
 ## Observability hooks
 
 The perf workflow surfaces these metrics; production exposes the same

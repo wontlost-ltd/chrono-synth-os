@@ -41,8 +41,12 @@ import {
   type PcoreWalletRow,
   type PcoreWalletSettlementRow,
   type PcoreWalletTransactionRow,
+  assertWalletMutationAllowed,
+  type WalletActorType,
+  type WalletDirection,
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { ValidationError, ErrorCode } from '../errors/index.js';
 import { fromMinor, toMinor } from './persona-core-utils.js';
 import type {
   PersonaWallet,
@@ -211,6 +215,7 @@ export class PersonaWalletService {
         currency: wallet.currency,
         referenceType: 'wallet_payout_request',
         referenceId: payoutId,
+        actorType: 'human', /* 提现由 owner 经 HTTP 发起，已 owner 校验（ADR-0048 D2） */
       });
     });
 
@@ -243,7 +248,22 @@ export class PersonaWalletService {
     currency: string;
     referenceType?: string | null;
     referenceId?: string | null;
+    /** ADR-0048 D2：发起方类型。autonomous 不得 debit（负 amount）。默认 system。 */
+    actorType?: WalletActorType;
   }): WalletTransaction {
+    /* ADR-0048 D2 铁律在真实写路径强制：autonomous actor 不得出账。
+     * 这是所有钱包 journal 写入的单一收口，覆盖 payout + settlement。 */
+    const actorType: WalletActorType = input.actorType ?? 'system';
+    const direction: WalletDirection = input.amountMinor < 0 ? 'debit' : 'credit';
+    const guard = assertWalletMutationAllowed({
+      actorType,
+      direction,
+      transactionType: input.transactionType,
+      amountMinor: Math.abs(input.amountMinor),
+    });
+    if (!guard.allowed) {
+      throw new ValidationError(`钱包写入被拒: ${guard.reason}`, ErrorCode.AUTH_INSUFFICIENT_ROLE);
+    }
     const now = Date.now();
     const id = generatePrefixedId('wtx');
     this.tx.execute(pcoreCmdInsertWalletTransaction({

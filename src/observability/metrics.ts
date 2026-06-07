@@ -108,3 +108,12 @@ export const onboardingStepDurationMs = meter.createHistogram('chrono_onboarding
   description: '引导单步耗时（毫秒），用于 PRD 的 5 分钟预算监控',
   unit: 'ms',
 });
+
+/**
+ * ADR-0047：蒸馏编译补偿不完整次数（label: step=rollback|reject）。
+ * 编译已应用但状态推进失败时触发补偿；若回滚或拒绝标记失败，计入此指标——
+ * 表示可能存在"核心已变更但工件未达终态"的不一致，需人工巡检告警。
+ */
+export const distillationCompensationFailures = meter.createCounter('chrono_distillation_compensation_failures_total', {
+  description: '蒸馏编译补偿（回滚/标记）失败次数；>0 表示需人工巡检核心一致性',
+});

@@ -75,7 +75,9 @@ POST 同步与 SSE 流式两种端点；按 `(personaId, externalUserId)` 速率
 
 **可用性保障**：
 - **Circuit breaker**：5 次失败开断；30s 执行超时；指数退避重试（默认 2 次）
-- **降级路径**：LLM 不可达时返回 `FALLBACK_RESPONSE` + `guardAction='llm_fallback'` + `shouldEscalate=true`，绝不返回 5xx
+- **降级路径**：LLM 不可达时绝不返回 5xx。
+  - P1 行为：返回静态 `FALLBACK_RESPONSE` + `guardAction='llm_fallback'`。
+  - **ADR-0047 起（自主模式）**：改为由确定性离线回应器据 persona 叙事 + 已检索知识生成人格落地回应，`guardAction='autonomous_response'`（非故障，区别于 `llm_fallback`）；仍无 5xx。详见 [ADR-0047](../adr/0047-llm-as-distillable-teacher.md)。
 - **Quota 闸门**：Token Budget + QuotaManager 双重检查；耗尽时 `guardAction='quota_exceeded'`
 
 **置信度可解释**：每条响应附带 `confidence: { score, level, interval, factors[] }`，前端可视化"为什么是这个分数"。
@@ -103,7 +105,7 @@ POST 同步与 SSE 流式两种端点；按 `(personaId, externalUserId)` 速率
 - `invoice.paid` / `invoice.payment_succeeded` → past_due 恢复 + 配额恢复
 - `invoice.payment_failed` → past_due + 3 天 grace period
 
-**用量计量**：每次成功 LLM 调用上报 `chrono_conversation_message`；每次批量导入上报 `chrono_bulk_knowledge_import_item`，便于按 Stripe Meter Events 做超额计费。
+**用量计量**：每条已交付的对话消息上报 `chrono_conversation_message`（按消息计费，非按 LLM token；ADR-0047 起 `autonomous_response` 离线回应虽不消耗 LLM token，仍属已交付消息，计 1 条）；每次批量导入上报 `chrono_bulk_knowledge_import_item`，便于按 Stripe Meter Events 做超额计费。
 
 **订阅闸门**：`active / trialing / past_due-within-grace` → 放行；其他 → HTTP 402 + actionable `upgradeUrl`。
 

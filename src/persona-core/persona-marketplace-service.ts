@@ -475,6 +475,19 @@ export class PersonaMarketplaceService {
       importance: 0.52,
     });
 
+    /* ADR-0048：记录经济行为溯源（human vs autonomous），供治理审计。
+     * 自主行为审计为 system（系统代 persona 经 pipeline 执行）。 */
+    recordBusinessAuditLog(this.tx, {
+      tenantId: input.tenantId,
+      actorType: input.actor === 'autonomous' ? 'system' : 'user',
+      actorId: input.actor === 'autonomous' ? input.personaId : input.ownerUserId,
+      actionType: 'task.application',
+      targetType: 'task_application',
+      targetId: applicationId,
+      createdAt: now,
+      payload: { taskId: input.taskId, personaId: input.personaId, actor: input.actor ?? 'human' },
+    });
+
     return this.findTaskApplication(input.tenantId, input.taskId, input.personaId);
   }
 
@@ -831,8 +844,9 @@ export class PersonaMarketplaceService {
 
       recordBusinessAuditLog(this.tx, {
         tenantId: input.tenantId,
-        actorType: 'user',
-        actorId: input.ownerUserId,
+        /* ADR-0048：自主提交审计为 system（系统代 persona 经 pipeline 执行） */
+        actorType: input.actor === 'autonomous' ? 'system' : 'user',
+        actorId: input.actor === 'autonomous' ? assignment.personaId : input.ownerUserId,
         actionType: 'task.submission',
         targetType: 'task_result',
         targetId: resultId,
@@ -841,6 +855,7 @@ export class PersonaMarketplaceService {
           taskId: input.taskId,
           assignmentId: input.assignmentId,
           resultUri: input.resultUri,
+          actor: input.actor ?? 'human',
         },
       });
     });

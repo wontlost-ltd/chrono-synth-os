@@ -18,5 +18,10 @@
     "src/test/integration/better-sqlite3.d.ts",
     "src/storage/dsl-migrations-runner.ts",
     "packages/schema-dsl/src/**/*.ts"
-  ]
+  ],
+  // 必须显式声明 exclude：否则会继承 tsconfig.src.json 的 exclude（其中
+  // 列出了 schema-dsl-*.test.ts / fixtures/legacy-migrations.ts 等），
+  // TypeScript 的 exclude 会过滤本文件 include 的文件 → 测试与夹具被排除、
+  // 永不 emit，node --test 找不到 dist 产物（CI schema-dsl-integration 长期红）。
+  "exclude": ["node_modules", "dist"]
 }

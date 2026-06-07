@@ -909,3 +909,13 @@ export const JwtDenyJtiBodySchema = z.object({
   jti: z.string().min(1),
   expiresAtMs: z.number().int().positive(),
 });
+
+/* ADR-0047 蒸馏治理：拒绝工件需带原因 */
+export const DistillationRejectBodySchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+/* ADR-0048 自主挣钱：触发挣钱周期（可选限制本周期评估任务数） */
+export const EarningCycleBodySchema = z.object({
+  maxTasksPerCycle: z.number().int().min(1).max(20).optional(),
+});

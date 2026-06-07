@@ -16,6 +16,7 @@ export type ToolInvocationStatus =
   | 'pending_confirmation'
   | 'denied_permission'
   | 'denied_quota'
+  | 'denied_budget'
   | 'denied_circuit_open'
   | 'tool_not_found'
   | 'timeout';

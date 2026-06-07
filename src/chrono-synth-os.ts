@@ -28,6 +28,10 @@ import { ConsoleLogger, type Logger } from './utils/logger.js';
 import { generatePrefixedId } from './utils/id-generator.js';
 import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
+import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
+import { DistillationService } from './intelligence/distillation-service.js';
+import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
+import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
 import { TaskQueue } from './queue/task-queue.js';
 import { FeatureFlagService } from './feature-flags/feature-flag-service.js';
 import { AuditChainAnchorService, type AuditChainKmsProvider } from './audit/audit-chain-anchor-service.js';
@@ -71,6 +75,10 @@ export class ChronoSynthOS {
   readonly updateGate: UpdateGate;
   readonly patternExtractor: MemoryPatternExtractor;
   readonly lifeSimulation: LifeSimulationService;
+  /** ADR-0047：蒸馏管线（LLM 教学输出 → 门控 → 编译进确定性内核） */
+  readonly distillation: DistillationService;
+  /** ADR-0048：收益蒸馏器（任务收益 → 蒸馏候选，闭合 earn→grow 飞轮） */
+  readonly earningDistiller: EarningOutcomeDistiller;
   readonly queue: TaskQueue;
   /** Phase 1B 可选：开启 audit chain KMS 锚定时存在 */
   readonly auditChainAnchors: AuditChainAnchorService | undefined;
@@ -136,6 +144,25 @@ export class ChronoSynthOS {
       lifeSimStore, this.queue, lifeSimEngine, this.bus,
       () => compilePersonaState(this.core),
     );
+
+    /* ADR-0047 蒸馏管线：候选 → 校验 → 门控 → 编译进核心（带快照/回滚）。
+     * snapshotGuard 复用编排器的事务级 createSnapshot/restoreFromSnapshot。 */
+    const artifactStore = new DistilledArtifactStore(this.db, this.tenantId);
+    const artifactCompiler = new ArtifactCompiler(this.core, this.logger);
+    this.distillation = new DistillationService({
+      store: artifactStore,
+      compiler: artifactCompiler,
+      snapshotGuard: {
+        snapshot: () => this.createSnapshot('manual').id,
+        rollback: (snapshotId: string) => this.restoreFromSnapshot(snapshotId),
+      },
+      bus: this.bus,
+      clock: this.clock,
+      logger: this.logger,
+      tenantId: this.tenantId,
+    });
+    /* ADR-0048：收益蒸馏器复用蒸馏门，把任务收益转为成长候选 */
+    this.earningDistiller = new EarningOutcomeDistiller(this.distillation, this.logger);
 
     /* 可选：注入 KmsProvider 后开启审计链尾签名。flag 默认关闭，
      * 即使注入了 provider，feature flag 也必须显式开启才会签名。 */

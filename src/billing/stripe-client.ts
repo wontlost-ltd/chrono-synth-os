@@ -16,9 +16,10 @@ export function getStripe(config: AppConfig): Stripe {
     }
     /* Pinned to the SDK v22 default — the version the TypeScript types
      * reflect. Bumping to a newer date string requires a coordinated
-     * SDK upgrade so the response shapes stay in sync. */
+     * SDK upgrade so the response shapes stay in sync. stripe 22.2.0
+     * advanced the pinned default to 2026-05-27.dahlia. */
     stripeInstance = new Stripe(config.stripe.secretKey, {
-      apiVersion: '2026-04-22.dahlia',
+      apiVersion: '2026-05-27.dahlia',
     });
   }
   return stripeInstance;

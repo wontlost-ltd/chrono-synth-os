@@ -23,6 +23,7 @@ export const TPERM_QUERY_LIST_BY_PERSONA = 'toolPermission.listByPersona' as con
 export const TPERM_QUERY_LIST_BY_TENANT = 'toolPermission.listByTenant' as const;
 export const TPERM_QUERY_BY_REVOCATION_KEY = 'toolPermission.byRevocationKey' as const;
 export const TPERM_QUERY_DAILY_USAGE = 'toolPermission.dailyUsage' as const;
+export const TPERM_QUERY_DAILY_COST = 'toolPermission.dailyCost' as const;
 
 export const AGAUTH_QUERY_BY_ID = 'agencyAuth.byId' as const;
 export const AGAUTH_QUERY_LIST_BY_PERSONA = 'agencyAuth.listByPersona' as const;
@@ -177,6 +178,11 @@ export function tpermQueryByRevocationKey(key: string): Query<ToolPermissionRow 
 
 export function tpermQueryDailyUsage(p: TpermDailyUsageParams): Query<{ count: number } | null, TpermDailyUsageParams> {
   return { kind: TPERM_QUERY_DAILY_USAGE, params: p };
+}
+
+/** 当日累计工具调用成本（分）——用于 budget gate（ADR-0048：成本不得超授权预算/任务报酬） */
+export function tpermQueryDailyCost(p: TpermDailyUsageParams): Query<{ cost_cents: number } | null, TpermDailyUsageParams> {
+  return { kind: TPERM_QUERY_DAILY_COST, params: p };
 }
 
 export function agauthQueryById(p: AgauthByIdParams): Query<AgencyAuthorizationRow | null, AgauthByIdParams> {

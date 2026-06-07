@@ -15,7 +15,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { SyncWriteUnitOfWork, ToolPermission, ToolPermissionRow, ToolConstraints, ToolPermissionCheckInput, ToolPermissionCheckResult, ToolScope, ToolInvocationRow, ToolInvocation, ToolInvocationStatus } from '@chrono/kernel';
 import {
   tpermQueryByPersonaTool, tpermQueryListByPersona, tpermQueryListByTenant,
-  tpermQueryByRevocationKey, tpermQueryDailyUsage,
+  tpermQueryByRevocationKey, tpermQueryDailyUsage, tpermQueryDailyCost,
   tpermCmdGrant, tpermCmdRevoke, tpermCmdRevokeByKey,
   tinvQueryById, tinvQueryListByPersona, tinvQueryDailyCount,
   tinvQueryPendingByUser, tinvQueryByConfirmationToken,
@@ -131,6 +131,13 @@ export class ToolPermissionService {
     const sinceMs = now - ONE_DAY_MS;
     const row = this.tx.queryOne(tpermQueryDailyUsage({ tenantId, personaId, toolId, sinceMs }));
     return row?.count ?? 0;
+  }
+
+  /** 查询当日累计成本（分）——用于 budget gate */
+  dailyCostCents(tenantId: string, personaId: string, toolId: string, now = Date.now()): number {
+    const sinceMs = now - ONE_DAY_MS;
+    const row = this.tx.queryOne(tpermQueryDailyCost({ tenantId, personaId, toolId, sinceMs }));
+    return row?.cost_cents ?? 0;
   }
 
   /** 写入 invocation 记录 */

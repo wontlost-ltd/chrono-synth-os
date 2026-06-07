@@ -5,7 +5,7 @@
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
   TPERM_QUERY_BY_PERSONA_TOOL, TPERM_QUERY_LIST_BY_PERSONA, TPERM_QUERY_LIST_BY_TENANT,
-  TPERM_QUERY_BY_REVOCATION_KEY, TPERM_QUERY_DAILY_USAGE,
+  TPERM_QUERY_BY_REVOCATION_KEY, TPERM_QUERY_DAILY_USAGE, TPERM_QUERY_DAILY_COST,
   TPERM_CMD_GRANT, TPERM_CMD_REVOKE, TPERM_CMD_REVOKE_BY_REVOCATION_KEY,
   AGAUTH_QUERY_BY_ID, AGAUTH_QUERY_LIST_BY_PERSONA, AGAUTH_QUERY_LIST_BY_PRINCIPAL,
   AGAUTH_QUERY_BY_REVOCATION_KEY,
@@ -74,6 +74,16 @@ export function registerToolPermissionExecutors(): void {
   registerQuery<{ count: number } | null, TpermDailyUsageParams>(TPERM_QUERY_DAILY_USAGE, (db, p) => {
     return db.prepare<{ count: number }>(
       `SELECT COUNT(*) AS count
+         FROM tool_invocations
+        WHERE tenant_id = ? AND persona_id = ? AND tool_id = ?
+          AND invoked_at >= ? AND status = 'success'`,
+    ).get(p.tenantId, p.personaId, p.toolId, p.sinceMs) ?? null;
+  });
+
+  /* 当日累计成本（分）：仅计成功调用；COALESCE 防 NULL（无记录返回 0） */
+  registerQuery<{ cost_cents: number } | null, TpermDailyUsageParams>(TPERM_QUERY_DAILY_COST, (db, p) => {
+    return db.prepare<{ cost_cents: number }>(
+      `SELECT COALESCE(SUM(cost_cents), 0) AS cost_cents
          FROM tool_invocations
         WHERE tenant_id = ? AND persona_id = ? AND tool_id = ?
           AND invoked_at >= ? AND status = 'success'`,

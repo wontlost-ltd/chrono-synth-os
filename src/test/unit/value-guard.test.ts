@@ -95,4 +95,19 @@ describe('ValueGuard', () => {
     assert.equal(r.action, 'escalate');
     assert.equal(r.matchedTopic, 'classifier 主题');
   });
+
+  it('pattern 层正则无状态：同一含金额文本重复匹配一致（修复 /g lastIndex 漏判）', () => {
+    const boundary: BehaviorBoundary = { rule: 'never_discuss', topic: '退款金额超过 100 元' };
+    const text = '请问退款金额超过 5000 元怎么处理';
+    /* 连续多次调用必须稳定命中——若 AMOUNT_PATTERN 带 /g，会因 lastIndex 交替漏判 */
+    const results = Array.from({ length: 5 }, () => guard.literalMatch(text, boundary));
+    assert.deepEqual(results, [true, true, true, true, true], 'pattern 层重复调用不应交替命中/漏判');
+  });
+
+  it('pattern 层正则无状态：百分比文本重复匹配一致', () => {
+    const boundary: BehaviorBoundary = { rule: 'never_discuss', topic: '折扣超过 50%' };
+    const text = '能给到超过 80% 的折扣吗';
+    const results = Array.from({ length: 4 }, () => guard.literalMatch(text, boundary));
+    assert.deepEqual(results, [true, true, true, true]);
+  });
 });

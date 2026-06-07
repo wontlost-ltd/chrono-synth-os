@@ -22,6 +22,7 @@ import { registerIdentityExecutors } from './identity-executors.js';
 import { registerUserProfileExecutors } from './user-profile-executors.js';
 import { registerSnapshotExecutors } from './snapshot-executors.js';
 import { registerUpdateGateExecutors } from './update-gate-executors.js';
+import { registerDistilledArtifactExecutors } from './distilled-artifact-executors.js';
 import { registerConflictExecutors } from './conflict-executors.js';
 import { registerAddOnExecutors } from './add-on-executors.js';
 import { registerEntitlementExecutors } from './entitlement-executors.js';
@@ -65,7 +66,7 @@ import {
   EVIDENCE_QUERY_BY_ID,
   AVT_QUERY_BY_ID, QUOTA_QUERY_LIMIT,
   IDENT_QUERY_BY_USER, UPROF_QUERY_BY_ID,
-  SNAP_QUERY_BY_ID, UGATE_QUERY_BY_ID, CONFLICT_QUERY_UNRESOLVED,
+  SNAP_QUERY_BY_ID, UGATE_QUERY_BY_ID, DISTILL_QUERY_BY_ID, CONFLICT_QUERY_UNRESOLVED,
   ADDON_QUERY_BY_CODE, ENTL_QUERY_PLAN_ID,
   SUBQ_QUERY_LATEST_PLAN, APIKEY_QUERY_LIST,
   SWHS_QUERY_LATEST_SUBSCRIPTION, AUTH_QUERY_USER_BY_EMAIL,
@@ -113,6 +114,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(UPROF_QUERY_BY_ID)) registerUserProfileExecutors();
   if (!resolveQueryExecutor(SNAP_QUERY_BY_ID)) registerSnapshotExecutors();
   if (!resolveQueryExecutor(UGATE_QUERY_BY_ID)) registerUpdateGateExecutors();
+  if (!resolveQueryExecutor(DISTILL_QUERY_BY_ID)) registerDistilledArtifactExecutors();
   if (!resolveQueryExecutor(CONFLICT_QUERY_UNRESOLVED)) registerConflictExecutors();
   if (!resolveQueryExecutor(ADDON_QUERY_BY_CODE)) registerAddOnExecutors();
   if (!resolveQueryExecutor(ENTL_QUERY_PLAN_ID)) registerEntitlementExecutors();

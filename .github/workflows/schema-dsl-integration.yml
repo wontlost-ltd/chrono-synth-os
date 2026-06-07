@@ -21,7 +21,11 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npm run build --workspace @wontlost-ltd/schema-dsl
+      # tsconfig.integration.json 编译 src/storage/*（database.ts、legacy-sync-bridge.ts）
+      # 依赖 @chrono/kernel 等工作区包的类型声明；只构建 schema-dsl 会导致
+      # "Cannot find module '@chrono/kernel'" / "Property 'transaction' does not exist"。
+      # 与 ci.yml 一致，先按依赖顺序构建全部工作区包再跑集成测试。
+      - run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - run: npm run test:integration:schema-dsl
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'true'

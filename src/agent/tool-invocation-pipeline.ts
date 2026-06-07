@@ -39,6 +39,7 @@ export type InvocationDecision =
         | 'tool_not_found'
         | 'denied_permission'
         | 'denied_quota'
+        | 'denied_budget'
         | 'denied_circuit_open'
         | 'denied_authorization'
         | 'pending_confirmation'
@@ -134,9 +135,23 @@ export class ToolInvocationPipeline {
       }
     }
 
-    /* 5. Confirmation gate */
+    /* 5. Budget gate（ADR-0048）：当日累计成本已达预算上限则拒绝，防止工具花费失控
+     * （尤其自主挣钱场景：工具成本不得侵蚀任务报酬）。成本为后验，故按"已花 ≥ 上限"拦截。 */
+    const budgetLimitCents = permission.constraints.budgetLimitCents;
+    if (budgetLimitCents !== undefined && budgetLimitCents >= 0) {
+      const spentCents = this.deps.permissions.dailyCostCents(
+        request.tenantId, request.personaId, request.toolId, now,
+      );
+      if (spentCents >= budgetLimitCents) {
+        const id = this.recordDenied(request, 'denied_budget', `daily budget ${budgetLimitCents}¢ reached (spent=${spentCents}¢)`);
+        return { ok: false, invocationId: id, status: 'denied_budget', reason: `当日预算已耗尽 (${spentCents}/${budgetLimitCents}¢)` };
+      }
+    }
+
+    /* 6. Confirmation gate（含 action 级动态风险：ADR-0048） */
+    const actionHighRisk = adapter.isHighRisk?.(request.arguments) ?? false;
     const requireConfirmation =
-      adapter.metadata.highRisk || permission.constraints.requireConfirmation === true;
+      adapter.metadata.highRisk || actionHighRisk || permission.constraints.requireConfirmation === true;
     if (requireConfirmation) {
       const decision = this.handleConfirmation(request, adapter);
       if (decision !== null) return decision;
@@ -300,7 +315,7 @@ export class ToolInvocationPipeline {
 
   private recordDenied(
     request: InvokeRequest,
-    status: 'denied_permission' | 'denied_quota' | 'denied_circuit_open' | 'tool_not_found',
+    status: 'denied_permission' | 'denied_quota' | 'denied_budget' | 'denied_circuit_open' | 'tool_not_found',
     errorMessage: string,
   ): string {
     const inputHash = hashArgs(request.arguments);

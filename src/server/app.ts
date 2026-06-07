@@ -81,6 +81,7 @@ import { MemorySearchTool } from '../agent/tools/memory-search-tool.js';
 import { MemoryAddTool } from '../agent/tools/memory-add-tool.js';
 import { KnowledgeQueryTool } from '../agent/tools/knowledge-query-tool.js';
 import { DecisionRecordTool } from '../agent/tools/decision-record-tool.js';
+import { MarketplaceTool } from '../agent/tools/marketplace-tool.js';
 import { WebSearchTool } from '../agent/tools/web-search-tool.js';
 import { CalendarTool } from '../agent/tools/calendar-tool.js';
 import { EmailTool } from '../agent/tools/email-tool.js';
@@ -100,6 +101,7 @@ import { PersonaTemplateService } from '../enterprise/persona-template-service.j
 import { ConversationService } from '../conversation/conversation-service.js';
 import { ConversationRetentionWorker } from '../conversation/conversation-retention-worker.js';
 import { registerConversationRoutes } from './routes/conversation.js';
+import { registerDistillationRoutes } from './routes/distillation.js';
 import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
@@ -141,6 +143,12 @@ import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
 import { LlmKnowledgeSource } from '../knowledge/sources/llm-source.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import { ModelRouter } from '../intelligence/model-router.js';
+import { DecisionEngine } from '../intelligence/decision-engine.js';
+import { RuleEngine } from '../intelligence/rule-engine.js';
+import { RetrievalService } from '../intelligence/retrieval-service.js';
+import { InMemoryEmbeddingIndex } from '../intelligence/embedding-index-memory.js';
+import { PersonaEarningService } from '../intelligence/persona-earning-service.js';
+import { registerEarningRoutes } from './routes/earning.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -501,6 +509,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   toolRegistry.register(new MemoryAddTool(bulkImportPersonaCoreService));
   toolRegistry.register(new KnowledgeQueryTool(conversationService.getRetriever()));
   toolRegistry.register(new DecisionRecordTool(bulkImportPersonaCoreService));
+  /* ADR-0048：人才市场经济行为工具（apply/submit 走 pipeline 治理） */
+  toolRegistry.register(new MarketplaceTool(bulkImportPersonaCoreService));
   /* P3-C 外部工具适配器 */
   toolRegistry.register(new WebSearchTool({
     provider: config.agent.webSearch.provider,
@@ -533,6 +543,29 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     confirmationStore: conversationService.getConfirmationStore(),
   });
   const mcpServer = new ChronoMcpServer(toolRegistry, toolInvocationPipeline, deps.os.getLogger());
+
+  /* ADR-0048：自主挣钱编排服务。决策走 autonomous 模式（确定性，rule-engine 为主，
+   * 不调 LLM），故 embedding index 仅为构造满足、autonomous 路径不查询。 */
+  const earningEmbeddingIndex = new InMemoryEmbeddingIndex(
+    tx, deps.os.getClock(), conversationLlmRouter, config.intelligence.embeddingModel,
+  );
+  const earningDecisionEngine = new DecisionEngine(
+    deps.os.core,
+    new RetrievalService(deps.os.core.memories, earningEmbeddingIndex),
+    conversationLlmRouter,
+    deps.os.getClock(),
+    deps.os.getLogger(),
+    config.intelligence.simulation,
+    new RuleEngine(deps.os.getClock(), config.ruleEngine, deps.os.getLogger()),
+  );
+  const personaEarningService = new PersonaEarningService({
+    personaCore: bulkImportPersonaCoreService,
+    decisionEngine: earningDecisionEngine,
+    pipeline: toolInvocationPipeline,
+    bus: deps.os.bus,
+    clock: deps.os.getClock(),
+    logger: deps.os.getLogger(),
+  });
 
   /* F2/F3：用户级 OAuth resolver 工厂（每个请求构造独立 resolver） */
   const oauthResolverFactory = createUserOauthTokenResolverFactory({
@@ -604,6 +637,16 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     personaCore: bulkImportPersonaCoreService,
     subscriptionGate,
     db,
+  });
+  /* ADR-0047：蒸馏治理端点（审查/审批/拒绝自我修改工件） */
+  registerDistillationRoutes(app, {
+    distillation: deps.os.distillation,
+    personaCore: bulkImportPersonaCoreService,
+  });
+  /* ADR-0048：自主挣钱治理端点（触发周期 / work feed / 钱包视图） */
+  registerEarningRoutes(app, {
+    earning: personaEarningService,
+    personaCore: bulkImportPersonaCoreService,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);

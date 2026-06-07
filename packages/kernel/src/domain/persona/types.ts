@@ -588,6 +588,8 @@ export interface ApplyTaskInput {
   ownerUserId: string;
   taskId: string;
   personaId: string;
+  /** ADR-0048：发起方溯源（审计）。'autonomous'=经 pipeline 的自主行为；默认 human。 */
+  actor?: 'human' | 'autonomous';
 }
 
 export interface AssignTaskInput {
@@ -611,6 +613,8 @@ export interface SubmitTaskResultInput {
   assignmentId: string;
   resultUri: string;
   evaluation?: Record<string, unknown>;
+  /** ADR-0048：发起方溯源（审计）。'autonomous'=经 pipeline 的自主行为；默认 human。 */
+  actor?: 'human' | 'autonomous';
 }
 
 export interface AcceptSubmittedTaskInput {
