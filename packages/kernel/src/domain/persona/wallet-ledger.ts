@@ -58,17 +58,51 @@ export type WalletGuardResult =
   | { readonly allowed: false; readonly reason: string };
 
 /**
+ * 每种 transactionType 的**唯一合法资金流向**（ADR-0048）。
+ *
+ * 方向由各 type 的业务语义决定，且都从实际写入点逐一核验（见
+ * .claude/context-wallet-direction.json 的证据）：
+ *   - task_payment   → credit：结算把任务报酬入账（数字人赚钱，+）。
+ *   - platform_fee   → debit：从报酬中扣平台抽成（-）。
+ *   - owner_payout   → debit：owner 提现，减余额（-）。
+ *   - persona_reserve→ debit：结算把 persona 份额从工资钱包划出预留（-）。
+ *   - refund         → debit：退款减数字人余额（-）。
+ *
+ * 这 5 种 type 语义都是单向的（无双向 type），故用 type→direction 的一一映射。
+ * 防止 type 与方向语义错配（如 owner_payout 被当作 credit 入账）。
+ */
+export const WALLET_DIRECTION_MATRIX: Readonly<Record<WalletTransactionType, WalletDirection>> = {
+  task_payment: 'credit',
+  platform_fee: 'debit',
+  owner_payout: 'debit',
+  persona_reserve: 'debit',
+  refund: 'debit',
+};
+
+/**
  * 钱包变更安全守卫（纯函数，ADR-0048 D2 铁律）。
  *
+ * 入参约定：本守卫的 `amountMinor` 是**绝对值（必须为正）**，方向由独立的 `direction`
+ * 字段表达——调用方（如 PersonaWalletService）从带符号金额推导出 `direction` 后，传入
+ * `Math.abs(amount)` 作为 amountMinor。守卫不看符号，只看 direction 字段。
+ *
  * 规则：
- *   - credit：任何 actor 都允许（赚钱无限制方向）。
+ *   - amountMinor 必须为正（符号由 direction 字段表达，不靠负数）。
+ *   - transactionType ↔ direction 必须与 WALLET_DIRECTION_MATRIX 一致——杜绝语义错配
+ *     （如 owner_payout 当 credit、task_payment 当 debit），这是钱的正确性铁律。
  *   - debit：autonomous actor 一律拒绝；只有 human / system（代表人类确认的
- *     已审批操作）允许。
- *   - amountMinor 必须为正（金额符号由 direction 表达，不靠负数）。
+ *     已审批操作）允许。credit：任何 actor 都允许（赚钱无限制方向）。
  */
 export function assertWalletMutationAllowed(intent: WalletMutationIntent): WalletGuardResult {
   if (!Number.isFinite(intent.amountMinor) || intent.amountMinor <= 0) {
     return { allowed: false, reason: 'amountMinor must be a positive number' };
+  }
+  const expectedDirection = WALLET_DIRECTION_MATRIX[intent.transactionType];
+  if (intent.direction !== expectedDirection) {
+    return {
+      allowed: false,
+      reason: `transactionType '${intent.transactionType}' must be ${expectedDirection}, got ${intent.direction} (ADR-0048 direction matrix)`,
+    };
   }
   if (intent.direction === 'debit' && intent.actorType === 'autonomous') {
     return {
@@ -79,7 +113,7 @@ export function assertWalletMutationAllowed(intent: WalletMutationIntent): Walle
   return { allowed: true };
 }
 
-/** transactionType 是否本质上是 debit 方向（用于校验 direction 与类型一致） */
+/** transactionType 是否本质上是 debit 方向（由方向矩阵派生，单一事实来源）。 */
 export function isDebitTransactionType(t: WalletTransactionType): boolean {
-  return t === 'owner_payout' || t === 'platform_fee' || t === 'refund';
+  return WALLET_DIRECTION_MATRIX[t] === 'debit';
 }
