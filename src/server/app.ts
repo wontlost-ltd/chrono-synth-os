@@ -565,6 +565,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     bus: deps.os.bus,
     clock: deps.os.getClock(),
     logger: deps.os.getLogger(),
+    /* ADR-0048 多实例 gating：复用 OS 的 per-persona 锁，串行化每个 persona 的挣钱周期 */
+    leaseStore: deps.os.personaLeases,
   });
 
   /* F2/F3：用户级 OAuth resolver 工厂（每个请求构造独立 resolver） */

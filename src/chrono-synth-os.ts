@@ -32,6 +32,7 @@ import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
 import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
+import { PersonaLeaseStore } from './storage/persona-lease-store.js';
 import { TaskQueue } from './queue/task-queue.js';
 import { FeatureFlagService } from './feature-flags/feature-flag-service.js';
 import { AuditChainAnchorService, type AuditChainKmsProvider } from './audit/audit-chain-anchor-service.js';
@@ -79,6 +80,8 @@ export class ChronoSynthOS {
   readonly distillation: DistillationService;
   /** ADR-0048：收益蒸馏器（任务收益 → 蒸馏候选，闭合 earn→grow 飞轮） */
   readonly earningDistiller: EarningOutcomeDistiller;
+  /** ADR-0047/0048：per-persona 并发锁（compile mutex + earning lease，多实例 gating） */
+  readonly personaLeases: PersonaLeaseStore;
   readonly queue: TaskQueue;
   /** Phase 1B 可选：开启 audit chain KMS 锚定时存在 */
   readonly auditChainAnchors: AuditChainAnchorService | undefined;
@@ -149,6 +152,9 @@ export class ChronoSynthOS {
      * snapshotGuard 复用编排器的事务级 createSnapshot/restoreFromSnapshot。 */
     const artifactStore = new DistilledArtifactStore(this.db, this.tenantId);
     const artifactCompiler = new ArtifactCompiler(this.core, this.logger);
+    /* ADR-0047/0048 多实例 gating：并发锁，供租户级全局 compile mutex 与 per-persona
+     * earning lease 共用（同一个 store，不同 scope）。 */
+    this.personaLeases = new PersonaLeaseStore(this.db, this.tenantId);
     this.distillation = new DistillationService({
       store: artifactStore,
       compiler: artifactCompiler,
@@ -160,6 +166,7 @@ export class ChronoSynthOS {
       clock: this.clock,
       logger: this.logger,
       tenantId: this.tenantId,
+      leaseStore: this.personaLeases,
     });
     /* ADR-0048：收益蒸馏器复用蒸馏门，把任务收益转为成长候选 */
     this.earningDistiller = new EarningOutcomeDistiller(this.distillation, this.logger);

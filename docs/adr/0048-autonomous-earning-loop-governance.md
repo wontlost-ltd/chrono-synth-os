@@ -139,16 +139,24 @@ cycle on consecutive rejections / disputes / reputation collapse.
 - Real economic risk surface. Mitigated by: tool-ization, earning
   policy, credit-only wallet, human approval for high/critical, circuit
   breakers, full audit.
-- **Deployment constraint (hard):** the earning cycle is safe only under a
-  **single-process synchronous core writer**. Daily-reward-exposure is
-  computed from a 24h window over accepted tasks, which is correct
-  single-process but racy across instances. Before any multi-instance
-  deployment that runs earning cycles, a **DB-level per-persona earning
-  lease** (unique running cycle per persona, compare-and-set) is REQUIRED —
-  otherwise two concurrent cycles can both read stale exposure and exceed
-  the daily cap. This is in addition to the per-persona compile mutex noted
-  in ADR-0047. Not implemented yet; tracked as the gating item for
-  multi-instance earning.
+- **Deployment constraint (resolved):** the earning cycle previously was safe
+  only under a **single-process synchronous core writer**, because
+  daily-reward-exposure is computed from a 24h window over accepted tasks
+  (correct single-process but racy across instances). This is now closed by a
+  **DB-level per-persona earning lease** (compare-and-set, unique running
+  cycle per persona, TTL takeover): `runEarningCycle` acquires
+  `purpose='earning'` for the persona and serializes the whole "read exposure →
+  apply" critical section; a second concurrent cycle for the same persona
+  finds the lease held and skips. The same mechanism backs ADR-0047's compile
+  mutex — but note the granularity differs: **earning is per-persona** (exposure
+  is per-persona), while **compile is tenant-global** (it rolls back a
+  system-global snapshot, so it locks on `GLOBAL_LEASE_PERSONA_ID`).
+  Implemented as `persona_leases` (DSL v081 /
+  Postgres v083), `PersonaLease` kernel types + CAS predicates, and
+  `PersonaLeaseStore` (`acquire`/`release`/`refresh`/`withLease`), wired into
+  both `PersonaEarningService` and `DistillationService` (the lease store is
+  optional — when absent, single-process synchronous semantics are preserved
+  for backward compatibility).
 - The deterministic skill router covers a bounded set of task
   categories; categories without a router stay human-or-skip until a
   router exists.
