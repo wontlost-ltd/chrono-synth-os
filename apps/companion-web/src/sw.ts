@@ -31,13 +31,24 @@ const swScope = self as unknown as {
   clients: { claim(): Promise<void> };
 };
 
+const COMPANION_API_CACHE = 'companion-api-cache';
+const STATIC_CACHE = 'companion-static-cache';
+
 /* injectManifest 策略下，autoUpdate 不会自动给自写 SW 注入 skipWaiting/clientsClaim，
  * 否则新 SW 会卡在 waiting 永不激活——这里显式做：install 即 skipWaiting，activate 即 claim。 */
 swScope.addEventListener('install', () => {
   void swScope.skipWaiting();
 });
-swScope.addEventListener('activate', () => {
-  void swScope.clients.claim();
+swScope.addEventListener('activate', (event) => {
+  /* 新 SW 激活时清空 companion 私有 API 缓存：旧版 SW 写入的条目可能没有 Vary 头，
+   * 按 URL 命中会回显上一账号数据——activate 删除消除这条升级残留路径（Codex Major）。
+   * static 缓存是公开/hashed 资源，无需清。 */
+  (event as { waitUntil?(p: Promise<unknown>): void }).waitUntil?.(
+    (async () => {
+      await caches.delete(COMPANION_API_CACHE);
+      await swScope.clients.claim();
+    })(),
+  );
 });
 
 /* 主线程发 SKIP_WAITING 时也立即激活（双保险）。 */
@@ -47,9 +58,6 @@ swScope.addEventListener('message', (event) => {
     void swScope.skipWaiting();
   }
 });
-
-const COMPANION_API_CACHE = 'companion-api-cache';
-const STATIC_CACHE = 'companion-static-cache';
 
 /* auth：永不缓存。 */
 registerRoute(

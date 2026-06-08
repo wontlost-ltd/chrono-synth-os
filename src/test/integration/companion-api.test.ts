@@ -94,6 +94,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/growth', headers });
     assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
     const growth = CompanionGrowthV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(growth.hasBaseline, false);
     assert.equal(growth.overallIntensity, 'steady');
@@ -112,6 +113,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/growth', headers });
     assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
     const growth = CompanionGrowthV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(growth.hasBaseline, false, '单快照不应被判为有基线');
     assert.deepEqual(growth.directions, []);
@@ -137,6 +139,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
       method: 'GET', url: '/api/v1/companion/me/memories?page=1&pageSize=2', headers,
     });
     assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
     const list = CompanionMemoryListV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(list.items.length, 2, '第 1 页应有 2 条');
     assert.equal(list.pagination.total, 3);
