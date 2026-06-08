@@ -20,20 +20,16 @@ import { AuthorizationError, ErrorCode } from '../../../errors/index.js';
 import {
   PersonaDriftAnalyzer,
   resolveDriftThresholds,
-  type DriftReport,
-  type ValueDrift,
 } from '../../../safety/persona-drift-analyzer.js';
 import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
+  driftReportToGrowth,
   type CompanionMeV1,
   type CompanionValueV1,
   type CompanionMemoryV1,
-  type CompanionGrowthV1,
   type CompanionMemoryListV1,
-  type ExplorationIntensityV1,
-  type ExplorationDirectionV1,
 } from '@chrono/contracts';
 import { MemoryFacade } from '../../../core/memory-facade.js';
 import { parsePagination } from '../../plugins/pagination.js';
@@ -64,61 +60,8 @@ export function toCompanionMemory(m: MemoryNode): CompanionMemoryV1 {
   };
 }
 
-/** 企业版 drift alertLevel → C 端探索强度（语义不变，只是不叫「告警」）。 */
-function alertLevelToIntensity(level: DriftReport['alertLevel']): ExplorationIntensityV1 {
-  switch (level) {
-    case 'critical': return 'leaping';
-    case 'warning': return 'exploring';
-    default: return 'steady';
-  }
-}
-
-/** 单条 ValueDrift → C 端探索方向（direction 由 delta 符号定，magnitude=|delta| 夹到 0..1）。 */
-function valueDriftToDirection(d: ValueDrift): ExplorationDirectionV1 {
-  const magnitude = Math.min(1, Math.abs(d.delta));
-  const direction: ExplorationDirectionV1['direction'] =
-    d.delta > 0 ? 'toward' : d.delta < 0 ? 'away' : 'steady';
-  return {
-    valueId: d.valueId,
-    label: d.label,
-    direction,
-    magnitude,
-    intensity: alertLevelToIntensity(d.alertLevel),
-  };
-}
-
-/**
- * DriftReport → C 端成长视图。
- *
- * `hasBaseline` **不能**用 report.baselineSnapshotId !== null 判断：PersonaDriftAnalyzer 在
- * 只有 1 个快照时仍会持久化一份 baselineSnapshotId=该快照、valueDrifts=[] 的报告（那个
- * 快照是「当前」而非「历史基线」）。真正的基线需要 ≥2 个快照做对比，故由调用方传入
- * hasComparisonBaseline（快照数 ≥ 2）。report 为 null（从未分析）时一律空态。
- */
-export function driftReportToGrowth(
-  report: DriftReport | null,
-  hasComparisonBaseline: boolean,
-): CompanionGrowthV1 {
-  if (!report || !hasComparisonBaseline) {
-    return {
-      schemaVersion: 'companion-growth.v1',
-      hasBaseline: false,
-      analyzedAt: report?.analyzedAt ?? null,
-      overallIntensity: 'steady',
-      directions: [],
-    };
-  }
-  const directions = report.valueDrifts
-    .map(valueDriftToDirection)
-    .sort((a, b) => b.magnitude - a.magnitude);
-  return {
-    schemaVersion: 'companion-growth.v1',
-    hasBaseline: true,
-    analyzedAt: report.analyzedAt,
-    overallIntensity: alertLevelToIntensity(report.alertLevel),
-    directions,
-  };
-}
+/* drift→「你最近探索的方向」映射已抽到 @chrono/contracts（driftReportToGrowth），服务端与
+ * desktop 本地共用同一份，杜绝分叉。服务端 DriftReport 结构化满足其 DriftLike 入参。 */
 
 /** 统计租户快照数（与 PersonaDriftAnalyzer.analyze 的 WHERE 一致），用于判断是否有可对比基线。 */
 export function countTenantSnapshots(db: IDatabase, tenantId: string): number {
