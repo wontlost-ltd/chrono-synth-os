@@ -40,7 +40,7 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         .join("node_modules")
         .join(".bin")
         .join("schema-dsl-render-rust");
-    if from_node_modules.exists() {
+    if from_node_modules.is_file() {
         return from_node_modules;
     }
 
@@ -51,13 +51,54 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         .join("schema-dsl")
         .join("bin")
         .join("render-rust.js");
-    if from_pkg.exists() {
+    if from_pkg.is_file() {
         return from_pkg;
     }
 
+    // Monorepo paths (ADR-0049): desktop is a workspace member, so deps hoist to the repo root
+    // node_modules (not apps/desktop/node_modules). build.rs runs from apps/desktop/src-tauri/,
+    // so the repo root is three levels up.
+    //
+    // CRITICAL: both the root `.bin` symlink (candidate 4) and the source path (candidate 5)
+    // resolve to the SAME in-repo `packages/schema-dsl/bin/render-rust.js`, which imports the
+    // package's built `dist/` output — and `dist/` is NOT git-tracked. So `npm ci` creates the
+    // symlink but does NOT build `dist/`. We must only use these candidates when `dist/` is
+    // actually built; otherwise node would crash with a cryptic module-not-found instead of the
+    // helpful panic below. Guard BOTH candidates on `dist` being built (both import entrypoints).
+    let workspace_root = PathBuf::from("..").join("..").join("..");
+    let schema_dsl_pkg = workspace_root.join("packages").join("schema-dsl");
+    let dist_src = schema_dsl_pkg.join("dist").join("src");
+    let dist_built = dist_src
+        .join("migrations")
+        .join("desktop")
+        .join("index.js")
+        .is_file()
+        && dist_src
+            .join("renderers")
+            .join("sqlite-rust-module.js")
+            .is_file();
+
+    if dist_built {
+        // 4. root node_modules/.bin symlink (after `npm ci` at the root).
+        let from_root_bin = workspace_root
+            .join("node_modules")
+            .join(".bin")
+            .join("schema-dsl-render-rust");
+        if from_root_bin.is_file() {
+            return from_root_bin;
+        }
+        // 5. the workspace package source directly (even if the .bin symlink isn't present).
+        let from_workspace_pkg = schema_dsl_pkg.join("bin").join("render-rust.js");
+        if from_workspace_pkg.is_file() {
+            return from_workspace_pkg;
+        }
+    }
+
     panic!(
-        "Cannot find @wontlost-ltd/schema-dsl CLI. Either:\n\
-         - run `npm install @wontlost-ltd/schema-dsl` in the desktop repo (production path), or\n\
+        "Cannot find a runnable @wontlost-ltd/schema-dsl CLI. Either:\n\
+         - at the monorepo root run `npm ci` then `npm run -w @wontlost-ltd/schema-dsl build`\n\
+           (npm ci hoists the package to root node_modules but does NOT build its dist/), or\n\
+         - run a full `npm run build` at the root (tsc -b builds all packages incl. schema-dsl), or\n\
          - set CHRONO_SCHEMA_DSL_CLI to the path of bin/render-rust.js in your worktree."
     );
 }

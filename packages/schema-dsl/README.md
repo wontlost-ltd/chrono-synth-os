@@ -123,12 +123,21 @@ real SQLite/PostgreSQL catalogs to catch drift after PR6.
 
 ## Desktop Integration
 
-The desktop repository consumes `@wontlost-ltd/schema-dsl` as a build-time package.
-Its `src-tauri/build.rs` resolves the Rust renderer CLI in this order:
+`apps/desktop` consumes `@wontlost-ltd/schema-dsl` as a build-time package
+(ADR-0049: desktop is now a workspace member, not a separate repo). Its
+`src-tauri/build.rs` resolves the Rust renderer CLI in this order:
 
-1. `CHRONO_SCHEMA_DSL_CLI`
-2. `../node_modules/.bin/schema-dsl-render-rust`
-3. `../node_modules/@wontlost-ltd/schema-dsl/bin/render-rust.js`
+1. `CHRONO_SCHEMA_DSL_CLI` env override
+2. `apps/desktop/node_modules/.bin/schema-dsl-render-rust` (legacy standalone)
+3. `apps/desktop/node_modules/@wontlost-ltd/schema-dsl/bin/render-rust.js` (legacy standalone)
+4. monorepo root `node_modules/.bin/schema-dsl-render-rust` (workspace hoist)
+5. in-repo `packages/schema-dsl/bin/render-rust.js` source
+
+Candidates 4-5 resolve to this in-repo package, whose `bin/render-rust.js` imports
+the **built `dist/`** (not git-tracked). So build.rs only uses 4-5 when `dist/` is
+built; otherwise it panics with build guidance. In the monorepo, run
+`npm run -w @wontlost-ltd/schema-dsl build` (or a full `npm run build`) after
+`npm ci` (which hoists the package but does not build its `dist/`).
 
 The build script writes `migrations_generated.rs` into Cargo `OUT_DIR`.
 `src-tauri/src/db/migrations.rs` includes that generated file and keeps the
