@@ -14,8 +14,10 @@ const RECENT_MEMORIES_LIMIT = 8;
 
 /** 选「主」persona：取 growth_index 最高的一个（数字人成长程度最高 = 最主要的陪伴对象）。 */
 function pickPrimaryPersona(rows: readonly PersonaRow[]): PersonaRow | null {
-  if (rows.length === 0) return null;
-  return [...rows].sort((a, b) => b.growth_index - a.growth_index)[0] ?? null;
+  return rows.reduce<PersonaRow | null>(
+    (best, row) => (best === null || row.growth_index > best.growth_index ? row : best),
+    null,
+  );
 }
 
 function formatTimestamp(ms: number): string {

@@ -132,6 +132,18 @@ export async function crdtExportFullState(personaId: string): Promise<CrdtUpdate
 
 /* ── T0-B: AI 安全 / 漂移监测 ─────────────────────────────────── */
 
+/**
+ * 判断一个 Tauri invoke 的 reject 是否为「命令未注册/未实现」。
+ *
+ * Tauri 的 invoke 失败既可能 reject 一个 Error，也可能 reject 一个**字符串**（后端返回的错误串），
+ * 所以必须对 `String(err)` 做正则，而不能只判 `err instanceof Error`——否则未接的命令会把错误
+ * 冒泡成页面错误态，而不是优雅降级（空态）。
+ */
+function isMissingCommandError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /not.*(implemented|registered|found)/i.test(msg);
+}
+
 export type DriftAlertLevel = 'ok' | 'warning' | 'critical';
 
 export interface DriftValueDelta {
@@ -165,10 +177,8 @@ export async function getLatestDriftReport(): Promise<DriftReport | null> {
   try {
     return await invoke<DriftReport | null>('get_latest_drift_report');
   } catch (err) {
-    /* Tauri returns the missing-command string verbatim; treat as not implemented */
-    if (err instanceof Error && /not.*(implemented|registered|found)/i.test(err.message)) {
-      return null;
-    }
+    /* 命令未接时优雅降级为 null（与页面空态一致）；Tauri 可能 reject 字符串，故走统一判定。 */
+    if (isMissingCommandError(err)) return null;
     throw err;
   }
 }
@@ -177,9 +187,7 @@ export async function generateDriftReport(): Promise<DriftReport | null> {
   try {
     return await invoke<DriftReport>('generate_drift_report');
   } catch (err) {
-    if (err instanceof Error && /not.*(implemented|registered|found)/i.test(err.message)) {
-      return null;
-    }
+    if (isMissingCommandError(err)) return null;
     throw err;
   }
 }
@@ -197,9 +205,8 @@ export async function queryTenantSnapshotCount(): Promise<number> {
   try {
     return await invoke<number>('count_snapshots');
   } catch (err) {
-    if (err instanceof Error && /not.*(implemented|registered|found)/i.test(err.message)) {
-      return 0;
-    }
+    /* 未接时优雅返回 0（= 无基线 → 成长视图走「还在认识你」空态）。Tauri 字符串 reject 也覆盖。 */
+    if (isMissingCommandError(err)) return 0;
     throw err;
   }
 }

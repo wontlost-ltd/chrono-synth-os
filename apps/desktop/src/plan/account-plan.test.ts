@@ -69,4 +69,33 @@ describe('resolveAccountPlanWith', () => {
     const { deps } = makeDeps({ unconfigured: false, status: 0 }, 'garbage-value');
     expect(await resolveAccountPlanWith(deps)).toBe('unconfigured');
   });
+
+  /* ── 「不抛」契约：桥接读写/probe 失败都不能冒泡（App 状态机依赖它失败也能进 ready）。 ── */
+
+  it('200 但写缓存 reject → 仍返回 companion（缓存 best-effort）', async () => {
+    const deps: AccountPlanDeps = {
+      probe: vi.fn().mockResolvedValue({ unconfigured: false, status: 200 }),
+      readCachedPlan: vi.fn().mockResolvedValue(null),
+      writeCachedPlan: vi.fn().mockRejectedValue(new Error('keyring locked')),
+    };
+    await expect(resolveAccountPlanWith(deps)).resolves.toBe('companion');
+  });
+
+  it('网络不可达 + 读缓存 reject → 收敛 unconfigured，不抛', async () => {
+    const deps: AccountPlanDeps = {
+      probe: vi.fn().mockResolvedValue({ unconfigured: false, status: 0 }),
+      readCachedPlan: vi.fn().mockRejectedValue(new Error('db locked')),
+      writeCachedPlan: vi.fn().mockResolvedValue(undefined),
+    };
+    await expect(resolveAccountPlanWith(deps)).resolves.toBe('unconfigured');
+  });
+
+  it('probe 本身抛 → 视作不可达回退缓存，不抛', async () => {
+    const deps: AccountPlanDeps = {
+      probe: vi.fn().mockRejectedValue(new Error('boom')),
+      readCachedPlan: vi.fn().mockResolvedValue('enterprise'),
+      writeCachedPlan: vi.fn().mockResolvedValue(undefined),
+    };
+    await expect(resolveAccountPlanWith(deps)).resolves.toBe('enterprise');
+  });
 });

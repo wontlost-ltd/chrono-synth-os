@@ -32,6 +32,10 @@ export function App() {
   const [gate, setGate] = useState<GateState>('opening-db');
   const [dbError, setDbError] = useState<string | null>(null);
   const [plan, setPlan] = useState<AccountPlan>('unconfigured');
+  /* onboarding 完成后递增以重跑 boot 序列：此时 first_run_completed 已为真，
+   * 序列会跳过 onboarding → 探测 plan → ready。避免「完成 onboarding 却卡在 onboarding」
+   * （Codex PR-A Critical：旧实现靠单 MemoryRouter 的 navigate('/')，新状态机需显式重查）。 */
+  const [bootNonce, setBootNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,10 +70,16 @@ export function App() {
         return;
       }
 
-      /* 已 onboard：探测 plan 决定渲染哪套外壳。resolveAccountPlan 不抛（失败回退缓存/
-       * unconfigured），所以这里无需 try——拿到什么 plan 就进 ready。 */
+      /* 已 onboard：探测 plan 决定渲染哪套外壳。resolveAccountPlan 设计为不抛（失败回退缓存/
+       * unconfigured）；这里再包一层 try 兜底——即便未来它意外抛出，也降级 unconfigured（→ 企业版），
+       * 绝不把 App 卡在 resolving-plan（Codex PR-A Critical：防启动死锁）。 */
       setGate('resolving-plan');
-      const resolved = await resolveAccountPlan();
+      let resolved: AccountPlan;
+      try {
+        resolved = await resolveAccountPlan();
+      } catch {
+        resolved = 'unconfigured';
+      }
       if (cancelled) return;
       setPlan(resolved);
       setGate('ready');
@@ -77,7 +87,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bootNonce]);
 
   if (gate === 'db-error') {
     return (
@@ -117,15 +127,9 @@ export function App() {
   }
 
   if (gate === 'first-run') {
-    return (
-      <MemoryRouter initialEntries={['/onboarding']}>
-        <Routes>
-          <Route path="/onboarding" element={<OnboardingPage />} />
-          {/* onboarding 完成后由其内部 navigate('/') 进入；这里只需把首屏定在 onboarding。 */}
-          <Route path="*" element={<OnboardingPage />} />
-        </Routes>
-      </MemoryRouter>
-    );
+    /* onboarding 完成后 bump nonce 重跑 boot（此时 first_run_completed=真 → 直接探测 plan → ready），
+     * 而不是靠路由内部 navigate——后者在新状态机下 gate 仍是 first-run，会把用户带回 onboarding。 */
+    return <OnboardingPage onComplete={() => setBootNonce((n) => n + 1)} />;
   }
 
   /* ready：按 plan 渲染。companion = 个人版精简外壳；enterprise / unconfigured = 企业版（本地优先默认）。 */

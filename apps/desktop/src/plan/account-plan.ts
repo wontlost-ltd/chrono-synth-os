@@ -7,7 +7,10 @@
  *   - 本地缓存：探测成功后把结果写入 app_settings；离线/探测失败时回退上次缓存，保证离线可用。
  *
  * 本模块是纯逻辑 + 依赖注入（probe / 读写缓存都从外部传入），便于 vitest 全分支覆盖；
- * 文件末尾导出一个用真实桥接接好线的 `resolveAccountPlan` 供 App 使用。
+ * 用真实桥接接好线的 `resolveAccountPlan` 在 `account-plan-runtime.ts` 里。
+ *
+ * **不抛契约**：本函数对外承诺「不抛」（App.tsx 的状态机依赖它失败也能进 ready）。因此对注入的
+ * 缓存读/写都做 best-effort 兜底——写失败忽略、读失败按无缓存处理，绝不让桥接异常冒泡。
  */
 
 /** 账号 plan 解析结果。 */
@@ -39,6 +42,24 @@ function normalizeCachedPlan(raw: string | null): AccountPlan {
   return raw === 'enterprise' || raw === 'companion' ? raw : 'unconfigured';
 }
 
+/** best-effort 写缓存：写失败不影响 plan 结果（缓存只是优化，不是真相来源）。 */
+async function writeCacheBestEffort(deps: AccountPlanDeps, plan: AccountPlan): Promise<void> {
+  try {
+    await deps.writeCachedPlan(plan);
+  } catch {
+    /* 忽略：缓存写失败下次再写即可，不能让它破坏「不抛」契约。 */
+  }
+}
+
+/** best-effort 读缓存：读失败按「无缓存」处理（→ unconfigured），不抛。 */
+async function readCacheBestEffort(deps: AccountPlanDeps): Promise<string | null> {
+  try {
+    return await deps.readCachedPlan();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 解析账号 plan。
  *
@@ -49,18 +70,25 @@ function normalizeCachedPlan(raw: string | null): AccountPlan {
  *   3. 探测失败（status=0，网络/服务端不可达）→ 回退本地缓存（离线续用上次结论）。
  */
 export async function resolveAccountPlanWith(deps: AccountPlanDeps): Promise<AccountPlan> {
-  const result = await deps.probe();
+  /* probe 也兜底：约定的 runtime probe 已自吞网络异常，但任何注入实现抛出时也不破坏「不抛」契约
+   * ——视作连不上（status=0），回退缓存。 */
+  let result: PlanProbeResult;
+  try {
+    result = await deps.probe();
+  } catch {
+    result = { unconfigured: false, status: 0 };
+  }
   if (result.unconfigured) return 'unconfigured';
 
   if (result.status === 200) {
-    await deps.writeCachedPlan('companion');
+    await writeCacheBestEffort(deps, 'companion');
     return 'companion';
   }
   if (result.status === 403) {
-    await deps.writeCachedPlan('enterprise');
+    await writeCacheBestEffort(deps, 'enterprise');
     return 'enterprise';
   }
   /* 能连上但状态码不是明确的 200/403（如 401 token 过期、5xx），或彻底连不上（status=0）：
    * 不臆断 plan，回退上次缓存的可信结论；无缓存则 unconfigured（让 UI 引导重新配置/登录）。 */
-  return normalizeCachedPlan(await deps.readCachedPlan());
+  return normalizeCachedPlan(await readCacheBestEffort(deps));
 }
