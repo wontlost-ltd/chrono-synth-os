@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import type { ExplorationDirectionV1, ExplorationIntensityV1 } from '@chrono/contracts';
 import { fetchGrowth } from '../api.js';
 import { useAsync } from '../useAsync.js';

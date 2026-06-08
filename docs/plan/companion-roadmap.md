@@ -69,7 +69,8 @@
       React，避免一个 monorepo 两个 React 大版本；plugin-react@5 适配 Vite 8）(PR #62)
 - [x] 3 屏：登录、我的数字人主页、成长视图（+ 记忆 tab）(PR #62 / #63)
 - [x] PWA manifest（独立 brand color / icon）(PR #62)
-- [ ] Service Worker（沿用 chrono-synth-web 的策略）
+- [x] Service Worker（vite-plugin-pwa injectManifest + 自写 src/sw.ts，复用 apps/web 策略；
+      app shell precache + /companion/me* StaleWhileRevalidate 离线浏览 + auth NetworkOnly）
 
 ### 2.3 Mobile (`apps/mobile/` 扩屏)
 

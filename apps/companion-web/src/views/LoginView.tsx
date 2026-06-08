@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type JSX } from 'react';
 import { login } from '../auth.js';
 
 /** 登录页（alpha）：邮箱 + 密码 → /api/v1/auth/login，成功后由 App 切到主界面。 */

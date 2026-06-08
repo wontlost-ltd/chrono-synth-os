@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import { fetchMe } from '../api.js';
 import { useAsync } from '../useAsync.js';
 import { StateBlock } from './StateBlock.js';

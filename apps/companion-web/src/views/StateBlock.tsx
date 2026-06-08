@@ -1,3 +1,5 @@
+import type { JSX } from 'react';
+
 /** 加载 / 错误 / 鉴权失败的统一占位块。 */
 export function StateBlock(props: {
   status: 'loading' | 'ok' | 'error';

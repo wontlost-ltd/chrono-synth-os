@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore, type JSX } from 'react';
 import { HomeView } from './views/HomeView.js';
 import { GrowthView } from './views/GrowthView.js';
 import { MemoriesView } from './views/MemoriesView.js';

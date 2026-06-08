@@ -1,0 +1,76 @@
+/**
+ * ChronoCompanion Service Worker — PWA 离线支持（Phase 2.2）。
+ *
+ * companion 是只读浏览型 C 端（看「我的数字人 / 成长 / 记忆」），无离线写 outbox，
+ * 故策略比企业版 apps/web 精简：
+ *   - app shell：Workbox precache（构建期注入 manifest）。
+ *   - companion 只读 API（/api/v1/companion/me*）：StaleWhileRevalidate，离线时供 24h 缓存副本
+ *     →「断网也能看自己的数字人」。
+ *   - auth：NetworkOnly（永不缓存令牌/会话）。
+ *   - 静态资源（JS/CSS/图片/字体）：CacheFirst，30d。
+ *
+ * injectManifest 策略（与 apps/web 一致）：本文件是 SW 源码，构建期由 vite-plugin-pwa 注入
+ * self.__WB_MANIFEST 后编译为 sw.js。
+ */
+
+import { precacheAndRoute } from 'workbox-precaching';
+import { registerRoute } from 'workbox-routing';
+import { CacheFirst, StaleWhileRevalidate, NetworkOnly } from 'workbox-strategies';
+import { ExpirationPlugin } from 'workbox-expiration';
+import { CacheableResponsePlugin } from 'workbox-cacheable-response';
+
+declare let self: ServiceWorkerGlobalScope;
+
+/* precache app shell（构建期注入）。 */
+precacheAndRoute(self.__WB_MANIFEST);
+
+/* SW 作用域里 addEventListener/skipWaiting 运行时恒在，但 DOM lib 的类型不含——弱类型访问。 */
+const swScope = self as unknown as {
+  addEventListener(type: string, listener: (event: Event) => void): void;
+  skipWaiting(): Promise<void>;
+};
+
+/* 主线程发 SKIP_WAITING 时立即激活新 SW（配合 registerType:'autoUpdate'）。 */
+swScope.addEventListener('message', (event) => {
+  const data = (event as MessageEvent<{ type?: string } | null>).data;
+  if (data?.type === 'SKIP_WAITING') {
+    void swScope.skipWaiting();
+  }
+});
+
+const COMPANION_API_CACHE = 'companion-api-cache';
+const STATIC_CACHE = 'companion-static-cache';
+
+/* auth：永不缓存。 */
+registerRoute(
+  ({ url }) => url.pathname.startsWith('/api/v1/auth'),
+  new NetworkOnly(),
+);
+
+/* companion 只读 API：StaleWhileRevalidate（24h，支持离线浏览自己的数字人）。 */
+registerRoute(
+  ({ url, request }) =>
+    request.method === 'GET' && url.pathname.startsWith('/api/v1/companion/me'),
+  new StaleWhileRevalidate({
+    cacheName: COMPANION_API_CACHE,
+    plugins: [
+      new CacheableResponsePlugin({ statuses: [200] }),
+      new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 24 * 60 * 60 }),
+    ],
+  }),
+);
+
+/* 静态资源：CacheFirst（30d）。 */
+registerRoute(
+  ({ request }) =>
+    request.destination === 'script' ||
+    request.destination === 'style' ||
+    request.destination === 'image' ||
+    request.destination === 'font',
+  new CacheFirst({
+    cacheName: STATIC_CACHE,
+    plugins: [
+      new ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 }),
+    ],
+  }),
+);
