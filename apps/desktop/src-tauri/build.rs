@@ -40,7 +40,7 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         .join("node_modules")
         .join(".bin")
         .join("schema-dsl-render-rust");
-    if from_node_modules.exists() {
+    if from_node_modules.is_file() {
         return from_node_modules;
     }
 
@@ -51,7 +51,7 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         .join("schema-dsl")
         .join("bin")
         .join("render-rust.js");
-    if from_pkg.exists() {
+    if from_pkg.is_file() {
         return from_pkg;
     }
 
@@ -63,24 +63,32 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         .join("node_modules")
         .join(".bin")
         .join("schema-dsl-render-rust");
-    if from_root_bin.exists() {
+    if from_root_bin.is_file() {
         return from_root_bin;
     }
 
-    // 5. Last resort: the workspace package source directly (present in-repo even if the .bin
-    //    symlink wasn't created, e.g. a fresh checkout before `npm ci`).
-    let from_workspace_pkg = workspace_root
-        .join("packages")
-        .join("schema-dsl")
-        .join("bin")
-        .join("render-rust.js");
-    if from_workspace_pkg.exists() {
+    // 5. Last resort: the workspace package source directly. NOTE: render-rust.js imports the
+    //    package's built `dist/` output, which is NOT git-tracked. So only return this path when
+    //    `dist` has actually been built — otherwise selecting it would crash node with a cryptic
+    //    module-not-found instead of the helpful panic below.
+    let schema_dsl_pkg = workspace_root.join("packages").join("schema-dsl");
+    let from_workspace_pkg = schema_dsl_pkg.join("bin").join("render-rust.js");
+    let dist_built = schema_dsl_pkg
+        .join("dist")
+        .join("src")
+        .join("migrations")
+        .join("desktop")
+        .join("index.js")
+        .is_file();
+    if from_workspace_pkg.is_file() && dist_built {
         return from_workspace_pkg;
     }
 
     panic!(
-        "Cannot find @wontlost-ltd/schema-dsl CLI. Either:\n\
-         - run `npm ci` at the monorepo root (hoists @wontlost-ltd/schema-dsl to root node_modules), or\n\
+        "Cannot find a runnable @wontlost-ltd/schema-dsl CLI. Either:\n\
+         - at the monorepo root run `npm ci` then `npm run -w @wontlost-ltd/schema-dsl build`\n\
+           (npm ci hoists the package to root node_modules but does NOT build its dist/), or\n\
+         - run a full `npm run build` at the root (tsc -b builds all packages incl. schema-dsl), or\n\
          - set CHRONO_SCHEMA_DSL_CLI to the path of bin/render-rust.js in your worktree."
     );
 }

@@ -60,11 +60,16 @@ npm run tauri dev
 ```
 
 The Rust migration table is generated at build time by `@wontlost-ltd/schema-dsl`.
-`src-tauri/build.rs` first looks for `../node_modules/.bin/schema-dsl-render-rust`
-and then `../node_modules/@wontlost-ltd/schema-dsl/bin/render-rust.js`. Until the
-package is published and installed from GitHub Packages, set
-`CHRONO_SCHEMA_DSL_CLI` to a local `packages/schema-dsl/bin/render-rust.js`
-worktree path before running Cargo/Tauri commands.
+`src-tauri/build.rs` resolves the CLI in order: `CHRONO_SCHEMA_DSL_CLI` env →
+`apps/desktop/node_modules/.bin` (legacy standalone) → **the monorepo root
+`node_modules/.bin/schema-dsl-render-rust`** (ADR-0049: desktop is a workspace
+member, so deps hoist to root) → the in-repo `packages/schema-dsl` source (only
+if its `dist/` is built). In the monorepo, **run `npm ci` then build the package**
+at the repo root — `npm ci` hoists `@wontlost-ltd/schema-dsl` to root
+`node_modules` but does **not** build its `dist/` (no prepare script), so either
+run a full `npm run build` (tsc -b builds all packages) or
+`npm run -w @wontlost-ltd/schema-dsl build` before `npm run tauri dev`. The
+`CHRONO_SCHEMA_DSL_CLI` env override remains for differently-laid-out worktrees.
 
 For the production build matrix (signed installers for all three OSes):
 see `.github/workflows/release.yml`.
