@@ -24,13 +24,23 @@ declare let self: ServiceWorkerGlobalScope;
 /* precache app shell（构建期注入）。 */
 precacheAndRoute(self.__WB_MANIFEST);
 
-/* SW 作用域里 addEventListener/skipWaiting 运行时恒在，但 DOM lib 的类型不含——弱类型访问。 */
+/* SW 作用域里 addEventListener/skipWaiting/clients 运行时恒在，但 DOM lib 类型不全——弱类型访问。 */
 const swScope = self as unknown as {
   addEventListener(type: string, listener: (event: Event) => void): void;
   skipWaiting(): Promise<void>;
+  clients: { claim(): Promise<void> };
 };
 
-/* 主线程发 SKIP_WAITING 时立即激活新 SW（配合 registerType:'autoUpdate'）。 */
+/* injectManifest 策略下，autoUpdate 不会自动给自写 SW 注入 skipWaiting/clientsClaim，
+ * 否则新 SW 会卡在 waiting 永不激活——这里显式做：install 即 skipWaiting，activate 即 claim。 */
+swScope.addEventListener('install', () => {
+  void swScope.skipWaiting();
+});
+swScope.addEventListener('activate', () => {
+  void swScope.clients.claim();
+});
+
+/* 主线程发 SKIP_WAITING 时也立即激活（双保险）。 */
 swScope.addEventListener('message', (event) => {
   const data = (event as MessageEvent<{ type?: string } | null>).data;
   if (data?.type === 'SKIP_WAITING') {
