@@ -27,6 +27,7 @@
     "@tanstack/react-query": "^5.0.0"
   },
   "devDependencies": {
+    "@chrono/contracts": "file:../../packages/contracts",
     "@types/react": "~18.3.0",
     "typescript": "~5.7.0"
   }
