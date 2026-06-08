@@ -65,7 +65,8 @@ services:
 
   frontend:
     build:
-      context: ${FRONTEND_PATH:-../chrono-synth-web}
+      # web 已融合进本仓 apps/web（ADR-0049）；默认 build context 指向它，不再是归档 sibling 仓。
+      context: ${FRONTEND_PATH:-./apps/web}
       dockerfile: Dockerfile
     ports:
       - "80:80"
