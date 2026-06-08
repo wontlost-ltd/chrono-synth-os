@@ -12,9 +12,17 @@ import {
   toCompanionMemory,
 } from '../../server/routes/companion/me.js';
 import { driftReportToGrowth } from '@chrono/contracts';
+import type { DriftLike } from '@chrono/contracts';
 import type { CoreValue } from '@chrono/kernel';
 import type { MemoryNode } from '@chrono/kernel';
 import type { DriftReport } from '../../safety/persona-drift-analyzer.js';
+
+/* 编译期防回归锁：真实的 DriftReport 必须结构化满足 contracts 的 DriftLike 入参。
+ * driftReportToGrowth 抽到 @chrono/contracts 后用结构化 DriftLike 解耦，这条断言确保
+ * 未来若 PersonaDriftAnalyzer 改了 alertLevel 取值或 valueDrifts 字段，类型检查直接报错，
+ * 而非运行时静默漂移（Codex PR-B 审查 Suggestion）。仅类型层面，无运行时开销。 */
+const _driftReportSatisfiesDriftLike: DriftLike = {} as DriftReport;
+void _driftReportSatisfiesDriftLike;
 
 function coreValue(over: Partial<CoreValue> = {}): CoreValue {
   return { id: 'v1', label: '好奇心', weight: 0.7, timeDiscount: 0.5, emotionAmplifier: 1, updatedAt: 1000, ...over };
