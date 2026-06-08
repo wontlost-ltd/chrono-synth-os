@@ -10,8 +10,8 @@ import assert from 'node:assert/strict';
 import {
   toCompanionValue,
   toCompanionMemory,
-  driftReportToGrowth,
 } from '../../server/routes/companion/me.js';
+import { driftReportToGrowth } from '@chrono/contracts';
 import type { CoreValue } from '@chrono/kernel';
 import type { MemoryNode } from '@chrono/kernel';
 import type { DriftReport } from '../../safety/persona-drift-analyzer.js';
@@ -95,7 +95,7 @@ describe('driftReportToGrowth（企业 drift → C 端探索语义）', () => {
     assert.equal(out.directions[0].magnitude, 1, 'magnitude 夹到 1');
     assert.equal(out.directions[0].direction, 'toward');
     assert.equal(out.directions[0].intensity, 'leaping');
-    const byId = Object.fromEntries(out.directions.map((x) => [x.valueId, x]));
+    const byId = Object.fromEntries(out.directions.map((x) => [x.valueId, x] as const));
     assert.equal(byId.a.direction, 'toward');
     assert.equal(byId.b.direction, 'away');
     assert.equal(byId.c.direction, 'steady');
