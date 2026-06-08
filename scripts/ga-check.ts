@@ -1,21 +1,20 @@
 #!/usr/bin/env node
 /**
  * GA aggregate gate — runs every GA-relevant lint/audit across the
- * monorepo + its three sibling repos in a single command.
+ * monorepo (incl. the in-repo apps/web + apps/desktop) in one command.
  *
  * Why this exists:
- *   `audit:ga-blockers` covers OS-side artifact presence (§8 #1-28),
- *   but each of the three sibling repos (chrono-synth-web,
- *   chrono-synth-desktop, chrono-synth-deploy) has its own GA lint
- *   that the OS auditor previously had to invoke by hand. CI and the
- *   release runbook both want one entrypoint that fails-fast on any
- *   GA regression across the four repos.
+ *   `audit:ga-blockers` covers OS-side artifact presence (§8 #1-28).
+ *   web/desktop are now in-repo apps (ADR-0049) and their GA lints
+ *   (typecheck / i18n / vitest / Tauri updater-pubkey) run here against
+ *   apps/* and MUST pass. Only chrono-synth-deploy remains a separate
+ *   repo and is still resolved as an optional sibling.
  *
  * Mechanics:
  *   - Each step declares { id, repo, repoPath, command, args, desc, optional? }.
- *   - repoPath defaults to OS_ROOT/../<sibling>; override per-repo via
- *     CHRONO_WEB_REPO / CHRONO_DESKTOP_REPO / CHRONO_DEPLOY_REPO.
- *   - Sibling repos that are not checked out are reported as `skipped`
+ *   - web/desktop gates point at OS_ROOT/apps/* (required).
+ *   - deploy defaults to OS_ROOT/../chrono-synth-deploy; override via
+ *     CHRONO_DEPLOY_REPO. If not checked out it is reported as `skipped`
  *     (not failed) by default. Pass `--require-siblings` (or set
  *     CHRONO_GA_REQUIRE_SIBLINGS=1) to convert "skip" into "fail" for
  *     release CI; the script then also pre-checks repo presence and
@@ -130,14 +129,6 @@ const STEPS: readonly StepDecl[] = [
     command: 'npm',
     args: ['run', 'lint:contrast', '--silent'],
     desc: 'WCAG AA/AAA contrast lint across all three themes',
-  },
-  {
-    id: 'os.sync-vendor-check',
-    repo: 'os',
-    repoPath: OS_ROOT,
-    command: 'npm',
-    args: ['run', 'sync:vendor:check', '--silent'],
-    desc: 'vendored sibling packages match OS source',
   },
 
   /* web/desktop 已是本仓 apps/*（ADR-0049 融合）——必过，不再 optional。 */

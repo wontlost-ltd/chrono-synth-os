@@ -19,15 +19,17 @@
 
 ## Why these are inside `chrono-synth-os` (not separate repos)
 
-ADR-0046 D2 picked monorepo over per-app repos because:
+ADR-0046 D2 picked monorepo over per-app repos, and [ADR-0049](../docs/adr/0049-consolidate-app-hosts-into-monorepo.md)
+finished the job by merging the last two holdouts (`chrono-synth-web` →
+`apps/web`, `chrono-synth-desktop` → `apps/desktop`):
 - `apps/*` consume `@chrono/kernel` + `@chrono/contracts` + `@chrono/sync-engine`
-  + `@chrono/design-tokens` via `file:` workspace deps. Pulling them out into
-  separate repos would mean publishing those packages on every kernel change.
-- All three hosts share the same backend (`chrono-synth-os`). A change to a
-  route schema needs to update host code; a cross-repo PR is painful.
+  + `@chrono/design-tokens` via **workspace** deps (`*`). The old standalone repos
+  vendored those packages' `dist/` and drifted; workspace deps remove that.
+- All hosts share the same backend (`chrono-synth-os`). A route-schema change
+  needs host updates; a cross-repo PR is painful.
 - Issue tracker / CI / dependabot all stay in one place.
 
 The trade-off is that `chrono-synth-os` becomes the org-level monorepo. The
-sibling `chrono-synth-web` / `chrono-synth-desktop` / `chrono-synth-deploy`
-repos remain because they pre-date `apps/` and their CI / release pipelines
-are independently load-bearing. New product hosts go under `apps/` here.
+only remaining separate repo is **`chrono-synth-deploy`** (independent deploy
+pipeline). `chrono-synth-web` / `chrono-synth-desktop` are archived (ADR-0049).
+New product hosts go under `apps/` here.

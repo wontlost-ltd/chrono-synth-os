@@ -38,9 +38,6 @@
     "recharts": "^3.8.1",
     "web-vitals": "^5.1.0"
   },
-  "overrides": {
-    "serialize-javascript": "^7.0.4"
-  },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@chrono/contracts": "*",

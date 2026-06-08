@@ -34,8 +34,6 @@
     "build:design-tokens": "tsc -b packages/design-tokens/tsconfig.json",
     "codegen:design-tokens": "npm run build:design-tokens --silent && node scripts/codegen-design-tokens-css.mjs",
     "codegen:design-tokens:check": "npm run build:design-tokens --silent && node scripts/codegen-design-tokens-css.mjs --check",
-    "sync:vendor": "npm run build:design-tokens --silent && bash scripts/sync-vendored-packages.sh",
-    "sync:vendor:check": "npm run build:design-tokens --silent && bash scripts/sync-vendored-packages.sh --check",
     "lint:contrast": "npm run build:design-tokens --silent && node scripts/lint-contrast-ratio.mjs",
     "check:licenses": "node scripts/check-license-boundary.mjs",
     "test": "npm run test:unit && npm run test:integration",
@@ -83,6 +81,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "@types/react": "19.2.15",
-    "@types/react-dom": "19.2.3"
+    "@types/react-dom": "19.2.3",
+    "serialize-javascript": "^7.0.4"
   }
 }
