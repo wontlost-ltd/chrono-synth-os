@@ -1,0 +1,13 @@
+# 链接 sqlcipher。
+#
+# 默认走 rusqlite 的 `bundled` + `sqlcipher` 特性，build.rs 会从源码编译 sqlcipher，
+# 不依赖任何系统库。这样三平台 CI（Linux / macOS / Windows）行为完全一致。
+#
+# 之前这里设置过 SQLCIPHER_LIB_DIR / SQLCIPHER_INCLUDE_DIR 环境变量希望加速本地
+# macOS 开发，但这两个变量会让 libsqlite3-sys 切换成"链接系统 sqlcipher"路径，
+# Linux/Windows runner 上找不到 /opt/homebrew/opt/sqlcipher/lib，链接器报
+# undefined symbol: sqlite3_prepare_v3 等。删除后由 bundled 路径接管。
+#
+# macOS 本地开发若想加速，可在 shell rc 里手动 export SQLCIPHER_*，避免污染 CI。
+[target.'cfg(target_os = "macos")']
+rustflags = ["-L", "/opt/homebrew/opt/sqlcipher/lib"]

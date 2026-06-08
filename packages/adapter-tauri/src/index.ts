@@ -9,6 +9,9 @@
 export { TauriKVStore } from './tauri-kv-store.js';
 export type { TauriKVStoreOptions, TauriInvoke } from './tauri-kv-store.js';
 
+export { bootPersonaRuntime } from './boot-persona-runtime.js';
+export type { PersonaRuntime } from './boot-persona-runtime.js';
+
 /* Re-export the kernel-facing pieces from adapter-web so Tauri hosts only
  * need to depend on @chrono/adapter-tauri. */
 export {

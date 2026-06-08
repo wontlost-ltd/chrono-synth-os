@@ -15,7 +15,7 @@
     { "path": "./packages/schema-dsl" },
     { "path": "./packages/adapter-web" },
     { "path": "./packages/adapter-tauri" },
-    { "path": "./packages/adapter-react-native" },
-    { "path": "./apps/desktop" }
+    { "path": "./packages/adapter-tauri/tsconfig.test.json" },
+    { "path": "./packages/adapter-react-native" }
   ]
 }
