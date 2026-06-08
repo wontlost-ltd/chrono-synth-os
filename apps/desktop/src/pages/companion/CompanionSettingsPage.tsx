@@ -9,8 +9,8 @@ import { useState } from 'react';
 import {
   getApiBaseUrl,
   getApiToken,
-  setApiBaseUrl,
-  setApiToken,
+  setApiCredentials,
+  clearCachedAccountPlan,
 } from '@/bridge/http-client';
 import type { AccountPlan } from '@/plan/account-plan';
 
@@ -31,7 +31,7 @@ export function CompanionSettingsPage({ plan }: CompanionSettingsPageProps) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function handleSave() {
+  async function handleSave() {
     setError(null);
     const trimmed = baseUrl.trim();
     if (trimmed) {
@@ -46,15 +46,17 @@ export function CompanionSettingsPage({ plan }: CompanionSettingsPageProps) {
         return;
       }
     }
-    setApiBaseUrl(trimmed || null);
-    setApiToken(token.trim() || null);
+    /* 事务式写凭据 + 清 plan 缓存，**await 后再 reload**——否则 reload 会中断清缓存的
+     * pending promise，换账号后离线时仍可能沿用旧 plan（Codex 复审 Major）。 */
+    await setApiCredentials({ baseUrl: trimmed || null, token: token.trim() || null });
     setSaved(true);
-    /* 保存后重载：plan 探测/数据查询会用新配置重新跑（最省心、无状态泄漏）。 */
     window.location.reload();
   }
 
-  function handleLogout() {
-    setApiToken(null);
+  async function handleLogout() {
+    /* 登出：清 token + 作废 plan 缓存（下次登录是别的账号也不会复用旧 plan），await 后 reload。 */
+    await setApiCredentials({ token: null });
+    await clearCachedAccountPlan();
     window.location.reload();
   }
 

@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/* clearCachedAccountPlan 动态 import 这个模块清 account.plan；mock 掉 setAppSetting 以验证清缓存行为。 */
+vi.mock('./tauri-commands', () => ({
+  setAppSetting: vi.fn(async () => undefined),
+}));
+
 import {
   ApiNotConfiguredError,
   apiFetch,
@@ -6,18 +12,66 @@ import {
   getApiToken,
   setApiBaseUrl,
   setApiToken,
+  setApiCredentials,
 } from './http-client';
+import { setAppSetting } from './tauri-commands';
+import { APP_SETTING_ACCOUNT_PLAN } from '@/plan/account-plan';
 
 const STORAGE_BASE = 'chrono.api.baseUrl';
 const STORAGE_TOKEN = 'chrono.api.token';
 
+const setAppSettingMock = setAppSetting as unknown as ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   localStorage.clear();
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
   localStorage.clear();
+  vi.unstubAllGlobals();
+});
+
+describe('setApiCredentials — 事务式凭据更新 + plan 缓存作废（Codex PR-A 复审 Major）', () => {
+  it('baseUrl 变化 → 写 localStorage 并 await 清 account.plan', async () => {
+    await setApiCredentials({ baseUrl: 'https://a.example.com//' });
+    expect(getApiBaseUrl()).toBe('https://a.example.com'); // 尾斜杠已 trim
+    expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_ACCOUNT_PLAN, '');
+  });
+
+  it('token 变化 → 清 account.plan', async () => {
+    await setApiCredentials({ token: 'jwt-new' });
+    expect(getApiToken()).toBe('jwt-new');
+    expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_ACCOUNT_PLAN, '');
+  });
+
+  it('值未变化 → 不清缓存（避免无谓写）', async () => {
+    setApiBaseUrl('https://same.example.com');
+    setApiToken('jwt-same');
+    setAppSettingMock.mockClear();
+    await setApiCredentials({ baseUrl: 'https://same.example.com', token: 'jwt-same' });
+    expect(setAppSettingMock).not.toHaveBeenCalled();
+  });
+
+  it('清除凭据（null）也算变化 → 清缓存', async () => {
+    setApiToken('jwt-x');
+    setAppSettingMock.mockClear();
+    await setApiCredentials({ token: null });
+    expect(getApiToken()).toBeNull();
+    expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_ACCOUNT_PLAN, '');
+  });
+
+  it('清缓存失败被吞掉，不让凭据更新流程抛', async () => {
+    setAppSettingMock.mockRejectedValueOnce(new Error('db locked'));
+    await expect(setApiCredentials({ token: 'jwt-y' })).resolves.toBeUndefined();
+    expect(getApiToken()).toBe('jwt-y');
+  });
+
+  it('同步 setApiBaseUrl/setApiToken 不再自行清缓存（清缓存只属事务式 API）', () => {
+    setApiBaseUrl('https://b.example.com');
+    setApiToken('jwt-z');
+    expect(setAppSettingMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('storage helpers', () => {

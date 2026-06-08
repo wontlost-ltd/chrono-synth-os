@@ -22,7 +22,7 @@
 
 import { useState } from 'react';
 import { markFirstRunCompleted } from '../bridge/tauri-commands';
-import { setApiBaseUrl } from '../bridge/http-client';
+import { setApiCredentials } from '../bridge/http-client';
 
 type Step = 'welcome' | 'mode-select' | 'done';
 const STEPS: Step[] = ['welcome', 'mode-select', 'done'];
@@ -62,7 +62,8 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps = {}) {
           setError('URL must use http or https');
           return;
         }
-        setApiBaseUrl(trimmed);
+        /* 事务式写 baseUrl + 清残留 plan 缓存（await，避免后续 boot 重跑读到旧账号 plan）。 */
+        await setApiCredentials({ baseUrl: trimmed });
       } catch {
         setError('That doesn\'t look like a valid URL');
         return;
