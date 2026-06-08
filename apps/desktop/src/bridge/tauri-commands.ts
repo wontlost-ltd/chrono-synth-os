@@ -184,6 +184,26 @@ export async function generateDriftReport(): Promise<DriftReport | null> {
   }
 }
 
+/**
+ * 本地快照数量——companion 成长视图判断是否有「可对比的历史基线」用（≥2 才算）。
+ * 与服务端 countTenantSnapshots 同义：desktop 是单租户本地库，直接数 snapshots 表行数。
+ *
+ * Rust 端命令（待实现）：
+ *   #[tauri::command]
+ *   async fn count_snapshots() -> Result<u32, String>
+ * 未接时优雅返回 0（= 无基线 → 成长视图走「还在认识你」空态），与 getLatestDriftReport 一致。
+ */
+export async function queryTenantSnapshotCount(): Promise<number> {
+  try {
+    return await invoke<number>('count_snapshots');
+  } catch (err) {
+    if (err instanceof Error && /not.*(implemented|registered|found)/i.test(err.message)) {
+      return 0;
+    }
+    throw err;
+  }
+}
+
 /* ---------------------------------------------------------------------- *
  * App settings (kv) — backed by the app_settings table from v007.
  * First user is the first-launch onboarding completion flag; future
