@@ -56,10 +56,14 @@ npm install
 npx expo start --tunnel    # or --localhost for same-network testing
 ```
 
-`apps/mobile/package.json` consumes `@wontlost-ltd/schema-dsl` and
-`@chrono/*` via the OS monorepo workspaces. `apps/mobile/src/api/client.ts`
-expects `EXPO_PUBLIC_API_BASE_URL` env (defaults to `http://localhost:3000`
-in dev).
+`apps/mobile` is **not** a root-workspace member (Expo/RN 0.76 pins React 18,
+which conflicts with the workspace's React 19 — see ADR-0049). It installs
+independently (`cd apps/mobile && npm install`, its own `package-lock.json`).
+It consumes only `@chrono/contracts` — **type-only** (`import type
+RuntimeSyncStateV2`, erased at runtime, never bundled by Metro) — declared as a
+`file:../../packages/contracts` dep and resolved for typecheck via the tsconfig
+`paths` mapping to the package source. `apps/mobile/src/api/client.ts` expects
+`EXPO_PUBLIC_API_BASE_URL` env (defaults to `http://localhost:3000` in dev).
 
 ## Bundle identifiers (locked by ADR-0046)
 

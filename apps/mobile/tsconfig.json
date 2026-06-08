@@ -4,9 +4,7 @@
     "strict": true,
     "paths": {
       "@/*": ["./src/*"],
-      "@chrono/contracts": ["../../packages/contracts/src/index.ts"],
-      "@chrono/kernel": ["../../packages/kernel/src/index.ts"],
-      "@chrono/design-tokens": ["../../packages/design-tokens/src/index.ts"]
+      "@chrono/contracts": ["../../packages/contracts/src/index.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"]
