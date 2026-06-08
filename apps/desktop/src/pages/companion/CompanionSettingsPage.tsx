@@ -9,6 +9,7 @@ import { useState } from 'react';
 import {
   getApiBaseUrl,
   getApiToken,
+  setApiToken,
   setApiCredentials,
   clearCachedAccountPlan,
 } from '@/bridge/http-client';
@@ -54,8 +55,10 @@ export function CompanionSettingsPage({ plan }: CompanionSettingsPageProps) {
   }
 
   async function handleLogout() {
-    /* 登出：清 token + 作废 plan 缓存（下次登录是别的账号也不会复用旧 plan），await 后 reload。 */
-    await setApiCredentials({ token: null });
+    /* 登出：清 token；plan 缓存无条件作废（无论 token 原本是否为 null，登出都不该留旧账号 plan）。
+     * setApiCredentials 仅在 token 变化时清缓存，故这里直接显式 clearCachedAccountPlan 覆盖两种情况，
+     * 不再叠加 setApiCredentials 的条件清理（避免重复写）。 */
+    setApiToken(null);
     await clearCachedAccountPlan();
     window.location.reload();
   }
