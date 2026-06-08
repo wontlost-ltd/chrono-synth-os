@@ -25,7 +25,11 @@ declare let self: ServiceWorkerGlobalScope;
 precacheAndRoute(self.__WB_MANIFEST);
 
 /* SW 作用域里 addEventListener/skipWaiting/clients 运行时恒在，但 DOM lib 类型不全——弱类型访问。 */
+/* install/activate 是 ExtendableEvent（运行时必有 waitUntil）；显式类型避免 waitUntil 被
+ * optional-chaining 静默跳过（否则 activate 清缓存/claim 可能不执行）。DOM lib 不全，弱声明。 */
+type SwExtendableEvent = Event & { waitUntil(p: Promise<unknown>): void };
 const swScope = self as unknown as {
+  addEventListener(type: 'install' | 'activate', listener: (event: SwExtendableEvent) => void): void;
   addEventListener(type: string, listener: (event: Event) => void): void;
   skipWaiting(): Promise<void>;
   clients: { claim(): Promise<void> };
@@ -39,11 +43,11 @@ const STATIC_CACHE = 'companion-static-cache';
 swScope.addEventListener('install', () => {
   void swScope.skipWaiting();
 });
-swScope.addEventListener('activate', (event) => {
+swScope.addEventListener('activate', (event: SwExtendableEvent) => {
   /* 新 SW 激活时清空 companion 私有 API 缓存：旧版 SW 写入的条目可能没有 Vary 头，
    * 按 URL 命中会回显上一账号数据——activate 删除消除这条升级残留路径（Codex Major）。
    * static 缓存是公开/hashed 资源，无需清。 */
-  (event as { waitUntil?(p: Promise<unknown>): void }).waitUntil?.(
+  event.waitUntil(
     (async () => {
       await caches.delete(COMPANION_API_CACHE);
       await swScope.clients.claim();
