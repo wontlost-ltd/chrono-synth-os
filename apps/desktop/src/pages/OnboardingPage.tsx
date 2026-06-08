@@ -21,17 +21,20 @@
  */
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { markFirstRunCompleted } from '../bridge/tauri-commands';
-import { setApiBaseUrl } from '../bridge/http-client';
+import { setApiCredentials } from '../bridge/http-client';
 
 type Step = 'welcome' | 'mode-select' | 'done';
 const STEPS: Step[] = ['welcome', 'mode-select', 'done'];
 
 type Mode = 'local' | 'cloud';
 
-export function OnboardingPage() {
-  const navigate = useNavigate();
+export interface OnboardingPageProps {
+  /** onboarding 完成回调。App 用它 bump boot nonce 重跑启动序列（探测 plan → ready）。 */
+  readonly onComplete?: () => void;
+}
+
+export function OnboardingPage({ onComplete }: OnboardingPageProps = {}) {
   const [step, setStep] = useState<Step>('welcome');
   const [mode, setMode] = useState<Mode | null>(null);
   const [cloudUrl, setCloudUrl] = useState('');
@@ -59,7 +62,8 @@ export function OnboardingPage() {
           setError('URL must use http or https');
           return;
         }
-        setApiBaseUrl(trimmed);
+        /* 事务式写 baseUrl + 清残留 plan 缓存（await，避免后续 boot 重跑读到旧账号 plan）。 */
+        await setApiCredentials({ baseUrl: trimmed });
       } catch {
         setError('That doesn\'t look like a valid URL');
         return;
@@ -74,7 +78,8 @@ export function OnboardingPage() {
     setError(null);
     try {
       await markFirstRunCompleted();
-      navigate('/', { replace: true });
+      /* 通知 App 重跑 boot 序列进入主应用（按 plan 渲染企业版/companion）。 */
+      onComplete?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save settings');
       setBusy(false);
