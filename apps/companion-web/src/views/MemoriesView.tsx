@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 import type { CompanionMemoryV1 } from '@chrono/contracts';
 import { fetchMemories, ApiAuthError } from '../api.js';
 import { canLoadPage } from '../pagination-guard.js';

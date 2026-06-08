@@ -15,6 +15,9 @@ import assert from 'node:assert/strict';
 import { decide401Action } from '../src/api-retry.ts';
 import { canLoadPage } from '../src/pagination-guard.ts';
 
+/** 记录 caches.delete 调用的缓存名（installEnv 装的 CacheStorage stub 写入）。 */
+const deletedCaches: string[] = [];
+
 interface FetchCall {
   url: string;
   method: string;
@@ -38,6 +41,12 @@ function installEnv(): {
   (globalThis as { document?: { cookie: string } }).document = {
     get cookie() { return cookie; },
     set cookie(v: string) { cookie = v; },
+  };
+
+  /* CacheStorage stub：记录 caches.delete 调用，用于断言 login/logout 清 SW 私有缓存。 */
+  deletedCaches.length = 0;
+  (globalThis as { caches?: unknown }).caches = {
+    delete: async (name: string) => { deletedCaches.push(name); return true; },
   };
 
   function jsonResponse(body: unknown, ok: boolean): Response {
@@ -99,6 +108,19 @@ test('logout 携带 x-csrf-token + Authorization，并在请求发出之后才�
   assert.equal(logoutCall.headers['authorization'], 'Bearer at-login', 'logout 应带当前 access token');
   assert.equal(authedAtLogoutFetch, true, '发出 logout 请求时会话必须仍在');
   assert.equal(auth.isAuthenticated(), false, 'logout 完成后会话已清空');
+});
+
+test('login 与 logout 都清空 SW 的 companion 私有缓存（防换账号回显，Codex Critical）', async () => {
+  const env = installEnv();
+  env.setCookie('csrf_token=csrf-cache');
+  const auth = await import('../src/auth.ts?cache' as string);
+
+  await auth.login('u@test.com', 'pw');
+  assert.ok(deletedCaches.includes('companion-api-cache'), 'login 应清 companion-api-cache');
+
+  deletedCaches.length = 0;
+  await auth.logout();
+  assert.ok(deletedCaches.includes('companion-api-cache'), 'logout 应清 companion-api-cache');
 });
 
 test('refresh single-flight：并发 tryRefresh 只触发一次 /auth/refresh', async () => {

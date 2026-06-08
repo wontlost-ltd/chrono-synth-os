@@ -10,7 +10,7 @@
  * 双产品「同内核两外壳」的核心证明点（roadmap Phase 2 退出条件 5.2）。
  */
 
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
@@ -177,12 +177,22 @@ export function registerCompanionRoutes(
     critical: config.safety.drift.criticalThreshold,
   };
 
+  /* companion 响应是按用户/租户私有数据：标 Cache-Control: private, no-store + Vary，
+   * 让任何 HTTP 缓存（含 SW/CDN/代理）不跨会话复用。配合前端 SW 在 login/logout 清缓存，
+   * 双重防换账号回显（Codex Critical）。在各 handler 内对 reply 设置——不用全局 onSend hook
+   * （那会作用于所有路由，且 reply 已 sent 时 reply.header 抛 ERR_HTTP_HEADERS_SENT）。 */
+  function setPrivateNoStore(reply: FastifyReply): void {
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('Vary', 'Authorization, X-Tenant-Id');
+  }
+
   /* 记忆分页读取复用企业版 MemoryFacade（含 confidence 富集 + 租户隔离），C 端只做映射。 */
   const memoryFacade = new MemoryFacade(os, tenantFactory, config);
 
   /* GET /api/v1/companion/me —「我的数字人」主页 */
-  app.get('/api/v1/companion/me', async (request) => {
+  app.get('/api/v1/companion/me', async (request, reply) => {
     assertCompanionAccess(request);
+    setPrivateNoStore(reply);
     const core = getOS(request).core;
 
     const allValues = [...core.values.getAll().values()];
@@ -210,8 +220,9 @@ export function registerCompanionRoutes(
   });
 
   /* GET /api/v1/companion/me/growth —「你最近探索的方向」（drift 的 C 端渲染） */
-  app.get('/api/v1/companion/me/growth', async (request) => {
+  app.get('/api/v1/companion/me/growth', async (request, reply) => {
     assertCompanionAccess(request);
+    setPrivateNoStore(reply);
     const thresholds = resolveDriftThresholds(db, driftThresholdFallback);
     const analyzer = new PersonaDriftAnalyzer(db, thresholds);
     const report = analyzer.getLatest(request.tenantId);
@@ -221,8 +232,9 @@ export function registerCompanionRoutes(
   });
 
   /* GET /api/v1/companion/me/memories —「我的记忆」分页浏览（复用 MemoryFacade.listMemories） */
-  app.get('/api/v1/companion/me/memories', async (request) => {
+  app.get('/api/v1/companion/me/memories', async (request, reply) => {
     assertCompanionAccess(request);
+    setPrivateNoStore(reply);
     const { page, pageSize } = parsePagination(request.query as Record<string, unknown>);
     const result = memoryFacade.listMemories(request.tenantId, page, pageSize);
     /* MemoryNodeWithConfidence extends MemoryNode → toCompanionMemory 直接可用（多余字段丢弃）。 */

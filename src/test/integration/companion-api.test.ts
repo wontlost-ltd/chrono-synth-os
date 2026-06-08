@@ -72,6 +72,10 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
     assert.equal(res.statusCode, 200, res.body);
+    /* 私有数据缓存头：no-store + Vary（防 HTTP/SW/CDN 跨会话复用） */
+    assert.match(String(res.headers['cache-control']), /private/);
+    assert.match(String(res.headers['cache-control']), /no-store/);
+    assert.match(String(res.headers['vary']), /Authorization/i);
     const body = JSON.parse(res.body).data;
     /* 用契约 schema 反向校验：后端输出严格符合前端类型 */
     const me = CompanionMeV1Schema.parse(body);
@@ -90,6 +94,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/growth', headers });
     assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
     const growth = CompanionGrowthV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(growth.hasBaseline, false);
     assert.equal(growth.overallIntensity, 'steady');
@@ -108,6 +113,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
 
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me/growth', headers });
     assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
     const growth = CompanionGrowthV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(growth.hasBaseline, false, '单快照不应被判为有基线');
     assert.deepEqual(growth.directions, []);
@@ -133,6 +139,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
       method: 'GET', url: '/api/v1/companion/me/memories?page=1&pageSize=2', headers,
     });
     assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
     const list = CompanionMemoryListV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(list.items.length, 2, '第 1 页应有 2 条');
     assert.equal(list.pagination.total, 3);

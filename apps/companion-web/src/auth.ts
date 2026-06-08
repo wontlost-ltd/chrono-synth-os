@@ -48,6 +48,22 @@ interface LoginResult {
   tenantId: string;
 }
 
+/* SW 的 companion API 缓存名（须与 src/sw.ts 的 COMPANION_API_CACHE 一致）。 */
+const COMPANION_API_CACHE = 'companion-api-cache';
+
+/**
+ * 清空 SW 里的 companion 私有 API 缓存。会话边界即缓存边界——login/logout 都清，杜绝
+ * 同一浏览器换账号时 StaleWhileRevalidate 把上一位用户的 /me 数据短暂回显（隐私）。
+ */
+async function clearCompanionCache(): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    await caches.delete(COMPANION_API_CACHE);
+  } catch {
+    /* 缓存 API 不可用（如非 HTTPS / 旧浏览器）时忽略 */
+  }
+}
+
 /** 登录：成功后持有 accessToken + tenantId 并通知订阅者。 */
 export async function login(email: string, password: string): Promise<void> {
   epoch += 1; /* 作废任何在途 refresh：本次登录是新的权威会话 */
@@ -64,6 +80,8 @@ export async function login(email: string, password: string): Promise<void> {
   if (!body.data?.accessToken || !body.data?.tenantId) {
     throw new Error('登录响应缺少令牌');
   }
+  /* 登录成功即清前一会话残留的 companion 缓存（防换账号回显上一位用户数据）。 */
+  await clearCompanionCache();
   session = { accessToken: body.data.accessToken, tenantId: body.data.tenantId };
   emit();
 }
@@ -146,5 +164,6 @@ export async function logout(): Promise<void> {
   } catch {
     /* 吊销失败可忽略：本地仍会清空 */
   }
+  await clearCompanionCache(); /* 清 SW 私有缓存，防登出后他人浏览本地残留 */
   clearSession();
 }
