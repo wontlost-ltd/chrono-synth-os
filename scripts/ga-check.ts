@@ -82,12 +82,10 @@ interface StepResult {
 
 /* ── Step inventory ───────────────────────────────────────────────── */
 
-/* Sibling-repo locations are resolved relative to the OS repo by default
- * (the convention used by every contributor's working tree), but each
- * one can be overridden via env so CI workflows that lay out the repos
- * differently (e.g. monorepo runners, sparse checkouts) still work. */
-const WEB = process.env.CHRONO_WEB_REPO ?? resolve(REPOS_ROOT, 'chrono-synth-web');
-const DESKTOP = process.env.CHRONO_DESKTOP_REPO ?? resolve(REPOS_ROOT, 'chrono-synth-desktop');
+/* web/desktop 已融合进本仓 apps/*（ADR-0049），gate 直接对本地 apps 跑（必过，非 optional）。
+ * deploy 仍是独立仓，按原 sibling 约定解析（可 env 覆盖），保持 optional。 */
+const WEB = resolve(OS_ROOT, 'apps/web');
+const DESKTOP = resolve(OS_ROOT, 'apps/desktop');
 const DEPLOY = process.env.CHRONO_DEPLOY_REPO ?? resolve(REPOS_ROOT, 'chrono-synth-deploy');
 
 const STEPS: readonly StepDecl[] = [
@@ -142,16 +140,14 @@ const STEPS: readonly StepDecl[] = [
     desc: 'vendored sibling packages match OS source',
   },
 
-  /* Sibling repos. Optional so a CI run scoped to OS alone still
-   * exits 0 — but if the sibling IS present, it must pass. */
+  /* web/desktop 已是本仓 apps/*（ADR-0049 融合）——必过，不再 optional。 */
   {
     id: 'web.typecheck',
     repo: 'web',
     repoPath: WEB,
     command: 'npm',
     args: ['run', 'typecheck', '--silent'],
-    desc: 'web typecheck',
-    optional: true,
+    desc: 'apps/web typecheck',
   },
   {
     id: 'web.i18n-check',
@@ -159,8 +155,15 @@ const STEPS: readonly StepDecl[] = [
     repoPath: WEB,
     command: 'npm',
     args: ['run', 'i18n:check', '--silent'],
-    desc: 'web i18n: no untranslated CJK literals in source',
-    optional: true,
+    desc: 'apps/web i18n: no untranslated CJK literals in source',
+  },
+  {
+    id: 'web.test',
+    repo: 'web',
+    repoPath: WEB,
+    command: 'npm',
+    args: ['run', 'test', '--silent'],
+    desc: 'apps/web vitest 单元测试',
   },
   {
     id: 'desktop.typecheck',
@@ -168,8 +171,15 @@ const STEPS: readonly StepDecl[] = [
     repoPath: DESKTOP,
     command: 'npm',
     args: ['run', 'typecheck', '--silent'],
-    desc: 'desktop typecheck',
-    optional: true,
+    desc: 'apps/desktop typecheck',
+  },
+  {
+    id: 'desktop.test',
+    repo: 'desktop',
+    repoPath: DESKTOP,
+    command: 'npm',
+    args: ['run', 'test', '--silent'],
+    desc: 'apps/desktop vitest 单元测试',
   },
   {
     id: 'desktop.lint-updater-pubkey',
@@ -178,7 +188,6 @@ const STEPS: readonly StepDecl[] = [
     command: 'npm',
     args: ['run', 'lint:updater-pubkey', '--silent'],
     desc: 'Tauri updater pubkey is not the placeholder',
-    optional: true,
   },
   {
     id: 'desktop.test-lint-updater-pubkey',
@@ -186,9 +195,9 @@ const STEPS: readonly StepDecl[] = [
     repoPath: DESKTOP,
     command: 'npm',
     args: ['run', 'test:lint:updater-pubkey', '--silent'],
-    desc: 'self-tests for the pubkey lint (10-case smoke)',
-    optional: true,
+    desc: 'self-tests for the pubkey lint',
   },
+  /* deploy 仍是独立仓——保持 optional（本仓单独 CI 跑时缺席即跳过）。 */
   {
     id: 'deploy.lint-compliance',
     repo: 'deploy',

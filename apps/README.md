@@ -6,14 +6,16 @@
 
 | Host | Status | Product | Notes |
 |------|--------|---------|-------|
-| [`mobile/`](mobile/README.md) | PoC (4 screens), expanding to production in roadmap Phase 2 | **ChronoCompanion** (primary mobile host) | Expo + RN; iOS + Android |
-| [`desktop/`](desktop/) | Enterprise PoC live; companion mode planned (roadmap Phase 2.4) | Both — same binary, plan-based UX | Tauri 2; macOS / Windows / Linux |
-| [`companion-web/`](companion-web/README.md) | Placeholder | **ChronoCompanion** (web fallback) | React 19 + Vite 8; planned Phase 2.2 |
+| [`web/`](web/README.md) | Production (enterprise console) | **Enterprise governance** | React 19 + Vite 8; merged in from `chrono-synth-web` (ADR-0049) |
+| [`desktop/`](desktop/README.md) | Enterprise app live; companion mode planned (roadmap Phase 2.4) | Both — same binary, plan-based UX | Tauri 2 + SQLCipher; macOS / Windows / Linux; merged in from `chrono-synth-desktop` (ADR-0049) |
+| [`companion-web/`](companion-web/README.md) | v0.1.0-alpha (Home/Growth/Memories) | **ChronoCompanion** (C-end web) | React 19 + Vite 8 |
+| [`mobile/`](mobile/README.md) | PoC (RN 0.76 / React 18) | **ChronoCompanion** (primary mobile host) | Expo + RN; iOS + Android; ⚠️ not yet wired into workspace (see ADR-0049 遗留) |
 
-> The **enterprise web console** lives in the sibling repo
-> [`chrono-synth-web`](https://github.com/wontlost-ltd/chrono-synth-web),
-> not here. The two web hosts are deliberately split: different brand,
-> different routing, different pricing.
+> Per [ADR-0049](../docs/adr/0049-consolidate-app-hosts-into-monorepo.md), the
+> **enterprise web console** (`web/`) and **desktop** (`desktop/`) were merged
+> in from their former sibling repos (`chrono-synth-web` / `chrono-synth-desktop`),
+> eliminating vendoring. They consume `@chrono/*` via workspace deps now.
+> Only `chrono-synth-deploy` remains a separate repo.
 
 ## Why these are inside `chrono-synth-os` (not separate repos)
 
