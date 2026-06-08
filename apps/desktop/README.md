@@ -55,20 +55,24 @@ work — see `chrono-synth-os/.claude/gtm/` for the timeline.
 
 ```bash
 # prerequisite: rustup + node 24 + sqlcipher (brew install sqlcipher on macOS)
-npm install
-npm run tauri dev
+# run from the MONOREPO ROOT (chrono-synth-os/), not apps/desktop:
+npm ci                                   # hoists @wontlost-ltd/schema-dsl to root node_modules
+npm run -w @wontlost-ltd/schema-dsl build  # builds its dist/ (build.rs needs it; no prepare script)
+npm run -w @chrono/desktop tauri dev     # or `cd apps/desktop && npm run tauri dev`
 ```
 
 The Rust migration table is generated at build time by `@wontlost-ltd/schema-dsl`.
 `src-tauri/build.rs` resolves the CLI in order: `CHRONO_SCHEMA_DSL_CLI` env →
-`apps/desktop/node_modules/.bin` (legacy standalone) → **the monorepo root
-`node_modules/.bin/schema-dsl-render-rust`** (ADR-0049: desktop is a workspace
-member, so deps hoist to root) → the in-repo `packages/schema-dsl` source (only
-if its `dist/` is built). In the monorepo, **run `npm ci` then build the package**
-at the repo root — `npm ci` hoists `@wontlost-ltd/schema-dsl` to root
-`node_modules` but does **not** build its `dist/` (no prepare script), so either
-run a full `npm run build` (tsc -b builds all packages) or
-`npm run -w @wontlost-ltd/schema-dsl build` before `npm run tauri dev`. The
+`apps/desktop/node_modules/.bin/schema-dsl-render-rust` → its
+`@wontlost-ltd/schema-dsl/bin/render-rust.js` (both legacy standalone) → **the
+monorepo root `node_modules/.bin/schema-dsl-render-rust`** (ADR-0049: desktop is a
+workspace member, so deps hoist to root) → the in-repo `packages/schema-dsl`
+source. The last two (root) candidates resolve to the in-repo package source,
+which imports the package's **built `dist/`** — and `dist/` is NOT git-tracked, so
+`npm ci` alone is insufficient. build.rs therefore only uses the root candidates
+when `dist/` is built; otherwise it panics with build guidance. So run
+`npm run -w @wontlost-ltd/schema-dsl build` (or a full `npm run build`, which
+`tsc -b` builds all packages) before `npm run tauri dev`. The
 `CHRONO_SCHEMA_DSL_CLI` env override remains for differently-laid-out worktrees.
 
 For the production build matrix (signed installers for all three OSes):
