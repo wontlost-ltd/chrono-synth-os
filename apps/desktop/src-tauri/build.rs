@@ -55,9 +55,32 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         return from_pkg;
     }
 
+    // 4. Monorepo path (ADR-0049): desktop is a workspace member, so deps hoist to the repo
+    //    root node_modules, not apps/desktop/node_modules. build.rs runs from
+    //    apps/desktop/src-tauri/, so the repo root is three levels up.
+    let workspace_root = PathBuf::from("..").join("..").join("..");
+    let from_root_bin = workspace_root
+        .join("node_modules")
+        .join(".bin")
+        .join("schema-dsl-render-rust");
+    if from_root_bin.exists() {
+        return from_root_bin;
+    }
+
+    // 5. Last resort: the workspace package source directly (present in-repo even if the .bin
+    //    symlink wasn't created, e.g. a fresh checkout before `npm ci`).
+    let from_workspace_pkg = workspace_root
+        .join("packages")
+        .join("schema-dsl")
+        .join("bin")
+        .join("render-rust.js");
+    if from_workspace_pkg.exists() {
+        return from_workspace_pkg;
+    }
+
     panic!(
         "Cannot find @wontlost-ltd/schema-dsl CLI. Either:\n\
-         - run `npm install @wontlost-ltd/schema-dsl` in the desktop repo (production path), or\n\
+         - run `npm ci` at the monorepo root (hoists @wontlost-ltd/schema-dsl to root node_modules), or\n\
          - set CHRONO_SCHEMA_DSL_CLI to the path of bin/render-rust.js in your worktree."
     );
 }
