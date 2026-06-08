@@ -9,15 +9,21 @@ FROM node:26-alpine AS builder
 RUN apk upgrade --no-cache
 WORKDIR /app
 
-# 先拷 workspace 清单 + lockfile + 所有内部包源码，装一次 workspace 依赖（含 apps/web）。
+# 先只拷 root + 所有 workspace 成员的 package.json + lockfile，装一次 workspace 依赖。
+# 拷全部 workspace manifest（与 root `workspaces` 声明一致）让 npm ci 确定性安装，不依赖
+# npm 对缺失 workspace 目录的容忍行为。packages/*/package.json 用通配整目录的 manifest，
+# 但为保持依赖安装层缓存，源码在 npm ci 之后再拷。
 COPY package.json package-lock.json ./
 COPY packages/ packages/
 COPY apps/web/package.json apps/web/package.json
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY apps/companion-web/package.json apps/companion-web/package.json
 RUN npm ci
 
-# web 的 @chrono/* 依赖解析到 packages/*/dist，需先把这些包构建出来（design-tokens/contracts/
-# sync-engine/kernel-testkit 等 web 依赖链）。用根 tsc -b 构建包引用图。
-COPY tsconfig.json tsconfig.base.json* ./
+# web 的 @chrono/* 依赖解析到 packages/*/dist，需先构建这些内部包（web devDeps：contracts/
+# design-tokens/sync-engine/kernel-testkit；依赖图闭合，sync-engine/kernel-testkit 引用 contracts）。
+# packages/ 源码已随上面 COPY 带入；tsconfig.json 是根项目引用图入口。
+COPY tsconfig.json ./
 RUN npx tsc -b packages/contracts packages/design-tokens packages/sync-engine packages/kernel-testkit
 
 # 再拷 web 源码并构建（vite → apps/web/dist）。
