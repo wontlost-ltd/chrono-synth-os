@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Hardened runtime: required for notarization. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <false/>
+
+  <!-- Network access for /api/* sync calls. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- Sandbox is OFF for now: SQLCipher + keyring access fight the
+       sandbox. Enabling it requires a security review pass to scope
+       file access via temporary-exception entitlements. Tracked. -->
+  <key>com.apple.security.app-sandbox</key>
+  <false/>
+
+  <!-- Allow executable code generation for tauri's WKWebView. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Disallow unsigned code injection (defense against runtime swap). -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <false/>
+</dict>
+</plist>

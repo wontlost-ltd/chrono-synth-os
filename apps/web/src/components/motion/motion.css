@@ -1,0 +1,53 @@
+/* P1.7.3 motion primitives — shared keyframes & easings.
+ *
+ * Standard easings (cubic-bezier samples):
+ *  - --motion-standard:  ease-in-out feel; default for most transitions.
+ *  - --motion-decel:     ease-out; for "thing arriving / settling".
+ *  - --motion-accel:     ease-in; for "thing leaving the viewport".
+ *
+ * Durations:
+ *  - --motion-fast: 120ms — micro hover / focus
+ *  - --motion-base: 200ms — page transition, panel slide
+ *  - --motion-slow: 320ms — drawer open, complex composites
+ */
+
+:root {
+  --motion-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-decel:    cubic-bezier(0,   0, 0, 1);
+  --motion-accel:    cubic-bezier(0.4, 0, 1, 1);
+  --motion-fast:  120ms;
+  --motion-base:  200ms;
+  --motion-slow:  320ms;
+}
+
+/* Page transition: fade + 4px lift */
+@keyframes motion-page-enter-kf {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.motion-page-enter {
+  animation: motion-page-enter-kf var(--motion-base) var(--motion-decel) both;
+  will-change: opacity, transform;
+}
+
+/* SuccessCheck: SVG path stroke draw */
+@keyframes motion-check-stroke-kf {
+  from { stroke-dashoffset: 24; opacity: 0.4; }
+  to   { stroke-dashoffset: 0;  opacity: 1;   }
+}
+
+.motion-check-path {
+  stroke-dasharray: 24;
+  animation: motion-check-stroke-kf var(--motion-slow) var(--motion-decel) both;
+}
+
+/* Hard reset for users who opted out via prefers-reduced-motion.
+ * Components may also gate themselves via the hook; this is the
+ * defense-in-depth layer that catches anything we forgot. */
+@media (prefers-reduced-motion: reduce) {
+  .motion-page-enter,
+  .motion-check-path {
+    animation: none !important;
+  }
+}

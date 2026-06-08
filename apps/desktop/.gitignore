@@ -1,0 +1,12 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# Tauri
+*.db
+*.log
+
+# IDE 本地工程文件
+*.iml
+.idea/

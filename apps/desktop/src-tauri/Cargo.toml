@@ -1,0 +1,39 @@
+[package]
+name = "chrono-synth-desktop"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "chrono-synth-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-shell = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# bundled-sqlcipher-vendored-openssl = fully self-contained build:
+# sqlcipher source is compiled in (via libsqlite3-sys), and openssl-sys
+# vendors libcrypto from source. Removes both system libsqlcipher and
+# system openssl as build-time dependencies — every runner builds the
+# same binary regardless of host package availability.
+#
+# History: ["bundled", "sqlcipher"] dynamically linked the host's
+# libsqlcipher; that fails on Linux CI (Ubuntu apt's libsqlcipher 3.4.1
+# misses sqlite3_prepare_v3 / sqlite3_changes64 / sqlite3_error_offset).
+# "bundled-sqlcipher" alone compiles sqlcipher but still relies on the
+# host's libcrypto, which trips macOS builds when OpenSSL isn't on the
+# default linker path.
+rusqlite = { version = "0.39", features = ["bundled-sqlcipher-vendored-openssl"] }
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["full"] }
+keyring = "4"
+keyring-core = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs"] }
+yrs = "0.26"
+base64 = "0.22"

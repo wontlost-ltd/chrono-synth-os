@@ -1,0 +1,40 @@
+/* P3.7 level-up celebration — falling confetti.
+ *
+ * Twelve spans drift from -10% to 110% vertically with a slight wobble.
+ * Color cycles through chart-1..4 so it picks up the active theme.
+ * Reduced-motion is enforced by the JS gate; this stylesheet additionally
+ * disables the animation as defense in depth.
+ */
+
+@keyframes levelup-confetti-fall {
+  from {
+    transform: translateY(-10vh) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(110vh) rotate(540deg);
+    opacity: 0;
+  }
+}
+
+.levelup-confetti {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  animation: levelup-confetti-fall 2.4s linear forwards;
+  will-change: transform, opacity;
+}
+
+.levelup-confetti-1 { background: var(--color-chart-1, #3b82f6); }
+.levelup-confetti-2 { background: var(--color-chart-2, #10b981); }
+.levelup-confetti-3 { background: var(--color-chart-3, #f59e0b); }
+.levelup-confetti-4 { background: var(--color-chart-4, #ef4444); }
+
+@media (prefers-reduced-motion: reduce) {
+  .levelup-confetti {
+    animation: none;
+    opacity: 0;
+  }
+}

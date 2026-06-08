@@ -1,0 +1,19 @@
+# ChronoSynth OS is an authenticated SaaS application; the public surface is
+# the marketing/landing pages only. We disallow indexing of the application
+# routes since they require login and serve user-specific content.
+
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Disallow: /personas/
+Disallow: /simulations/
+Disallow: /knowledge-sources/
+Disallow: /agent/
+Disallow: /enterprise/
+Disallow: /persona-core/
+Disallow: /avatars/
+Disallow: /marketplace/
+Disallow: /growth/
+Disallow: /settings/
+Disallow: /billing/
+Disallow: /system/

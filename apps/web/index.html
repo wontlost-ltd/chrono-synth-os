@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="description" content="ChronoSynth OS — your digital persona workspace. Cultivate AI agents that reflect your values, learn from your decisions, and stay aligned over time." />
+    <!--
+      Content-Security-Policy via <meta>. Note: frame-ancestors is
+      ignored when delivered via meta and must be set as an HTTP header
+      at the reverse proxy (helm chart's nginx config handles it). The
+      meta directive remains useful for the rest of the policy.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://*.sentry.io ws: wss:; manifest-src 'self'; worker-src 'self'; media-src 'self'; child-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self';" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>ChronoSynth OS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/runtime-config.js"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

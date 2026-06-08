@@ -1,0 +1,1519 @@
+{
+  "dashboard": {
+    "title": "Life Simulation Dashboard",
+    "inputLabel": "Enter Simulation ID:",
+    "load": "Load",
+    "emptyState": "No simulation selected",
+    "createNew": "Create New Simulation",
+    "loadError": "Failed to load: {{message}}",
+    "noData": "No data",
+    "reselect": "Reselect",
+    "subtitle": "Simulation {{id}}... · {{years}} years",
+    "switchSimulation": "Switch Simulation",
+    "recommendedPath": "Recommended Path",
+    "compositeScore": "Composite Score",
+    "keyMetrics": "Key Metrics",
+    "confidence": "Confidence",
+    "regretProbability": "Regret Probability",
+    "retrospective": "Retrospective Analysis",
+    "comparePaths": "Compare Paths",
+    "viewBranches": "View Branches",
+    "stressTest": "Stress Test",
+    "milestones": "Milestones",
+    "liveEvents": "Live Event Stream",
+    "simIdPlaceholder": "lsim_...",
+    "viewAll": "View All Simulations"
+  },
+  "simulations": {
+    "title": "My Simulations",
+    "subtitle": "View and manage your life simulations",
+    "createNew": "New Simulation",
+    "createFirst": "Create Your First Simulation",
+    "emptyState": "No simulations yet. Create one to get started.",
+    "loadError": "Failed to load simulations: {{message}}",
+    "colId": "Simulation ID",
+    "colStatus": "Status",
+    "colCreated": "Created",
+    "colCompleted": "Completed",
+    "colActions": "Actions",
+    "view": "View Results",
+    "inProgress": "In progress",
+    "pageInfo": "Page {{page}} of {{total}}",
+    "prev": "Previous",
+    "next": "Next",
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed"
+    }
+  },
+  "statsTable": {
+    "caption": "Path statistics summary",
+    "pathHeader": "Path",
+    "min": "Min",
+    "max": "Max",
+    "avg": "Avg",
+    "last": "Last"
+  },
+  "wizard": {
+    "pathIdRequired": "Path {{index}} ID cannot be empty",
+    "pathNameRequired": "Path {{index}} name cannot be empty",
+    "duplicatePathIds": "Path IDs must be unique",
+    "branchNameRequired": "Path \"{{label}}\" has an empty branch name",
+    "invalidProbability": "Branch \"{{label}}\" probability is not a valid number",
+    "probabilityOutOfRange": "Branch \"{{label}}\" probability must be between 0-1",
+    "probabilitySumInvalid": "Path \"{{label}}\" branch probabilities sum ({{sum}}) should be 1.0",
+    "ageOutOfRange": "Age must be between 1-120",
+    "horizonOutOfRange": "Simulation years must be between 1-80",
+    "invalidIncome": "Path \"{{label}}\" income must be a valid non-negative number",
+    "invalidSavings": "Path \"{{label}}\" savings must be a valid non-negative number",
+    "title": "Create Life Simulation",
+    "stepSubtitle": "Step {{step}}/{{total}}: {{name}}",
+    "stepDefinePaths": "Define Paths",
+    "stepBranches": "Branch Settings",
+    "stepParameters": "Parameters",
+    "stepPreview": "Preview & Submit",
+    "pathLabel": "Path {{index}}",
+    "delete": "Delete",
+    "idLabel": "ID",
+    "nameLabel": "Name",
+    "idPlaceholder": "stable",
+    "namePlaceholder": "Stable Path",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Maintain status quo",
+    "addPath": "+ Add Path",
+    "branchesForPath": "Branches for {{label}}",
+    "branchNamePlaceholder": "Branch name",
+    "probabilityLabel": "Probability",
+    "deleteBranchAria": "Delete branch {{label}}",
+    "addBranch": "+ Add Branch",
+    "ageLabel": "Age",
+    "horizonYearsLabel": "Simulation Years",
+    "incomeLabel": "{{label}} Income",
+    "savingsLabel": "{{label}} Savings",
+    "configSummary": "Configuration Summary",
+    "previous": "Previous",
+    "next": "Next",
+    "creating": "Creating...",
+    "create": "Create Simulation",
+    "createError": "Failed to create simulation"
+  },
+  "values": {
+    "title": "Values Manager",
+    "subtitle": "Define and adjust life value weights",
+    "addSectionTitle": "Add Value",
+    "nameRequired": "Name cannot be empty",
+    "weightOutOfRange": "Weight must be between 0-1",
+    "addError": "Failed to add value",
+    "namePlaceholder": "Value name",
+    "weightLabel": "Weight",
+    "weightAria": "Weight: {{value}}",
+    "adding": "Adding...",
+    "add": "Add",
+    "loadError": "Failed to load: {{message}}",
+    "emptyState": "No values added yet"
+  },
+  "pathComparison": {
+    "title": "Path Comparison",
+    "subtitle": "Multi-path time series visualization",
+    "activeMetricLabel": "Active Metric",
+    "loadError": "Failed to load: {{message}}",
+    "noData": "No path data",
+    "statsSummary": "Statistics Summary"
+  },
+  "branchExplorer": {
+    "title": "Branch Structure",
+    "subtitle": "Path branch probability visualization",
+    "pathSelectionLabel": "Path Selection",
+    "loadError": "Failed to load: {{message}}",
+    "branchGraphTitle": "Branch Probability Graph",
+    "noBranchData": "No branch data",
+    "pathInfoTitle": "Path Info",
+    "timespanLabel": "Timespan:",
+    "pivotPointLabel": "Pivot Point:",
+    "compositeScoreLabel": "Composite Score:",
+    "selectPathPrompt": "Select a path to view branch structure"
+  },
+  "stressTest": {
+    "title": "Stress Test",
+    "subtitle": "Simulate extreme scenario impacts on paths",
+    "variantNameRequired": "Variant name cannot be empty",
+    "invalidIncomeFreeze": "Income freeze years must be a valid non-negative number",
+    "invalidMarketDownturn": "Market downturn factor must be between 0-1",
+    "invalidHealthShock": "Health shock must be between 0-1",
+    "createError": "Failed to create stress test",
+    "formTitle": "Run New Stress Test",
+    "variantNameLabel": "Variant Name",
+    "incomeFreezeLabel": "Income Freeze Years",
+    "marketDownturnLabel": "Market Downturn Factor",
+    "healthShockLabel": "Health Shock",
+    "running": "Running...",
+    "run": "Run Stress Test",
+    "loadError": "Failed to load: {{message}}",
+    "variantLabel": "Variant: {{id}}...",
+    "deltaScoreLabel": "{{pathId}} Score Δ",
+    "noVariants": "No stress test variants yet"
+  },
+  "milestones": {
+    "title": "Milestones",
+    "subtitle": "Key timeline events",
+    "loadError": "Failed to load: {{message}}",
+    "noEvents": "No milestone events for this path",
+    "startLabel": "Start",
+    "endLabel": "End",
+    "noData": "No milestone data"
+  },
+  "systemStatus": {
+    "title": "System Status",
+    "subtitle": "API health checks and persona status",
+    "unreachable": "Unreachable",
+    "unknown": "Unknown",
+    "uptimeLabel": "Uptime:",
+    "apiDocsLabel": "API Docs",
+    "personaSummaryTitle": "Persona Status Summary",
+    "personaError": "Unable to fetch persona status"
+  },
+  "login": {
+    "emailLabel": "Email",
+    "passwordLabel": "Password",
+    "loggingIn": "Logging in...",
+    "login": "Login",
+    "noAccount": "Don't have an account?",
+    "register": "Register"
+  },
+  "register": {
+    "title": "Create Account",
+    "emailLabel": "Email",
+    "passwordLabel": "Password (at least 8 characters)",
+    "confirmPasswordLabel": "Confirm Password",
+    "passwordMismatch": "Passwords do not match",
+    "registering": "Registering...",
+    "registerButton": "Register",
+    "hasAccount": "Already have an account?",
+    "login": "Login"
+  },
+  "billing": {
+    "title": "Billing",
+    "subtitle": "Manage subscription plans and usage",
+    "currentPlanTitle": "Current Plan",
+    "freePlan": "Free",
+    "statusLabel": "Status:",
+    "activeStatus": "Active",
+    "renewalLabel": "Next renewal:",
+    "redirecting": "Redirecting...",
+    "manageSubscription": "Manage Subscription",
+    "usageTitle": "Monthly Usage",
+    "simulationsLabel": "Simulations",
+    "pathsLabel": "Paths",
+    "llmTokensLabel": "LLM Tokens",
+    "availablePlansTitle": "Available Plans",
+    "unlimited": "Unlimited",
+    "currentPlanBadge": "Current Plan",
+    "loadError": "Failed to load billing data: {{message}}",
+    "portalError": "Failed to open billing portal: {{message}}",
+    "addOnsTitle": "Add-ons",
+    "addOnOwned": "Owned",
+    "purchaseAddOn": "Purchase",
+    "activeAddOnsLabel": "Active add-ons:",
+    "addOnsError": "Failed to load add-ons: {{message}}",
+    "upgradePlan": "Upgrade",
+    "upgradeError": "Upgrade failed: {{message}}",
+    "addOnsEmpty": "No add-ons available right now.",
+    "addOnResource": {
+      "simulation": "Simulations",
+      "paths": "Paths",
+      "llm_tokens": "LLM Tokens"
+    }
+  },
+  "onboardingV2": {
+    "title": "Get started with ChronoSynth",
+    "subtitle": "5 steps · about 3 minutes",
+    "skip": "Skip onboarding",
+    "continue": "Continue",
+    "saving": "Saving…",
+    "starting": "Starting…",
+    "loading": "Loading…",
+    "progressLabel": "Onboarding progress: step {{step}} of {{total}}",
+    "welcome": {
+      "title": "The audit log enterprise AI agents always needed.",
+      "description": "We'll walk you through registering your first agent, defining what it's allowed to do, and showing you what your audit log looks like — in about 3 minutes.",
+      "bullet1": "Name your organization",
+      "bullet2": "Register an agent and policies",
+      "bullet3": "See a synthetic invocation in the audit log",
+      "start": "Start →"
+    },
+    "org": {
+      "title": "Name your team",
+      "description": "This is the tenant that owns your agents and audit log. You can rename it later in Settings.",
+      "nameLabel": "Organization name",
+      "namePlaceholder": "Acme Inc"
+    },
+    "agent": {
+      "title": "Register your first agent",
+      "description": "An agent is the LLM-driven worker whose actions you'll be governing. You can register more later from the dashboard.",
+      "nameLabel": "Agent name",
+      "providerLabel": "LLM provider",
+      "provider": {
+        "openai": "OpenAI",
+        "anthropic": "Anthropic",
+        "skip": "Skip for now (tool-only agent)"
+      },
+      "keyLabel": "API key",
+      "keyPlaceholder": "sk-…",
+      "keyNote": "We'll encrypt this with your tenant's KMS key. You can rotate it any time from Settings → Secrets."
+    },
+    "policy": {
+      "title": "Define what this agent can do",
+      "description": "Tools your agent is allowed to call, and how. Defaults are sensible — you can edit any row or add more later.",
+      "scopeLabel": "Scope",
+      "decisionLabel": "Decision",
+      "scope": {
+        "read": "read-only",
+        "write": "write",
+        "execute": "execute"
+      },
+      "decision": {
+        "allow": "Allow",
+        "deny": "Deny",
+        "confirm": "Confirm"
+      }
+    },
+    "synthetic": {
+      "title": "Fire a test invocation",
+      "description": "We'll generate three example tool calls so you can see what your real agent's actions will look like in the audit log. This is fake data — no external tool will actually be called.",
+      "fire": "Run synthetic invocation →",
+      "firing": "Running…",
+      "fired": "✓ Fired — moving to audit log",
+      "note": "Real agent calls land here automatically once you wire your agent up."
+    },
+    "audit": {
+      "title": "Your audit log, live",
+      "description": "Below are the three synthetic events from step 4. This is the screen your compliance team will live in.",
+      "summary": "Real agent invocations land here in real time. Done!",
+      "done": "Open dashboard →",
+      "status": {
+        "success": "Success",
+        "pending": "Pending confirmation",
+        "denied": "Denied"
+      },
+      "note": {
+        "success": "Policy passed, action recorded.",
+        "pending": "High-risk action requires human approval before it runs.",
+        "denied": "Tool not in agent's allowed policy — blocked at the gate."
+      }
+    },
+    "errors": {
+      "orgNameRequired": "Please enter an organization name.",
+      "agentNameRequired": "Please enter a name for your agent.",
+      "unknown": "Something went wrong. Please try again."
+    }
+  },
+  "onboarding": {
+    "welcomeTitle": "Welcome to ChronoSynth",
+    "welcomeDescription": "ChronoSynth helps you simulate and compare possible outcomes of different life paths. Let's set up your first simulation.",
+    "getStarted": "Get Started",
+    "valuesTitle": "Define Your Values",
+    "valuesDescription": "Add the value dimensions most important to you and set their weights. This will affect simulation scoring.",
+    "valuePlaceholder": "Value {{index}}",
+    "weightAria": "Weight: {{value}}",
+    "addValue": "+ Add Value",
+    "atLeastOneValue": "Please add at least one value",
+    "valueError": "Failed to add value",
+    "next": "Next",
+    "simulationTitle": "Create Your First Simulation",
+    "simulationDescription": "We'll create a default simulation for you. You can customize more paths and branches later in the dashboard.",
+    "createFirstSim": "Create Simulation",
+    "simError": "Failed to create simulation",
+    "defaultPathLabel": "Default Path",
+    "defaultPathDescription": "Initial default path",
+    "doneTitle": "Setup Complete!",
+    "doneDescription": "Your values and first simulation have been created. You can now go to the dashboard to view results.",
+    "goToDashboard": "Go to Dashboard",
+    "progressLabel": "Onboarding progress: step {{step}} of {{total}}",
+    "back": "Back",
+    "templateTitle": "Choose Your Lifestyle",
+    "templateDescription": "Pick a template that fits you best. We'll preset value parameters for you.",
+    "templateCareer": "Career-Focused",
+    "templateCareerDesc": "Pursue professional achievement and financial growth",
+    "templateFamily": "Family-Oriented",
+    "templateFamilyDesc": "Focus on family relationships and personal growth",
+    "templateExplorer": "Explorer",
+    "templateExplorerDesc": "Seek freedom and rich life experiences",
+    "templateCustom": "Custom",
+    "templateCustomDesc": "Define your values from scratch"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "User profile and account security",
+    "profileTitle": "Profile",
+    "emailLabel": "Email",
+    "roleLabel": "Role",
+    "tenantLabel": "Tenant",
+    "createdAtLabel": "Created At",
+    "changePasswordTitle": "Change Password",
+    "currentPasswordLabel": "Current Password",
+    "newPasswordLabel": "New Password",
+    "confirmPasswordLabel": "Confirm New Password",
+    "passwordTooShort": "Password must be at least 8 characters",
+    "passwordMismatch": "Passwords do not match",
+    "passwordChangeError": "Failed to change password",
+    "passwordChanged": "Password changed successfully",
+    "changePasswordButton": "Change Password",
+    "loadError": "Failed to load: {{message}}"
+  },
+  "liveIndicator": {
+    "connected": "Connected",
+    "connecting": "Connecting",
+    "disconnected": "Disconnected"
+  },
+  "liveMetricStream": {
+    "waitingForConnection": "Waiting for WebSocket connection...",
+    "waitingForData": "Waiting for data stream...",
+    "chartLabel": "Live metric stream chart",
+    "dataTableCaption": "Live metric data",
+    "timeColumn": "Time",
+    "valueColumn": "Value"
+  },
+  "sidebar": {
+    "dashboard": "Dashboard",
+    "simulations": "My Simulations",
+    "newSimulation": "New Simulation",
+    "values": "Values",
+    "avatars": "Avatars",
+    "personaCore": "Persona Core",
+    "knowledgeSources": "Knowledge Sources",
+    "marketplace": "Marketplace",
+    "billing": "Billing",
+    "enterprise": "Enterprise",
+    "settings": "Settings",
+    "systemStatus": "System Status",
+    "adminConfig": "System Config",
+    "closeNav": "Close navigation",
+    "expand": "Expand sidebar",
+    "collapse": "Collapse sidebar",
+    "mainNav": "Main navigation",
+    "logout": "Logout",
+    "groups": {
+      "agents": "Agents & Knowledge",
+      "ops": "Operations"
+    }
+  },
+  "appShell": {
+    "skipToMain": "Skip to main content",
+    "openNav": "Open navigation",
+    "navMenu": "Navigation menu"
+  },
+  "featureGate": {
+    "subscriptionRequired": "This feature requires a subscription",
+    "upgradePrompt": "Upgrade to unlock all features",
+    "viewPlans": "View Plans"
+  },
+  "errorBoundary": {
+    "errorTitle": "Page render error",
+    "unknownError": "Unknown error",
+    "retry": "Retry",
+    "goHome": "Go Home"
+  },
+  "sso": {
+    "signInWithSSO": "Sign in with SSO",
+    "enterTenantFirst": "Enter Tenant ID First",
+    "processing": "Processing SSO authentication...",
+    "missingTokens": "SSO authentication failed: missing token information",
+    "parseError": "SSO authentication failed: token parse error",
+    "backToLogin": "Back to Login",
+    "orDivider": "or",
+    "stateMismatch": "SSO authentication failed: invalid state",
+    "tenantIdLabel": "Tenant ID for SSO",
+    "tenantIdPlaceholder": "tenant_123 or enterprise tenant slug",
+    "tenantIdHint": "OIDC login is tenant-scoped. Enter the target tenant before redirecting to your identity provider."
+  },
+  "sharing": {
+    "title": "Share Simulation",
+    "userIdLabel": "User ID",
+    "userIdPlaceholder": "Enter user ID or email",
+    "permissionLabel": "Permission",
+    "invite": "Invite",
+    "currentShares": "Currently Shared With",
+    "revoke": "Revoke",
+    "permission": {
+      "view": "View",
+      "edit": "Edit",
+      "admin": "Admin"
+    }
+  },
+  "adminConfig": {
+    "title": "System Configuration",
+    "subtitle": "Manage system runtime parameters",
+    "noPermission": "Admin access required",
+    "loadError": "Failed to load config: {{message}}",
+    "requiresRestart": "Requires restart",
+    "maskedValue": "Hidden",
+    "secretPlaceholder": "Enter a new value to update",
+    "auditError": "Failed to load audit log: {{message}}",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "saved": "Configuration saved",
+    "savedNeedsRestart": "Saved. These settings require a restart: {{keys}}",
+    "editValueAria": "Edit value for {{key}}",
+    "auditTitle": "Change History",
+    "auditKey": "Config Key",
+    "auditOldValue": "Old Value",
+    "auditNewValue": "New Value",
+    "auditChangedBy": "Changed By",
+    "auditChangedAt": "Changed At",
+    "noAudit": "No changes recorded yet"
+  },
+  "trustBadge": {
+    "ai": "AI",
+    "user": "User",
+    "system": "System"
+  },
+  "safetyError": {
+    "quotaTitle": "Quota Exceeded",
+    "rate_limitTitle": "Rate Limited",
+    "policyTitle": "Safety Policy Violation",
+    "genericTitle": "Error",
+    "retryAfter": "Please retry after {{seconds}} seconds",
+    "upgradePlan": "Upgrade Plan"
+  },
+  "statusBadge": {
+    "active": "Active",
+    "completed": "Completed",
+    "paused": "Paused",
+    "error": "Error",
+    "syncing": "Syncing",
+    "offline": "Offline"
+  },
+  "stepper": {
+    "ariaLabel": "Step progress"
+  },
+  "logTimeline": {
+    "empty": "No logs yet"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "Error",
+    "notFound": "Page not found",
+    "language": "Language",
+    "offline": "You are offline. Changes will sync when connection is restored.",
+    "lastSynced": "Last synced: {{time}}",
+    "queuedActions": "{{count}} action(s) pending",
+    "dismiss": "Dismiss"
+  },
+  "aria": {
+    "breadcrumb": "Breadcrumb",
+    "timeResolution": "Time resolution",
+    "metricSelection": "Metric selection",
+    "timeSeriesChart": "{{metric}} time series chart",
+    "timeSeriesData": "{{metric}} data",
+    "yearLabel": "Year",
+    "stressDeltaChart": "Stress test delta comparison chart",
+    "stressDeltaData": "Stress test delta data",
+    "pathColumn": "Path",
+    "scoreColumn": "Composite Score Δ (%)",
+    "regretColumn": "Regret Probability Δ (%)",
+    "changePercent": "Change (%)",
+    "scoreDelta": "Composite Score Δ",
+    "regretDelta": "Regret Probability Δ",
+    "sankeyChart": "Branch probability Sankey chart",
+    "sankeyData": "Branch probability data",
+    "sourceColumn": "Source",
+    "targetColumn": "Target",
+    "weightColumn": "Weight",
+    "probabilityColumn": "Probability",
+    "milestoneThreshold": "Threshold: {{value}}",
+    "trendUp": "Trending up",
+    "trendDown": "Trending down",
+    "trendFlat": "Flat"
+  },
+  "avatars": {
+    "title": "Avatar Management",
+    "subtitle": "Manage and configure your digital avatars",
+    "detail": "Avatar Detail",
+    "create": "New Avatar",
+    "createTitle": "Create Avatar",
+    "save": "Save",
+    "view": "View",
+    "delete": "Delete",
+    "confirmDelete": "Are you sure you want to delete this avatar?",
+    "labelField": "Name",
+    "labelRequired": "Name cannot be empty",
+    "kindField": "Type",
+    "loadError": "Failed to load avatars: {{message}}",
+    "emptyState": "No avatars yet. Create one to get started.",
+    "notFound": "Avatar not found",
+    "project": "Project",
+    "colLabel": "Name",
+    "colKind": "Type",
+    "colStatus": "Status",
+    "colCreated": "Created",
+    "metricKind": "Type",
+    "metricAutorun": "Autorun",
+    "metricCreated": "Created",
+    "autorunOn": "Enabled",
+    "autorunOff": "Disabled",
+    "autorunStatus": "Runs every {{interval}} minutes",
+    "autorunDisabled": "Autorun is not enabled",
+    "configAutorun": "Configure Autorun",
+    "behaviorTitle": "Behavior Overrides",
+    "noOverrides": "No custom overrides",
+    "noActivity": "No activity recorded",
+    "tabs": {
+      "overview": "Overview",
+      "autorun": "Autorun",
+      "activity": "Activity Log"
+    },
+    "kind": {
+      "general": "General",
+      "work": "Work",
+      "social": "Social",
+      "family": "Family",
+      "creative": "Creative"
+    },
+    "emptyTitle": "No avatars yet",
+    "emptyDescription": "An Avatar is a conversational projection of a persona, with configurable autorun and domain-knowledge ingest.",
+    "emptyAction": "Create your first avatar"
+  },
+  "knowledgeSources": {
+    "title": "Knowledge Sources",
+    "subtitle": "Manage knowledge sources and sync configuration",
+    "detail": "Knowledge Source Detail",
+    "create": "New Source",
+    "createTitle": "Create Knowledge Source",
+    "createAndSync": "Create & Sync",
+    "sync": "Sync",
+    "syncing": "Syncing...",
+    "view": "View",
+    "delete": "Delete",
+    "confirmDelete": "Are you sure you want to delete this knowledge source?",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "loadError": "Failed to load knowledge sources: {{message}}",
+    "emptyState": "No knowledge sources yet. Create one to get started.",
+    "notFound": "Knowledge source not found",
+    "colName": "Name",
+    "colType": "Type",
+    "colStatus": "Status",
+    "colLastSync": "Last Sync",
+    "colItems": "Items",
+    "colCreated": "Created",
+    "configSection": "Configuration",
+    "nameLabel": "Name",
+    "nameRequired": "Name cannot be empty",
+    "urlRequired": "URL cannot be empty",
+    "promptRequired": "System prompt cannot be empty",
+    "pollingLabel": "Polling Interval (minutes)",
+    "pollingDesc": "15-10080 minutes",
+    "manualTextLabel": "Text Content",
+    "fileRefLabel": "File Reference",
+    "systemPromptLabel": "System Prompt",
+    "systemPromptDesc": "Define the LLM role and output format",
+    "topicsLabel": "Topics",
+    "topicsDesc": "One topic per line",
+    "topicsPlaceholder": "Accounting standards\nTax calculation\nFinancial reporting",
+    "itemsPerRunLabel": "Items Per Run",
+    "itemsPerRunDesc": "1-20 items",
+    "confirmSummary": "Configuration Summary",
+    "urlLabel": "URL",
+    "steps": {
+      "type": "Select Type",
+      "config": "Configuration",
+      "confirm": "Confirm"
+    },
+    "emptyTitle": "No knowledge sources yet",
+    "emptyDescription": "Connect an RSS feed, API, file upload, or manual entry to feed external knowledge into a persona's memory.",
+    "emptyAction": "Add your first knowledge source"
+  },
+  "autorun": {
+    "title": "Autorun Configuration",
+    "runsTitle": "Run History",
+    "triggerNow": "Run Now",
+    "viewRuns": "View Run History",
+    "enabledLabel": "Enable Autorun",
+    "on": "Enabled",
+    "off": "Disabled",
+    "intervalLabel": "Run Interval (minutes)",
+    "intervalDesc": "15-10080 minutes",
+    "driftLabel": "Drift Threshold",
+    "driftDesc": "0-1, lower is stricter",
+    "reviewLabel": "Review Required",
+    "reviewDesc": "Changes require manual review",
+    "sourcesLabel": "Linked Knowledge Sources",
+    "sourcesDesc": "Select knowledge sources for this avatar",
+    "save": "Save Configuration",
+    "saved": "Configuration saved",
+    "saveError": "Failed to save configuration",
+    "noRuns": "No runs recorded",
+    "colRunId": "Run ID",
+    "colStatus": "Status",
+    "colStarted": "Started",
+    "colItems": "Items Processed",
+    "noRunsEmptyTitle": "No runs yet for this avatar",
+    "noRunsEmptyDescription": "Once Avatar autorun is enabled, every scheduled run lands here with knowledge ingest, pattern extraction, and drift-detection details.",
+    "noRunsEmptyAction": "View autorun configuration"
+  },
+  "personas": {
+    "title": "Persona Management",
+    "subtitle": "Manage persona branches and simulations",
+    "fork": "Fork Persona",
+    "forkTitle": "Create Persona Fork",
+    "labelField": "Name",
+    "emptyState": "No persona branches yet",
+    "pause": "Pause",
+    "resume": "Resume",
+    "colLabel": "Name",
+    "colStatus": "Status",
+    "colQuota": "Resource Quota",
+    "colCreated": "Created",
+    "emptyTitle": "No personas yet",
+    "emptyDescription": "Fork from a template or import a snapshot to create your first persona. Each persona has independent values, memory, and decision style.",
+    "emptyAction": "Create your first persona"
+  },
+  "personaCore": {
+    "title": "Persona Core",
+    "subtitle": "Manage canonical personas, forks, knowledge, and lifecycle",
+    "create": "Create Persona",
+    "createTitle": "Create Persona Core",
+    "fork": "Create Fork",
+    "forkTitle": "Create Persona Fork",
+    "knowledgeTitle": "Add Knowledge",
+    "addKnowledge": "Add Knowledge",
+    "view": "View",
+    "selected": "Selected",
+    "decease": "Mark Deceased",
+    "deceasePrompt": "Enter a shutdown reason",
+    "detailTitle": "Persona Detail",
+    "profileTitle": "Core Profile",
+    "noSelection": "Select a persona to inspect its wallet, forks, and memory stream.",
+    "noMission": "No mission profile recorded yet.",
+    "walletAddress": "Wallet",
+    "emptyState": "No core personas yet. Create one to bootstrap the OS 2.0 model.",
+    "emptyForks": "No forks created yet.",
+    "emptyKnowledge": "No synced knowledge yet.",
+    "emptyMemories": "No recent memories yet.",
+    "emptyGovernance": "No governance events yet.",
+    "activitySummary": "{{activeForks}} forks · {{knowledgeCount}} knowledge · {{activeTaskCount}} active tasks",
+    "metrics": {
+      "personas": "Core Personas",
+      "walletBalance": "Wallet Balance",
+      "tokenBalance": "Token Balance",
+      "avgGrowth": "Average Growth",
+      "reputation": "Reputation",
+      "trainingInvestment": "Training Investment"
+    },
+    "columns": {
+      "name": "Name",
+      "status": "Status",
+      "visibility": "Visibility",
+      "growth": "Growth",
+      "reputation": "Reputation",
+      "wallet": "Wallet",
+      "activity": "Activity"
+    },
+    "sections": {
+      "forks": "Forks",
+      "knowledge": "Knowledge",
+      "memories": "Recent Memories",
+      "governance": "Governance"
+    },
+    "form": {
+      "name": "Persona Name",
+      "visibility": "Visibility",
+      "mission": "Mission",
+      "traits": "Traits (one per line)",
+      "seedKnowledgeTitle": "Seed Knowledge Title",
+      "seedKnowledgeContent": "Seed Knowledge Content",
+      "forkName": "Fork Name",
+      "forkType": "Fork Type",
+      "knowledgeTitle": "Knowledge Title",
+      "knowledgeSource": "Knowledge Source",
+      "knowledgeTags": "Tags (comma separated)",
+      "knowledgeContent": "Knowledge Content"
+    },
+    "status": {
+      "active": "Active",
+      "restricted": "Restricted",
+      "deceased": "Deceased",
+      "transferred": "Transferred"
+    },
+    "visibility": {
+      "private": "Private",
+      "shared": "Shared",
+      "marketplace": "Marketplace"
+    },
+    "forkType": {
+      "experimental": "Experimental",
+      "task": "Task",
+      "social": "Social",
+      "research": "Research",
+      "operations": "Operations"
+    },
+    "governance": {
+      "warning": "Warning",
+      "reward": "Reward",
+      "restriction": "Restriction",
+      "review": "Review",
+      "transfer": "Transfer",
+      "death": "Death"
+    }
+  },
+  "marketplace": {
+    "title": "Marketplace",
+    "subtitle": "Publish tasks, bind them to a core persona, and settle rewards into its wallet",
+    "publish": "Publish Task",
+    "publishTitle": "Publish Marketplace Task",
+    "accept": "Accept",
+    "complete": "Complete",
+    "completeTitle": "Complete Task",
+    "assignPersona": "Execution Persona",
+    "emptyState": "No marketplace tasks for this status yet.",
+    "unassigned": "Unassigned",
+    "noPersona": "No Persona",
+    "metrics": {
+      "visibleTasks": "Visible Tasks",
+      "totalReward": "Total Reward",
+      "activePersona": "Active Persona"
+    },
+    "columns": {
+      "title": "Task",
+      "category": "Category",
+      "status": "Status",
+      "reward": "Reward",
+      "assignee": "Assignee",
+      "updatedAt": "Updated"
+    },
+    "form": {
+      "title": "Task Title",
+      "description": "Description",
+      "category": "Category",
+      "reward": "Reward",
+      "currency": "Currency",
+      "qualityScore": "Quality Score",
+      "trainingHours": "Owner Training Hours"
+    },
+    "status": {
+      "open": "Open",
+      "accepted": "Accepted",
+      "completed": "Completed",
+      "cancelled": "Cancelled"
+    },
+    "category": {
+      "writing": "Writing",
+      "coding": "Coding",
+      "research": "Research",
+      "operations": "Operations",
+      "general": "General"
+    },
+    "emptyTitle": "No marketplace tasks yet",
+    "emptyDescription": "Publish a marketplace task to let other users' personas pick it up, or browse what's already out there.",
+    "emptyAction": "Publish your first task"
+  },
+  "toolPermissions": {
+    "title": "Tool Permissions",
+    "subtitle": "Manage (persona, tool) execution grants; revocation is a soft delete and stays auditable",
+    "actions": {
+      "grant": "Grant permission",
+      "cancel": "Cancel",
+      "revoke": "Revoke"
+    },
+    "filters": {
+      "personaPlaceholder": "Filter by personaId",
+      "statusAll": "All",
+      "statusActive": "Active only",
+      "statusRevoked": "Revoked only",
+      "countSummary": "{{shown}} / {{total}}"
+    },
+    "table": {
+      "persona": "Persona",
+      "tool": "Tool",
+      "scope": "Scope",
+      "constraints": "Constraints",
+      "granted": "Granted",
+      "expires": "Expires",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "statusLabels": {
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked"
+    },
+    "empty": {
+      "noMatch": "No matching permissions."
+    },
+    "prompts": {
+      "revokeReason": "Revocation reason (required)"
+    },
+    "errors": {
+      "loadFailed": "Load failed: {{message}}"
+    },
+    "grantForm": {
+      "title": "Grant tool permission",
+      "personaIdLabel": "Persona ID",
+      "toolIdLabel": "Tool ID (e.g. web_search / calendar / email.send)",
+      "scopeLabel": "Scope",
+      "maxPerDayLabel": "Max calls per day (optional)",
+      "requireConfirmLabel": "Require second-step confirmation (auto-enabled for high-risk tools)",
+      "submit": "Grant",
+      "submitting": "Submitting…",
+      "cancel": "Cancel"
+    }
+  },
+  "agencyAuthorizations": {
+    "title": "Agency Authorizations",
+    "subtitle": "Establish legal-scope agency between (persona, principalUser) with suspend / resume / revoke lifecycle",
+    "actions": {
+      "create": "New authorization",
+      "cancel": "Cancel",
+      "suspend": "Suspend",
+      "resume": "Resume",
+      "revoke": "Revoke"
+    },
+    "filters": {
+      "personaPlaceholder": "Enter personaId to query / create",
+      "enterPersonaTooltip": "Enter a personaId in the filter bar first"
+    },
+    "empty": {
+      "enterPersona": "Enter a personaId to view its agency authorizations.",
+      "personaEmpty": "Persona {{personaId}} has no authorizations yet."
+    },
+    "prompts": {
+      "revokeReason": "Revocation reason (required)"
+    },
+    "errors": {
+      "loadFailed": "Load failed: {{message}}"
+    },
+    "card": {
+      "scope": "Scope",
+      "principal": "Principal",
+      "grantedAt": "Granted at: {{ts}}",
+      "expiresAt": "Expires: {{ts}}",
+      "allowedTools": "Allowed tools: {{count}}",
+      "deniedTools": "Denied tools: {{count}}",
+      "revokedNote": "Revoked at {{ts}} — {{reason}}"
+    },
+    "createForm": {
+      "title": "Create authorization for Persona {{personaId}}",
+      "principalUserIdLabel": "Principal User ID",
+      "scopeLabel": "Scope",
+      "scopeDescriptionLabel": "Scope description (≥10 chars; used as legal evidence)",
+      "allowedToolsLabel": "Allowed tools (comma-separated, optional)",
+      "allowedToolsPlaceholder": "web_search, calendar",
+      "deniedToolsLabel": "Denied tools (comma-separated, optional)",
+      "deniedToolsPlaceholder": "email.send, payment.*",
+      "submit": "Create authorization",
+      "submitting": "Submitting…",
+      "cancel": "Cancel"
+    }
+  },
+  "toolInvocations": {
+    "title": "Tool Invocation History",
+    "subtitle": "Per-persona tool_invocations audit including success / failure / denied / pending states",
+    "filters": {
+      "personaPlaceholder": "Enter personaId to query",
+      "limitLabel": "Rows"
+    },
+    "empty": {
+      "enterPersona": "Enter a personaId to view its tool invocation history.",
+      "personaEmpty": "Persona {{personaId}} has no tool invocation records yet."
+    },
+    "errors": {
+      "loadFailed": "Load failed: {{message}}"
+    },
+    "table": {
+      "invoked": "Invoked",
+      "tool": "Tool",
+      "invoker": "Invoker",
+      "status": "Status",
+      "duration": "Duration",
+      "output": "Output",
+      "error": "Error",
+      "durationMs": "{{ms}} ms",
+      "outputBytes": "{{bytes}} B"
+    }
+  },
+  "agentOauthGoogle": {
+    "documentTitle": "Google Authorization",
+    "title": "Google Account Authorization",
+    "subtitle": "Authorize Chrono Synth to access Calendar / Gmail on your behalf; revoke any time and any in-flight agent call fails immediately",
+    "addSection": {
+      "heading": "Add new authorization",
+      "authorize": "Authorize",
+      "authorizing": "Preparing…",
+      "authorized": "Authorized",
+      "startError": "Authorization start failed: {{message}}"
+    },
+    "list": {
+      "heading": "Granted scopes",
+      "empty": "No Google scopes have been authorized yet.",
+      "loadFailed": "Load failed: {{message}}",
+      "revoke": "Revoke",
+      "revokeConfirm": "Revoke {{scope}}? Any agent currently using this scope will fail immediately."
+    },
+    "statusLabels": {
+      "active": "Active",
+      "expired": "Expired (refresh on next call)",
+      "revoked": "Revoked"
+    },
+    "table": {
+      "scope": "Scope",
+      "status": "Status",
+      "granted": "Granted",
+      "expires": "Expires"
+    }
+  },
+  "agentConfirmations": {
+    "documentTitle": "Pending Approvals",
+    "title": "Pending Approvals",
+    "subtitle": "High-risk tool calls require your second-step approval before execution; you can revoke the entire grant within 30 s",
+    "statusPending": "Pending",
+    "actions": {
+      "approve": "Approve",
+      "reject": "Reject",
+      "cancel": "Cancel",
+      "execute": "Execute",
+      "executing": "Executing…"
+    },
+    "empty": "No tool calls awaiting approval.",
+    "errors": {
+      "loadFailed": "Load failed: {{message}}",
+      "submitFailed": "Submit failed: {{message}}",
+      "argsNotObject": "arguments must be a JSON object",
+      "argsParseFailed": "JSON parse failed"
+    },
+    "prompts": {
+      "rejectReason": "Rejection reason (optional)"
+    },
+    "fields": {
+      "persona": "Persona",
+      "invoker": "Invoker",
+      "invokedAt": "Triggered",
+      "inputHash": "Input hash"
+    },
+    "dialog": {
+      "title": "Approve tool call",
+      "tool": "Tool",
+      "persona": "Persona",
+      "hint": "For privacy the backend does not persist arguments; paste the original JSON arguments that triggered this call. Mismatched input_hash will be rejected."
+    }
+  },
+  "safetyDrift": {
+    "documentTitle": "AI Safety — Drift Monitor",
+    "title": "AI Safety / Persona Drift Monitor",
+    "subtitle": "Compares value weight deltas across the latest two snapshots; over-threshold writes an audit and fires the webhook",
+    "actions": {
+      "generate": "Generate report now",
+      "generating": "Analyzing…"
+    },
+    "cards": {
+      "safetyScore": "Safety Score",
+      "safetyScoreValue": "{{score}}/100",
+      "unverifiedMemory": "Unverified Memories",
+      "unverifiedMemorySubtitle": "Low confidence or unknown source",
+      "recentAlerts": "Recent Alerts (≠ ok)",
+      "recentAlertsSubtitle": "Last 10 abnormal states"
+    },
+    "empty": {
+      "noReport": "No drift report yet. Click “Generate report now” to start the first analysis.",
+      "noValueDrifts": "No comparable value changes in this analysis (likely only one snapshot exists)."
+    },
+    "report": {
+      "heading": "Latest Report",
+      "generatedAt": "Generated at {{ts}} · baseline {{baseline}}",
+      "overallScore": "Overall drift score: ",
+      "auditWritten": "Alert written to audit (auditId={{id}})"
+    },
+    "table": {
+      "value": "Value",
+      "baseline": "Baseline",
+      "current": "Current",
+      "delta": "Delta",
+      "alert": "Alert"
+    },
+    "recentAlerts": {
+      "heading": "Recent Alerts"
+    }
+  },
+  "setupChecklist": {
+    "title": "Get started",
+    "subtitle": "{{completed}} of {{total}} completed",
+    "collapse": "Collapse",
+    "dismiss": "Dismiss",
+    "completed": "Completed",
+    "progressLabel": "Progress {{progress}}%",
+    "steps": {
+      "createPersona": "Create your first persona",
+      "addKnowledge": "Add a knowledge source",
+      "grantTools": "Grant a tool permission",
+      "firstConversation": "Have your first conversation",
+      "inviteTeam": "Invite a teammate"
+    }
+  },
+  "changelog": {
+    "title": "Recent updates",
+    "label": "Updates",
+    "openLabel": "Open changelog",
+    "close": "Close",
+    "unread": "Unread",
+    "entries": {
+      "0": {
+        "title": "P1.7.2 — Setup checklist + structured empty states + analytics",
+        "body": "· Floating bottom-right setup checklist: 5-step guide + progress bar + persistent dismissal\n· EmptyState upgrade: illustrations + title + primary/secondary CTAs (backward-compatible)\n· Client-side analytics tracker + server-side events_user_journey persistence (v069)"
+      },
+      "1": {
+        "title": "P0.4 / P1.4 — Full i18n + strict CSP",
+        "body": "· 6 admin/agent pages fully translated for zh-CN + en-US\n· Strict CSP + COOP/COEP/CORP + Trusted Types report-only\n· HSTS upgraded to 2-year + preload"
+      }
+    }
+  },
+  "cmdk": {
+    "placeholder": "Search commands or routes…",
+    "searchLabel": "Command palette search",
+    "resultsLabel": "Search results",
+    "empty": "No matching commands.",
+    "help": {
+      "move": "Move",
+      "select": "Select",
+      "close": "Close"
+    },
+    "commands": {
+      "dashboard": "Go to: Dashboard",
+      "personas": "Go to: Personas",
+      "simulations": "Go to: Simulations",
+      "values": "Go to: Core values",
+      "knowledge": "Go to: Knowledge sources",
+      "billing": "Go to: Billing",
+      "settings": "Go to: Settings",
+      "toolPermissions": "Manage: Tool permissions",
+      "agencyAuthorizations": "Manage: Agency authorizations",
+      "toolInvocations": "View: Tool invocation history",
+      "safetyDrift": "AI safety: Drift report",
+      "adminConfig": "Manage: Tenant config",
+      "agentOauthGoogle": "Google account authorization",
+      "agentConfirmations": "Pending approvals"
+    }
+  },
+  "errorPages": {
+    "notFound": {
+      "documentTitle": "Page not found",
+      "title": "We can't find that page",
+      "body": "The link may have expired, or the path you entered doesn't exist. Try one of the common entry points below."
+    },
+    "forbidden": {
+      "documentTitle": "Access denied",
+      "title": "You don't have permission to view this page",
+      "body": "This page is admin-only. If you think this is a mistake, contact your tenant administrator.",
+      "backToDashboard": "Back to dashboard"
+    },
+    "suggestions": {
+      "heading": "Try these",
+      "dashboard": "Dashboard",
+      "personas": "Personas",
+      "simulations": "Simulations",
+      "settings": "Settings"
+    }
+  },
+  "personaHealth": {
+    "title": "Persona health dashboard",
+    "subtitle": "Core values and activity for persona {{personaId}}",
+    "disabled": {
+      "title": "This feature is in beta",
+      "message": "The health dashboard is still under construction. Set chrono.flag.experimental.values_health_dashboard=true in localStorage to preview."
+    },
+    "radar": {
+      "heading": "Core values radar",
+      "empty": "This persona has no value data to visualize yet. Record a few decisions and come back.",
+      "legend": {
+        "current": "Today",
+        "d7": "7 days ago",
+        "d30": "30 days ago"
+      }
+    },
+    "decisionTrend": {
+      "heading": "Decision count, last 30 days",
+      "empty": "No decisions recorded recently."
+    },
+    "memoryStack": {
+      "heading": "Memory growth, last 30 days",
+      "empty": "No memory data yet.",
+      "legend": {
+        "episodic": "Episodic",
+        "semantic": "Semantic",
+        "procedural": "Procedural"
+      }
+    },
+    "toolMix": {
+      "heading": "Tool invocation mix, last 7 days",
+      "empty": "No successful tool invocations in the last week."
+    },
+    "driftTimeline": {
+      "heading": "Drift history, last 90 days",
+      "empty": "No drift reports yet."
+    },
+    "errors": {
+      "loadFailed": "Load failed: {{message}}"
+    }
+  },
+  "growth": {
+    "levels": {
+      "L1": {
+        "label": "Newcomer",
+        "description": "Create a persona, start your first conversation"
+      },
+      "L2": {
+        "label": "Explorer",
+        "description": "Unlock simulations and the memory graph"
+      },
+      "L3": {
+        "label": "Practitioner",
+        "description": "Unlock tool invocations and external authorizations"
+      },
+      "L4": {
+        "label": "Power user",
+        "description": "Unlock multi-persona, governance, and the admin console"
+      }
+    },
+    "locked": {
+      "title": "Requires level {{level}}",
+      "body": "Keep using the app to unlock this feature.",
+      "daysRemaining_one": "{{count}} day until unlock",
+      "daysRemaining_other": "{{count}} days until unlock"
+    },
+    "page": {
+      "title": "Your growth",
+      "subtitle": "Level {{level}} · {{daysOfUse}} days of use"
+    },
+    "tree": {
+      "label": "Capability ladder",
+      "daysUntilNext_one": "{{count}} day until the next level",
+      "daysUntilNext_other": "{{count}} days until the next level",
+      "maxReached": "You've reached the highest level."
+    },
+    "welcome": {
+      "skip": "Skip",
+      "next": "Next",
+      "start": "Get started",
+      "hello": {
+        "title": "Welcome to ChronoSynth",
+        "body": "ChronoSynth is your personal cognition workspace. We help you grow a digital persona that reflects your values, learns from your decisions, and stays aligned with how you want to operate."
+      },
+      "persona": {
+        "title": "Personas are your unit of value",
+        "body": "Every conversation, every simulation, every memory belongs to a persona. Start with one — you can fork or specialize later as your needs evolve."
+      },
+      "growth": {
+        "title": "Capabilities unlock with use",
+        "body": "We don't dump every advanced surface on you on day one. As you spend time with ChronoSynth, new tools, simulations, and admin features appear when they're useful."
+      }
+    },
+    "celebration": {
+      "eyebrow": "Level up",
+      "title": "You've reached {{level}}",
+      "unlocksLabel": "Newly unlocked",
+      "dismiss": "Awesome"
+    },
+    "unlocks": {
+      "personas": "Persona management",
+      "conversation": "Conversations",
+      "simulations": "Counterfactual simulations",
+      "memory_graph": "Memory graph",
+      "agent_tools": "Agent tool invocations",
+      "oauth_authorizations": "External OAuth authorizations",
+      "multi_persona": "Multi-persona orchestration",
+      "governance": "Governance controls",
+      "admin_console": "Admin console"
+    }
+  },
+  "suggestions": {
+    "firstPersona": {
+      "title": "Create your first persona",
+      "body": "A persona is the container for your digital identity. Start with one to begin."
+    },
+    "firstKnowledge": {
+      "title": "Add a knowledge source",
+      "body": "Give the persona context. Conversations get sharper once knowledge is connected."
+    },
+    "viewDrift": {
+      "title": "Review the drift report"
+    },
+    "firstTool": {
+      "title": "Grant your first tool permission"
+    }
+  },
+  "metric": {
+    "wealth": "Wealth",
+    "healthIndex": "Health Index",
+    "overallScore": "Overall Score",
+    "emotionalValence": "Mood",
+    "emotionalStress": "Stress",
+    "emotionalFulfillment": "Fulfillment",
+    "emotionalRegret": "Regret",
+    "spouseSecurity": "Spouse Security",
+    "childCost": "Child Cost",
+    "familyPressure": "Family Pressure"
+  },
+  "resolution": {
+    "year": "Year",
+    "twoYears": "2 Years",
+    "fiveYears": "5 Years"
+  },
+  "syncStatus": {
+    "initial_sync": "Initial sync",
+    "online_synced": "Synced",
+    "online_dirty": "Pending upload",
+    "syncing": "Syncing",
+    "offline_queueing": "Offline (queued)",
+    "offline_readonly": "Offline (read-only)",
+    "conflict_inbox": "Conflicts",
+    "degraded_remote": "Remote degraded",
+    "reauth_required": "Re-auth required",
+    "recovery_required": "Manual recovery required"
+  },
+  "chart": {
+    "yearAxis": "Year"
+  },
+  "milestone": {
+    "peak": "Peak",
+    "trough": "Trough",
+    "cross_up": "Crossed up",
+    "cross_down": "Crossed down"
+  },
+  "conflicts": {
+    "title": "Conflict Inbox",
+    "subtitle": "Resolve cross-runtime sync conflicts",
+    "refresh": "Refresh",
+    "empty": "No pending conflicts",
+    "resolving": "Resolving…",
+    "actions": {
+      "keep_local": "Keep local",
+      "keep_server": "Keep server",
+      "duplicate": "Create duplicate",
+      "merge_manually": "Merge manually"
+    },
+    "errors": {
+      "loadTitle": "Couldn't load conflict inbox",
+      "resolveTitle": "Couldn't resolve conflict",
+      "retry": "Retry",
+      "UNKNOWN": "Something went wrong. Please retry, or contact support if it persists.",
+      "AUTH_REQUIRED": "Your session expired. Please sign in again to view conflicts.",
+      "AUTH_FORBIDDEN": "You don't have permission to resolve conflicts in this tenant.",
+      "STATE_INVALID_TRANSITION": "This conflict was already resolved on another device. The inbox was refreshed.",
+      "RATE_LIMIT_EXCEEDED": "Too many requests — please wait a moment and try again."
+    }
+  },
+  "errors": {
+    "missingSimulationId": "Missing simulationId parameter",
+    "wsReconnectFailed": "WebSocket reconnect failed after {{max}} attempts",
+    "wsConnectionError": "WebSocket connection error"
+  },
+  "theme": {
+    "label": "Theme",
+    "choices": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark",
+      "highContrast": "High contrast"
+    }
+  },
+  "enterpriseConsole": {
+    "title": "Enterprise Console",
+    "subtitle": "Operate organizations, deployment profiles, control-plane views, and audit evidence from one place.",
+    "requiresAdmin": "Enterprise Console requires an admin account.",
+    "actions": {
+      "workerHealth": "Worker Health",
+      "prometheus": "Prometheus",
+      "grafana": "Grafana"
+    },
+    "metrics": {
+      "tenant": "Tenant",
+      "tenantHint": "JWT-scoped tenant for all enterprise actions",
+      "organizations": "Organizations",
+      "deploymentMode": "Deployment Mode",
+      "deploymentModeHint": "Shared Kafka topic namespace",
+      "auditEvents": "Audit Events",
+      "auditEventsHint": "Recent business audit records for this tenant"
+    },
+    "tabs": {
+      "deployment": "Deployment Profile",
+      "organizations": "Organizations & RBAC",
+      "control": "Control Plane",
+      "vault": "Key Vault",
+      "audit": "Audit Trail"
+    },
+    "sections": {
+      "currentPosture": {
+        "title": "Current Posture",
+        "subtitle": "Dedicated deployment, encryption, and enterprise identity posture for this tenant."
+      },
+      "deploymentProfile": {
+        "title": "Deployment Profile",
+        "subtitle": "Persist the tenant deployment profile consumed by OIDC, SCIM, encryption, and Kafka namespace routing."
+      },
+      "scimProvisioning": {
+        "title": "SCIM Provisioning",
+        "subtitle": "Generate a new SCIM bearer token for IdP-driven enterprise user provisioning."
+      },
+      "organizationsList": {
+        "title": "Organizations",
+        "subtitle": "Create organizations and grant enterprise workspace roles for the current tenant."
+      },
+      "createOrganization": {
+        "title": "Create Organization",
+        "subtitle": "Bootstrap an organization with its default workspace and the current admin as org_admin."
+      },
+      "memberships": {
+        "title": "Memberships & Role Bindings",
+        "subtitleSelected": "Manage members for {{org}}.",
+        "subtitleEmpty": "Select an organization first."
+      },
+      "personas": { "title": "Personas", "subtitle": "Current persona fleet, ownership, and wallet posture." },
+      "tasks": { "title": "Tasks", "subtitle": "Marketplace backlog and completion posture." },
+      "wallets": { "title": "Wallets", "subtitle": "Persona wallet exposure and settlement freshness." },
+      "governance": { "title": "Governance", "subtitle": "Open cases, appeals, and recent moderation actions." },
+      "tenantKeyVersions": {
+        "title": "Tenant Key Versions",
+        "subtitle": "Platform-managed encryption keys for this tenant. Rotate to issue a new version; revoke to retire a compromised key."
+      },
+      "vaultAudit": {
+        "title": "Vault Operation Audit",
+        "subtitle": "Last 50 cryptographic operations performed against this tenant's vault."
+      },
+      "businessAudit": {
+        "title": "Business Audit Trail",
+        "subtitle": "Recent sensitive actions captured by the platform audit logger."
+      }
+    },
+    "buttons": {
+      "saveProfile": "Save Profile",
+      "saving": "Saving...",
+      "generateToken": "Generate Token",
+      "generating": "Generating...",
+      "createOrganization": "Create Organization",
+      "creating": "Creating...",
+      "addOrUpdateMember": "Add / Update Member",
+      "updating": "Updating...",
+      "rotate": "Rotate",
+      "rotating": "Rotating…",
+      "revoke": "Revoke",
+      "revoking": "Revoking…",
+      "rotateNamed": "Rotate \"{{ref}}\"",
+      "selected": "Selected",
+      "viewMembers": "View Members"
+    },
+    "fields": {
+      "organizationName": "Organization Name",
+      "slug": "Slug",
+      "defaultWorkspaceName": "Default Workspace Name",
+      "defaultWorkspaceSlug": "Default Workspace Slug",
+      "userEmail": "User Email",
+      "roles": "Roles",
+      "deployment": "Deployment",
+      "deploymentMode": "Deployment Mode",
+      "databaseIsolation": "Database Isolation",
+      "encryptionMode": "Encryption Mode",
+      "kmsKeyReference": "KMS Key Reference",
+      "enableTenantOidc": "Enable Tenant OIDC",
+      "issuerUrl": "Issuer URL",
+      "clientId": "Client ID",
+      "clientSecret": "Client Secret",
+      "audience": "Audience",
+      "scope": "Scope",
+      "emailClaim": "Email Claim",
+      "nameClaim": "Name Claim",
+      "kafkaNamespace": "Kafka Namespace",
+      "encryption": "Encryption",
+      "ssoScim": "SSO / SCIM",
+      "dbIsolation": "DB isolation: {{mode}}",
+      "kafkaNamespaceHint": "Runtime routing target for observability topics",
+      "encryptionKeyringDefault": "Platform-managed keyring",
+      "deploymentLoading": "loading",
+      "oidcOn": "OIDC on",
+      "oidcOff": "OIDC off",
+      "scimReady": "SCIM ready",
+      "scimMissing": "No SCIM token",
+      "updatedAt": "Updated {{when}}",
+      "oneTimeTokenLabel": "One-time token value",
+      "oneTimeTokenHelp": "Copy this immediately — it will not be shown again.",
+      "secretPlaceholder": "Leave blank to keep the current encrypted secret"
+    },
+    "columns": {
+      "organization": "Organization",
+      "slug": "Slug",
+      "defaultWorkspace": "Default Workspace",
+      "created": "Created",
+      "email": "Email",
+      "roles": "Roles",
+      "status": "Status",
+      "joined": "Joined",
+      "keyRef": "Key Ref",
+      "provider": "Provider",
+      "version": "Version",
+      "revoked": "Revoked",
+      "operation": "Operation",
+      "action": "Action",
+      "actor": "Actor",
+      "target": "Target",
+      "targetType": "Target Type",
+      "timestamp": "Timestamp",
+      "time": "Time",
+      "outcome": "Outcome",
+      "persona": "Persona",
+      "owner": "Owner",
+      "wallet": "Wallet",
+      "task": "Task",
+      "category": "Category",
+      "reward": "Reward",
+      "balance": "Balance",
+      "reserve": "Reserve",
+      "lastSettled": "Last Settled",
+      "trigger": "Trigger",
+      "severity": "Severity"
+    },
+    "empty": {
+      "organizations": "No organizations yet.",
+      "members": "No members yet.",
+      "membersAssigned": "No members assigned yet.",
+      "selectOrgFirst": "Create or select an organization to manage memberships.",
+      "personas": "No personas found.",
+      "tasks": "No tasks found.",
+      "wallets": "No wallets found.",
+      "governance": "No governance cases found.",
+      "vaultKeys": "No key versions found. Keys are provisioned on first vault operation.",
+      "vaultAudit": "No vault operations yet.",
+      "audit": "No audit entries."
+    },
+    "summary": {
+      "total": "Total",
+      "active": "Active",
+      "restricted": "Restricted",
+      "deceased": "Deceased",
+      "open": "Open",
+      "accepted": "Accepted",
+      "completed": "Completed",
+      "wallets": "Wallets",
+      "totalBalance": "Total Balance",
+      "tokenReserve": "Token Reserve",
+      "cases": "Cases",
+      "actionApplied": "Action Applied",
+      "appealed": "Appealed"
+    },
+    "errors": {
+      "deploymentLoadFailed": "Failed to load deployment profile: {{error}}",
+      "vaultKeysLoadFailed": "Failed to load vault keys: {{error}}",
+      "auditLoadFailed": "Failed to load audit log: {{error}}",
+      "organizationsLoadFailed": "Failed to load organizations: {{error}}",
+      "membersLoadFailed": "Failed to load members: {{error}}"
+    },
+    "metricsActive": {
+      "createFirstOrg": "Create the first org to enable RBAC",
+      "activeOrg": "Active org: {{org}}"
+    },
+    "success": {
+      "deploymentSaved": "Deployment profile saved.",
+      "organizationCreated": "Organization {{name}} created.",
+      "memberBindingsUpdated": "Organization member bindings updated."
+    }
+  }
+}

@@ -1,0 +1,13 @@
+node_modules
+dist
+*.local
+.env.local
+.env.*.local
+.git
+.github
+e2e
+test-results
+playwright-report
+*.iml
+.DS_Store
+# packages/ is intentionally NOT excluded — CI copies chrono-synth-os/packages/ here before build

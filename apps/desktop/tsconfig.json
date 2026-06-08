@@ -1,16 +1,24 @@
 {
-  "extends": "../../packages/tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
-    "rootDir": "src",
-    "outDir": "dist"
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../../packages/kernel" },
-    { "path": "../../packages/contracts" },
-    { "path": "../../packages/adapter-tauri" },
-    { "path": "../../packages/adapter-web" }
-  ]
+  "include": ["src"],
+  "references": []
 }

@@ -31,7 +31,7 @@ const MIT_PACKAGES = [
   'packages/kernel-testkit', 'packages/schema-dsl',
 ];
 const AGPL_PACKAGE_DIRS = [
-  'apps/companion-web', 'apps/desktop', 'apps/mobile',
+  'apps/companion-web', 'apps/desktop', 'apps/mobile', 'apps/web',
 ];
 const AGPL_ROOT = '.'; /* 仓库根 = 服务端 src，单独校验根 AGPL LICENSE */
 
