@@ -23,7 +23,7 @@
     "clsx": "^2",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "react-router-dom": "7.15.1"
+    "react-router-dom": "7.17.0"
   },
   "devDependencies": {
     "@wontlost-ltd/schema-dsl": "*",
