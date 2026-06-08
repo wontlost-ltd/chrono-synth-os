@@ -9,10 +9,11 @@ FROM node:26-alpine AS builder
 RUN apk upgrade --no-cache
 WORKDIR /app
 
-# 先只拷 root + 所有 workspace 成员的 package.json + lockfile，装一次 workspace 依赖。
-# 拷全部 workspace manifest（与 root `workspaces` 声明一致）让 npm ci 确定性安装，不依赖
-# npm 对缺失 workspace 目录的容忍行为。packages/*/package.json 用通配整目录的 manifest，
-# 但为保持依赖安装层缓存，源码在 npm ci 之后再拷。
+# 拷 root + 所有 workspace 成员 manifest + 内部包源码，装一次 workspace 依赖。
+# 补齐全部 workspace manifest（apps/web + apps/desktop + apps/companion-web，与 root
+# `workspaces` 声明一致；apps/mobile 不在 workspaces）让 npm ci 确定性安装，不依赖 npm 对
+# 缺失 workspace 目录的容忍行为。注：COPY packages/ 同时带入 packages 源码（内部包随后要
+# tsc -b 构建），代价是任意 package 源码改动会击穿 npm ci 层缓存——可接受的简化。
 COPY package.json package-lock.json ./
 COPY packages/ packages/
 COPY apps/web/package.json apps/web/package.json
