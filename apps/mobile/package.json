@@ -8,7 +8,20 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "jest --forceExit",
+    "test:debug-handles": "jest --detectOpenHandles"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "testMatch": ["**/?(*.)+(test).ts?(x)"],
+    "//moduleNameMapper": "去掉相对 import 的 .js 后缀，让 jest CJS 解析器加载 @chrono/contracts 的 NodeNext .ts 源（其 import 用 .js specifier）。仓库内无同名 foo.ts/foo.js 冲突，故安全。",
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@react-navigation/.*|@tanstack/.*))"
+    ]
   },
   "dependencies": {
     "expo": "~52.0.0",
@@ -28,7 +41,12 @@
   },
   "devDependencies": {
     "@chrono/contracts": "file:../../packages/contracts",
+    "@testing-library/react-native": "^12.9.0",
+    "@types/jest": "^29.5.14",
     "@types/react": "~18.3.0",
+    "jest": "~29.7.0",
+    "jest-expo": "~52.0.0",
+    "react-test-renderer": "18.3.1",
     "typescript": "~5.7.0"
   }
 }
