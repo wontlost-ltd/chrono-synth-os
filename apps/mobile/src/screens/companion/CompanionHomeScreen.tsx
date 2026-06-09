@@ -24,7 +24,7 @@ export function CompanionHomeScreen() {
   if (error || !data) {
     return (
       <View style={styles.center}>
-        <Text style={styles.muted}>读取失败，下拉重试或检查网络。</Text>
+        <Text style={styles.muted}>读取失败，请检查网络后重新进入。</Text>
       </View>
     );
   }

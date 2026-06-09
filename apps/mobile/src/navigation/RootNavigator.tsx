@@ -50,12 +50,16 @@ export function RootNavigator({ conflictCount, onLogout, sessionKey }: RootNavig
     );
   }
 
+  /* 用 sessionKey 作 React key：账号切换时强制重挂导航子树，丢弃上一账号的组件内状态，
+   * 与 App 层清 companion 缓存形成双保险（Codex 隐私 Major）。 */
+  const treeKey = String(sessionKey ?? 'anon');
+
   if (gate === 'companion') {
-    return <CompanionTabNavigator plan="companion" onLogout={onLogout} />;
+    return <CompanionTabNavigator key={treeKey} plan="companion" onLogout={onLogout} />;
   }
 
   /* enterprise / unconfigured → 企业版（本地优先默认，与今日行为一致）。 */
-  return <TabNavigator conflictCount={conflictCount} />;
+  return <TabNavigator key={treeKey} conflictCount={conflictCount} />;
 }
 
 const styles = StyleSheet.create({

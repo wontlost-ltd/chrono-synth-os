@@ -26,13 +26,21 @@ export async function fetchCompanionGrowth(): Promise<CompanionGrowthV1> {
   return CompanionGrowthV1Schema.parse(await apiFetch<unknown>('/api/v1/companion/me/growth'));
 }
 
+/** 收敛成 ≥1 的正整数（防御非法 page/pageSize 污染请求）。 */
+function positiveInt(n: number, fallback: number): number {
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
 /** GET /companion/me/memories —「我的记忆」分页。 */
 export async function fetchCompanionMemories(
   page = 1,
   pageSize = 20,
 ): Promise<CompanionMemoryListV1> {
-  const qs = `?page=${page}&pageSize=${pageSize}`;
+  const qs = new URLSearchParams({
+    page: String(positiveInt(page, 1)),
+    pageSize: String(positiveInt(pageSize, 20)),
+  });
   return CompanionMemoryListV1Schema.parse(
-    await apiFetch<unknown>(`/api/v1/companion/me/memories${qs}`),
+    await apiFetch<unknown>(`/api/v1/companion/me/memories?${qs.toString()}`),
   );
 }
