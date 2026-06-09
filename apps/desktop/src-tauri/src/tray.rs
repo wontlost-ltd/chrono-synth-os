@@ -30,9 +30,12 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&status, &open, &force_sync, &quit])?;
 
-    /* 句柄存入 state，供 set_tray_status 后续更新文本。 */
+    /* 句柄存入 state，供 set_tray_status 后续更新文本。锁中毒概率极低，且即便存不进去也只是
+     * 状态项不会动态更新（菜单其余项照常工作），故忽略错误继续 setup，不让 tray 整体失败。 */
     if let Some(state) = app.try_state::<TrayStatusState>() {
-        *state.item.lock().unwrap() = Some(status);
+        if let Ok(mut slot) = state.item.lock() {
+            *slot = Some(status);
+        }
     }
 
     let mut builder = TrayIconBuilder::new()
@@ -66,11 +69,16 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 ///
 /// 文案由前端 `computeTrayStatusLabel` 合成后传入（含状态点 emoji + 中文）。tray 尚未 setup 或句柄
 /// 缺失时优雅 no-op（不报错）——前端轮询会再次推送。
+/// 托盘状态文本最大字符数——label 来自前端纯函数本应很短，这里只做防御性收紧，
+/// 避免异常长字符串污染托盘 UI（按 char 计，对 emoji/中文安全）。
+const MAX_TRAY_LABEL_CHARS: usize = 64;
+
 #[tauri::command]
 pub async fn set_tray_status(
     label: String,
     state: State<'_, TrayStatusState>,
 ) -> Result<(), String> {
+    let label: String = label.chars().take(MAX_TRAY_LABEL_CHARS).collect();
     let guard = state
         .item
         .lock()

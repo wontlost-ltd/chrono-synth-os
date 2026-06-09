@@ -237,9 +237,10 @@ export async function pushTrayStatus(label: string): Promise<void> {
   try {
     await invoke('set_tray_status', { label });
   } catch (err) {
-    /* tray 状态是锦上添花：命令缺失（isMissingCommandError）优雅 no-op；其它错误也只吞掉
-     * （托盘更新失败不值得让 UI 崩，下次轮询会再推）。 */
+    /* tray 状态是锦上添花，不让 UI 崩。命令缺失（isMissingCommandError）静默 no-op；其它错误
+     * （Rust set_text 失败 / poisoned lock 等真实回归）不外抛，但 console.warn 留观测，避免被完全吞掉。 */
     if (isMissingCommandError(err)) return;
+    console.warn('pushTrayStatus failed:', err);
   }
 }
 

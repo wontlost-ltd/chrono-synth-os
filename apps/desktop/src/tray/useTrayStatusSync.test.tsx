@@ -87,4 +87,25 @@ describe('useTrayStatusSync', () => {
     await waitFor(() => expect(pushMock).toHaveBeenCalled());
     expect(lastPushedLabel()).toContain('成长中');
   });
+
+  it('sync 状态未知（查询未返回）→ 不 push', async () => {
+    driftMock.mockResolvedValue(null);
+    /* sync 永不 resolve：syncState 一直 undefined，hook 不应 push（避免误显示）。 */
+    syncMock.mockReturnValue(new Promise(() => {}));
+    renderHarness();
+    /* 给足时间让 drift query settle；push 仍不该发生。 */
+    await new Promise((r) => setTimeout(r, 50));
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it('label 不变 → 不重复 push（useRef 去重）', async () => {
+    driftMock.mockResolvedValue(null);
+    syncMock.mockResolvedValue(syncRow('online_synced'));
+    const { rerender } = renderHarness();
+    await waitFor(() => expect(pushMock).toHaveBeenCalledTimes(1));
+    /* 再次渲染（数据不变）：label 相同，不应再次 push。 */
+    rerender(<Harness />);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(pushMock).toHaveBeenCalledTimes(1);
+  });
 });
