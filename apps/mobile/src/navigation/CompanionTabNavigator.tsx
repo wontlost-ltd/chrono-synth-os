@@ -27,9 +27,11 @@ function TabIcon({ label, focused }: { label: string; focused: boolean }) {
 export interface CompanionTabNavigatorProps {
   readonly plan: AccountPlan;
   readonly onLogout: () => void;
+  /** 账号身份键（userId:tenantId）——透传到各数据屏，纳入 queryKey 做缓存隔离。 */
+  readonly accountKey: string;
 }
 
-export function CompanionTabNavigator({ plan, onLogout }: CompanionTabNavigatorProps) {
+export function CompanionTabNavigator({ plan, onLogout, accountKey }: CompanionTabNavigatorProps) {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -41,9 +43,16 @@ export function CompanionTabNavigator({ plan, onLogout }: CompanionTabNavigatorP
         tabBarIcon: ({ focused }) => <TabIcon label={route.name} focused={focused} />,
       })}
     >
-      <Tab.Screen name="Me" component={CompanionHomeScreen} options={{ title: '我的数字人' }} />
-      <Tab.Screen name="Growth" component={CompanionGrowthScreen} options={{ title: '成长' }} />
-      <Tab.Screen name="Memories" component={CompanionMemoriesScreen} options={{ title: '记忆' }} />
+      {/* 数据屏用 render-prop 注入 accountKey（缓存隔离），而非 component=，故 queryKey 含账号维度。 */}
+      <Tab.Screen name="Me" options={{ title: '我的数字人' }}>
+        {() => <CompanionHomeScreen accountKey={accountKey} />}
+      </Tab.Screen>
+      <Tab.Screen name="Growth" options={{ title: '成长' }}>
+        {() => <CompanionGrowthScreen accountKey={accountKey} />}
+      </Tab.Screen>
+      <Tab.Screen name="Memories" options={{ title: '记忆' }}>
+        {() => <CompanionMemoriesScreen accountKey={accountKey} />}
+      </Tab.Screen>
       <Tab.Screen name="Settings" options={{ title: '设置' }}>
         {() => <CompanionSettingsScreen plan={plan} onLogout={onLogout} />}
       </Tab.Screen>

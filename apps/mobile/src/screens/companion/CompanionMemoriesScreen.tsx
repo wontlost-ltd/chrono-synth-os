@@ -7,13 +7,14 @@ import { View, Text, FlatList, StyleSheet, ActivityIndicator } from 'react-nativ
 import { useInfiniteQuery } from '@tanstack/react-query';
 import type { CompanionMemoryV1 } from '@chrono/contracts';
 import { fetchCompanionMemories } from '../../companion/companionApi';
+import type { CompanionScreenProps } from './CompanionHomeScreen';
 
 const PAGE_SIZE = 20;
 
-export function CompanionMemoriesScreen() {
+export function CompanionMemoriesScreen({ accountKey }: CompanionScreenProps) {
   const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useInfiniteQuery({
-      queryKey: ['companion', 'memories'],
+      queryKey: ['companion', accountKey, 'memories'],
       queryFn: ({ pageParam }) => fetchCompanionMemories(pageParam, PAGE_SIZE),
       initialPageParam: 1,
       getNextPageParam: (last) => {

@@ -26,10 +26,15 @@ export async function fetchCompanionGrowth(): Promise<CompanionGrowthV1> {
   return CompanionGrowthV1Schema.parse(await apiFetch<unknown>('/api/v1/companion/me/growth'));
 }
 
-/** 收敛成 ≥1 的正整数（防御非法 page/pageSize 污染请求）。 */
-function positiveInt(n: number, fallback: number): number {
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+/** 收敛成 [1, max] 的正整数（防御非法/超大 page/pageSize 污染请求）。 */
+function clampInt(n: number, fallback: number, max: number): number {
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(Math.floor(n), max);
 }
+
+/** 分页上限——避免导出 API 被复用时传超大 pageSize。 */
+const MAX_PAGE = 100_000;
+const MAX_PAGE_SIZE = 100;
 
 /** GET /companion/me/memories —「我的记忆」分页。 */
 export async function fetchCompanionMemories(
@@ -37,8 +42,8 @@ export async function fetchCompanionMemories(
   pageSize = 20,
 ): Promise<CompanionMemoryListV1> {
   const qs = new URLSearchParams({
-    page: String(positiveInt(page, 1)),
-    pageSize: String(positiveInt(pageSize, 20)),
+    page: String(clampInt(page, 1, MAX_PAGE)),
+    pageSize: String(clampInt(pageSize, 20, MAX_PAGE_SIZE)),
   });
   return CompanionMemoryListV1Schema.parse(
     await apiFetch<unknown>(`/api/v1/companion/me/memories?${qs.toString()}`),

@@ -7,6 +7,7 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import type { ExplorationIntensityV1, ExplorationDirectionV1 } from '@chrono/contracts';
 import { fetchCompanionGrowth } from '../../companion/companionApi';
+import type { CompanionScreenProps } from './CompanionHomeScreen';
 
 /** 探索强度 → 中文 + 配色（成长语气，非告警）。 */
 const INTENSITY: Record<ExplorationIntensityV1, { label: string; bg: string; fg: string }> = {
@@ -21,9 +22,9 @@ const DIRECTION_LABEL: Record<ExplorationDirectionV1['direction'], string> = {
   steady: '保持',
 };
 
-export function CompanionGrowthScreen() {
+export function CompanionGrowthScreen({ accountKey }: CompanionScreenProps) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['companion', 'growth'],
+    queryKey: ['companion', accountKey, 'growth'],
     queryFn: fetchCompanionGrowth,
   });
 

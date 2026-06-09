@@ -7,9 +7,14 @@ import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { fetchCompanionMe } from '../../companion/companionApi';
 
-export function CompanionHomeScreen() {
+export interface CompanionScreenProps {
+  /** 当前账号身份键（userId:tenantId）——纳入 queryKey 做缓存隔离，杜绝换账号回显（Codex 隐私 Major）。 */
+  readonly accountKey: string;
+}
+
+export function CompanionHomeScreen({ accountKey }: CompanionScreenProps) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['companion', 'me'],
+    queryKey: ['companion', accountKey, 'me'],
     queryFn: fetchCompanionMe,
   });
 

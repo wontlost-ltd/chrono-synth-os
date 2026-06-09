@@ -55,7 +55,16 @@ export function RootNavigator({ conflictCount, onLogout, sessionKey }: RootNavig
   const treeKey = String(sessionKey ?? 'anon');
 
   if (gate === 'companion') {
-    return <CompanionTabNavigator key={treeKey} plan="companion" onLogout={onLogout} />;
+    /* companion 态必然已登录，treeKey 即账号身份键（userId:tenantId）；透传给各屏纳入 queryKey。
+     * key + accountKey 双重隔离：换账号既重挂子树，新屏的 queryKey 也不同，缓存按构造隔离（无时序窗口）。 */
+    return (
+      <CompanionTabNavigator
+        key={treeKey}
+        plan="companion"
+        onLogout={onLogout}
+        accountKey={treeKey}
+      />
+    );
   }
 
   /* enterprise / unconfigured → 企业版（本地优先默认，与今日行为一致）。 */
