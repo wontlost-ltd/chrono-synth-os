@@ -8,6 +8,12 @@ vi.mock('@/bridge/tauri-commands', () => ({
   getFirstRunCompleted: vi.fn(async () => firstRunCompleted),
 }));
 
+/* useTrayStatusSync 有独立测试（useTrayStatusSync.test.tsx）；这里 mock 成 no-op，让 App 测试
+ * 不必引入 QueryClientProvider，专注「按 plan 选哪套 router」。 */
+vi.mock('@/tray/useTrayStatusSync', () => ({
+  useTrayStatusSync: vi.fn(),
+}));
+
 /* 把两套 router 换成轻量哨兵——App 测试只关心「选了哪套」，不关心页面内部（页面各有自己的测试）。 */
 vi.mock('@/routers/EnterpriseRoutes', () => ({
   EnterpriseRoutes: () => <div data-testid="enterprise-router" />,

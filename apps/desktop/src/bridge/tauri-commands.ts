@@ -227,6 +227,22 @@ export async function setAppSetting(key: string, value: string): Promise<void> {
   await invoke('set_app_setting', { key, value });
 }
 
+/* ── Phase 2.4b: 托盘「数字人状态」 ───────────────────────────── */
+
+/**
+ * 推送托盘状态文本到 Rust（set_tray_status 更新菜单项）。
+ * label 由前端 computeTrayStatusLabel 合成。命令未接/tray 未 setup 时优雅 no-op。
+ */
+export async function pushTrayStatus(label: string): Promise<void> {
+  try {
+    await invoke('set_tray_status', { label });
+  } catch (err) {
+    /* tray 状态是锦上添花：命令缺失（isMissingCommandError）优雅 no-op；其它错误也只吞掉
+     * （托盘更新失败不值得让 UI 崩，下次轮询会再推）。 */
+    if (isMissingCommandError(err)) return;
+  }
+}
+
 /** Convention: namespace + boolean-ish value ('1' = true) for flags. */
 export const APP_SETTING_FIRST_RUN_COMPLETED = 'onboarding.first_run_completed';
 

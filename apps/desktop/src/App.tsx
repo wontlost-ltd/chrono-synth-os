@@ -6,6 +6,7 @@ import { CompanionRoutes } from './routers/CompanionRoutes';
 import { getFirstRunCompleted, openDatabase } from './bridge/tauri-commands';
 import { resolveAccountPlan } from './plan/account-plan-runtime';
 import type { AccountPlan } from './plan/account-plan';
+import { useTrayStatusSync } from './tray/useTrayStatusSync';
 
 /* P0-G Desktop boot sequence (Step 3 of GA remediation) + ADR-0046 Phase 2.4a plan 切换：
  *
@@ -36,6 +37,10 @@ export function App() {
    * 序列会跳过 onboarding → 探测 plan → ready。避免「完成 onboarding 却卡在 onboarding」
    * （Codex PR-A Critical：旧实现靠单 MemoryRouter 的 navigate('/')，新状态机需显式重查）。 */
   const [bootNonce, setBootNonce] = useState(0);
+
+  /* 把本地数字人状态（drift + sync）同步到系统托盘。无条件挂载（hooks 顺序稳定）；
+   * sync 数据到达前内部 no-op，不受 gate 影响。两套外壳都需要托盘状态。 */
+  useTrayStatusSync();
 
   useEffect(() => {
     let cancelled = false;
