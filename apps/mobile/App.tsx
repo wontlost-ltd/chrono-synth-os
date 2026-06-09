@@ -4,7 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { TabNavigator } from './src/navigation/TabNavigator';
+import { RootNavigator } from './src/navigation/RootNavigator';
+import { useAuth } from './src/hooks/useAuth';
 import {
   RuntimeSyncBadge,
   registerBackgroundSync,
@@ -18,6 +19,7 @@ const queryClient = new QueryClient({
 
 export default function App() {
   const { state, conflictCount, triggerSync } = useMobileSyncState();
+  const { isAuthenticated, logout } = useAuth();
 
   usePushSync(triggerSync);
 
@@ -35,7 +37,11 @@ export default function App() {
             <RuntimeSyncBadge state={state} />
           </View>
           <NavigationContainer>
-            <TabNavigator conflictCount={conflictCount} />
+            <RootNavigator
+              conflictCount={conflictCount}
+              onLogout={logout}
+              sessionKey={isAuthenticated}
+            />
           </NavigationContainer>
         </View>
         <StatusBar style="light" />
