@@ -17,6 +17,7 @@ use commands::sync::{
     mark_sync_failed,
 };
 use rusqlite::Connection;
+use tray::{set_tray_status, TrayStatusState};
 
 pub struct AppState {
     pub db: Mutex<Option<Connection>>,
@@ -52,6 +53,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new(keyring_init_error))
+        .manage(TrayStatusState::default())
         .invoke_handler(tauri::generate_handler![
             open_database,
             query_personas,
@@ -71,6 +73,7 @@ fn main() {
             crdt_export_full_state,
             get_app_setting,
             set_app_setting,
+            set_tray_status,
         ])
         .setup(|app| {
             tray::setup_tray(app.handle())?;
