@@ -22,37 +22,49 @@ describe('fetchCompanionMemories 分页 query 构造', () => {
   });
   afterEach(() => spy.mockRestore());
 
-  /** 取本次调用传给 apiFetch 的 path。 */
-  function calledPath(): string {
-    return spy.mock.calls[0]![0] as string;
+  /** 解析本次调用 path 的 query，精确断言 page/pageSize（避免 toContain 子串误判）。 */
+  function calledQuery(): URLSearchParams {
+    const path = spy.mock.calls[0]![0] as string;
+    return new URLSearchParams(path.slice(path.indexOf('?') + 1));
   }
 
   it('默认 page=1 pageSize=20', async () => {
     await fetchCompanionMemories();
-    expect(calledPath()).toContain('page=1');
-    expect(calledPath()).toContain('pageSize=20');
+    const q = calledQuery();
+    expect(q.get('page')).toBe('1');
+    expect(q.get('pageSize')).toBe('20');
   });
 
   it('正常分页透传', async () => {
     await fetchCompanionMemories(3, 50);
-    expect(calledPath()).toContain('page=3');
-    expect(calledPath()).toContain('pageSize=50');
+    const q = calledQuery();
+    expect(q.get('page')).toBe('3');
+    expect(q.get('pageSize')).toBe('50');
   });
 
-  it('非法 page/pageSize（0/负/NaN）回退默认', async () => {
+  it('非法 page/pageSize（0/负）回退默认', async () => {
     await fetchCompanionMemories(0, -5);
-    expect(calledPath()).toContain('page=1');
-    expect(calledPath()).toContain('pageSize=20');
+    const q = calledQuery();
+    expect(q.get('page')).toBe('1');
+    expect(q.get('pageSize')).toBe('20');
+  });
+
+  it('NaN → 回退默认', async () => {
+    await fetchCompanionMemories(Number.NaN, Number.NaN);
+    const q = calledQuery();
+    expect(q.get('page')).toBe('1');
+    expect(q.get('pageSize')).toBe('20');
   });
 
   it('超大 pageSize 被 clamp 到上限 100', async () => {
     await fetchCompanionMemories(1, 100000);
-    expect(calledPath()).toContain('pageSize=100');
+    expect(calledQuery().get('pageSize')).toBe('100');
   });
 
   it('小数被取整', async () => {
     await fetchCompanionMemories(2.9, 19.9);
-    expect(calledPath()).toContain('page=2');
-    expect(calledPath()).toContain('pageSize=19');
+    const q = calledQuery();
+    expect(q.get('page')).toBe('2');
+    expect(q.get('pageSize')).toBe('19');
   });
 });

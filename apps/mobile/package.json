@@ -9,11 +9,13 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "typecheck": "tsc --noEmit",
-    "test": "jest --forceExit"
+    "test": "jest --forceExit",
+    "test:debug-handles": "jest --detectOpenHandles"
   },
   "jest": {
     "preset": "jest-expo",
     "testMatch": ["**/?(*.)+(test).ts?(x)"],
+    "//moduleNameMapper": "去掉相对 import 的 .js 后缀，让 jest CJS 解析器加载 @chrono/contracts 的 NodeNext .ts 源（其 import 用 .js specifier）。仓库内无同名 foo.ts/foo.js 冲突，故安全。",
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
