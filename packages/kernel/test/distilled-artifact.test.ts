@@ -314,3 +314,30 @@ describe('validateArtifact 强化校验 (审查采纳)', () => {
     assert.equal(r.ok, false);
   });
 });
+
+describe('validatePayloadShape: decision_style_patch / cognitive_model_patch (WP-1)', () => {
+  const dsp = (payload: unknown) =>
+    validateArtifact(makeArtifact({ kind: 'decision_style_patch', payload }));
+  const cmp = (payload: unknown) =>
+    validateArtifact(makeArtifact({ kind: 'cognitive_model_patch', payload }));
+
+  it('decision_style_patch：[0,1] 字段 + lossAversion≥1 + deliberationDepth 1..5 整数', () => {
+    assert.deepEqual(dsp({ riskAppetite: 0.7, lossAversion: 2.5, deliberationDepth: 4 }), []);
+    /* 各字段真实领域约束违反 → 报问题（非统一 [0,1]）。 */
+    assert.ok(dsp({ riskAppetite: 1.5 }).length > 0, 'riskAppetite 越界');
+    assert.ok(dsp({ lossAversion: 0.5 }).length > 0, 'lossAversion 必须 ≥1');
+    assert.ok(dsp({ deliberationDepth: 3.5 }).length > 0, 'deliberationDepth 必须整数');
+    assert.ok(dsp({ deliberationDepth: 6 }).length > 0, 'deliberationDepth ≤5');
+    assert.ok(dsp({}).length > 0, '至少一个字段');
+    assert.ok(dsp(null).length > 0, '非对象');
+  });
+
+  it('cognitive_model_patch：scalar [0,1] + map key→[0,1]', () => {
+    assert.deepEqual(cmp({ growthMindset: 0.9, beliefs: { a: 0.5 } }), []);
+    assert.ok(cmp({ growthMindset: 1.5 }).length > 0, 'scalar 越界');
+    assert.ok(cmp({ beliefs: { a: 1.5 } }).length > 0, 'map 值越界');
+    assert.ok(cmp({ beliefs: [1, 2] }).length > 0, 'map 必须是 key→number 对象');
+    assert.ok(cmp({}).length > 0, '至少一个字段');
+    assert.ok(cmp(null).length > 0, '非对象');
+  });
+});

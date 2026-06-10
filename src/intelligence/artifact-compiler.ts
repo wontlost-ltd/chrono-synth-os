@@ -12,10 +12,11 @@
  *   - response_template  → ResponseTemplateStore 专用持久表（版本化、不衰减）。
  *                          原先落 procedural 记忆会被衰减/驱逐（「学了会忘」），
  *                          违背蒸馏持久性，故 ADR-0047 改为专用表（需注入 templates）。
+ *   - decision_style_patch → CoreRhythmLayer.setDecisionStyle（L2 决策风格参数校准，WP-1）
+ *   - cognitive_model_patch → CoreRhythmLayer.setCognitiveModel（L3 认知模型参数校准，WP-1）
  *
- * 其余 kind（rule / decision_style_patch / cognitive_model_patch）目前不编译，
- * 返回 unsupported——它们停留在 approved/pending 待后续 PR 接专用编译路径，
- * 绝不静默丢弃（D3：自我修改必须可解释）。
+ * 唯一尚不编译的 kind 是 rule：需独立的 rule-store + RuleEngine 持久入口（单列工作）。
+ * 对它**显式拒绝并给原因**（不静默丢弃，D3：自我修改必须可解释），停留在 approved/pending。
  *
  * 快照/回滚由调用方（DistillationService）负责：它持有 ChronoSynthOS，能在编译
  * 批次前后做 snapshot 并在失败时 restore。编译器本身只报告每件工件的成败。
@@ -30,6 +31,8 @@ import type {
   ValueShiftPayload,
   MemoryEdgePayload,
   ResponseTemplatePayload,
+  DecisionStylePatchPayload,
+  CognitiveModelPatchPayload,
 } from '@chrono/kernel';
 
 const LAYER = 'ArtifactCompiler';
@@ -68,6 +71,14 @@ export class ArtifactCompiler {
           return this.compileNarrativePatch(artifact.payload as NarrativePatchPayload);
         case 'response_template':
           return this.compileResponseTemplate(personaId, artifact.id, artifact.payload as ResponseTemplatePayload);
+        case 'decision_style_patch':
+          return this.compileDecisionStylePatch(artifact.payload as DecisionStylePatchPayload);
+        case 'cognitive_model_patch':
+          return this.compileCognitiveModelPatch(artifact.payload as CognitiveModelPatchPayload);
+        case 'rule':
+          /* rule 持久化（规则库）尚未落地：需独立的 rule-store + RuleEngine 持久入口（单列工作）。
+           * 显式拒绝并给原因，与 response_template「未注入则不可编译」同纪律——不静默吞。 */
+          return { ok: false, reason: 'rule compilation not supported: persistent rule store not implemented yet' };
         default:
           return { ok: false, reason: `unsupported artifact kind for compile: ${artifact.kind}` };
       }
@@ -113,4 +124,48 @@ export class ArtifactCompiler {
     this.logger?.info(LAYER, `已编译 response_template: intent=${p.intent} → v${version}（专用表，持久）`);
     return { ok: true, applied: `template intent=${p.intent} v${version}` };
   }
+
+  /** L2 决策风格校准 → CoreRhythmLayer.setDecisionStyle（部分合并更新）。 */
+  private compileDecisionStylePatch(p: DecisionStylePatchPayload): CompileOutcome {
+    /* 白名单取已定义的合法字段（Codex WP-1 Minor：不把未知 numeric key 纳入 patch/log）。
+     * 字段值域已由 kernel validatePayloadShape 按真实领域约束校验过；setDecisionStyle 合并 + 落库 + emit。 */
+    const patch: Partial<DecisionStylePatchPayload> = {};
+    for (const f of DECISION_STYLE_PATCH_FIELDS) {
+      const v = p[f];
+      if (typeof v === 'number') (patch as Record<string, number>)[f] = v;
+    }
+    this.core.setDecisionStyle(patch);
+    const applied = Object.keys(patch).join(',');
+    this.logger?.info(LAYER, `已编译 decision_style_patch: ${applied}`);
+    return { ok: true, applied: `decision_style ${applied}` };
+  }
+
+  /** L3 认知模型校准 → CoreRhythmLayer.setCognitiveModel（scalar 直传，map **entry 级合并**而非整张替换）。 */
+  private compileCognitiveModelPatch(p: CognitiveModelPatchPayload): CompileOutcome {
+    /* setCognitiveModel 对 map 字段是 `patch.beliefs ?? current`（整张替换），故这里先读 current 再逐项
+     * merge，保留旧 key、覆盖/新增 patch key（Codex WP-1 Major：避免覆盖整张认知模型）。 */
+    const current = this.core.cognitiveModel.get();
+    const patch: Record<string, unknown> = {};
+    if (typeof p.attributionStyle === 'number') patch.attributionStyle = p.attributionStyle;
+    if (typeof p.growthMindset === 'number') patch.growthMindset = p.growthMindset;
+    if (p.beliefs) {
+      const merged = new Map<string, number>(current.beliefs);
+      for (const [k, v] of Object.entries(p.beliefs)) merged.set(k, Number(v));
+      patch.beliefs = merged;
+    }
+    if (p.biasWeights) {
+      const merged = new Map<string, number>(current.biasWeights);
+      for (const [k, v] of Object.entries(p.biasWeights)) merged.set(k, Number(v));
+      patch.biasWeights = merged;
+    }
+    this.core.setCognitiveModel(patch as Parameters<CoreRhythmLayer['setCognitiveModel']>[0]);
+    const applied = Object.keys(patch).join(',');
+    this.logger?.info(LAYER, `已编译 cognitive_model_patch: ${applied}`);
+    return { ok: true, applied: `cognitive_model ${applied}` };
+  }
 }
+
+/** L2 决策风格可校准字段白名单（与 kernel DecisionStylePatchPayload 一致）。 */
+const DECISION_STYLE_PATCH_FIELDS: ReadonlyArray<keyof DecisionStylePatchPayload> = [
+  'riskAppetite', 'timeHorizon', 'explorationBias', 'lossAversion', 'deliberationDepth', 'regretSensitivity',
+];

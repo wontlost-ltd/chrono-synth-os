@@ -143,6 +143,47 @@ export interface ResponseTemplatePayload {
   readonly template: string;
 }
 
+/**
+ * L2 决策风格校准载荷（部分更新）。字段约束**对齐领域模型**（decision-style-service.validateDecisionStyle）：
+ * 多数字段 [0,1]，但 lossAversion ≥ 1、deliberationDepth 是 1..5 的整数——否则会「schema 通过但编译抛
+ * RangeError」（Codex WP-1 Critical）。至少一个字段非空才有意义。
+ */
+export interface DecisionStylePatchPayload {
+  readonly riskAppetite?: number;
+  readonly timeHorizon?: number;
+  readonly explorationBias?: number;
+  readonly lossAversion?: number;
+  readonly deliberationDepth?: number;
+  readonly regretSensitivity?: number;
+}
+
+/** 每个 L2 字段的合法性判定（与领域 validateDecisionStyle 一致）。 */
+type FieldCheck = (v: unknown) => boolean;
+const DECISION_STYLE_CONSTRAINTS: Readonly<Record<keyof DecisionStylePatchPayload, FieldCheck>> = {
+  riskAppetite: inUnitRange,
+  timeHorizon: inUnitRange,
+  explorationBias: inUnitRange,
+  regretSensitivity: inUnitRange,
+  /* lossAversion ≥ 1（无上限），deliberationDepth 必须是 1..5 的整数。 */
+  lossAversion: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 1,
+  deliberationDepth: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 5,
+};
+const DECISION_STYLE_FIELDS = Object.keys(DECISION_STYLE_CONSTRAINTS) as Array<keyof DecisionStylePatchPayload>;
+
+/**
+ * L3 认知模型校准载荷（部分更新）。attributionStyle/growthMindset 是 [0,1] 标量；
+ * beliefs/biasWeights 是 key→[0,1] 的映射（对象形式，编译器转 Map）。至少一个字段非空。
+ */
+export interface CognitiveModelPatchPayload {
+  readonly attributionStyle?: number;
+  readonly growthMindset?: number;
+  readonly beliefs?: Readonly<Record<string, number>>;
+  readonly biasWeights?: Readonly<Record<string, number>>;
+}
+
+const COGNITIVE_SCALAR_FIELDS = ['attributionStyle', 'growthMindset'] as const;
+const COGNITIVE_MAP_FIELDS = ['beliefs', 'biasWeights'] as const;
+
 /** 合法状态转移表 */
 const VALID_TRANSITIONS: Readonly<Record<ArtifactStatus, readonly ArtifactStatus[]>> = {
   candidate: ['approved', 'rejected'],
@@ -263,8 +304,50 @@ function validatePayloadShape(kind: ArtifactKind, payload: unknown): string[] {
       }
       return [];
     }
+    case 'decision_style_patch': {
+      const p = payload as Record<string, unknown> | null;
+      if (!p || typeof p !== 'object') return ['decision_style_patch payload must be an object'];
+      const problems: string[] = [];
+      let present = 0;
+      for (const f of DECISION_STYLE_FIELDS) {
+        if (p[f] === undefined) continue;
+        present++;
+        /* 按字段真实领域约束校验（[0,1] / lossAversion≥1 / deliberationDepth 1..5 整数）。 */
+        if (!DECISION_STYLE_CONSTRAINTS[f](p[f])) {
+          problems.push(`decision_style_patch ${f} violates its domain constraint`);
+        }
+      }
+      if (present === 0) problems.push('decision_style_patch requires at least one calibration field');
+      return problems;
+    }
+    case 'cognitive_model_patch': {
+      const p = payload as Record<string, unknown> | null;
+      if (!p || typeof p !== 'object') return ['cognitive_model_patch payload must be an object'];
+      const problems: string[] = [];
+      let present = 0;
+      for (const f of COGNITIVE_SCALAR_FIELDS) {
+        if (p[f] === undefined) continue;
+        present++;
+        if (!inUnitRange(p[f])) problems.push(`cognitive_model_patch ${f} must be within [0,1]`);
+      }
+      for (const f of COGNITIVE_MAP_FIELDS) {
+        if (p[f] === undefined) continue;
+        present++;
+        const m = p[f];
+        if (m === null || typeof m !== 'object' || Array.isArray(m)) {
+          problems.push(`cognitive_model_patch ${f} must be a key→number map`);
+        } else {
+          for (const v of Object.values(m as Record<string, unknown>)) {
+            if (!inUnitRange(v)) { problems.push(`cognitive_model_patch ${f} values must be within [0,1]`); break; }
+          }
+        }
+      }
+      if (present === 0) problems.push('cognitive_model_patch requires at least one field');
+      return problems;
+    }
     default:
-      /* 其余 kind（rule / *_patch）的载荷形状在后续 PR 接入编译器时补充校验 */
+      /* rule kind 的持久化（规则库）尚未落地——编译器对其显式拒绝并给原因，故此处不放行任意 payload。
+       * 仍返回 []（校验通过），由编译器层 reject，保持"校验通过但不可编译"的清晰边界。 */
       return [];
   }
 }
