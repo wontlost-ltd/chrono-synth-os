@@ -8,6 +8,7 @@ import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { CreateSnapshotSchema } from '../schemas/api-schemas.js';
 import { parsePagination, paginate } from '../plugins/pagination.js';
+import { requireRole } from '../plugins/rbac.js';
 
 export function registerSnapshotRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
   function getOS(request: FastifyRequest): ChronoSynthOS {
@@ -31,6 +32,26 @@ export function registerSnapshotRoutes(app: FastifyInstance, os: ChronoSynthOS, 
     const params = parsePagination(request.query);
     return paginate(list, params);
   });
+
+  /* GET /api/v1/snapshots/:id — 获取单个快照的**原始完整状态**（含 data_json）。
+   *
+   * desktop 同步用：列表只给元数据，本地算 drift 需要 data_json 里的 values。复用 store.loadRaw。
+   *
+   * ⚠️ 这是「受保护的全量状态导出」，敏感度高于列表元数据（data_json 是完整 SystemSnapshot，可能含
+   * 凭据/工具权限等）。故 requireRole('admin') 收紧——只有 admin 能拉完整快照；普通 member/viewer/
+   * service api-key 不可。跨租户由 getOS(request)（tenant 来自 JWT/key，非 header）隔离，A 拉不到 B 的。 */
+  app.get<{ Params: { id: string } }>(
+    '/api/v1/snapshots/:id',
+    { preHandler: requireRole('admin') },
+    async (request) => {
+      const { id } = request.params;
+      const raw = getOS(request).snapshots.loadRaw(id);
+      if (!raw) {
+        throw new NotFoundError(`快照 ${id} 不存在`, ErrorCode.NOT_FOUND_SNAPSHOT);
+      }
+      return { data: raw };
+    },
+  );
 
   /* POST /api/v1/snapshots/:id/restore — 从快照恢复 */
   app.post<{ Params: { id: string } }>('/api/v1/snapshots/:id/restore', async (request) => {

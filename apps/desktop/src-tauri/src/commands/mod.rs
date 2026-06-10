@@ -3,4 +3,5 @@ pub mod crdt;
 pub mod database;
 pub mod memories;
 pub mod personas;
+pub mod snapshots;
 pub mod sync;
