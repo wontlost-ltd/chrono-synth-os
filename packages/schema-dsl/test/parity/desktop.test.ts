@@ -18,8 +18,8 @@ const CLI_SNAPSHOT_HEADER = 'test (@wontlost-ltd/schema-dsl)';
 // Both run on each desktop build.rs invocation.
 
 describe('desktop sqlite-rust migrations', () => {
-  it('covers seven desktop-only migrations', () => {
-    assert.equal(DESKTOP_MIGRATIONS.length, 7);
+  it('covers eight desktop-only migrations', () => {
+    assert.equal(DESKTOP_MIGRATIONS.length, 8);
     assert.deepEqual(DESKTOP_MIGRATIONS.map(migration => migration.aliases['sqlite-rust']), [
       'v001',
       'v002',
@@ -28,8 +28,9 @@ describe('desktop sqlite-rust migrations', () => {
       'v005',
       'v006',
       'v007',
+      'v008',
     ]);
-    assert.equal(DESKTOP_MIGRATIONS.filter(migration => migration.target === 'desktop-only').length, 7);
+    assert.equal(DESKTOP_MIGRATIONS.filter(migration => migration.target === 'desktop-only').length, 8);
   });
 
   it('full desktop module renders byte-stable Rust', () => {

@@ -6,6 +6,7 @@ import { desktop_v004 } from './v004.js';
 import { desktop_v005 } from './v005.js';
 import { desktop_v006 } from './v006.js';
 import { desktop_v007 } from './v007.js';
+import { desktop_v008 } from './v008.js';
 
 export const DESKTOP_MIGRATIONS: readonly Migration[] = [
   desktop_v001,
@@ -15,4 +16,5 @@ export const DESKTOP_MIGRATIONS: readonly Migration[] = [
   desktop_v005,
   desktop_v006,
   desktop_v007,
+  desktop_v008,
 ];
