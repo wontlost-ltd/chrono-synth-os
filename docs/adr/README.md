@@ -79,6 +79,8 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 46 | [Dual-product split: Enterprise governance + ChronoCompanion (C-end)](0046-dual-product-companion.md) | Accepted |
 | 47 | [The LLM is a distillable teacher, not a runtime dependency](0047-llm-as-distillable-teacher.md) | Accepted |
 | 48 | [Autonomous earning loop & its governance](0048-autonomous-earning-loop-governance.md) | Accepted |
+| 49 | [Consolidate web + desktop app hosts into the monorepo](0049-consolidate-app-hosts-into-monorepo.md) | Accepted |
+| 50 | [Architecture budget: core-persona progress gates new enterprise surface](0050-architecture-budget-core-over-enterprise.md) | Accepted |
 
 The first 31 records were back-filled in P1.5 to cover kernel
 architecture, storage, agent layer, deployment, and product policy.
