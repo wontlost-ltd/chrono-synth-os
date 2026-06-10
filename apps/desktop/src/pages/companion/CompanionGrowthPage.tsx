@@ -31,6 +31,7 @@ const DIRECTION_LABEL: Record<ExplorationDirectionV1['direction'], string> = {
 
 const SOURCE_HINT: Record<GrowthSource, string> = {
   remote: '在线最新',
+  local: '本地计算（离线，基于已同步的快照）',
   cache: '上次同步（当前离线或服务器不可达）',
   none: '',
 };

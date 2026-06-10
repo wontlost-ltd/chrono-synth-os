@@ -12,21 +12,38 @@ vi.mock('@/bridge/http-client', () => {
 vi.mock('@/bridge/tauri-commands', () => ({
   getAppSetting: vi.fn(),
   setAppSetting: vi.fn().mockResolvedValue(undefined),
+  querySnapshots: vi.fn().mockResolvedValue([]),
+  upsertSnapshots: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {
   pickGrowth,
+  computeLocalGrowth,
   loadCompanionGrowth,
   clearCachedCompanionGrowth,
   APP_SETTING_GROWTH_CACHE,
 } from './growth-data';
 import { apiFetch, ApiNotConfiguredError } from '@/bridge/http-client';
-import { getAppSetting, setAppSetting } from '@/bridge/tauri-commands';
+import { getAppSetting, setAppSetting, querySnapshots } from '@/bridge/tauri-commands';
 import type { CompanionGrowthV1 } from '@chrono/contracts';
+import type { SnapshotRow } from '@/bridge/tauri-commands';
 
 const apiFetchMock = apiFetch as unknown as ReturnType<typeof vi.fn>;
 const getAppSettingMock = getAppSetting as unknown as ReturnType<typeof vi.fn>;
 const setAppSettingMock = setAppSetting as unknown as ReturnType<typeof vi.fn>;
+const querySnapshotsMock = querySnapshots as unknown as ReturnType<typeof vi.fn>;
+
+/** 造一条本地快照行。 */
+function snapRow(id: string, createdAt: number, values: Array<{ id: string; label: string; weight: number }>): SnapshotRow {
+  return {
+    id,
+    data_json: JSON.stringify({ values }),
+    reason: '',
+    tenant_id: null,
+    created_at: createdAt,
+    synced_at: 0,
+  };
+}
 
 const sample: CompanionGrowthV1 = {
   schemaVersion: 'companion-growth.v1',
@@ -38,26 +55,52 @@ const sample: CompanionGrowthV1 = {
 
 const cachedSample: CompanionGrowthV1 = { ...sample, analyzedAt: 1, overallIntensity: 'steady', directions: [] };
 
-describe('pickGrowth（纯合并决策）', () => {
-  it('remote 优先', () => {
-    expect(pickGrowth(sample, cachedSample, false)).toEqual({ growth: sample, source: 'remote', unconfigured: false });
+const localSample: CompanionGrowthV1 = { ...sample, analyzedAt: 3, overallIntensity: 'leaping' };
+
+describe('pickGrowth（纯合并决策：remote → local → cache → none）', () => {
+  it('remote 优先（即使有 local/cache）', () => {
+    expect(pickGrowth(sample, localSample, cachedSample, false)).toEqual({ growth: sample, source: 'remote', unconfigured: false });
   });
-  it('无 remote → 回退 cache', () => {
-    expect(pickGrowth(null, cachedSample, false)).toEqual({ growth: cachedSample, source: 'cache', unconfigured: false });
+  it('无 remote 有 local → local（路线 A 离线本地算优先于上次缓存）', () => {
+    expect(pickGrowth(null, localSample, cachedSample, false)).toEqual({ growth: localSample, source: 'local', unconfigured: false });
+  });
+  it('无 remote 无 local 有 cache → cache', () => {
+    expect(pickGrowth(null, null, cachedSample, false)).toEqual({ growth: cachedSample, source: 'cache', unconfigured: false });
   });
   it('都无 + unconfigured → none + unconfigured 标记', () => {
-    expect(pickGrowth(null, null, true)).toEqual({ growth: null, source: 'none', unconfigured: true });
+    expect(pickGrowth(null, null, null, true)).toEqual({ growth: null, source: 'none', unconfigured: true });
   });
-  it('有 cache 时即使 unconfigured 也先给 cache（不标 unconfigured）', () => {
-    expect(pickGrowth(null, cachedSample, true).source).toBe('cache');
+  it('有 local 时即使 unconfigured 也先给 local（不标 unconfigured）', () => {
+    expect(pickGrowth(null, localSample, null, true).source).toBe('local');
   });
 });
 
-describe('loadCompanionGrowth（在线取 + 缓存回退）', () => {
+describe('computeLocalGrowth（路线 A：本地快照算 drift）', () => {
+  it('<2 快照 → null（无可对比基线）', () => {
+    expect(computeLocalGrowth([])).toBeNull();
+    expect(computeLocalGrowth([snapRow('a', 100, [])])).toBeNull();
+  });
+
+  it('≥2 快照 → 算出 growth（current 在前 baseline 在后），analyzedAt=current 时间', () => {
+    /* querySnapshots 返回 DESC：current(300) 在前、baseline(100) 在后。冒险 +0.3 → toward。 */
+    const out = computeLocalGrowth([
+      snapRow('cur', 300, [{ id: 'a', label: '冒险', weight: 0.5 }]),
+      snapRow('base', 100, [{ id: 'a', label: '冒险', weight: 0.2 }]),
+    ]);
+    expect(out).not.toBeNull();
+    expect(out!.hasBaseline).toBe(true);
+    expect(out!.analyzedAt).toBe(300);
+    expect(out!.directions[0]?.direction).toBe('toward');
+    expect(out!.directions[0]?.label).toBe('冒险');
+  });
+});
+
+describe('loadCompanionGrowth（路线 A+B 分层）', () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
     getAppSettingMock.mockReset();
     setAppSettingMock.mockReset().mockResolvedValue(undefined);
+    querySnapshotsMock.mockReset().mockResolvedValue([]); // 默认无本地快照
   });
 
   it('在线成功 → 返回 remote 并写缓存', async () => {
@@ -69,7 +112,20 @@ describe('loadCompanionGrowth（在线取 + 缓存回退）', () => {
     expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_GROWTH_CACHE, JSON.stringify(sample));
   });
 
-  it('在线失败但有缓存 → 回退 cache，不抛', async () => {
+  it('在线失败 + 本地有 ≥2 快照 → local（路线 A 真离线算），优先于缓存', async () => {
+    getAppSettingMock.mockResolvedValue(JSON.stringify(cachedSample));
+    apiFetchMock.mockRejectedValue(new Error('offline'));
+    querySnapshotsMock.mockResolvedValue([
+      snapRow('cur', 300, [{ id: 'a', label: '冒险', weight: 0.6 }]),
+      snapRow('base', 100, [{ id: 'a', label: '冒险', weight: 0.2 }]),
+    ]);
+    const out = await loadCompanionGrowth();
+    expect(out.source).toBe('local');
+    expect(out.growth?.hasBaseline).toBe(true);
+    expect(out.growth?.analyzedAt).toBe(300);
+  });
+
+  it('在线失败 + 本地无快照但有缓存 → 回退 cache，不抛', async () => {
     getAppSettingMock.mockResolvedValue(JSON.stringify(cachedSample));
     apiFetchMock.mockRejectedValue(new Error('network down'));
     const out = await loadCompanionGrowth();
