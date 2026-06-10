@@ -149,13 +149,13 @@ export class ArtifactCompiler {
     if (typeof p.attributionStyle === 'number') patch.attributionStyle = p.attributionStyle;
     if (typeof p.growthMindset === 'number') patch.growthMindset = p.growthMindset;
     if (p.beliefs) {
-      const merged = new Map(current.beliefs);
-      for (const [k, v] of Object.entries(p.beliefs)) merged.set(k, v);
+      const merged = new Map<string, number>(current.beliefs);
+      for (const [k, v] of Object.entries(p.beliefs)) merged.set(k, Number(v));
       patch.beliefs = merged;
     }
     if (p.biasWeights) {
-      const merged = new Map(current.biasWeights);
-      for (const [k, v] of Object.entries(p.biasWeights)) merged.set(k, v);
+      const merged = new Map<string, number>(current.biasWeights);
+      for (const [k, v] of Object.entries(p.biasWeights)) merged.set(k, Number(v));
       patch.biasWeights = merged;
     }
     this.core.setCognitiveModel(patch as Parameters<CoreRhythmLayer['setCognitiveModel']>[0]);
