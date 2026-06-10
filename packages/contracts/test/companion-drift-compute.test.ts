@@ -35,6 +35,30 @@ describe('parseSnapshotValues', () => {
     assert.equal(m.get('a')?.weight, 0);
     assert.equal(m.size, 1);
   });
+
+  it('真实快照形态：coreSelf.values 是序列化 Map（deepStringify 产物，Codex PR-4 Critical-3）', () => {
+    const real = JSON.stringify({
+      id: 'snap_1',
+      coreSelf: {
+        values: { __type: 'Map', entries: [['v1', { id: 'v1', label: '诚实', weight: 0.8 }]] },
+        narrative: '',
+      },
+      personas: [],
+    });
+    const m = parseSnapshotValues(real);
+    assert.equal(m.get('v1')?.weight, 0.8);
+    assert.equal(m.get('v1')?.label, '诚实');
+  });
+
+  it('coreSelf.values 优先于顶层 values（真实快照不误读旧键）', () => {
+    const data = JSON.stringify({
+      coreSelf: { values: { __type: 'Map', entries: [['real', { id: 'real', label: 'R', weight: 0.9 }]] } },
+      values: [{ id: 'legacy', label: 'L', weight: 0.1 }],
+    });
+    const m = parseSnapshotValues(data);
+    assert.ok(m.has('real'));
+    assert.ok(!m.has('legacy'), 'coreSelf.values 存在时不读顶层 values');
+  });
 });
 
 describe('computeAlertLevel', () => {
