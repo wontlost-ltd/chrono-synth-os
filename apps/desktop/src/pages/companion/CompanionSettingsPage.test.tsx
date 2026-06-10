@@ -8,14 +8,14 @@ vi.mock('@/bridge/http-client', () => ({
   getApiToken: vi.fn(() => 'jwt-x'),
   setApiToken: vi.fn(),
   setApiCredentials: vi.fn(),
-  clearCachedAccountPlan: vi.fn(),
+  clearAccountScopedCaches: vi.fn(),
 }));
 
 import { CompanionSettingsPage } from './CompanionSettingsPage';
-import { setApiCredentials, clearCachedAccountPlan } from '@/bridge/http-client';
+import { setApiCredentials, clearAccountScopedCaches } from '@/bridge/http-client';
 
 const setCredsMock = setApiCredentials as unknown as ReturnType<typeof vi.fn>;
-const clearPlanMock = clearCachedAccountPlan as unknown as ReturnType<typeof vi.fn>;
+const clearCachesMock = clearAccountScopedCaches as unknown as ReturnType<typeof vi.fn>;
 
 let reloadMock: ReturnType<typeof vi.fn>;
 
@@ -50,15 +50,15 @@ describe('CompanionSettingsPage 凭据更新顺序（reload 在事务后）', ()
     await waitFor(() => expect(reloadMock).toHaveBeenCalledTimes(1));
   });
 
-  it('登出：clearCachedAccountPlan 仍 pending 时不 reload，resolve 后才 reload', async () => {
+  it('登出：clearAccountScopedCaches（plan+growth）仍 pending 时不 reload，resolve 后才 reload', async () => {
     let resolveClear: () => void = () => {};
-    clearPlanMock.mockReturnValue(new Promise<void>((r) => { resolveClear = r; }));
+    clearCachesMock.mockReturnValue(new Promise<void>((r) => { resolveClear = r; }));
 
     render(<CompanionSettingsPage plan="companion" />);
     fireEvent.click(screen.getByRole('button', { name: '登出' }));
 
     await Promise.resolve();
-    expect(clearPlanMock).toHaveBeenCalledTimes(1);
+    expect(clearCachesMock).toHaveBeenCalledTimes(1);
     expect(reloadMock).not.toHaveBeenCalled();
 
     resolveClear();
