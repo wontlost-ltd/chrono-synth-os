@@ -186,7 +186,8 @@ core-persona-logic LOC** trend (not kernel-contract LOC — see correction)
 ## Related
 
 - [0001 — kernel zero runtime deps](0001-kernel-zero-runtime-deps.md) —
-  the invariant D2 protects; enterprise concerns in the kernel pressure it.
+  the invariant D2 protects; enterprise *runtime logic* (not contracts)
+  entering the kernel would pressure it.
 - [0046 — dual-product split](0046-dual-product-companion.md) —
   enterprise capability is intentional; the budget governs its *pace*,
   not its existence; Enterprise GA must not be blocked.
