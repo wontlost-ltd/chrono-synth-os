@@ -26,20 +26,11 @@ pub struct SnapshotRow {
     pub synced_at: i64,
 }
 
-/// 落本地快照（幂等 upsert）。同步引擎拉到服务端快照数据后调用。
-#[tauri::command]
-pub async fn upsert_snapshots(
-    state: State<'_, AppState>,
-    snapshots: Vec<SnapshotRow>,
-) -> Result<(), String> {
-    let mut guard = state
-        .db
-        .lock()
-        .map_err(|_| "database lock poisoned".to_string())?;
-    let conn = guard
-        .as_mut()
-        .ok_or_else(|| "database is not open".to_string())?;
+/* 命令体抽成接收 &Connection / &mut Connection 的内部函数，便于直接 cargo 测试
+ * （#[tauri::command] 的 State<AppState> 在单测里难构造）。命令只做 lock + 委托。 */
 
+/// 幂等 upsert（事务）。内部函数，便于测试直接传 Connection。
+pub fn upsert_snapshots_tx(conn: &mut rusqlite::Connection, snapshots: &[SnapshotRow]) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     for snap in snapshots {
         tx.execute(
@@ -68,22 +59,28 @@ pub async fn upsert_snapshots(
     Ok(())
 }
 
-/// 返回某租户最近两条快照（current + baseline），与服务端 analyzer 查询形状一致。
-/// tenant 传 None / "default" 时也匹配 tenant_id IS NULL 的本地快照。
+/// 落本地快照（幂等 upsert）。同步引擎拉到服务端快照数据后调用。
 #[tauri::command]
-pub async fn query_snapshots(
+pub async fn upsert_snapshots(
     state: State<'_, AppState>,
-    tenant_id: Option<String>,
-) -> Result<Vec<SnapshotRow>, String> {
-    let guard = state
+    snapshots: Vec<SnapshotRow>,
+) -> Result<(), String> {
+    let mut guard = state
         .db
         .lock()
         .map_err(|_| "database lock poisoned".to_string())?;
     let conn = guard
-        .as_ref()
+        .as_mut()
         .ok_or_else(|| "database is not open".to_string())?;
+    upsert_snapshots_tx(conn, &snapshots)
+}
 
-    let tenant = tenant_id.unwrap_or_else(|| "default".to_string());
+/// 取某租户最近两条快照（内部函数）。tenant None → "default"。
+pub fn query_snapshots_conn(
+    conn: &rusqlite::Connection,
+    tenant_id: Option<&str>,
+) -> Result<Vec<SnapshotRow>, String> {
+    let tenant = tenant_id.unwrap_or("default");
     let mut stmt = conn
         .prepare(
             r#"
@@ -112,6 +109,36 @@ pub async fn query_snapshots(
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// 返回某租户最近两条快照（current + baseline），与服务端 analyzer 查询形状一致。
+#[tauri::command]
+pub async fn query_snapshots(
+    state: State<'_, AppState>,
+    tenant_id: Option<String>,
+) -> Result<Vec<SnapshotRow>, String> {
+    let guard = state
+        .db
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    let conn = guard
+        .as_ref()
+        .ok_or_else(|| "database is not open".to_string())?;
+    query_snapshots_conn(conn, tenant_id.as_deref())
+}
+
+/// 某租户快照数量（内部函数）。tenant None → "default"。
+pub fn count_snapshots_conn(conn: &rusqlite::Connection, tenant_id: Option<&str>) -> Result<i64, String> {
+    let tenant = tenant_id.unwrap_or("default");
+    conn.query_row(
+        r#"
+        SELECT COUNT(*) FROM snapshots
+         WHERE tenant_id = ?1 OR (tenant_id IS NULL AND ?1 = 'default')
+        "#,
+        params![tenant],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// 某租户快照数量（用于「是否有可对比基线」判断，≥2 才算）。
 #[tauri::command]
 pub async fn count_snapshots(
@@ -125,21 +152,12 @@ pub async fn count_snapshots(
     let conn = guard
         .as_ref()
         .ok_or_else(|| "database is not open".to_string())?;
-
-    let tenant = tenant_id.unwrap_or_else(|| "default".to_string());
-    conn.query_row(
-        r#"
-        SELECT COUNT(*) FROM snapshots
-         WHERE tenant_id = ?1 OR (tenant_id IS NULL AND ?1 = 'default')
-        "#,
-        params![tenant],
-        |row| row.get(0),
-    )
-    .map_err(|e| e.to_string())
+    count_snapshots_conn(conn, tenant_id.as_deref())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use rusqlite::Connection;
 
     use crate::db::migrations::run_migrations;
@@ -150,52 +168,76 @@ mod tests {
         conn
     }
 
-    fn insert(conn: &Connection, id: &str, tenant: Option<&str>, created_at: i64) {
-        conn.execute(
-            "INSERT INTO snapshots (id, data_json, reason, tenant_id, created_at)
-             VALUES (?1, '{\"values\":[]}', '', ?2, ?3)",
-            rusqlite::params![id, tenant, created_at],
+    fn row(id: &str, tenant: Option<&str>, created_at: i64, data: &str) -> SnapshotRow {
+        SnapshotRow {
+            id: id.to_string(),
+            data_json: data.to_string(),
+            reason: "test".to_string(),
+            tenant_id: tenant.map(|s| s.to_string()),
+            created_at,
+            synced_at: 0,
+        }
+    }
+
+    #[test]
+    fn empty_db_returns_empty_and_zero() {
+        let conn = open();
+        assert_eq!(query_snapshots_conn(&conn, None).unwrap().len(), 0);
+        assert_eq!(count_snapshots_conn(&conn, None).unwrap(), 0);
+    }
+
+    #[test]
+    fn upsert_inserts_then_updates_same_id() {
+        let mut conn = open();
+        upsert_snapshots_tx(&mut conn, &[row("a", Some("default"), 100, "{\"v\":1}")]).unwrap();
+        assert_eq!(count_snapshots_conn(&conn, None).unwrap(), 1);
+        // 同 id 再 upsert → 更新而非新增。
+        upsert_snapshots_tx(&mut conn, &[row("a", Some("default"), 150, "{\"v\":2}")]).unwrap();
+        assert_eq!(count_snapshots_conn(&conn, None).unwrap(), 1, "same id updates, not inserts");
+        let got = query_snapshots_conn(&conn, None).unwrap();
+        assert_eq!(got[0].data_json, "{\"v\":2}", "data_json updated");
+        assert_eq!(got[0].created_at, 150);
+    }
+
+    #[test]
+    fn query_returns_latest_two_of_tenant_via_command_fn() {
+        let mut conn = open();
+        upsert_snapshots_tx(
+            &mut conn,
+            &[
+                row("a", Some("default"), 100, "{}"),
+                row("b", Some("default"), 300, "{}"),
+                row("c", None, 200, "{}"), // NULL 当 default
+                row("other", Some("tenantX"), 999, "{}"),
+            ],
         )
         .unwrap();
-    }
 
-    #[test]
-    fn query_returns_latest_two_of_tenant() {
-        let conn = open();
-        insert(&conn, "a", Some("default"), 100);
-        insert(&conn, "b", Some("default"), 300);
-        insert(&conn, "c", None, 200); // NULL 当 default
-        insert(&conn, "other", Some("tenantX"), 999);
-
-        let mut stmt = conn
-            .prepare(
-                "SELECT id FROM snapshots
-                  WHERE tenant_id = ?1 OR (tenant_id IS NULL AND ?1 = 'default')
-                  ORDER BY created_at DESC LIMIT 2",
-            )
-            .unwrap();
-        let ids: Vec<String> = stmt
-            .query_map(["default"], |r| r.get::<_, String>(0))
+        let ids: Vec<String> = query_snapshots_conn(&conn, None)
             .unwrap()
-            .map(|r| r.unwrap())
+            .into_iter()
+            .map(|s| s.id)
             .collect();
-        assert_eq!(ids, vec!["b".to_string(), "c".to_string()]);
+        assert_eq!(ids, vec!["b".to_string(), "c".to_string()], "latest two, NULL==default, excl tenantX");
     }
 
     #[test]
-    fn count_excludes_other_tenants() {
-        let conn = open();
-        insert(&conn, "a", Some("default"), 100);
-        insert(&conn, "c", None, 200);
-        insert(&conn, "other", Some("tenantX"), 999);
-        let n: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM snapshots
-                  WHERE tenant_id = ?1 OR (tenant_id IS NULL AND ?1 = 'default')",
-                ["default"],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(n, 2, "default + NULL count; tenantX excluded");
+    fn none_equals_default_and_explicit_tenant_excludes_null() {
+        let mut conn = open();
+        upsert_snapshots_tx(
+            &mut conn,
+            &[
+                row("d", Some("default"), 100, "{}"),
+                row("n", None, 200, "{}"),
+                row("x", Some("tenantX"), 300, "{}"),
+            ],
+        )
+        .unwrap();
+
+        // None → "default"：匹配 default + NULL = 2。
+        assert_eq!(count_snapshots_conn(&conn, None).unwrap(), 2);
+        assert_eq!(count_snapshots_conn(&conn, Some("default")).unwrap(), 2);
+        // 显式非 default 租户：只匹配自己，不匹配 NULL。
+        assert_eq!(count_snapshots_conn(&conn, Some("tenantX")).unwrap(), 1);
     }
 }

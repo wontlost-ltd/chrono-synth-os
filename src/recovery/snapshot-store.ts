@@ -39,6 +39,9 @@ export class SnapshotStore {
   /**
    * 按 ID 读取快照的**原始**行（id + 原始 dataJson 字符串 + reason + createdAt），不解析。
    * 供 desktop 同步：desktop 需要把 data_json 原样落到本地 snapshots 表后本地算 drift（ADR-0046 路线 A）。
+   *
+   * ⚠️ dataJson 是**完整 SystemSnapshot 的受保护全量导出**（可能含凭据/工具权限等敏感状态），不是普通
+   * read API。唯一的 HTTP 出口 GET /api/v1/snapshots/:id 已用 requireRole('admin') 收紧 + 租户隔离。
    */
   loadRaw(id: SnapshotId): { id: string; dataJson: string; reason: string; createdAt: number } | undefined {
     const row = this.tx.queryOne(snapQueryById(id));
