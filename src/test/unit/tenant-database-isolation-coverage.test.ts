@@ -17,15 +17,41 @@ interface SqliteTableRow { readonly name: string }
 interface SqliteColRow { readonly name: string }
 
 /**
- * 已知未纳入 TenantDatabase 自动隔离的 tenant_id 表（隔离债）。
- * 多为通过专用 store/服务自带 tenant 作用域、或属租户根（users）的表；逐表验证后
- * 应或纳入隔离集、或确认豁免。不要往这里加新表来绕过隔离。
+ * 已知未纳入 TenantDatabase 自动隔离的 tenant_id 表。经 ②b 逐表审计（Codex 独立核验，
+ * 见 docs/audit/2026-06-11-tenant-table-isolation-audit.json）后，按访问路径的 tenant 约束分三类：
+ *
+ * 已登记 scoped 后续债（②b 复审）：
+ *   - tasks / subscriptions / life_simulations：仍有 id-only 读/改面，需逐路径拆分（worker-only vs
+ *     tenant-facing），见审计报告各表 Action。
+ *   - SAFE-EXEMPT 表的「未来裸 SQL 防回归」：本 ratchet 只挡「新表完全不登记」，挡不住「未来给已豁免
+ *     表新增忘带 tenant_id 的生产 SQL」。后续可加针对 SAFE-EXEMPT 表的静态/lint ratchet（标记触达
+ *     onboarding_sessions/idempotency_keys 等且不带 tenant_id 的新 SQL，除非显式标注为全局维护）。
+ *
+ * SPECIAL：users 是租户根/身份表——登录与身份发现必须先全局按 email/id 找到 user 才能确定其
+ * 租户归属，故部分访问天然全局；tenant-admin 路径仍要求 tenant 谓词。
+ *
+ * SAFE-EXEMPT（正式豁免）：所有读/改/删路径都在 SQL 层带 tenant_id 约束（经专用 executor/route
+ * 保证），不经 TenantDatabase 改写但同样安全。逐表证据见审计报告。
+ *
+ * NEEDS-ISOLATION（剩余 scoped debt）：仍存在 id-only 读/改路径（跨租户泄漏面），但因含 worker
+ * 全局语义/外部 id（Stripe）等，不能直接塞进 TenantDatabase，需逐路径拆分修复。
+ *
+ * 注：这些表都靠 executor/route 在 SQL 层手工带 tenant_id 保证隔离（而非 TenantDatabase 自动改写），
+ * 故仍登记在此清单（不在 ALL_TENANT_TABLES），但 SAFE-EXEMPT/SPECIAL 类已逐表核验安全。
  */
 const KNOWN_UNISOLATED: ReadonlySet<string> = new Set<string>([
-  'users',            /* 租户根表本身 */
-  'quota_limits', 'quota_usage', 'idempotency_keys', /* 由专用 executor 自带 tenant 作用域 */
-  'tasks', 'life_simulations', 'subscriptions', 'usage_records', 'llm_usage',
-  'decision_cases', 'decision_runs', 'decision_feedbacks', 'onboarding_sessions',
+  /* ── SPECIAL ── */
+  'users',            /* 租户根/身份表：登录/身份发现天然全局，tenant-admin 路径仍带 tenant 谓词 */
+  /* ── SAFE-EXEMPT（executor/route 层均带 tenant_id，逐表核验后正式豁免）── */
+  'quota_limits', 'quota_usage',   /* quota-executors：读/写/删均 WHERE tenant_id */
+  'usage_records', 'llm_usage',    /* usage/llm-usage-executors：租户读写带 tenant_id（仅 admin metrics 全局聚合）*/
+  'decision_cases', 'decision_runs', 'decision_feedbacks', /* decisions route：读 WHERE id AND tenant_id */
+  'onboarding_sessions', /* ②b 修复：读回从 id-only 改为 id AND tenant_id，全路径已带 tenant 约束 */
+  'idempotency_keys',    /* ②b 修复：complete/delete 从 id-only 改为 id AND tenant_id（过期清理仍显式全局）*/
+  /* ── NEEDS-ISOLATION（剩余 scoped debt：含 worker 全局/外部 id 语义，需逐路径拆分）── */
+  'tasks',            /* 最高风险：tenant-facing get/cancel 先 SELECT WHERE id=? 再 service 层校验 tenant */
+  'subscriptions',    /* Stripe webhook 按 stripe_customer_id/id 改，与租户路由混在一起，需拆访问点 */
+  'life_simulations', /* worker 路径用 id-only getById/update，需拆 worker-only 与 tenant-facing */
 ]);
 
 describe('TenantDatabase isolation ratchet: tenant tables must be isolated or registered', () => {

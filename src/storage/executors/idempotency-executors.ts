@@ -9,7 +9,7 @@ import {
 } from '@chrono/kernel';
 import type {
   IdemRow, IdemIdRow,
-  IdemExistingParams, IdemInsertParams, IdemCompleteParams,
+  IdemExistingParams, IdemInsertParams, IdemCompleteParams, IdemDeleteParams,
 } from '@chrono/kernel';
 
 export function registerIdempotencyExecutors(): void {
@@ -52,6 +52,7 @@ export function registerIdempotencyExecutors(): void {
   });
 
   registerCommand<IdemCompleteParams>(IDEM_CMD_COMPLETE, (db, p) => {
+    /* 租户隔离（②b）：id AND tenant_id，消除 id-only 写。 */
     const result = db.prepare<void>(
       `UPDATE idempotency_keys
        SET state = 'completed',
@@ -59,15 +60,15 @@ export function registerIdempotencyExecutors(): void {
            response_content_type = ?,
            response_headers_json = ?,
            response_body = ?
-       WHERE id = ?`,
-    ).run(p.responseStatus, p.responseContentType, p.responseHeadersJson, p.responseBody, p.id);
+       WHERE id = ? AND tenant_id = ?`,
+    ).run(p.responseStatus, p.responseContentType, p.responseHeadersJson, p.responseBody, p.id, p.tenantId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<string>(IDEM_CMD_DELETE, (db, id) => {
+  registerCommand<IdemDeleteParams>(IDEM_CMD_DELETE, (db, p) => {
     const result = db.prepare<void>(
-      'DELETE FROM idempotency_keys WHERE id = ?',
-    ).run(id);
+      'DELETE FROM idempotency_keys WHERE id = ? AND tenant_id = ?',
+    ).run(p.id, p.tenantId);
     return { rowsAffected: result.changes };
   });
 }
