@@ -110,11 +110,17 @@
 ### 任务
 - T4.1 记录占比基线（已量化：核心①+②=19% ≈ 企业④=19%，内核本体仅 12%）。
 - T4.2 约定"架构预算"规则：新增企业模块需附带等量或更多的核心命题进展（文档约定，非硬门）。
-- T4.3 评估现有企业模块哪些可下沉为可选插件/分包，减小核心心智负担（尤其 kernel 域里混入的 billing/enterprise/compliance）。
+- T4.3 评估现有企业模块哪些可下沉为可选插件/分包，减小核心心智负担。
+  注（③ 更正）：原句点名「kernel 域里混入的 billing/enterprise/compliance」已撤销——
+  那些 kernel 子树是纯可携 Query/Command 契约（非逻辑），不构成混入；真正的企业逻辑在
+  src/，插件化候选应针对 src/ 实现层。详见 ADR-0050 2026-06-11 更正。
 
 ### 验收契约
 - ✅ 占比基线 + 预算规则写入 ADR 或 CONTRIBUTING。
-- ✅ （可选）至少一个企业能力从 kernel 域剥离为应用层/插件，降低 kernel 心智负担。
+- ⊘ （可选项，已撤销）「从 kernel 域剥离企业能力」——③ 实做时发现这是度量误判：
+  kernel 的 billing/enterprise/compliance/multi-tenant 是纯 Query/Command 可携契约
+  （零逻辑零依赖，与其它 50+ 同类契约一致），不是 SaaS 逻辑，无可剥离。ADR-0050
+  已据此修正（D2 重定义 / D3 撤销），占比基线改用 src/ 逻辑 LOC 量化。
 
 ---
 
