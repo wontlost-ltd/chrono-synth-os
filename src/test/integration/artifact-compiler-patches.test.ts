@@ -64,13 +64,45 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     assert.equal(after.beliefs.get('world-is-learnable'), 0.85, 'beliefs map 应被合并');
   });
 
-  it('decision_style_patch 非法 payload（越界）→ ingest 拒绝（校验拦截）', () => {
+  it('decision_style_patch 领域字段约束：lossAversion≥1 + deliberationDepth 1..5 整数（编译不抛）', () => {
+    /* Codex WP-1 Critical：lossAversion/deliberationDepth 不是 [0,1]。合法值应编译成功不抛 RangeError。 */
     const ing = os.distillation.ingest('p1', {
       kind: 'decision_style_patch', source: 'reflection',
-      payload: { riskAppetite: 1.5 }, // 越界
+      payload: { lossAversion: 2.5, deliberationDepth: 4 },
       confidence: 0.9, evidence: EV,
     });
+    assert.equal(ing.status, 'pending');
+    if (ing.status !== 'pending') return;
+    const ap = os.distillation.approve('p1', ing.artifact.id);
+    assert.ok(ap.ok, `应编译成功（领域合法值）: ${ap.ok ? '' : ap.reason}`);
+    const after = os.core.decisionStyle.get();
+    assert.equal(after.lossAversion, 2.5);
+    assert.equal(after.deliberationDepth, 4);
+  });
+
+  it('decision_style_patch [0,1] 字段越界 → ingest 拒绝', () => {
+    const ing = os.distillation.ingest('p1', {
+      kind: 'decision_style_patch', source: 'reflection',
+      payload: { riskAppetite: 1.5 }, confidence: 0.9, evidence: EV,
+    });
     assert.equal(ing.status, 'rejected', '越界 payload 应被 schema 校验拒绝');
+  });
+
+  it('decision_style_patch deliberationDepth 非整数 / lossAversion<1 → 拒绝', () => {
+    const a = os.distillation.ingest('p1', { kind: 'decision_style_patch', source: 'reflection', payload: { deliberationDepth: 3.5 }, confidence: 0.9, evidence: EV });
+    assert.equal(a.status, 'rejected', 'deliberationDepth 必须整数');
+    const b = os.distillation.ingest('p1', { kind: 'decision_style_patch', source: 'reflection', payload: { lossAversion: 0.5 }, confidence: 0.9, evidence: EV });
+    assert.equal(b.status, 'rejected', 'lossAversion 必须 ≥1');
+  });
+
+  it('cognitive_model_patch beliefs → entry 级合并（保留旧 key，不覆盖整张）', () => {
+    const ing1 = os.distillation.ingest('p1', { kind: 'cognitive_model_patch', source: 'reflection', payload: { beliefs: { 'belief-A': 0.7 } }, confidence: 0.9, evidence: EV });
+    if (ing1.status === 'pending') os.distillation.approve('p1', ing1.artifact.id);
+    const ing2 = os.distillation.ingest('p1', { kind: 'cognitive_model_patch', source: 'reflection', payload: { beliefs: { 'belief-B': 0.8 } }, confidence: 0.9, evidence: EV });
+    if (ing2.status === 'pending') os.distillation.approve('p1', ing2.artifact.id);
+    const m = os.core.cognitiveModel.get();
+    assert.equal(m.beliefs.get('belief-A'), 0.7, 'belief-A 应被保留（merge 非替换）');
+    assert.equal(m.beliefs.get('belief-B'), 0.8, 'belief-B 应被新增');
   });
 
   it('decision_style_patch 空 payload（无字段）→ 拒绝', () => {

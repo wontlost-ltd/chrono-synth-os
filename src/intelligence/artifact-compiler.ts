@@ -127,10 +127,12 @@ export class ArtifactCompiler {
 
   /** L2 决策风格校准 → CoreRhythmLayer.setDecisionStyle（部分合并更新）。 */
   private compileDecisionStylePatch(p: DecisionStylePatchPayload): CompileOutcome {
-    /* 只取已定义字段（校验已确保各 [0,1] 且至少一个）；setDecisionStyle 做合并 + 落库 + emit。 */
+    /* 白名单取已定义的合法字段（Codex WP-1 Minor：不把未知 numeric key 纳入 patch/log）。
+     * 字段值域已由 kernel validatePayloadShape 按真实领域约束校验过；setDecisionStyle 合并 + 落库 + emit。 */
     const patch: Partial<DecisionStylePatchPayload> = {};
-    for (const [k, v] of Object.entries(p)) {
-      if (typeof v === 'number') (patch as Record<string, number>)[k] = v;
+    for (const f of DECISION_STYLE_PATCH_FIELDS) {
+      const v = p[f];
+      if (typeof v === 'number') (patch as Record<string, number>)[f] = v;
     }
     this.core.setDecisionStyle(patch);
     const applied = Object.keys(patch).join(',');
@@ -138,16 +140,32 @@ export class ArtifactCompiler {
     return { ok: true, applied: `decision_style ${applied}` };
   }
 
-  /** L3 认知模型校准 → CoreRhythmLayer.setCognitiveModel（scalar 直传，map 转 Map）。 */
+  /** L3 认知模型校准 → CoreRhythmLayer.setCognitiveModel（scalar 直传，map **entry 级合并**而非整张替换）。 */
   private compileCognitiveModelPatch(p: CognitiveModelPatchPayload): CompileOutcome {
+    /* setCognitiveModel 对 map 字段是 `patch.beliefs ?? current`（整张替换），故这里先读 current 再逐项
+     * merge，保留旧 key、覆盖/新增 patch key（Codex WP-1 Major：避免覆盖整张认知模型）。 */
+    const current = this.core.cognitiveModel.get();
     const patch: Record<string, unknown> = {};
     if (typeof p.attributionStyle === 'number') patch.attributionStyle = p.attributionStyle;
     if (typeof p.growthMindset === 'number') patch.growthMindset = p.growthMindset;
-    if (p.beliefs) patch.beliefs = new Map(Object.entries(p.beliefs));
-    if (p.biasWeights) patch.biasWeights = new Map(Object.entries(p.biasWeights));
+    if (p.beliefs) {
+      const merged = new Map(current.beliefs);
+      for (const [k, v] of Object.entries(p.beliefs)) merged.set(k, v);
+      patch.beliefs = merged;
+    }
+    if (p.biasWeights) {
+      const merged = new Map(current.biasWeights);
+      for (const [k, v] of Object.entries(p.biasWeights)) merged.set(k, v);
+      patch.biasWeights = merged;
+    }
     this.core.setCognitiveModel(patch as Parameters<CoreRhythmLayer['setCognitiveModel']>[0]);
     const applied = Object.keys(patch).join(',');
     this.logger?.info(LAYER, `已编译 cognitive_model_patch: ${applied}`);
     return { ok: true, applied: `cognitive_model ${applied}` };
   }
 }
+
+/** L2 决策风格可校准字段白名单（与 kernel DecisionStylePatchPayload 一致）。 */
+const DECISION_STYLE_PATCH_FIELDS: ReadonlyArray<keyof DecisionStylePatchPayload> = [
+  'riskAppetite', 'timeHorizon', 'explorationBias', 'lossAversion', 'deliberationDepth', 'regretSensitivity',
+];

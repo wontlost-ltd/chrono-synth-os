@@ -144,8 +144,9 @@ export interface ResponseTemplatePayload {
 }
 
 /**
- * L2 决策风格校准载荷（部分更新）。字段对应 DecisionStyle 的可调参数，全部 [0,1]（updatedAt 不可外部设）。
- * 至少一个字段非空才有意义。
+ * L2 决策风格校准载荷（部分更新）。字段约束**对齐领域模型**（decision-style-service.validateDecisionStyle）：
+ * 多数字段 [0,1]，但 lossAversion ≥ 1、deliberationDepth 是 1..5 的整数——否则会「schema 通过但编译抛
+ * RangeError」（Codex WP-1 Critical）。至少一个字段非空才有意义。
  */
 export interface DecisionStylePatchPayload {
   readonly riskAppetite?: number;
@@ -156,10 +157,18 @@ export interface DecisionStylePatchPayload {
   readonly regretSensitivity?: number;
 }
 
-/** L2 决策风格可调字段（用于校验枚举）。 */
-const DECISION_STYLE_FIELDS = [
-  'riskAppetite', 'timeHorizon', 'explorationBias', 'lossAversion', 'deliberationDepth', 'regretSensitivity',
-] as const;
+/** 每个 L2 字段的合法性判定（与领域 validateDecisionStyle 一致）。 */
+type FieldCheck = (v: unknown) => boolean;
+const DECISION_STYLE_CONSTRAINTS: Readonly<Record<keyof DecisionStylePatchPayload, FieldCheck>> = {
+  riskAppetite: inUnitRange,
+  timeHorizon: inUnitRange,
+  explorationBias: inUnitRange,
+  regretSensitivity: inUnitRange,
+  /* lossAversion ≥ 1（无上限），deliberationDepth 必须是 1..5 的整数。 */
+  lossAversion: (v) => typeof v === 'number' && Number.isFinite(v) && v >= 1,
+  deliberationDepth: (v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 5,
+};
+const DECISION_STYLE_FIELDS = Object.keys(DECISION_STYLE_CONSTRAINTS) as Array<keyof DecisionStylePatchPayload>;
 
 /**
  * L3 认知模型校准载荷（部分更新）。attributionStyle/growthMindset 是 [0,1] 标量；
@@ -303,7 +312,10 @@ function validatePayloadShape(kind: ArtifactKind, payload: unknown): string[] {
       for (const f of DECISION_STYLE_FIELDS) {
         if (p[f] === undefined) continue;
         present++;
-        if (!inUnitRange(p[f])) problems.push(`decision_style_patch ${f} must be within [0,1]`);
+        /* 按字段真实领域约束校验（[0,1] / lossAversion≥1 / deliberationDepth 1..5 整数）。 */
+        if (!DECISION_STYLE_CONSTRAINTS[f](p[f])) {
+          problems.push(`decision_style_patch ${f} violates its domain constraint`);
+        }
       }
       if (present === 0) problems.push('decision_style_patch requires at least one calibration field');
       return problems;
