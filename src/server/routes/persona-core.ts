@@ -323,7 +323,26 @@ function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
   return user;
 }
 
-export function registerPersonaCoreRoutes(app: FastifyInstance, db: IDatabase, config?: AppConfig): void {
+/**
+ * 任务完成事件（earn→distill 闭环 WP-0）。完成市场任务后由路由触发，宿主（app.ts）订阅后
+ * 经 tenant OS 的 earningDistiller 把高质量 outcome 蒸馏成 core value 候选（经蒸馏门，不绕过）。
+ */
+export interface MarketplaceTaskCompletedEvent {
+  readonly tenantId: string;
+  readonly personaId: string;
+  readonly taskId: string;
+  readonly category: string;
+  readonly qualityScore: number;
+  readonly payout: number;
+}
+
+export function registerPersonaCoreRoutes(
+  app: FastifyInstance,
+  db: IDatabase,
+  config?: AppConfig,
+  /** 可选：任务完成回调（earn→distill 闭环）。app.ts 注入经 tenantFactory 调 earningDistiller。 */
+  onTaskCompleted?: (event: MarketplaceTaskCompletedEvent) => void,
+): void {
   const tx = db;
   const profileService = config ? new TenantEnterpriseProfileService(tx, config) : undefined;
   const service = new PersonaCoreService(
@@ -1186,6 +1205,28 @@ export function registerPersonaCoreRoutes(app: FastifyInstance, db: IDatabase, c
     });
     if (!result) {
       throw new NotFoundError(`市场任务 ${request.params.id} 不存在或不可完成`, ErrorCode.NOT_FOUND_TASK);
+    }
+    /* earn→distill 闭环（WP-0）：完成后触发回调，宿主经蒸馏门把高质量 outcome 蒸馏进 core values。
+     * best-effort——蒸馏失败不影响任务完成的返回（钱/声誉已落库）。 */
+    if (onTaskCompleted) {
+      try {
+        onTaskCompleted({
+          tenantId: request.tenantId,
+          personaId: result.persona.id,
+          taskId: result.task.id,
+          category: result.task.category,
+          /* qualityScore 用入参（service 正是用它结算的，即结算事实）。 */
+          qualityScore: body.qualityScore,
+          /* payout 用结算公式（与 service completeTask 一致：reward * max(quality, 0.2)），而非临时重算。 */
+          payout: Math.round(result.task.reward * Math.max(body.qualityScore, 0.2) * 100) / 100,
+        });
+      } catch (err) {
+        /* 蒸馏触发失败不阻断任务完成，但记录可观测（不含敏感 payload），否则闭环失效不可见。 */
+        app.log.warn(
+          { tenantId: request.tenantId, taskId: result.task.id, personaId: result.persona.id, err: err instanceof Error ? err.message : String(err) },
+          'earn→distill 回调失败（任务已完成，蒸馏未触发）',
+        );
+      }
     }
     return {
       data: {
