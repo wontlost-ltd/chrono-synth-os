@@ -121,19 +121,19 @@ export async function clearCachedCompanionGrowth(): Promise<void> {
  */
 async function syncSnapshotsToLocal(): Promise<void> {
   try {
-    /* 列表只要最近 2 条（drift 只需 current+baseline）。 */
-    const list = await apiFetch<{ id: string }[] | { data?: unknown }>(
-      '/api/v1/snapshots?page=1&pageSize=2',
-    );
-    /* apiFetch 已解包 {data}；列表分页响应是数组。 */
-    const items = Array.isArray(list) ? list : [];
+    /* desktop apiFetch **不**解包信封（与 mobile 不同）：列表返回 { data: [...], pagination }，
+     * 详情返回 { data: {...} }。这里显式取 .data。列表只要最近 2 条（drift 只需 current+baseline）。 */
+    const listEnv = await apiFetch<{ data?: unknown }>('/api/v1/snapshots?page=1&pageSize=2');
+    const items = Array.isArray(listEnv?.data) ? (listEnv.data as Array<{ id?: unknown }>) : [];
     const rows: SnapshotRow[] = [];
-    for (const it of items as Array<{ id?: unknown }>) {
+    for (const it of items) {
       const id = typeof it.id === 'string' ? it.id : null;
       if (!id) continue;
-      const raw = await apiFetch<{ id: string; dataJson: string; reason: string; createdAt: number }>(
-        `/api/v1/snapshots/${encodeURIComponent(id)}`,
-      );
+      const detailEnv = await apiFetch<{
+        data?: { id: string; dataJson: string; reason: string; createdAt: number };
+      }>(`/api/v1/snapshots/${encodeURIComponent(id)}`);
+      const raw = detailEnv?.data;
+      if (!raw) continue;
       rows.push({
         id: raw.id,
         data_json: raw.dataJson,
@@ -145,7 +145,7 @@ async function syncSnapshotsToLocal(): Promise<void> {
     }
     if (rows.length > 0) await upsertSnapshots(rows);
   } catch {
-    /* 同步失败不影响本次展示（可能离线/未配置/非 admin 无权拉 data）。下次在线再同步。 */
+    /* 同步失败不影响本次展示（可能离线/未配置/非 admin 无权拉 data → 403）。下次在线再同步。 */
   }
 }
 
@@ -167,9 +167,9 @@ async function loadLocalGrowth(): Promise<CompanionGrowthV1 | null> {
 export async function loadCompanionGrowth(): Promise<GrowthResult> {
   const cached = await readCachedGrowth();
   try {
-    const remote = CompanionGrowthV1Schema.parse(
-      await apiFetch<unknown>('/api/v1/companion/me/growth'),
-    );
+    /* desktop apiFetch 不解包信封：服务端 /companion/me/growth 返回 { data: growth }，显式取 .data。 */
+    const env = await apiFetch<{ data?: unknown }>('/api/v1/companion/me/growth');
+    const remote = CompanionGrowthV1Schema.parse(env?.data);
     await writeCachedGrowth(remote);
     /* 在线成功：顺手把本地 snapshots 同步好，供日后离线本地算（不阻塞返回）。 */
     void syncSnapshotsToLocal();

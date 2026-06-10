@@ -41,25 +41,67 @@ interface CoreValueSnapshot {
   readonly weight: number;
 }
 
+/** 把一个「价值条目」对象收敛成 {id,label,weight}；无 id 返回 null。 */
+function toCoreValueSnapshot(v: unknown): CoreValueSnapshot | null {
+  if (v === null || typeof v !== 'object') return null;
+  const val = v as Record<string, unknown>;
+  const id = String(val.id ?? '');
+  if (!id) return null;
+  const label = String(val.label ?? '');
+  const weight = typeof val.weight === 'number' ? val.weight : 0;
+  return { id, label, weight };
+}
+
+/**
+ * 从任意「价值集合」形态收集价值。支持三种真实/历史形态：
+ *   1. 普通数组 `[{id,label,weight}, ...]`（旧 fixtures / data.values / data.L1）。
+ *   2. 序列化的 Map `{__type:'Map', entries:[[id, CoreValue], ...]}`（真实快照 coreSelf.values，
+ *      deepStringify 产物——CoreValue 自带 id/label/weight）。
+ *   3. 普通对象 `{ id: CoreValue }`（保险起见也支持）。
+ */
+function collectValues(values: unknown, into: Map<string, CoreValueSnapshot>): void {
+  if (Array.isArray(values)) {
+    for (const v of values) {
+      const cv = toCoreValueSnapshot(v);
+      if (cv) into.set(cv.id, cv);
+    }
+    return;
+  }
+  if (values !== null && typeof values === 'object') {
+    const obj = values as Record<string, unknown>;
+    /* 序列化 Map：取 entries 的 value（[key, CoreValue]）。 */
+    if (obj.__type === 'Map' && Array.isArray(obj.entries)) {
+      for (const entry of obj.entries as unknown[]) {
+        if (Array.isArray(entry) && entry.length >= 2) {
+          const cv = toCoreValueSnapshot(entry[1]);
+          if (cv) into.set(cv.id, cv);
+        }
+      }
+      return;
+    }
+    /* 普通对象映射：每个 value 是 CoreValue。 */
+    for (const v of Object.values(obj)) {
+      const cv = toCoreValueSnapshot(v);
+      if (cv) into.set(cv.id, cv);
+    }
+  }
+}
+
 /**
  * 解析快照 JSON 的价值列表 → Map<id, {id,label,weight}>。
- * 兼容 `data.values` 与旧的 `data.L1` 两种键；非法/缺失返回空 Map（不抛）。
+ *
+ * 真实快照（os.createSnapshot → deepStringify(SystemSnapshot)）把价值放在 `coreSelf.values`，且是
+ * 序列化 Map（`{__type:'Map', entries}`）。历史/测试 fixtures 用顶层 `values`/`L1` 数组。三处都支持，
+ * 非法/缺失返回空 Map（不抛）。
  */
 export function parseSnapshotValues(dataJson: string): Map<string, CoreValueSnapshot> {
   const result = new Map<string, CoreValueSnapshot>();
   try {
     const data = JSON.parse(dataJson) as Record<string, unknown>;
-    const values = (data.values ?? data.L1) as unknown;
-    if (!Array.isArray(values)) return result;
-    for (const v of values as unknown[]) {
-      if (v !== null && typeof v === 'object') {
-        const val = v as Record<string, unknown>;
-        const id = String(val.id ?? '');
-        const label = String(val.label ?? '');
-        const weight = typeof val.weight === 'number' ? val.weight : 0;
-        if (id) result.set(id, { id, label, weight });
-      }
-    }
+    /* 真实快照：coreSelf.values。历史/fixtures：顶层 values / L1。按优先级取第一个存在的。 */
+    const coreSelf = data.coreSelf as Record<string, unknown> | undefined;
+    const source = coreSelf?.values ?? data.values ?? data.L1;
+    collectValues(source, result);
   } catch {
     /* malformed snapshot — 返回空 */
   }
