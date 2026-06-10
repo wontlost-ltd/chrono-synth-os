@@ -10,9 +10,11 @@
  *   2. naive JSON.stringify **确实会丢** Map —— 证明 deepStringify 不可省（防止有人「优化」掉它）。
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { deepStringify, deepParse } from '../../storage/serialization.js';
+import { ChronoSynthOS } from '../../chrono-synth-os.js';
+import { TestClock, SilentLogger } from '../../utils/index.js';
 
 /** 贴近真实 coreSelf.values 形态：Map<valueId, CoreValue-ish object>。 */
 function realValuesMap(): Map<string, { id: string; label: string; weight: number }> {
@@ -66,5 +68,36 @@ describe('快照序列化形态契约（WP-3 T3.2）', () => {
     const restored = deepParse<Map<string, unknown>>(deepStringify(new Map()));
     assert.ok(restored instanceof Map);
     assert.equal(restored.size, 0);
+  });
+});
+
+/**
+ * 端到端 smoke（Codex WP-3 复审 #4）：走真实 createSnapshot → load → restore，
+ * 证明上面的工具函数契约确实保护了真实快照路径（而非仅锁工具函数）。
+ */
+describe('快照端到端形态 smoke（WP-3 T3.2）', () => {
+  let os: ChronoSynthOS;
+
+  beforeEach(() => {
+    os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os.start();
+  });
+  afterEach(() => os.close());
+
+  it('addValue → createSnapshot → load → restore：核心价值不丢、形态仍是 Map', () => {
+    const v = os.core.addValue('探索', 0.46);
+    const snap = os.createSnapshot('manual');
+
+    /* load 回来的快照里 coreSelf.values 必须仍是 Map（经 deepParse 复原，不是 {}）。 */
+    const loaded = os.snapshots.load(snap.id);
+    assert.ok(loaded, '应能加载刚建的快照');
+    assert.ok(loaded!.coreSelf.values instanceof Map, 'load 后 coreSelf.values 必须是 Map');
+    assert.equal(loaded!.coreSelf.values.get(v.id)?.weight, 0.46, 'load 后价值权重保真');
+
+    /* 改权重 → restore → 必须回到快照时的值（证明 restore 真的读到了未丢失的 Map）。 */
+    os.core.updateValueParams(v.id, { weight: 0.9 });
+    assert.equal(os.core.values.getAll().get(v.id)!.weight, 0.9);
+    assert.ok(os.restoreFromSnapshot(snap.id), 'restore 应成功');
+    assert.equal(os.core.values.getAll().get(v.id)!.weight, 0.46, 'restore 后应回到快照权重（价值没丢）');
   });
 });
