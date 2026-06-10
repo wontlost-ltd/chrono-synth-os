@@ -177,7 +177,10 @@ const MALFORMED_CANDIDATES: Array<{ name: string; input: CandidateInput }> = [
       payload: { narrative: '   ' } },
   },
   {
-    name: '对抗形态：__proto__ 污染 payload',
+    /* 注：本例的 suggestedWeight:1.5 会先被越界分支拦下 → 它证明的是「携带 __proto__ 字段的
+     * payload 不崩、被拒、且原型未被污染」，不是专门的原型污染防护测试（JSON.parse 的 __proto__
+     * 本就不会污染 Object.prototype）。命名诚实，不夸大（Codex WP-3 复审）。 */
+    name: '对抗形态：携带 __proto__ 字段的 payload 不崩、被拒、原型未污染',
     input: { kind: 'value_shift', source: 'conversation', confidence: 0.9, evidence: goodEvidence,
       payload: JSON.parse('{"__proto__":{"polluted":true},"valueId":"v","currentWeight":0.5,"suggestedWeight":1.5,"delta":1,"patternAgrees":true}') },
   },
@@ -223,6 +226,9 @@ describe('provider 输出畸形 corpus：不崩、不写脏数据进内核（WP-
       /* 不应有任何 compiled 工件落库（被拒的候选不进持久状态机的 compiled 终态）。 */
       const compiled = os.distillation.listByPersona(PERSONA).filter((a) => a.status === 'compiled');
       assert.equal(compiled.length, 0, '不应有畸形候选被编译');
+
+      /* 原型未被污染（兜底校验，对 __proto__ 对抗用例尤为相关）。 */
+      assert.equal(({} as Record<string, unknown>).polluted, undefined, 'Object.prototype 不应被污染');
     });
   }
 
