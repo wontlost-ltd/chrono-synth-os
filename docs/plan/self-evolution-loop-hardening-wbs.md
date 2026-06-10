@@ -114,7 +114,10 @@
 
 ### 验收契约
 - ✅ 占比基线 + 预算规则写入 ADR 或 CONTRIBUTING。
-- ✅ （可选）至少一个企业能力从 kernel 域剥离为应用层/插件，降低 kernel 心智负担。
+- ⊘ （可选项，已撤销）「从 kernel 域剥离企业能力」——③ 实做时发现这是度量误判：
+  kernel 的 billing/enterprise/compliance/multi-tenant 是纯 Query/Command 可携契约
+  （零逻辑零依赖，与其它 50+ 同类契约一致），不是 SaaS 逻辑，无可剥离。ADR-0050
+  已据此修正（D2 重定义 / D3 撤销），占比基线改用 src/ 逻辑 LOC 量化。
 
 ---
 

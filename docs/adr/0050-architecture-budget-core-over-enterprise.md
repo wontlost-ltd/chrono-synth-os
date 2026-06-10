@@ -1,8 +1,8 @@
 # 0050 — Architecture budget: core-persona progress gates new enterprise surface
 
-**Status:** Accepted
+**Status:** Accepted (D2 amended / D3 withdrawn 2026-06-11 — see correction)
 **Date:** 2026-06-11
-**Scope:** governance (applies to `packages/kernel/src/domain`, `src/server`,
+**Scope:** governance (applies to `src/` enterprise vs core logic,
 contribution review); no runtime code.
 **Relates to:** [0001](0001-kernel-zero-runtime-deps.md) (kernel zero-deps),
 [0046](0046-dual-product-companion.md) (dual-product split),
@@ -38,13 +38,29 @@ that is supposed to *be* the deterministic persona:
 | Kernel-domain subset | LOC | Share of kernel domain |
 |----------------------|-----|------------------------|
 | core-persona (`core-self`, `persona`, `intelligence`, `conversation`, `identity`) | 9,505 | ~61% |
-| enterprise concerns (`billing`, `enterprise`, `compliance`, `multi-tenant`) | 2,056 | ~13% |
+| enterprise subtrees (`billing`, `enterprise`, `compliance`, `multi-tenant`) | 2,056 | ~13% |
 
-So ~13% of the *zero-dependency persona kernel* is SaaS billing /
-enterprise / compliance / tenancy logic that has nothing to do with the
-persona's deterministic self. That is a standing mental-load tax on every
-person reasoning about the core, and a magnet for "just add it to the
-kernel" growth.
+> **Correction (2026-06-11, amends D2/D3 below).** The original framing of
+> this 2,056 LOC as "SaaS logic that has nothing to do with the persona"
+> was a **measurement error** found while attempting the D3 extraction.
+> Those four kernel-domain subtrees contain **only `*-queries.ts` files** —
+> pure Query/Command *kind contracts* (zero `class`/`if`/`for`, zero
+> non-relative imports, fully ADR-0001 zero-dependency). They are two of
+> **60+ such contract files** that are the kernel's *universal* pattern:
+> every domain (core-self, identity, billing, conversation, …) declares its
+> data-plane contract shapes in the kernel while the **executors/services
+> live in `src/`**. So this 2,056 LOC is not misplaced SaaS logic — it is
+> exactly what the kernel is designed to hold (portable contracts for
+> desktop/edge runtimes). There is no logic here to extract; extracting it
+> would *contradict* the kernel's contract-layer architecture.
+>
+> The real occupancy signal is **logic LOC in `src/`**, re-measured:
+> enterprise logic (`src/billing` 1,940 + `src/enterprise` 2,284 +
+> `src/multi-tenant` 708 + `src/compliance` 674 + enterprise executors 691
+> ≈ **6,297**) vs core-persona logic (`src/intelligence` 2,990 +
+> `src/core` 1,069 + `src/meta` 561 + `src/accelerated` 294 ≈ **4,914**).
+> The mismatch the budget targets is **real but lives in `src/` logic**,
+> not in kernel contracts.
 
 The point is **not** that enterprise capability is wrong — ADR-0046
 deliberately keeps a dual product (Enterprise governance + ChronoCompanion).
@@ -77,32 +93,37 @@ count. The mechanism is a **PR checklist item** the author fills in:
 A pure-core or pure-infra PR checks "n/a" and moves on. Only net-new
 enterprise surface owes a paired core contribution.
 
-### D2 — Kernel domain is core-only going forward
+### D2 — Kernel domain holds the persona **and portable contracts**; not SaaS *logic* (amended 2026-06-11)
 
-`packages/kernel/src/domain` is for the **deterministic persona** only.
-**No new enterprise concern** (billing, compliance, multi-tenant,
-enterprise admin) may be added to the kernel domain. Such logic belongs
-in the application layer (`src/server`, `src/storage`) or a dedicated
-package, where it can depend on infrastructure freely without taxing the
-zero-dependency core (ADR-0001).
+`packages/kernel/src/domain` holds two legitimate things: (1) the
+**deterministic persona**, and (2) **portable Query/Command *kind
+contracts*** (`*-queries.ts`) for *every* domain — including enterprise
+ones — so the data-plane shape is reusable across desktop/edge runtimes
+that lack the Node server (ADR-0001 zero-dependency). The existing
+`billing`/`enterprise`/`compliance`/`multi-tenant` subtrees are exactly
+this: pure contracts, correctly placed. They are **not** debt and are
+**not** extraction candidates (the original D2/D3 claim was the measurement
+error corrected above).
 
-The four existing enterprise subtrees in the kernel domain
-(`billing`, `enterprise`, `compliance`, `multi-tenant`, 2,056 LOC) are
-**registered debt**, not grandfathered-as-fine. They are candidates for
-extraction (D3); until extracted they must not grow.
+What **must not** enter the kernel domain is **enterprise *logic* with
+runtime dependencies** — services, stores, executors, anything with
+branching business rules or infra imports. That belongs in `src/` (which
+is already where all of it lives). The line is **contract vs.
+implementation**, not **persona vs. enterprise**.
 
-### D3 — Extraction is opportunistic, not a big-bang migration
+### D3 — (withdrawn) — no kernel extraction; the budget watches `src/` logic instead
 
-We do **not** schedule a disruptive refactor to move 2,056 LOC out of the
-kernel now (it would be a large, risky, low-user-value change — exactly
-the kind ADR/Linus pragmatism rejects). Instead: **when a kernel-domain
-enterprise module is next touched for a feature**, that PR should also
-take the opportunity to move it out (or document why it can't yet). The
-budget rule (D1) funds this by ensuring core progress keeps pace.
+The original D3 ("opportunistically extract the kernel enterprise subtrees")
+is **withdrawn**: there is no logic in those subtrees to extract — they are
+contracts (D2). Forcing them out would break the kernel's contract-layer
+pattern and diverge them from the other 50+ contract files.
 
-First extraction candidates, smallest-blast-radius first:
-`compliance` (92 LOC) and `multi-tenant` (102 LOC), then `enterprise`
-(895) and `billing` (967).
+The architecture budget (D1) stands, retargeted at its real subject:
+**enterprise *logic* in `src/`** (~6,297 LOC) outweighs **core-persona
+logic in `src/`** (~4,914 LOC). New net enterprise *logic* (not contracts)
+owes a paired core-persona contribution. The optional non-blocking trend
+report (below) should track `src/` enterprise-logic vs core-logic LOC, not
+kernel-contract LOC.
 
 ## Consequences
 
@@ -111,8 +132,9 @@ First extraction candidates, smallest-blast-radius first:
 - The occupancy mismatch becomes **visible per-PR** instead of
   discovered quarterly. Reviewers can see "this adds enterprise surface
   with no core counterpart" and ask for the pairing.
-- The kernel domain stops accreting SaaS logic — D2 caps the debt at
-  today's 2,056 LOC and points it downward.
+- The kernel domain stays contracts-only for enterprise concerns — D2
+  (amended) blocks enterprise *logic* (services/executors/infra) from
+  entering the kernel, while keeping portable contracts where they belong.
 - No engineering is blocked: the rule is a checklist + reviewer
   judgement, not a gate. Pure-core and infra work pay nothing.
 - Extraction rides existing feature work (D3), so it never needs its own
@@ -126,15 +148,18 @@ First extraction candidates, smallest-blast-radius first:
 - "Net new enterprise surface" has a fuzzy boundary. Accepted: the rule
   optimises for making the conversation happen, not for precise
   accounting; a borderline PR simply triggers a one-line reviewer note.
-- The kernel-domain debt persists until features touch it. Accepted as
-  the deliberately pragmatic trade (D3) over a big-bang refactor.
+- The `src/` enterprise-logic vs core-logic mismatch persists until
+  weighed per-PR via D1. Accepted as the deliberately light intervention
+  over a heavy process. (The original "kernel-domain debt" framing is
+  withdrawn — see the 2026-06-11 correction; those kernel subtrees are
+  contracts, not debt.)
 
 **Registered follow-up (non-blocking):** to lower the rubber-stamp risk
 of a judgement-only checklist, a future **non-blocking** trend report may
-emit (on PR or on a schedule) the kernel-domain enterprise-subset LOC and
-its share, and `src/server` vs core-persona LOC trend — comment only,
-never a red light. This stays a reporting aid, not a gate (a gate is
-explicitly rejected above).
+emit (on PR or on a schedule) the **`src/` enterprise-logic vs
+core-persona-logic LOC** trend (not kernel-contract LOC — see correction)
+— comment only, never a red light. This stays a reporting aid, not a gate
+(a gate is explicitly rejected above).
 
 ## Alternatives considered
 
@@ -142,14 +167,16 @@ explicitly rejected above).
   rejected — LOC is a bad proxy for value, and a gate would block
   legitimate enterprise work (Enterprise GA must not be blocked, ADR-0046).
   We want visibility, not obstruction.
-- **Big-bang kernel cleanup now:** rejected — high risk, low user value,
-  violates "solve real problems, not theoretical purity." The debt is
-  registered and bounded (D2) and extracted opportunistically (D3).
-- **Do nothing (status quo):** rejected — the measured 13% enterprise
-  share of the zero-dependency kernel and the server surface being the
-  single largest area show the default trajectory drifts away from the
-  product thesis. A budget is the minimum intervention that corrects the
-  trajectory without a heavy process.
+- **Big-bang kernel cleanup now:** rejected — *and the premise turned out
+  false*: there is no enterprise *logic* in the kernel to clean up (the
+  subtrees are contracts, per the 2026-06-11 correction). Attempting D3
+  surfaced the measurement error; the honest outcome is to withdraw the
+  extraction, not perform it.
+- **Do nothing (status quo):** rejected — the re-measured mismatch
+  (`src/` enterprise logic ~6,297 LOC vs core-persona logic ~4,914 LOC,
+  and `src/server` being the single largest area) shows the default
+  trajectory drifts toward enterprise surface. A budget is the minimum
+  intervention that corrects the trajectory without a heavy process.
 
 ## Related
 
