@@ -18,7 +18,14 @@ interface SqliteColRow { readonly name: string }
 
 /**
  * 已知未纳入 TenantDatabase 自动隔离的 tenant_id 表。经 ②b 逐表审计（Codex 独立核验，
- * 见 .claude/context-13-table-isolation-audit.json）后，按访问路径的 tenant 约束分三类：
+ * 见 docs/audit/2026-06-11-tenant-table-isolation-audit.json）后，按访问路径的 tenant 约束分三类：
+ *
+ * 已登记 scoped 后续债（②b 复审）：
+ *   - tasks / subscriptions / life_simulations：仍有 id-only 读/改面，需逐路径拆分（worker-only vs
+ *     tenant-facing），见审计报告各表 Action。
+ *   - SAFE-EXEMPT 表的「未来裸 SQL 防回归」：本 ratchet 只挡「新表完全不登记」，挡不住「未来给已豁免
+ *     表新增忘带 tenant_id 的生产 SQL」。后续可加针对 SAFE-EXEMPT 表的静态/lint ratchet（标记触达
+ *     onboarding_sessions/idempotency_keys 等且不带 tenant_id 的新 SQL，除非显式标注为全局维护）。
  *
  * SPECIAL：users 是租户根/身份表——登录与身份发现必须先全局按 email/id 找到 user 才能确定其
  * 租户归属，故部分访问天然全局；tenant-admin 路径仍要求 tenant 谓词。
