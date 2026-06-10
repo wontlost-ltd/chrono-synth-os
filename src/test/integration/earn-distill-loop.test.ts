@@ -91,18 +91,17 @@ describe('earn→distill 闭环（WP-0）', () => {
     });
     assert.equal(cRes.statusCode, 200, cRes.body);
 
-    /* 4. 闭环断言：蒸馏被触发——要么某 core value 权重上升（强信号自动编译），要么产生了候选。
-     *    关键是「挣钱完成确实经蒸馏门作用到了核心人格」，不是只动 marketplace 标量。 */
-    const after = [...os.core.values.getAll().values()];
-    const candidatesAfter = os.distillation.listCandidates(personaId).length;
-    const someWeightRose = after.some((v) => {
-      const prev = before.find((b) => b.id === v.id);
-      return prev !== undefined && v.weight > prev.weight;
-    });
-    assert.ok(
-      someWeightRose || candidatesAfter > candidatesBefore,
-      `earn→distill 应触发：core 权重上升或产生候选。before=${before.map((v) => v.weight)} after=${after.map((v) => v.weight)} cand ${candidatesBefore}→${candidatesAfter}`,
-    );
+    /* 4. 精确闭环断言（Codex WP-0 Major）：产生了一个 value_shift 工件，source=conversation，
+     *    指向 seeded value，且已 compiled；core 中该 value 权重从 0.5 上升。 */
+    const artifacts = os.distillation.listByPersona(personaId);
+    const vs = artifacts.find((a) => a.kind === 'value_shift');
+    assert.ok(vs, `应产生 value_shift 工件，实际: ${artifacts.map((a) => a.kind).join(',')}`);
+    assert.equal(vs!.source, 'conversation', 'earning 蒸馏来源应为 conversation');
+    assert.equal((vs!.payload as { valueId: string }).valueId, seeded.id, 'value_shift 应指向 research 价值');
+    assert.equal(vs!.status, 'compiled', '强信号(0.95)应自动编译进核心');
+    const afterWeight = os.core.values.getById(seeded.id)?.weight ?? 0;
+    assert.ok(afterWeight > 0.5, `core value 权重应从 0.5 上升，实际 ${afterWeight}`);
+    void before; void candidatesBefore;
   });
 
   it('完成低质量任务（<0.5）→ 不产成长候选（不奖励烂活）', async () => {

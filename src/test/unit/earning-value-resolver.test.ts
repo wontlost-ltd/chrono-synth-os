@@ -26,12 +26,12 @@ describe('resolveTargetValueForCategory', () => {
     assert.equal(resolveTargetValueForCategory('craftsmanship', values)?.valueId, 'craft');
   });
 
-  it('无匹配 → 最高权重兜底', () => {
-    assert.equal(resolveTargetValueForCategory('totally-unrelated', values)?.valueId, 'curiosity'); // 0.7 最高
+  it('无明确映射 → null（不兜底强化最强价值，避免漂移）', () => {
+    assert.equal(resolveTargetValueForCategory('totally-unrelated', values), null);
   });
 
-  it('空 category → 最高权重兜底', () => {
-    assert.equal(resolveTargetValueForCategory('', values)?.valueId, 'curiosity');
+  it('空 category → null', () => {
+    assert.equal(resolveTargetValueForCategory('', values), null);
   });
 
   it('无 values → null', () => {

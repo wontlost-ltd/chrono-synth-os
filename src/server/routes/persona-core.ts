@@ -1215,11 +1215,17 @@ export function registerPersonaCoreRoutes(
           personaId: result.persona.id,
           taskId: result.task.id,
           category: result.task.category,
+          /* qualityScore 用入参（service 正是用它结算的，即结算事实）。 */
           qualityScore: body.qualityScore,
-          payout: result.wallet.balance >= 0 ? Math.max(result.task.reward * body.qualityScore, 0) : 0,
+          /* payout 用结算公式（与 service completeTask 一致：reward * max(quality, 0.2)），而非临时重算。 */
+          payout: Math.round(result.task.reward * Math.max(body.qualityScore, 0.2) * 100) / 100,
         });
-      } catch {
-        /* 蒸馏触发失败不阻断任务完成 */
+      } catch (err) {
+        /* 蒸馏触发失败不阻断任务完成，但记录可观测（不含敏感 payload），否则闭环失效不可见。 */
+        app.log.warn(
+          { tenantId: request.tenantId, taskId: result.task.id, personaId: result.persona.id, err: err instanceof Error ? err.message : String(err) },
+          'earn→distill 回调失败（任务已完成，蒸馏未触发）',
+        );
       }
     }
     return {
