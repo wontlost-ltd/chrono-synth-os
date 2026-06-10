@@ -79,7 +79,20 @@ export async function runBenchmark(
   if (cases.length === 0) throw new Error('runBenchmark: cases must not be empty');
   const results: CaseMetrics[] = [];
   for (const bc of cases) {
+    /* fixture 完整性（Codex WP-2 Minor）：oracle 必须是该 case 的备选之一，否则 accuracy
+     * 会静默偏低（看似「学得差」实为 benchmark 数据写错）→ 显式抛错暴露。
+     * alternatives 可选（决策引擎可自生成备选），但 benchmark 要求 fixture 显式给出可比备选。 */
+    const alternatives = bc.decisionCase.alternatives ?? [];
+    if (!alternatives.includes(bc.expectedAlternative)) {
+      throw new Error(
+        `runBenchmark: expectedAlternative "${bc.expectedAlternative}" not in alternatives of case ${bc.decisionCase.id}`,
+      );
+    }
     const r = await engine.evaluate(bc.decisionCase, { mode: 'autonomous' });
+    /* 引擎返回的 caseId 必须与输入一致，否则结果错位归档、后续 case-set 校验也会被误导。 */
+    if (r.caseId !== bc.decisionCase.id) {
+      throw new Error(`runBenchmark: engine returned caseId "${r.caseId}" for input case "${bc.decisionCase.id}"`);
+    }
     const top = r.rankedOptions[0];
     const recommended = recommendedOf(r);
     results.push({
@@ -100,7 +113,10 @@ export async function runBenchmark(
 
 /**
  * 对比 baseline 与 learned（纯对比，无副作用）。
- * accuracyDelta>0 表示「学习让决策更靠近 ground-truth」——核心命题的硬证据。
+ * accuracyDelta>0 表示「learned 配置比 baseline 更靠近 oracle」。证明强度取决于 learned
+ * **怎么来的**：经真实 earn→distill→门控→编译闭环得到的 learned 才是「自我进化使决策更优」
+ * 的证据；手动调权得到的 learned 只证明「权重变化会改变 RuleEngine 排序」。两类测试都有，
+ * 见 learning-benchmark.test.ts。
  *
  * 强校验 case 集一致（Codex WP-2 Major）：caseId 集合必须完全相同、无重复，否则抛错——
  * 否则缺/多/重复 case 会静默产生看似有效的 delta。
