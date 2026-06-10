@@ -95,6 +95,70 @@ mod tests {
         assert_eq!(n, 1, "snapshots table accepts rows");
     }
 
+    /// 验证 snapshots 表能支撑服务端 PersonaDriftAnalyzer 的查询语义（Codex PR-1 Minor）：
+    /// `WHERE tenant_id = ? OR (tenant_id IS NULL AND ? = 'default') ORDER BY created_at DESC LIMIT 2`
+    /// ——取目标租户最近两条、含 NULL 当 default、排除其他租户。
+    #[test]
+    fn snapshots_drift_query_semantics() {
+        let conn = open_in_memory();
+        // default 租户的两条 + 一条 NULL（当作 default）+ 一条别的租户。
+        let rows = [
+            ("a", "default", 100_i64),
+            ("b", "default", 300),
+            ("c_null", "", 200), // tenant_id NULL（用空串占位，下面单独插 NULL）
+            ("other", "tenantX", 999),
+        ];
+        for (id, tenant, ts) in rows {
+            if tenant.is_empty() {
+                conn.execute(
+                    "INSERT INTO snapshots (id, data_json, reason, tenant_id, created_at)
+                     VALUES (?1, '{\"values\":[]}', '', NULL, ?2)",
+                    rusqlite::params![id, ts],
+                )
+                .unwrap();
+            } else {
+                conn.execute(
+                    "INSERT INTO snapshots (id, data_json, reason, tenant_id, created_at)
+                     VALUES (?1, '{\"values\":[]}', '', ?2, ?3)",
+                    rusqlite::params![id, tenant, ts],
+                )
+                .unwrap();
+            }
+        }
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM snapshots
+                  WHERE tenant_id = ?1 OR (tenant_id IS NULL AND ?1 = 'default')
+                  ORDER BY created_at DESC
+                  LIMIT 2",
+            )
+            .unwrap();
+        let ids: Vec<String> = stmt
+            .query_map(["default"], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        // 最近两条（按 created_at DESC）：b(300) > c_null(200)；排除 other(tenantX) 与 a(100)。
+        assert_eq!(ids, vec!["b".to_string(), "c_null".to_string()]);
+    }
+
+    /// 热路径索引在重生成/手改后不应丢失（Codex PR-1 Suggestion）。
+    #[test]
+    fn snapshots_index_exists() {
+        let conn = open_in_memory();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                  WHERE type = 'index' AND name = 'idx_snapshots_tenant_created'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "idx_snapshots_tenant_created must exist");
+    }
+
     #[test]
     fn app_settings_round_trips_kv_pair() {
         let conn = open_in_memory();
