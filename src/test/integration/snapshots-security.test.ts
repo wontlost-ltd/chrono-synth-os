@@ -36,7 +36,7 @@ async function registerAndGetAuth(
   return JSON.parse(res.body).data as { accessToken: string; tenantId: string; userId: string };
 }
 
-/** 用 admin 角色自签 token（注册默认 member）。 */
+/** 用 admin 角色自签 token（注册首用户本就是 admin/owner，这里显式自签以示意图）。 */
 function adminHeaders(app: FastifyInstance, userId: string, tenantId: string) {
   const token = signToken(app, { sub: userId, tenantId, role: 'admin' });
   return { authorization: `Bearer ${token}`, 'x-tenant-id': tenantId };
