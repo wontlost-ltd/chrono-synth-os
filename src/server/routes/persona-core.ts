@@ -323,7 +323,26 @@ function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
   return user;
 }
 
-export function registerPersonaCoreRoutes(app: FastifyInstance, db: IDatabase, config?: AppConfig): void {
+/**
+ * 任务完成事件（earn→distill 闭环 WP-0）。完成市场任务后由路由触发，宿主（app.ts）订阅后
+ * 经 tenant OS 的 earningDistiller 把高质量 outcome 蒸馏成 core value 候选（经蒸馏门，不绕过）。
+ */
+export interface MarketplaceTaskCompletedEvent {
+  readonly tenantId: string;
+  readonly personaId: string;
+  readonly taskId: string;
+  readonly category: string;
+  readonly qualityScore: number;
+  readonly payout: number;
+}
+
+export function registerPersonaCoreRoutes(
+  app: FastifyInstance,
+  db: IDatabase,
+  config?: AppConfig,
+  /** 可选：任务完成回调（earn→distill 闭环）。app.ts 注入经 tenantFactory 调 earningDistiller。 */
+  onTaskCompleted?: (event: MarketplaceTaskCompletedEvent) => void,
+): void {
   const tx = db;
   const profileService = config ? new TenantEnterpriseProfileService(tx, config) : undefined;
   const service = new PersonaCoreService(
@@ -1186,6 +1205,22 @@ export function registerPersonaCoreRoutes(app: FastifyInstance, db: IDatabase, c
     });
     if (!result) {
       throw new NotFoundError(`市场任务 ${request.params.id} 不存在或不可完成`, ErrorCode.NOT_FOUND_TASK);
+    }
+    /* earn→distill 闭环（WP-0）：完成后触发回调，宿主经蒸馏门把高质量 outcome 蒸馏进 core values。
+     * best-effort——蒸馏失败不影响任务完成的返回（钱/声誉已落库）。 */
+    if (onTaskCompleted) {
+      try {
+        onTaskCompleted({
+          tenantId: request.tenantId,
+          personaId: result.persona.id,
+          taskId: result.task.id,
+          category: result.task.category,
+          qualityScore: body.qualityScore,
+          payout: result.wallet.balance >= 0 ? Math.max(result.task.reward * body.qualityScore, 0) : 0,
+        });
+      } catch {
+        /* 蒸馏触发失败不阻断任务完成 */
+      }
     }
     return {
       data: {

@@ -105,6 +105,7 @@ import { registerConversationRoutes } from './routes/conversation.js';
 import { registerDistillationRoutes } from './routes/distillation.js';
 import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
+import { resolveTargetValueForCategory } from '../intelligence/earning-value-resolver.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
 import { CostTracker as ConversationCostTracker } from '../intelligence/cost-tracker.js';
 import { UsageTracker as P1dUsageTracker } from '../billing/usage-tracker.js';
@@ -594,7 +595,29 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerUserRoutes(app, services);
   registerOrganizationRoutes(app, services);
   registerBillingRoutes(app, db, config);
-  registerPersonaCoreRoutes(app, db, config);
+  /* earn→distill 闭环（WP-0）：任务完成 → 经 tenant OS 的 earningDistiller 把高质量 outcome
+   * 蒸馏成 core value 候选（经蒸馏门，不绕过）。回调在此注入，因为这里能拿到 os + tenantFactory。 */
+  const onMarketplaceTaskCompleted = (event: import('./routes/persona-core.js').MarketplaceTaskCompletedEvent): void => {
+    const tenantOS =
+      tenantFactory && event.tenantId && event.tenantId !== 'default'
+        ? tenantFactory.getTenantOS(event.tenantId)
+        : deps.os;
+    const values = [...tenantOS.core.values.getAll().values()].map((v) => ({
+      id: v.id, label: v.label, weight: v.weight,
+    }));
+    const target = resolveTargetValueForCategory(event.category, values);
+    /* distill 内部对低质量(<0.5)/无映射会自行跳过；targetValue 缺省则不产 value_shift。 */
+    tenantOS.earningDistiller.distill({
+      tenantId: event.tenantId,
+      personaId: event.personaId,
+      taskId: event.taskId,
+      category: event.category,
+      qualityScore: event.qualityScore,
+      payout: event.payout,
+      targetValue: target ?? undefined,
+    });
+  };
+  registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
   registerHealthRoutes(app, {
     os: deps.os,
     db: deps.db,
