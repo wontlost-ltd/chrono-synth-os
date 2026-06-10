@@ -14,7 +14,12 @@ vi.mock('@/bridge/tauri-commands', () => ({
   setAppSetting: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { pickGrowth, loadCompanionGrowth, APP_SETTING_GROWTH_CACHE } from './growth-data';
+import {
+  pickGrowth,
+  loadCompanionGrowth,
+  clearCachedCompanionGrowth,
+  APP_SETTING_GROWTH_CACHE,
+} from './growth-data';
 import { apiFetch, ApiNotConfiguredError } from '@/bridge/http-client';
 import { getAppSetting, setAppSetting } from '@/bridge/tauri-commands';
 import type { CompanionGrowthV1 } from '@chrono/contracts';
@@ -84,5 +89,34 @@ describe('loadCompanionGrowth（在线取 + 缓存回退）', () => {
     apiFetchMock.mockRejectedValue(new Error('offline'));
     const out = await loadCompanionGrowth();
     expect(out.source).toBe('none');
+  });
+
+  it('remote 返回非法 schema（ZodError）但缓存有效 → 回退 cache', async () => {
+    getAppSettingMock.mockResolvedValue(JSON.stringify(cachedSample));
+    /* 缺字段/类型错 → CompanionGrowthV1Schema.parse 抛 ZodError，应被 catch 回退缓存。 */
+    apiFetchMock.mockResolvedValue({ schemaVersion: 'companion-growth.v1', hasBaseline: 'yes' });
+    const out = await loadCompanionGrowth();
+    expect(out.source).toBe('cache');
+    expect(out.growth).toEqual(cachedSample);
+  });
+
+  it('remote 成功但写缓存失败 → 仍返回 remote（best-effort 缓存）', async () => {
+    getAppSettingMock.mockResolvedValue(null);
+    apiFetchMock.mockResolvedValue(sample);
+    setAppSettingMock.mockImplementation(async () => {
+      throw new Error('disk full');
+    });
+    const out = await loadCompanionGrowth();
+    expect(out.source).toBe('remote');
+    expect(out.growth).toEqual(sample);
+  });
+});
+
+describe('clearCachedCompanionGrowth（换凭据/登出清缓存，Codex ② Major）', () => {
+  beforeEach(() => setAppSettingMock.mockReset().mockResolvedValue(undefined));
+
+  it('把 growth 缓存键置空', async () => {
+    await clearCachedCompanionGrowth();
+    expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_GROWTH_CACHE, '');
   });
 });

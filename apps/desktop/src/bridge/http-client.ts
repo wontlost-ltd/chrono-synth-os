@@ -95,7 +95,22 @@ export async function setApiCredentials(creds: ApiCredentials): Promise<void> {
     }
   }
 
-  if (changed) await clearCachedAccountPlan();
+  if (changed) await clearAccountScopedCaches();
+}
+
+/**
+ * 清所有「跟当前账号绑定」的本地缓存：plan + companion growth。换凭据/登出时调用。
+ * growth 是用户画像数据，必须跟凭据生命周期一起清，否则换账号会串显旧用户成长（Codex ② Major）。
+ * 动态 import 避免与 companion/tauri 模块形成静态环。
+ */
+export async function clearAccountScopedCaches(): Promise<void> {
+  await clearCachedAccountPlan();
+  try {
+    const { clearCachedCompanionGrowth } = await import('@/companion/growth-data');
+    await clearCachedCompanionGrowth();
+  } catch {
+    /* growth 缓存模块加载/清理失败不阻断凭据流程；脏缓存读取已被 schema 校验收敛。 */
+  }
 }
 
 export class ApiNotConfiguredError extends Error {

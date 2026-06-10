@@ -11,7 +11,7 @@ import {
   getApiToken,
   setApiToken,
   setApiCredentials,
-  clearCachedAccountPlan,
+  clearAccountScopedCaches,
 } from '@/bridge/http-client';
 import type { AccountPlan } from '@/plan/account-plan';
 
@@ -55,11 +55,10 @@ export function CompanionSettingsPage({ plan }: CompanionSettingsPageProps) {
   }
 
   async function handleLogout() {
-    /* 登出：清 token；plan 缓存无条件作废（无论 token 原本是否为 null，登出都不该留旧账号 plan）。
-     * setApiCredentials 仅在 token 变化时清缓存，故这里直接显式 clearCachedAccountPlan 覆盖两种情况，
-     * 不再叠加 setApiCredentials 的条件清理（避免重复写）。 */
+    /* 登出：清 token；账号绑定缓存（plan + companion growth）无条件作废——无论 token 原值如何，
+     * 登出都不该留旧账号的 plan 或成长画像（Codex ② Major：growth 也要随登出清）。 */
     setApiToken(null);
-    await clearCachedAccountPlan();
+    await clearAccountScopedCaches();
     window.location.reload();
   }
 

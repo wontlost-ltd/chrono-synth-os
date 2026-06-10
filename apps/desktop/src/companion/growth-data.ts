@@ -60,6 +60,21 @@ async function writeCachedGrowth(growth: CompanionGrowthV1): Promise<void> {
 }
 
 /**
+ * 作废缓存的 growth（换凭据/登出时调用）——可 await，best-effort。
+ *
+ * growth 是用户画像/价值倾向，存在无账号维度的 app_settings 里，必须跟凭据生命周期绑定：
+ * 换服务器/换 token/登出后绝不能让旧账号的成长数据串到新账号（Codex ② Major，与
+ * clearCachedAccountPlan 同类）。
+ */
+export async function clearCachedCompanionGrowth(): Promise<void> {
+  try {
+    await setAppSetting(APP_SETTING_GROWTH_CACHE, '');
+  } catch {
+    /* 清缓存失败不阻断流程；脏/空缓存读取时已被 schema 校验按「无缓存」收敛。 */
+  }
+}
+
+/**
  * 取成长数据：先试在线（成功则刷新缓存），失败/未配置回退缓存。
  *
  * 返回 source 让 UI 区分「在线最新 / 上次同步 / 还在认识你」。任何网络/服务端错误都不抛——

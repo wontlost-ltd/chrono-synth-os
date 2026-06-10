@@ -193,13 +193,12 @@ export async function generateDriftReport(): Promise<DriftReport | null> {
 }
 
 /**
- * 本地快照数量——companion 成长视图判断是否有「可对比的历史基线」用（≥2 才算）。
- * 与服务端 countTenantSnapshots 同义：desktop 是单租户本地库，直接数 snapshots 表行数。
+ * 本地快照数量——判断是否有「可对比的历史基线」（≥2 才算）。
  *
- * Rust 端命令（待实现）：
- *   #[tauri::command]
- *   async fn count_snapshots() -> Result<u32, String>
- * 未接时优雅返回 0（= 无基线 → 成长视图走「还在认识你」空态），与 getLatestDriftReport 一致。
+ * **路线 A 预留**：Growth 当前走路线 B（在线取 /companion/me/growth + 缓存，见 growth-data.ts），
+ * 暂无生产调用方。保留此桥接给后续路线 A（本地 mirror snapshots + 本地算 drift，见
+ * docs/plan/desktop-drift-data-design.md）——届时 desktop schema v008 加 snapshots 表 +
+ * Rust `count_snapshots` 命令，本函数即接真实数据。未接时优雅返回 0（Tauri 字符串 reject 也覆盖）。
  */
 export async function queryTenantSnapshotCount(): Promise<number> {
   try {
