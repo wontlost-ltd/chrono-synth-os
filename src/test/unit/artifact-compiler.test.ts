@@ -125,11 +125,21 @@ describe('ArtifactCompiler (ADR-0047)', () => {
     if (!r.ok) assert.match(r.reason, /store not configured/);
   });
 
-  it('rule / decision_style_patch 等未支持 kind → unsupported（不静默丢弃）', () => {
-    for (const kind of ['rule', 'decision_style_patch', 'cognitive_model_patch'] as const) {
-      const r = compiler.compile('p1', artifact({ kind, payload: {} }));
-      assert.equal(r.ok, false, `${kind} 应 unsupported`);
-      if (!r.ok) assert.match(r.reason, /unsupported artifact kind/);
-    }
+  it('decision_style_patch → 编译进 L2 决策风格（WP-1）', () => {
+    const r = compiler.compile('p1', artifact({ kind: 'decision_style_patch', payload: { riskAppetite: 0.7 } }));
+    assert.equal(r.ok, true, `decision_style_patch 应可编译: ${r.ok ? '' : r.reason}`);
+    assert.equal(core.decisionStyle.get().riskAppetite, 0.7);
+  });
+
+  it('cognitive_model_patch → 编译进 L3 认知模型（WP-1）', () => {
+    const r = compiler.compile('p1', artifact({ kind: 'cognitive_model_patch', payload: { growthMindset: 0.85 } }));
+    assert.equal(r.ok, true, `cognitive_model_patch 应可编译: ${r.ok ? '' : r.reason}`);
+    assert.equal(core.cognitiveModel.get().growthMindset, 0.85);
+  });
+
+  it('rule kind → 显式拒绝（rule store 未落地，不静默丢弃）', () => {
+    const r = compiler.compile('p1', artifact({ kind: 'rule', payload: {} }));
+    assert.equal(r.ok, false, 'rule 应不可编译');
+    if (!r.ok) assert.match(r.reason, /rule compilation not supported/);
   });
 });

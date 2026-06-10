@@ -12,10 +12,11 @@
  *   - response_template  → ResponseTemplateStore 专用持久表（版本化、不衰减）。
  *                          原先落 procedural 记忆会被衰减/驱逐（「学了会忘」），
  *                          违背蒸馏持久性，故 ADR-0047 改为专用表（需注入 templates）。
+ *   - decision_style_patch → CoreRhythmLayer.setDecisionStyle（L2 决策风格参数校准，WP-1）
+ *   - cognitive_model_patch → CoreRhythmLayer.setCognitiveModel（L3 认知模型参数校准，WP-1）
  *
- * 其余 kind（rule / decision_style_patch / cognitive_model_patch）目前不编译，
- * 返回 unsupported——它们停留在 approved/pending 待后续 PR 接专用编译路径，
- * 绝不静默丢弃（D3：自我修改必须可解释）。
+ * 唯一尚不编译的 kind 是 rule：需独立的 rule-store + RuleEngine 持久入口（单列工作）。
+ * 对它**显式拒绝并给原因**（不静默丢弃，D3：自我修改必须可解释），停留在 approved/pending。
  *
  * 快照/回滚由调用方（DistillationService）负责：它持有 ChronoSynthOS，能在编译
  * 批次前后做 snapshot 并在失败时 restore。编译器本身只报告每件工件的成败。
@@ -30,6 +31,8 @@ import type {
   ValueShiftPayload,
   MemoryEdgePayload,
   ResponseTemplatePayload,
+  DecisionStylePatchPayload,
+  CognitiveModelPatchPayload,
 } from '@chrono/kernel';
 
 const LAYER = 'ArtifactCompiler';
@@ -68,6 +71,14 @@ export class ArtifactCompiler {
           return this.compileNarrativePatch(artifact.payload as NarrativePatchPayload);
         case 'response_template':
           return this.compileResponseTemplate(personaId, artifact.id, artifact.payload as ResponseTemplatePayload);
+        case 'decision_style_patch':
+          return this.compileDecisionStylePatch(artifact.payload as DecisionStylePatchPayload);
+        case 'cognitive_model_patch':
+          return this.compileCognitiveModelPatch(artifact.payload as CognitiveModelPatchPayload);
+        case 'rule':
+          /* rule 持久化（规则库）尚未落地：需独立的 rule-store + RuleEngine 持久入口（单列工作）。
+           * 显式拒绝并给原因，与 response_template「未注入则不可编译」同纪律——不静默吞。 */
+          return { ok: false, reason: 'rule compilation not supported: persistent rule store not implemented yet' };
         default:
           return { ok: false, reason: `unsupported artifact kind for compile: ${artifact.kind}` };
       }
@@ -112,5 +123,31 @@ export class ArtifactCompiler {
     const version = this.templates.appendVersion(personaId, p.intent, p.template, artifactId, this.clock.now());
     this.logger?.info(LAYER, `已编译 response_template: intent=${p.intent} → v${version}（专用表，持久）`);
     return { ok: true, applied: `template intent=${p.intent} v${version}` };
+  }
+
+  /** L2 决策风格校准 → CoreRhythmLayer.setDecisionStyle（部分合并更新）。 */
+  private compileDecisionStylePatch(p: DecisionStylePatchPayload): CompileOutcome {
+    /* 只取已定义字段（校验已确保各 [0,1] 且至少一个）；setDecisionStyle 做合并 + 落库 + emit。 */
+    const patch: Partial<DecisionStylePatchPayload> = {};
+    for (const [k, v] of Object.entries(p)) {
+      if (typeof v === 'number') (patch as Record<string, number>)[k] = v;
+    }
+    this.core.setDecisionStyle(patch);
+    const applied = Object.keys(patch).join(',');
+    this.logger?.info(LAYER, `已编译 decision_style_patch: ${applied}`);
+    return { ok: true, applied: `decision_style ${applied}` };
+  }
+
+  /** L3 认知模型校准 → CoreRhythmLayer.setCognitiveModel（scalar 直传，map 转 Map）。 */
+  private compileCognitiveModelPatch(p: CognitiveModelPatchPayload): CompileOutcome {
+    const patch: Record<string, unknown> = {};
+    if (typeof p.attributionStyle === 'number') patch.attributionStyle = p.attributionStyle;
+    if (typeof p.growthMindset === 'number') patch.growthMindset = p.growthMindset;
+    if (p.beliefs) patch.beliefs = new Map(Object.entries(p.beliefs));
+    if (p.biasWeights) patch.biasWeights = new Map(Object.entries(p.biasWeights));
+    this.core.setCognitiveModel(patch as Parameters<CoreRhythmLayer['setCognitiveModel']>[0]);
+    const applied = Object.keys(patch).join(',');
+    this.logger?.info(LAYER, `已编译 cognitive_model_patch: ${applied}`);
+    return { ok: true, applied: `cognitive_model ${applied}` };
   }
 }
