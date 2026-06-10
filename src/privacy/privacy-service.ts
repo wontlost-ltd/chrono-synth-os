@@ -246,38 +246,29 @@ function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
 }
 
-function safeDelete(db: IDatabase, table: string, tenantId: string): number {
+/* GDPR fail-closed（Art.17 擦除 / Art.20 导出）：删除/导出失败**绝不**静默吞成「0 行 / 空集」。
+ * 旧实现 `catch { return 0 }` 会把 DELETE 抛错当成「删了 0 行」，事务照常提交，eraseData
+ * 误报 deleted:true——用户被告知数据已删，实则未删。改为让 SQL 错误**向上抛**：擦除事务因此
+ * 回滚、对外暴露失败；导出同理（导出失败 ≠ 该表为空，否则用户行权失败却拿到「成功的空导出」）。
+ *
+ * 仍保留的「非租户表 → 返回 0/[]」是**合法跳过**（白名单守卫，不是错误吞咽）：调用方按固定表清单
+ * 迭代，这里只是拒绝越界表名，不触及任何 SQL 执行。 */
+function eraseDelete(db: IDatabase, table: string, tenantId: string): number {
   if (!TENANT_TABLE_SET.has(table)) return 0;
-  try {
-    return db.prepare<void>(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId).changes;
-  } catch {
-    return 0;
-  }
+  return db.prepare<void>(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId).changes;
 }
 
-function safeDeleteQuery(db: IDatabase, sql: string, params: SqlValue[]): number {
-  try {
-    return db.prepare<void>(sql).run(...params).changes;
-  } catch {
-    return 0;
-  }
+function eraseDeleteQuery(db: IDatabase, sql: string, params: SqlValue[]): number {
+  return db.prepare<void>(sql).run(...params).changes;
 }
 
 function exportTable(db: IDatabase, table: string, tenantId: string): unknown[] {
   if (!TENANT_TABLE_SET.has(table)) return [];
-  try {
-    return db.prepare<Record<string, unknown>>(`SELECT * FROM ${table} WHERE tenant_id = ?`).all(tenantId);
-  } catch {
-    return [];
-  }
+  return db.prepare<Record<string, unknown>>(`SELECT * FROM ${table} WHERE tenant_id = ?`).all(tenantId);
 }
 
 function exportQuery(db: IDatabase, sql: string, params: SqlValue[]): unknown[] {
-  try {
-    return db.prepare<Record<string, unknown>>(sql).all(...params);
-  } catch {
-    return [];
-  }
+  return db.prepare<Record<string, unknown>>(sql).all(...params);
 }
 
 function decryptIfNeeded(encryption: FieldEncryption | undefined, value: unknown): unknown {
@@ -445,17 +436,25 @@ export class PrivacyService {
 
     const deletedCounts: Record<string, number> = {};
 
+    /* fail-closed：任一 DELETE 抛错 → 事务回滚 + 错误向上抛，eraseData 绝不误报 deleted:true。
+     * 全擦除是一个原子操作：要么全删成功，要么整体回滚由调用方处理（HTTP 层返回 5xx + 审计失败）。
+     *
+     * defer_foreign_keys：全租户擦除是「整租户数据全删」，最终状态 FK 自洽（父子全没），但**删除途中**
+     * 的中间状态会瞬时违反 FK（删父表时子表还在）。把 FK 校验推迟到 COMMIT 时统一检查——这样删除顺序
+     * 无需手工维护成完美拓扑序，而真正的孤儿/残留仍会在 COMMIT 时被 FK 拦截（不牺牲完整性，仍 fail-closed）。
+     * 仅在本事务内生效，COMMIT/ROLLBACK 后自动复位。 */
     db.transaction(() => {
+      db.exec('PRAGMA defer_foreign_keys=ON');
       for (const rel of RELATED_TABLES) {
-        const count = safeDeleteQuery(db, rel.deleteSql, rel.params(tenantId));
+        const count = eraseDeleteQuery(db, rel.deleteSql, rel.params(tenantId));
         if (count > 0) deletedCounts[rel.name] = count;
       }
       for (const table of TENANT_TABLES) {
-        const count = safeDelete(db, table, tenantId);
+        const count = eraseDelete(db, table, tenantId);
         if (count > 0) deletedCounts[table] = count;
       }
       for (const rel of POST_TENANT_RELATED_TABLES) {
-        const count = safeDeleteQuery(db, rel.deleteSql, rel.params(tenantId));
+        const count = eraseDeleteQuery(db, rel.deleteSql, rel.params(tenantId));
         if (count > 0) deletedCounts[rel.name] = count;
       }
     });
@@ -542,7 +541,10 @@ export class PrivacyService {
           download_url: downloadUrl,
           pack_json: bundledPack,
         });
-      } catch {
+      } catch (err) {
+        /* 导出失败 fail-closed：任务标记 failed（经 getExportJobStatus 对用户可见），并记录原因便于排障。
+         * 不再静默——导出失败必须可诊断，否则数据主体行权失败却无从追因。 */
+        this.os.getLogger().error('PrivacyService', `导出任务失败: ${jobId} — ${err instanceof Error ? err.message : String(err)}`);
         const completedAt = this.os.getClock().now();
         updateExportJob(db, jobId, {
           state: 'failed',
