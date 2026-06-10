@@ -226,6 +226,37 @@ describe('loadCompanionGrowth（路线 A+B 分层）', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(upsertSnapshotsMock).not.toHaveBeenCalled();
   });
+
+  it('同步：单条详情失败只跳过该条，已成功的仍 upsert（per-item catch）', async () => {
+    getAppSettingMock.mockResolvedValue(null);
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith('/api/v1/companion/me/growth')) return envelope(sample);
+      if (path === '/api/v1/snapshots?page=1&pageSize=2') return envelope([{ id: 'ok' }, { id: 'bad' }]);
+      if (path.endsWith('/ok')) {
+        return envelope({ id: 'ok', dataJson: '{"coreSelf":{"values":{"__type":"Map","entries":[]}}}', reason: 'manual', createdAt: 1 });
+      }
+      if (path.endsWith('/bad')) throw new Error('HTTP 404');
+      return envelope(null);
+    });
+    await loadCompanionGrowth();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(upsertSnapshotsMock).toHaveBeenCalledTimes(1);
+    const rows = upsertSnapshotsMock.mock.calls[0]![0] as SnapshotRow[];
+    expect(rows.map((r) => r.id)).toEqual(['ok']); // bad 跳过，ok 仍落
+  });
+
+  it('同步：详情字段非法（缺 dataJson）→ 该条被 runtime guard 跳过', async () => {
+    getAppSettingMock.mockResolvedValue(null);
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path.startsWith('/api/v1/companion/me/growth')) return envelope(sample);
+      if (path === '/api/v1/snapshots?page=1&pageSize=2') return envelope([{ id: 'x' }]);
+      if (path.startsWith('/api/v1/snapshots/')) return envelope({ id: 'x', reason: 'manual', createdAt: 1 }); // 缺 dataJson
+      return envelope(null);
+    });
+    await loadCompanionGrowth();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(upsertSnapshotsMock).not.toHaveBeenCalled(); // 唯一一条非法 → 无可 upsert
+  });
 });
 
 describe('clearCachedCompanionGrowth（换凭据/登出清缓存，Codex ② Major）', () => {

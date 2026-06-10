@@ -129,24 +129,40 @@ async function syncSnapshotsToLocal(): Promise<void> {
     for (const it of items) {
       const id = typeof it.id === 'string' ? it.id : null;
       if (!id) continue;
-      const detailEnv = await apiFetch<{
-        data?: { id: string; dataJson: string; reason: string; createdAt: number };
-      }>(`/api/v1/snapshots/${encodeURIComponent(id)}`);
-      const raw = detailEnv?.data;
-      if (!raw) continue;
-      rows.push({
-        id: raw.id,
-        data_json: raw.dataJson,
-        reason: raw.reason,
-        tenant_id: null,
-        created_at: raw.createdAt,
-        synced_at: Date.now(),
-      });
+      try {
+        const detailEnv = await apiFetch<{ data?: unknown }>(
+          `/api/v1/snapshots/${encodeURIComponent(id)}`,
+        );
+        const row = toSnapshotRow(detailEnv?.data);
+        if (row) rows.push(row);
+      } catch {
+        /* 单条详情失败（403/404/临时错误）只跳过这条，不丢整批已拉到的（Codex PR-4 建议）。 */
+      }
     }
     if (rows.length > 0) await upsertSnapshots(rows);
   } catch {
-    /* 同步失败不影响本次展示（可能离线/未配置/非 admin 无权拉 data → 403）。下次在线再同步。 */
+    /* 同步失败不影响本次展示（可能离线/未配置）。下次在线再同步。 */
   }
+}
+
+/**
+ * 运行时校验快照详情 DTO → SnapshotRow（Codex PR-4 Minor：泛型声明不防脏数据）。
+ * 字段缺失/类型不符返回 null（跳过该条），避免把 undefined 写进本地表导致后续本地 drift 静默失效。
+ */
+function toSnapshotRow(raw: unknown): SnapshotRow | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.id !== 'string' || typeof r.dataJson !== 'string' || typeof r.createdAt !== 'number') {
+    return null;
+  }
+  return {
+    id: r.id,
+    data_json: r.dataJson,
+    reason: typeof r.reason === 'string' ? r.reason : '',
+    tenant_id: null,
+    created_at: r.createdAt,
+    synced_at: Date.now(),
+  };
 }
 
 /** 读本地 snapshots 算 growth（路线 A）；查询失败/无数据 → null，不抛。 */
