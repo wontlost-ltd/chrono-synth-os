@@ -32,6 +32,17 @@ export function registerSnapshotRoutes(app: FastifyInstance, os: ChronoSynthOS, 
     return paginate(list, params);
   });
 
+  /* GET /api/v1/snapshots/:id — 获取单个快照的原始数据（含 data_json）。
+   * desktop 同步用：列表只给元数据，本地算 drift 需要 data_json 里的 values。复用 store.loadRaw。 */
+  app.get<{ Params: { id: string } }>('/api/v1/snapshots/:id', async (request) => {
+    const { id } = request.params;
+    const raw = getOS(request).snapshots.loadRaw(id);
+    if (!raw) {
+      throw new NotFoundError(`快照 ${id} 不存在`, ErrorCode.NOT_FOUND_SNAPSHOT);
+    }
+    return { data: raw };
+  });
+
   /* POST /api/v1/snapshots/:id/restore — 从快照恢复 */
   app.post<{ Params: { id: string } }>('/api/v1/snapshots/:id/restore', async (request) => {
     const { id } = request.params;

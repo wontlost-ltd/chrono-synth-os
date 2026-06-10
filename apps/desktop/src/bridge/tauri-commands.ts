@@ -192,22 +192,45 @@ export async function generateDriftReport(): Promise<DriftReport | null> {
   }
 }
 
+/* ── 路线 A：本地 snapshots（本地算 drift 的数据源） ───────────────── */
+
+/** 本地快照行（镜像服务端子集；与 Rust SnapshotRow 同形）。 */
+export interface SnapshotRow {
+  id: string;
+  data_json: string;
+  reason: string;
+  tenant_id: string | null;
+  created_at: number;
+  synced_at: number;
+}
+
 /**
  * 本地快照数量——判断是否有「可对比的历史基线」（≥2 才算）。
- *
- * **路线 A 预留**：Growth 当前走路线 B（在线取 /companion/me/growth + 缓存，见 growth-data.ts），
- * 暂无生产调用方。保留此桥接给后续路线 A（本地 mirror snapshots + 本地算 drift，见
- * docs/plan/desktop-drift-data-design.md）——届时 desktop schema v008 加 snapshots 表 +
- * Rust `count_snapshots` 命令，本函数即接真实数据。未接时优雅返回 0（Tauri 字符串 reject 也覆盖）。
+ * 接 Rust count_snapshots（v008 snapshots 表，路线 A）。未接时优雅返回 0（成长视图走空态）。
  */
 export async function queryTenantSnapshotCount(): Promise<number> {
   try {
-    return await invoke<number>('count_snapshots');
+    return await invoke<number>('count_snapshots', { tenantId: null });
   } catch (err) {
-    /* 未接时优雅返回 0（= 无基线 → 成长视图走「还在认识你」空态）。Tauri 字符串 reject 也覆盖。 */
     if (isMissingCommandError(err)) return 0;
     throw err;
   }
+}
+
+/** 取本地最近两条快照（current + baseline），喂共享 computeDriftFromSnapshots 本地算 drift。 */
+export async function querySnapshots(): Promise<SnapshotRow[]> {
+  try {
+    return await invoke<SnapshotRow[]>('query_snapshots', { tenantId: null });
+  } catch (err) {
+    /* 未接（旧版本）时返回空 → 上层走「无本地数据」分支。 */
+    if (isMissingCommandError(err)) return [];
+    throw err;
+  }
+}
+
+/** 落本地快照（同步引擎拉到服务端数据后调用）。 */
+export async function upsertSnapshots(snapshots: SnapshotRow[]): Promise<void> {
+  await invoke('upsert_snapshots', { snapshots });
 }
 
 /* ---------------------------------------------------------------------- *

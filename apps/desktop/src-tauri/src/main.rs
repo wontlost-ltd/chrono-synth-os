@@ -12,6 +12,7 @@ use commands::crdt::{
 use commands::database::open_database;
 use commands::memories::{delete_memory, query_memories, upsert_memories};
 use commands::personas::{query_personas, upsert_personas};
+use commands::snapshots::{count_snapshots, query_snapshots, upsert_snapshots};
 use commands::sync::{
     complete_sync, enqueue_offline_op, flush_offline_queue, force_sync, get_sync_state,
     mark_sync_failed,
@@ -74,6 +75,9 @@ fn main() {
             get_app_setting,
             set_app_setting,
             set_tray_status,
+            upsert_snapshots,
+            query_snapshots,
+            count_snapshots,
         ])
         .setup(|app| {
             tray::setup_tray(app.handle())?;

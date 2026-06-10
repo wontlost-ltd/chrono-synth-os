@@ -294,6 +294,24 @@ describe('API 集成测试', () => {
       assert.ok(body.pagination);
       assert.equal(body.pagination.total, 5);
     });
+
+    it('GET /api/v1/snapshots/:id 返回原始 data_json（desktop 本地算 drift 用）', async () => {
+      const snap = os.createSnapshot('manual');
+      const res = await app.inject({ method: 'GET', url: `/api/v1/snapshots/${snap.id}` });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.id, snap.id);
+      assert.equal(body.data.reason, 'manual');
+      assert.equal(typeof body.data.dataJson, 'string');
+      /* dataJson 必须是合法 JSON（desktop 会原样落库后 parse 出 values）。 */
+      assert.doesNotThrow(() => JSON.parse(body.data.dataJson));
+      assert.equal(typeof body.data.createdAt, 'number');
+    });
+
+    it('GET /api/v1/snapshots/:id 未知 id → 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/snapshots/snap_nonexistent' });
+      assert.equal(res.statusCode, 404);
+    });
   });
 
   describe('操作', () => {

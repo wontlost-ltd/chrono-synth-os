@@ -36,6 +36,16 @@ export class SnapshotStore {
     return parsed;
   }
 
+  /**
+   * 按 ID 读取快照的**原始**行（id + 原始 dataJson 字符串 + reason + createdAt），不解析。
+   * 供 desktop 同步：desktop 需要把 data_json 原样落到本地 snapshots 表后本地算 drift（ADR-0046 路线 A）。
+   */
+  loadRaw(id: SnapshotId): { id: string; dataJson: string; reason: string; createdAt: number } | undefined {
+    const row = this.tx.queryOne(snapQueryById(id));
+    if (!row) return undefined;
+    return { id: row.id, dataJson: row.data_json, reason: row.reason, createdAt: row.created_at };
+  }
+
   /** 获取最新快照 */
   getLatest(): SystemSnapshot | undefined {
     const row = this.tx.queryOne(snapQueryLatest());
