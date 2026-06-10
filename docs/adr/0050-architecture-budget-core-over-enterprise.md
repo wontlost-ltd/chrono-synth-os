@@ -43,24 +43,28 @@ that is supposed to *be* the deterministic persona:
 > **Correction (2026-06-11, amends D2/D3 below).** The original framing of
 > this 2,056 LOC as "SaaS logic that has nothing to do with the persona"
 > was a **measurement error** found while attempting the D3 extraction.
-> Those four kernel-domain subtrees contain **only `*-queries.ts` files** —
-> pure Query/Command *kind contracts* (zero `class`/`if`/`for`, zero
-> non-relative imports, fully ADR-0001 zero-dependency). They are two of
-> **60+ such contract files** that are the kernel's *universal* pattern:
-> every domain (core-self, identity, billing, conversation, …) declares its
-> data-plane contract shapes in the kernel while the **executors/services
-> live in `src/`**. So this 2,056 LOC is not misplaced SaaS logic — it is
-> exactly what the kernel is designed to hold (portable contracts for
-> desktop/edge runtimes). There is no logic here to extract; extracting it
-> would *contradict* the kernel's contract-layer architecture.
+> Those four kernel-domain subtrees contain **only `*-queries.ts` files
+> plus re-export-only `index.ts` barrels** — pure Query/Command *kind
+> contracts* (zero `class`/`if`/`for`, zero non-relative imports, fully
+> ADR-0001 zero-dependency; the only import is `../../ports/query.js`
+> types). They are part of **58 such `*-queries.ts` contract files** that
+> are the kernel's *universal* pattern: every domain (core-self, identity,
+> billing, conversation, …) declares its data-plane contract shapes in the
+> kernel while the **executors/services live in `src/`**. So this 2,056 LOC
+> is not misplaced SaaS logic — it is exactly what the kernel is designed
+> to hold (portable contracts for desktop/edge runtimes). There is no logic
+> here to extract; extracting it would *contradict* the kernel's
+> contract-layer architecture.
 >
-> The real occupancy signal is **logic LOC in `src/`**, re-measured:
-> enterprise logic (`src/billing` 1,940 + `src/enterprise` 2,284 +
-> `src/multi-tenant` 708 + `src/compliance` 674 + enterprise executors 691
-> ≈ **6,297**) vs core-persona logic (`src/intelligence` 2,990 +
-> `src/core` 1,069 + `src/meta` 561 + `src/accelerated` 294 ≈ **4,914**).
-> The mismatch the budget targets is **real but lives in `src/` logic**,
-> not in kernel contracts.
+> The real occupancy signal is **logic LOC in `src/`**, re-measured
+> (Codex-verified): enterprise logic — directories `src/billing` 1,940 +
+> `src/enterprise` 2,284 + `src/multi-tenant` 708 + `src/compliance` 674
+> (= 5,606) **plus** the matching `src/storage/executors` (billing 689 +
+> enterprise 769 + compliance/multi-tenant 171 = 1,629) ≈ **7,235** — vs
+> core-persona logic (`src/intelligence` 2,990 + `src/core` 1,069 +
+> `src/meta` 561 + `src/accelerated` 294 ≈ **4,914**). The mismatch the
+> budget targets is **real but lives in `src/` logic**, not in kernel
+> contracts.
 
 The point is **not** that enterprise capability is wrong — ADR-0046
 deliberately keeps a dual product (Enterprise governance + ChronoCompanion).
@@ -116,10 +120,10 @@ implementation**, not **persona vs. enterprise**.
 The original D3 ("opportunistically extract the kernel enterprise subtrees")
 is **withdrawn**: there is no logic in those subtrees to extract — they are
 contracts (D2). Forcing them out would break the kernel's contract-layer
-pattern and diverge them from the other 50+ contract files.
+pattern and diverge them from the other contract files (58 total).
 
 The architecture budget (D1) stands, retargeted at its real subject:
-**enterprise *logic* in `src/`** (~6,297 LOC) outweighs **core-persona
+**enterprise *logic* in `src/`** (~7,235 LOC) outweighs **core-persona
 logic in `src/`** (~4,914 LOC). New net enterprise *logic* (not contracts)
 owes a paired core-persona contribution. The optional non-blocking trend
 report (below) should track `src/` enterprise-logic vs core-logic LOC, not
@@ -137,8 +141,9 @@ kernel-contract LOC.
   entering the kernel, while keeping portable contracts where they belong.
 - No engineering is blocked: the rule is a checklist + reviewer
   judgement, not a gate. Pure-core and infra work pay nothing.
-- Extraction rides existing feature work (D3), so it never needs its own
-  risky migration sprint.
+- No risky migration: D3 is withdrawn (the kernel subtrees are contracts,
+  not extractable logic), so the budget needs no refactor sprint at all —
+  it is purely a per-PR review convention over `src/` logic.
 
 **Costs / risks**
 
@@ -173,7 +178,7 @@ core-persona-logic LOC** trend (not kernel-contract LOC — see correction)
   surfaced the measurement error; the honest outcome is to withdraw the
   extraction, not perform it.
 - **Do nothing (status quo):** rejected — the re-measured mismatch
-  (`src/` enterprise logic ~6,297 LOC vs core-persona logic ~4,914 LOC,
+  (`src/` enterprise logic ~7,235 LOC vs core-persona logic ~4,914 LOC,
   and `src/server` being the single largest area) shows the default
   trajectory drifts toward enterprise surface. A budget is the minimum
   intervention that corrects the trajectory without a heavy process.
