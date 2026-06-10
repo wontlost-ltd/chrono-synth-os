@@ -62,10 +62,18 @@ export interface IdemInsertParams {
 
 export interface IdemCompleteParams {
   id: string;
+  /** 租户隔离（②b）：complete 按 id AND tenant_id，消除 id-only 写。 */
+  tenantId: string;
   responseStatus: number;
   responseContentType: string | null;
   responseHeadersJson: string | null;
   responseBody: string;
+}
+
+/** delete 也按 id AND tenant_id（②b 隔离收敛）。 */
+export interface IdemDeleteParams {
+  id: string;
+  tenantId: string;
 }
 
 /* ── Query 工厂 ── */
@@ -92,6 +100,6 @@ export function idemCmdComplete(params: IdemCompleteParams): Command<IdemComplet
   return { kind: IDEM_CMD_COMPLETE, params };
 }
 
-export function idemCmdDelete(id: string): Command<string> {
-  return { kind: IDEM_CMD_DELETE, params: id };
+export function idemCmdDelete(params: IdemDeleteParams): Command<IdemDeleteParams> {
+  return { kind: IDEM_CMD_DELETE, params };
 }

@@ -1,0 +1,612 @@
+{
+  "audit": "13-table KNOWN_UNISOLATED tenant isolation audit",
+  "date": "2026-06-11",
+  "scope": {
+    "tables": [
+      "quota_limits",
+      "quota_usage",
+      "idempotency_keys",
+      "tasks",
+      "life_simulations",
+      "subscriptions",
+      "usage_records",
+      "llm_usage",
+      "decision_cases",
+      "decision_runs",
+      "decision_feedbacks",
+      "onboarding_sessions",
+      "users"
+    ],
+    "method": "Production src grep for FROM/UPDATE/DELETE FROM/INTO table names, then manual verification of executor, route, and service call paths.",
+    "standard": "Reads, updates, and deletes must constrain by tenant_id or by an equivalent tenant-bound join/foreign-key check. Inserts must write tenant_id. Global maintenance/admin aggregation is recorded separately."
+  },
+  "summary": {
+    "SAFE_EXEMPT": 7,
+    "NEEDS_ISOLATION": 5,
+    "SPECIAL": 1,
+    "highestRisk": "tasks",
+    "highestRiskReason": "User-facing get/cancel paths call queue.getTask(taskId), whose SQL reads SELECT * FROM tasks WHERE id = ? before the service checks task.tenantId. Multiple task updates/deletes are also id-only/global because the queue is a platform scheduler."
+  },
+  "tables": [
+    {
+      "table": "quota_limits",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/storage/executors/quota-executors.ts:23",
+          "query": "SELECT * FROM quota_limits WHERE tenant_id = ? AND resource = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/quota-executors.ts:37",
+          "query": "INSERT INTO quota_limits (tenant_id, resource, max_per_window, window_ms) ... ON CONFLICT(tenant_id, resource)",
+          "assessment": "writes tenant_id and conflicts on tenant_id/resource"
+        },
+        {
+          "file": "src/storage/executors/quota-executors.ts:46",
+          "query": "DELETE FROM quota_limits WHERE tenant_id = ? AND resource = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/privacy/privacy-service.ts:65",
+          "query": "generic GDPR export/delete for quota_limits by tenant_id",
+          "assessment": "tenant constrained via TENANT_TABLES"
+        }
+      ],
+      "recommendation": "Keep out of TenantDatabase and formally document executor-level exemption."
+    },
+    {
+      "table": "quota_usage",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/storage/executors/quota-executors.ts:29",
+          "query": "SELECT * FROM quota_usage WHERE tenant_id = ? AND resource = ? AND window_start = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/quota-executors.ts:53",
+          "query": "INSERT INTO quota_usage (tenant_id, resource, used, window_start) ... ON CONFLICT(tenant_id, resource, window_start)",
+          "assessment": "writes tenant_id and conflicts on tenant_id/resource/window"
+        },
+        {
+          "file": "src/storage/executors/quota-executors.ts:62",
+          "query": "INSERT INTO quota_usage (tenant_id, resource, used, window_start) ... ON CONFLICT(tenant_id, resource, window_start)",
+          "assessment": "writes tenant_id and conflicts on tenant_id/resource/window"
+        },
+        {
+          "file": "src/privacy/privacy-service.ts:65",
+          "query": "generic GDPR export/delete for quota_usage by tenant_id",
+          "assessment": "tenant constrained via TENANT_TABLES"
+        }
+      ],
+      "recommendation": "Keep out of TenantDatabase and formally document executor-level exemption."
+    },
+    {
+      "table": "idempotency_keys",
+      "classification": "NEEDS-ISOLATION",
+      "evidence": [
+        {
+          "file": "src/storage/executors/idempotency-executors.ts:18",
+          "query": "SELECT * FROM idempotency_keys WHERE tenant_id = ? AND scope_key = ? AND idempotency_key = ? AND expires_at > ? LIMIT 1",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/idempotency-executors.ts:26",
+          "query": "SELECT id FROM idempotency_keys WHERE tenant_id = ? AND scope_key = ? AND idempotency_key = ? LIMIT 1",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/idempotency-executors.ts:34",
+          "query": "DELETE FROM idempotency_keys WHERE expires_at <= ?",
+          "assessment": "global expiry cleanup; not tenant-facing but not tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/idempotency-executors.ts:42",
+          "query": "INSERT OR IGNORE INTO idempotency_keys (... id, tenant_id, scope_key, idempotency_key ...)",
+          "assessment": "writes tenant_id"
+        },
+        {
+          "file": "src/storage/executors/idempotency-executors.ts:56",
+          "query": "UPDATE idempotency_keys SET ... WHERE id = ?",
+          "assessment": "id-only update; context id is internally generated by plugin, but SQL has no tenant predicate"
+        },
+        {
+          "file": "src/storage/executors/idempotency-executors.ts:69",
+          "query": "DELETE FROM idempotency_keys WHERE id = ?",
+          "assessment": "id-only delete; context id is internally generated by plugin, but SQL has no tenant predicate"
+        },
+        {
+          "file": "src/server/plugins/idempotency.ts:143",
+          "query": "idemCmdCleanupExpired(now)",
+          "assessment": "global maintenance invoked before request claim"
+        },
+        {
+          "file": "src/server/plugins/idempotency.ts:212",
+          "query": "idemCmdComplete({ id: context.id, ... })",
+          "assessment": "completion id comes from request-local idempotency context"
+        },
+        {
+          "file": "src/server/plugins/idempotency.ts:220",
+          "query": "idemCmdDelete(context.id)",
+          "assessment": "delete id comes from request-local idempotency context"
+        }
+      ],
+      "recommendation": "Do not blindly add to TenantDatabase because global cleanup would change behavior. Prefer adding tenant_id to complete/delete params and keeping cleanup as explicitly global maintenance."
+    },
+    {
+      "table": "tasks",
+      "classification": "NEEDS-ISOLATION",
+      "evidence": [
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:22",
+          "query": "SELECT * FROM tasks WHERE id = ?",
+          "assessment": "id-only read; TaskQueryService checks tenant after materializing the row"
+        },
+        {
+          "file": "src/queue/task-query-service.ts:35",
+          "query": "const task = this.queue.getTask(taskId); if (task.tenantId !== tenantId) throw NotFound",
+          "assessment": "application-level post-read check; not SQL-level isolation"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:27",
+          "query": "SELECT t.* FROM tasks t LEFT JOIN (...) WHERE t.status = 'pending' ... LIMIT 1",
+          "assessment": "global scheduler dequeue; intentionally not tenant scoped"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:38",
+          "query": "SELECT id FROM tasks WHERE status IN ('completed', 'failed') AND updated_at < ? LIMIT ?",
+          "assessment": "global purge candidate query"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:46",
+          "query": "INSERT INTO tasks (... tenant_id ...) SELECT ... WHERE ... (SELECT COUNT(*) FROM tasks WHERE tenant_id = ? ...)",
+          "assessment": "writes tenant_id and enforces tenant quota in subquery"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:55",
+          "query": "UPDATE tasks SET status = 'running' ... WHERE id = ? AND status = 'pending'",
+          "assessment": "id-only claim update"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:62",
+          "query": "UPDATE tasks SET status = 'completed' ... WHERE id = ?",
+          "assessment": "id-only completion update"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:69",
+          "query": "UPDATE tasks SET status = 'failed' ... WHERE id = ?",
+          "assessment": "id-only failure update"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:76",
+          "query": "UPDATE tasks SET status = 'pending' ... WHERE id = ?",
+          "assessment": "id-only reschedule update"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:85",
+          "query": "DELETE FROM tasks WHERE id IN (...)",
+          "assessment": "global purge delete by ids"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:93",
+          "query": "UPDATE tasks SET status = 'pending' ... WHERE status = 'running' ...",
+          "assessment": "global stale-task reaper"
+        },
+        {
+          "file": "src/storage/executors/task-queue-executors.ts:102",
+          "query": "UPDATE tasks SET status = 'failed' ... WHERE status = 'running' ...",
+          "assessment": "global stale-task reaper"
+        },
+        {
+          "file": "src/storage/executors/metrics-query-executors.ts:17",
+          "query": "SELECT COUNT(*) as count FROM tasks WHERE status = ?",
+          "assessment": "global observability metric"
+        }
+      ],
+      "recommendation": "Highest-risk table. Do not add wholesale to TenantDatabase because dequeue, purge, reaper, and INSERT SELECT are platform/global and include unsupported shapes. Add tenant-aware getTask/cancel-facing commands; keep scheduler/admin operations explicitly global."
+    },
+    {
+      "table": "life_simulations",
+      "classification": "NEEDS-ISOLATION",
+      "evidence": [
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:28",
+          "query": "SELECT * FROM life_simulations WHERE id = ?",
+          "assessment": "id-only read"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:34",
+          "query": "SELECT * FROM life_simulations WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained variant exists"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:40",
+          "query": "SELECT * FROM life_simulations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:72",
+          "query": "SELECT * FROM life_simulations WHERE base_simulation_id = ? ORDER BY created_at ASC",
+          "assessment": "base id-only variant read"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:78",
+          "query": "SELECT * FROM life_simulations WHERE base_simulation_id = ? AND tenant_id = ? ORDER BY created_at ASC",
+          "assessment": "tenant constrained variant exists"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:92",
+          "query": "INSERT INTO life_simulations (id, tenant_id, task_id, base_simulation_id, ...)",
+          "assessment": "writes tenant_id"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:100",
+          "query": "UPDATE life_simulations SET status = ?, error = ?, updated_at = ? WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:107",
+          "query": "UPDATE life_simulations SET status = ?, error = ?, updated_at = ?, completed_at = ? WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:114",
+          "query": "UPDATE life_simulations SET progress_json = ?, updated_at = ? WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/life-sim-executors.ts:121",
+          "query": "UPDATE life_simulations SET summary_json = ?, updated_at = ? WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/simulation/life-simulation-service.ts:32",
+          "query": "executeTask(simulationId) -> store.getById(simulationId)",
+          "assessment": "worker/internal path uses id-only read"
+        },
+        {
+          "file": "src/server/routes/life-simulations.ts:106",
+          "query": "GET /api/v1/simulations/:id uses service.getStatus(id, tenantId)",
+          "assessment": "public status route uses tenant-aware read"
+        },
+        {
+          "file": "src/storage/executors/collaboration-executors.ts:21",
+          "query": "SELECT tenant_id FROM life_simulations WHERE id = ?",
+          "assessment": "id-only tenant lookup used for explicit tenant comparison in CollaborationService"
+        }
+      ],
+      "recommendation": "Prefer adding tenant_id to write commands where caller has tenant context and clearly marking worker-only id paths. Do not wholesale add until worker/update paths are separated from tenant-facing reads."
+    },
+    {
+      "table": "subscriptions",
+      "classification": "NEEDS-ISOLATION",
+      "evidence": [
+        {
+          "file": "src/storage/executors/subscription-query-executors.ts:15",
+          "query": "SELECT plan_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/subscription-query-executors.ts:21",
+          "query": "SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/billing-service-executors.ts:38",
+          "query": "SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC, updated_at DESC LIMIT 1",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/billing-service-executors.ts:98",
+          "query": "UPDATE subscriptions SET plan_id = ?, status = 'active', ... WHERE id = ?",
+          "assessment": "id-only update after service loads current subscription by tenant"
+        },
+        {
+          "file": "src/storage/executors/billing-service-executors.ts:105",
+          "query": "INSERT INTO subscriptions (id, tenant_id, ...)",
+          "assessment": "writes tenant_id"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:26",
+          "query": "SELECT * FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:32",
+          "query": "SELECT * FROM subscriptions WHERE stripe_customer_id = ? ORDER BY created_at DESC LIMIT 1",
+          "assessment": "external id-only/global lookup"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:47",
+          "query": "UPDATE subscriptions SET stripe_customer_id = ?, updated_at = ? WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:61",
+          "query": "UPDATE subscriptions SET stripe_subscription_id = ?, status = ?, ... WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:68",
+          "query": "UPDATE subscriptions SET status = 'canceled', plan_id = 'free', updated_at = ? WHERE stripe_customer_id = ?",
+          "assessment": "external id-only/global update"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:82",
+          "query": "UPDATE subscriptions SET trial_end = ?, ... WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:94",
+          "query": "UPDATE subscriptions SET status = CASE ... WHERE id = ?",
+          "assessment": "id-only update"
+        },
+        {
+          "file": "src/storage/executors/stripe-webhook-executors.ts:106",
+          "query": "UPDATE subscriptions SET status = 'past_due', ... WHERE id = ?",
+          "assessment": "id-only update"
+        }
+      ],
+      "recommendation": "Do not blindly add to TenantDatabase because Stripe webhook handlers are global/external-id driven. Add tenant_id to tenant-route update commands; for webhook commands either update by id plus known tenant_id from the looked-up row or document a separate global-webhook exemption with uniqueness constraints."
+    },
+    {
+      "table": "usage_records",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/storage/executors/usage-executors.ts:16",
+          "query": "SELECT COALESCE(SUM(quantity), 0) AS total FROM usage_records WHERE tenant_id = ? AND resource = ? AND recorded_at >= ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/usage-executors.ts:22",
+          "query": "SELECT resource, COALESCE(SUM(quantity), 0) AS total FROM usage_records WHERE tenant_id = ? AND recorded_at >= ? GROUP BY resource",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/usage-executors.ts:30",
+          "query": "INSERT INTO usage_records (id, tenant_id, resource, quantity, recorded_at) VALUES (?, ?, ?, ?, ?)",
+          "assessment": "writes tenant_id"
+        },
+        {
+          "file": "src/storage/executors/billing-service-executors.ts:76",
+          "query": "SELECT resource, COALESCE(SUM(quantity), 0) AS total_quantity FROM usage_records WHERE tenant_id = ? AND recorded_at >= ? AND recorded_at < ? GROUP BY resource",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/metrics-query-executors.ts:75",
+          "query": "SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource ORDER BY total DESC LIMIT ?",
+          "assessment": "global observability/admin aggregation; groups by tenant_id and does not expose tenant route data path"
+        }
+      ],
+      "recommendation": "Formal exemption is reasonable. Keep the metrics query explicitly documented as platform/admin aggregation."
+    },
+    {
+      "table": "llm_usage",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/storage/executors/llm-usage-executors.ts:17",
+          "query": "INSERT INTO llm_usage (tenant_id, provider, model, ...)",
+          "assessment": "writes tenant_id"
+        },
+        {
+          "file": "src/storage/executors/llm-usage-executors.ts:27",
+          "query": "FROM llm_usage WHERE tenant_id = ? AND recorded_at >= ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/llm-usage-executors.ts:41",
+          "query": "SELECT * FROM llm_usage WHERE tenant_id = ? ORDER BY recorded_at DESC LIMIT ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/storage/executors/llm-usage-executors.ts:47",
+          "query": "SELECT COALESCE(SUM(total_tokens), 0) AS total FROM llm_usage WHERE tenant_id = ? AND recorded_at >= ?",
+          "assessment": "tenant constrained"
+        }
+      ],
+      "recommendation": "Keep out of TenantDatabase and formally document executor-level exemption."
+    },
+    {
+      "table": "decision_cases",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/server/routes/decisions.ts:147",
+          "query": "INSERT INTO decision_cases (id, tenant_id, ...)",
+          "assessment": "writes tenant_id from request.tenantId"
+        },
+        {
+          "file": "src/server/routes/decisions.ts:161",
+          "query": "SELECT COUNT(*) as count FROM decision_cases WHERE tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/server/routes/decisions.ts:165",
+          "query": "SELECT * FROM decision_cases WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/server/routes/decisions.ts:190",
+          "query": "SELECT * FROM decision_cases WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        }
+      ],
+      "recommendation": "Formal route-level exemption is reasonable."
+    },
+    {
+      "table": "decision_runs",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/server/routes/decisions.ts:220",
+          "query": "INSERT INTO decision_runs (id, case_id, tenant_id, result_json, created_at) VALUES (?, ?, ?, ?, ?)",
+          "assessment": "writes tenant_id after case lookup by id+tenant_id"
+        },
+        {
+          "file": "src/server/routes/decisions.ts:254",
+          "query": "SELECT * FROM decision_runs WHERE id = ? AND case_id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/server/routes/decisions.ts:269",
+          "query": "SELECT * FROM decision_runs WHERE id = ? AND case_id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        }
+      ],
+      "recommendation": "Formal route-level exemption is reasonable."
+    },
+    {
+      "table": "decision_feedbacks",
+      "classification": "SAFE-EXEMPT",
+      "evidence": [
+        {
+          "file": "src/server/routes/decisions.ts:269",
+          "query": "SELECT * FROM decision_runs WHERE id = ? AND case_id = ? AND tenant_id = ?",
+          "assessment": "feedback creation is gated by tenant-constrained run lookup"
+        },
+        {
+          "file": "src/server/routes/decisions.ts:277",
+          "query": "INSERT INTO decision_feedbacks (id, run_id, tenant_id, selected_alternative, satisfaction, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          "assessment": "writes tenant_id from request.tenantId"
+        },
+        {
+          "file": "src/privacy/privacy-service.ts:57",
+          "query": "generic GDPR export/delete for decision_feedbacks by tenant_id",
+          "assessment": "tenant constrained via TENANT_TABLES"
+        }
+      ],
+      "recommendation": "Formal route-level exemption is reasonable; no read/update/delete path was found outside tenant-scoped privacy handling."
+    },
+    {
+      "table": "onboarding_sessions",
+      "classification": "NEEDS-ISOLATION",
+      "evidence": [
+        {
+          "file": "src/server/routes/onboarding.ts:178",
+          "query": "INSERT INTO onboarding_sessions (id, tenant_id, current_step, ...)",
+          "assessment": "v1 route writes tenant_id"
+        },
+        {
+          "file": "src/server/routes/onboarding.ts:195",
+          "query": "SELECT * FROM onboarding_sessions WHERE id = ? AND tenant_id = ?",
+          "assessment": "v1 status route tenant constrained"
+        },
+        {
+          "file": "src/server/routes/onboarding.ts:236",
+          "query": "UPDATE onboarding_sessions ... WHERE id = ? AND tenant_id = ?",
+          "assessment": "v1 update tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:119",
+          "query": "SELECT * FROM onboarding_sessions WHERE tenant_id = ? AND user_id = ? AND completed_at IS NULL ...",
+          "assessment": "v2 active-session lookup tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:131",
+          "query": "INSERT INTO onboarding_sessions (id, tenant_id, user_id, ...)",
+          "assessment": "v2 start writes tenant_id"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:146",
+          "query": "SELECT * FROM onboarding_sessions WHERE id = ?",
+          "assessment": "id-only read immediately after insert"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:166",
+          "query": "UPDATE onboarding_sessions SET organization_id = ?, current_step = 2, updated_at = ? WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:190",
+          "query": "UPDATE onboarding_sessions SET agent_id = ?, current_step = 3, updated_at = ? WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:210",
+          "query": "UPDATE onboarding_sessions SET current_step = 4, updated_at = ? WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:243",
+          "query": "UPDATE onboarding_sessions SET current_step = 5, updated_at = ? WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:259",
+          "query": "UPDATE onboarding_sessions SET current_step = 5, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:306",
+          "query": "SELECT * FROM onboarding_sessions WHERE tenant_id = ? AND user_id = ? AND completed_at IS NULL ...",
+          "assessment": "tenant constrained"
+        },
+        {
+          "file": "src/onboarding/onboarding-v2-service.ts:360",
+          "query": "SELECT * FROM onboarding_sessions WHERE id = ? AND tenant_id = ?",
+          "assessment": "tenant constrained"
+        }
+      ],
+      "recommendation": "Fix the v2 post-insert read to WHERE id = ? AND tenant_id = ?. After that, exemption is likely safe; wholesale TenantDatabase inclusion is probably unnecessary."
+    },
+    {
+      "table": "users",
+      "classification": "SPECIAL",
+      "evidence": [
+        {
+          "file": "src/storage/executors/auth-executors.ts:27",
+          "query": "SELECT * FROM users WHERE email = ?",
+          "assessment": "global identity lookup for login; tenant is discovered from user row"
+        },
+        {
+          "file": "src/storage/executors/auth-executors.ts:31",
+          "query": "SELECT * FROM users WHERE id = ?",
+          "assessment": "global identity lookup by authenticated user id"
+        },
+        {
+          "file": "src/storage/executors/user-profile-executors.ts:21",
+          "query": "SELECT id, email, role, tenant_id, created_at FROM users WHERE id = ?",
+          "assessment": "profile lookup by authenticated user id"
+        },
+        {
+          "file": "src/storage/executors/user-profile-executors.ts:41",
+          "query": "UPDATE users SET email = ?, updated_at = ? WHERE id = ?",
+          "assessment": "profile update by authenticated user id; no tenant predicate"
+        },
+        {
+          "file": "src/storage/executors/scim-executors.ts:25",
+          "query": "SELECT * FROM users WHERE tenant_id = ? ORDER BY created_at ASC LIMIT ? OFFSET ?",
+          "assessment": "SCIM tenant list constrained"
+        },
+        {
+          "file": "src/storage/executors/scim-executors.ts:53",
+          "query": "SELECT id, tenant_id FROM users WHERE email = ? LIMIT 1",
+          "assessment": "global SCIM/email identity lookup"
+        },
+        {
+          "file": "src/storage/executors/scim-executors.ts:119",
+          "query": "DELETE FROM users WHERE id = ? AND tenant_id = ?",
+          "assessment": "SCIM delete tenant constrained"
+        },
+        {
+          "file": "src/privacy/privacy-service.ts:157",
+          "query": "SELECT id, email, role, tenant_id, created_at, updated_at FROM users WHERE tenant_id = ?",
+          "assessment": "privacy export tenant constrained"
+        },
+        {
+          "file": "src/privacy/privacy-service.ts:158",
+          "query": "DELETE FROM users WHERE tenant_id = ?",
+          "assessment": "privacy erase tenant constrained"
+        }
+      ],
+      "recommendation": "Keep as SPECIAL. users is the tenant root/identity table: login and self-profile paths necessarily discover tenant from user identity, while tenant-admin paths should keep explicit tenant_id predicates."
+    }
+  ],
+  "notes": [
+    "TenantDatabase should not be used as a blanket fix for tasks or subscriptions because they include global scheduler/webhook semantics and unsupported SQL shapes such as INSERT ... SELECT and joins/subqueries.",
+    "For NEEDS-ISOLATION tables, the practical remediation is usually to add tenant_id to specific executor params and WHERE clauses for tenant-facing reads/writes, while leaving platform maintenance paths explicit and reviewed."
+  ]
+}

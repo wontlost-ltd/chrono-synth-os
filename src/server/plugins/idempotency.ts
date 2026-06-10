@@ -17,6 +17,8 @@ const REPLAY_HEADER = 'x-idempotent-replayed';
 
 interface IdempotencyContext {
   id: string;
+  /** 携带 tenantId 以便 complete/delete 按 id AND tenant_id 隔离（②b）。 */
+  tenantId: string;
 }
 
 function getHeaderValue(request: FastifyRequest, name: string): string | undefined {
@@ -192,7 +194,7 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
       return;
     }
 
-    (request as FastifyRequest & { idempotencyContext?: IdempotencyContext }).idempotencyContext = { id };
+    (request as FastifyRequest & { idempotencyContext?: IdempotencyContext }).idempotencyContext = { id, tenantId };
     reply.header(REPLAY_HEADER, 'false');
     done();
   });
@@ -211,13 +213,14 @@ export function registerIdempotency(app: FastifyInstance, db: IDatabase | undefi
           : null;
         tx.execute(idemCmdComplete({
           id: context.id,
+          tenantId: context.tenantId,
           responseStatus: reply.statusCode,
           responseContentType: contentType,
           responseHeadersJson: serializeReplayHeaders(reply),
           responseBody: normalizePayload(payload),
         }));
       } else {
-        tx.execute(idemCmdDelete(context.id));
+        tx.execute(idemCmdDelete({ id: context.id, tenantId: context.tenantId }));
       }
     } catch {
       /* 中间件异常不应破坏主流程 */

@@ -142,9 +142,10 @@ export class OnboardingV2Service {
       });
     } catch { /* never fail user flow on evidence failure */ }
 
+    /* 读回带 tenant_id（②b 隔离收敛）：与其它 v2 读/改路径一致，消除唯一的 id-only 读。 */
     const row = this.db.prepare<SessionRow>(
-      'SELECT * FROM onboarding_sessions WHERE id = ?',
-    ).get(id);
+      'SELECT * FROM onboarding_sessions WHERE id = ? AND tenant_id = ?',
+    ).get(id, tenantId);
     if (!row) throw new Error(`onboarding session ${id} 创建后无法读回`);
     return this.rowToSession(row, false, now);
   }
