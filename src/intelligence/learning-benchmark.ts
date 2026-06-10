@@ -3,30 +3,43 @@
  *
  * 把「数字人真的在变好吗」从叙事变成**可回归的数字**：同一组固定 decision case，分别在
  * baseline persona 与 learned persona（经价值蒸馏后）上跑**确定性零-LLM** 决策引擎（autonomous 模式），
- * 采集可度量指标，对比学习前后的变化。
+ * 用**固定外部 oracle**（每个 case 的 expectedAlternative）度量命中率。
  *
- * 指标全部来自决策引擎既有输出（DecisionResult.rankedOptions[].{overallScore, regretProbability}），
- * 不新增侵入式埋点。runner 纯编排，便于测 + 接 ga:check（advisory）。
+ * 关键（Codex WP-2 Major）：主指标是 **accuracy（命中 oracle 的比例）**，跨 baseline/learned 可比——
+ * 它度量「决策对不对」而非「persona 更偏好它学到的」。overallScore/regretProbability 只作辅助参考，
+ * 因为它们在不同 persona 权重下定义已变，不可直接跨配置比较（同一推荐项的分数含义不同）。
  */
 
 import type { DecisionCase, DecisionResult } from './types.js';
+
+/**
+ * benchmark 用的 case：DecisionCase + 固定 oracle（该 case「更好」的备选，应是 alternatives 之一）。
+ */
+export interface BenchmarkCase {
+  readonly decisionCase: DecisionCase;
+  readonly expectedAlternative: string;
+}
 
 /** 单个 case 的度量。 */
 export interface CaseMetrics {
   readonly caseId: string;
   readonly recommended: string;
-  /** 推荐项的综合分（越高越好）。 */
+  /** 推荐是否命中 oracle（固定 ground-truth，跨配置可比 → 主信号）。 */
+  readonly correct: boolean;
+  /** 推荐项综合分（persona 视角，**非跨配置可比**，仅辅助）。 */
   readonly topScore: number;
-  /** 推荐项的后悔概率（越低越好）。 */
+  /** 推荐项后悔概率（overallScore 派生量，辅助）。 */
   readonly topRegret: number;
 }
 
-/** 一次 benchmark 运行（一组 case）的汇总指标。 */
+/** 一次 benchmark 运行的汇总指标。 */
 export interface BenchmarkMetrics {
   readonly cases: readonly CaseMetrics[];
-  /** 平均综合分（推荐项）。 */
+  /** **主指标**：命中 oracle 的比例（0..1，跨 baseline/learned 可比）。 */
+  readonly accuracy: number;
+  /** 平均综合分（辅助，不可跨配置直接比）。 */
   readonly meanScore: number;
-  /** 平均后悔概率（推荐项）。 */
+  /** 平均后悔概率（辅助派生量）。 */
   readonly meanRegret: number;
 }
 
@@ -34,9 +47,8 @@ export interface BenchmarkMetrics {
 export interface BenchmarkComparison {
   readonly baseline: BenchmarkMetrics;
   readonly learned: BenchmarkMetrics;
-  /** learned - baseline（meanScore 升为正向改善；meanRegret 降为正向改善）。 */
-  readonly meanScoreDelta: number;
-  readonly meanRegretDelta: number;
+  /** **主对比**：命中率变化（>0 = 学习让决策更靠近 ground-truth）。 */
+  readonly accuracyDelta: number;
   /** 推荐项发生变化的 case 数（学习改变了决策）。 */
   readonly recommendationChanges: number;
 }
@@ -46,55 +58,82 @@ export interface BenchmarkEngine {
   evaluate(decisionCase: DecisionCase, options: { mode: 'autonomous' }): Promise<DecisionResult>;
 }
 
-function toCaseMetrics(r: DecisionResult): CaseMetrics {
-  const top = r.rankedOptions[0];
-  return {
-    caseId: r.caseId,
-    recommended: r.recommendedAlternative,
-    topScore: top?.overallScore ?? 0,
-    topRegret: top?.regretProbability ?? 0,
-  };
+/** 取推荐项：用 rankedOptions[0]（top）；若与 recommendedAlternative 不一致则以 top 为准并暴露。 */
+function recommendedOf(r: DecisionResult): string {
+  const top = r.rankedOptions[0]?.alternative;
+  return top ?? r.recommendedAlternative;
 }
 
 function mean(xs: readonly number[]): number {
   return xs.length === 0 ? 0 : xs.reduce((s, x) => s + x, 0) / xs.length;
 }
 
-/** 在给定引擎上跑一组 case，汇总指标（确定性，autonomous 零-LLM）。 */
+/**
+ * 在给定引擎上跑一组 benchmark case，按 oracle 汇总指标（确定性，autonomous 零-LLM）。
+ * 空 case 集抛错（避免「成功但无证据」的空 benchmark，Codex WP-2 Minor）。
+ */
 export async function runBenchmark(
   engine: BenchmarkEngine,
-  cases: readonly DecisionCase[],
+  cases: readonly BenchmarkCase[],
 ): Promise<BenchmarkMetrics> {
+  if (cases.length === 0) throw new Error('runBenchmark: cases must not be empty');
   const results: CaseMetrics[] = [];
-  for (const c of cases) {
-    results.push(toCaseMetrics(await engine.evaluate(c, { mode: 'autonomous' })));
+  for (const bc of cases) {
+    const r = await engine.evaluate(bc.decisionCase, { mode: 'autonomous' });
+    const top = r.rankedOptions[0];
+    const recommended = recommendedOf(r);
+    results.push({
+      caseId: r.caseId,
+      recommended,
+      correct: recommended === bc.expectedAlternative,
+      topScore: top?.overallScore ?? 0,
+      topRegret: top?.regretProbability ?? 0,
+    });
   }
   return {
     cases: results,
+    accuracy: mean(results.map((m) => (m.correct ? 1 : 0))),
     meanScore: mean(results.map((m) => m.topScore)),
     meanRegret: mean(results.map((m) => m.topRegret)),
   };
 }
 
 /**
- * 对比 baseline 引擎与 learned 引擎在同一组 case 上的指标（纯对比，无副作用）。
- * meanScoreDelta>0 / meanRegretDelta<0 表示「学习后决策更好」（更高综合分、更低后悔）。
+ * 对比 baseline 与 learned（纯对比，无副作用）。
+ * accuracyDelta>0 表示「学习让决策更靠近 ground-truth」——核心命题的硬证据。
+ *
+ * 强校验 case 集一致（Codex WP-2 Major）：caseId 集合必须完全相同、无重复，否则抛错——
+ * 否则缺/多/重复 case 会静默产生看似有效的 delta。
  */
 export function compareBenchmarks(
   baseline: BenchmarkMetrics,
   learned: BenchmarkMetrics,
 ): BenchmarkComparison {
+  assertSameCaseSet(baseline, learned);
   const byId = new Map(baseline.cases.map((c) => [c.caseId, c]));
   let recommendationChanges = 0;
   for (const lc of learned.cases) {
-    const bc = byId.get(lc.caseId);
-    if (bc && bc.recommended !== lc.recommended) recommendationChanges++;
+    const bc = byId.get(lc.caseId)!;
+    if (bc.recommended !== lc.recommended) recommendationChanges++;
   }
   return {
     baseline,
     learned,
-    meanScoreDelta: learned.meanScore - baseline.meanScore,
-    meanRegretDelta: learned.meanRegret - baseline.meanRegret,
+    accuracyDelta: learned.accuracy - baseline.accuracy,
     recommendationChanges,
   };
+}
+
+function assertSameCaseSet(a: BenchmarkMetrics, b: BenchmarkMetrics): void {
+  const ids = (m: BenchmarkMetrics) => m.cases.map((c) => c.caseId);
+  const aIds = ids(a);
+  const bIds = ids(b);
+  const aSet = new Set(aIds);
+  const bSet = new Set(bIds);
+  if (aSet.size !== aIds.length || bSet.size !== bIds.length) {
+    throw new Error('compareBenchmarks: duplicate caseId in a run');
+  }
+  if (aSet.size !== bSet.size || [...aSet].some((id) => !bSet.has(id))) {
+    throw new Error('compareBenchmarks: baseline/learned case sets differ');
+  }
 }
