@@ -253,6 +253,11 @@ function sha256Hex(content: string): string {
  *
  * 仍保留的「非租户表 → 返回 0/[]」是**合法跳过**（白名单守卫，不是错误吞咽）：调用方按固定表清单
  * 迭代，这里只是拒绝越界表名，不触及任何 SQL 执行。 */
+/** 在当前事务内把 FK 检查推迟到 COMMIT（方言感知）。全租户擦除最终 FK 自洽，删除途中中间态不必满足 FK。 */
+function deferForeignKeys(db: IDatabase): void {
+  db.exec(db.dialect === 'postgres' ? 'SET CONSTRAINTS ALL DEFERRED' : 'PRAGMA defer_foreign_keys=ON');
+}
+
 function eraseDelete(db: IDatabase, table: string, tenantId: string): number {
   if (!TENANT_TABLE_SET.has(table)) return 0;
   return db.prepare<void>(`DELETE FROM ${table} WHERE tenant_id = ?`).run(tenantId).changes;
@@ -444,7 +449,10 @@ export class PrivacyService {
      * 无需手工维护成完美拓扑序，而真正的孤儿/残留仍会在 COMMIT 时被 FK 拦截（不牺牲完整性，仍 fail-closed）。
      * 仅在本事务内生效，COMMIT/ROLLBACK 后自动复位。 */
     db.transaction(() => {
-      db.exec('PRAGMA defer_foreign_keys=ON');
+      /* 延迟 FK 检查到 COMMIT，跨方言（Codex ② 复审：privacy 服务用 IDatabase，存在 PostgresDatabase，
+       * SQLite PRAGMA 在 PG 下会语法失败）。SQLite: PRAGMA defer_foreign_keys=ON（事务级，COMMIT 后自动复位）；
+       * Postgres: SET CONSTRAINTS ALL DEFERRED（仅对 DEFERRABLE 约束生效，本事务内有效）。 */
+      deferForeignKeys(db);
       for (const rel of RELATED_TABLES) {
         const count = eraseDeleteQuery(db, rel.deleteSql, rel.params(tenantId));
         if (count > 0) deletedCounts[rel.name] = count;

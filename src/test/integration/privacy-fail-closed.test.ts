@@ -107,4 +107,27 @@ describe('GDPR fail-closed：擦除/导出失败不静默吞错（②）', () =>
       );
     }
   });
+
+  /* 锁死语义（Codex ② 复审建议）：defer_foreign_keys 是「推迟检查到 COMMIT」而非「取消检查」。
+   * 用一对受控 FK 表证明：只删父、漏删子 → 留下孤儿 → COMMIT 时 FK 仍失败并整体回滚。
+   * 这保证「漏删某子表」不会被 defer 静默放过——defer 不会把 fail-closed 偷换成 fail-open。 */
+  it('defer 是推迟不是取消：只删父、漏删子 → COMMIT FK 失败 → 整体回滚', () => {
+    const { db } = setup();
+    db.exec('CREATE TABLE t_parent (id TEXT PRIMARY KEY)');
+    db.exec('CREATE TABLE t_child (id TEXT PRIMARY KEY, parent_id TEXT REFERENCES t_parent(id))');
+    db.prepare<void>('INSERT INTO t_parent (id) VALUES (?)').run('p1');
+    db.prepare<void>('INSERT INTO t_child (id, parent_id) VALUES (?, ?)').run('c1', 'p1');
+
+    /* 模拟「漏删子表」：开 defer，只删父表 → 中间态有孤儿子行。 */
+    assert.throws(() => {
+      db.transaction(() => {
+        db.exec('PRAGMA defer_foreign_keys=ON');
+        db.prepare<void>('DELETE FROM t_parent WHERE id = ?').run('p1');
+        /* 故意不删 t_child → COMMIT 时孤儿被 FK 拦截。 */
+      });
+    }, /FOREIGN KEY|constraint/i, 'defer 不取消检查：COMMIT 时孤儿仍触发 FK 失败');
+
+    /* 回滚：父行仍在（要么全删要么全不删）。 */
+    assert.equal(db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM t_parent').get()?.c, 1, 'COMMIT 失败后父行应回滚仍在');
+  });
 });
