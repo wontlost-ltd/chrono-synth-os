@@ -77,7 +77,22 @@ mod tests {
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(count, 7, "all seven versions should be recorded");
+        assert_eq!(count, 8, "all eight versions should be recorded");
+    }
+
+    #[test]
+    fn snapshots_table_round_trips() {
+        let conn = open_in_memory();
+        conn.execute(
+            "INSERT INTO snapshots (id, data_json, reason, tenant_id, created_at)
+             VALUES ('s1', '{\"values\":[]}', 'manual', 'default', 100)",
+            [],
+        )
+        .expect("insert snapshot");
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM snapshots", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "snapshots table accepts rows");
     }
 
     #[test]
