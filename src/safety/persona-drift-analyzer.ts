@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { computeDriftFromSnapshots } from '@chrono/contracts';
 
 export type AlertLevel = 'ok' | 'warning' | 'critical';
 
@@ -75,38 +76,9 @@ interface SnapshotRow {
   tenant_id: string | null;
 }
 
-interface CoreValueSnapshot {
-  id: string;
-  label: string;
-  weight: number;
-}
-
-function parseSnapshotValues(dataJson: string): Map<string, CoreValueSnapshot> {
-  const result = new Map<string, CoreValueSnapshot>();
-  try {
-    const data = JSON.parse(dataJson) as Record<string, unknown>;
-    const values = (data.values ?? data.L1) as unknown;
-    if (!Array.isArray(values)) return result;
-    for (const v of values as unknown[]) {
-      if (v !== null && typeof v === 'object') {
-        const val = v as Record<string, unknown>;
-        const id = String(val.id ?? '');
-        const label = String(val.label ?? '');
-        const weight = typeof val.weight === 'number' ? val.weight : 0;
-        if (id) result.set(id, { id, label, weight });
-      }
-    }
-  } catch {
-    // malformed snapshot — return empty
-  }
-  return result;
-}
-
-function computeAlertLevel(absDelta: number, thresholds: DriftThresholds): AlertLevel {
-  if (absDelta >= thresholds.critical) return 'critical';
-  if (absDelta >= thresholds.warning) return 'warning';
-  return 'ok';
-}
+/* drift 计算核心（解析快照价值 + delta + alertLevel + 综合分）已抽到 @chrono/contracts 的
+ * computeDriftFromSnapshots，服务端与 desktop 本地共用（ADR-0046 路线 A）。本类只管 DB 取数 +
+ * 报告组装 + 持久化。 */
 
 export class PersonaDriftAnalyzer {
   constructor(
@@ -145,41 +117,22 @@ export class PersonaDriftAnalyzer {
     }
 
     const [current, baseline] = snapshots as [SnapshotRow, SnapshotRow];
-    const baselineValues = parseSnapshotValues(baseline.data_json);
-    const currentValues = parseSnapshotValues(current.data_json);
 
-    const drifts: ValueDrift[] = [];
-    for (const [id, baseVal] of baselineValues) {
-      const curVal = currentValues.get(id);
-      if (!curVal) continue;
-      const delta = curVal.weight - baseVal.weight;
-      const absDelta = Math.abs(delta);
-      drifts.push({
-        valueId: id,
-        label: baseVal.label,
-        baseline: baseVal.weight,
-        current: curVal.weight,
-        delta,
-        alertLevel: computeAlertLevel(absDelta, this.thresholds),
-      });
-    }
-
-    const overallDriftScore = drifts.length > 0
-      ? drifts.reduce((sum, d) => sum + Math.abs(d.delta), 0) / drifts.length
-      : 0;
-
-    let alertLevel: AlertLevel = 'ok';
-    if (drifts.some((d) => d.alertLevel === 'critical')) alertLevel = 'critical';
-    else if (drifts.some((d) => d.alertLevel === 'warning')) alertLevel = 'warning';
+    /* 计算复用 @chrono/contracts 共享纯函数（与 desktop 本地算 drift 同一份，零分叉）。 */
+    const computed = computeDriftFromSnapshots(
+      baseline.data_json,
+      current.data_json,
+      this.thresholds,
+    );
 
     const report: DriftReport = {
       reportId,
       tenantId,
       baselineSnapshotId: baseline.id,
       analyzedAt: now,
-      valueDrifts: drifts,
-      overallDriftScore,
-      alertLevel,
+      valueDrifts: computed.valueDrifts as ValueDrift[],
+      overallDriftScore: computed.overallDriftScore,
+      alertLevel: computed.alertLevel,
     };
 
     this.persistReport(report);
