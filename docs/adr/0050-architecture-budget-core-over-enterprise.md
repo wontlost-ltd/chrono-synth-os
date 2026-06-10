@@ -129,6 +129,13 @@ First extraction candidates, smallest-blast-radius first:
 - The kernel-domain debt persists until features touch it. Accepted as
   the deliberately pragmatic trade (D3) over a big-bang refactor.
 
+**Registered follow-up (non-blocking):** to lower the rubber-stamp risk
+of a judgement-only checklist, a future **non-blocking** trend report may
+emit (on PR or on a schedule) the kernel-domain enterprise-subset LOC and
+its share, and `src/server` vs core-persona LOC trend — comment only,
+never a red light. This stays a reporting aid, not a gate (a gate is
+explicitly rejected above).
+
 ## Alternatives considered
 
 - **Hard CI gate (block PRs that add enterprise LOC without core LOC):**

@@ -19,5 +19,3 @@
 
 - [ ] `npm run test:golden` 全绿
 - [ ] 相关单测/集成测试通过
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
