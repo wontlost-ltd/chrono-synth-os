@@ -84,7 +84,8 @@ export function computeAlertLevel(
  *   - alertLevel 由 |delta| 与阈值定；
  *   - overallDriftScore = mean(|delta|)（无 drift 时 0）；
  *   - 整体 alertLevel：任一 critical → critical；任一 warning → warning；否则 ok。
- * current 中没有的 baseline 价值跳过（与服务端一致）。入参是已解析的快照 JSON 字符串。
+ * current 中没有的 baseline 价值跳过（与服务端一致）。入参 baselineJson/currentJson 是**原始**
+ * 快照 JSON 字符串（内部用 parseSnapshotValues 解析）。
  */
 export function computeDriftFromSnapshots(
   baselineJson: string,

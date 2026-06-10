@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { computeDriftFromSnapshots } from '@chrono/contracts';
+import type { ComputedValueDrift } from '@chrono/contracts';
 
 export type AlertLevel = 'ok' | 'warning' | 'critical';
 
@@ -18,6 +19,12 @@ export interface ValueDrift {
   delta: number;
   alertLevel: AlertLevel;
 }
+
+/* 编译期防回归锁（Codex PR-2 Minor）：共享 computeDriftFromSnapshots 产出的 ComputedValueDrift
+ * 必须结构化满足本地 ValueDrift——analyze() 里用 `as ValueDrift[]` 强转依赖二者同形，若未来任一侧
+ * 改字段/alertLevel 取值，这条断言让 tsc 直接报错而非静默漂移。仅类型层，无运行时开销。 */
+const _computedValueDriftSatisfiesValueDrift: ValueDrift = {} as ComputedValueDrift;
+void _computedValueDriftSatisfiesValueDrift;
 
 export interface DriftReport {
   reportId: string;
