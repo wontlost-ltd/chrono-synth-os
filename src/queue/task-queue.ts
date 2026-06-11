@@ -8,7 +8,7 @@ import type { IDatabase } from '../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { TaskRow } from '@chrono/kernel';
 import {
-  taskQueryById, taskQueryDequeueCandidate, taskQueryExpiredIds,
+  taskQueryById, taskQueryByIdAndTenant, taskQueryDequeueCandidate, taskQueryExpiredIds,
   taskCmdEnqueue, taskCmdClaim, taskCmdComplete, taskCmdFail,
   taskCmdReschedule, taskCmdDeleteBatch, taskCmdReapRetryable, taskCmdReapExhausted,
 } from '@chrono/kernel';
@@ -125,9 +125,16 @@ export class TaskQueue {
     this.tx.execute(taskCmdReschedule({ taskId, retryCount, availableAt, error, now: Date.now() }));
   }
 
-  /** 查询任务状态 */
+  /** 查询任务状态（无 tenant 谓词）。仅供 worker/内部按 id 操作已 dequeue 的任务；
+   * tenant-facing 的 get/cancel 请用 getTaskForTenant（SQL 层隔离）。 */
   getTask(taskId: string): TaskRecord | undefined {
     const row = this.tx.queryOne(taskQueryById(taskId));
+    return row ? rowToRecord(row) : undefined;
+  }
+
+  /** tenant-facing 查询（#124 防御纵深）：SQL 层 id + tenant 双约束，跨租户 id 查不到。 */
+  getTaskForTenant(taskId: string, tenantId: string): TaskRecord | undefined {
+    const row = this.tx.queryOne(taskQueryByIdAndTenant({ taskId, tenantId }));
     return row ? rowToRecord(row) : undefined;
   }
 

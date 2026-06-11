@@ -7,6 +7,8 @@ import type { Query, Command } from '../../ports/query.js';
 /* ── Query Kinds ── */
 
 export const TASK_QUERY_BY_ID = 'task-queue.get-by-id' as const;
+/** tenant-facing 读：SQL 层 tenant 隔离（防御纵深，#124）。worker 仍用 by-id。 */
+export const TASK_QUERY_BY_ID_AND_TENANT = 'task-queue.get-by-id-and-tenant' as const;
 export const TASK_QUERY_DEQUEUE_CANDIDATE = 'task-queue.dequeue-candidate' as const;
 export const TASK_QUERY_EXPIRED_IDS = 'task-queue.expired-ids' as const;
 
@@ -94,10 +96,21 @@ export interface TaskExpiredIdsParams {
   batchSize: number;
 }
 
+/** tenant-facing get：id + tenant 双约束（#124）。 */
+export interface TaskByIdAndTenantParams {
+  taskId: string;
+  tenantId: string;
+}
+
 /* ── Query 工厂 ── */
 
 export function taskQueryById(taskId: string): Query<TaskRow | null, string> {
   return { kind: TASK_QUERY_BY_ID, params: taskId };
+}
+
+/** tenant-facing 读：SQL 层 tenant 隔离（#124）。供 TaskQueryService 的 getTask/cancelTask。 */
+export function taskQueryByIdAndTenant(params: TaskByIdAndTenantParams): Query<TaskRow | null, TaskByIdAndTenantParams> {
+  return { kind: TASK_QUERY_BY_ID_AND_TENANT, params };
 }
 
 export function taskQueryDequeueCandidate(availableAt: number): Query<TaskRow | null, number> {

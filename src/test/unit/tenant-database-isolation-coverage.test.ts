@@ -48,10 +48,13 @@ const KNOWN_UNISOLATED: ReadonlySet<string> = new Set<string>([
   'decision_cases', 'decision_runs', 'decision_feedbacks', /* decisions route：读 WHERE id AND tenant_id */
   'onboarding_sessions', /* ②b 修复：读回从 id-only 改为 id AND tenant_id，全路径已带 tenant 约束 */
   'idempotency_keys',    /* ②b 修复：complete/delete 从 id-only 改为 id AND tenant_id（过期清理仍显式全局）*/
-  /* ── NEEDS-ISOLATION（剩余 scoped debt：含 worker 全局/外部 id 语义，需逐路径拆分）── */
-  'tasks',            /* 最高风险：tenant-facing get/cancel 先 SELECT WHERE id=? 再 service 层校验 tenant */
-  'subscriptions',    /* Stripe webhook 按 stripe_customer_id/id 改，与租户路由混在一起，需拆访问点 */
-  'life_simulations', /* worker 路径用 id-only getById/update，需拆 worker-only 与 tenant-facing */
+  /* ── 经 #124 逐路径核验：tenant-facing 路径已 SQL 层隔离 / 其余为合法全局 worker·webhook ── */
+  'tasks',            /* #124 已加固：tenant-facing get/cancel 改用 getTaskForTenant（SQL 层 id+tenant）；
+                         claim/complete/fail/reschedule/reaper/dequeue/purge 是 worker 全局语义，保持全局 */
+  'subscriptions',    /* #124 核验：id-only UPDATE 均在 getLatestSubscription(tenantId) 之后（行已 tenant 验证）；
+                         Stripe webhook 按 stripe_customer_id 是外部 id 驱动，天然全局——无需加 tenant 谓词 */
+  'life_simulations', /* #124 核验：tenant-facing 路由用 getStatus(id,tenantId) 等 tenant 变体；id-only
+                         getById/update 是 worker executeTask 内部路径（任务入队时已校 tenant 配额），合法全局 */
 ]);
 
 describe('TenantDatabase isolation ratchet: tenant tables must be isolated or registered', () => {
