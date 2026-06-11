@@ -40,9 +40,10 @@ export class TaskQueryService {
       };
     }
 
-    const task = this.queue.getTask(taskId);
+    /* #124 防御纵深：SQL 层 id + tenant 双约束（跨租户 id 直接查不到）。
+     * 下面的 tenantId 复核保留为第二层（belt-and-suspenders），不删。 */
+    const task = this.queue.getTaskForTenant(taskId, tenantId);
     if (!task) throw new NotFoundError(`任务 ${taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);
-    /* 租户隔离：非本租户的任务不可见 */
     if (task.tenantId !== tenantId) throw new NotFoundError(`任务 ${taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);
 
     return {
@@ -57,7 +58,8 @@ export class TaskQueryService {
   }
 
   cancelTask(tenantId: string, taskId: string): { taskId: string; cancelled: boolean } {
-    const task = this.queue.getTask(taskId);
+    /* #124 防御纵深：SQL 层 tenant 隔离 + 应用层复核。 */
+    const task = this.queue.getTaskForTenant(taskId, tenantId);
     if (!task) throw new NotFoundError(`任务 ${taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);
     if (task.tenantId !== tenantId) throw new NotFoundError(`任务 ${taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);
 

@@ -9,13 +9,13 @@ import type {
   LsimUpdateProgressParams, LsimSaveSummaryParams, LsimSavePathParams,
   LsimByIdTenantParams, LsimByTenantParams, LsimPaginatedParams,
   LsimPathDetailParams, LsimPathDetailTenantParams,
-  LsimVariantsParams, LsimVariantsTenantParams,
+  LsimVariantsParams, LsimVariantsTenantParams, LsimPathsBySimTenantParams,
 } from '@chrono/kernel';
 import {
   LSIM_QUERY_BY_ID, LSIM_QUERY_BY_ID_TENANT, LSIM_QUERY_BY_TENANT,
   LSIM_QUERY_COUNT_BY_TENANT, LSIM_QUERY_PAGINATED,
   LSIM_QUERY_PATH_DETAIL, LSIM_QUERY_PATH_DETAIL_TENANT,
-  LSIM_QUERY_VARIANTS, LSIM_QUERY_VARIANTS_TENANT, LSIM_QUERY_PATHS_BY_SIM,
+  LSIM_QUERY_VARIANTS, LSIM_QUERY_VARIANTS_TENANT, LSIM_QUERY_PATHS_BY_SIM, LSIM_QUERY_PATHS_BY_SIM_TENANT,
   LSIM_CMD_CREATE, LSIM_CMD_SET_STATUS, LSIM_CMD_SET_STATUS_COMPLETED,
   LSIM_CMD_UPDATE_PROGRESS, LSIM_CMD_SAVE_SUMMARY, LSIM_CMD_SAVE_PATH,
 } from '@chrono/kernel';
@@ -83,6 +83,17 @@ export function registerLifeSimExecutors(): void {
     return db.prepare<LifeSimPathRow>(
       'SELECT * FROM life_simulation_paths WHERE simulation_id = ? ORDER BY created_at ASC',
     ).all(simId);
+  });
+
+  /* tenant-facing 变体（#124）：JOIN 父 simulation 校验 tenant，固化顺序依赖。
+   * life_simulation_paths 无 tenant_id 列，租户归属继承自父 life_simulations。 */
+  registerQuery<LifeSimPathRow[], LsimPathsBySimTenantParams>(LSIM_QUERY_PATHS_BY_SIM_TENANT, (db, p) => {
+    return db.prepare<LifeSimPathRow>(
+      `SELECT pa.* FROM life_simulation_paths pa
+       JOIN life_simulations s ON s.id = pa.simulation_id
+       WHERE pa.simulation_id = ? AND s.tenant_id = ?
+       ORDER BY pa.created_at ASC`,
+    ).all(p.simulationId, p.tenantId);
   });
 
   /* ── Commands ── */

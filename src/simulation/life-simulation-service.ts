@@ -82,9 +82,14 @@ export class LifeSimulationService {
     return this.store.getVariants(baseSimulationId, tenantId);
   }
 
-  /** 查询模拟的所有路径 */
+  /** 查询模拟的所有路径（无 tenant 谓词，内部用）。 */
   getPathsBySimulation(simulationId: string): LifeSimulationPathRecord[] {
     return this.store.getPathsBySimulation(simulationId);
+  }
+
+  /** tenant-facing 路径聚合（#124）：SQL 层 JOIN 父 simulation 校验 tenant，固化顺序依赖。 */
+  getPathsBySimulationForTenant(simulationId: string, tenantId: string): LifeSimulationPathRecord[] {
+    return this.store.getPathsBySimulationForTenant(simulationId, tenantId);
   }
 
   /** 查询租户的所有模拟 */

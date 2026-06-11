@@ -26,6 +26,23 @@ describe('TaskQueue', () => {
     assert.deepEqual(JSON.parse(task.payload), { caseId: 'dec_1' });
   });
 
+  /* #124 防御纵深：getTaskForTenant 在 SQL 层做 id+tenant 双约束，跨租户 id 查不到。 */
+  it('getTaskForTenant：本租户能查到、跨租户查不到（SQL 层隔离）', () => {
+    const id = queue.enqueue('tenant-a', 'decision:simulate', { caseId: 'dec_1' });
+
+    /* 本租户：查得到。 */
+    const own = queue.getTaskForTenant(id, 'tenant-a');
+    assert.ok(own, '本租户应能查到自己的任务');
+    assert.equal(own.tenantId, 'tenant-a');
+
+    /* 跨租户：拿对 id 但传别租户 → SQL 层就过滤掉，返回 undefined（不依赖应用层复核）。 */
+    const cross = queue.getTaskForTenant(id, 'tenant-b');
+    assert.equal(cross, undefined, '跨租户 id 在 SQL 层即查不到');
+
+    /* 对照：无 tenant 谓词的 getTask 仍能按 id 拿到（worker/内部用）。 */
+    assert.ok(queue.getTask(id), 'getTask（worker 用）仍按 id 可查');
+  });
+
   it('出队返回最早的待执行任务', () => {
     const id1 = queue.enqueue('t', 'type-a', { n: 1 });
     const id2 = queue.enqueue('t', 'type-b', { n: 2 });

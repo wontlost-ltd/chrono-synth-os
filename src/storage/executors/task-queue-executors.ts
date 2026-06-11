@@ -6,10 +6,10 @@ import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import type {
   TaskRow, TaskEnqueueParams, TaskClaimParams, TaskCompleteParams,
   TaskFailParams, TaskRescheduleParams, TaskDeleteBatchParams,
-  TaskReapParams, TaskExpiredIdsParams,
+  TaskReapParams, TaskExpiredIdsParams, TaskByIdAndTenantParams,
 } from '@chrono/kernel';
 import {
-  TASK_QUERY_BY_ID, TASK_QUERY_DEQUEUE_CANDIDATE, TASK_QUERY_EXPIRED_IDS,
+  TASK_QUERY_BY_ID, TASK_QUERY_BY_ID_AND_TENANT, TASK_QUERY_DEQUEUE_CANDIDATE, TASK_QUERY_EXPIRED_IDS,
   TASK_CMD_ENQUEUE, TASK_CMD_CLAIM, TASK_CMD_COMPLETE, TASK_CMD_FAIL,
   TASK_CMD_RESCHEDULE, TASK_CMD_DELETE_BATCH, TASK_CMD_REAP_RETRYABLE,
   TASK_CMD_REAP_EXHAUSTED,
@@ -18,8 +18,16 @@ import {
 export function registerTaskQueueExecutors(): void {
   /* ── Queries ── */
 
+  /* by-id（无 tenant 谓词）：仅供 worker/内部按 id 操作已 dequeue 的任务（worker 已全局取号）。
+   * tenant-facing 的 get/cancel 必须用下面的 by-id-and-tenant，不得用本查询直接对外返回。 */
   registerQuery<TaskRow | null, string>(TASK_QUERY_BY_ID, (db, taskId) => {
     return db.prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?').get(taskId) ?? null;
+  });
+
+  /* tenant-facing 读（#124 防御纵深）：SQL 层 id + tenant 双约束，跨租户 id 直接查不到 →
+   * 隔离不再只靠应用层 post-read 检查。 */
+  registerQuery<TaskRow | null, TaskByIdAndTenantParams>(TASK_QUERY_BY_ID_AND_TENANT, (db, p) => {
+    return db.prepare<TaskRow>('SELECT * FROM tasks WHERE id = ? AND tenant_id = ?').get(p.taskId, p.tenantId) ?? null;
   });
 
   registerQuery<TaskRow | null, number>(TASK_QUERY_DEQUEUE_CANDIDATE, (db, availableAt) => {
