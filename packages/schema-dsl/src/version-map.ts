@@ -92,4 +92,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v080_distilled_artifacts', aliases: { postgres: 'v082', 'sqlite-sql': 'v080' }, classification: 'schema-simple', notes: 'ADR-0047: gated LLM→core distillation artifact pipeline' },
   { canonical: 'v081_persona_leases', aliases: { postgres: 'v083', 'sqlite-sql': 'v081' }, classification: 'schema-simple', notes: 'ADR-0047/0048: per-persona concurrency lease (earning + compile)' },
   { canonical: 'v082_response_templates', aliases: { postgres: 'v084', 'sqlite-sql': 'v082' }, classification: 'schema-simple', notes: 'ADR-0047: durable versioned response templates (replaces decaying procedural memory)' },
+  { canonical: 'v083_persona_rules', aliases: { postgres: 'v085', 'sqlite-sql': 'v083' }, classification: 'schema-simple', notes: 'ADR-0047: durable versioned persona rules for rule-engine adjustments' },
 ];

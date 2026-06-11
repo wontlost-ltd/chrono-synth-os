@@ -11,6 +11,7 @@ import {
   DEFAULT_RULE_ENGINE_CONFIG,
   type RuleEngineConfig,
   type RuleEnginePersonaState,
+  type RulePayload,
 } from '@chrono/kernel';
 
 export type { RuleEngineConfig };
@@ -18,7 +19,8 @@ export type { RuleEngineConfig };
 const LAYER = 'RuleEngine';
 
 function toRulePersona(state: PersonaOSState): RuleEnginePersonaState {
-  return { L0: state.L0, L1: state.L1, L2: state.L2, L3: state.L3 };
+  const withRules = state as PersonaOSState & { readonly rules?: readonly RulePayload[] };
+  return { L0: state.L0, L1: state.L1, L2: state.L2, L3: state.L3, rules: withRules.rules };
 }
 
 export class RuleEngine {

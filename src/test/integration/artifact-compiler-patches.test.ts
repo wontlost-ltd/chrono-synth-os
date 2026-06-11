@@ -1,6 +1,6 @@
 /**
  * 蒸馏编译器补全（WP-1）：decision_style_patch / cognitive_model_patch 经审批编译进 L2/L3 内核；
- * rule 显式拒绝（不静默）。锁住「老师产出能完整蒸馏进确定性内核」。
+ * rule 经审批编译进版本化规则库。锁住「老师产出能完整蒸馏进确定性内核」。
  *
  * 这两类 kind 不在 auto-compile 范围（只 value_shift/memory_edge 自动编），故走 ingest→approve→compile。
  */
@@ -113,18 +113,32 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     assert.equal(ing.status, 'rejected', '无校准字段应被拒绝');
   });
 
-  it('rule kind → 编译显式拒绝（rule store 未落地，不静默）', () => {
-    /* rule 校验通过（default 放行），但编译器显式拒绝。走 approve 触发编译。 */
+  it('rule kind → 审批编译 → 版本化规则库', () => {
+    /* rule 不在 auto-compile 白名单，走 approve 后落 persona_rules。 */
     const ing = os.distillation.ingest('p1', {
       kind: 'rule', source: 'reflection',
-      payload: { if: 'x', then: 'y' }, confidence: 0.9, evidence: EV,
+      payload: {
+        ruleId: 'prefer_quality',
+        condition: '质量',
+        action: 'prefer',
+        weight: 0.8,
+        description: '遇到质量选项时优先',
+      },
+      confidence: 0.9, evidence: EV,
     });
     assert.equal(ing.status, 'pending', 'rule 不 auto-compile → pending');
     if (ing.status !== 'pending') return;
     const ap = os.distillation.approve('p1', ing.artifact.id);
-    /* 编译失败 → approve 返回 ok:false（或 artifact 非 compiled），rule 不进内核。 */
-    if (ap.ok) {
-      assert.notEqual(ap.artifact.status, 'compiled', 'rule 不应被编译进内核');
-    }
+    assert.ok(ap.ok, `审批应成功: ${ap.ok ? '' : ap.reason}`);
+    assert.equal(ap.artifact.status, 'compiled');
+
+    const rules = os.rules.getActiveRules('p1');
+    assert.deepEqual(rules, [{
+      ruleId: 'prefer_quality',
+      condition: '质量',
+      action: 'prefer',
+      weight: 0.8,
+      description: '遇到质量选项时优先',
+    }]);
   });
 });

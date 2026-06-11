@@ -8,6 +8,7 @@ import type { CoreValue } from '../core-self/value-types.js';
 import type { SurvivalAnchor } from '../core-self/anchor-types.js';
 import type { DecisionStyle } from '../core-self/decision-style-types.js';
 import type { CognitiveModel } from '../core-self/cognitive-model-types.js';
+import type { RulePayload } from '../core-self/distilled-artifact-types.js';
 import type { ScoreBreakdown } from './structural-scorer.js';
 import { computeStructuralScore } from './structural-scorer.js';
 import {
@@ -25,6 +26,8 @@ export interface RuleEnginePersonaState {
   readonly L1: ReadonlyMap<string, CoreValue>;
   readonly L2: DecisionStyle;
   readonly L3: CognitiveModel;
+  /** 可选持久规则：未提供时保持历史行为。 */
+  readonly rules?: readonly RulePayload[];
 }
 
 /** 规则引擎配置 */
@@ -130,6 +133,24 @@ function computeConstraintPenalty(
   return Math.min(penaltyCount * 0.15, 0.6);
 }
 
+/** 按 active rules 对已惩罚分数做确定性微调：prefer 加分，avoid 减分。 */
+function applyRuleAdjustment(
+  score: number,
+  alternative: string,
+  textContext: string,
+  rules?: readonly RulePayload[],
+): number {
+  if (!rules || rules.length === 0) return score;
+  let adjusted = score;
+  for (const rule of rules) {
+    const relevance = computeKeywordRelevance(rule.condition, alternative, textContext);
+    if (relevance <= 0) continue;
+    const delta = rule.weight * relevance;
+    adjusted += rule.action === 'prefer' ? delta : -delta;
+  }
+  return clamp01(adjusted);
+}
+
 /** 规则引擎评估（纯函数） */
 export function evaluateDecisionCase(
   decisionCase: DecisionCase,
@@ -175,9 +196,10 @@ export function evaluateDecisionCase(
     /* 约束惩罚独立于 L0 锚点，直接扣减综合得分 */
     const constraintPen = computeConstraintPenalty(alternative, decisionCase.constraints);
     const penalizedScore = clamp01(structural.overallScore - constraintPen);
+    const adjustedScore = applyRuleAdjustment(penalizedScore, alternative, textContext, persona.rules);
 
-    const explanation = buildExplanation(alternative, structural.alignmentScore, penalizedScore, structural.breakdown);
-    const regretProbability = clamp01(persona.L2.regretSensitivity * (1 - penalizedScore));
+    const explanation = buildExplanation(alternative, structural.alignmentScore, adjustedScore, structural.breakdown);
+    const regretProbability = clamp01(persona.L2.regretSensitivity * (1 - adjustedScore));
     scored.push({
       option: {
         alternative,
@@ -185,12 +207,12 @@ export function evaluateDecisionCase(
         alignmentScore: structural.alignmentScore,
         riskScore,
         confidence: 0.4,
-        overallScore: penalizedScore,
+        overallScore: adjustedScore,
         regretProbability,
         explanation,
         scoreBreakdown: structural.breakdown,
       },
-      score: penalizedScore,
+      score: adjustedScore,
     });
   }
 

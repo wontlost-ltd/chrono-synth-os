@@ -933,6 +933,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS response_templates (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    intent TEXT NOT NULL,\n    template TEXT NOT NULL,\n    version INTEGER NOT NULL DEFAULT 1,\n    artifact_id TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, intent, version)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_response_templates_intent ON response_templates(tenant_id, persona_id, intent, version)"
     ]
+  },
+  {
+    "version": "v083",
+    "description": "ADR-0047: durable versioned persona rules for rule-engine adjustments",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS persona_rules (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    rule_id TEXT NOT NULL,\n    condition TEXT NOT NULL,\n    action TEXT NOT NULL,\n    weight REAL NOT NULL,\n    description TEXT,\n    artifact_id TEXT,\n    version INTEGER NOT NULL DEFAULT 1,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, rule_id, version),\n    CHECK(action IN ('prefer', 'avoid')),\n    CHECK(weight >= 0 AND weight <= 1)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_persona_rules_rule ON persona_rules(tenant_id, persona_id, rule_id, version)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1846,6 +1854,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS response_templates (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    intent TEXT NOT NULL,\n    template TEXT NOT NULL,\n    version INTEGER NOT NULL DEFAULT 1,\n    artifact_id TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, intent, version)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_response_templates_intent ON response_templates (tenant_id, persona_id, intent, version)"
+    ]
+  },
+  {
+    "version": "v085",
+    "description": "ADR-0047: durable versioned persona rules for rule-engine adjustments",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS persona_rules (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    rule_id TEXT NOT NULL,\n    condition TEXT NOT NULL,\n    action TEXT NOT NULL,\n    weight DOUBLE PRECISION NOT NULL,\n    description TEXT,\n    artifact_id TEXT,\n    version INTEGER NOT NULL DEFAULT 1,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, rule_id, version),\n    CHECK(action IN ('prefer', 'avoid')),\n    CHECK(weight >= 0 AND weight <= 1)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_persona_rules_rule ON persona_rules (tenant_id, persona_id, rule_id, version)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

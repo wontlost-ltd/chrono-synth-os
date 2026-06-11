@@ -32,8 +32,8 @@ const TENANT_TABLES = new Set([
   'governance_cases', 'governance_actions',
   'wallet_transactions', 'wallet_payout_requests', 'wallet_settlements',
   'platform_dlq_events',
-  /* ADR-0047/0048：蒸馏工件、并发租约、响应模板均为 tenant 数据 */
-  'distilled_artifacts', 'persona_leases', 'response_templates',
+  /* ADR-0047/0048：蒸馏工件、并发租约、响应模板、规则均为 tenant 数据 */
+  'distilled_artifacts', 'persona_leases', 'response_templates', 'persona_rules',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

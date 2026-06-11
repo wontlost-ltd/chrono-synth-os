@@ -4,6 +4,7 @@ import { RuleEngine } from '../../intelligence/rule-engine.js';
 import type { DecisionCase } from '../../intelligence/types.js';
 import type { PersonaOSState } from '../../types/personality-os.js';
 import { TestClock } from '../../utils/index.js';
+import type { RulePayload } from '@chrono/kernel';
 
 function makePersonaState(overrides?: Partial<PersonaOSState>): PersonaOSState {
   return {
@@ -193,5 +194,43 @@ describe('RuleEngine', () => {
     const state = makePersonaState();
     const result = engine.evaluate(makeCase({ context: undefined }), state);
     assert.ok(result.rankedOptions.length > 0);
+  });
+
+  it('未提供 rules 与空 rules 行为一致（向后兼容）', () => {
+    const engine = new RuleEngine(clock);
+    const state = makePersonaState({ L1: new Map() });
+    const decision = makeCase({ alternatives: ['质量优先', '拖延处理'] });
+    const withoutRules = engine.evaluate(decision, state);
+    const withEmptyRules = engine.evaluate(decision, { ...state, rules: [] } as PersonaOSState & { rules: RulePayload[] });
+    assert.deepEqual(
+      withEmptyRules.rankedOptions.map((o) => [o.alternative, o.overallScore]),
+      withoutRules.rankedOptions.map((o) => [o.alternative, o.overallScore]),
+    );
+  });
+
+  it('prefer rule 命中 condition 时提升匹配选项排序', () => {
+    const engine = new RuleEngine(clock);
+    const state = {
+      ...makePersonaState({ L1: new Map() }),
+      rules: [{ ruleId: 'prefer_quality', condition: '质量', action: 'prefer', weight: 1 }],
+    } as PersonaOSState & { rules: RulePayload[] };
+    const result = engine.evaluate(makeCase({ alternatives: ['拖延处理', '质量优先'] }), state);
+    assert.equal(result.recommendedAlternative, '质量优先');
+    assert.ok(result.rankedOptions[0].overallScore > result.rankedOptions[1].overallScore);
+  });
+
+  it('avoid rule 命中 condition 时降低匹配选项排序', () => {
+    const engine = new RuleEngine(clock);
+    const state = {
+      ...makePersonaState({
+        L1: new Map([
+          ['v1', { id: 'v1', label: 'option', weight: 1, timeDiscount: 0.5, emotionAmplifier: 1.0, updatedAt: 1000 }],
+        ]),
+      }),
+      rules: [{ ruleId: 'avoid_delay', condition: 'delay', action: 'avoid', weight: 1 }],
+    } as PersonaOSState & { rules: RulePayload[] };
+    const result = engine.evaluate(makeCase({ alternatives: ['delay option', 'quality option'] }), state);
+    assert.equal(result.recommendedAlternative, 'quality option');
+    assert.ok(result.rankedOptions[0].overallScore > result.rankedOptions[1].overallScore);
   });
 });

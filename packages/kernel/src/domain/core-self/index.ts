@@ -26,4 +26,5 @@ export * from './add-on-types.js';
 export * from './distilled-artifact-types.js';
 export * from './distilled-artifact-queries.js';
 export * from './response-template-types.js';
+export * from './rule-queries.js';
 export * from './core-update-gate.js';
