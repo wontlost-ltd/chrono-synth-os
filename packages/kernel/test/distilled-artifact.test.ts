@@ -156,6 +156,43 @@ describe('validateArtifact', () => {
       kind: 'response_template', payload: { intent: 'greeting', template: '   ' },
     })).length > 0);
   });
+
+  it('rule 合法 payload 通过校验', () => {
+    assert.deepEqual(validateArtifact(makeArtifact({
+      kind: 'rule',
+      payload: { ruleId: 'prefer_quality', condition: '质量', action: 'prefer', weight: 0.7 },
+    })), []);
+  });
+
+  it('rule 缺 ruleId / condition 被拒', () => {
+    assert.ok(validateArtifact(makeArtifact({
+      kind: 'rule',
+      payload: { ruleId: '', condition: '质量', action: 'prefer', weight: 0.7 },
+    })).some((p) => p.includes('ruleId')));
+    assert.ok(validateArtifact(makeArtifact({
+      kind: 'rule',
+      payload: { ruleId: 'r1', condition: '   ', action: 'prefer', weight: 0.7 },
+    })).some((p) => p.includes('condition')));
+  });
+
+  it('rule action 非 prefer/avoid 被拒', () => {
+    const problems = validateArtifact(makeArtifact({
+      kind: 'rule',
+      payload: { ruleId: 'r1', condition: '质量', action: 'boost', weight: 0.7 },
+    }));
+    assert.ok(problems.some((p) => p.includes('action')));
+  });
+
+  it('rule weight 必须在 [0,1]', () => {
+    assert.ok(validateArtifact(makeArtifact({
+      kind: 'rule',
+      payload: { ruleId: 'r1', condition: '质量', action: 'prefer', weight: -0.1 },
+    })).some((p) => p.includes('weight')));
+    assert.ok(validateArtifact(makeArtifact({
+      kind: 'rule',
+      payload: { ruleId: 'r1', condition: '质量', action: 'avoid', weight: 1.1 },
+    })).some((p) => p.includes('weight')));
+  });
 });
 
 describe('canAutoCompile (ADR-0047 D3)', () => {
@@ -205,9 +242,16 @@ describe('canAutoCompile (ADR-0047 D3)', () => {
   });
 
   it('rule / *_patch / narrative_patch 默认需审批', () => {
+    const payloadByKind = {
+      rule: { ruleId: 'r1', condition: '质量', action: 'prefer', weight: 0.5 },
+      decision_style_patch: { riskAppetite: 0.6 },
+      cognitive_model_patch: { growthMindset: 0.6 },
+      narrative_patch: { narrative: '我是稳定的数字人。' },
+      response_template: { intent: 'x', template: 'y' },
+    } as const;
     for (const kind of ['rule', 'decision_style_patch', 'cognitive_model_patch', 'narrative_patch', 'response_template'] as const) {
       assert.equal(
-        canAutoCompile(makeArtifact({ kind, confidence: 0.99, payload: { intent: 'x', template: 'y' } })),
+        canAutoCompile(makeArtifact({ kind, confidence: 0.99, payload: payloadByKind[kind] })),
         false,
         `${kind} 应需审批`,
       );

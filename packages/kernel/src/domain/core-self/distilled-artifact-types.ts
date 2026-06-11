@@ -143,6 +143,20 @@ export interface ResponseTemplatePayload {
   readonly template: string;
 }
 
+/** rule 工件的载荷形状：关键词 if → prefer/avoid then。 */
+export interface RulePayload {
+  /** 稳定标识：同 ruleId 视为同一规则的新版本。 */
+  readonly ruleId: string;
+  /** if：关键词/短语，匹配 decisionCase 文本即触发。 */
+  readonly condition: string;
+  /** then：命中的 alternative 加分或减分。 */
+  readonly action: 'prefer' | 'avoid';
+  /** 影响强度 [0,1]。 */
+  readonly weight: number;
+  /** 人读说明（可选）。 */
+  readonly description?: string;
+}
+
 /**
  * L2 决策风格校准载荷（部分更新）。字段约束**对齐领域模型**（decision-style-service.validateDecisionStyle）：
  * 多数字段 [0,1]，但 lossAversion ≥ 1、deliberationDepth 是 1..5 的整数——否则会「schema 通过但编译抛
@@ -297,6 +311,16 @@ function validatePayloadShape(kind: ArtifactKind, payload: unknown): string[] {
       }
       return [];
     }
+    case 'rule': {
+      const p = payload as Partial<RulePayload> | null;
+      const problems: string[] = [];
+      if (!p || typeof p !== 'object') return ['rule payload must be an object'];
+      if (typeof p.ruleId !== 'string' || p.ruleId.trim().length === 0) problems.push('rule payload requires non-empty ruleId');
+      if (typeof p.condition !== 'string' || p.condition.trim().length === 0) problems.push('rule payload requires non-empty condition');
+      if (p.action !== 'prefer' && p.action !== 'avoid') problems.push('rule action must be prefer or avoid');
+      if (!inUnitRange(p.weight)) problems.push('rule weight must be within [0,1]');
+      return problems;
+    }
     case 'narrative_patch': {
       const p = payload as { narrative?: unknown } | null;
       if (!p || typeof p.narrative !== 'string' || p.narrative.trim().length === 0) {
@@ -346,8 +370,6 @@ function validatePayloadShape(kind: ArtifactKind, payload: unknown): string[] {
       return problems;
     }
     default:
-      /* rule kind 的持久化（规则库）尚未落地——编译器对其显式拒绝并给原因，故此处不放行任意 payload。
-       * 仍返回 []（校验通过），由编译器层 reject，保持"校验通过但不可编译"的清晰边界。 */
       return [];
   }
 }

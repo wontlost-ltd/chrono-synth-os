@@ -34,6 +34,7 @@ import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distille
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
 import { PersonaLeaseStore } from './storage/persona-lease-store.js';
 import { ResponseTemplateStore } from './storage/response-template-store.js';
+import { RuleStore } from './storage/rule-store.js';
 import { TaskQueue } from './queue/task-queue.js';
 import { FeatureFlagService } from './feature-flags/feature-flag-service.js';
 import { AuditChainAnchorService, type AuditChainKmsProvider } from './audit/audit-chain-anchor-service.js';
@@ -85,6 +86,8 @@ export class ChronoSynthOS {
   readonly personaLeases: PersonaLeaseStore;
   /** ADR-0047：响应模板专用持久表（版本化、不衰减；取代会衰减的 procedural memory） */
   readonly responseTemplates: ResponseTemplateStore;
+  /** ADR-0047：规则专用持久表（版本化；RuleEngine 消费 active rules） */
+  readonly rules: RuleStore;
   readonly queue: TaskQueue;
   /** Phase 1B 可选：开启 audit chain KMS 锚定时存在 */
   readonly auditChainAnchors: AuditChainAnchorService | undefined;
@@ -156,7 +159,9 @@ export class ChronoSynthOS {
     const artifactStore = new DistilledArtifactStore(this.db, this.tenantId);
     /* ADR-0047：response_template 编译进专用持久表（版本化、不衰减），而非会被衰减驱逐的 procedural memory。 */
     this.responseTemplates = new ResponseTemplateStore(this.db, this.tenantId);
-    const artifactCompiler = new ArtifactCompiler(this.core, this.logger, this.responseTemplates, this.clock);
+    /* ADR-0047：rule 编译进专用规则表，作为 RuleEngine 的确定性排序调整输入。 */
+    this.rules = new RuleStore(this.db, this.tenantId);
+    const artifactCompiler = new ArtifactCompiler(this.core, this.logger, this.responseTemplates, this.clock, this.rules);
     /* ADR-0047/0048 多实例 gating：并发锁，供租户级全局 compile mutex 与 per-persona
      * earning lease 共用（同一个 store，不同 scope）。 */
     this.personaLeases = new PersonaLeaseStore(this.db, this.tenantId);

@@ -11,6 +11,7 @@ import { TestClock, SilentLogger } from '../../utils/index.js';
 import { CoreRhythmLayer } from '../../core/core-rhythm-layer.js';
 import { ArtifactCompiler } from '../../intelligence/artifact-compiler.js';
 import { ResponseTemplateStore } from '../../storage/response-template-store.js';
+import { RuleStore } from '../../storage/rule-store.js';
 import type { DistilledArtifact } from '@chrono/kernel';
 
 function artifact(overrides: Partial<DistilledArtifact> & Pick<DistilledArtifact, 'kind' | 'payload'>): DistilledArtifact {
@@ -26,6 +27,7 @@ describe('ArtifactCompiler (ADR-0047)', () => {
   let db: IDatabase;
   let core: CoreRhythmLayer;
   let templates: ResponseTemplateStore;
+  let rules: RuleStore;
   let compiler: ArtifactCompiler;
 
   beforeEach(() => {
@@ -34,7 +36,8 @@ describe('ArtifactCompiler (ADR-0047)', () => {
     const clock = new TestClock(1000);
     core = new CoreRhythmLayer(db, new EventBus(), clock, new SilentLogger());
     templates = new ResponseTemplateStore(db, 'default');
-    compiler = new ArtifactCompiler(core, new SilentLogger(), templates, clock);
+    rules = new RuleStore(db, 'default');
+    compiler = new ArtifactCompiler(core, new SilentLogger(), templates, clock, rules);
   });
 
   it('value_shift 编译为价值权重', () => {
@@ -137,9 +140,32 @@ describe('ArtifactCompiler (ADR-0047)', () => {
     assert.equal(core.cognitiveModel.get().growthMindset, 0.85);
   });
 
-  it('rule kind → 显式拒绝（rule store 未落地，不静默丢弃）', () => {
-    const r = compiler.compile('p1', artifact({ kind: 'rule', payload: {} }));
+  it('rule 编译进专用持久表（版本化）', () => {
+    const r = compiler.compile('p1', artifact({
+      id: 'dart-rule',
+      kind: 'rule',
+      payload: { ruleId: 'prefer_quality', condition: '质量', action: 'prefer', weight: 0.8, description: '优先质量' },
+    }));
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.applied, 'rule prefer_quality v1');
+    const active = rules.getActiveRules('p1');
+    assert.equal(active.length, 1);
+    assert.deepEqual(active[0], {
+      ruleId: 'prefer_quality',
+      condition: '质量',
+      action: 'prefer',
+      weight: 0.8,
+      description: '优先质量',
+    });
+  });
+
+  it('rule 未注入 store → 显式失败（不静默）', () => {
+    const noStore = new ArtifactCompiler(core, new SilentLogger(), templates, new TestClock(1000));
+    const r = noStore.compile('p1', artifact({
+      kind: 'rule',
+      payload: { ruleId: 'r1', condition: '质量', action: 'prefer', weight: 0.8 },
+    }));
     assert.equal(r.ok, false, 'rule 应不可编译');
-    if (!r.ok) assert.match(r.reason, /rule compilation not supported/);
+    if (!r.ok) assert.match(r.reason, /rule store not configured/);
   });
 });

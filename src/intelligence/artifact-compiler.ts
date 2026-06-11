@@ -14,9 +14,7 @@
  *                          违背蒸馏持久性，故 ADR-0047 改为专用表（需注入 templates）。
  *   - decision_style_patch → CoreRhythmLayer.setDecisionStyle（L2 决策风格参数校准，WP-1）
  *   - cognitive_model_patch → CoreRhythmLayer.setCognitiveModel（L3 认知模型参数校准，WP-1）
- *
- * 唯一尚不编译的 kind 是 rule：需独立的 rule-store + RuleEngine 持久入口（单列工作）。
- * 对它**显式拒绝并给原因**（不静默丢弃，D3：自我修改必须可解释），停留在 approved/pending。
+ *   - rule → RuleStore 专用持久表（版本化），由 RuleEngine 作为 constraint-penalty 同类机制消费。
  *
  * 快照/回滚由调用方（DistillationService）负责：它持有 ChronoSynthOS，能在编译
  * 批次前后做 snapshot 并在失败时 restore。编译器本身只报告每件工件的成败。
@@ -25,12 +23,14 @@
 import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
 import type { Logger } from '../utils/logger.js';
 import type { ResponseTemplateStore } from '../storage/response-template-store.js';
+import type { RuleStore } from '../storage/rule-store.js';
 import type { Clock } from '../utils/clock.js';
 import type {
   DistilledArtifact,
   ValueShiftPayload,
   MemoryEdgePayload,
   ResponseTemplatePayload,
+  RulePayload,
   DecisionStylePatchPayload,
   CognitiveModelPatchPayload,
 } from '@chrono/kernel';
@@ -53,6 +53,8 @@ export class ArtifactCompiler {
     /** response_template 专用持久表（ADR-0047）；未注入时该 kind 不可编译，显式失败。 */
     private readonly templates?: ResponseTemplateStore,
     private readonly clock?: Clock,
+    /** rule 专用持久表（ADR-0047）；未注入时该 kind 不可编译，显式失败。 */
+    private readonly rules?: RuleStore,
   ) {}
 
   /**
@@ -76,9 +78,7 @@ export class ArtifactCompiler {
         case 'cognitive_model_patch':
           return this.compileCognitiveModelPatch(artifact.payload as CognitiveModelPatchPayload);
         case 'rule':
-          /* rule 持久化（规则库）尚未落地：需独立的 rule-store + RuleEngine 持久入口（单列工作）。
-           * 显式拒绝并给原因，与 response_template「未注入则不可编译」同纪律——不静默吞。 */
-          return { ok: false, reason: 'rule compilation not supported: persistent rule store not implemented yet' };
+          return this.compileRule(personaId, artifact.id, artifact.payload as RulePayload);
         default:
           return { ok: false, reason: `unsupported artifact kind for compile: ${artifact.kind}` };
       }
@@ -123,6 +123,17 @@ export class ArtifactCompiler {
     const version = this.templates.appendVersion(personaId, p.intent, p.template, artifactId, this.clock.now());
     this.logger?.info(LAYER, `已编译 response_template: intent=${p.intent} → v${version}（专用表，持久）`);
     return { ok: true, applied: `template intent=${p.intent} v${version}` };
+  }
+
+  private compileRule(personaId: string, artifactId: string, p: RulePayload): CompileOutcome {
+    /* 落专用规则表（版本化），RuleEngine 决策时消费每个 ruleId 的最新版本。
+     * 需注入 rules store + clock，与 response_template 的持久化纪律一致。 */
+    if (!this.rules || !this.clock) {
+      return { ok: false, reason: 'rule store not configured (RuleStore + Clock required)' };
+    }
+    const version = this.rules.appendVersion(personaId, p, artifactId, this.clock.now());
+    this.logger?.info(LAYER, `已编译 rule: ruleId=${p.ruleId} → v${version}（专用表，持久）`);
+    return { ok: true, applied: `rule ${p.ruleId} v${version}` };
   }
 
   /** L2 决策风格校准 → CoreRhythmLayer.setDecisionStyle（部分合并更新）。 */

@@ -45,8 +45,8 @@ const TENANT_TABLES = [
   'persona_governance_events', 'persona_growth_events',
   'persona_memories', 'persona_knowledge_items',
   'marketplace_tasks', 'persona_forks', 'persona_wallets', 'persona_core',
-  /* ADR-0047/0048：蒸馏工件、并发租约、响应模板均为 tenant/persona 数据，须随租户导出/擦除 */
-  'distilled_artifacts', 'persona_leases', 'response_templates',
+  /* ADR-0047/0048：蒸馏工件、并发租约、响应模板、规则均为 tenant/persona 数据，须随租户导出/擦除 */
+  'distilled_artifacts', 'persona_leases', 'response_templates', 'persona_rules',
   /* GDPR 补齐（A 类：标准业务/配置/派生数据，无敏感凭证列，无保留义务） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
