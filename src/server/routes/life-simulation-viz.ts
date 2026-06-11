@@ -89,7 +89,8 @@ export function registerLifeSimVizRoutes(
       const q = VisualizationQuerySchema.parse(request.query);
       const metrics = parseMetrics(q.metrics);
       const step = resolutionStep(q.resolution as Resolution);
-      const pathRecords = service.getPathsBySimulation(id);
+      /* #124：SQL 层 tenant 隔离（JOIN 父 simulation），不再只靠上面的 getStatus 顺序依赖。 */
+      const pathRecords = service.getPathsBySimulationForTenant(id, tenantId);
 
       const series = pathRecords.map(pr => {
         const timeline: YearState[] = (safeJsonParse(pr.timelineJson, []) as YearState[]);
@@ -258,7 +259,8 @@ export function registerLifeSimVizRoutes(
 
       const q = VisualizationQuerySchema.parse(request.query);
       const metrics = parseMetrics(q.metrics);
-      const pathRecords = service.getPathsBySimulation(id);
+      /* #124：SQL 层 tenant 隔离（JOIN 父 simulation）。 */
+      const pathRecords = service.getPathsBySimulationForTenant(id, tenantId);
 
       const milestones = pathRecords.map(pr => {
         const timeline: YearState[] = (safeJsonParse(pr.timelineJson, []) as YearState[]);

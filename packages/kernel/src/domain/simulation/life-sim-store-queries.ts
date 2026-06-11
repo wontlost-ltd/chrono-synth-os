@@ -16,6 +16,8 @@ export const LSIM_QUERY_PATH_DETAIL_TENANT = 'lifeSim.pathDetailTenant' as const
 export const LSIM_QUERY_VARIANTS = 'lifeSim.variants' as const;
 export const LSIM_QUERY_VARIANTS_TENANT = 'lifeSim.variantsTenant' as const;
 export const LSIM_QUERY_PATHS_BY_SIM = 'lifeSim.pathsBySim' as const;
+/** tenant-facing 路径聚合：JOIN 父 simulation 校验 tenant（#124 固化顺序依赖）。 */
+export const LSIM_QUERY_PATHS_BY_SIM_TENANT = 'lifeSim.pathsBySimTenant' as const;
 
 /* ── Command Kinds ── */
 
@@ -132,6 +134,11 @@ export interface LsimPathDetailTenantParams {
   tenantId: string;
 }
 
+export interface LsimPathsBySimTenantParams {
+  simulationId: string;
+  tenantId: string;
+}
+
 export interface LsimVariantsParams {
   baseSimulationId: string;
 }
@@ -181,6 +188,11 @@ export function lsimQueryVariantsTenant(baseSimulationId: string, tenantId: stri
 
 export function lsimQueryPathsBySim(simulationId: string): Query<LifeSimPathRow, string> {
   return { kind: LSIM_QUERY_PATHS_BY_SIM, params: simulationId };
+}
+
+/** tenant-facing 路径聚合（#124）：JOIN 父 simulation 校验 tenant，固化「先校验 parent 再查 children」。 */
+export function lsimQueryPathsBySimTenant(simulationId: string, tenantId: string): Query<LifeSimPathRow, LsimPathsBySimTenantParams> {
+  return { kind: LSIM_QUERY_PATHS_BY_SIM_TENANT, params: { simulationId, tenantId } };
 }
 
 /* ── Command 工厂 ── */

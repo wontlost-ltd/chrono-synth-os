@@ -16,7 +16,7 @@ import {
   lsimQueryById, lsimQueryByIdTenant, lsimQueryByTenant,
   lsimQueryCountByTenant, lsimQueryPaginated,
   lsimQueryPathDetail, lsimQueryPathDetailTenant,
-  lsimQueryVariants, lsimQueryVariantsTenant, lsimQueryPathsBySim,
+  lsimQueryVariants, lsimQueryVariantsTenant, lsimQueryPathsBySim, lsimQueryPathsBySimTenant,
   lsimCmdCreate, lsimCmdSetStatus, lsimCmdSetStatusCompleted,
   lsimCmdUpdateProgress, lsimCmdSaveSummary, lsimCmdSavePath,
 } from '@chrono/kernel';
@@ -172,9 +172,15 @@ export class LifeSimulationStore {
     return rows.map(rowToSimRecord);
   }
 
-  /** 查询模拟的所有路径摘要 */
+  /** 查询模拟的所有路径摘要（无 tenant 谓词，内部用）。 */
   getPathsBySimulation(simId: string): LifeSimulationPathRecord[] {
     const rows = this.tx.queryMany(lsimQueryPathsBySim(simId));
+    return rows.map(rowToPathRecord);
+  }
+
+  /** tenant-facing 路径聚合（#124）：JOIN 父 simulation 校验 tenant，跨租户 simId 返回空。 */
+  getPathsBySimulationForTenant(simId: string, tenantId: string): LifeSimulationPathRecord[] {
+    const rows = this.tx.queryMany(lsimQueryPathsBySimTenant(simId, tenantId));
     return rows.map(rowToPathRecord);
   }
 }
