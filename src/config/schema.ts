@@ -224,6 +224,18 @@ const intelligenceSchema = z.object({
   vectorExtensionTenants: z.array(z.string()).default([]),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
+  /**
+   * 自动分层降级链（ADR-0047 D2）：主 provider 因可用性失败（网络/超时/5xx/能力缺失）时，
+   * 按顺序降级到下一档。典型 [cloud] → fallbacks:[本地 ollama]。空数组 = 不降级（保持单 provider
+   * 行为不变）。每档自带 provider/model/凭据/端点。最坏全链失败由调用方落到确定性档。
+   */
+  fallbacks: z.array(z.object({
+    provider: z.enum(['openai', 'anthropic', 'ollama', 'mock']),
+    model: z.string(),
+    embeddingModel: z.string().optional(),
+    apiKey: z.string().optional(),
+    baseUrl: z.string().optional(),
+  })).default([]),
   maxTokens: z.coerce.number().int().default(4096),
   temperature: z.coerce.number().min(0).max(2).default(0.7),
   simulation: intelligenceSimulationSchema,
@@ -507,7 +519,7 @@ export const AppConfigSchema = z.object({
   billing: billingSchema,
   intelligence: intelligenceSchema.default({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
-    embeddingDims: 1536, useVectorExtension: false, vectorExtensionTenants: [],
+    embeddingDims: 1536, useVectorExtension: false, vectorExtensionTenants: [], fallbacks: [],
     maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
     budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
   }),
@@ -612,8 +624,8 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
  *     与实际能力不符）。
  *   - `mock`：哈希向量无实际语义价值，维持原 apiKey gate（不在无 key 默认路径平白启用）。
  */
-export function intelligenceProvidesEmbeddings(config: AppConfig): boolean {
-  const { provider, apiKey } = config.intelligence;
+/** 单档 provider 是否能提供 embedding（凭据齐备时）。 */
+function providerProvidesEmbeddings(provider: string, apiKey?: string): boolean {
   switch (provider) {
     case 'ollama': return true;
     case 'anthropic': return false; /* Anthropic 无 embedding 接口 */
@@ -621,6 +633,15 @@ export function intelligenceProvidesEmbeddings(config: AppConfig): boolean {
     case 'mock': return Boolean(apiKey);
     default: return Boolean(apiKey);
   }
+}
+
+export function intelligenceProvidesEmbeddings(config: AppConfig): boolean {
+  const { provider, apiKey, fallbacks } = config.intelligence;
+  /* ADR-0047 D2：主 provider 或**任一 fallback** 能提供 embedding 即视为可用——
+   * 否则配 anthropic 主 + ollama fallback 时，embed 注入会在构造前被误关，
+   * router 内部的 embed 降级形同虚设（Codex D2 复审）。 */
+  if (providerProvidesEmbeddings(provider, apiKey)) return true;
+  return fallbacks.some((f) => providerProvidesEmbeddings(f.provider, f.apiKey));
 }
 
 /** 从环境变量读取配置（CHRONO_ 前缀） */

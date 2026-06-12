@@ -126,6 +126,7 @@ export class MemoryFacade {
       embeddingModel: this.config.intelligence.embeddingModel,
       apiKey: this.config.intelligence.apiKey,
       baseUrl: this.config.intelligence.baseUrl,
+      fallbacks: this.config.intelligence.fallbacks,
       maxTokens: this.config.intelligence.maxTokens,
       temperature: this.config.intelligence.temperature,
       tokenBudget: this.tokenBudget,

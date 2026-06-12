@@ -74,6 +74,8 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         embed_errors: llmMetrics.embedErrors,
         embed_latency_ms: llmLatencyPercentiles(llmMetrics.embedLatencyMs),
         total_tokens_consumed: llmMetrics.totalTokensConsumed,
+        /* ADR-0047 D2：主 provider 不可用→降级到下一档的次数。 */
+        fallbacks: llmMetrics.fallbacks,
         safety: {
           input_checks: safetyMetrics.inputChecks,
           input_blocked: safetyMetrics.inputBlocked,
@@ -262,6 +264,9 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     lines.push('# HELP chrono_llm_tokens_consumed_total LLM token 消耗总量');
     lines.push('# TYPE chrono_llm_tokens_consumed_total counter');
     lines.push(`chrono_llm_tokens_consumed_total ${llmMetrics.totalTokensConsumed}`);
+    lines.push('# HELP chrono_llm_fallbacks_total LLM provider 降级次数（ADR-0047 D2，主不可用→下一档）');
+    lines.push('# TYPE chrono_llm_fallbacks_total counter');
+    lines.push(`chrono_llm_fallbacks_total ${llmMetrics.fallbacks}`);
 
     const queueBacklog = metricsService.getQueueBacklog();
     lines.push('# HELP chrono_queue_backlog 任务队列积压');

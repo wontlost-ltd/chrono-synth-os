@@ -175,22 +175,30 @@ ADR-0047 把"语言能力"分三档，**精度内核与语言皮肤解耦**：
 （如 `http://localhost:11434`），数字人的 growth 模式即用本地小模型而非云端 LLM——离线、零
 云成本、数据不出本机。
 
-### 4.3 缺口（尚未实现，需产品决策）
+### 4.3 自动分层降级链（ADR-0047 D2，已实现）
 
-**`ModelRouter` 当前是单 provider**（`model-router.ts:113` `this.provider` 是单值，`switch` 选
-单分支），**没有自动的"云不可用 → 降级本地 Ollama → 再降级确定性档1"链式回退**。
+**`ModelRouter` 现支持有序 provider 链**（`model-router.ts` `fallbacks` + `dispatchWithFallback`）：
+主 provider 因**可用性失败**（网络/超时/5xx/能力缺失）时，按顺序降级到下一档；典型配置
+`provider:'anthropic'`（云）+ `fallbacks:[{provider:'ollama', baseUrl:'http://localhost:11434'}]`
+（本地）。
 
-也就是说：今天可以**显式选** Ollama，但还不能**自动分层降级**（cloud → local → deterministic）。
-这是 ADR-0047 的 D2「三层路由语义」遗留项——它影响用户可见的失败语义（部分场景该用本地补，
-部分该直接走确定性），需要产品先定策略（见 [[adr-deferred-items-progress]]）。
+降级策略（最优实现）：
+1. **链式尝试** `[主, ...fallbacks]`，每档自带 provider/model/凭据/端点（云端用云 key、本地用
+   本地 url，互不共享）。`dispatchWithFallback` 仅在可用性失败时降级。
+2. **主动拒绝不降级**：安全拒绝（`ValidationError`）/ 预算·配额耗尽（`QuotaExceededError`）是
+   **有意结果**，换 provider 也该被拒——`isAvailabilityError` 判定这两类直接抛出，不降级（否则
+   降级会绕过策略）。
+3. **安全/预算/配额只在主路径消费一次**，子路由（fallback）精简、不重复扣费、无递归。
+4. **确定性档1 不在 ModelRouter 内**：全链 LLM 都失败 → 抛错，由调用方落到确定性档
+   （`decision-engine` → `RuleEngine`，对话 → `offline-conversation-responder`）。所以**最坏情况
+   永远 fallback 到确定性，决策不失精度**。
+5. 降级次数计入 `llmMetrics.fallbacks` 可观测。
 
-**要补的话**（建议实现，未实现）：
-1. `ModelRouter` 支持有序 provider 链（`[anthropic, ollama]`），云端 timeout/error → 自动切本地。
-2. 本地也不可用 → 决策走 autonomous 确定性内核、对话走 offline-conversation-responder（档1）。
-3. 每档产出标 `confidence`（档3 > 档2 > 档1），供 `confidence-calibrator` 与前端预期管理用。
+配置：`intelligence.fallbacks: [{ provider, model, baseUrl?, apiKey?, embeddingModel? }]`
+（`src/config/schema.ts`）。空数组 = 不降级（保持单 provider 行为不变，向后兼容）。
 
-> 当前安全姿态是对的：**最坏情况永远 fallback 到档1 确定性**（决策不失精度），只是中间档2
-> 还需手动配置而非自动接管。
+> 三档完整闭环：**云端 LLM（档3）→ 本地 Ollama（档2）→ 确定性内核（档1）自动逐级降级**，
+> 任一层失败自动落到下一层，最坏永远是确定性，既不中断服务又不失决策精度。
 
 ---
 
