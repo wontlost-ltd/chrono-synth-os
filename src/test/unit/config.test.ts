@@ -56,6 +56,22 @@ describe('配置系统', () => {
       assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'anthropic', apiKey: 'sk-ant' } })), false);
     });
 
+    it('anthropic 主 + ollama fallback → true（ADR-0047 D2：任一档能 embedding 即可用，不被提前关）', () => {
+      const config = loadConfig({ intelligence: {
+        provider: 'anthropic', apiKey: 'sk-ant',
+        fallbacks: [{ provider: 'ollama', model: 'llama3', baseUrl: 'http://localhost:11434' }],
+      } });
+      assert.equal(intelligenceProvidesEmbeddings(config), true, 'fallback 有 ollama → embed 注入不应被关');
+    });
+
+    it('anthropic 主 + 也无 embedding 的 fallback（anthropic）→ 仍 false', () => {
+      const config = loadConfig({ intelligence: {
+        provider: 'anthropic', apiKey: 'sk-ant',
+        fallbacks: [{ provider: 'anthropic', model: 'claude-y', apiKey: 'sk-ant2' }],
+      } });
+      assert.equal(intelligenceProvidesEmbeddings(config), false, '无任何档能 embedding → false');
+    });
+
     it('mock 维持原行为（按 apiKey gate）：无 key → false', () => {
       assert.equal(intelligenceProvidesEmbeddings(loadConfig({ intelligence: { provider: 'mock' } })), false);
     });

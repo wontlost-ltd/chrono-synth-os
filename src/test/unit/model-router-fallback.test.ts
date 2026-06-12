@@ -128,4 +128,24 @@ describe('ModelRouter 分层降级链（ADR-0047 D2）', () => {
     await assert.rejects(() => single.chat([{ role: 'user', content: 'q' }]));
     assert.equal(llmMetrics.fallbacks, 0, '无 fallback 不降级');
   });
+
+  it('成本归因按实际服务档：降级到 ollama 后 record 记 ollama/llama3 而非主 anthropic（Codex 复审）', async () => {
+    const recorded: Array<{ provider: string; model: string }> = [];
+    const record = (_t: string, provider: string, model: string): void => { recorded.push({ provider, model }); };
+    type CT = ConstructorParameters<typeof ModelRouter>[0]['costTracker'];
+    const spyTracker = { record } as unknown as CT;
+    const router = new ModelRouter({
+      provider: 'anthropic', model: 'claude-x', embeddingModel: 'text-embedding-3-small',
+      apiKey: 'k', baseUrl: 'https://api.anthropic.com', costTracker: spyTracker,
+      fallbacks: [{ provider: 'ollama', model: 'llama3', baseUrl: 'http://localhost:11434' }],
+    });
+    behaviors = {
+      'api.anthropic.com': { status: 503, json: {} },
+      'localhost:11434': { status: 200, json: { message: { content: 'ok' } } },
+    };
+    await router.chat([{ role: 'user', content: 'hi' }]);
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0].provider, 'ollama', '成本应记实际服务的 ollama，不是主 anthropic');
+    assert.equal(recorded[0].model, 'llama3');
+  });
 });

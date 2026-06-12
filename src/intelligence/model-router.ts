@@ -209,13 +209,16 @@ export class ModelRouter implements LLMProvider {
     }
 
     let response: ChatResponse;
+    let servedBy: ModelRouter;
     const chatStart = performance.now();
     llmMetrics.chatCalls++;
     try {
       /* ADR-0047 D2：沿降级链 [主, ...fallbacks] 尝试，仅可用性失败时降级（见 dispatchWithFallback）。 */
-      response = await this.dispatchWithFallback(
+      const out = await this.dispatchWithFallback(
         (r) => r.dispatchChatOnce(messages, options),
       );
+      response = out.result;
+      servedBy = out.servedBy;
     } catch (err) {
       llmMetrics.chatErrors++;
       recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
@@ -223,17 +226,17 @@ export class ModelRouter implements LLMProvider {
     }
     recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
 
-    /* 输出安全验证：清理敏感信息泄露 */
-    if (this.provider !== 'mock') {
+    /* 输出安全验证：清理敏感信息泄露。按实际服务档判定 mock（mock 不清理）。 */
+    if (servedBy.provider !== 'mock') {
       response = validateOutput(response);
     }
 
-    /* 记录成本 */
+    /* 记录成本：按**实际服务的档**归因 provider/model（Codex D2 复审：降级时不再误记主 provider）。 */
     if (this.costTracker) {
       this.costTracker.record(
         this.tenantId,
-        this.provider,
-        this.model,
+        servedBy.provider,
+        servedBy.model,
         response.usage?.inputTokens ?? 0,
         response.usage?.outputTokens ?? 0,
       );
@@ -282,12 +285,15 @@ export class ModelRouter implements LLMProvider {
     }
 
     let embeddings: number[][];
+    let servedBy: ModelRouter;
     const embedStart = performance.now();
     llmMetrics.embedCalls++;
     try {
       /* ADR-0047 D2：embed 同样沿降级链。anthropic 无 embed 能力会抛错→降级到有 embed 的下一档
        * （如 ollama），这正是分层降级要解决的「主 provider 此能力不可用」。 */
-      embeddings = await this.dispatchWithFallback((r) => r.dispatchEmbedOnce(texts));
+      const out = await this.dispatchWithFallback((r) => r.dispatchEmbedOnce(texts));
+      embeddings = out.result;
+      servedBy = out.servedBy;
     } catch (err) {
       llmMetrics.embedErrors++;
       recordLlmLatency(llmMetrics.embedLatencyMs, performance.now() - embedStart);
@@ -295,8 +301,9 @@ export class ModelRouter implements LLMProvider {
     }
     recordLlmLatency(llmMetrics.embedLatencyMs, performance.now() - embedStart);
 
+    /* 成本按实际服务档归因（Codex D2 复审）。 */
     if (this.costTracker) {
-      this.costTracker.record(this.tenantId, this.provider, this.embeddingModel, estimatedTokens, 0);
+      this.costTracker.record(this.tenantId, servedBy.provider, servedBy.embeddingModel, estimatedTokens, 0);
     }
     if (this.tokenBudget) this.tokenBudget.recordUsage(this.tenantId, estimatedTokens);
     if (estimatedTokens > 0) llmMetrics.totalTokensConsumed += estimatedTokens;
@@ -329,12 +336,15 @@ export class ModelRouter implements LLMProvider {
    * **主动拒绝**（安全拒绝 / 预算·配额耗尽）立即抛出，不降级（那是有意拒绝，非不可用）。
    * 全链失败抛最后一个错误，由调用方落到确定性档。
    */
-  private async dispatchWithFallback<T>(op: (router: ModelRouter) => Promise<T>): Promise<T> {
+  private async dispatchWithFallback<T>(
+    op: (router: ModelRouter) => Promise<T>,
+  ): Promise<{ result: T; servedBy: ModelRouter }> {
     const chain: readonly ModelRouter[] = [this, ...this.fallbackRouters];
     let lastErr: unknown;
     for (let i = 0; i < chain.length; i++) {
       try {
-        return await op(chain[i]);
+        /* servedBy = 实际成功响应的那档，供成本/用量按真实 provider 归因（Codex D2 复审）。 */
+        return { result: await op(chain[i]), servedBy: chain[i] };
       } catch (err) {
         lastErr = err;
         /* 主动拒绝不降级：安全拒绝 / 预算·配额耗尽是有意结果，换 provider 也该拒。 */
