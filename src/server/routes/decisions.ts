@@ -95,6 +95,7 @@ export function registerDecisionRoutes(
       embeddingModel: config.intelligence.embeddingModel,
       apiKey: config.intelligence.apiKey,
       baseUrl: config.intelligence.baseUrl,
+      fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
       temperature: config.intelligence.temperature,
       tokenBudget,

@@ -25,7 +25,21 @@ export const llmMetrics = {
   embedErrors: 0,
   embedLatencyMs: [] as number[],
   totalTokensConsumed: 0,
+  /** ADR-0047 D2：降级链命中次数（主 provider 不可用→降级到下一档的次数）。 */
+  fallbacks: 0,
 };
+
+/**
+ * 是否「可用性失败」（应触发降级）。ADR-0047 D2：
+ * 网络/超时/5xx/能力缺失（如 anthropic 无 embed）= 可用性失败 → 降级到下一档。
+ * 但**主动拒绝**不算——安全拒绝（ValidationError）与预算·配额耗尽（QuotaExceededError）是有意
+ * 结果，换 provider 也该被拒，降级反而绕过策略，故这两类直接抛出不降级。
+ */
+function isAvailabilityError(err: unknown): boolean {
+  if (err instanceof ValidationError) return false;
+  if (err instanceof QuotaExceededError) return false;
+  return true;
+}
 
 const LLM_LATENCY_SAMPLES = 1024;
 
@@ -34,12 +48,33 @@ function recordLlmLatency(arr: number[], ms: number): void {
   arr.push(ms);
 }
 
+/**
+ * 降级链中的一档 provider 规格（ADR-0047 D2）。每一档自带 provider/model/凭据/端点——
+ * 云端档用云 key+url，本地档（ollama）用本地 url+本地模型，互不共享凭据。
+ */
+export interface FallbackSpec {
+  readonly provider: LLMProviderName;
+  readonly model: string;
+  readonly embeddingModel?: string;
+  readonly apiKey?: string;
+  readonly baseUrl?: string;
+}
+
 export interface ModelRouterConfig {
   readonly provider: LLMProviderName;
   readonly model: string;
   readonly embeddingModel: string;
   readonly apiKey?: string;
   readonly baseUrl?: string;
+  /**
+   * 自动分层降级链（ADR-0047 D2）：主 provider 因**可用性失败**（网络/超时/5xx）时，
+   * 按顺序尝试下一档（典型：[云端 anthropic] → fallbacks:[本地 ollama]）。
+   * **不**在「主动拒绝」（安全拒绝 / 预算·配额耗尽）时降级——那是有意拒绝，不是不可用。
+   * 安全检查与预算·配额只在主路径消费一次，不随降级重复扣。
+   * 全链失败 → 抛错，由调用方落到确定性档（decision-engine→RuleEngine /
+   * offline-conversation-responder），这一档不在 ModelRouter 内。
+   */
+  readonly fallbacks?: readonly FallbackSpec[];
   readonly maxTokens?: number;
   readonly temperature?: number;
   readonly timeoutMs?: number;
@@ -108,6 +143,12 @@ export class ModelRouter implements LLMProvider {
   private readonly stripeConfig?: AppConfig;
   private readonly stripeCustomerId?: string;
   private readonly billingOutbox?: BillingOutbox;
+  /**
+   * 降级链子路由器（ADR-0047 D2）。每档一个**精简** ModelRouter：仅承担 provider 调度
+   * （chat/embed 的 switch），不带 budget/quota/billing——那些只在主路由消费一次，子路由
+   * 不重复扣。子路由自身 fallbacks 为空，避免递归链。
+   */
+  private readonly fallbackRouters: readonly ModelRouter[];
 
   constructor(config: ModelRouterConfig) {
     this.provider = config.provider;
@@ -126,6 +167,19 @@ export class ModelRouter implements LLMProvider {
     this.stripeConfig = config.stripeConfig;
     this.stripeCustomerId = config.stripeCustomerId;
     this.billingOutbox = config.billingOutbox;
+    /* 为每档 fallback 建一个精简子路由（无 budget/quota/billing/fallbacks，避免重复扣与递归）。
+     * 子路由沿用主路由的 maxTokens/temperature/timeout（除非 spec 覆盖 model/凭据/端点）。 */
+    this.fallbackRouters = (config.fallbacks ?? []).map((spec) => new ModelRouter({
+      provider: spec.provider,
+      model: spec.model,
+      embeddingModel: spec.embeddingModel ?? config.embeddingModel,
+      apiKey: spec.apiKey,
+      baseUrl: spec.baseUrl,
+      maxTokens: config.maxTokens,
+      temperature: config.temperature,
+      timeoutMs: config.timeoutMs,
+      tenantId: config.tenantId,
+    }));
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
@@ -158,13 +212,10 @@ export class ModelRouter implements LLMProvider {
     const chatStart = performance.now();
     llmMetrics.chatCalls++;
     try {
-      switch (this.provider) {
-        case 'openai': response = await this.chatOpenAI(messages, options); break;
-        case 'anthropic': response = await this.chatAnthropic(messages, options); break;
-        case 'ollama': response = await this.chatOllama(messages, options); break;
-        case 'mock': response = await this.chatMock(messages, options); break;
-        default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
-      }
+      /* ADR-0047 D2：沿降级链 [主, ...fallbacks] 尝试，仅可用性失败时降级（见 dispatchWithFallback）。 */
+      response = await this.dispatchWithFallback(
+        (r) => r.dispatchChatOnce(messages, options),
+      );
     } catch (err) {
       llmMetrics.chatErrors++;
       recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
@@ -234,13 +285,9 @@ export class ModelRouter implements LLMProvider {
     const embedStart = performance.now();
     llmMetrics.embedCalls++;
     try {
-      switch (this.provider) {
-        case 'openai': embeddings = await this.embedOpenAI(texts); break;
-        case 'ollama': embeddings = await this.embedOllama(texts); break;
-        case 'mock': embeddings = texts.map(t => hashVector(t)); break;
-        case 'anthropic': throw new Error('Anthropic 不支持嵌入接口');
-        default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
-      }
+      /* ADR-0047 D2：embed 同样沿降级链。anthropic 无 embed 能力会抛错→降级到有 embed 的下一档
+       * （如 ollama），这正是分层降级要解决的「主 provider 此能力不可用」。 */
+      embeddings = await this.dispatchWithFallback((r) => r.dispatchEmbedOnce(texts));
     } catch (err) {
       llmMetrics.embedErrors++;
       recordLlmLatency(llmMetrics.embedLatencyMs, performance.now() - embedStart);
@@ -273,6 +320,54 @@ export class ModelRouter implements LLMProvider {
     }
 
     return embeddings;
+  }
+
+  /* ─────────────── ADR-0047 D2：分层降级链 ─────────────── */
+
+  /**
+   * 沿降级链 [this, ...fallbackRouters] 依次尝试 op，仅在**可用性失败**时降级到下一档；
+   * **主动拒绝**（安全拒绝 / 预算·配额耗尽）立即抛出，不降级（那是有意拒绝，非不可用）。
+   * 全链失败抛最后一个错误，由调用方落到确定性档。
+   */
+  private async dispatchWithFallback<T>(op: (router: ModelRouter) => Promise<T>): Promise<T> {
+    const chain: readonly ModelRouter[] = [this, ...this.fallbackRouters];
+    let lastErr: unknown;
+    for (let i = 0; i < chain.length; i++) {
+      try {
+        return await op(chain[i]);
+      } catch (err) {
+        lastErr = err;
+        /* 主动拒绝不降级：安全拒绝 / 预算·配额耗尽是有意结果，换 provider 也该拒。 */
+        if (!isAvailabilityError(err)) throw err;
+        /* 可用性失败且还有下一档 → 记一次降级并继续；否则下面抛出。 */
+        if (i < chain.length - 1) {
+          llmMetrics.fallbacks++;
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  /** 纯 provider 调度（chat）：无 budget/safety/billing，仅 switch。供降级链每档调用。 */
+  private async dispatchChatOnce(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
+    switch (this.provider) {
+      case 'openai': return this.chatOpenAI(messages, options);
+      case 'anthropic': return this.chatAnthropic(messages, options);
+      case 'ollama': return this.chatOllama(messages, options);
+      case 'mock': return this.chatMock(messages, options);
+      default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
+    }
+  }
+
+  /** 纯 provider 调度（embed）。anthropic 无 embed 能力，抛错触发降级。 */
+  private async dispatchEmbedOnce(texts: readonly string[]): Promise<number[][]> {
+    switch (this.provider) {
+      case 'openai': return this.embedOpenAI(texts);
+      case 'ollama': return this.embedOllama(texts);
+      case 'mock': return texts.map(t => hashVector(t));
+      case 'anthropic': throw new Error('Anthropic 不支持嵌入接口');
+      default: throw new Error(`不支持的 LLM 提供商: ${this.provider}`);
+    }
   }
 
   private async chatOpenAI(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
