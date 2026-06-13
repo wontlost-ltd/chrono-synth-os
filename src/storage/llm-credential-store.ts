@@ -77,8 +77,9 @@ export function tryByokEncryption(encryptionConfig: ConstructorParameters<typeof
 
 /**
  * 解析 ModelRouter 构造该用的 api key（BYOK）：优先本租户该 provider 的加密 key，
- * 缺失则回退全局 config 的 key（向后兼容）。加密未启用或无 store 时直接返回 fallback。
- * 任一步异常都安全回退 fallback（不让 key 解析故障阻塞决策/对话主流程）。
+ * 缺失则回退全局 config 的 key（向后兼容）。加密未启用时直接返回 fallback。
+ * **fail-closed**（Codex 复审）：有 BYOK row 但解密失败 → **抛错**（不静默回退平台 key）。
+ * 调用方（ModelRouter 构造处）若需对坏 row 优雅降级，应自行 try/catch。
  */
 export function resolveLlmApiKey(
   tx: SyncWriteUnitOfWork,
@@ -94,4 +95,24 @@ export function resolveLlmApiKey(
    * 无 row → 回退全局（合法兼容）；有 row 但解密失败 → **抛错**，绝不静默改用平台 key
    * （否则用户以为用自己的 key 实际走平台 key，计费/合规/审计风险）。 */
   return store.get(provider) ?? configFallback;
+}
+
+/**
+ * resolveLlmApiKey 的**启动期安全变体**（Codex BYOK 复审）：用于 app 初始化时构造的默认租户 router。
+ * 解密失败时回退全局 config 而非抛错——避免一个坏的默认租户 BYOK row 阻断**整个 app 启动**。
+ * 请求期路由仍用严格的 resolveLlmApiKey（fail-closed，坏 key 让该请求报错而非静默用平台 key）。
+ */
+export function resolveLlmApiKeyAtStartup(
+  tx: SyncWriteUnitOfWork,
+  tenantId: string,
+  provider: string,
+  encryption: FieldEncryption | undefined,
+  configFallback: string | undefined,
+): string | undefined {
+  try {
+    return resolveLlmApiKey(tx, tenantId, provider, encryption, configFallback);
+  } catch {
+    /* 启动期坏 row：退回全局 config，不阻断 boot（请求期会用严格版重新解析 per-tenant）。 */
+    return configFallback;
+  }
 }

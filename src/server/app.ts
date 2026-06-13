@@ -105,7 +105,7 @@ import { registerConversationRoutes } from './routes/conversation.js';
 import { registerDistillationRoutes } from './routes/distillation.js';
 import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
-import { resolveLlmApiKey, tryByokEncryption } from '../storage/llm-credential-store.js';
+import { resolveLlmApiKeyAtStartup, tryByokEncryption } from '../storage/llm-credential-store.js';
 import { resolveTargetValueForCategory } from '../intelligence/earning-value-resolver.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
 import { CostTracker as ConversationCostTracker } from '../intelligence/cost-tracker.js';
@@ -357,7 +357,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       model: config.intelligence.model,
       embeddingModel: config.intelligence.embeddingModel,
       /* BYOK：app-init 默认租户 router——优先默认租户的加密 key，缺失回退全局 config。 */
-      apiKey: resolveLlmApiKey(db, 'default', config.intelligence.provider, byokEncryption, config.intelligence.apiKey),
+      apiKey: resolveLlmApiKeyAtStartup(db, 'default', config.intelligence.provider, byokEncryption, config.intelligence.apiKey),
       baseUrl: config.intelligence.baseUrl,
       fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
@@ -446,7 +446,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     model: config.intelligence.model,
     embeddingModel: config.intelligence.embeddingModel,
     /* BYOK：默认租户对话 router——优先默认租户的加密 key，缺失回退全局 config。 */
-    apiKey: resolveLlmApiKey(db, 'default', config.intelligence.provider, conversationByokEncryption, config.intelligence.apiKey),
+    apiKey: resolveLlmApiKeyAtStartup(db, 'default', config.intelligence.provider, conversationByokEncryption, config.intelligence.apiKey),
     baseUrl: config.intelligence.baseUrl,
     fallbacks: config.intelligence.fallbacks,
     maxTokens: config.intelligence.maxTokens,
