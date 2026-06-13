@@ -48,6 +48,8 @@ const TENANT_TABLES = [
   /* ADR-0047/0048：蒸馏工件、并发租约、响应模板、规则均为 tenant/persona 数据，须随租户导出/擦除 */
   'distilled_artifacts', 'persona_leases', 'response_templates', 'persona_rules',
   /* GDPR 补齐（A 类：标准业务/配置/派生数据，无敏感凭证列，无保留义务） */
+  /* tenant_llm_settings：BYOK active provider 偏好，非 secret 配置（key 在 llm_provider_credentials B 类） */
+  'tenant_llm_settings',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',
