@@ -118,6 +118,13 @@ const RELATED_TABLES: Array<{
     params: (t) => [t],
   },
   {
+    /* llm_provider_credentials.api_key_encrypted 是 BYOK 密钥密文，导出省略，仅导出元数据（BYOK）*/
+    name: 'llm_provider_credentials',
+    exportSql: 'SELECT tenant_id, provider, created_by, created_at, updated_at FROM llm_provider_credentials WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM llm_provider_credentials WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
     /* tool_permissions.revocation_key 是带外撤销 bearer，导出省略 */
     name: 'tool_permissions',
     exportSql: 'SELECT id, tenant_id, persona_id, tool_id, scope, constraints_json, granted_by, granted_at, expires_at, revoked_at, revocation_reason FROM tool_permissions WHERE tenant_id = ?',

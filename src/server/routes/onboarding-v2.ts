@@ -15,6 +15,7 @@ import type { OrganizationService } from '../../enterprise/organization-service.
 import { OnboardingV2Service } from '../../onboarding/onboarding-v2-service.js';
 import { ToolPermissionService } from '../../agent/tool-permission-service.js';
 import { ValidationError, ErrorCode } from '../../errors/index.js';
+import { LlmCredentialStore, tryByokEncryption } from '../../storage/llm-credential-store.js';
 import {
   OnboardingV2StartSchema,
   OnboardingV2OrganizationSchema,
@@ -33,6 +34,9 @@ export function registerOnboardingV2Routes(
 ): void {
   const service = new OnboardingV2Service(db);
   const permissions = new ToolPermissionService(db);
+  /* BYOK：加密落 llmApiKey（明文绝不持久化）。加密不可用（未启用/key 非法）则不落库，
+   * 用户改在 Settings 重填——绝不明文落库，绝不因 key 解析阻塞 onboarding。 */
+  const encryption = tryByokEncryption(config.encryption);
 
   /** 取调用方 userId。JWT 模式下从 request.user.sub 取；否则用 tenant fallback。 */
   function requireUserId(request: { user?: { sub?: string }; tenantId: string }): string {
@@ -114,12 +118,13 @@ export function registerOnboardingV2Routes(
       now,
     );
 
-    /* TODO(W2.1 Step 2 follow-up): 接 tenant-KMS envelope 流程
-     * 加密存储 llmApiKey 到 user_oauth_tokens 或 agent_credentials 表。
-     * 当前 PR 范围内仅承认 provider 选择，不持久化 key —— 用户
-     * 在 Settings → Secrets 中重新填一次即可。 */
-    void body.llmProvider;
-    void body.llmApiKey;
+    /* BYOK：加密落库 llmApiKey（明文绝不持久化）。同租户同 provider 覆盖更新；
+     * ModelRouter 构造时优先取本租户 key，缺失回退全局 config。
+     * 加密不可用（encryption=undefined）则跳过——绝不明文落库。 */
+    if (encryption && body.llmProvider && body.llmApiKey) {
+      new LlmCredentialStore(db, encryption, request.tenantId)
+        .store(body.llmProvider, body.llmApiKey, userId, now);
+    }
 
     const session = service.recordAgentStep(body.sessionId, request.tenantId, agentId);
     return reply.send({ data: { session, agentId } });

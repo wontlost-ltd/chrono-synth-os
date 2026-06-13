@@ -93,4 +93,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v081_persona_leases', aliases: { postgres: 'v083', 'sqlite-sql': 'v081' }, classification: 'schema-simple', notes: 'ADR-0047/0048: per-persona concurrency lease (earning + compile)' },
   { canonical: 'v082_response_templates', aliases: { postgres: 'v084', 'sqlite-sql': 'v082' }, classification: 'schema-simple', notes: 'ADR-0047: durable versioned response templates (replaces decaying procedural memory)' },
   { canonical: 'v083_persona_rules', aliases: { postgres: 'v085', 'sqlite-sql': 'v083' }, classification: 'schema-simple', notes: 'ADR-0047: durable versioned persona rules for rule-engine adjustments' },
+  { canonical: 'v084_llm_provider_credentials', aliases: { postgres: 'v086', 'sqlite-sql': 'v084' }, classification: 'schema-simple', notes: 'BYOK: encrypted per-tenant LLM provider API keys' },
 ];
