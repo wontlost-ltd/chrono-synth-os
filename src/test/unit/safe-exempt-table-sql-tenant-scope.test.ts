@@ -15,6 +15,20 @@
  *
  * allowlist 用「表名 + 规范化 SQL 指纹」做键（不随行号漂移）；SQL 内容改了才需重新登记，
  * 符合「内容变了重新审」。指纹来源经 #124 复审与逐路径核验（见上述审计报告）。
+ *
+ * 已知边界（本 ratchet 是 SQL 层「存在性」防线，非完整 SQL 静态分析器；以下形态超出扫描范围，
+ * 由 tenant-database-isolation-coverage 审计 + 人工 code review 兜底）：
+ *   1. 跨字面量拼接构造的 SQL（`'SELECT ...' + tableVar + 'WHERE ...'`）——本库约定「一条 SQL
+ *      一个完整字面量/模板」，无拼接先例；扫描以单字面量为单位，不重组拼接片段。
+ *   2. 动态表名（`FROM ${table}`）——表名非字面量无法静态判定具体表；现存动态点仅 privacy-service
+ *      的 GDPR 泛型擦除/导出（表名取自固定 TENANT_TABLES allowlist 且同串带 tenant_id）与 app.ts
+ *      pruneTable（全局 TTL 清理），均已核验安全。
+ *   3. 谓词位置：本 ratchet 检查「同串存在 tenant_id」作为强信号，不解析 tenant_id 是否恰为 WHERE
+ *      隔离谓词（区分 INSERT 列名 / WHERE 谓词 / ON CONFLICT 需 SQL parser，过度工程）；
+ *      「SELECT tenant_id 列但不按它过滤」这类罕见伪形态由 code review 兜底。
+ *   4. 固有边界：ratchet 只看 SQL 文本、不看调用方传参——同一条「合法全局」裸 SQL 若未来被新的
+ *      tenant-facing route 复用，SQL 指纹不变故本测试不会红；调用约定的破坏由 isolation 审计兜底。
+ *   注：normalizeSql 会剥离 SQL 注释，故 `/* tenant_id *​/` 之类注释无法伪造 tenant_id 命中。
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -142,9 +156,14 @@ const ALLOWED_GLOBAL_SQL: readonly AllowedGlobalSql[] = [
     reason: '协作流程从全局 simulation id 反查所属 tenant，再做 share 鉴权' },
 ];
 
-/** 规范化 SQL 指纹：去 SQL 注释、折叠空白、小写、去首尾空白与尾分号。 */
+/**
+ * 规范化 SQL 指纹：先剥离 SQL 注释（块 `/* *​/` 与行 `--`），再折叠空白、小写、去尾分号。
+ * 剥离注释是必须的——否则可用 `/* tenant_id *​/` 注释伪造 tenant_id 命中绕过 ratchet。
+ */
 function normalizeSql(sql: string): string {
   return sql
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')   // 块注释 /* ... */
+    .replace(/--[^\n]*/g, ' ')           // 行注释 -- ...
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/;\s*$/, '')
