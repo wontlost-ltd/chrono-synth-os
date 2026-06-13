@@ -15,3 +15,11 @@ export { SyncOutbox, classifyOpKind, type OutboxEntry, type ChangeClass } from '
 export {
   resolveConflict, resolveConflictsByTarget, toChangeRef, type ChangeRef, type Resolution,
 } from './sync/conflict.js';
+
+/* Edge-P4：离线成长队列 + teacher job 编排。 */
+export {
+  GrowthJobQueue, type GrowthJob, type GrowthJobKind, type GrowthJobStatus,
+} from './growth/growth-queue.js';
+export {
+  TeacherJobRunner, type TeacherFn, type TeacherOutcome, type RunSummary,
+} from './growth/teacher-job-runner.js';
