@@ -66,7 +66,8 @@ export class PerceptionDistiller {
 
   /**
    * 感知一次：老师分析 → 校验 → 沉淀事实记忆 + memory_edge/身份候选过门。
-   * 失败安全降级为空结果。
+   * 老师调用失败（analyze 抛错/空表征/畸形）降级为空结果；记忆写入/蒸馏门基础设施失败按常规抛出
+   * （见文件头不变量 4）。
    */
   async perceive(input: PerceptionDistillInput): Promise<PerceptionDistillResult> {
     const analysis = await this.analyzeSafe(input.media);

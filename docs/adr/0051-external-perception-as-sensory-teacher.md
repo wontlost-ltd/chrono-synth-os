@@ -28,8 +28,9 @@
 
 **多模态模型是「感官老师」（sensory teacher），不是人格的运行时感官。** 它只在
 **摄取/成长阶段**被调用一次，把音视频翻译成结构化感知分析；该分析**整体视为不可信**，
-经硬校验后才可能沉淀为记忆/成长候选，绝不直接进确定性核。运行时人格仍只依赖已沉淀的
-记忆/规则/确定性状态——对话引用感知记忆时**不再调用**多模态老师。
+经硬校验后才可能沉淀为记忆/成长候选，**绝不自动改身份核**（value/narrative/L0-L3/规则模板——
+见下文「不变量」对「核」的精确定义；事实记忆 append 与记忆边链接是自动的）。运行时人格仍只依赖
+已沉淀的记忆/规则/确定性状态——对话引用感知记忆时**不再调用**多模态老师。
 
 这把感知层完全纳入 ADR-0047 已确立的「老师 → 蒸馏门 → 确定性核」范式，与
 `LlmReflectionDistiller` 同构：
@@ -37,7 +38,7 @@
 ```
 媒体表征(transcript/关键帧)  ← 采集层(client/edge)，原始媒体不进业务流
   → PerceptionProvider.analyze()        感官老师，不可信输出
-  → PerceptionDistiller                 硬校验 + 编排（不写核心状态）
+  → PerceptionDistiller                 硬校验 + 编排（不自动改身份核；只 append 事实记忆 + 记忆边）
       ├─ 事实型观察 → memory graph（episodic/semantic 记忆，append-only，低风险）
       └─ 身份层提案 → DistillationService.ingest → core-update-gate
             · value_shift：delta 封顶 0.05 + patternAgrees=false → 必 pending
