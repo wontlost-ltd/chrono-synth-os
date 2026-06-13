@@ -95,4 +95,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v083_persona_rules', aliases: { postgres: 'v085', 'sqlite-sql': 'v083' }, classification: 'schema-simple', notes: 'ADR-0047: durable versioned persona rules for rule-engine adjustments' },
   { canonical: 'v084_llm_provider_credentials', aliases: { postgres: 'v086', 'sqlite-sql': 'v084' }, classification: 'schema-simple', notes: 'BYOK: encrypted per-tenant LLM provider API keys' },
   { canonical: 'v085_tenant_llm_settings', aliases: { postgres: 'v087', 'sqlite-sql': 'v085' }, classification: 'schema-simple', notes: 'BYOK: per-tenant active LLM provider preference' },
+  { canonical: 'v086_perception_media_refs', aliases: { postgres: 'v088', 'sqlite-sql': 'v086' }, classification: 'schema-simple', notes: 'ADR-0052 Edge-P5: perception media reference metadata' },
 ];
