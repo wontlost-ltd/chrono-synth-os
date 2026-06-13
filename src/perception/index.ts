@@ -14,3 +14,6 @@ export { MockPerceptionProvider, type MockPerceptionOptions } from './sources/mo
 export {
   PerceptionDistiller, type PerceptionDistillInput, type PerceptionDistillResult,
 } from './perception-distiller.js';
+
+/* 确定性环境感知旁路（ADR-0052 Edge-P1）。 */
+export * from './environment/index.js';
