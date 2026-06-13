@@ -18,6 +18,8 @@ import type { AutorunRunMetrics } from '../types/avatar-autorun.js';
 import type { PersonaOSState } from '../types/personality-os.js';
 import { compilePersonaState } from '../intelligence/persona-state.js';
 import { computeProjection } from './avatar-projection-engine.js';
+import { LlmReflectionDistiller, type ReflectMemory, type ReflectValue } from '../intelligence/llm-reflection-distiller.js';
+import type { LLMProvider } from '../intelligence/llm-provider.js';
 
 export class AvatarAutorunService {
   constructor(
@@ -32,6 +34,9 @@ export class AvatarAutorunService {
     private readonly knowledgeIngestion: KnowledgeIngestionService,
     private readonly tenantFactory: TenantOSFactory,
     _config: AppConfig,
+    /** 可选 LLM（ADR-0047 growth 档）：注入时 autorun 在确定性反思后额外跑 LLM 反思蒸馏，
+     * 产成长候选过 DistillationService 门。未注入 = 纯确定性成长（向后兼容）。 */
+    private readonly llm?: LLMProvider,
   ) {}
 
   /** 调度器调用：扫描到期配置并入队 */
@@ -130,6 +135,13 @@ export class AvatarAutorunService {
         tenantOS.core.memories,
       );
 
+      /* 3.5 LLM 反思（ADR-0047 growth 档，可选）：确定性反思（runCognitionCycle）已跑，这里用 LLM
+       * 作为「老师」额外反思最近记忆产更丰富候选，过 DistillationService 同一安全门（三重证据门防
+       * 幻觉）。未注入 LLM 则跳过（纯确定性成长，不靠 marketplace 也能长）。失败不影响 autorun 主流程。 */
+      if (this.llm) {
+        await this.runLlmReflection(tenantOS, run.tenantId);
+      }
+
       /* 4. 漂移检测 */
       let driftScore = 0;
       const now = Date.now();
@@ -198,5 +210,31 @@ export class AvatarAutorunService {
     count += styleDiffs.length;
 
     return count > 0 ? totalDiff / count : 0;
+  }
+
+  /**
+   * LLM 反思（ADR-0047 growth 档）：读租户 OS core 的高显著记忆 + 价值 + 叙事，交
+   * LlmReflectionDistiller 产成长候选过蒸馏门。失败仅记日志，不影响 autorun 主流程。
+   * personaId 用 OS core 约定的 'default'（与 learning-benchmark / 收益蒸馏一致）。
+   */
+  private async runLlmReflection(tenantOS: ReturnType<TenantOSFactory['getTenantOS']>, tenantId: string): Promise<void> {
+    try {
+      const state = tenantOS.core.getState();
+      const values: ReflectValue[] = [...state.values.values()].map((v) => ({ id: v.id, label: v.label, weight: v.weight }));
+      /* 高显著记忆优先（反思聚焦「最近最在意的」），脱敏只取 content/salience/valence。 */
+      const memories: ReflectMemory[] = [...state.memories.values()]
+        .sort((a, b) => b.salience - a.salience)
+        .slice(0, 24)
+        .map((m) => ({ id: m.id, content: m.content, salience: m.salience, valence: m.valence }));
+      if (values.length === 0 || memories.length === 0) return;
+
+      const distiller = new LlmReflectionDistiller(tenantOS.distillation, this.llm!, this.logger);
+      const result = await distiller.distill({ personaId: 'default', narrative: state.narrative, values, memories });
+      if (result.candidatesIngested > 0) {
+        this.logger.info('AvatarAutorun', `LLM 反思产 ${result.candidatesIngested} 个成长候选（tenant=${tenantId}）`);
+      }
+    } catch (err) {
+      this.logger.warn('AvatarAutorun', `LLM 反思失败（不影响主流程）: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
