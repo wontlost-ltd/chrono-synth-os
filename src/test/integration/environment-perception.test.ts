@@ -71,7 +71,7 @@ describe('确定性环境信号提取（ADR-0052）', () => {
     assert.equal(ex.extract(window('light', [2, 2])).light?.level, 'dark');
   });
 
-  it('确定性：同输入序列 → 同输出（golden replay）', () => {
+  it('确定性：同输入 → 同输出（单窗 golden）', () => {
     const samples = [
       ...window('light', [100, 48, 30, 200], 1000),
       ...window('sound', [0.01, 0.3, 0.05], 1000),
@@ -81,6 +81,24 @@ describe('确定性环境信号提取（ADR-0052）', () => {
       return JSON.stringify(ex.extract(samples));
     };
     assert.equal(run(), run(), '同输入必须同输出');
+  });
+
+  it('确定性：逐窗序列 replay（含滞回跨窗状态）从同初始态产出相同 level 序列', () => {
+    /* 多窗序列，跨阈值含滞回：normal → 滞回带保持 → dim → bright。 */
+    const sequence = [
+      window('light', [100, 120], 1000),   // normal
+      window('light', [48, 48], 3000),     // 滞回带 → 保持 normal
+      window('light', [30, 30], 5000),     // 出带 → dim
+      window('light', [500, 500], 7000),   // 跨档 → bright
+    ];
+    const replay = () => {
+      const ex = new EnvironmentSignalExtractor();
+      return sequence.map((w) => ex.extract(w).light!.level);
+    };
+    const a = replay();
+    const b = replay();
+    assert.deepEqual(a, b, '同初始态 + 同窗序列 → 同 level 序列');
+    assert.deepEqual(a, ['normal', 'normal', 'dim', 'bright'], '滞回跨窗行为符合预期');
   });
 
   it('置信度：样本足且波动小 → 高；波动大 → 低', () => {
