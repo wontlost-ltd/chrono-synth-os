@@ -2,7 +2,8 @@
  * 确定性环境信号提取器（ADR-0052 Edge-P1）。
  *
  * 纯确定性 DSP，**零 LLM / 零硬件 / 零外部依赖**：输入一窗传感器时间序列样本，输出离散环境
- * 状态。同输入 → 同输出（golden 可验证，为未来 WASM/MCU 确定性回放打基础）。
+ * 状态。确定性契约精确表述为 `extract = f(lastLevel, samples)`——**同初始滞回状态 + 同输入序列
+ * → 同输出**（滞回带来的跨窗状态依赖是 ④ 的必要特性；golden replay 须从同一初始态或先 reset()）。
  *
  * 算法：
  *   ① 窗口聚合：rolling average / peak / trough。
@@ -76,8 +77,10 @@ export class EnvironmentSignalExtractor {
    */
   extract(samples: readonly EnvironmentSample[]): EnvironmentState {
     const byChannel = groupByChannel(samples);
-    const windowStart = samples.length ? Math.min(...samples.map((s) => s.at)) : 0;
-    const windowEnd = samples.length ? Math.max(...samples.map((s) => s.at)) : 0;
+    /* 时间窗只用 finite 时间戳，防畸形 at（NaN/Inf）污染 windowStart/End。 */
+    const times = samples.map((s) => s.at).filter((t) => Number.isFinite(t));
+    const windowStart = times.length ? Math.min(...times) : 0;
+    const windowEnd = times.length ? Math.max(...times) : 0;
 
     return {
       light: this.channelState('light', byChannel.light, this.light),

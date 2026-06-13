@@ -102,6 +102,28 @@ describe('确定性环境信号提取（ADR-0052）', () => {
     assert.equal(cs.sampleCount, 2, '畸形读数被丢弃');
     assert.equal(cs.average, 110);
   });
+
+  it('畸形时间戳（NaN/Inf at）不污染 windowStart/End', () => {
+    const ex = new EnvironmentSignalExtractor();
+    const state = ex.extract([
+      { channel: 'light', value: 100, at: 1000 },
+      { channel: 'light', value: 110, at: NaN },
+      { channel: 'light', value: 120, at: 5000 },
+    ]);
+    assert.equal(state.windowStart, 1000, 'windowStart 只取 finite at');
+    assert.equal(state.windowEnd, 5000, 'windowEnd 只取 finite at');
+    assert.ok(Number.isFinite(state.windowStart) && Number.isFinite(state.windowEnd));
+  });
+
+  it('空窗 / 单样本窗边界安全', () => {
+    const ex = new EnvironmentSignalExtractor();
+    const empty = ex.extract([]);
+    assert.equal(empty.light, undefined);
+    assert.equal(empty.windowStart, 0);
+    const single = ex.extract(window('motion', [0.5]));
+    assert.equal(single.motion?.level, 'active');
+    assert.equal(single.motion?.sampleCount, 1);
+  });
 });
 
 describe('环境观察沉淀为事实记忆（ADR-0052）', () => {
