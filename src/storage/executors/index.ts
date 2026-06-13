@@ -61,6 +61,7 @@ import { registerResponseTemplateExecutors } from './response-template-executors
 import { registerRuleExecutors } from './rule-executors.js';
 import { registerLlmCredentialExecutors } from './llm-credential-executors.js';
 import { registerTenantLlmSettingsExecutors } from './tenant-llm-settings-executors.js';
+import { registerPerceptionMediaExecutors } from './perception-media-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -96,6 +97,7 @@ import {
   RULE_QUERY_ACTIVE_BY_PERSONA,
   LLMCRED_QUERY_BY_TENANT_PROVIDER,
   TENANT_LLM_SETTINGS_QUERY_BY_TENANT,
+  MEDIA_REF_QUERY_BY_ID,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -163,6 +165,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(RULE_QUERY_ACTIVE_BY_PERSONA)) registerRuleExecutors();
   if (!resolveQueryExecutor(LLMCRED_QUERY_BY_TENANT_PROVIDER)) registerLlmCredentialExecutors();
   if (!resolveQueryExecutor(TENANT_LLM_SETTINGS_QUERY_BY_TENANT)) registerTenantLlmSettingsExecutors();
+  if (!resolveQueryExecutor(MEDIA_REF_QUERY_BY_ID)) registerPerceptionMediaExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

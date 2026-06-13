@@ -127,6 +127,15 @@ const RELATED_TABLES: Array<{
     params: (t) => [t],
   },
   {
+    /* perception_media_refs.object_key 能定位对象存储中的原始媒体（最敏 PII），导出省略 object_key，
+     * 仅导出脱敏元数据（ADR-0052 Edge-P5）。注：擦除只删 DB 引用行；对象存储对象的删除由
+     * MediaRefStore.erase / runMediaRetention 经 ObjectStorageEraser 处理（DB 擦除无法触达对象存储）。 */
+    name: 'perception_media_refs',
+    exportSql: 'SELECT id, tenant_id, sha256, mime, size_bytes, duration_ms, retention_class, delete_after, status, created_at FROM perception_media_refs WHERE tenant_id = ?',
+    deleteSql: 'DELETE FROM perception_media_refs WHERE tenant_id = ?',
+    params: (t) => [t],
+  },
+  {
     /* tool_permissions.revocation_key 是带外撤销 bearer，导出省略 */
     name: 'tool_permissions',
     exportSql: 'SELECT id, tenant_id, persona_id, tool_id, scope, constraints_json, granted_by, granted_at, expires_at, revoked_at, revocation_reason FROM tool_permissions WHERE tenant_id = ?',

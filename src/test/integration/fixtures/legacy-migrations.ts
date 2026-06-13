@@ -955,6 +955,15 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS tenant_llm_settings (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    active_provider TEXT NOT NULL,\n    model TEXT,\n    embedding_model TEXT,\n    base_url TEXT,\n    updated_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id)\n  )"
     ]
+  },
+  {
+    "version": "v086",
+    "description": "ADR-0052 Edge-P5: perception media reference metadata (raw media stays in object storage)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS perception_media_refs (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    object_key TEXT NOT NULL,\n    sha256 TEXT NOT NULL,\n    mime TEXT NOT NULL,\n    size_bytes INTEGER NOT NULL DEFAULT 0,\n    duration_ms INTEGER NOT NULL DEFAULT 0,\n    retention_class TEXT NOT NULL DEFAULT 'process-and-delete',\n    delete_after INTEGER,\n    status TEXT NOT NULL DEFAULT 'pending',\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_tenant ON perception_media_refs(tenant_id)",
+      "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_expiry ON perception_media_refs(delete_after)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1890,6 +1899,15 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "BYOK: per-tenant active LLM provider preference (tenant_llm_settings)",
     "sql": [
       "CREATE TABLE IF NOT EXISTS tenant_llm_settings (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    active_provider TEXT NOT NULL,\n    model TEXT,\n    embedding_model TEXT,\n    base_url TEXT,\n    updated_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id)\n  )"
+    ]
+  },
+  {
+    "version": "v088",
+    "description": "ADR-0052 Edge-P5: perception media reference metadata (raw media stays in object storage)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS perception_media_refs (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    object_key TEXT NOT NULL,\n    sha256 TEXT NOT NULL,\n    mime TEXT NOT NULL,\n    size_bytes BIGINT NOT NULL DEFAULT 0,\n    duration_ms BIGINT NOT NULL DEFAULT 0,\n    retention_class TEXT NOT NULL DEFAULT 'process-and-delete',\n    delete_after BIGINT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_tenant ON perception_media_refs (tenant_id)",
+      "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_expiry ON perception_media_refs (delete_after)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
