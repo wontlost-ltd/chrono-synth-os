@@ -74,6 +74,7 @@ export { v081_persona_leases } from './v081.js';
 export { v082_response_templates } from './v082.js';
 export { v083_persona_rules } from './v083.js';
 export { v084_llm_provider_credentials } from './v084.js';
+export { v085_tenant_llm_settings } from './v085.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -152,6 +153,7 @@ import { v081_persona_leases } from './v081.js';
 import { v082_response_templates } from './v082.js';
 import { v083_persona_rules } from './v083.js';
 import { v084_llm_provider_credentials } from './v084.js';
+import { v085_tenant_llm_settings } from './v085.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -230,4 +232,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v082_response_templates,
   v083_persona_rules,
   v084_llm_provider_credentials,
+  v085_tenant_llm_settings,
 ];

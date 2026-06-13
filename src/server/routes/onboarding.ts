@@ -18,7 +18,9 @@ import { QuestionnaireEngine } from '../../onboarding/questionnaire-engine.js';
 import { DataIngestion } from '../../onboarding/data-ingestion.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
 import { RuleEngine } from '../../intelligence/rule-engine.js';
-import { resolveLlmApiKey, tryByokEncryption } from '../../storage/llm-credential-store.js';
+import { tryByokEncryption } from '../../storage/llm-credential-store.js';
+import { resolveTenantLlmConfig } from '../../storage/tenant-llm-settings-store.js';
+import type { LLMProviderName } from '@chrono/kernel';
 import type { EmbeddingIndex } from '../../intelligence/embedding-index.js';
 import { createEmbeddingIndex } from '../../intelligence/embedding-index-factory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
@@ -110,13 +112,14 @@ export function registerOnboardingRoutes(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId)?.stripe_customer_id ?? undefined
       : undefined;
+    /* BYOK：解析本租户有效 LLM 配置（active provider + 该 provider 的加密 key，缺失回退全局 config）。 */
+    const effectiveLlm = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
     const llm = new ModelRouter({
-      provider: config.intelligence.provider,
-      model: config.intelligence.model,
-      embeddingModel: config.intelligence.embeddingModel,
-      /* BYOK：优先本租户该 provider 的加密 key，缺失回退全局 config。 */
-      apiKey: resolveLlmApiKey(sharedDb, tenantId, config.intelligence.provider, llmEncryption, config.intelligence.apiKey),
-      baseUrl: config.intelligence.baseUrl,
+      provider: effectiveLlm.provider as LLMProviderName,
+      model: effectiveLlm.model,
+      embeddingModel: effectiveLlm.embeddingModel,
+      apiKey: effectiveLlm.apiKey,
+      baseUrl: effectiveLlm.baseUrl,
       fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
       temperature: config.intelligence.temperature,

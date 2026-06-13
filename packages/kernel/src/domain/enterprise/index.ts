@@ -5,3 +5,4 @@ export * from './tenant-profile-queries.js';
 export * from './kafka-namespace-queries.js';
 export * from './persona-template-queries.js';
 export * from './llm-credential-queries.js';
+export * from './tenant-llm-settings-queries.js';

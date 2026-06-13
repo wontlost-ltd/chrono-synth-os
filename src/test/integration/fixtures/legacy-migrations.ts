@@ -948,6 +948,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS llm_provider_credentials (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    provider TEXT NOT NULL,\n    api_key_encrypted TEXT NOT NULL,\n    created_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, provider)\n  )"
     ]
+  },
+  {
+    "version": "v085",
+    "description": "BYOK: per-tenant active LLM provider preference (tenant_llm_settings)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_llm_settings (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    active_provider TEXT NOT NULL,\n    model TEXT,\n    embedding_model TEXT,\n    base_url TEXT,\n    updated_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id)\n  )"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1876,6 +1883,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "BYOK: encrypted per-tenant LLM provider API keys (llm_provider_credentials)",
     "sql": [
       "CREATE TABLE IF NOT EXISTS llm_provider_credentials (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    provider TEXT NOT NULL,\n    api_key_encrypted TEXT NOT NULL,\n    created_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, provider)\n  )"
+    ]
+  },
+  {
+    "version": "v087",
+    "description": "BYOK: per-tenant active LLM provider preference (tenant_llm_settings)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_llm_settings (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    active_provider TEXT NOT NULL,\n    model TEXT,\n    embedding_model TEXT,\n    base_url TEXT,\n    updated_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id)\n  )"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

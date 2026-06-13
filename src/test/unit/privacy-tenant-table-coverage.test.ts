@@ -56,7 +56,7 @@ describe('Privacy coverage ratchet: every tenant-scoped table is classified', ()
   });
 
   it('回归锚点：凭证表纳入覆盖（脱敏导出 + 擦除）', () => {
-    for (const t of ['api_keys', 'user_oauth_tokens', 'tool_permissions', 'persona_rules', 'llm_provider_credentials']) {
+    for (const t of ['api_keys', 'user_oauth_tokens', 'tool_permissions', 'persona_rules', 'llm_provider_credentials', 'tenant_llm_settings']) {
       assert.ok(PRIVACY_COVERED_TABLES.has(t), `${t} 必须在隐私覆盖（脱敏导出 + 擦除）`);
     }
   });

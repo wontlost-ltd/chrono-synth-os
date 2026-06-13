@@ -60,6 +60,7 @@ import { registerPersonaLeaseExecutors } from './persona-lease-executors.js';
 import { registerResponseTemplateExecutors } from './response-template-executors.js';
 import { registerRuleExecutors } from './rule-executors.js';
 import { registerLlmCredentialExecutors } from './llm-credential-executors.js';
+import { registerTenantLlmSettingsExecutors } from './tenant-llm-settings-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -94,6 +95,7 @@ import {
   RT_QUERY_LATEST_BY_INTENT,
   RULE_QUERY_ACTIVE_BY_PERSONA,
   LLMCRED_QUERY_BY_TENANT_PROVIDER,
+  TENANT_LLM_SETTINGS_QUERY_BY_TENANT,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -160,6 +162,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(RT_QUERY_LATEST_BY_INTENT)) registerResponseTemplateExecutors();
   if (!resolveQueryExecutor(RULE_QUERY_ACTIVE_BY_PERSONA)) registerRuleExecutors();
   if (!resolveQueryExecutor(LLMCRED_QUERY_BY_TENANT_PROVIDER)) registerLlmCredentialExecutors();
+  if (!resolveQueryExecutor(TENANT_LLM_SETTINGS_QUERY_BY_TENANT)) registerTenantLlmSettingsExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
