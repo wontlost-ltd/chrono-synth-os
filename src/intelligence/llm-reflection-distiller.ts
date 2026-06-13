@@ -110,7 +110,8 @@ export class LlmReflectionDistiller {
       this.logger?.info('LlmReflectionDistiller', `反思 → value_shift ${vs.valueId} Δ${vs.delta} status=${r.status}`);
     }
 
-    /* ② memory_edge：source/target 必须都是本次反思可见的真实记忆且不同。LLM 来源默认需审批。 */
+    /* ② memory_edge：source/target 必须都是本次反思可见的真实记忆且不同；过门后充分证据
+     * （confidence≥0.75 ∧ evidence≥2）自动编译——仅链接两条真实记忆，安全。 */
     const me = this.buildMemoryLink(proposal.memoryLink, memoryIds);
     if (me) {
       const r = this.distillation.ingest(input.personaId, {
