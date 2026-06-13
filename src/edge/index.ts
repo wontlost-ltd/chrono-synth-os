@@ -11,7 +11,7 @@ export { runValueClosedLoop, type RuntimeProofResult } from './kernel-runtime-pr
 
 /* Edge-P3：端侧持久化 + 同步边界。 */
 export { type EdgePersistence, InMemoryPersistence } from './sync/persistence.js';
-export { SyncOutbox, type OutboxEntry, type ChangeClass } from './sync/outbox.js';
+export { SyncOutbox, classifyOpKind, type OutboxEntry, type ChangeClass } from './sync/outbox.js';
 export {
-  resolveConflict, toChangeRef, type ChangeRef, type Resolution,
+  resolveConflict, resolveConflictsByTarget, toChangeRef, type ChangeRef, type Resolution,
 } from './sync/conflict.js';

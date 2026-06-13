@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   InMemoryValueUnitOfWork, DeterministicClock, DeterministicRandom,
-  InMemoryPersistence, SyncOutbox, resolveConflict, toChangeRef,
+  InMemoryPersistence, SyncOutbox, resolveConflict, resolveConflictsByTarget, toChangeRef,
   type ChangeRef,
 } from '../../edge/index.js';
 import { createValue, getAllValues } from '@chrono/kernel';
@@ -50,6 +50,21 @@ describe('端侧持久化往返（ADR-0052 Edge-P3）', () => {
     const tx = new InMemoryValueUnitOfWork();
     assert.throws(() => tx.restore('{"not":"array"}'), /必须是数组/);
   });
+
+  it('restore 原子性：数组内含畸形行 → 抛错且不破坏现有状态', () => {
+    const tx = new InMemoryValueUnitOfWork();
+    const clock = new DeterministicClock();
+    const random = new DeterministicRandom();
+    createValue(tx, clock, random, '基线', 0.5);
+    const before = tx.snapshotHash();
+    /* 第二行缺 id（畸形）。 */
+    const bad = JSON.stringify([
+      { id: 'v1', label: 'ok', weight: 0.5, timeDiscount: 0.5, emotionAmplifier: 1, updatedAt: 1 },
+      { label: 'missing-id', weight: 0.5, timeDiscount: 0.5, emotionAmplifier: 1, updatedAt: 1 },
+    ]);
+    assert.throws(() => tx.restore(bad), /畸形价值行/);
+    assert.equal(tx.snapshotHash(), before, '畸形 restore 不破坏现有状态（原子）');
+  });
 });
 
 describe('同步 outbox（ADR-0052 Edge-P3）', () => {
@@ -70,6 +85,34 @@ describe('同步 outbox（ADR-0052 Edge-P3）', () => {
     assert.equal(ob.pending().length, 1);
     assert.equal(ob.pending()[0].seq, 2);
     assert.equal(ob.markSynced(99), false);
+  });
+
+  it('序列化往返：重载后 nextSeq 续接（不破坏 seq 去重锚点）', () => {
+    const ob = new SyncOutbox('device-A');
+    ob.enqueue('fact', 'memory.append', { id: 'm1' }, 1000);
+    ob.enqueue('fact', 'memory.append', { id: 'm2' }, 2000);
+    /* 落盘重载。 */
+    const restored = SyncOutbox.fromSerialized(ob.serialize());
+    const e3 = restored.enqueue('fact', 'memory.append', { id: 'm3' }, 3000);
+    assert.equal(e3.seq, 3, '重载后 seq 续接（非从 1 重来）');
+    assert.equal(restored.all().length, 3);
+  });
+
+  it('防误标护栏：身份核 op 标成 fact → enqueue 抛错', () => {
+    const ob = new SyncOutbox('device-A');
+    /* value.update 推导为 identity，标成 fact → 拦截。 */
+    assert.throws(() => ob.enqueue('fact', 'value.update', { id: 'v1' }, 1000), /防身份核误标/);
+    /* 正确标 identity → 通过。 */
+    const e = ob.enqueue('identity', 'value.update', { id: 'v1' }, 1000);
+    assert.equal(e.changeClass, 'identity');
+  });
+
+  it('pending/all 返回拷贝（不可绕过 markSynced 改 synced）', () => {
+    const ob = new SyncOutbox('device-A');
+    ob.enqueue('fact', 'memory.append', { id: 'm1' }, 1000);
+    const p = ob.pending();
+    (p[0] as { synced: boolean }).synced = true;   /* 篡改拷贝 */
+    assert.equal(ob.pending().length, 1, '内部状态不受拷贝篡改影响');
   });
 });
 
@@ -112,9 +155,10 @@ describe('多设备冲突解决三分法（ADR-0052 Edge-P3）', () => {
     assert.equal(r.action, 'pending');
   });
 
-  it('混合含 identity → 整组保守按 pending（最高风险优先）', () => {
+  it('同目标混合含 identity → 整组保守按 pending（最高风险优先）', () => {
+    /* 同一 targetId 上既有 fact 又有 identity 变更（如对同一实体的事实记录 + 身份核改动）。 */
     const r = resolveConflict([
-      ref('A', 1, 'fact', 'm1'),
+      ref('A', 1, 'fact', 'value-x'),
       ref('B', 2, 'identity', 'value-x'),
     ]);
     assert.equal(r.action, 'pending', '任一身份核变更 → 整组 pending');
@@ -129,5 +173,28 @@ describe('多设备冲突解决三分法（ADR-0052 Edge-P3）', () => {
   it('确定性：同输入 → 同 resolution', () => {
     const input = [ref('A', 1, 'fact', 'm1'), ref('B', 1, 'fact', 'm1')];
     assert.deepEqual(resolveConflict(input), resolveConflict(input));
+  });
+
+  it('单目标契约：resolveConflict 收到跨 targetId 抛错', () => {
+    assert.throws(
+      () => resolveConflict([ref('A', 1, 'fact', 'm1'), ref('B', 1, 'fact', 'm2')]),
+      /单一 targetId/,
+    );
+  });
+
+  it('resolveConflictsByTarget：自动按 targetId 分组逐组解决', () => {
+    const byTarget = resolveConflictsByTarget([
+      ref('A', 1, 'fact', 'm1'),
+      ref('B', 1, 'fact', 'm1'),
+      ref('A', 2, 'identity', 'value-x'),
+    ]);
+    assert.equal(byTarget.get('m1')!.action, 'merge');
+    assert.equal(byTarget.get('value-x')!.action, 'pending');
+  });
+
+  it('toChangeRef 无 targetId → 用 deviceId:seq 占位（不误合并）', () => {
+    const ob = new SyncOutbox('A');
+    const e = ob.enqueue('fact', 'memory.append', { note: 'no-id-field' }, 1000);
+    assert.equal(toChangeRef(e).targetId, 'A:1', '无 id/targetId → 唯一占位');
   });
 });

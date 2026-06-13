@@ -125,13 +125,35 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
     return JSON.stringify(rows);
   }
 
-  /** 从序列化字符串重建（落盘后重载）。畸形输入抛错（不静默丢状态）。 */
+  /**
+   * 从序列化字符串重建（落盘后重载）。**原子**：先全部校验/构建到临时 Map，全部成功才替换
+   * 当前状态——任一元素畸形则抛错且**不破坏现有状态**（Codex 复审：原实现先 clear 再逐条写，
+   * 中途畸形会留半恢复状态）。
+   */
   restore(serialized: string): void {
-    const parsed = JSON.parse(serialized) as CoreValue[];
+    const parsed = JSON.parse(serialized) as unknown;
     if (!Array.isArray(parsed)) throw new Error('InMemoryValueUnitOfWork.restore: 序列化数据必须是数组');
+    const next = new Map<ValueId, CoreValue>();
+    for (const raw of parsed) {
+      if (!isValidValueRow(raw)) throw new Error('InMemoryValueUnitOfWork.restore: 含畸形价值行，已中止（状态未变）');
+      next.set(raw.id, toRow(raw));
+    }
+    /* 全部校验通过才替换（原子）。 */
     this.values.clear();
-    for (const v of parsed) this.values.set(v.id, toRow(v));
+    for (const [k, v] of next) this.values.set(k, v);
   }
+}
+
+/** 校验一行价值数据的形状（restore 原子性用）。 */
+function isValidValueRow(v: unknown): v is CoreValue {
+  if (v === null || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.id === 'string' && r.id.length > 0
+    && typeof r.label === 'string'
+    && typeof r.weight === 'number' && Number.isFinite(r.weight)
+    && typeof r.timeDiscount === 'number' && Number.isFinite(r.timeDiscount)
+    && typeof r.emotionAmplifier === 'number' && Number.isFinite(r.emotionAmplifier)
+    && typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt);
 }
 
 /** CreateValueParams → CoreValue 行（统一构造，避免 create/upsert 重复）。 */
