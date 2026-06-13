@@ -105,7 +105,7 @@ describe('感知蒸馏器（ADR-0051 Phase 1）', () => {
     assert.ok(np, 'narrative_patch 应 pending（改「我是谁」必人工审批）');
   });
 
-  it('幻觉防护：value_shift 指向不存在的 valueId → 蒸馏门 rejected，不进核', async () => {
+  it('幻觉防护：value_shift（含不存在的 valueId）一律不自动编译进核', async () => {
     const hinted = scriptedProvider({
       confidence: 0.9,
       facts: [{ summary: '我听到：一些话', memoryKind: 'episodic', valence: 0, salience: 0.5 }],
@@ -113,9 +113,10 @@ describe('感知蒸馏器（ADR-0051 Phase 1）', () => {
     });
     const distiller = new PerceptionDistiller(hinted, os.core.memories, os.distillation, new SilentLogger());
     const res = await distiller.perceive({ personaId: 'default', tenantId: 'default', media: MEDIA });
-    /* value_shift 候选进门时 compiler 校验 valueId 不存在 → 不会 compiled（pending 或 rejected）。 */
-    const vs = res.candidates.find((c) => c.status === 'compiled');
-    assert.equal(vs, undefined, '不存在的 valueId 绝不被自动编译进核');
+    /* 感知 value_shift 因 patternAgrees=false 永不满足自动门 → 必 pending，绝不自动编译进核；
+     * 幻觉 valueId 的最终拒绝发生在人工审批的 compiler 校验阶段（不在自动路径）。 */
+    const compiled = res.candidates.find((c) => c.status === 'compiled');
+    assert.equal(compiled, undefined, '感知 value_shift 绝不被自动编译进核（幻觉 valueId 也停在 pending）');
   });
 
   it('老师抛错 / 空表征：安全降级为空结果，不抛进主流程', async () => {

@@ -47,14 +47,21 @@
 
 ### 不变量（与 ADR-0047 D3 一致）
 
-1. `PerceptionDistiller` 绝不调 `CoreRhythmLayer` / value-store / narrative-store 等
-   核心写方法；只经 memory graph append + `DistillationService.ingest`（后者经
-   `core-update-gate` 把关）。
+「核」在此特指**身份核**：value 权重 / narrative / L0-L3 决策风格·认知模型 / 规则·模板。
+
+1. **绝不自动改身份核**：感知的 value_shift / narrative_patch 提案一律走蒸馏门且**必 pending**
+   人工审批——`PerceptionDistiller` 绝不调 `CoreRhythmLayer` 的身份写方法
+   （updateValueParams/updateNarrative/setDecisionStyle 等）。
 2. 老师的 value_shift 提案 delta **封顶**到自动门上限（0.05）且 `patternAgrees=false`
-   （感知是单源，不冒充确定性 pattern-extractor 的交叉验证）→ 故感知单源的 value_shift
+   （感知是单源，不冒充确定性 pattern-extractor 的交叉验证）→ 而 `core-update-gate` 对
+   distilled value_shift 要求 `patternAgrees===true` 才自动 → 故感知单源 value_shift
    **永远 pending**，不会被自动改 value。
-3. 身份层（narrative/value）变更默认人工审批；只有事实型记忆 append 是自动的。
-4. 老师抛错 / 分析畸形 / 空表征 → 安全降级为「未产记忆」，绝不抛进调用方主流程。
+3. **会自动写的只有事实层**：事实型观察 append 为 memory node；相邻事实间的 memory_edge 候选
+   满足门（confidence≥0.75∧evidence≥2）会自动编译为记忆边——但**只链接刚写入的两条真实记忆**，
+   不创造身份、不改 value/narrative，与 ADR-0047 既有 memory_edge 自动编译同属「仅链接真实记忆，
+   安全」。即：感知会自动沉淀事实记忆与记忆关联，但绝不自动改身份核。
+4. **老师调用失败**（analyze 抛错 / 空表征 / 分析畸形）安全降级为「未产记忆」，不抛进主流程；
+   记忆写入与蒸馏门是基础设施操作，其失败按常规抛出由调用方处理（append 语义非事务，已写记忆有效）。
 5. `DecisionEngine` / `RuleEngine` / `CoreRhythmLayer` 运行时**绝不**同步依赖多模态 provider。
 
 ## Phasing（分阶段）

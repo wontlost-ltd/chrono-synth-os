@@ -9,16 +9,23 @@
  *   ④ 同一媒体内多条事实之间 → memory_edge 候选交 DistillationService.ingest（链接真实记忆，满足门可自动）；
  *   ⑤ 身份层提案（value_shift / narrative_patch）→ 交蒸馏门，**默认 pending 人工审批**（改「我是谁」保守）。
  *
- * 不变量：
- *   - 绝不调 CoreRhythmLayer / value-store / narrative-store 等核心写方法；只经 memory graph append +
- *     DistillationService.ingest（后者经 core-update-gate 把关）。
+ * 不变量（「核」= 身份核：value 权重 / narrative / L0-L3 决策风格·认知模型 / 规则·模板）：
+ *   - **绝不自动改身份核**：感知的 value_shift/narrative_patch 提案一律走蒸馏门且必 pending 人工审批
+ *     （value_shift 因 patternAgrees=false 永不满足自动门；narrative_patch 门控默认 pending）。
+ *   - 绝不调 CoreRhythmLayer 的身份写方法（updateValueParams/updateNarrative/setDecisionStyle 等）。
+ *   - **会自动写的只有事实层**：事实型观察 append 为 memory node，相邻事实间 memory_edge 候选满足门
+ *     （confidence≥0.75∧evidence≥2）会自动编译为记忆边——但**只链接刚写入的两条真实记忆**，不创造
+ *     身份、不改 value/narrative，与 ADR-0047 既有 memory_edge 自动编译同属「仅链接真实记忆，安全」。
  *   - Phase 1：蒸馏候选 source 暂复用 'knowledge_import'（感知 provenance 体现在 memory content 第一人称
  *     「我听到/我看到」+ evidence 指向真实记忆 id）。独立 'perception' source 待 Phase 3 落
  *     perception_events 表时随 migration 一并扩 distilled_artifacts.source 的 CHECK 约束引入——
  *     Phase 1 不为一个 provenance 标签触发核心表 CHECK rebuild migration。
  *   - value_shift delta 进门前**封顶**到自动门上限（0.05），patternAgrees=false（感知单源，不冒充
  *     确定性 pattern 交叉验证）→ 故 value_shift 永远 pending，不会被感知单源自动改 value。
- *   - 任一步失败（老师抛错、分析畸形、空表征）安全降级为「未产记忆」，绝不抛进调用方主流程。
+ *   - **老师调用失败**（analyze 抛错 / 空表征 / 分析畸形）安全降级为「未产记忆」，不抛进调用方主流程。
+ *     记忆写入（memoryGraph.addMemory）与蒸馏门（distillation.ingest）是基础设施操作——其失败（如 DB
+ *     不可用）按常规**抛出**由调用方处理，不静默吞（与 LlmReflectionDistiller 一致）。perceive 是
+ *     **append 语义非事务**：若在写入多条记忆中途基础设施失败，已写入的记忆是有效真实感知（不回滚）。
  */
 
 import type { Logger } from '../utils/logger.js';
