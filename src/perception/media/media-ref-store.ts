@@ -2,9 +2,13 @@
  * 感知媒体引用存储（ADR-0052 Edge-P5）— 媒体引用元数据 + retention + GDPR 擦除编排。
  *
  * 红线：**原始音视频绝不进库**。本 store 只管引用元数据（object_key/sha256/...）；原始媒体在对象
- * 存储。retention worker 按 delete_after 清理过期引用并触发对象存储 erase；GDPR 擦除同时删 DB 行 +
- * 调对象存储 erase hook。`ObjectStorageEraser` 是可注入接口——真实 S3/R2/minio driver 部署期接入，
- * 本层用 mock 证明「擦除调 eraser」语义。
+ * 存储。retention worker 按 delete_after 清理过期引用并触发对象存储 erase。
+ *
+ * GDPR Art.17 擦除走**两段闭环**（Codex 复审）：privacy eraseData **标记** perception_media_refs
+ * 为 erased + delete_after=0（保留 object_key），retention worker（runMediaRetention）异步删对象
+ * 存储对象 + 删引用行——原始媒体最终被删，不丢定位能力、无孤儿。`ObjectStorageEraser` 是可注入
+ * 接口（真实 S3/R2/minio driver 部署期接入，本层 mock 证明擦除语义）。**部署契约**：retention
+ * worker 是 GDPR 关键后台任务，必须运行并监控。
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';

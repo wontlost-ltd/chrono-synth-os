@@ -6,7 +6,8 @@ import { defineMigration, type Migration } from '../../index.js';
  * 多模态感知的原始音视频是**最敏感 PII，绝不进主业务库**（红线）。本表只存媒体的**引用元数据**：
  * 对象存储 key、内容哈希、mime、大小、时长、保留策略、过期时刻、处理状态——原始媒体本体存对象
  * 存储（S3/R2/minio/BYOS），主库只持引用。retention worker 按 delete_after 清理过期引用并触发
- * 对象存储 erase；GDPR 擦除同时删 DB 行 + 调对象存储 erase hook。
+ * 对象存储 erase。GDPR Art.17 擦除走两段闭环：privacy 标记 erased+delete_after=0（保留 object_key），
+ * retention worker 异步删对象存储对象 + 删引用行（原始媒体最终被删，无孤儿）。
  *
  * 字段决策：
  *   - id 主键；tenant_id 默认 'default'（多租户隔离 + GDPR）；
