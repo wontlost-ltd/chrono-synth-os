@@ -7,6 +7,13 @@
  *
  * 范围：第一阶段只覆盖 core-value 一个闭环（backend 研究的 Native projection 路线：先证一个域，
  * 不复刻全部 executor）。后续 Phase（Edge-P3）做持久化 + 更多域。
+ *
+ * **语义对齐真实 executor**（Codex Edge-P2 复审）——本 reference adapter 会被端侧实现照抄，故必须与
+ * src/storage/executors/value-executors.ts（SQL）+ packages/adapter-web（IndexedDB）语义一致：
+ *   - 读接口返回 **detached 拷贝**（不暴露内部 live reference，调用方不能绕过 command 改存储）；
+ *   - CREATE 对重复 id **抛错**（对齐 SQL INSERT 主键冲突）；UPSERT 才覆盖（ON CONFLICT DO UPDATE）；
+ *   - DELETE_ALL 返回 rowsAffected=0（对齐 SQL executor）；
+ *   - all() 排序 **weight desc, id asc**（对齐 adapter-web contract）。
  */
 
 import type {
@@ -26,7 +33,9 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
     switch (q.kind) {
       case VALUE_QUERY_BY_ID: {
         const { id } = q.params as { id: ValueId };
-        return (this.values.get(id) ?? null) as TResult | null;
+        const v = this.values.get(id);
+        /* detached 拷贝：不暴露 live reference（对齐 SQL/Web adapter 返回的 detached row）。 */
+        return (v ? { ...v } : null) as TResult | null;
       }
       default:
         throw new Error(`InMemoryValueUnitOfWork 不支持 query kind: ${q.kind}`);
@@ -35,8 +44,12 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
 
   queryMany<TResult, TParams = unknown>(q: Query<TResult, TParams>): readonly TResult[] {
     switch (q.kind) {
-      case VALUE_QUERY_ALL:
-        return [...this.values.values()] as unknown as readonly TResult[];
+      case VALUE_QUERY_ALL: {
+        /* detached 拷贝 + 排序 weight desc, id asc（对齐 adapter-web contract）。 */
+        const rows = [...this.values.values()].map((v) => ({ ...v }));
+        rows.sort((a, b) => b.weight - a.weight || a.id.localeCompare(b.id));
+        return rows as unknown as readonly TResult[];
+      }
       default:
         throw new Error(`InMemoryValueUnitOfWork 不支持 queryMany kind: ${q.kind}`);
     }
@@ -44,13 +57,17 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
 
   execute<TParams>(cmd: Command<TParams>): ExecResult {
     switch (cmd.kind) {
-      case VALUE_CMD_CREATE:
+      case VALUE_CMD_CREATE: {
+        const p = cmd.params as CreateValueParams;
+        /* 对齐 SQL INSERT：重复主键抛错（不静默覆盖；覆盖语义是 UPSERT 的事）。 */
+        if (this.values.has(p.id)) throw new Error(`core-value 主键冲突: ${p.id}`);
+        this.values.set(p.id, toRow(p));
+        return { rowsAffected: 1 };
+      }
       case VALUE_CMD_UPSERT: {
         const p = cmd.params as CreateValueParams;
-        this.values.set(p.id, {
-          id: p.id, label: p.label, weight: p.weight,
-          timeDiscount: p.timeDiscount, emotionAmplifier: p.emotionAmplifier, updatedAt: p.updatedAt,
-        });
+        /* 对齐 SQL ON CONFLICT DO UPDATE：存在则覆盖全字段，不存在则插入。 */
+        this.values.set(p.id, toRow(p));
         return { rowsAffected: 1 };
       }
       case VALUE_CMD_UPDATE: {
@@ -69,9 +86,8 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
         return { rowsAffected: this.values.delete(id) ? 1 : 0 };
       }
       case VALUE_CMD_DELETE_ALL: {
-        const n = this.values.size;
         this.values.clear();
-        return { rowsAffected: n };
+        return { rowsAffected: 0 };   /* 对齐 SQL executor（DELETE_ALL 固定返回 0）。 */
       }
       default:
         throw new Error(`InMemoryValueUnitOfWork 不支持 command kind: ${cmd.kind}`);
@@ -93,11 +109,19 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
     }
   }
 
-  /** 当前状态的确定性指纹（golden replay 比对用）。 */
+  /** 当前状态的确定性指纹（golden replay 比对用）。按 id 排序，不依赖 Map 插入序。 */
   snapshotHash(): string {
-    const ordered = [...this.values.values()].map((v) =>
-      `${v.id}|${v.label}|${v.weight}|${v.timeDiscount}|${v.emotionAmplifier}|${v.updatedAt}`,
-    );
-    return ordered.join('\n');
+    return [...this.values.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((v) => `${v.id}|${v.label}|${v.weight}|${v.timeDiscount}|${v.emotionAmplifier}|${v.updatedAt}`)
+      .join('\n');
   }
+}
+
+/** CreateValueParams → CoreValue 行（统一构造，避免 create/upsert 重复）。 */
+function toRow(p: CreateValueParams): CoreValue {
+  return {
+    id: p.id, label: p.label, weight: p.weight,
+    timeDiscount: p.timeDiscount, emotionAmplifier: p.emotionAmplifier, updatedAt: p.updatedAt,
+  };
 }

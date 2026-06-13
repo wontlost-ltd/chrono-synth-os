@@ -7,8 +7,14 @@
  * 「架构承诺」变成「可跑 + 可 golden replay 的证明」。
  *
  * 这是 ADR-0001 可移植承诺的首个真实兑现：kernel 只经注入的 ports 触达存储/时钟/随机，不依赖任何
- * Node 全局。真浏览器 Worker harness（vite/worker 打包）是后续打包基建工作；本证明在 Node test 中
- * 用端侧 adapter 跑同一套 kernel 代码，等价地证明「无 Node 依赖 + 确定性」。
+ * Node 全局。
+ *
+ * 证明的**精确边界**（Codex Edge-P2 复审，避免过度宣称）：这是 **Node-hosted source-level /
+ * adapter-level 可移植性证明**——src/edge adapter 零 node:*（ratchet 锁住）+ @chrono/kernel 有
+ * zero-dep contract（kernel-zero-deps.test）+ 真实 kernel value-service 在端侧 adapter 上确定性
+ * 跑通闭环。它**还不是**完整 Web Worker/browser runtime proof（未经 bundler、Worker global、真正
+ * 非 Node JS 引擎加载）——那是后续打包基建工作（vite/worker harness）。本证明在 Node test 用端侧
+ * adapter 跑同一套 kernel 源码，证明「源码级无 Node 依赖 + 确定性」，是浏览器 harness 的前置。
  */
 
 import { createValue, updateValue, getAllValues, deleteValue, type CoreValue } from '@chrono/kernel';
