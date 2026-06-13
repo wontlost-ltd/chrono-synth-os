@@ -372,6 +372,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       queueDb, queue, deps.os.bus, deps.os.getLogger(),
       quotaManager, avatarService, autorunStore, knowledgeStore,
       knowledgeIngestion, tenantFactory, config,
+      /* ADR-0047 growth 档：注入 LLM 路由（含 D2 降级链），autorun 在确定性反思后额外跑 LLM 反思。
+       * mock provider 不产实际成长（仅占位），生产配 anthropic/ollama 时生效。 */
+      config.intelligence.provider === 'mock' ? undefined : llmRouter,
     );
 
     worker.register('avatar_autorun', async (task, signal) => {
