@@ -116,6 +116,22 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
       .map((v) => `${v.id}|${v.label}|${v.weight}|${v.timeDiscount}|${v.emotionAmplifier}|${v.updatedAt}`)
       .join('\n');
   }
+
+  /**
+   * 序列化为可落盘字符串（Edge-P3 持久化）。按 id 排序保证确定性序列化（同状态 → 同字符串）。
+   */
+  serialize(): string {
+    const rows = [...this.values.values()].sort((a, b) => a.id.localeCompare(b.id));
+    return JSON.stringify(rows);
+  }
+
+  /** 从序列化字符串重建（落盘后重载）。畸形输入抛错（不静默丢状态）。 */
+  restore(serialized: string): void {
+    const parsed = JSON.parse(serialized) as CoreValue[];
+    if (!Array.isArray(parsed)) throw new Error('InMemoryValueUnitOfWork.restore: 序列化数据必须是数组');
+    this.values.clear();
+    for (const v of parsed) this.values.set(v.id, toRow(v));
+  }
 }
 
 /** CreateValueParams → CoreValue 行（统一构造，避免 create/upsert 重复）。 */

@@ -8,3 +8,10 @@
 export { DeterministicClock, DeterministicRandom } from './host/deterministic-host.js';
 export { InMemoryValueUnitOfWork } from './host/in-memory-value-uow.js';
 export { runValueClosedLoop, type RuntimeProofResult } from './kernel-runtime-proof.js';
+
+/* Edge-P3：端侧持久化 + 同步边界。 */
+export { type EdgePersistence, InMemoryPersistence } from './sync/persistence.js';
+export { SyncOutbox, type OutboxEntry, type ChangeClass } from './sync/outbox.js';
+export {
+  resolveConflict, toChangeRef, type ChangeRef, type Resolution,
+} from './sync/conflict.js';
