@@ -145,23 +145,24 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
 }
 
 /**
- * 校验一行价值数据的形状**与领域约束**（restore 原子性用）。复用 value-service 的区间约束
- * （weight/timeDiscount∈[0,1]、emotionAmplifier≥0），防坏落盘数据注入非法状态（如 weight:999）。
+ * 校验一行价值数据的形状**与领域约束**（restore 原子性用）。约束对齐 value-service：
+ * weight/timeDiscount∈[0,1]、**emotionAmplifier∈[0.5,2.0]**（assertEmotionAmplifier），
+ * 防坏落盘数据注入非法状态（如 weight:999 / emotionAmplifier:999）。
  */
 function isValidValueRow(v: unknown): v is CoreValue {
   if (v === null || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
   return typeof r.id === 'string' && r.id.length > 0
     && typeof r.label === 'string'
-    && isInUnit(r.weight)
-    && isInUnit(r.timeDiscount)
-    && typeof r.emotionAmplifier === 'number' && Number.isFinite(r.emotionAmplifier) && r.emotionAmplifier >= 0
+    && isInRange(r.weight, 0, 1)
+    && isInRange(r.timeDiscount, 0, 1)
+    && isInRange(r.emotionAmplifier, 0.5, 2.0)
     && typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt);
 }
 
-/** [0,1] 区间有限数。 */
-function isInUnit(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+/** [lo,hi] 区间有限数。 */
+function isInRange(v: unknown, lo: number, hi: number): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 }
 
 /** CreateValueParams → CoreValue 行（统一构造，避免 create/upsert 重复）。 */

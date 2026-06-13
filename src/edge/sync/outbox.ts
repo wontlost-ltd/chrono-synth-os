@@ -78,17 +78,18 @@ export class SyncOutbox {
     if (derived !== changeClass) {
       throw new Error(`outbox enqueue: opKind「${opKind}」推导类别 ${derived} 与传入 ${changeClass} 不一致（防身份核误标）`);
     }
-    const entry: OutboxEntry = {
+    /* 入库与返回都经 cloneEntry 真深拷贝——隔离调用方传入的 payload（含嵌套）与内部状态。 */
+    const entry = cloneEntry({
       deviceId: this.deviceId,
       seq: this.nextSeq++,
       changeClass,
       opKind,
-      payload: { ...payload },
+      payload,
       at,
       synced: false,
-    };
+    });
     this.entries.push(entry);
-    return { ...entry, payload: { ...entry.payload } };
+    return cloneEntry(entry);
   }
 
   /** 待同步（未 synced）的变更拷贝，按 seq 升序（不暴露 live reference）。 */
@@ -168,9 +169,10 @@ function validateEntry(raw: unknown, deviceId: string): OutboxEntry {
   }
   if (r.payload === null || typeof r.payload !== 'object') throw new Error('SyncOutbox.fromSerialized: payload 非对象');
   if (typeof r.at !== 'number' || !Number.isFinite(r.at)) throw new Error('SyncOutbox.fromSerialized: at 非有限数');
+  if (typeof r.synced !== 'boolean') throw new Error('SyncOutbox.fromSerialized: synced 必须是 boolean');
   return {
     deviceId, seq: r.seq, changeClass: r.changeClass, opKind: r.opKind,
     payload: JSON.parse(JSON.stringify(r.payload)) as Record<string, unknown>,
-    at: r.at, synced: r.synced === true,
+    at: r.at, synced: r.synced,
   };
 }

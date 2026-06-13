@@ -74,6 +74,17 @@ describe('端侧持久化往返（ADR-0052 Edge-P3）', () => {
     assert.throws(() => tx.restore(illegal), /畸形价值行/);
     assert.equal(getAllValues(tx).size, 0, '非法状态未注入');
   });
+
+  it('restore 领域约束：emotionAmplifier 越界（>2.0）被拒（对齐 value-service [0.5,2.0]）', () => {
+    const tx = new InMemoryValueUnitOfWork();
+    const illegal = JSON.stringify([
+      { id: 'v1', label: 'x', weight: 0.5, timeDiscount: 0.5, emotionAmplifier: 999, updatedAt: 1 },
+    ]);
+    assert.throws(() => tx.restore(illegal), /畸形价值行/);
+    /* 合法 emotionAmplifier=1.5 应通过。 */
+    tx.restore(JSON.stringify([{ id: 'v1', label: 'x', weight: 0.5, timeDiscount: 0.5, emotionAmplifier: 1.5, updatedAt: 1 }]));
+    assert.equal(getAllValues(tx).size, 1);
+  });
 });
 
 describe('同步 outbox（ADR-0052 Edge-P3）', () => {
@@ -141,13 +152,17 @@ describe('同步 outbox（ADR-0052 Edge-P3）', () => {
     assert.throws(() => SyncOutbox.fromSerialized(bad), /nextSeq/);
   });
 
-  it('深拷贝：嵌套 payload 不外泄 live reference', () => {
+  it('深拷贝：嵌套 payload 不外泄 live reference（all + enqueue 入参/返回值）', () => {
     const ob = new SyncOutbox('A');
-    ob.enqueue('fact', 'memory.append', { nested: { v: 1 } }, 1000);
-    const got = ob.all()[0];
-    (got.payload.nested as { v: number }).v = 999;   /* 篡改嵌套 */
-    const reread = ob.all()[0];
-    assert.equal((reread.payload.nested as { v: number }).v, 1, '嵌套 payload 深拷贝隔离');
+    const src = { nested: { v: 1 } };
+    const returned = ob.enqueue('fact', 'memory.append', src, 1000);
+    /* 篡改 enqueue 入参源对象 → 不应影响内部。 */
+    src.nested.v = 777;
+    /* 篡改 enqueue 返回值 → 不应影响内部。 */
+    (returned.payload.nested as { v: number }).v = 888;
+    /* 篡改 all() 读出 → 不应影响内部。 */
+    (ob.all()[0].payload.nested as { v: number }).v = 999;
+    assert.equal((ob.all()[0].payload.nested as { v: number }).v, 1, '内部状态隔离所有外部篡改');
   });
 
   it('pending/all 返回拷贝（不可绕过 markSynced 改 synced）', () => {
