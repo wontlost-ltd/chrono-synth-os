@@ -55,6 +55,7 @@ export class MediaRefStore {
 
   /** 登记一个媒体引用（原始媒体已在对象存储）。 */
   register(input: RegisterMediaInput, now: number): void {
+    assertObjectKeyOnly(input.objectKey);   /* durable boundary：强制「原始媒体绝不进库」红线 */
     this.tx.execute(mediaRefInsert({
       id: input.id,
       tenantId: this.tenantId,
@@ -121,6 +122,26 @@ export async function runMediaRetention(
     }
   }
   return { erased, failed };
+}
+
+/** object_key 上限——对象存储 key 是路径式短标识，超长说明可能塞了内嵌内容。 */
+const MAX_OBJECT_KEY_LEN = 1024;
+
+/**
+ * durable boundary 校验：object_key 必须是引用（对象存储路径），**绝不是内嵌的原始媒体内容**
+ * （Codex Edge-P5 复审：原 object_key 是未校验 text，上游误传 data: URI / base64 媒体会绕过
+ * 「原始媒体绝不进库」红线）。拒绝 data:/blob: URI 与超长 payload。
+ */
+function assertObjectKeyOnly(objectKey: string): void {
+  if (typeof objectKey !== 'string' || objectKey.trim().length === 0) {
+    throw new Error('perception_media_refs: object_key 不能为空');
+  }
+  if (objectKey.length > MAX_OBJECT_KEY_LEN) {
+    throw new Error(`perception_media_refs: object_key 超长（${objectKey.length}>${MAX_OBJECT_KEY_LEN}），疑似内嵌媒体内容（红线：原始媒体绝不进库）`);
+  }
+  if (/^\s*(data|blob):/i.test(objectKey)) {
+    throw new Error('perception_media_refs: object_key 不得是 data:/blob: URI（内嵌媒体内容违反红线）');
+  }
 }
 
 function toMetadata(r: PerceptionMediaRefRow): MediaRefMetadata {

@@ -47,6 +47,17 @@ describe('感知媒体引用存储（ADR-0052 Edge-P5）', () => {
     assert.equal(new MediaRefStore(db, 'B').getObjectKey('m1'), undefined);
   });
 
+  it('durable boundary：register 拒绝 data: URI / 超长 object_key（红线强制）', () => {
+    const store = new MediaRefStore(db, TENANT);
+    /* data: URI 内嵌媒体内容 → 拒绝。 */
+    assert.throws(() => store.register({ id: 'm1', objectKey: 'data:audio/wav;base64,AAAA', sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1 }, 1000), /data:\/blob:/);
+    /* 超长 → 拒绝。 */
+    assert.throws(() => store.register({ id: 'm2', objectKey: 'x'.repeat(2000), sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1 }, 1000), /超长/);
+    /* 空 → 拒绝。 */
+    assert.throws(() => store.register({ id: 'm3', objectKey: '  ', sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1 }, 1000), /不能为空/);
+    assert.equal(store.listMetadata().length, 0, '畸形 object_key 均未落库');
+  });
+
   it('erase：先删对象存储对象，再删 DB 引用行', async () => {
     const store = new MediaRefStore(db, TENANT);
     store.register({ id: 'm1', objectKey: 's3://bucket/abc', sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1 }, 1000);
@@ -102,7 +113,7 @@ describe('媒体引用 GDPR（ADR-0052 Edge-P5）', () => {
   let os: ChronoSynthOS | undefined;
   afterEach(() => { os?.close(); os = undefined; });
 
-  it('导出脱敏不含 object_key；擦除删引用行', () => {
+  it('导出脱敏不含 object_key；擦除标记 erased+待删，retention 闭环删对象+行（Art.17）', async () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     os = new ChronoSynthOS({ db, skipMigrations: true, clock: new TestClock(1000), logger: new SilentLogger() });
@@ -116,10 +127,22 @@ describe('媒体引用 GDPR（ADR-0052 Edge-P5）', () => {
     assert.ok(!('object_key' in rows[0]), 'object_key 不得出现在导出（能定位媒体）');
     assert.ok(!JSON.stringify(rows).includes('VERYSECRET'), '导出不得泄露 object_key');
 
+    /* GDPR 擦除：标记 erased + delete_after=0（保留 object_key 供对象删除定位），不直接删行。 */
     privacy.eraseData('default');
+    const marked = db.prepare<{ status: string; delete_after: number }>(
+      'SELECT status, delete_after FROM perception_media_refs WHERE id = ?',
+    ).get('m1');
+    assert.equal(marked?.status, 'erased', '擦除标记 erased');
+    assert.equal(marked?.delete_after, 0, 'delete_after=0 立即过期待删');
+
+    /* retention 闭环：删对象存储对象 + 删引用行（Art.17 完整擦除原始媒体）。 */
+    const eraser = recordingEraser();
+    const result = await runMediaRetention(db, eraser, 1);
+    assert.equal(result.erased, 1);
+    assert.deepEqual(eraser.erased, ['s3://VERYSECRET/loc'], '原始媒体对象被删（合规闭环）');
     assert.equal(
       db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM perception_media_refs WHERE tenant_id = ?').get('default')?.c, 0,
-      '引用行应随擦除删除',
+      '引用行最终删除',
     );
   });
 });

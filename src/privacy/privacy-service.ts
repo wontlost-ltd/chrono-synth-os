@@ -128,11 +128,16 @@ const RELATED_TABLES: Array<{
   },
   {
     /* perception_media_refs.object_key 能定位对象存储中的原始媒体（最敏 PII），导出省略 object_key，
-     * 仅导出脱敏元数据（ADR-0052 Edge-P5）。注：擦除只删 DB 引用行；对象存储对象的删除由
-     * MediaRefStore.erase / runMediaRetention 经 ObjectStorageEraser 处理（DB 擦除无法触达对象存储）。 */
+     * 仅导出脱敏元数据（ADR-0052 Edge-P5）。
+     *
+     * GDPR 擦除（Codex Edge-P5 复审 — Art.17 对象存储闭环）：**不直接 DELETE 引用行**（否则 object_key
+     * 随行丢失，对象存储里的原始媒体成为无法定位的孤儿，违反「被遗忘权」）。改为**标记 erased +
+     * delete_after=0**（立即过期）——保留 object_key，由 retention worker（runMediaRetention）异步删
+     * 对象存储对象 + 删引用行，达成「原始媒体最终被删」的合规闭环。privacy 同步擦除不阻塞、对象删除
+     * 最终一致。erased tombstone 不含 PII（只剩待删 object_key + 脱敏元数据），导出已脱敏不泄露。 */
     name: 'perception_media_refs',
     exportSql: 'SELECT id, tenant_id, sha256, mime, size_bytes, duration_ms, retention_class, delete_after, status, created_at FROM perception_media_refs WHERE tenant_id = ?',
-    deleteSql: 'DELETE FROM perception_media_refs WHERE tenant_id = ?',
+    deleteSql: "UPDATE perception_media_refs SET status = 'erased', delete_after = 0 WHERE tenant_id = ?",
     params: (t) => [t],
   },
   {
