@@ -12,6 +12,7 @@ import type { MemoryNode, MemoryEdge, MemoryKind, ActivationResult, Consolidatio
 import type { PersonaMemorySensitivity } from '../persona-core/types.js';
 import type { MemorySourceKind } from '../server/schemas/api-schemas.js';
 import { FieldEncryption } from '../storage/encryption.js';
+import { resolveLlmApiKey, tryByokEncryption } from '../storage/llm-credential-store.js';
 import type { EmbeddingIndex } from '../intelligence/embedding-index.js';
 import { createEmbeddingIndex } from '../intelligence/embedding-index-factory.js';
 import { ModelRouter } from '../intelligence/model-router.js';
@@ -120,11 +121,13 @@ export class MemoryFacade {
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId)?.stripe_customer_id ?? undefined
       : undefined;
+    const llmEncryption = tryByokEncryption(this.config.encryption);
     const llm = new ModelRouter({
       provider: this.config.intelligence.provider,
       model: this.config.intelligence.model,
       embeddingModel: this.config.intelligence.embeddingModel,
-      apiKey: this.config.intelligence.apiKey,
+      /* BYOK：优先本租户该 provider 的加密 key，缺失回退全局 config。 */
+      apiKey: resolveLlmApiKey(this.sharedDb, tenantId, this.config.intelligence.provider, llmEncryption, this.config.intelligence.apiKey),
       baseUrl: this.config.intelligence.baseUrl,
       fallbacks: this.config.intelligence.fallbacks,
       maxTokens: this.config.intelligence.maxTokens,

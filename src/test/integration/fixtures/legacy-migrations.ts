@@ -941,6 +941,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS persona_rules (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    rule_id TEXT NOT NULL,\n    condition TEXT NOT NULL,\n    action TEXT NOT NULL,\n    weight REAL NOT NULL,\n    description TEXT,\n    artifact_id TEXT,\n    version INTEGER NOT NULL DEFAULT 1,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, rule_id, version),\n    CHECK(action IN ('prefer', 'avoid')),\n    CHECK(weight >= 0 AND weight <= 1)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_persona_rules_rule ON persona_rules(tenant_id, persona_id, rule_id, version)"
     ]
+  },
+  {
+    "version": "v084",
+    "description": "BYOK: encrypted per-tenant LLM provider API keys (llm_provider_credentials)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS llm_provider_credentials (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    provider TEXT NOT NULL,\n    api_key_encrypted TEXT NOT NULL,\n    created_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, provider)\n  )"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1862,6 +1869,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS persona_rules (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    rule_id TEXT NOT NULL,\n    condition TEXT NOT NULL,\n    action TEXT NOT NULL,\n    weight DOUBLE PRECISION NOT NULL,\n    description TEXT,\n    artifact_id TEXT,\n    version INTEGER NOT NULL DEFAULT 1,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id, rule_id, version),\n    CHECK(action IN ('prefer', 'avoid')),\n    CHECK(weight >= 0 AND weight <= 1)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_persona_rules_rule ON persona_rules (tenant_id, persona_id, rule_id, version)"
+    ]
+  },
+  {
+    "version": "v086",
+    "description": "BYOK: encrypted per-tenant LLM provider API keys (llm_provider_credentials)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS llm_provider_credentials (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    provider TEXT NOT NULL,\n    api_key_encrypted TEXT NOT NULL,\n    created_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, provider)\n  )"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

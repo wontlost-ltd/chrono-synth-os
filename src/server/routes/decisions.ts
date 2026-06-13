@@ -16,6 +16,7 @@ import { generatePrefixedId } from '../../utils/id-generator.js';
 import type { DecisionCase } from '../../intelligence/types.js';
 import { DecisionEngine } from '../../intelligence/decision-engine.js';
 import { RuleEngine } from '../../intelligence/rule-engine.js';
+import { resolveLlmApiKey, tryByokEncryption } from '../../storage/llm-credential-store.js';
 import { createEmbeddingIndex } from '../../intelligence/embedding-index-factory.js';
 import { RetrievalService } from '../../intelligence/retrieval-service.js';
 import { ModelRouter } from '../../intelligence/model-router.js';
@@ -62,6 +63,8 @@ export function registerDecisionRoutes(
   const sharedTx = sharedDb;
   const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
   const costTracker = new CostTracker(sharedDb);
+  /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
+  const llmEncryption = tryByokEncryption(config.encryption);
   const usageTracker = new UsageTracker(sharedTx);
   const quotaManager = new QuotaManager(sharedTx);
   const billingOutbox = new BillingOutbox(sharedTx, config);
@@ -93,7 +96,8 @@ export function registerDecisionRoutes(
       provider: config.intelligence.provider,
       model: config.intelligence.model,
       embeddingModel: config.intelligence.embeddingModel,
-      apiKey: config.intelligence.apiKey,
+      /* BYOK：优先本租户该 provider 的加密 key，缺失回退全局 config。 */
+      apiKey: resolveLlmApiKey(sharedDb, tenantId, config.intelligence.provider, llmEncryption, config.intelligence.apiKey),
       baseUrl: config.intelligence.baseUrl,
       fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
