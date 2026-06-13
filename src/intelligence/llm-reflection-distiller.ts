@@ -7,10 +7,12 @@
  * （value_shift / memory_edge / narrative_patch）。
  *
  * 不变量（ADR-0047 D3）：LLM 输出**不可信**，绝不直接改核心状态。所有候选都交
- * DistillationService 经三重证据门（confidence / patternAgrees / |delta|≤0.05）：
- *   - value_shift 满足门则自动编译；
- *   - memory_edge / narrative_patch（LLM 来源）默认需人工审批（不自动编译），保守。
- * 进门前先**硬校验**（valueId/memoryId 必须真实存在、delta 封顶、字段非空），畸形/幻觉直接丢弃。
+ * DistillationService 经统一门（core-update-gate）：
+ *   - value_shift：满足 confidence≥0.8 ∧ patternAgrees ∧ |delta|≤0.05 则自动编译；
+ *   - memory_edge：满足 confidence≥0.75 ∧ evidenceCount≥2 则自动编译（仅链接两条真实记忆，安全）；
+ *   - narrative_patch / rule 等改「我是谁」的 kind：保守，默认需人工审批（不自动编译）。
+ * 进门前先**硬校验**：valueId/memoryId 必须真实存在；value_shift delta **先封顶**到「单周期剩余预算」
+ * 再过门（门看到的已是合法 delta）；字段非空。畸形/幻觉直接丢弃。
  *
  * 纯编排：不写核心状态、不调 UpdateGate、不与确定性反思争用——它只产候选喂门。
  */
@@ -49,6 +51,13 @@ export interface LlmReflectionInput {
   readonly values: readonly ReflectValue[];
   /** 候选记忆（调用方应已按 salience 降序截断到合理规模）。 */
   readonly memories: readonly ReflectMemory[];
+  /**
+   * 本 autorun 周期内**确定性反思已对各 value 应用的漂移**（valueId → 已用 delta）。
+   * 用于「单周期单 value 累计漂移预算」（Codex 复审）：LLM 反思的 value_shift 会从
+   * MAX_REFLECTION_DELTA 里扣掉已用量，使两条自动路径同周期对同一 value 的净漂移不超过 0.05，
+   * 不绕过 core-update-gate 的小步防漂移意图。缺省视为本周期尚未漂移。
+   */
+  readonly appliedDeltas?: ReadonlyMap<string, number>;
 }
 
 export interface LlmReflectionResult {
@@ -89,9 +98,9 @@ export class LlmReflectionDistiller {
     const evidence: ArtifactEvidence[] = memories.slice(0, 3).map((m) => ({ type: 'memory', id: m.id, score: clamp01(m.salience) }));
     const results: IngestResult[] = [];
 
-    /* ① value_shift：valueId 必须真实存在；delta 封顶 ±0.05；patternAgrees=true（LLM 视为强信号，
-     * 但仍需过门 confidence/delta 才自动编译——幻觉的越界提案会被门拦）。 */
-    const vs = this.buildValueShift(proposal.valueShift, valueById);
+    /* ① value_shift：valueId 必须真实存在；delta 封顶到「单周期单 value 剩余预算」（0.05 减去本周期
+     * 确定性反思已用量），patternAgrees=true（仍需过门 confidence/delta 才自动编译）。 */
+    const vs = this.buildValueShift(proposal.valueShift, valueById, input.appliedDeltas);
     if (vs) {
       const r = this.distillation.ingest(input.personaId, {
         kind: 'value_shift', source: 'reflection',
@@ -156,17 +165,23 @@ export class LlmReflectionDistiller {
     }
   }
 
-  /** 校验并构造 value_shift payload。valueId 不存在 / delta 非法 → null（丢弃）。 */
+  /** 校验并构造 value_shift payload。valueId 不存在 / delta 非法 / 周期预算已用尽 → null（丢弃）。 */
   private buildValueShift(
     raw: ReflectionProposal['valueShift'],
     valueById: ReadonlyMap<string, ReflectValue>,
+    appliedDeltas?: ReadonlyMap<string, number>,
   ): { valueId: string; currentWeight: number; suggestedWeight: number; delta: number; patternAgrees: boolean } | null {
     if (!raw || typeof raw.valueId !== 'string') return null;
     const value = valueById.get(raw.valueId);
     if (!value) return null; /* 幻觉的不存在 valueId */
+    /* 单周期单 value 累计漂移预算（Codex 复审）：0.05 减去本周期确定性反思已用的同向漂移。
+     * 已用量取绝对值扣减，剩余预算 ≤0 则本周期该 value 不再让 LLM 漂移（避免两路径叠加超 0.05）。 */
+    const usedThisCycle = Math.abs(appliedDeltas?.get(value.id) ?? 0);
+    const remainingBudget = round(MAX_REFLECTION_DELTA - usedThisCycle, 4);
+    if (remainingBudget <= 0) return null;
     const rawDelta = typeof raw.delta === 'number' && Number.isFinite(raw.delta) ? raw.delta : 0;
-    /* 封顶到 ±MAX_REFLECTION_DELTA，并禁止 0（无意义提案）。 */
-    const delta = round(clamp(rawDelta, -MAX_REFLECTION_DELTA, MAX_REFLECTION_DELTA), 4);
+    /* 封顶到 ±剩余预算，并禁止 0（无意义提案）。 */
+    const delta = round(clamp(rawDelta, -remainingBudget, remainingBudget), 4);
     if (delta === 0) return null;
     const suggestedWeight = clamp01(round(value.weight + delta, 4));
     const actualDelta = round(suggestedWeight - value.weight, 4);

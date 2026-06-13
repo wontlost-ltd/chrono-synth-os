@@ -139,7 +139,7 @@ export class AvatarAutorunService {
        * 作为「老师」额外反思最近记忆产更丰富候选，过 DistillationService 同一安全门（三重证据门防
        * 幻觉）。未注入 LLM 则跳过（纯确定性成长，不靠 marketplace 也能长）。失败不影响 autorun 主流程。 */
       if (this.llm) {
-        await this.runLlmReflection(tenantOS, run.tenantId);
+        await this.runLlmReflection(tenantOS, run.tenantId, base);
       }
 
       /* 4. 漂移检测 */
@@ -217,7 +217,11 @@ export class AvatarAutorunService {
    * LlmReflectionDistiller 产成长候选过蒸馏门。失败仅记日志，不影响 autorun 主流程。
    * personaId 用 OS core 约定的 'default'（与 learning-benchmark / 收益蒸馏一致）。
    */
-  private async runLlmReflection(tenantOS: ReturnType<TenantOSFactory['getTenantOS']>, tenantId: string): Promise<void> {
+  private async runLlmReflection(
+    tenantOS: ReturnType<TenantOSFactory['getTenantOS']>,
+    tenantId: string,
+    preCycle: PersonaOSState,
+  ): Promise<void> {
     try {
       const state = tenantOS.core.getState();
       const values: ReflectValue[] = [...state.values.values()].map((v) => ({ id: v.id, label: v.label, weight: v.weight }));
@@ -228,8 +232,17 @@ export class AvatarAutorunService {
         .map((m) => ({ id: m.id, content: m.content, salience: m.salience, valence: m.valence }));
       if (values.length === 0 || memories.length === 0) return;
 
+      /* 单周期单 value 累计漂移预算（Codex 复审）：算本周期确定性反思（runCognitionCycle→UpdateGate）
+       * 已对各 value 应用的漂移 = 当前权重 − 周期前权重，传给 distiller 从 0.05 预算里扣，避免两条
+       * 自动路径同周期对同一 value 叠加超 0.05。 */
+      const appliedDeltas = new Map<string, number>();
+      for (const v of state.values.values()) {
+        const before = preCycle.L1.get(v.id)?.weight;
+        if (before !== undefined && before !== v.weight) appliedDeltas.set(v.id, v.weight - before);
+      }
+
       const distiller = new LlmReflectionDistiller(tenantOS.distillation, this.llm!, this.logger);
-      const result = await distiller.distill({ personaId: 'default', narrative: state.narrative, values, memories });
+      const result = await distiller.distill({ personaId: 'default', narrative: state.narrative, values, memories, appliedDeltas });
       if (result.candidatesIngested > 0) {
         this.logger.info('AvatarAutorun', `LLM 反思产 ${result.candidatesIngested} 个成长候选（tenant=${tenantId}）`);
       }

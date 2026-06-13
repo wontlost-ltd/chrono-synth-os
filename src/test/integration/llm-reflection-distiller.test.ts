@@ -110,4 +110,28 @@ describe('LLM 反思蒸馏器（ADR-0047 growth 档）', () => {
     const res = await distiller.distill({ personaId: 'default', narrative: 'n', values: [], memories: [] });
     assert.equal(res.candidatesIngested, 0);
   });
+
+  /* Codex 复审：防两条自动路径同周期对同一 value 叠加超 0.05。 */
+  it('单周期预算：确定性反思本周期已用满 0.05 → LLM value_shift 被丢弃', async () => {
+    const { values, memories } = seed();
+    /* appliedDeltas 标记本周期确定性反思已对该 value 漂移 +0.05（用满预算）。 */
+    const applied = new Map([[values[0].id, 0.05]]);
+    const llm = stubLlm({ valueShift: { valueId: values[0].id, delta: 0.04, reason: 'x' } });
+    const distiller = new LlmReflectionDistiller(os.distillation, llm, new SilentLogger());
+    const res = await distiller.distill({ personaId: 'default', narrative: 'n', values, memories, appliedDeltas: applied });
+    /* value_shift 应被丢弃（无候选；本例只提了 value_shift）。 */
+    assert.equal(res.results.filter((r) => r.status !== 'rejected').length, 0, '预算用尽 → 不产 value_shift 候选');
+  });
+
+  it('单周期预算：确定性已用 0.03 → LLM 至多再 0.02（封顶到剩余预算）', async () => {
+    const { values, memories } = seed();
+    const applied = new Map([[values[0].id, 0.03]]);
+    const llm = stubLlm({ valueShift: { valueId: values[0].id, delta: 0.05, reason: 'x' } }); /* 提 0.05，但剩余只 0.02 */
+    const distiller = new LlmReflectionDistiller(os.distillation, llm, new SilentLogger());
+    const res = await distiller.distill({ personaId: 'default', narrative: 'n', values, memories, appliedDeltas: applied });
+    assert.ok(res.candidatesIngested >= 1);
+    const w = os.core.values.getAll().get(values[0].id)!.weight;
+    /* 起点 0.5，LLM 只能再 +0.02（剩余预算）→ ≤0.52，绝不到 0.55。 */
+    assert.ok(w <= 0.52 + 1e-9, `剩余预算 0.02 → 权重最多 0.52，实际 ${w}`);
+  });
 });
