@@ -52,30 +52,36 @@ export class GrowthJobQueue {
     return this.jobs.filter((j) => j.status === 'pending').map(cloneJob);
   }
 
-  /** 标记 running。 */
+  /** 标记 running（仅 pending→running 合法）。进入 running 即一次尝试 → attempts+1。 */
   markRunning(id: string): boolean {
-    return this.transition(id, 'running');
-  }
-
-  /** 标记完成。 */
-  markDone(id: string): boolean {
-    return this.transition(id, 'done');
-  }
-
-  /** 标记失败（记录原因 + 累加 attempts）。失败的 job 不阻断其他 job。 */
-  markFailed(id: string, reason: string): boolean {
-    const j = this.jobs.find((x) => x.id === id);
+    const j = this.find(id, 'pending');
     if (!j) return false;
-    j.status = 'failed';
-    j.failureReason = reason;
-    j.attempts++;
+    j.status = 'running';
+    j.attempts++;   /* attempts = 进入 running 的次数 = 真实尝试次数（markFailed 不再重复 +1）。 */
     return true;
   }
 
-  /** 把 failed job 重置为 pending（联网重试）。 */
+  /** 标记完成（仅 running→done 合法）。 */
+  markDone(id: string): boolean {
+    const j = this.find(id, 'running');
+    if (!j) return false;
+    j.status = 'done';
+    return true;
+  }
+
+  /** 标记失败（仅 running→failed 合法）。记录原因；**不重复加 attempts**（markRunning 已加）。 */
+  markFailed(id: string, reason: string): boolean {
+    const j = this.find(id, 'running');
+    if (!j) return false;
+    j.status = 'failed';
+    j.failureReason = reason;
+    return true;
+  }
+
+  /** 把 failed job 重置为 pending（联网重试，仅 failed→pending 合法）。 */
   retry(id: string): boolean {
-    const j = this.jobs.find((x) => x.id === id);
-    if (!j || j.status !== 'failed') return false;
+    const j = this.find(id, 'failed');
+    if (!j) return false;
     j.status = 'pending';
     return true;
   }
@@ -90,25 +96,44 @@ export class GrowthJobQueue {
     return JSON.stringify({ seq: this.seq, jobs: this.jobs });
   }
 
-  private transition(id: string, to: GrowthJobStatus): boolean {
+  /** 查找指定 id 且处于 requiredStatus 的 job（from-state 校验，挡非法转移）。 */
+  private find(id: string, requiredStatus: GrowthJobStatus): GrowthJob | undefined {
     const j = this.jobs.find((x) => x.id === id);
-    if (!j) return false;
-    j.status = to;
-    if (to === 'running') j.attempts++;
-    return true;
+    return j && j.status === requiredStatus ? j : undefined;
   }
 
-  /** 从序列化恢复。 */
+  /**
+   * 从序列化恢复。**完整校验**（Codex Edge-P4 复审）：逐条 validateJob + id 唯一 +
+   * seq 必须大于已恢复 job 的最大 gjob_N 序号（否则新入队 id 会与旧重复）。
+   */
   static fromSerialized(serialized: string): GrowthJobQueue {
     const parsed = JSON.parse(serialized) as { seq?: unknown; jobs?: unknown };
     if (typeof parsed.seq !== 'number' || !Number.isInteger(parsed.seq) || parsed.seq < 0 || !Array.isArray(parsed.jobs)) {
       throw new Error('GrowthJobQueue.fromSerialized: 畸形序列化数据');
     }
     const q = new GrowthJobQueue();
+    const seenIds = new Set<string>();
+    let maxIdSeq = -1;
+    for (const raw of parsed.jobs) {
+      const job = validateJob(raw);
+      if (seenIds.has(job.id)) throw new Error(`GrowthJobQueue.fromSerialized: job id 重复 ${job.id}`);
+      seenIds.add(job.id);
+      const idSeq = parseJobIdSeq(job.id);
+      if (idSeq !== undefined) maxIdSeq = Math.max(maxIdSeq, idSeq);
+      q.jobs.push(job);
+    }
+    if (parsed.seq <= maxIdSeq) {
+      throw new Error(`GrowthJobQueue.fromSerialized: seq(${parsed.seq}) 必须大于已有 job 最大序号(${maxIdSeq})`);
+    }
     q.seq = parsed.seq;
-    for (const raw of parsed.jobs) q.jobs.push(validateJob(raw));
     return q;
   }
+}
+
+/** 从 'gjob_N' 解析序号 N；非此格式返回 undefined。 */
+function parseJobIdSeq(id: string): number | undefined {
+  const m = /^gjob_(\d+)$/.exec(id);
+  return m ? Number(m[1]) : undefined;
 }
 
 const VALID_KINDS: ReadonlySet<string> = new Set(['reflection', 'perception', 'knowledge']);

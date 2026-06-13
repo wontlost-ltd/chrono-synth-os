@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   GrowthJobQueue, TeacherJobRunner, type GrowthJob, type TeacherFn,
 } from '../../edge/index.js';
+import type { Logger } from '../../utils/logger.js';
 
 describe('离线成长队列（ADR-0052 Edge-P4）', () => {
   it('入队 → pending → markRunning/Done 生命周期', () => {
@@ -20,15 +21,41 @@ describe('离线成长队列（ADR-0052 Edge-P4）', () => {
     assert.equal(q.all().find((x) => x.id === j.id)!.status, 'done');
   });
 
-  it('失败 → retry 回 pending', () => {
+  it('running → failed → retry 回 pending', () => {
     const q = new GrowthJobQueue();
     const j = q.enqueue('perception', { mediaSha: 'abc' }, 1000);
+    q.markRunning(j.id);
     q.markFailed(j.id, 'teacher down');
     const failed = q.all().find((x) => x.id === j.id)!;
     assert.equal(failed.status, 'failed');
     assert.equal(failed.failureReason, 'teacher down');
     assert.equal(q.retry(j.id), true);
     assert.equal(q.pending().length, 1);
+  });
+
+  it('状态机：非法转移被拒（done 不能再 markRunning；pending 不能直接 markFailed）', () => {
+    const q = new GrowthJobQueue();
+    const j = q.enqueue('reflection', {}, 1000);
+    /* pending 直接 markFailed/markDone 非法（须先 running）。 */
+    assert.equal(q.markFailed(j.id, 'x'), false);
+    assert.equal(q.markDone(j.id), false);
+    q.markRunning(j.id);
+    q.markDone(j.id);
+    /* done 不能再 markRunning。 */
+    assert.equal(q.markRunning(j.id), false);
+    assert.equal(q.all().find((x) => x.id === j.id)!.status, 'done');
+  });
+
+  it('attempts 单计：一次 running→failed 只 +1（不双计）', () => {
+    const q = new GrowthJobQueue();
+    const j = q.enqueue('reflection', {}, 1000);
+    q.markRunning(j.id);
+    q.markFailed(j.id, 'x');
+    assert.equal(q.all().find((x) => x.id === j.id)!.attempts, 1, '一次尝试 attempts=1');
+    /* retry 再跑一次 → attempts=2。 */
+    q.retry(j.id);
+    q.markRunning(j.id);
+    assert.equal(q.all().find((x) => x.id === j.id)!.attempts, 2);
   });
 
   it('序列化往返：恢复后 jobs + seq 保留', () => {
@@ -48,6 +75,20 @@ describe('离线成长队列（ADR-0052 Edge-P4）', () => {
       () => GrowthJobQueue.fromSerialized(JSON.stringify({ seq: 1, jobs: [{ id: 'x', kind: 'bogus', status: 'pending', payload: {}, enqueuedAt: 1, attempts: 0 }] })),
       /kind 非法/,
     );
+  });
+
+  it('fromSerialized：seq 必须大于已有 job 最大序号（防新 id 重复）', () => {
+    /* job gjob_5 但 seq=3 ≤ 5 → 拒绝（否则新入队 gjob_3 会与未来冲突）。 */
+    const bad = JSON.stringify({ seq: 3, jobs: [{ id: 'gjob_5', kind: 'reflection', status: 'done', payload: {}, enqueuedAt: 1, attempts: 1 }] });
+    assert.throws(() => GrowthJobQueue.fromSerialized(bad), /必须大于已有/);
+  });
+
+  it('fromSerialized：job id 重复被拒', () => {
+    const dup = JSON.stringify({ seq: 2, jobs: [
+      { id: 'gjob_0', kind: 'reflection', status: 'done', payload: {}, enqueuedAt: 1, attempts: 1 },
+      { id: 'gjob_0', kind: 'reflection', status: 'pending', payload: {}, enqueuedAt: 2, attempts: 0 },
+    ] });
+    assert.throws(() => GrowthJobQueue.fromSerialized(dup), /id 重复/);
   });
 
   it('深拷贝：enqueue 入参/读出不外泄 live reference', () => {
@@ -114,5 +155,31 @@ describe('Teacher job 运行器（ADR-0052 Edge-P4）', () => {
       return new TeacherJobRunner(q, async () => ({ candidatesIngested: 3 }));
     };
     assert.deepEqual(await mk().runPending(), await mk().runPending());
+  });
+
+  it('logger 抛错不破坏失败隔离（runPending 仍不抛）', async () => {
+    const q = new GrowthJobQueue();
+    q.enqueue('reflection', {}, 1000);
+    /* logger.info/warn 都抛错。 */
+    const throwingLogger: Logger = {
+      info: () => { throw new Error('logger boom'); },
+      warn: () => { throw new Error('logger boom'); },
+      error: () => { throw new Error('logger boom'); },
+      debug: () => { throw new Error('logger boom'); },
+    };
+    const runner = new TeacherJobRunner(q, async () => ({ candidatesIngested: 1 }), throwingLogger);
+    const summary = await runner.runPending();   /* 不抛 */
+    assert.equal(summary.succeeded, 1, 'logger 抛错被隔离，job 仍正常完成');
+  });
+
+  it('teacher 返回畸形 outcome（NaN）→ 当失败处理，不污染 summary', async () => {
+    const q = new GrowthJobQueue();
+    q.enqueue('reflection', {}, 1000);
+    const runner = new TeacherJobRunner(q, async () => ({ candidatesIngested: NaN }));
+    const summary = await runner.runPending();
+    assert.equal(summary.failed, 1, '畸形 outcome 当失败');
+    assert.equal(summary.succeeded, 0);
+    assert.equal(Number.isFinite(summary.totalCandidates), true, 'totalCandidates 不被 NaN 污染');
+    assert.equal(summary.totalCandidates, 0);
   });
 });

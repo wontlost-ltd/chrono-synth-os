@@ -50,19 +50,34 @@ export class TeacherJobRunner {
       this.queue.markRunning(job.id);
       try {
         const outcome = await this.teacher(job);
+        /* 校验 teacher outcome：非有限非负 candidatesIngested 视为畸形（teacher 不可信）→ 当失败处理，
+         * 不污染 summary。 */
+        const n = outcome?.candidatesIngested;
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+          throw new Error(`teacher 返回畸形 candidatesIngested: ${String(n)}`);
+        }
         this.queue.markDone(job.id);
         succeeded++;
-        totalCandidates += outcome.candidatesIngested;
-        this.logger?.info('TeacherJobRunner', `job ${job.id}(${job.kind}) done，候选 ${outcome.candidatesIngested}`);
+        totalCandidates += n;
+        this.safeLog('info', `job ${job.id}(${job.kind}) done，候选 ${n}`);
       } catch (err) {
         /* 失败隔离：标 failed，不抛、不中断后续 job、不影响 runtime。 */
         const reason = err instanceof Error ? err.message : String(err);
         this.queue.markFailed(job.id, reason);
         failed++;
-        this.logger?.warn('TeacherJobRunner', `job ${job.id}(${job.kind}) 失败（隔离）: ${reason}`);
+        this.safeLog('warn', `job ${job.id}(${job.kind}) 失败（隔离）: ${reason}`);
       }
     }
 
     return { attempted: jobs.length, succeeded, failed, totalCandidates };
+  }
+
+  /** logger 隔离：logger 抛错绝不破坏 job 失败隔离（否则 logger 失败会阻断 runtime 自治）。 */
+  private safeLog(level: 'info' | 'warn', msg: string): void {
+    try {
+      this.logger?.[level]('TeacherJobRunner', msg);
+    } catch {
+      /* 吞掉 logger 自身错误——日志失败不能破坏失败隔离不变量。 */
+    }
   }
 }
