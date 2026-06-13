@@ -28,7 +28,7 @@ export type ArtifactKind =
 export type ArtifactSource =
   | 'reflection'          /* LLM 反思循环 */
   | 'conversation'        /* 对话沉淀 */
-  | 'knowledge_import'    /* 知识摄入 */
+  | 'knowledge_import'    /* 知识摄入（ADR-0051 Phase 1：外部感知候选暂复用此来源） */
   | 'onboarding';          /* 初始画像 */
 
 /**
