@@ -23,6 +23,22 @@ import { resolveLlmApiKey } from './llm-credential-store.js';
 /** 有效 provider 枚举（与 config.intelligence.provider / LLMProviderName 对齐）。 */
 const VALID_PROVIDERS: ReadonlySet<string> = new Set(['openai', 'anthropic', 'ollama', 'mock']);
 
+/**
+ * 各 provider 的默认 chat/embedding 模型。
+ * 用途：租户切到**异于全局**的 provider 但未显式配 model 时——全局 model 是为全局 provider
+ * 准备的模型名（如 anthropic 的 claude-sonnet），不能盲目发给另一个 provider（openai 没这个模型）。
+ * 此时用该 provider 的默认模型。同 provider 则继续沿用全局 model（尊重运维配置）。
+ *
+ * 注：anthropic 不支持 embedding（ModelRouter dispatchEmbedOnce 抛错）；其 embedding 默认沿用
+ * openai 系列模型名仅作占位——anthropic 主 provider 的 embedding 实际由 fallback 或全局路径承担。
+ */
+const PROVIDER_DEFAULT_MODELS: Readonly<Record<string, { chat: string; embedding: string }>> = {
+  openai: { chat: 'gpt-4o', embedding: 'text-embedding-3-small' },
+  anthropic: { chat: 'claude-sonnet-4-5-20250929', embedding: 'text-embedding-3-small' },
+  ollama: { chat: 'llama3', embedding: 'nomic-embed-text' },
+  mock: { chat: 'mock', embedding: 'mock' },
+};
+
 /** 全局 LLM 配置中本模块需要的子集（避免直接依赖 AppConfig 整块）。 */
 export interface GlobalLlmConfig {
   readonly provider: string;
@@ -107,12 +123,24 @@ function normalizeOptional(v: string | null | undefined): string | null {
 /**
  * 解析某租户构造 ModelRouter 该用的有效 LLM 配置（全局 config ∪ 租户偏好）。
  *
- * 无偏好 row → 直接返回全局配置（行为不变）。有偏好 → 用 active_provider，model/embedding/baseUrl
- * 仅覆盖非空项；apiKey 按**有效 provider** 解析 BYOK key（缺失回退全局 key）。fallbacks 始终用
- * 全局（降级链是平台级策略，非租户配置项）。
+ * 无偏好 row → 完全回退全局（按全局 provider 解析 BYOK key，保持既有 BYOK 行为）。
  *
- * fail-closed 语义随 resolveLlmApiKey：有 BYOK row 但解密失败 → 抛错（不静默用平台 key）。
- * 启动期调用方若需对坏 row 优雅降级，应用 resolveTenantLlmConfigAtStartup。
+ * 有偏好时，**区分有效 provider 是否等于全局 provider**（Codex #129 复审修：跨 provider 时所有
+ * 「全局值」都不可盲目沿用——全局 key/model/baseUrl 是为全局 provider 准备的）：
+ *   - 同 provider：继承全局 model/embeddingModel/baseUrl，apiKey 按该 provider 解析 BYOK key
+ *     缺失回退全局 key（合法——同 provider 的全局 key 就是给它的）。
+ *   - 跨 provider：model/embeddingModel 用租户显式覆盖 → 否则用**该 provider 默认**（绝不沿用全局
+ *     provider 的模型名）；baseUrl 用租户覆盖 → 否则 undefined（绝不沿用全局 provider 的端点）；
+ *     apiKey 只用该 provider 的 BYOK key，**无则 undefined**——绝不借全局 provider 的平台 key
+ *     （否则把 A provider 的平台 key 当 B provider key 用：功能必错 + 平台 key 可能外送到租户
+ *     可控 base_url，是安全面）。
+ *
+ * fallbacks 始终用全局（降级链是平台级策略，非租户配置项）。⚠️ **语义披露**：fallback 档用
+ * 平台凭据——若租户主 provider 因可用性失败而降级，该次降级走平台 key。本特性是「优先用租户
+ * key」而非「所有流量必须用租户 key」；后者需后续做 per-tenant fallback opt-out（已登记）。
+ *
+ * fail-closed 语义随 resolveLlmApiKey：有效 provider 有 BYOK row 但解密失败 → 抛错（不静默用平台
+ * key）。启动期调用方若需对坏 row 优雅降级，应用 resolveTenantLlmConfigAtStartup。
  */
 export function resolveTenantLlmConfig(
   tx: SyncWriteUnitOfWork,
@@ -134,14 +162,21 @@ export function resolveTenantLlmConfig(
     };
   }
 
-  /* 有偏好：active provider + 非空覆盖；apiKey 按有效 provider 解析 BYOK key。 */
   const provider = settings.active_provider;
+  const sameAsGlobal = provider === global.provider;
+  const defaults = PROVIDER_DEFAULT_MODELS[provider] ?? PROVIDER_DEFAULT_MODELS.mock;
+
+  /* 同 provider：全局 key 是该 provider 的合法 fallback；跨 provider：绝不借全局平台 key。 */
+  const keyFallback = sameAsGlobal ? global.apiKey : undefined;
+
   return {
     provider,
-    model: settings.model ?? global.model,
-    embeddingModel: settings.embedding_model ?? global.embeddingModel,
-    apiKey: resolveLlmApiKey(tx, tenantId, provider, encryption, global.apiKey),
-    baseUrl: settings.base_url ?? global.baseUrl,
+    /* 跨 provider 不沿用全局 model/embeddingModel（那是全局 provider 的模型名），用该 provider 默认。 */
+    model: settings.model ?? (sameAsGlobal ? global.model : defaults.chat),
+    embeddingModel: settings.embedding_model ?? (sameAsGlobal ? global.embeddingModel : defaults.embedding),
+    apiKey: resolveLlmApiKey(tx, tenantId, provider, encryption, keyFallback),
+    /* 跨 provider 不沿用全局 baseUrl（那是全局 provider 的端点）。 */
+    baseUrl: settings.base_url ?? (sameAsGlobal ? global.baseUrl : undefined),
     fallbacks: global.fallbacks,
   };
 }

@@ -47,25 +47,48 @@ describe('BYOK per-tenant provider preference', () => {
   });
 
   it('租户切到自己的 active provider（openai）+ 取该 provider 的 BYOK key', () => {
-    /* 租户存了 openai 的 key，并把 active provider 切到 openai。 */
+    /* 租户存了 openai 的 key，并把 active provider 切到 openai（全局是 anthropic）。 */
     new LlmCredentialStore(db, enc, TENANT).store('openai', 'sk-tenant-openai', 'u', 1000);
     new TenantLlmSettingsStore(db, TENANT).upsert({ activeProvider: 'openai', now: 1000 });
 
     const eff = resolveTenantLlmConfig(db, TENANT, GLOBAL, enc);
     assert.equal(eff.provider, 'openai');                 // 用租户选的 provider，不是全局 anthropic
     assert.equal(eff.apiKey, 'sk-tenant-openai');         // 取的是 openai 的 per-tenant key
-    assert.equal(eff.model, GLOBAL.model);                // 未覆盖 → 沿用全局 model
+    /* 跨 provider 未覆盖 model → 用 openai 默认（不沿用 anthropic 的 claude-sonnet）。 */
+    assert.equal(eff.model, 'gpt-4o');
+    assert.equal(eff.embeddingModel, 'text-embedding-3-small');
   });
 
-  it('model/embedding/baseUrl 覆盖：非空覆盖，空/未设沿用全局', () => {
+  it('安全修：跨 provider 且无该 provider BYOK key → apiKey=undefined（绝不借全局平台 key）', () => {
+    /* 全局 anthropic + 平台 key；租户切 openai 但没存 openai key。 */
+    new TenantLlmSettingsStore(db, TENANT).upsert({ activeProvider: 'openai', now: 1000 });
+    const eff = resolveTenantLlmConfig(db, TENANT, GLOBAL, enc);
+    assert.equal(eff.provider, 'openai');
+    assert.equal(eff.apiKey, undefined, '不得把全局 anthropic 平台 key 当 openai key 用');
+    assert.notEqual(eff.apiKey, GLOBAL.apiKey);
+    /* 跨 provider 也不沿用全局 baseUrl/model。 */
+    assert.equal(eff.model, 'gpt-4o');
+    assert.equal(eff.baseUrl, undefined);
+  });
+
+  it('同 provider（切到全局 anthropic 自身）：继承全局 model/key（合法 fallback）', () => {
+    new TenantLlmSettingsStore(db, TENANT).upsert({ activeProvider: 'anthropic', now: 1000 });
+    const eff = resolveTenantLlmConfig(db, TENANT, GLOBAL, enc);
+    assert.equal(eff.provider, 'anthropic');
+    assert.equal(eff.model, GLOBAL.model);                // 同 provider → 沿用全局 model（运维配置）
+    assert.equal(eff.apiKey, 'sk-global-anthropic');      // 同 provider → 全局 key 是合法 fallback
+  });
+
+  it('model/baseUrl 覆盖生效；跨 provider 未设 embedding → 用该 provider 默认（不沿用全局）', () => {
     new TenantLlmSettingsStore(db, TENANT).upsert({
       activeProvider: 'ollama', model: 'qwen2', baseUrl: 'http://10.0.0.5:11434', now: 1000,
     });
     const eff = resolveTenantLlmConfig(db, TENANT, GLOBAL, enc);
     assert.equal(eff.provider, 'ollama');
-    assert.equal(eff.model, 'qwen2');                     // 覆盖
-    assert.equal(eff.baseUrl, 'http://10.0.0.5:11434');   // 覆盖
-    assert.equal(eff.embeddingModel, GLOBAL.embeddingModel); // 未设 → 沿用全局
+    assert.equal(eff.model, 'qwen2');                     // 显式覆盖
+    assert.equal(eff.baseUrl, 'http://10.0.0.5:11434');   // 显式覆盖
+    /* 跨 provider（全局 anthropic→ollama）未设 embedding → ollama 默认，不沿用全局 openai 系列名。 */
+    assert.equal(eff.embeddingModel, 'nomic-embed-text');
   });
 
   it('active provider=ollama 无需 key：apiKey 回退全局（可 undefined），不抛错', () => {
