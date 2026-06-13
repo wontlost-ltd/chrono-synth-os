@@ -25,6 +25,11 @@ export class LlmCredentialStore {
     private readonly encryption: FieldEncryption,
     private readonly tenantId: string = 'default',
   ) {
+    /* 硬安全边界（Codex BYOK 复审）：拒绝 disabled FieldEncryption——否则 encrypt() 恒等返回明文，
+     * api key 会明文落库。store 不依赖调用方纪律，自身 fail-closed。 */
+    if (!encryption.isEnabled) {
+      throw new Error('LlmCredentialStore 需要启用的 FieldEncryption（拒绝明文落库 api key）');
+    }
     registerCoreSelfExecutors();
   }
 
@@ -82,11 +87,11 @@ export function resolveLlmApiKey(
   encryption: FieldEncryption | undefined,
   configFallback: string | undefined,
 ): string | undefined {
-  if (!encryption) return configFallback;
-  try {
-    const tenantKey = new LlmCredentialStore(tx, encryption, tenantId).get(provider);
-    return tenantKey ?? configFallback;
-  } catch {
-    return configFallback;
-  }
+  /* 加密未配置（disabled/key 非法 → tryByokEncryption 返回 undefined）：BYOK 不可用，回退全局。 */
+  if (!encryption || !encryption.isEnabled) return configFallback;
+  const store = new LlmCredentialStore(tx, encryption, tenantId);
+  /* fail-closed 语义（Codex BYOK 复审）：区分「无 row」与「解密失败」。
+   * 无 row → 回退全局（合法兼容）；有 row 但解密失败 → **抛错**，绝不静默改用平台 key
+   * （否则用户以为用自己的 key 实际走平台 key，计费/合规/审计风险）。 */
+  return store.get(provider) ?? configFallback;
 }

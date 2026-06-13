@@ -118,10 +118,14 @@ export function registerOnboardingV2Routes(
       now,
     );
 
-    /* BYOK：加密落库 llmApiKey（明文绝不持久化）。同租户同 provider 覆盖更新；
+    /* BYOK：加密落库 llmApiKey（明文绝不持久化）。同租户同 provider 覆盖更新。
      * ModelRouter 构造时优先取本租户 key，缺失回退全局 config。
+     * ⚠️ 当前限制（Codex BYOK 复审）：运行时 provider 仍取全局 config.intelligence.provider；
+     *   故仅当用户所选 provider == 全局 active provider 时这把 key 才会被用上。用户选了别的
+     *   provider 时 key 落库但暂不生效（需后续 per-tenant provider preference）。这里只在
+     *   provider 匹配全局时落库，避免存「永不生效的死 key」。
      * 加密不可用（encryption=undefined）则跳过——绝不明文落库。 */
-    if (encryption && body.llmProvider && body.llmApiKey) {
+    if (encryption && body.llmProvider === config.intelligence.provider && body.llmApiKey) {
       new LlmCredentialStore(db, encryption, request.tenantId)
         .store(body.llmProvider, body.llmApiKey, userId, now);
     }

@@ -78,6 +78,19 @@ describe('BYOK LLM 凭据存储', () => {
     /* 无 encryption → 直接 fallback。 */
     assert.equal(resolveLlmApiKey(db, TENANT, 'anthropic', undefined, 'sk-global-fallback'), 'sk-global-fallback');
   });
+
+  it('硬安全边界：disabled FieldEncryption → store 构造抛错（拒绝明文落库）', () => {
+    const disabled = new FieldEncryption({ ...ENC, enabled: false });
+    assert.throws(() => new LlmCredentialStore(db, disabled, TENANT), /启用的 FieldEncryption/);
+  });
+
+  it('fail-closed：有 BYOK row 但解密失败 → resolveLlmApiKey 抛错（不静默改用全局 key）', () => {
+    /* 用一把 key 存，换另一把 key 解 → 解密失败。 */
+    new LlmCredentialStore(db, enc, TENANT).store('anthropic', 'sk-tenant', 'u', 1000);
+    const otherEnc = new FieldEncryption({ ...ENC, masterKey: Buffer.alloc(32, 9).toString('base64') });
+    /* 有 row 但解密失败 → 抛错（fail-closed），绝不静默回退 sk-global。 */
+    assert.throws(() => resolveLlmApiKey(db, TENANT, 'anthropic', otherEnc, 'sk-global'));
+  });
 });
 
 describe('BYOK 凭据 GDPR：导出脱敏 + 擦除', () => {
