@@ -65,6 +65,15 @@ describe('端侧持久化往返（ADR-0052 Edge-P3）', () => {
     assert.throws(() => tx.restore(bad), /畸形价值行/);
     assert.equal(tx.snapshotHash(), before, '畸形 restore 不破坏现有状态（原子）');
   });
+
+  it('restore 领域约束：非法 weight（>1）被拒（不注入非法状态）', () => {
+    const tx = new InMemoryValueUnitOfWork();
+    const illegal = JSON.stringify([
+      { id: 'v1', label: 'x', weight: 999, timeDiscount: 0.5, emotionAmplifier: 1, updatedAt: 1 },
+    ]);
+    assert.throws(() => tx.restore(illegal), /畸形价值行/);
+    assert.equal(getAllValues(tx).size, 0, '非法状态未注入');
+  });
 });
 
 describe('同步 outbox（ADR-0052 Edge-P3）', () => {
@@ -98,13 +107,47 @@ describe('同步 outbox（ADR-0052 Edge-P3）', () => {
     assert.equal(restored.all().length, 3);
   });
 
-  it('防误标护栏：身份核 op 标成 fact → enqueue 抛错', () => {
+  it('防误标护栏：真实 kernel 身份核 op（core-value.*）标成 fact → enqueue 抛错', () => {
     const ob = new SyncOutbox('device-A');
-    /* value.update 推导为 identity，标成 fact → 拦截。 */
-    assert.throws(() => ob.enqueue('fact', 'value.update', { id: 'v1' }, 1000), /防身份核误标/);
+    /* 真实 kernel kind 是 core-value.update（非 value.update）；标成 fact → 拦截。 */
+    assert.throws(() => ob.enqueue('fact', 'core-value.update', { id: 'v1' }, 1000), /防身份核误标/);
     /* 正确标 identity → 通过。 */
-    const e = ob.enqueue('identity', 'value.update', { id: 'v1' }, 1000);
+    const e = ob.enqueue('identity', 'core-value.update', { id: 'v1' }, 1000);
     assert.equal(e.changeClass, 'identity');
+  });
+
+  it('身份核前缀覆盖真实 kernel kind（core-value/survival-anchor/narrative/decision-style/cognitive-model/personaRule）', () => {
+    const ob = new SyncOutbox('device-A');
+    for (const op of ['core-value.update', 'survival-anchor.upsert', 'narrative.set', 'decision-style.set', 'cognitive-model.set', 'personaRule.insert']) {
+      assert.throws(() => ob.enqueue('fact', op, {}, 1000), /防身份核误标/, `${op} 应被识别为 identity`);
+    }
+    /* 蒸馏 artifact kind 也覆盖。 */
+    assert.throws(() => ob.enqueue('fact', 'value_shift', {}, 1000), /防身份核误标/);
+  });
+
+  it('fromSerialized 完整校验：坏落盘数据（身份 op 标 fact）被拒，不绕过护栏', () => {
+    const bad = JSON.stringify({
+      deviceId: 'A', nextSeq: 2,
+      entries: [{ deviceId: 'A', seq: 1, changeClass: 'fact', opKind: 'core-value.update', payload: {}, at: 1, synced: false }],
+    });
+    assert.throws(() => SyncOutbox.fromSerialized(bad), /推导.*不一致/);
+  });
+
+  it('fromSerialized：nextSeq 必须大于 max(seq)', () => {
+    const bad = JSON.stringify({
+      deviceId: 'A', nextSeq: 1,
+      entries: [{ deviceId: 'A', seq: 1, changeClass: 'fact', opKind: 'memory.append', payload: {}, at: 1, synced: false }],
+    });
+    assert.throws(() => SyncOutbox.fromSerialized(bad), /nextSeq/);
+  });
+
+  it('深拷贝：嵌套 payload 不外泄 live reference', () => {
+    const ob = new SyncOutbox('A');
+    ob.enqueue('fact', 'memory.append', { nested: { v: 1 } }, 1000);
+    const got = ob.all()[0];
+    (got.payload.nested as { v: number }).v = 999;   /* 篡改嵌套 */
+    const reread = ob.all()[0];
+    assert.equal((reread.payload.nested as { v: number }).v, 1, '嵌套 payload 深拷贝隔离');
   });
 
   it('pending/all 返回拷贝（不可绕过 markSynced 改 synced）', () => {
