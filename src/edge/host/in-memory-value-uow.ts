@@ -116,6 +116,53 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
       .map((v) => `${v.id}|${v.label}|${v.weight}|${v.timeDiscount}|${v.emotionAmplifier}|${v.updatedAt}`)
       .join('\n');
   }
+
+  /**
+   * 序列化为可落盘字符串（Edge-P3 持久化）。按 id 排序保证确定性序列化（同状态 → 同字符串）。
+   */
+  serialize(): string {
+    const rows = [...this.values.values()].sort((a, b) => a.id.localeCompare(b.id));
+    return JSON.stringify(rows);
+  }
+
+  /**
+   * 从序列化字符串重建（落盘后重载）。**原子**：先全部校验/构建到临时 Map，全部成功才替换
+   * 当前状态——任一元素畸形则抛错且**不破坏现有状态**（Codex 复审：原实现先 clear 再逐条写，
+   * 中途畸形会留半恢复状态）。
+   */
+  restore(serialized: string): void {
+    const parsed = JSON.parse(serialized) as unknown;
+    if (!Array.isArray(parsed)) throw new Error('InMemoryValueUnitOfWork.restore: 序列化数据必须是数组');
+    const next = new Map<ValueId, CoreValue>();
+    for (const raw of parsed) {
+      if (!isValidValueRow(raw)) throw new Error('InMemoryValueUnitOfWork.restore: 含畸形价值行，已中止（状态未变）');
+      next.set(raw.id, toRow(raw));
+    }
+    /* 全部校验通过才替换（原子）。 */
+    this.values.clear();
+    for (const [k, v] of next) this.values.set(k, v);
+  }
+}
+
+/**
+ * 校验一行价值数据的形状**与领域约束**（restore 原子性用）。约束对齐 value-service：
+ * weight/timeDiscount∈[0,1]、**emotionAmplifier∈[0.5,2.0]**（assertEmotionAmplifier），
+ * 防坏落盘数据注入非法状态（如 weight:999 / emotionAmplifier:999）。
+ */
+function isValidValueRow(v: unknown): v is CoreValue {
+  if (v === null || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.id === 'string' && r.id.length > 0
+    && typeof r.label === 'string'
+    && isInRange(r.weight, 0, 1)
+    && isInRange(r.timeDiscount, 0, 1)
+    && isInRange(r.emotionAmplifier, 0.5, 2.0)
+    && typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt);
+}
+
+/** [lo,hi] 区间有限数。 */
+function isInRange(v: unknown, lo: number, hi: number): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 }
 
 /** CreateValueParams → CoreValue 行（统一构造，避免 create/upsert 重复）。 */
