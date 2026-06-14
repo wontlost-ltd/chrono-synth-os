@@ -29,8 +29,9 @@ export interface SpeechRecognitionState {
 /**
  * 设备端语音识别 hook（深化感知 3/3）。
  *
- * 论点红线：原始音频不离开浏览器——SpeechRecognition 在端侧把语音转文字，本 hook 只对外暴露
- * transcript（文本表征），由 PerceiveView 交给 perceive()。服务端从不接收音频。
+ * 论点红线（诚实表述）：**Chrono 服务端从不接收音频**——SpeechRecognition 在浏览器侧把语音转文字，
+ * 本 hook 只对外暴露 transcript（文本表征），由 PerceiveView 交给 perceive()。⚠️ 不宣称「音频不离开
+ * 设备」：Web Speech 不保证端侧识别，部分浏览器把音频送厂商语音服务（见 speech-recognition.ts 模块注释）。
  *
  * 纯决策逻辑（结果合并 / 错误映射 / 能力探测）全在 speech-recognition.ts（已单测）；本 hook
  * 只做浏览器事件接线与 React 状态。卸载/停止时 abort，避免泄漏识别会话。
