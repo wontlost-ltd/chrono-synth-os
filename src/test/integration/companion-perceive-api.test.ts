@@ -16,6 +16,7 @@ import { CompanionPerceiveResultV1Schema, CompanionMeV1Schema } from '@chrono/co
 import { registerCompanionPerceiveRoutes } from '../../server/routes/companion/perceive.js';
 import { MockPerceptionProvider } from '../../perception/sources/mock-perception-provider.js';
 import type { PerceptionProvider } from '../../perception/perception-provider.js';
+import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -146,5 +147,29 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
       payload: { modality: 'audio', representation: '测试' },
     });
     assert.ok(res.statusCode === 401 || res.statusCode === 403, '无 token 应拒绝');
+  });
+
+  it('感知配额：设了 perception 限额并用尽 → 429（防 BYOK LLM 刷爆）', async () => {
+    const auth = await registerAndGetAuth(app, 'perceive-quota@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    /* 给该租户设感知限额：每窗 1 次。 */
+    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'perception', 1, 60_000);
+
+    /* 第一次成功（200）。 */
+    const r1 = await app.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', headers, payload: { modality: 'audio', representation: '第一次' } });
+    assert.equal(r1.statusCode, 200, r1.body);
+    /* 第二次超额 → 429。 */
+    const r2 = await app.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', headers, payload: { modality: 'audio', representation: '第二次' } });
+    assert.equal(r2.statusCode, 429, '超额应 429');
+  });
+
+  it('未设限额的租户：感知无限（不被配额拦）', async () => {
+    const auth = await registerAndGetAuth(app, 'perceive-noquota@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    /* 不设限额，连发 3 次都应 200。 */
+    for (let i = 0; i < 3; i++) {
+      const r = await app.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', headers, payload: { modality: 'audio', representation: `第 ${i}` } });
+      assert.equal(r.statusCode, 200, `第 ${i} 次应 200`);
+    }
   });
 });
