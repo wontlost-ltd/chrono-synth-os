@@ -13,6 +13,9 @@ import { loadConfig } from '../../config/schema.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { CompanionPerceiveResultV1Schema, CompanionMeV1Schema } from '@chrono/contracts';
+import { registerCompanionPerceiveRoutes } from '../../server/routes/companion/perceive.js';
+import { MockPerceptionProvider } from '../../perception/sources/mock-perception-provider.js';
+import type { PerceptionProvider } from '../../perception/perception-provider.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -75,6 +78,37 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     const result = CompanionPerceiveResultV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(typeof result.pendingApprovalCount, 'number');
     assert.ok(result.pendingApprovalCount >= 0);
+  });
+
+  it('身份核安全（强）：注入会产身份提案的 provider → pendingApprovalCount=1 且核心 narrative 不变', async () => {
+    /* 用 scripted provider 直接挂 route（provider 注入点），断言身份提案进 route 出口为 pending、
+     * 且绝不自动改身份核（Codex 复审：锁住 pendingApprovalCount 的生产映射 + 红线）。 */
+    const fastify = (await import('fastify')).default;
+    const local = fastify();
+    /* 测试鉴权 stub：注入 user + tenantId（绕过完整 JWT，聚焦 route 逻辑）。 */
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    /* 先建真实 value，让身份提案的 valueId 真实存在 → 进门为 pending（非 rejected）。 */
+    const v = os.core.addValue('探索', 0.5);
+    const scripted: PerceptionProvider = new MockPerceptionProvider({
+      scriptedAnalysis: {
+        confidence: 0.9,
+        facts: [{ summary: '我听到：想安静一会', memoryKind: 'episodic', valence: -0.2, salience: 0.6 }],
+        identityHints: [{ kind: 'value_shift', valueId: v.id, delta: 0.5, reason: '反复需要独处' }],
+      },
+    });
+
+    registerCompanionPerceiveRoutes(local, os, undefined, scripted);
+    await local.ready();
+    const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: 'x' } });
+    assert.equal(res.statusCode, 200, res.body);
+    const result = CompanionPerceiveResultV1Schema.parse(JSON.parse(res.body).data);
+    assert.equal(result.pendingApprovalCount, 1, '身份提案 → pending（绝不自动应用）');
+    /* 核心 value 权重未变（身份核未被感知自动改）。 */
+    assert.equal(os.core.values.getAll().get(v.id)!.weight, 0.5, '感知绝不自动改身份核 value');
+    await local.close();
   });
 
   it('红线：超长 representation 被契约拒绝（防原始媒体内嵌 / 滥用）', async () => {
