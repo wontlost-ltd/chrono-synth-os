@@ -1,0 +1,3 @@
+# Playwright E2E 产物（报告 + 失败截图/trace），不入库
+test-results/
+playwright-report/
