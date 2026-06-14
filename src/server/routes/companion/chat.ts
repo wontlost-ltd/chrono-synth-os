@@ -8,7 +8,8 @@
  * 论点红线：
  *   - 绝不调 LLM（OfflineConversationResponder 是纯确定性，相同输入→相同输出）。
  *   - 只读人格状态（narrative + memories），绝不改身份核。
- *   - 边界自检（never_discuss/always_escalate）离线同样强制（OfflineConversationResponder 内置）。
+ *   - never_discuss 输入/输出自检：喂 companion 基线安全边界（凭证类敏感主题），离线同样强制；
+ *     per-persona 自定义边界是后续（默认人格无 enterprise 模板边界）。
  *
  * 复用 companion/me.ts 的访问门 + 租户隔离 + 私有缓存头 + perception 同款配额口径。
  */
@@ -28,9 +29,26 @@ import {
 import { OfflineConversationResponder } from '../../../conversation/offline-conversation-responder.js';
 import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
+import type { BehaviorBoundary } from '../../../enterprise/persona-template-catalog.js';
 
 /** 检索的相关记忆条数上限（喂给离线回应器作 grounding）。 */
 const MAX_GROUNDING_MEMORIES = 5;
+/** 最小关键词分门槛：低于此视为弱匹配噪声，不 grounding（一个长词命中=2）。 */
+const MIN_GROUNDING_SCORE = 2;
+
+/**
+ * companion 个人版基线安全边界（never_discuss）：默认人格无 enterprise 模板边界，但 C 端面向真实
+ * 用户，不能因「无配置」就让离线回应器的 never_discuss 输入/输出自检变成 no-op。这里给一组基线敏感
+ * 主题——即使某条记忆里混入了凭证类内容，关键词检索也不会把它复述出去。per-persona 自定义边界是后续。
+ */
+const COMPANION_BASELINE_BOUNDARIES: BehaviorBoundary[] = [
+  { rule: 'never_discuss', topic: '密码' },
+  { rule: 'never_discuss', topic: '口令' },
+  { rule: 'never_discuss', topic: '密钥' },
+  { rule: 'never_discuss', topic: 'api key' },
+  { rule: 'never_discuss', topic: '银行卡号' },
+  { rule: 'never_discuss', topic: '身份证号' },
+];
 
 export function registerCompanionChatRoutes(
   app: FastifyInstance,
@@ -40,7 +58,7 @@ export function registerCompanionChatRoutes(
 ): void {
   const sharedDb = db ?? os.getDatabase();
   const quotaManager = new QuotaManager(sharedDb);
-  /* 离线回应器：无 matcher（companion 默认人格暂无 enterprise 边界配置，回退保守子串匹配）。 */
+  /* 离线回应器：无 matcher（回退保守子串匹配——已足够匹配基线敏感主题的 never_discuss 自检）。 */
   const responder = new OfflineConversationResponder();
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
@@ -81,7 +99,9 @@ export function registerCompanionChatRoutes(
     const scored: RelevantKnowledge[] = [];
     for (const node of tenantOS.core.memories.getAllMemories().values()) {
       const score = scoreTextByKeyword(node.content, tokens);
-      if (score <= 0) continue;
+      /* 最小分门槛：score ≥ 2（一个长词命中=2，或两个短词/bigram）——挡单个泛词/CJK bigram 噪声
+       * 误 grounding（Codex 复审：避免「答非所问地翻记忆」）。 */
+      if (score < MIN_GROUNDING_SCORE) continue;
       /* 饱和归一化 relevance = score/(score+K)：score 2→0.33、6→0.6，命中即过离线回应器的
        * MIN_USEFUL_RELEVANCE(0.1) 门；不像 score/(tokens*2) 那样被「全 token 满分」的虚高分母压垮。
        * 记忆无标题（title 用于 enterprise 知识条目）——空标题，content 即记忆原文。 */
@@ -107,11 +127,11 @@ export function registerCompanionChatRoutes(
     const narrative = tenantOS.core.narrative.get();
     const relevantKnowledge = retrieveRelevantMemories(tenantOS, body.message);
 
-    /* 确定性离线回应（零 LLM）。boundaries 暂空——companion 默认人格无 enterprise 边界配置；
-     * 离线回应器仍做保守 never_discuss 子串自检。 */
+    /* 确定性离线回应（零 LLM）。喂基线安全边界——never_discuss 输入/输出自检对凭证类敏感主题真生效
+     * （不因 companion 默认人格无 enterprise 配置就让安全自检 no-op）。 */
     const offline = responder.respond({
       narrative,
-      boundaries: [],
+      boundaries: COMPANION_BASELINE_BOUNDARIES,
       userInput: body.message,
       relevantKnowledge,
     });
