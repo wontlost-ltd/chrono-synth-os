@@ -132,12 +132,11 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     assert.equal(res.statusCode, 200, res.body);
     const result = CompanionPerceiveResultV1Schema.parse(JSON.parse(res.body).data);
     assert.equal(result.perceivedMemories.length, 0);
-    /* 审计记了一条 status=failed。 */
+    /* 审计记了一条 status=failed（按 status 锁定本例，避免同毫秒事件的 tie-order flake）。 */
     const rows = os.getDatabase().prepare<{ status: string; memory_count: number }>(
-      "SELECT * FROM perception_events WHERE tenant_id = 'default' ORDER BY created_at DESC",
+      "SELECT * FROM perception_events WHERE tenant_id = 'default' AND status = 'failed'",
     ).all();
-    assert.ok(rows.length >= 1);
-    assert.equal(rows[0].status, 'failed', '老师挂了 → status=failed');
+    assert.equal(rows.length, 1, '老师挂了 → 恰一条 status=failed 事件');
     assert.equal(rows[0].memory_count, 0);
     await local.close();
   });
