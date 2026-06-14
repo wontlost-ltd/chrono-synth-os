@@ -70,9 +70,11 @@ function parseFacts(raw: unknown, maxFacts: number): PerceivedFact[] {
     const f = r as Record<string, unknown>;
     const summary = typeof f.summary === 'string' ? f.summary.trim() : '';
     if (summary.length === 0 || summary.length > MAX_SUMMARY_LEN) continue;
-    const memoryKind = f.memoryKind === 'semantic' ? 'semantic' : 'episodic';
+    /* memoryKind 只接受 episodic|semantic，否则**丢弃整条**（不洗白非法 kind 成 episodic——
+     * 那会绕过「畸形条目丢弃」承诺并削弱 distiller 第二层校验，Codex 复审）。 */
+    if (f.memoryKind !== 'episodic' && f.memoryKind !== 'semantic') continue;
     if (!inRange(f.valence, -1, 1) || !inRange(f.salience, 0, 1)) continue;
-    out.push({ summary, memoryKind, valence: f.valence, salience: f.salience });
+    out.push({ summary, memoryKind: f.memoryKind, valence: f.valence, salience: f.salience });
     if (out.length >= maxFacts) break;
   }
   return out;

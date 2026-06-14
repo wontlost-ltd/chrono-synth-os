@@ -50,6 +50,22 @@ describe('LLM 感官老师（LlmPerceptionProvider）', () => {
     assert.equal(analysis.facts[0].summary, '合法');
   });
 
+  it('硬校验：非法 memoryKind 丢弃整条（不洗白成 episodic）', async () => {
+    const json = JSON.stringify({
+      facts: [
+        { summary: '合法 episodic', memoryKind: 'episodic', valence: 0, salience: 0.5 },
+        { summary: '非法 kind', memoryKind: 'procedural', valence: 0, salience: 0.5 },   // 丢弃（不洗白）
+        { summary: '缺 kind', valence: 0, salience: 0.5 },                                 // 丢弃
+        { summary: 'kind 是数字', memoryKind: 123, valence: 0, salience: 0.5 },            // 丢弃
+      ],
+      confidence: 0.7,
+    });
+    const provider = new LlmPerceptionProvider(stubLlm(json));
+    const analysis = await provider.analyze(MEDIA);
+    assert.equal(analysis.facts.length, 1, '非法 memoryKind 整条丢弃，不洗白');
+    assert.equal(analysis.facts[0].summary, '合法 episodic');
+  });
+
   it('硬校验：畸形 identityHint（缺 valueId/缺 narrative）被丢弃', async () => {
     const json = JSON.stringify({
       facts: [{ summary: 'x', memoryKind: 'episodic', valence: 0, salience: 0.5 }],

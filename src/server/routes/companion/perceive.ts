@@ -21,7 +21,7 @@ import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import type { LLMProviderName } from '@chrono/kernel';
-import { AuthorizationError, ErrorCode } from '../../../errors/index.js';
+import { AuthorizationError, ValidationError, ErrorCode } from '../../../errors/index.js';
 import {
   CompanionPerceiveRequestV1Schema,
   CompanionPerceiveResultV1Schema,
@@ -59,17 +59,24 @@ export function registerCompanionPerceiveRoutes(
   /**
    * 按租户 BYOK 选「感官老师」provider（论点：LLM 只在摄取阶段当老师）：
    *   - 显式注入 → 用它（测试）。
-   *   - 配了有效 LLM 的租户（resolveTenantLlmConfig 有 apiKey，或 provider=ollama/mock）→ LLM teacher
-   *     （真语义理解），用 ModelRouter。
-   *   - 否则 → 确定性 MockPerceptionProvider（无 key 也能用、本地可验证）。
+   *   - provider=mock（无真实 LLM）→ 确定性 MockPerceptionProvider。
+   *   - ollama 无需 key / 云 provider 有 apiKey → LLM teacher（真语义，ModelRouter）。
+   *   - 云 provider **无 key** → 退回确定性 mock（租户没配 LLM，仍能用确定性感知）。
+   *   - 云 provider **坏 key**（BYOK 解密失败）→ resolveTenantLlmConfig **fail-closed 抛错**：转成清晰
+   *     ValidationError（不静默降级 mock——租户配了 BYOK 坏 key 不该静默改用别的，与 #97-99 fail-closed
+   *     安全语义一致；让租户知道是 LLM 配置问题，而非裸 500）。
    */
   function providerFor(tenantId: string): PerceptionProvider {
     if (injectedProvider) return injectedProvider;
     if (!config) return new MockPerceptionProvider();
-    const effective = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
-    /* provider='mock'（无真实 LLM）→ 确定性 MockPerceptionProvider（句切，非走 ModelRouter mock chat）。 */
+    let effective;
+    try {
+      effective = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
+    } catch {
+      /* BYOK fail-closed（坏 row 解密失败）：清晰 400 错误，不静默降级（安全语义保持）。 */
+      throw new ValidationError('LLM 配置不可用，请检查 BYOK 设置');
+    }
     if (effective.provider === 'mock') return new MockPerceptionProvider();
-    /* ollama 无需 key；其余 provider 需有 apiKey 才用 LLM teacher，否则退回确定性 mock。 */
     if (effective.provider !== 'ollama' && !effective.apiKey) return new MockPerceptionProvider();
     const llm = new ModelRouter({
       provider: effective.provider as LLMProviderName,
