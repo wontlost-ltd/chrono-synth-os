@@ -44,11 +44,36 @@ npm run dev          # Vite dev server; proxies /api → COMPANION_API_TARGET (d
 npm run typecheck    # tsc --noEmit
 npm run test         # node:test (native TS) — auth session-layer unit tests (CSRF / single-flight / epoch)
 npm run build        # production bundle → dist/
+npm run test:e2e     # Playwright (chromium) — real-browser E2E (Edge Worker + voice ASR)
 ```
 
 > The auth unit tests run on Node's native TS support (v24+) with stubbed
 > `fetch`/`document`. Like `apps/mobile`/`apps/desktop`, this host runs in its
 > own lane and is not yet wired into the repo's root `test:golden` (follow-up).
+
+### Playwright E2E (`npm run test:e2e`)
+
+Real-browser proof for two capabilities whose unit tests can't reach a real
+browser:
+
+- **`e2e/edge-worker.spec.ts`** — the persona kernel really loads + runs a
+  deterministic value-loop **inside a real browser Web Worker** (asserts the
+  `EdgeRuntimeBadge` success text, which only renders on Worker self-check
+  success, + that the built `persona-worker-*.js` chunk is loaded via Resource
+  Timing).
+- **`e2e/voice-perceive.spec.ts`** — the real `useSpeechRecognition` hook +
+  `PerceiveView` wiring (a controllable fake `SpeechRecognition` is injected
+  because headless can't drive real ASR; only the *browser API* is faked, the
+  hook/view under test are real).
+
+The webServer runs `vite preview` (the **build output**, not dev) so the Worker
+chunk is the genuinely-bundled one. Mocks `/auth/login` + `/companion/me` +
+`/perceive` via `page.route` — no backend needed.
+
+> **Local/manual gate, by design.** Like `apps/web`'s Playwright specs, this is
+> **not** wired into CI (the repo runs zero E2E in CI — aligns with the
+> local-verification policy). Run it locally before shipping changes to the Edge
+> Worker or voice input. Requires `npx playwright install chromium` once.
 
 Run the backend (`chrono-synth-os`) separately; the dev server proxies `/api`
 to it. Log in with a non-enterprise account to see your digital human. The
