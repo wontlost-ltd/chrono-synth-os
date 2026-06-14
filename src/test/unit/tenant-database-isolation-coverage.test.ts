@@ -43,7 +43,7 @@ const KNOWN_UNISOLATED: ReadonlySet<string> = new Set<string>([
   /* ── SPECIAL ── */
   'users',            /* 租户根/身份表：登录/身份发现天然全局，tenant-admin 路径仍带 tenant 谓词 */
   /* ── SAFE-EXEMPT（executor/route 层均带 tenant_id，逐表核验后正式豁免）── */
-  'quota_limits', 'quota_usage',   /* quota-executors：读/写/删均 WHERE tenant_id */
+  'quota_limits', 'quota_usage',   /* quota-executors：租户读/写/删带 tenant_id；唯一例外是 quota_usage 旧窗口 retention 清理（全局按 window_start+window_ms 跨租户扫，绝不删当前窗口） */
   'usage_records', 'llm_usage',    /* usage/llm-usage-executors：租户读写带 tenant_id（仅 admin metrics 全局聚合）*/
   'decision_cases', 'decision_runs', 'decision_feedbacks', /* decisions route：读 WHERE id AND tenant_id */
   'onboarding_sessions', /* ②b 修复：读回从 id-only 改为 id AND tenant_id，全路径已带 tenant 约束 */
