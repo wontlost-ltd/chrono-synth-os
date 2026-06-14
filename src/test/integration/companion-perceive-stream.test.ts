@@ -137,4 +137,68 @@ describe('实时流感知 WS', () => {
       ws.close(); await ctx.app.close(); ctx.os.close();
     }
   });
+
+  it('消息速率超限 → RATE_LIMIT（防高频刷帧 DoS）', async (t) => {
+    const ctx = await setup();
+    if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
+    const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    /* 收集所有响应（避免 nextMessage 逐条监听漏帧）。 */
+    const codes: string[] = [];
+    ws.addEventListener('message', (e) => {
+      const m = JSON.parse(String(e.data)) as { code?: string };
+      if (m.code) codes.push(m.code);
+    });
+    try {
+      await open(ws);
+      /* 一秒内猛发 40 条非法帧（>30/s 上限）→ 必有 RATE_LIMIT。 */
+      for (let i = 0; i < 40; i++) ws.send('bad');
+      /* 等响应落齐。 */
+      await new Promise((r) => setTimeout(r, 500));
+      assert.ok(codes.includes('RATE_LIMIT'), `高频帧应触发 RATE_LIMIT（收到 ${codes.length} 条响应）`);
+    } finally {
+      ws.close(); await ctx.app.close(); ctx.os.close();
+    }
+  });
+
+  it('累积超上限 → BUFFER_FULL', async (t) => {
+    const ctx = await setup();
+    if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
+    const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    try {
+      await open(ws);
+      /* 累积上限 4000；每片 1000（chunk 上限），第 5 片 1000 会越界（4000+1000>4000）。 */
+      const big = 'x'.repeat(1000);
+      let last: Record<string, unknown> = {};
+      for (let i = 0; i < 5; i++) {
+        ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: big }));
+        last = await nextMessage(ws);
+      }
+      assert.equal(last.code, 'BUFFER_FULL', '第 5 片越界 4000 上限');
+    } finally {
+      ws.close(); await ctx.app.close(); ctx.os.close();
+    }
+  });
+
+  it('配额用尽 → finalize 回 QUOTA_EXCEEDED（在异步蒸馏前扣，防刷）', async (t) => {
+    const ctx = await setup();
+    if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
+    /* 设 perception 限额 1：第一段 finalize 用掉，第二段 finalize 超额。 */
+    const { QuotaManager } = await import('../../multi-tenant/quota-manager.js');
+    new QuotaManager(ctx.os.getDatabase()).setLimit('default', 'perception', 1, 60_000);
+    const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    try {
+      await open(ws);
+      ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '第一段内容。' }));
+      await nextMessage(ws);
+      ws.send(JSON.stringify({ type: 'finalize' }));
+      assert.equal((await nextMessage(ws)).type, 'perceived', '第一段成功');
+
+      ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '第二段内容。' }));
+      await nextMessage(ws);
+      ws.send(JSON.stringify({ type: 'finalize' }));
+      assert.equal((await nextMessage(ws)).code, 'QUOTA_EXCEEDED', '第二段超额');
+    } finally {
+      ws.close(); await ctx.app.close(); ctx.os.close();
+    }
+  });
 });

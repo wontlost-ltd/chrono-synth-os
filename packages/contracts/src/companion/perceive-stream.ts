@@ -66,7 +66,7 @@ export const PerceiveStreamPerceivedFrameSchema = z.object({
 /** error：协议/限额/蒸馏错误。 */
 export const PerceiveStreamErrorFrameSchema = z.object({
   type: z.literal('error'),
-  code: z.enum(['INVALID_FRAME', 'CHUNK_TOO_LARGE', 'BUFFER_FULL', 'EMPTY_FINALIZE', 'QUOTA_EXCEEDED', 'INTERNAL']),
+  code: z.enum(['INVALID_FRAME', 'CHUNK_TOO_LARGE', 'BUFFER_FULL', 'EMPTY_FINALIZE', 'QUOTA_EXCEEDED', 'RATE_LIMIT', 'BUSY', 'INTERNAL']),
   message: z.string(),
 }).strict();
 

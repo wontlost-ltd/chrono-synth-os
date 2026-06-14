@@ -37,6 +37,8 @@ import { selectPerceptionProvider } from './perception-provider-factory.js';
 
 /** WS 单帧字节上限（防超大帧；chunk 文本上限另由契约管）。 */
 const WS_FRAME_MAX_BYTES = 8192;
+/** 连接级消息速率上限（条/秒）——防高频刷非法帧/空 finalize/小 chunk（配额只在 finalize 扣，挡不住这些）。 */
+const WS_MAX_MESSAGES_PER_SECOND = 30;
 
 interface MinimalSocket {
   readyState: number;
@@ -45,8 +47,10 @@ interface MinimalSocket {
   on(event: 'message' | 'close' | 'error', cb: (arg?: unknown) => void): void;
 }
 
+/** safe send：仅在连接打开时发，且吞发送异常（close 竞态下 send 仍可能抛）——与主 /ws safeSend 同款。 */
 function send(socket: MinimalSocket, frame: PerceiveStreamServerFrame): void {
-  if (socket.readyState === 1) socket.send(JSON.stringify(frame));
+  if (socket.readyState !== 1) return;
+  try { socket.send(JSON.stringify(frame)); } catch { /* 发送失败（连接已断）无害，忽略 */ }
 }
 
 export function registerCompanionPerceiveStreamRoutes(
@@ -58,6 +62,9 @@ export function registerCompanionPerceiveStreamRoutes(
   /** 测试注入 provider（给定则所有租户用它）。 */
   injectedProvider?: PerceptionProvider,
 ): void {
+  /* WS 插件关闭时不注册此流式入口（它依赖 @fastify/websocket；否则 { websocket: true } 无意义）。 */
+  if (config && !config.websocket.enabled) return;
+
   const sharedDb = db ?? os.getDatabase();
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   const quotaManager = new QuotaManager(sharedDb);
@@ -85,20 +92,31 @@ export function registerCompanionPerceiveStreamRoutes(
     }
     const tenantId = user?.tenantId ?? request.tenantId ?? 'default';
 
-    /* per-connection 累积缓冲（bounded）。distilling 标记：蒸馏进行中拒绝并发 finalize。 */
+    /* per-connection 累积缓冲（bounded）。distilling 标记：蒸馏进行中拒绝并发 finalize（可继续累积下一段，
+     * 但不能提交，直到上一段完成）。 */
     let accumulated = '';
     let modality: 'audio' | 'video' = 'audio';
     let distilling = false;
     let closed = false;
 
-    socket.on('close', () => { closed = true; });
-    socket.on('error', () => { closed = true; });
+    /* 连接级消息速率限制（防高频刷帧——配额只在 finalize 扣，挡不住非法帧/空 finalize/reset/小 chunk）。 */
+    let messageCount = 0;
+    const rateLimitReset = setInterval(() => { messageCount = 0; }, 1000);
+    rateLimitReset.unref?.();
+    function cleanup(): void { closed = true; clearInterval(rateLimitReset); }
+    socket.on('close', cleanup);
+    socket.on('error', cleanup);
 
     socket.on('message', (raw) => {
       if (closed) return;
       const text = typeof raw === 'string' ? raw : String(raw);
       if (Buffer.byteLength(text, 'utf8') > WS_FRAME_MAX_BYTES) {
         send(socket, { type: 'error', code: 'CHUNK_TOO_LARGE', message: `帧不得超过 ${WS_FRAME_MAX_BYTES} 字节` });
+        return;
+      }
+      messageCount += 1;
+      if (messageCount > WS_MAX_MESSAGES_PER_SECOND) {
+        send(socket, { type: 'error', code: 'RATE_LIMIT', message: '消息速率超限，请等待 1 秒后重试' });
         return;
       }
       let parsed: unknown;
@@ -131,7 +149,7 @@ export function registerCompanionPerceiveStreamRoutes(
 
       /* finalize：触发异步蒸馏。 */
       if (distilling) {
-        send(socket, { type: 'error', code: 'INTERNAL', message: '上一段仍在处理，请稍候' });
+        send(socket, { type: 'error', code: 'BUSY', message: '上一段仍在处理，请稍候' });
         return;
       }
       const representation = accumulated.trim();
