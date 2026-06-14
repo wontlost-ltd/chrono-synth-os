@@ -10,9 +10,12 @@ import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
+  CompanionPerceiveResultV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
   type CompanionMemoryListV1,
+  type CompanionPerceiveRequestV1,
+  type CompanionPerceiveResultV1,
 } from '@chrono/contracts';
 import { apiFetch } from '../api/client';
 
@@ -47,5 +50,24 @@ export async function fetchCompanionMemories(
   });
   return CompanionMemoryListV1Schema.parse(
     await apiFetch<unknown>(`/api/v1/companion/me/memories?${qs.toString()}`),
+  );
+}
+
+/**
+ * POST /companion/me/perceive —「让 TA 听一段」。
+ *
+ * 用户把一段经历（已转写的文本表征）交给数字人，服务端确定性感知蒸馏器沉淀为 episodic 记忆 +
+ * 经蒸馏门产成长候选，返回「人格记住了什么 + 是否有待审批的成长」。
+ * 论点红线（ADR-0051）：服务端**只收文本表征**，不接收原始媒体——移动端当前是文本输入
+ * （RN 无 Web Speech；语音输入是后续 expo-speech 增量）。
+ */
+export async function companionPerceive(
+  input: CompanionPerceiveRequestV1,
+): Promise<CompanionPerceiveResultV1> {
+  return CompanionPerceiveResultV1Schema.parse(
+    await apiFetch<unknown>('/api/v1/companion/me/perceive', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
   );
 }

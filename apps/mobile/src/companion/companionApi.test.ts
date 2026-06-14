@@ -4,7 +4,7 @@
  * （Codex 审查 Minor：URLSearchParams 构造 + 上下限 clamp）。
  */
 
-import { fetchCompanionMemories } from './companionApi';
+import { fetchCompanionMemories, companionPerceive } from './companionApi';
 import * as client from '../api/client';
 
 /* 一个最小的合法 CompanionMemoryListV1 响应——satisfies schema.parse。 */
@@ -66,5 +66,39 @@ describe('fetchCompanionMemories 分页 query 构造', () => {
     const q = calledQuery();
     expect(q.get('page')).toBe('2');
     expect(q.get('pageSize')).toBe('19');
+  });
+});
+
+describe('companionPerceive POST 请求形状 + 响应校验', () => {
+  /* apiFetch 已 unwrap {data}，故 mock 直接返回 unwrap 后的 result。 */
+  const OK_RESULT = {
+    schemaVersion: 'companion-perceive-result.v1' as const,
+    perceivedMemories: [{ id: 'mem_1', content: '我听到：今天开会很累', valence: -0.3, salience: 0.6 }],
+    growthCandidateCount: 1,
+    pendingApprovalCount: 1,
+  };
+
+  let spy: jest.SpyInstance;
+  beforeEach(() => { spy = jest.spyOn(client, 'apiFetch').mockResolvedValue(OK_RESULT as never); });
+  afterEach(() => spy.mockRestore());
+
+  it('POST /companion/me/perceive，body 是 {modality, representation} JSON', async () => {
+    await companionPerceive({ modality: 'audio', representation: '今天开会很累。' });
+    const [path, init] = spy.mock.calls[0]!;
+    expect(path).toBe('/api/v1/companion/me/perceive');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init!.body as string)).toEqual({ modality: 'audio', representation: '今天开会很累。' });
+  });
+
+  it('返回经 schema 校验的结果（含待审批数）', async () => {
+    const res = await companionPerceive({ modality: 'audio', representation: 'x' });
+    expect(res.perceivedMemories).toHaveLength(1);
+    expect(res.perceivedMemories[0]!.content).toBe('我听到：今天开会很累');
+    expect(res.pendingApprovalCount).toBe(1);
+  });
+
+  it('响应不符合契约（漂移）→ schema.parse 抛错（端到端类型同源守卫）', async () => {
+    spy.mockResolvedValue({ schemaVersion: 'wrong', perceivedMemories: 'not-array' } as never);
+    await expect(companionPerceive({ modality: 'audio', representation: 'x' })).rejects.toThrow();
   });
 });

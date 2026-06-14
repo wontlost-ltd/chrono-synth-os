@@ -1,6 +1,6 @@
 /**
  * 移动端 ChronoCompanion tab 导航（ADR-0046 Phase 2.3）。
- * 个人版四个 tab：我的数字人 / 成长 / 记忆 / 设置。与企业版 TabNavigator 刻意区分。
+ * 个人版五个 tab：我的数字人 / 成长 / 记忆 / 让 TA 听 / 设置。与企业版 TabNavigator 刻意区分。
  */
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -8,6 +8,7 @@ import { Text } from 'react-native';
 import { CompanionHomeScreen } from '../screens/companion/CompanionHomeScreen';
 import { CompanionGrowthScreen } from '../screens/companion/CompanionGrowthScreen';
 import { CompanionMemoriesScreen } from '../screens/companion/CompanionMemoriesScreen';
+import { CompanionPerceiveScreen } from '../screens/companion/CompanionPerceiveScreen';
 import { CompanionSettingsScreen } from '../screens/companion/CompanionSettingsScreen';
 import type { AccountPlan } from '../companion/accountPlan';
 
@@ -17,6 +18,7 @@ const TAB_ICONS: Record<string, string> = {
   Me: '🪞',
   Growth: '🌱',
   Memories: '📔',
+  Perceive: '🎧',
   Settings: '⚙️',
 };
 
@@ -52,6 +54,9 @@ export function CompanionTabNavigator({ plan, onLogout, accountKey }: CompanionT
       </Tab.Screen>
       <Tab.Screen name="Memories" options={{ title: '记忆' }}>
         {() => <CompanionMemoriesScreen accountKey={accountKey} />}
+      </Tab.Screen>
+      <Tab.Screen name="Perceive" options={{ title: '让 TA 听' }}>
+        {() => <CompanionPerceiveScreen accountKey={accountKey} />}
       </Tab.Screen>
       <Tab.Screen name="Settings" options={{ title: '设置' }}>
         {() => <CompanionSettingsScreen plan={plan} onLogout={onLogout} />}
