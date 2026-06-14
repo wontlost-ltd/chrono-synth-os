@@ -145,6 +145,8 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
       assert.equal(result.kind, 'boundary_block', '命中 never_discuss 基线边界 → 拒答');
       assert.ok(!result.reply.includes('hunter2'), '绝不复述凭证');
+      /* 侧信道：拒答时 groundedMemoryCount=0，不泄露「确有相关敏感记忆存在」（Codex 复审）。 */
+      assert.equal(result.groundedMemoryCount, 0, '边界拒答不报引用数（防侧信道泄露）');
     } finally { await local.close(); }
   });
 });

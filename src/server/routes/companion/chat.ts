@@ -141,7 +141,10 @@ export function registerCompanionChatRoutes(
       reply: offline.content,
       kind: offline.kind,
       confidence: offline.confidence,
-      groundedMemoryCount: relevantKnowledge.length,
+      /* 仅 knowledge_grounded 才报引用数：边界拒答（boundary_block）时报 0——否则
+       * groundedMemoryCount>0 会从侧信道泄露「确有相关敏感记忆存在」（Codex 复审），
+       * 也与「引用了几条记忆」语义不符（拒答没引用）。 */
+      groundedMemoryCount: offline.kind === 'knowledge_grounded' ? relevantKnowledge.length : 0,
     };
     return { data: CompanionChatResultV1Schema.parse(payload) };
   });
