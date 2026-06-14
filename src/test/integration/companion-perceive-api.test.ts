@@ -100,7 +100,8 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
       },
     });
 
-    registerCompanionPerceiveRoutes(local, os, undefined, scripted);
+    /* injectedProvider 是第 6 参（db/config 省略，用注入 provider）。 */
+    registerCompanionPerceiveRoutes(local, os, undefined, undefined, undefined, scripted);
     await local.ready();
     const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: 'x' } });
     assert.equal(res.statusCode, 200, res.body);

@@ -15,6 +15,7 @@ export type {
   PerceptionAnalysis, PerceptionAnalyzeOptions, PerceptionProvider,
 } from './perception-provider.js';
 export { MockPerceptionProvider, type MockPerceptionOptions } from './sources/mock-perception-provider.js';
+export { LlmPerceptionProvider } from './sources/llm-perception-provider.js';
 export {
   PerceptionDistiller, type PerceptionDistillInput, type PerceptionDistillResult,
 } from './perception-distiller.js';

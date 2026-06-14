@@ -17,7 +17,10 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
+import type { IDatabase } from '../../../storage/database.js';
+import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
+import type { LLMProviderName } from '@chrono/kernel';
 import { AuthorizationError, ErrorCode } from '../../../errors/index.js';
 import {
   CompanionPerceiveRequestV1Schema,
@@ -27,19 +30,58 @@ import {
 import { createHash } from 'node:crypto';
 import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
 import { MockPerceptionProvider } from '../../../perception/sources/mock-perception-provider.js';
+import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
 import type { PerceptionProvider } from '../../../perception/perception-provider.js';
+import { ModelRouter } from '../../../intelligence/model-router.js';
+import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
+import { resolveTenantLlmConfig } from '../../../storage/tenant-llm-settings-store.js';
 
 export function registerCompanionPerceiveRoutes(
   app: FastifyInstance,
   os: ChronoSynthOS,
   tenantFactory: TenantOSFactory | undefined,
-  /** provider 可注入（测试 / 未来 BYOK 真 teacher）；缺省用确定性 mock。 */
-  provider: PerceptionProvider = new MockPerceptionProvider(),
+  /** BYOK 选 provider 需要 db + config（缺省构造 LLM teacher）；测试可省略只用注入 provider。 */
+  db?: IDatabase,
+  config?: AppConfig,
+  /** provider 显式注入（测试用）；给定则忽略 BYOK 解析，所有租户用它。 */
+  injectedProvider?: PerceptionProvider,
 ): void {
+  const sharedDb = db ?? os.getDatabase();
+  /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
+  const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
+
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
     if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
     return os;
+  }
+
+  /**
+   * 按租户 BYOK 选「感官老师」provider（论点：LLM 只在摄取阶段当老师）：
+   *   - 显式注入 → 用它（测试）。
+   *   - 配了有效 LLM 的租户（resolveTenantLlmConfig 有 apiKey，或 provider=ollama/mock）→ LLM teacher
+   *     （真语义理解），用 ModelRouter。
+   *   - 否则 → 确定性 MockPerceptionProvider（无 key 也能用、本地可验证）。
+   */
+  function providerFor(tenantId: string): PerceptionProvider {
+    if (injectedProvider) return injectedProvider;
+    if (!config) return new MockPerceptionProvider();
+    const effective = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
+    /* provider='mock'（无真实 LLM）→ 确定性 MockPerceptionProvider（句切，非走 ModelRouter mock chat）。 */
+    if (effective.provider === 'mock') return new MockPerceptionProvider();
+    /* ollama 无需 key；其余 provider 需有 apiKey 才用 LLM teacher，否则退回确定性 mock。 */
+    if (effective.provider !== 'ollama' && !effective.apiKey) return new MockPerceptionProvider();
+    const llm = new ModelRouter({
+      provider: effective.provider as LLMProviderName,
+      model: effective.model,
+      embeddingModel: effective.embeddingModel,
+      apiKey: effective.apiKey,
+      baseUrl: effective.baseUrl,
+      maxTokens: config.intelligence.maxTokens,
+      temperature: config.intelligence.temperature,
+      tenantId,
+    });
+    return new LlmPerceptionProvider(llm);
   }
 
   /* 与 companion/me.ts 同款访问门：仅个人用户会话，拒 API-key/service 主体 + enterprise plan。 */
@@ -71,6 +113,8 @@ export function registerCompanionPerceiveRoutes(
     const body = CompanionPerceiveRequestV1Schema.parse(request.body);
     const tenantOS = getOS(request);
 
+    /* 按租户 BYOK 选感官老师（有 LLM key → LLM teacher 真语义；否则确定性 mock）。 */
+    const provider = providerFor(request.tenantId);
     const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
     const result = await distiller.perceive({
       personaId: 'default',
