@@ -8,9 +8,15 @@
  *   - 纯确定性，**绝不调 LLM/模型**——环境感知是确定性旁路，断网无云仍可（端侧自治）。
  *   - 只 append 事实记忆，**绝不自动改身份核**（EnvironmentObserver 保证）。
  *
- * 已知边界（诚实标注）：本 route 的 EnvironmentObserver 是 per-request 构造——**跨请求的环境状态
- * 变化检测与去重**（避免每窗都记一条）需 observer 持有跨请求状态：要么端侧设备本地持有（ADR-0052
- * 端侧自治），要么服务端持久化（Edge-P3）。本切片每窗以「首次观察」语义沉淀当前环境记忆，去重是后续。
+ * 防记忆泛滥设计（Codex 复审）：服务端 route 是 **per-request**——EnvironmentObserver 的跨窗变化
+ * 检测去重**和** EnvironmentSignalExtractor 的跨窗滞回（hysteresis）都因 per-request 失效。故服务端
+ * **默认只提取返回状态、不写记忆**；只有请求显式带 `persist:true` 才沉淀一条。**去重/何时记的责任
+ * 在端侧**：设备/端侧持有跨窗 observer+extractor 状态，自行判定「环境变化」后才 persist（ADR-0052
+ * 端侧自治）；跨请求状态的服务端持久化是 Edge-P3 后续。
+ *
+ * 鉴权边界：复用 companion 个人会话门（拒 API-key），适合手机/桌面前台 app 上报（MVP）。长期
+ * Edge/机器人**后台**上报应走 scoped device credential + deviceId（参与状态去重）——ADR-0052 端侧
+ * 设备产品化后续。
  *
  * 复用 companion/me.ts 的访问门 + 租户隔离 + 私有缓存头。
  */
@@ -69,17 +75,22 @@ export function registerCompanionEnvironmentRoutes(
     const body = CompanionEnvironmentRequestV1Schema.parse(request.body);
     const tenantOS = getOS(request);
 
-    /* 确定性提取（无 LLM）+ 沉淀环境记忆（per-request observer，首次观察语义）。 */
+    /* 确定性提取（无 LLM）。 */
     const extractor = new EnvironmentSignalExtractor();
     const state = extractor.extract(body.samples);
-    const observer = new EnvironmentObserver(tenantOS.core.memories);
-    const observed = observer.observe(state);
+
+    /* 默认只提取返回（防泛滥）；persist=true（端侧已判定环境变化）才沉淀一条环境记忆。 */
+    let sensedMemoryCount = 0;
+    if (body.persist === true) {
+      const observer = new EnvironmentObserver(tenantOS.core.memories);
+      sensedMemoryCount = observer.observe(state).memoryIds.length;
+    }
 
     const states = collectStates(state);
     const payload: CompanionEnvironmentResultV1 = {
       schemaVersion: 'companion-environment-result.v1',
       states,
-      sensedMemoryCount: observed.memoryIds.length,
+      sensedMemoryCount,
     };
     return { data: CompanionEnvironmentResultV1Schema.parse(payload) };
   });

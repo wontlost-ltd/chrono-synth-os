@@ -44,7 +44,7 @@ describe('ChronoCompanion 环境感知 API 集成测试', () => {
   });
   afterEach(async () => { await app.close(); os.close(); });
 
-  it('POST /companion/me/environment：上报信号 → 提取状态 + 沉淀环境记忆', async () => {
+  it('默认（无 persist）：只提取返回状态，不写记忆（防泛滥）', async () => {
     const auth = await registerAndGetAuth(app, 'env@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
 
@@ -57,19 +57,30 @@ describe('ChronoCompanion 环境感知 API 集成测试', () => {
     const result = CompanionEnvironmentResultV1Schema.parse(JSON.parse(res.body).data);
 
     /* 光强低 → dark；声压高 → noisy。 */
-    const light = result.states.find((s) => s.channel === 'light');
-    const sound = result.states.find((s) => s.channel === 'sound');
-    assert.equal(light?.level, 'dark');
-    assert.equal(sound?.level, 'noisy');
-    /* 沉淀了环境记忆（首次观察记基线）。 */
-    assert.ok(result.sensedMemoryCount >= 1, '应沉淀环境记忆');
+    assert.equal(result.states.find((s) => s.channel === 'light')?.level, 'dark');
+    assert.equal(result.states.find((s) => s.channel === 'sound')?.level, 'noisy');
+    /* 默认不写记忆。 */
+    assert.equal(result.sensedMemoryCount, 0, '默认不沉淀记忆（防泛滥）');
+    const me = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
+    assert.equal(CompanionMeV1Schema.parse(JSON.parse(me.body).data).memoryCount, 0, '记忆图无环境记忆');
+  });
 
-    /* 端到端：环境记忆真进了 memory graph。 */
+  it('persist=true（端侧已判定环境变化）：沉淀一条环境记忆，进 memory graph', async () => {
+    const auth = await registerAndGetAuth(app, 'env-persist@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/companion/me/environment', headers,
+      payload: { samples: window('light', [2, 3, 4]), persist: true },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const result = CompanionEnvironmentResultV1Schema.parse(JSON.parse(res.body).data);
+    assert.ok(result.sensedMemoryCount >= 1, 'persist=true 应沉淀环境记忆');
+
     const me = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
     const meData = CompanionMeV1Schema.parse(JSON.parse(me.body).data);
     assert.ok(meData.memoryCount >= 1);
-    /* 环境记忆是「我注意到…」第一人称。 */
-    assert.ok(meData.recentMemories.some((m) => m.content.includes('我注意到')), '应有环境观察记忆');
+    assert.ok(meData.recentMemories.some((m) => m.content.includes('我注意到')), '应有环境观察记忆「我注意到」');
   });
 
   it('红线：超量样本（>1000）被契约拒绝', async () => {

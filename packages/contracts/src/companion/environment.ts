@@ -30,6 +30,12 @@ export const EnvironmentSampleV1Schema = z.object({
 export const CompanionEnvironmentRequestV1Schema = z.object({
   /** 一窗信号样本（可混合多通道）。 */
   samples: z.array(EnvironmentSampleV1Schema).min(1).max(ENVIRONMENT_MAX_SAMPLES),
+  /**
+   * 是否沉淀环境记忆。缺省 false——服务端默认**只提取返回状态、不写记忆**（防泛滥）。
+   * 设备/端侧持有跨窗状态（EnvironmentObserver/extractor 滞回），**自行判定环境变化**后才
+   * 带 persist:true 请求记一条（去重责任在端侧，符合 ADR-0052 端侧自治）。
+   */
+  persist: z.boolean().optional(),
 }).strict();
 
 export type CompanionEnvironmentRequestV1 = z.infer<typeof CompanionEnvironmentRequestV1Schema>;
