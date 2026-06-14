@@ -89,7 +89,7 @@ describe('TenantDatabase isolation ratchet: tenant tables must be isolated or re
   });
 
   it('回归锚点：本轮 GDPR 纳管的代表性表已进入隔离集', () => {
-    for (const t of ['response_templates', 'persona_rules', 'llm_provider_credentials', 'tenant_llm_settings', 'perception_media_refs', 'user_oauth_tokens', 'conversation_messages', 'legal_holds', 'api_keys']) {
+    for (const t of ['response_templates', 'persona_rules', 'llm_provider_credentials', 'tenant_llm_settings', 'perception_media_refs', 'perception_events', 'user_oauth_tokens', 'conversation_messages', 'legal_holds', 'api_keys']) {
       assert.ok(ALL_TENANT_TABLES.has(t), `${t} 应在 TenantDatabase 隔离集`);
     }
   });

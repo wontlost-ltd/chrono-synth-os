@@ -163,20 +163,27 @@ export function registerCompanionPerceiveRoutes(
     const candidates = result.candidates.filter((c) => c.status !== 'rejected');
     const pendingApprovalCount = result.candidates.filter((c) => c.status === 'pending').length;
 
-    /* 记一条感知事件审计（行为审计，不存表征原文——只哈希+计数+元数据）。 */
-    sharedDb.execute(perceptionEventInsert({
-      id: `pevt_${randomUUID()}`,
-      tenantId: request.tenantId,
-      personaId: 'default',
-      modality: body.modality,
-      representationSha256,
-      providerName: provider.name,
-      memoryCount: result.memoryIds.length,
-      candidateCount: candidates.length,
-      pendingCount: pendingApprovalCount,
-      status: 'done',
-      createdAt: Date.now(),
-    }));
+    /* 记一条感知事件审计（行为审计，不存表征原文——只哈希+计数+元数据）。
+     * best-effort：这是「人格何时感知了什么」的回看轨迹，不是强合规审计。记忆与配额此刻已落库提交，
+     * 审计行写失败绝不能反过来把整个 perceive 打成 500——否则用户重试会重复沉淀记忆+重复扣配额。
+     * 失败只 warn 记日志（与 analytics 事件写入同款非致命语义）。 */
+    try {
+      sharedDb.execute(perceptionEventInsert({
+        id: `pevt_${randomUUID()}`,
+        tenantId: request.tenantId,
+        personaId: 'default',
+        modality: body.modality,
+        representationSha256,
+        providerName: provider.name,
+        memoryCount: result.memoryIds.length,
+        candidateCount: candidates.length,
+        pendingCount: pendingApprovalCount,
+        status: 'done',
+        createdAt: Date.now(),
+      }));
+    } catch (err) {
+      request.log.warn({ err, tenantId: request.tenantId }, 'perception event audit write failed');
+    }
 
     const payload: CompanionPerceiveResultV1 = {
       schemaVersion: 'companion-perceive-result.v1',

@@ -17,6 +17,8 @@ import { registerCompanionPerceiveRoutes } from '../../server/routes/companion/p
 import { MockPerceptionProvider } from '../../perception/sources/mock-perception-provider.js';
 import type { PerceptionProvider } from '../../perception/perception-provider.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { PrivacyService } from '../../privacy/privacy-service.js';
+import { perceptionEventInsert } from '@chrono/kernel';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -171,19 +173,31 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     assert.ok(!cols.includes('representation') && !cols.some((c) => /transcript|content|text/i.test(c)), '无表征原文列');
   });
 
-  it('感知事件 GDPR：导出含审计 + 擦除删除', () => {
-    /* 用 default 租户 + os 直接（避开 createApp 的 PrivacyService 接线复杂度，复用现有 GDPR 测试模式）。 */
+  it('感知事件 GDPR：走真 PrivacyService — 导出 bundle 含 perception_events + 擦除真删行', () => {
+    /* 走真 PrivacyService（exportData/eraseData），证明 A 类注册真生效，
+     * 而非只手写 DELETE。默认租户 default 即 os 自身。 */
     const db = os.getDatabase();
-    db.execute({ kind: 'perceptionEvent.insert', params: {
-      id: 'pevt_1', tenantId: 'default', personaId: 'default', modality: 'audio',
+    db.execute(perceptionEventInsert({
+      id: 'pevt_gdpr', tenantId: 'default', personaId: 'default', modality: 'audio',
       representationSha256: 'a'.repeat(64), providerName: 'mock-perception',
       memoryCount: 2, candidateCount: 1, pendingCount: 0, status: 'done', createdAt: 1000,
-    } });
-    const before = db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM perception_events WHERE tenant_id = ?').get('default')?.c;
-    assert.equal(before, 1);
-    /* 擦除：privacy A 类标准 DELETE WHERE tenant_id。 */
-    db.prepare<void>('DELETE FROM perception_events WHERE tenant_id = ?').run('default');
-    assert.equal(db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM perception_events WHERE tenant_id = ?').get('default')?.c, 0);
+    }));
+    const privacy = new PrivacyService(os, undefined);
+
+    /* 导出：bundle.content.tables 含 perception_events（数据主体知情权）。 */
+    const bundle = privacy.exportData('default');
+    const exported = bundle.content.tables['perception_events'] as Array<{ representation_sha256: string }> | undefined;
+    assert.ok(exported && exported.length === 1, '导出 bundle 应含 perception_events 行');
+    assert.equal(exported[0].representation_sha256, 'a'.repeat(64), '导出含哈希 provenance');
+
+    /* 擦除：eraseData 标准 DELETE WHERE tenant_id，行被真删（被遗忘权）。 */
+    const res = privacy.eraseData('default');
+    assert.equal(res.blocked, false);
+    assert.equal(res.deleted, true);
+    assert.equal(
+      db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM perception_events WHERE tenant_id = ?').get('default')?.c, 0,
+      '擦除后 perception_events 行应清空',
+    );
   });
 
   it('感知配额：设了 perception 限额并用尽 → 429（防 BYOK LLM 刷爆）', async () => {
