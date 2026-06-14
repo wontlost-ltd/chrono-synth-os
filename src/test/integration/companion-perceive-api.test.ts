@@ -80,7 +80,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     assert.ok(result.pendingApprovalCount >= 0);
   });
 
-  it('身份核安全（强）：注入会产身份提案的 provider → pendingApprovalCount=1 且核心 narrative 不变', async () => {
+  it('身份核安全（强）：注入会产身份提案的 provider → pendingApprovalCount=1 且核心 value 权重不变', async () => {
     /* 用 scripted provider 直接挂 route（provider 注入点），断言身份提案进 route 出口为 pending、
      * 且绝不自动改身份核（Codex 复审：锁住 pendingApprovalCount 的生产映射 + 红线）。 */
     const fastify = (await import('fastify')).default;
