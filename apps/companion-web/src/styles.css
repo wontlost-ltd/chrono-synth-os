@@ -133,3 +133,14 @@ body {
 .perceive__hint--error { color: var(--c-neg); }
 .perceive__memories { margin: 8px 0 0; padding-left: 18px; }
 .perceive__memory { margin: 4px 0; color: var(--c-text); }
+
+/* 端侧内核徽章（ADR-0052 Local Persona Autonomy） */
+.edge-badge {
+  margin: 0 0 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--c-surface-2);
+  color: var(--c-pos);
+  font-size: 13px;
+  text-align: center;
+}
