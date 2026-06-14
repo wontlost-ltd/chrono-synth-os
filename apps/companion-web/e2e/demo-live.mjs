@@ -107,11 +107,11 @@ try {
   await page.screenshot({ path: join(OUT, '5-perceive-result.png'), fullPage: true });
   log('5 感知反馈：「我记住了」+ 真沉淀记忆（真后端真蒸馏器）');
 
-  /* 6. 回 Home 看记忆数真增长（证明真写库） */
+  /* 6. 回 Home 看记忆数真增长（证明真写库——断言非 0，否则初始「0 段记忆」也会满足）。 */
   await page.getByRole('tab', { name: '我的数字人' }).click();
-  await page.getByText(/段记忆/).waitFor({ timeout: 10000 });
+  await page.getByText(/[1-9]\d* 段记忆/).waitFor({ timeout: 10000 });
   await page.screenshot({ path: join(OUT, '6-home-after.png'), fullPage: true });
-  log('6 回 Home：记忆数真增长（真写库）');
+  log('6 回 Home：记忆数真增长（真写库，已断言 ≥1）');
 
   log('✅ 全部步骤完成');
 } catch (err) {
@@ -119,10 +119,11 @@ try {
   log(`✗ 出错（已截 ERROR.png）：${err.message}`);
   process.exitCode = 1;
 } finally {
-  /* 关 page 后视频才落盘；拿到路径后规整命名为 run.webm。 */
+  /* 关 page 后视频才落盘；拿到路径后规整命名为 run.webm。
+   * ctx.close / browser.close 分别兜底——ctx 关闭抛错也绝不漏关 browser（否则 chromium 进程泄漏）。 */
   videoPath = await page.video()?.path().catch(() => undefined);
-  await ctx.close();
-  await browser.close();
+  await ctx.close().catch(() => {});
+  await browser.close().catch(() => {});
   if (videoPath) {
     try { renameSync(videoPath, join(OUT, 'run.webm')); }
     catch { /* 若改名失败保留原 .webm */ }

@@ -88,10 +88,10 @@ real). It records the whole run as a `.webm` video plus key-frame PNGs into
 Prereqs — start the full stack first:
 
 ```bash
-# 1. backend on :3000 (in-memory/file sqlite, JWT enabled)
+# 1. backend on :3000 (file sqlite, JWT enabled)
 CHRONO_JWT_ENABLED=true \
 CHRONO_JWT_SECRET=local-demo-secret-at-least-32-chars-long-ok \
-CHRONO_DATABASE_DRIVER=sqlite CHRONO_DATABASE_PATH=/tmp/chrono-demo.sqlite \
+CHRONO_DB_DRIVER=sqlite CHRONO_DB_PATH=/tmp/chrono-demo.sqlite \
 node dist/main.js          # (run `npm run build` once first)
 
 # 2. companion-web dev on :5173, proxying /api → :3000
