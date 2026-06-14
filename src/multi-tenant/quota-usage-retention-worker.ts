@@ -79,7 +79,9 @@ export class QuotaUsageRetentionWorker {
     let total = 0;
     let batches = 0;
     for (let i = 0; i < this.options.maxBatchesPerCycle; i++) {
-      const removed = this.quota.pruneUsageBefore(cutoff, this.options.batchSize);
+      /* pruneUsageBefore 内部按各资源 window_ms 算当前窗口、绝不删当前窗口（即使 retentionMs <
+       * window_ms 也安全）。 */
+      const removed = this.quota.pruneUsageBefore(now, cutoff, this.options.batchSize);
       total += removed;
       batches++;
       if (removed < this.options.batchSize) break;

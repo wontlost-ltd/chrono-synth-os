@@ -61,6 +61,24 @@ describe('QuotaUsageRetentionWorker', () => {
     assert.equal(qm.checkQuota('t1', 'api', 3, now), false, '当前窗口已用 1，剩 2，要 3 超额');
   });
 
+  it('长窗口（window_ms > retentionMs）：当前窗口绝不被删（防配额绕过 — Codex #121 Critical）', async () => {
+    /* retentionMs=7d，但资源窗口=30d。当前窗口 window_start=90d，远早于 cutoff(93d)——
+     * 朴素按 cutoff 删会删掉当前窗口行 → 当期用量清零 → 用户重获额度（配额绕过）。
+     * 修后：prune 按资源 window_ms 算当前窗口，绝不删它。 */
+    const { db, qm, worker } = setup();
+    const now = 100 * DAY;
+    qm.setLimit('t1', 'big', 5, 30 * DAY);
+    /* 当前 30d 窗口起点 = 100d - (100d % 30d) = 100d - 10d = 90d。用满 5。 */
+    qm.consumeQuota('t1', 'big', 5, now);
+    const before = db.prepare<{ c: number }>("SELECT COUNT(*) AS c FROM quota_usage WHERE resource='big'").get()?.c;
+    assert.equal(before, 1);
+
+    const res = await worker.flushOnce(now);
+    assert.equal(res.deleted, 0, '当前长窗口虽早于 7d cutoff，但是当期窗口，绝不删');
+    /* 计量未被绕过：当前窗口仍记满，再要 1 即超额。 */
+    assert.equal(qm.checkQuota('t1', 'big', 1, now), false, '当前窗口已用满 5，不该被 retention 清零');
+  });
+
   it('无旧窗口时 deleted=0（幂等空跑）', async () => {
     const { qm, worker } = setup();
     const now = 100 * DAY;

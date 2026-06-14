@@ -67,10 +67,14 @@ export class QuotaManager {
   }
 
   /**
-   * 清理一批 window_start < cutoff 的已关闭窗口行（计量只读当前窗口，旧窗口是死重）。
+   * 清理一批旧窗口行（计量只读当前窗口，旧窗口是死重）。**绝不删当前窗口**——按每个资源的
+   * window_ms 算其当前窗口起点，只删 window_start 既早于 cutoff 又早于当前窗口的行（防当期用量被
+   * 清零导致配额绕过）。
+   * @param now 当前时刻（算各资源当前窗口用）。
+   * @param cutoff 删除阈值：window_start < cutoff 才考虑删。
    * @returns 本批实删行数（< batchSize 表示已清完）。
    */
-  pruneUsageBefore(cutoff: number, batchSize = 1000): number {
-    return this.tx.execute(quotaCmdPruneUsage({ cutoff, batchSize })).rowsAffected;
+  pruneUsageBefore(now: number, cutoff: number, batchSize = 1000): number {
+    return this.tx.execute(quotaCmdPruneUsage({ now, cutoff, batchSize })).rowsAffected;
   }
 }

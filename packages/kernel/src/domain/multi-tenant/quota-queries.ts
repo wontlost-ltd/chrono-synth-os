@@ -74,7 +74,10 @@ export interface QuotaRecordUsageParams {
 }
 
 export interface QuotaPruneUsageParams {
-  /** 删除 window_start < cutoff 的已关闭窗口行（cutoff 为 epoch ms）。 */
+  /** 当前时刻（epoch ms）——按每个资源的 window_ms 算其「当前窗口」，**绝不删当前窗口**（否则当期
+   * 用量被清零 = 配额绕过）。 */
+  now: number;
+  /** 删除阈值（epoch ms）：window_start < cutoff 才考虑删（保留近期窗口做审计/回看）。 */
   cutoff: number;
   /** 单批最多删除行数（限长事务，避免阻塞写入）。 */
   batchSize: number;

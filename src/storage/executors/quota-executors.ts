@@ -66,19 +66,30 @@ export function registerQuotaExecutors(): void {
     return { rowsAffected: result.changes };
   });
 
-  /* 清理已关闭的旧窗口行（window_start < cutoff）。consumeQuota/checkQuota 只读当前窗口，
-   * 旧窗口行是纯死重——删了不影响计量。组合主键无单列 id，用行值元组 IN 子查询限批（SQLite
-   * DELETE...LIMIT 标准发行版未启用；行值 IN 两库通用）。 */
+  /* 清理已关闭的旧窗口行。consumeQuota/checkQuota 只读**当前窗口**，旧窗口行是纯死重——删了
+   * 不影响计量。
+   *
+   * **绝不删当前窗口**（否则当期用量被清零 = 配额绕过，Codex #121 Critical）：当前窗口 =
+   * now - (now % window_ms)，按每个资源的 window_ms 各算。删除条件 = window_start < cutoff（够旧）
+   * 且 window_start < 该资源当前窗口起点（确保不是当期）。无 limit 的资源（recordUsage 落点窗口）
+   * 没有「当前窗口」概念，仅按 cutoff 删。
+   *
+   * 组合主键无单列 id，用行值元组 IN 子查询限批（SQLite DELETE...LIMIT 标准发行版未启用；行值 IN
+   * + 子查询 LEFT JOIN 两库通用；% 取模 SQLite/PG 同义）。 */
   registerCommand<QuotaPruneUsageParams>(QUOTA_CMD_PRUNE_USAGE, (db, p) => {
     const result = db.prepare<void>(
       `DELETE FROM quota_usage
         WHERE (tenant_id, resource, window_start) IN (
-          SELECT tenant_id, resource, window_start FROM quota_usage
-           WHERE window_start < ?
-           ORDER BY window_start ASC
+          SELECT u.tenant_id, u.resource, u.window_start
+            FROM quota_usage u
+            LEFT JOIN quota_limits l
+              ON l.tenant_id = u.tenant_id AND l.resource = u.resource
+           WHERE u.window_start < ?
+             AND (l.window_ms IS NULL OR u.window_start < ? - (? % l.window_ms))
+           ORDER BY u.window_start ASC
            LIMIT ?
         )`,
-    ).run(p.cutoff, p.batchSize);
+    ).run(p.cutoff, p.now, p.now, p.batchSize);
     return { rowsAffected: result.changes };
   });
 }
