@@ -16,10 +16,10 @@
  *   - **会自动写的只有事实层**：事实型观察 append 为 memory node，相邻事实间 memory_edge 候选满足门
  *     （confidence≥0.75∧evidence≥2）会自动编译为记忆边——但**只链接刚写入的两条真实记忆**，不创造
  *     身份、不改 value/narrative，与 ADR-0047 既有 memory_edge 自动编译同属「仅链接真实记忆，安全」。
- *   - Phase 1：蒸馏候选 source 暂复用 'knowledge_import'（感知 provenance 体现在 memory content 第一人称
- *     「我听到/我看到」+ evidence 指向真实记忆 id）。独立 'perception' source 待 Phase 3 落
- *     perception_events 表时随 migration 一并扩 distilled_artifacts.source 的 CHECK 约束引入——
- *     Phase 1 不为一个 provenance 标签触发核心表 CHECK rebuild migration。
+ *   - 蒸馏候选 source 用独立的 'perception'（v088 已扩 distilled_artifacts.source CHECK），与
+ *     'knowledge_import'（读文档/导入知识库）区分血缘——溯源/审计时能分清一条候选源自「听了段
+ *     经历」还是「读了篇文档」。感知 provenance 也体现在 memory content 第一人称「我听到/我看到」+
+ *     evidence 指向真实记忆 id。
  *   - value_shift delta 进门前**封顶**到自动门上限（0.05），patternAgrees=false（感知单源，不冒充
  *     确定性 pattern 交叉验证）→ 故 value_shift 永远 pending，不会被感知单源自动改 value。
  *   - **老师调用失败**（analyze 抛错 / 空表征 / 分析畸形）安全降级为「未产记忆」，不抛进调用方主流程。
@@ -96,7 +96,7 @@ export class PerceptionDistiller {
     for (let i = 0; i + 1 < memoryIds.length; i++) {
       const r = this.distillation.ingest(input.personaId, {
         kind: 'memory_edge',
-        source: 'knowledge_import',   /* Phase 1 provenance：见文件头说明 */
+        source: 'perception',   /* 感知血缘：见文件头说明 */
         payload: {
           sourceId: memoryIds[i],
           targetId: memoryIds[i + 1],
@@ -157,10 +157,10 @@ export class PerceptionDistiller {
     hint: PerceivedIdentityHint,
     evidence: readonly ArtifactEvidence[],
     confidence: number,
-  ): { kind: 'value_shift' | 'narrative_patch'; source: 'knowledge_import'; payload: unknown; confidence: number; evidence: readonly ArtifactEvidence[] } | undefined {
+  ): { kind: 'value_shift' | 'narrative_patch'; source: 'perception'; payload: unknown; confidence: number; evidence: readonly ArtifactEvidence[] } | undefined {
     if (hint.kind === 'narrative_patch') {
       if (typeof hint.narrative !== 'string' || hint.narrative.trim().length === 0) return undefined;
-      return { kind: 'narrative_patch', source: 'knowledge_import', payload: { narrative: hint.narrative.trim() }, confidence, evidence };
+      return { kind: 'narrative_patch', source: 'perception', payload: { narrative: hint.narrative.trim() }, confidence, evidence };
     }
     /* value_shift：需真实 valueId + 有限 delta。delta 封顶 + 与 suggested 自洽（current=0 占位无关门控）。 */
     if (typeof hint.valueId !== 'string' || hint.valueId.trim().length === 0) return undefined;
@@ -172,7 +172,7 @@ export class PerceptionDistiller {
     const current = 0.5;
     return {
       kind: 'value_shift',
-      source: 'knowledge_import',   /* Phase 1 provenance：见文件头说明 */
+      source: 'perception',   /* 感知血缘：见文件头说明 */
       payload: {
         valueId: hint.valueId.trim(),
         currentWeight: current,

@@ -28,8 +28,9 @@ export type ArtifactKind =
 export type ArtifactSource =
   | 'reflection'          /* LLM 反思循环 */
   | 'conversation'        /* 对话沉淀 */
-  | 'knowledge_import'    /* 知识摄入（ADR-0051 Phase 1：外部感知候选暂复用此来源） */
-  | 'onboarding';          /* 初始画像 */
+  | 'knowledge_import'    /* 知识摄入（读文档/导入知识库） */
+  | 'onboarding'          /* 初始画像 */
+  | 'perception';          /* 外部感知（ADR-0051：听一段/看一段——与 knowledge_import 区分血缘） */
 
 /**
  * 工件状态机（ADR-0047）：
@@ -61,7 +62,7 @@ const ARTIFACT_KINDS: ReadonlySet<ArtifactKind> = new Set([
   'cognitive_model_patch', 'response_template', 'narrative_patch',
 ]);
 const ARTIFACT_SOURCES: ReadonlySet<ArtifactSource> = new Set([
-  'reflection', 'conversation', 'knowledge_import', 'onboarding',
+  'reflection', 'conversation', 'knowledge_import', 'onboarding', 'perception',
 ]);
 const ARTIFACT_STATUSES: ReadonlySet<ArtifactStatus> = new Set([
   'candidate', 'approved', 'compiled', 'rejected', 'rolled_back',

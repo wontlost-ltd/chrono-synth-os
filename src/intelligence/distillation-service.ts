@@ -8,7 +8,7 @@
  *   4. transitionArtifact（状态机唯一写入口）+ 持久化 + 审计事件
  *
  * 纯确定性：本服务不调用 LLM。candidate 的来源（reflection/conversation/
- * knowledge_import/onboarding）由调用方在 growth 模式下产出后交给本服务门控。
+ * knowledge_import/onboarding/perception）由调用方在 growth 模式下产出后交给本服务门控。
  */
 
 import type { EventBus } from '../events/event-bus.js';
