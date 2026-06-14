@@ -115,6 +115,32 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     await local.close();
   });
 
+  it('老师失败审计：感官老师抛错 → 仍 200（安全降级）但记一条 status=failed 事件', async () => {
+    /* 注入抛错 provider：distiller 安全降级为空结果（teacherFailed=true），route 仍 200，
+     * 但审计记 failed——让运维能区分「老师挂了」与「正常无沉淀」。 */
+    const fastify = (await import('fastify')).default;
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    const throwing: PerceptionProvider = { name: 'throwing', analyze: async () => { throw new Error('teacher down'); } };
+    registerCompanionPerceiveRoutes(local, os, undefined, undefined, undefined, throwing);
+    await local.ready();
+    const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: 'x' } });
+    /* 安全降级：老师挂了不抛主流程，200 + 空记忆。 */
+    assert.equal(res.statusCode, 200, res.body);
+    const result = CompanionPerceiveResultV1Schema.parse(JSON.parse(res.body).data);
+    assert.equal(result.perceivedMemories.length, 0);
+    /* 审计记了一条 status=failed（按 status 锁定本例，避免同毫秒事件的 tie-order flake）。 */
+    const rows = os.getDatabase().prepare<{ status: string; memory_count: number }>(
+      "SELECT * FROM perception_events WHERE tenant_id = 'default' AND status = 'failed'",
+    ).all();
+    assert.equal(rows.length, 1, '老师挂了 → 恰一条 status=failed 事件');
+    assert.equal(rows[0].memory_count, 0);
+    await local.close();
+  });
+
   it('红线：超长 representation 被契约拒绝（防原始媒体内嵌 / 滥用）', async () => {
     const auth = await registerAndGetAuth(app, 'perceive-oversize@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };

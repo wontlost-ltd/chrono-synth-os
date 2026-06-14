@@ -118,6 +118,36 @@ export function registerCompanionPerceiveRoutes(
     reply.header('Vary', 'Authorization, X-Tenant-Id');
   }
 
+  /**
+   * best-effort 写一条感知事件审计行（不存表征原文——只哈希+计数+元数据+status）。
+   * 失败只 warn，绝不抛（记忆/配额此刻已提交，审计失败不能拖垮主流程或触发用户重试重复沉淀）。
+   */
+  function recordPerceptionEvent(
+    fields: {
+      modality: string; representationSha256: string; providerName: string;
+      memoryCount: number; candidateCount: number; pendingCount: number; status: string;
+    },
+    request: FastifyRequest,
+  ): void {
+    try {
+      sharedDb.execute(perceptionEventInsert({
+        id: `pevt_${randomUUID()}`,
+        tenantId: request.tenantId,
+        personaId: 'default',
+        modality: fields.modality,
+        representationSha256: fields.representationSha256,
+        providerName: fields.providerName,
+        memoryCount: fields.memoryCount,
+        candidateCount: fields.candidateCount,
+        pendingCount: fields.pendingCount,
+        status: fields.status,
+        createdAt: Date.now(),
+      }));
+    } catch (err) {
+      request.log.warn({ err, tenantId: request.tenantId }, 'perception event audit write failed');
+    }
+  }
+
   /* POST /api/v1/companion/me/perceive —「让 TA 听/看一段」 */
   app.post('/api/v1/companion/me/perceive', async (request, reply) => {
     assertCompanionAccess(request);
@@ -164,26 +194,20 @@ export function registerCompanionPerceiveRoutes(
     const pendingApprovalCount = result.candidates.filter((c) => c.status === 'pending').length;
 
     /* 记一条感知事件审计（行为审计，不存表征原文——只哈希+计数+元数据）。
+     * status：老师调用失败（teacherFailed）记 'failed'，正常记 'done'——让审计能区分「试了但老师挂了」
+     * 与「正常感知（哪怕没沉淀记忆）」。老师挂了是安全降级（不抛主流程），但审计要留痕。
      * best-effort：这是「人格何时感知了什么」的回看轨迹，不是强合规审计。记忆与配额此刻已落库提交，
      * 审计行写失败绝不能反过来把整个 perceive 打成 500——否则用户重试会重复沉淀记忆+重复扣配额。
      * 失败只 warn 记日志（与 analytics 事件写入同款非致命语义）。 */
-    try {
-      sharedDb.execute(perceptionEventInsert({
-        id: `pevt_${randomUUID()}`,
-        tenantId: request.tenantId,
-        personaId: 'default',
-        modality: body.modality,
-        representationSha256,
-        providerName: provider.name,
-        memoryCount: result.memoryIds.length,
-        candidateCount: candidates.length,
-        pendingCount: pendingApprovalCount,
-        status: 'done',
-        createdAt: Date.now(),
-      }));
-    } catch (err) {
-      request.log.warn({ err, tenantId: request.tenantId }, 'perception event audit write failed');
-    }
+    recordPerceptionEvent({
+      modality: body.modality,
+      representationSha256,
+      providerName: provider.name,
+      memoryCount: result.memoryIds.length,
+      candidateCount: candidates.length,
+      pendingCount: pendingApprovalCount,
+      status: result.teacherFailed ? 'failed' : 'done',
+    }, request);
 
     const payload: CompanionPerceiveResultV1 = {
       schemaVersion: 'companion-perceive-result.v1',
