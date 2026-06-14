@@ -129,6 +129,28 @@ body {
   cursor: pointer;
 }
 .perceive__submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.perceive__buttons { display: flex; align-items: center; gap: 8px; }
+.perceive__mic {
+  padding: 9px 14px;
+  border: 1px solid var(--c-brand);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--c-brand);
+  font-size: 15px;
+  cursor: pointer;
+}
+.perceive__mic:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 听写中：实心红，脉冲提示「正在录」。 */
+.perceive__mic--on {
+  background: var(--c-neg);
+  border-color: var(--c-neg);
+  color: #fff;
+  animation: perceive-pulse 1.4s ease-in-out infinite;
+}
+@keyframes perceive-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
 .perceive__hint { margin: 8px 0 0; font-size: 14px; }
 .perceive__hint--error { color: var(--c-neg); }
 .perceive__memories { margin: 8px 0 0; padding-left: 18px; }
