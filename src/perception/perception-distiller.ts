@@ -54,6 +54,11 @@ export interface PerceptionDistillResult {
   readonly memoryIds: readonly string[];
   /** 交蒸馏门的候选结果（memory_edge / 身份提案）。 */
   readonly candidates: readonly IngestResult[];
+  /**
+   * 感官老师调用失败（analyze 抛错）→ true。区别于「老师成功但没听出可记的事」（teacherFailed=false
+   * + memoryIds 空）。供审计区分「试了但老师挂了」与「正常但无沉淀」——前者应记 failed 事件。
+   */
+  readonly teacherFailed: boolean;
 }
 
 export class PerceptionDistiller {
@@ -70,14 +75,18 @@ export class PerceptionDistiller {
    * （见文件头不变量 4）。
    */
   async perceive(input: PerceptionDistillInput): Promise<PerceptionDistillResult> {
-    const analysis = await this.analyzeSafe(input.media);
-    if (!analysis) return { memoryIds: [], candidates: [] };
+    const outcome = await this.analyzeSafe(input.media);
+    /* 老师抛错降级：空结果但标记 teacherFailed，供调用方记 failed 审计事件。 */
+    if (outcome === 'teacher-failed') return { memoryIds: [], candidates: [], teacherFailed: true };
+    /* 空表征 / 老师返回空：正常无沉淀（非失败）。 */
+    if (!outcome) return { memoryIds: [], candidates: [], teacherFailed: false };
+    const analysis = outcome;
 
     /* ② 校验：丢弃畸形事实，截断到上限。 */
     const facts = this.validFacts(analysis.facts);
     if (facts.length === 0) {
       this.logger?.info('PerceptionDistiller', '老师分析无有效事实，跳过');
-      return { memoryIds: [], candidates: [] };
+      return { memoryIds: [], candidates: [], teacherFailed: false };
     }
 
     /* ③ 事实 → memory node（episodic/semantic）。 */
@@ -118,17 +127,20 @@ export class PerceptionDistiller {
       this.logger?.info('PerceptionDistiller', `身份提案 ${hint.kind} → status=${r.status}`);
     }
 
-    return { memoryIds, candidates };
+    return { memoryIds, candidates, teacherFailed: false };
   }
 
-  /** 调老师，任何失败安全降级为 undefined。 */
-  private async analyzeSafe(media: PerceptionInput): Promise<PerceptionAnalysis | undefined> {
+  /**
+   * 调老师。区分三态：成功→PerceptionAnalysis；空表征→undefined（正常无输入）；analyze 抛错→
+   * 'teacher-failed'（老师挂了，供审计记 failed 事件）。
+   */
+  private async analyzeSafe(media: PerceptionInput): Promise<PerceptionAnalysis | 'teacher-failed' | undefined> {
     if (!media.representation.trim()) return undefined;
     try {
       return await this.provider.analyze(media, { maxFacts: MAX_FACTS });
     } catch (err) {
       this.logger?.warn('PerceptionDistiller', `感官老师失败，降级跳过: ${err instanceof Error ? err.message : String(err)}`);
-      return undefined;
+      return 'teacher-failed';
     }
   }
 

@@ -127,10 +127,21 @@ describe('感知蒸馏器（ADR-0051 Phase 1）', () => {
     const d1 = new PerceptionDistiller(throwing, os.core.memories, os.distillation, new SilentLogger());
     const r1 = await d1.perceive({ personaId: 'default', tenantId: 'default', media: MEDIA });
     assert.deepEqual(r1.memoryIds, [], '老师抛错 → 空结果');
+    assert.equal(r1.teacherFailed, true, '老师抛错 → teacherFailed=true（供审计记 failed 事件）');
 
     const d2 = new PerceptionDistiller(new MockPerceptionProvider(), os.core.memories, os.distillation, new SilentLogger());
     const r2 = await d2.perceive({ personaId: 'default', tenantId: 'default', media: { ...MEDIA, representation: '   ' } });
     assert.deepEqual(r2.memoryIds, [], '空表征 → 空结果');
+    assert.equal(r2.teacherFailed, false, '空表征是正常无输入，非老师失败 → teacherFailed=false');
+  });
+
+  it('正常感知 → teacherFailed=false（即使没沉淀记忆也不算老师失败）', async () => {
+    /* 老师成功返回但无有效事实：teacherFailed=false（区别于老师挂了）。 */
+    const emptyFacts = new MockPerceptionProvider({ scriptedAnalysis: { confidence: 0.5, facts: [] } });
+    const distiller = new PerceptionDistiller(emptyFacts, os.core.memories, os.distillation, new SilentLogger());
+    const res = await distiller.perceive({ personaId: 'default', tenantId: 'default', media: MEDIA });
+    assert.deepEqual(res.memoryIds, []);
+    assert.equal(res.teacherFailed, false, '老师成功但无事实 → 非失败');
   });
 
   it('运行时 zero-LLM：感知沉淀后，记忆可被读取而无需再调老师', async () => {
