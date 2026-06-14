@@ -1,3 +1,5 @@
 # Playwright E2E 产物（报告 + 失败截图/trace），不入库
 test-results/
 playwright-report/
+# 真全栈演示脚本产物（录屏 .webm + 关键帧 PNG），不入库
+demo-shots/
