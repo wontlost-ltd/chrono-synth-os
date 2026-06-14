@@ -92,3 +92,42 @@ test('PersonaWorkerClient：worker 错误 → Promise reject', async () => {
   const client = new PersonaWorkerClient(w);
   await assert.rejects(() => client.send({ kind: 'listValues' }), /boom/);
 });
+
+test('健壮性：postMessage 同步抛错 → reject（不永挂）', async () => {
+  const w: WorkerLike = { onmessage: null, postMessage() { throw new Error('worker dead'); } };
+  const client = new PersonaWorkerClient(w);
+  await assert.rejects(() => client.send({ kind: 'listValues' }), /worker dead/);
+});
+
+test('健壮性：worker onerror（崩溃）→ reject 所有 pending', async () => {
+  let onerr: ((e: unknown) => void) | null = null;
+  const w: WorkerLike = {
+    onmessage: null,
+    set onerror(fn: ((e: unknown) => void) | null) { onerr = fn; },
+    get onerror() { return onerr; },
+    postMessage() { /* 永不回 */ },
+  };
+  const client = new PersonaWorkerClient(w);
+  const p1 = client.send({ kind: 'listValues' });
+  const p2 = client.send({ kind: 'listValues' });
+  /* worker 崩溃。 */
+  onerr?.({ message: 'crashed' });
+  await assert.rejects(() => p1, /crashed/);
+  await assert.rejects(() => p2, /crashed/);
+});
+
+test('健壮性：close() → reject 所有 pending', async () => {
+  const w: WorkerLike = { onmessage: null, postMessage() { /* 永不回 */ }, terminate() {} };
+  const client = new PersonaWorkerClient(w);
+  const p = client.send({ kind: 'listValues' });
+  client.close();
+  await assert.rejects(() => p, /已关闭/);
+  /* close 后再 send 直接 reject。 */
+  await assert.rejects(() => client.send({ kind: 'listValues' }), /已关闭/);
+});
+
+test('健壮性：worker 永不回 → 超时 reject（不永挂）', async () => {
+  const w: WorkerLike = { onmessage: null, postMessage() { /* 永不回 */ } };
+  const client = new PersonaWorkerClient(w, 30);   /* 30ms 超时 */
+  await assert.rejects(() => client.send({ kind: 'listValues' }), /超时/);
+});

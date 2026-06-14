@@ -5,6 +5,11 @@
  * runtime import `@chrono/kernel`**，在浏览器 worker 线程加载 kernel value-service 跑确定性人格
  * 状态闭环——证明「确定性人格内核能在非 Node 端侧 runtime 运行」（zero-LLM 论点的设备侧落地）。
  *
+ * 证明的**精确边界**（Codex 复审）：真实 Worker runtime path 已构建（vite 产出 persona-worker
+ * chunk = kernel 可 bundle 进浏览器 Worker）且代码走真 `new Worker(new URL)`；自动测试用 fake
+ * worker（Node 可测协议+kernel 闭环）。**真浏览器 Worker E2E 执行**待 playwright 后续，本切片不宣称
+ * 「CI 已证明浏览器端完整运行」。
+ *
  * 本文件是**纯逻辑**（不碰 postMessage / Worker 全局），故可在 Node 直接单测；worker 边界在
  * persona-worker.ts。浏览器 host adapter（内存 UoW + 确定性 clock/random）零 node:*——可移植。
  */

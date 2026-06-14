@@ -11,41 +11,79 @@
 import type { PersonaCommand, PersonaResult } from './persona-runtime.js';
 import type { WorkerRequest, WorkerResponse } from './worker-protocol.js';
 
-/** Worker 的最小面（便于注入 fake 测试）。 */
+/** Worker 的最小面（便于注入 fake 测试）。onerror/onmessageerror 可选——真 Worker 有。 */
 export interface WorkerLike {
   postMessage(message: WorkerRequest): void;
   onmessage: ((e: MessageEvent<WorkerResponse>) => void) | null;
+  onerror?: ((e: unknown) => void) | null;
+  onmessageerror?: ((e: unknown) => void) | null;
   terminate?(): void;
 }
 
+/** 单条请求超时（毫秒）——worker 永不回（崩溃/挂死）时不让 Promise 永挂。 */
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+
+interface PendingEntry { resolve: (r: PersonaResult) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+
 export class PersonaWorkerClient {
   private nextId = 1;
-  private readonly pending = new Map<number, { resolve: (r: PersonaResult) => void; reject: (e: Error) => void }>();
+  private readonly pending = new Map<number, PendingEntry>();
+  private closed = false;
 
-  constructor(private readonly worker: WorkerLike) {
+  constructor(private readonly worker: WorkerLike, private readonly timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
     this.worker.onmessage = (e: MessageEvent<WorkerResponse>): void => {
       const res = e.data;
       const p = this.pending.get(res.id);
-      if (!p) return;                       /* 未知 id（已解决/陈旧）：忽略 */
-      this.pending.delete(res.id);
-      if (res.ok) p.resolve(res.result);
-      else p.reject(new Error(res.error));
+      if (!p) return;                       /* 未知 id（已解决/超时/陈旧）：忽略 */
+      this.settle(res.id, p, res.ok ? { value: res.result } : { error: new Error(res.error) });
     };
+    /* worker 崩溃 / 消息反序列化失败 → reject 所有 pending（否则永挂，badge 卡死，Codex 复审）。 */
+    if ('onerror' in this.worker) this.worker.onerror = (e) => this.rejectAll(workerError(e, 'worker 错误'));
+    if ('onmessageerror' in this.worker) this.worker.onmessageerror = (e) => this.rejectAll(workerError(e, 'worker 消息反序列化失败'));
   }
 
-  /** 发一条命令到端侧人格 worker，返回结果 Promise（并发安全：id 关联）。 */
+  /** 发一条命令到端侧人格 worker，返回结果 Promise（并发安全：id 关联；超时/postMessage 抛错都 reject）。 */
   send(cmd: PersonaCommand): Promise<PersonaResult> {
     const id = this.nextId++;
     return new Promise<PersonaResult>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, cmd });
+      if (this.closed) { reject(new Error('worker 已关闭')); return; }
+      const timer = setTimeout(() => {
+        const p = this.pending.get(id);
+        if (p) this.settle(id, p, { error: new Error('worker 请求超时') });
+      }, this.timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+      try {
+        this.worker.postMessage({ id, cmd });
+      } catch (err) {
+        /* postMessage 同步抛错（worker 已死/不可序列化）→ 立即 reject 该请求（否则永挂）。 */
+        const p = this.pending.get(id);
+        if (p) this.settle(id, p, { error: err instanceof Error ? err : new Error(String(err)) });
+      }
     });
   }
 
-  /** 终止 worker（释放线程）。 */
+  /** 终止 worker（释放线程）+ reject 所有 pending（不让挂起请求永久泄漏）。 */
   close(): void {
+    this.closed = true;
+    this.rejectAll(new Error('worker 已关闭'));
     this.worker.terminate?.();
   }
+
+  private settle(id: number, p: PendingEntry, outcome: { value: PersonaResult } | { error: Error }): void {
+    clearTimeout(p.timer);
+    this.pending.delete(id);
+    if ('value' in outcome) p.resolve(outcome.value);
+    else p.reject(outcome.error);
+  }
+
+  private rejectAll(err: Error): void {
+    for (const [id, p] of [...this.pending]) this.settle(id, p, { error: err });
+  }
+}
+
+function workerError(e: unknown, fallback: string): Error {
+  const msg = (e as { message?: unknown })?.message;
+  return new Error(typeof msg === 'string' ? msg : fallback);
 }
 
 /**
