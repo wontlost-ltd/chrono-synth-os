@@ -50,6 +50,8 @@ const TENANT_TABLES = [
   /* GDPR 补齐（A 类：标准业务/配置/派生数据，无敏感凭证列，无保留义务） */
   /* tenant_llm_settings：BYOK active provider 偏好，非 secret 配置（key 在 llm_provider_credentials B 类） */
   'tenant_llm_settings',
+  /* perception_events：感知行为审计（哈希+计数+元数据，无敏感列；表征原文不落库），A 类标准导出+擦除 */
+  'perception_events',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

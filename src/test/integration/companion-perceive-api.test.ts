@@ -149,6 +149,43 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     assert.ok(res.statusCode === 401 || res.statusCode === 403, '无 token 应拒绝');
   });
 
+  it('感知事件审计：每次 perceive 记一条 event（哈希+计数，不存表征原文）', async () => {
+    const auth = await registerAndGetAuth(app, 'perceive-event@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    await app.inject({
+      method: 'POST', url: '/api/v1/companion/me/perceive', headers,
+      payload: { modality: 'audio', representation: '今天开会很累。回家想安静。' },
+    });
+    /* 直查 perception_events：记了一条，含哈希+计数+元数据，绝无表征原文。 */
+    const rows = os.getDatabase().prepare<{ representation_sha256: string; provider_name: string; memory_count: number; modality: string }>(
+      'SELECT * FROM perception_events WHERE tenant_id = ?',
+    ).all(auth.tenantId);
+    assert.equal(rows.length, 1, '记一条感知事件');
+    assert.equal(rows[0].modality, 'audio');
+    assert.ok(rows[0].provider_name.length > 0);
+    assert.ok(rows[0].memory_count >= 1, '记了沉淀记忆数');
+    assert.equal(rows[0].representation_sha256.length, 64, 'sha256 哈希（非原文）');
+    /* 直查全表无表征原文列。 */
+    const cols = os.getDatabase().prepare<{ name: string }>('PRAGMA table_info(perception_events)').all().map((c) => c.name);
+    assert.ok(!cols.includes('representation') && !cols.some((c) => /transcript|content|text/i.test(c)), '无表征原文列');
+  });
+
+  it('感知事件 GDPR：导出含审计 + 擦除删除', () => {
+    /* 用 default 租户 + os 直接（避开 createApp 的 PrivacyService 接线复杂度，复用现有 GDPR 测试模式）。 */
+    const db = os.getDatabase();
+    db.execute({ kind: 'perceptionEvent.insert', params: {
+      id: 'pevt_1', tenantId: 'default', personaId: 'default', modality: 'audio',
+      representationSha256: 'a'.repeat(64), providerName: 'mock-perception',
+      memoryCount: 2, candidateCount: 1, pendingCount: 0, status: 'done', createdAt: 1000,
+    } });
+    const before = db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM perception_events WHERE tenant_id = ?').get('default')?.c;
+    assert.equal(before, 1);
+    /* 擦除：privacy A 类标准 DELETE WHERE tenant_id。 */
+    db.prepare<void>('DELETE FROM perception_events WHERE tenant_id = ?').run('default');
+    assert.equal(db.prepare<{ c: number }>('SELECT COUNT(*) AS c FROM perception_events WHERE tenant_id = ?').get('default')?.c, 0);
+  });
+
   it('感知配额：设了 perception 限额并用尽 → 429（防 BYOK LLM 刷爆）', async () => {
     const auth = await registerAndGetAuth(app, 'perceive-quota@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };

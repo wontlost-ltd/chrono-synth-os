@@ -96,4 +96,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v084_llm_provider_credentials', aliases: { postgres: 'v086', 'sqlite-sql': 'v084' }, classification: 'schema-simple', notes: 'BYOK: encrypted per-tenant LLM provider API keys' },
   { canonical: 'v085_tenant_llm_settings', aliases: { postgres: 'v087', 'sqlite-sql': 'v085' }, classification: 'schema-simple', notes: 'BYOK: per-tenant active LLM provider preference' },
   { canonical: 'v086_perception_media_refs', aliases: { postgres: 'v088', 'sqlite-sql': 'v086' }, classification: 'schema-simple', notes: 'ADR-0052 Edge-P5: perception media reference metadata' },
+  { canonical: 'v087_perception_events', aliases: { postgres: 'v089', 'sqlite-sql': 'v087' }, classification: 'schema-simple', notes: 'Perception layer: perception event audit' },
 ];
