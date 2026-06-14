@@ -8,8 +8,8 @@
  * 论点红线（与 ADR-0051/0052 一致）：
  *   - 服务端**绝不接收原始媒体二进制**——只收已脱离媒体的中间表征（前端 ASR / 用户输入）。
  *   - 感知产物经蒸馏门：事实记忆 append，身份层提案默认 pending 人工审批，绝不自动改身份核。
- *   - provider 当前用确定性 MockPerceptionProvider（无 key 可跑、本地可验证全链路）；真实多模态
- *     teacher（BYOK LLM / ollama-llava）是紧跟增量（接入点：provider 注入），不在本切片。
+ *   - provider 按租户 BYOK 选（providerFor）：配了 LLM key → LlmPerceptionProvider（真语义理解，
+ *     ModelRouter 当感官老师）；无 key / provider=mock → 确定性 MockPerceptionProvider（本地可验证）。
  *
  * 复用 companion/me.ts 的访问门控（assertCompanionAccess）+ 租户隔离（getOS）+ 私有缓存头。
  */

@@ -6,7 +6,8 @@
  *
  * 注：media/（Edge-P5 媒体引用 + GDPR）是 privacy/retention 基础设施，由 privacy-service / retention
  * worker 直接 import，**不经本 barrel 导出**（非感知能力出口，是存储侧引用元数据管理）。
- * 未实现（登记债）：Phase 2 BYOK perception provider + 配额；perception_events 落库 + 独立 'perception'
+ * 真 LLM 感官老师已实现（LlmPerceptionProvider，按租户 BYOK 选用）。
+ * 未实现（登记债）：perception 推理配额计量；perception_events 落库 + 独立 'perception'
  * artifact source；实时流；感知节律集成（环境状态影响打扰阈值等）。
  */
 
