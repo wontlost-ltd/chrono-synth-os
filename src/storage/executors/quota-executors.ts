@@ -75,7 +75,8 @@ export function registerQuotaExecutors(): void {
    * 没有「当前窗口」概念，仅按 cutoff 删。
    *
    * 组合主键无单列 id，用行值元组 IN 子查询限批（SQLite DELETE...LIMIT 标准发行版未启用；行值 IN
-   * + 子查询 LEFT JOIN 两库通用；% 取模 SQLite/PG 同义）。 */
+   * + 子查询 LEFT JOIN 两库通用；% 取模 SQLite/PG 同义）。JOIN 条件带 window_ms > 0：脏数据
+   * （window_ms<=0）不参与取模，落到 IS NULL 分支按 cutoff 删，绝不触发 % 0 报错（Codex 加固）。 */
   registerCommand<QuotaPruneUsageParams>(QUOTA_CMD_PRUNE_USAGE, (db, p) => {
     const result = db.prepare<void>(
       `DELETE FROM quota_usage
@@ -83,7 +84,7 @@ export function registerQuotaExecutors(): void {
           SELECT u.tenant_id, u.resource, u.window_start
             FROM quota_usage u
             LEFT JOIN quota_limits l
-              ON l.tenant_id = u.tenant_id AND l.resource = u.resource
+              ON l.tenant_id = u.tenant_id AND l.resource = u.resource AND l.window_ms > 0
            WHERE u.window_start < ?
              AND (l.window_ms IS NULL OR u.window_start < ? - (? % l.window_ms))
            ORDER BY u.window_start ASC
