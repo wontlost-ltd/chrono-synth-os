@@ -972,6 +972,18 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS perception_events (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    modality TEXT NOT NULL,\n    representation_sha256 TEXT NOT NULL,\n    provider_name TEXT NOT NULL,\n    memory_count INTEGER NOT NULL DEFAULT 0,\n    candidate_count INTEGER NOT NULL DEFAULT 0,\n    pending_count INTEGER NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'done',\n    created_at INTEGER NOT NULL\n  )",
       "CREATE INDEX IF NOT EXISTS idx_perception_events_tenant ON perception_events(tenant_id, created_at)"
     ]
+  },
+  {
+    "version": "v088",
+    "description": "Perception: add perception source to distilled_artifacts CHECK",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS distilled_artifacts_new (\n        id TEXT PRIMARY KEY,\n        tenant_id TEXT NOT NULL DEFAULT 'default',\n        persona_id TEXT NOT NULL,\n        kind TEXT NOT NULL CHECK(kind IN ('rule', 'value_shift', 'memory_edge', 'decision_style_patch', 'cognitive_model_patch', 'response_template', 'narrative_patch')),\n        source TEXT NOT NULL CHECK(source IN ('reflection', 'conversation', 'knowledge_import', 'onboarding', 'perception')),\n        payload TEXT NOT NULL,\n        confidence REAL NOT NULL DEFAULT 0,\n        evidence TEXT NOT NULL DEFAULT '[]',\n        status TEXT NOT NULL DEFAULT 'candidate' CHECK(status IN ('candidate', 'approved', 'compiled', 'rejected', 'rolled_back')),\n        reason TEXT,\n        created_at INTEGER NOT NULL,\n        compiled_at INTEGER\n      )",
+      "INSERT OR IGNORE INTO distilled_artifacts_new\n       SELECT id, tenant_id, persona_id, kind, source, payload, confidence, evidence, status, reason, created_at, compiled_at\n       FROM distilled_artifacts",
+      "DROP TABLE IF EXISTS distilled_artifacts",
+      "ALTER TABLE distilled_artifacts_new RENAME TO distilled_artifacts",
+      "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_persona ON distilled_artifacts(tenant_id, persona_id)",
+      "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_status ON distilled_artifacts(tenant_id, persona_id, status)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1924,6 +1936,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS perception_events (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    modality TEXT NOT NULL,\n    representation_sha256 TEXT NOT NULL,\n    provider_name TEXT NOT NULL,\n    memory_count BIGINT NOT NULL DEFAULT 0,\n    candidate_count BIGINT NOT NULL DEFAULT 0,\n    pending_count BIGINT NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'done',\n    created_at BIGINT NOT NULL\n  )",
       "CREATE INDEX IF NOT EXISTS idx_perception_events_tenant ON perception_events (tenant_id, created_at)"
+    ]
+  },
+  {
+    "version": "v090",
+    "description": "Perception: add perception source to distilled_artifacts CHECK",
+    "sql": [
+      "ALTER TABLE distilled_artifacts DROP CONSTRAINT IF EXISTS distilled_artifacts_source_check",
+      "ALTER TABLE distilled_artifacts ADD CONSTRAINT distilled_artifacts_source_check CHECK (source IN ('reflection', 'conversation', 'knowledge_import', 'onboarding', 'perception'))"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

@@ -114,6 +114,15 @@ describe('validateArtifact', () => {
     assert.ok(problems.some((p) => p.includes('confidence')));
   });
 
+  it("source='perception' 合法（v088 独立感知血缘，与 knowledge_import 区分）", () => {
+    assert.deepEqual(validateArtifact(makeArtifact({ source: 'perception' })), []);
+  });
+
+  it('未知 source 仍被拒（防畸形）', () => {
+    const problems = validateArtifact(makeArtifact({ source: 'made_up_source' as never }));
+    assert.ok(problems.some((p) => p.includes('source')));
+  });
+
   it('空 evidence 被拒', () => {
     const problems = validateArtifact(makeArtifact({ evidence: [] }));
     assert.ok(problems.some((p) => p.includes('evidence')));
