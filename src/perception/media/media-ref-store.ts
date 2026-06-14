@@ -21,7 +21,10 @@ import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 
 /** 对象存储擦除钩子（运行时中性；真实 S3/R2/minio driver 部署期实现）。 */
 export interface ObjectStorageEraser {
-  /** 删除对象存储中的媒体对象。失败应抛错（调用方决定是否容忍）。 */
+  /**
+   * 删除对象存储中的媒体对象。**必须幂等**：对象不存在（已删/从未存在）应**视为成功 resolve**
+   * （不抛 not-found）——否则 retention 重试会因孤儿调用反复失败。仅真实 IO 错误（网络/权限）才抛。
+   */
   erase(objectKey: string): Promise<void>;
 }
 
@@ -106,6 +109,11 @@ export class MediaRefStore {
 /**
  * retention worker：清理所有租户已过期（delete_after ≤ now）的媒体引用 —— 先删对象存储对象，
  * 再删 DB 行。全局扫描（按时间，非租户数据访问）。返回清理数。单个对象删失败隔离（不阻断其他）。
+ *
+ * **调用契约（收口审查）**：`tx` **必须是 root/admin DB**（非 TenantDatabase）。本函数依赖
+ * MEDIA_REF_QUERY_EXPIRED 全局扫描所有租户的过期引用；若误传 TenantDatabase，query 会被自动改写
+ * 成单租户扫描，导致其他租户的过期媒体永不清理（合规/容量风险）。部署时由 retention worker 用
+ * root DB 调用。
  */
 export async function runMediaRetention(
   tx: SyncWriteUnitOfWork,

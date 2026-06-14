@@ -25,6 +25,9 @@ import {
   VALUE_CMD_CREATE, VALUE_CMD_UPDATE, VALUE_CMD_DELETE, VALUE_CMD_DELETE_ALL, VALUE_CMD_UPSERT,
 } from '@chrono/kernel';
 
+/** value UoW 序列化格式版本（前向兼容；不兼容变更须升版本 + 迁移）。 */
+const VALUE_UOW_SCHEMA_VERSION = 1;
+
 export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
   /** 价值表：id → CoreValue（插入序保留，复刻 SQL 表的稳定迭代序）。 */
   private readonly values = new Map<ValueId, CoreValue>();
@@ -122,19 +125,33 @@ export class InMemoryValueUnitOfWork implements SyncWriteUnitOfWork {
    */
   serialize(): string {
     const rows = [...this.values.values()].sort((a, b) => a.id.localeCompare(b.id));
-    return JSON.stringify(rows);
+    return JSON.stringify({ schemaVersion: VALUE_UOW_SCHEMA_VERSION, rows });
   }
 
   /**
    * 从序列化字符串重建（落盘后重载）。**原子**：先全部校验/构建到临时 Map，全部成功才替换
    * 当前状态——任一元素畸形则抛错且**不破坏现有状态**（Codex 复审：原实现先 clear 再逐条写，
-   * 中途畸形会留半恢复状态）。
+   * 中途畸形会留半恢复状态）。带 schemaVersion 兼容（缺省/裸数组视为 v1 向后兼容）。
    */
   restore(serialized: string): void {
     const parsed = JSON.parse(serialized) as unknown;
-    if (!Array.isArray(parsed)) throw new Error('InMemoryValueUnitOfWork.restore: 序列化数据必须是数组');
+    /* 兼容：v1 是带 {schemaVersion, rows} 的对象；向后兼容早期裸数组（视为 v1）。 */
+    let rows: unknown;
+    if (Array.isArray(parsed)) {
+      rows = parsed;   /* 早期裸数组格式 */
+    } else if (parsed !== null && typeof parsed === 'object') {
+      const o = parsed as { schemaVersion?: unknown; rows?: unknown };
+      const version = o.schemaVersion ?? 1;
+      if (version !== VALUE_UOW_SCHEMA_VERSION) {
+        throw new Error(`InMemoryValueUnitOfWork.restore: 不支持的 schemaVersion ${String(version)}（期望 ${VALUE_UOW_SCHEMA_VERSION}）`);
+      }
+      rows = o.rows;
+    } else {
+      throw new Error('InMemoryValueUnitOfWork.restore: 序列化数据格式非法');
+    }
+    if (!Array.isArray(rows)) throw new Error('InMemoryValueUnitOfWork.restore: rows 必须是数组');
     const next = new Map<ValueId, CoreValue>();
-    for (const raw of parsed) {
+    for (const raw of rows) {
       if (!isValidValueRow(raw)) throw new Error('InMemoryValueUnitOfWork.restore: 含畸形价值行，已中止（状态未变）');
       next.set(raw.id, toRow(raw));
     }

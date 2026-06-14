@@ -1,8 +1,10 @@
 /**
- * 端侧自治（ADR-0052 Edge 路线）— 让 zero-LLM 人格内核在非 Node runtime 端侧运行。
+ * 端侧自治（ADR-0052 Edge 路线）— 让 zero-LLM 人格内核在非 Node runtime 端侧运行。详见 README.md。
  *
- * Edge-P2（本阶段）：端侧确定性 host adapter（零 node:*）+ kernel 运行证明 + golden replay。
- * 后续：Edge-P3 持久化 + 同步边界；Edge-P4 离线成长队列；Edge-P5 媒体 GDPR；Edge-P6 固件裁剪规格。
+ * 已实现：Edge-P2 host adapter + kernel 运行证明（host/）；Edge-P3 持久化 + 同步边界（sync/）；
+ * Edge-P4 离线成长队列 + teacher job（growth/）。Edge-P5 媒体 GDPR 在 src/perception/media；
+ * Edge-P6 固件裁剪是规格（ADR-0053）。未实现（部署/独立工程）：真 Web Worker harness、真对象存储
+ * driver、真 MCU firmware——见 README「已知边界 / 登记债」。
  */
 
 export { DeterministicClock, DeterministicRandom } from './host/deterministic-host.js';

@@ -48,7 +48,22 @@ describe('端侧持久化往返（ADR-0052 Edge-P3）', () => {
 
   it('restore 畸形输入抛错（不静默丢状态）', () => {
     const tx = new InMemoryValueUnitOfWork();
-    assert.throws(() => tx.restore('{"not":"array"}'), /必须是数组/);
+    assert.throws(() => tx.restore('{"rows":"not-array"}'), /rows 必须是数组/);
+  });
+
+  it('schemaVersion（收口）：序列化带版本，兼容早期裸数组，拒未知版本', () => {
+    const tx = new InMemoryValueUnitOfWork();
+    const clock = new DeterministicClock();
+    const random = new DeterministicRandom();
+    createValue(tx, clock, random, 'X', 0.5);
+    /* 序列化带 schemaVersion。 */
+    assert.equal(JSON.parse(tx.serialize()).schemaVersion, 1);
+    /* 向后兼容早期裸数组格式。 */
+    const legacy = new InMemoryValueUnitOfWork();
+    legacy.restore(JSON.stringify([{ id: 'v1', label: 'x', weight: 0.5, timeDiscount: 0.5, emotionAmplifier: 1, updatedAt: 1 }]));
+    assert.equal(getAllValues(legacy).size, 1, '裸数组兼容为 v1');
+    /* 拒未知版本。 */
+    assert.throws(() => legacy.restore(JSON.stringify({ schemaVersion: 99, rows: [] })), /不支持的 schemaVersion/);
   });
 
   it('restore 原子性：数组内含畸形行 → 抛错且不破坏现有状态', () => {
@@ -116,6 +131,16 @@ describe('同步 outbox（ADR-0052 Edge-P3）', () => {
     const e3 = restored.enqueue('fact', 'memory.append', { id: 'm3' }, 3000);
     assert.equal(e3.seq, 3, '重载后 seq 续接（非从 1 重来）');
     assert.equal(restored.all().length, 3);
+  });
+
+  it('schemaVersion（收口）：outbox 序列化带版本，拒未知版本', () => {
+    const ob = new SyncOutbox('A');
+    ob.enqueue('fact', 'memory.append', { id: 'm1' }, 1000);
+    assert.equal(JSON.parse(ob.serialize()).schemaVersion, 1);
+    assert.throws(
+      () => SyncOutbox.fromSerialized(JSON.stringify({ schemaVersion: 99, deviceId: 'A', nextSeq: 1, entries: [] })),
+      /不支持的 schemaVersion/,
+    );
   });
 
   it('防误标护栏：真实 kernel 身份核 op（core-value.*）标成 fact → enqueue 抛错', () => {

@@ -128,7 +128,8 @@ function normalizeOptional(v: string | null | undefined): string | null {
  * 有偏好时，**区分有效 provider 是否等于全局 provider**（Codex #129 复审修：跨 provider 时所有
  * 「全局值」都不可盲目沿用——全局 key/model/baseUrl 是为全局 provider 准备的）：
  *   - 同 provider：继承全局 model/embeddingModel/baseUrl，apiKey 按该 provider 解析 BYOK key
- *     缺失回退全局 key（合法——同 provider 的全局 key 就是给它的）。
+ *     缺失回退全局 key——**但仅当有效 endpoint 仍是全局平台端点**（收口安全门：租户覆盖 base_url 成
+ *     自定义端点时，即便同 provider 也绝不把平台 key 外送到租户可控端点，只用租户 BYOK key）。
  *   - 跨 provider：model/embeddingModel 用租户显式覆盖 → 否则用**该 provider 默认**（绝不沿用全局
  *     provider 的模型名）；baseUrl 用租户覆盖 → 否则 undefined（绝不沿用全局 provider 的端点）；
  *     apiKey 只用该 provider 的 BYOK key，**无则 undefined**——绝不借全局 provider 的平台 key
@@ -166,8 +167,15 @@ export function resolveTenantLlmConfig(
   const sameAsGlobal = provider === global.provider;
   const defaults = PROVIDER_DEFAULT_MODELS[provider] ?? PROVIDER_DEFAULT_MODELS.mock;
 
-  /* 同 provider：全局 key 是该 provider 的合法 fallback；跨 provider：绝不借全局平台 key。 */
-  const keyFallback = sameAsGlobal ? global.apiKey : undefined;
+  /* 有效 endpoint：租户覆盖 → 否则同 provider 沿用全局端点 / 跨 provider undefined。 */
+  const effectiveBaseUrl = settings.base_url ?? (sameAsGlobal ? global.baseUrl : undefined);
+
+  /* 平台 key 仅当「同 provider **且 endpoint 仍是全局平台端点**」时才作合法 fallback。
+   * 安全门（收口审查）：若租户把 base_url 覆盖成自定义 endpoint（≠全局），即便同 provider 也
+   * **绝不**把平台 key 外送到租户可控端点——只用该租户自己的 BYOK key（无则 undefined）。
+   * 跨 provider 一律不借平台 key（既有逻辑）。 */
+  const endpointIsGlobalPlatform = effectiveBaseUrl === global.baseUrl;
+  const keyFallback = (sameAsGlobal && endpointIsGlobalPlatform) ? global.apiKey : undefined;
 
   return {
     provider,
@@ -175,8 +183,7 @@ export function resolveTenantLlmConfig(
     model: settings.model ?? (sameAsGlobal ? global.model : defaults.chat),
     embeddingModel: settings.embedding_model ?? (sameAsGlobal ? global.embeddingModel : defaults.embedding),
     apiKey: resolveLlmApiKey(tx, tenantId, provider, encryption, keyFallback),
-    /* 跨 provider 不沿用全局 baseUrl（那是全局 provider 的端点）。 */
-    baseUrl: settings.base_url ?? (sameAsGlobal ? global.baseUrl : undefined),
+    baseUrl: effectiveBaseUrl,
     fallbacks: global.fallbacks,
   };
 }

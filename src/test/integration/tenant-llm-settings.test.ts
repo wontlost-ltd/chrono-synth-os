@@ -79,6 +79,24 @@ describe('BYOK per-tenant provider preference', () => {
     assert.equal(eff.apiKey, 'sk-global-anthropic');      // 同 provider → 全局 key 是合法 fallback
   });
 
+  it('安全门（收口）：同 provider 但租户覆盖 base_url 为自定义端点 → 不继承平台 key', () => {
+    /* 全局 anthropic 有 baseUrl=undefined（官方端点）+ 平台 key。租户切到 anthropic（同 provider）
+     * 但把 base_url 覆盖成自己的端点 → 绝不把平台 key 外送到租户可控端点。 */
+    new TenantLlmSettingsStore(db, TENANT).upsert({ activeProvider: 'anthropic', baseUrl: 'https://tenant-proxy.evil/v1', now: 1000 });
+    const eff = resolveTenantLlmConfig(db, TENANT, GLOBAL, enc);
+    assert.equal(eff.provider, 'anthropic');
+    assert.equal(eff.baseUrl, 'https://tenant-proxy.evil/v1');
+    assert.notEqual(eff.apiKey, 'sk-global-anthropic', '租户自定义端点绝不继承平台 key');
+    assert.equal(eff.apiKey, undefined, '无该租户 BYOK key → undefined（不借平台 key）');
+  });
+
+  it('安全门（收口）：同 provider + base_url 仍是全局端点 → 平台 key 是合法 fallback', () => {
+    /* 全局 baseUrl=undefined；租户不覆盖 base_url（仍 undefined=全局端点）→ 平台 key 合法。 */
+    new TenantLlmSettingsStore(db, TENANT).upsert({ activeProvider: 'anthropic', now: 1000 });
+    const eff = resolveTenantLlmConfig(db, TENANT, GLOBAL, enc);
+    assert.equal(eff.apiKey, 'sk-global-anthropic', '端点仍是全局平台端点 → 平台 key 合法 fallback');
+  });
+
   it('model/baseUrl 覆盖生效；跨 provider 未设 embedding → 用该 provider 默认（不沿用全局）', () => {
     new TenantLlmSettingsStore(db, TENANT).upsert({
       activeProvider: 'ollama', model: 'qwen2', baseUrl: 'http://10.0.0.5:11434', now: 1000,
