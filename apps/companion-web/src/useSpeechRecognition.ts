@@ -77,6 +77,8 @@ export function useSpeechRecognition(lang = 'zh-CN'): SpeechRecognitionState {
     rec.lang = lang;
     rec.continuous = true;
     rec.interimResults = true;
+    /* best-effort 表达本地处理偏好（实验性属性，部分浏览器才有；不保证不传音频——见模块注释）。 */
+    if ('processLocally' in rec) rec.processLocally = true;
     rec.onresult = (ev) => {
       partsRef.current = reduceSpeechResult(partsRef.current, ev);
       setTranscript(joinTranscript(partsRef.current));
@@ -91,7 +93,17 @@ export function useSpeechRecognition(lang = 'zh-CN'): SpeechRecognitionState {
     };
     recognitionRef.current = rec;
     setListening(true);
-    rec.start();
+    try {
+      rec.start();
+    } catch {
+      /* start() 同步抛错（如已在识别中、设备不可用）：回滚状态，别卡在 listening。 */
+      rec.onresult = null;
+      rec.onerror = null;
+      rec.onend = null;
+      recognitionRef.current = null;
+      setListening(false);
+      setError('无法启动语音识别，请改用文字输入。');
+    }
   }, [lang]);
 
   const stop = useCallback(() => {

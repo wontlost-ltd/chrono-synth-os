@@ -12,9 +12,10 @@ type Status = 'idle' | 'perceiving' | 'ok' | 'error';
  * 「让 TA 听一段」：用户把一段经历交给数字人，人格用确定性感知蒸馏器沉淀为记忆，并以第一人称
  * 反馈「我记住了什么」。
  *
- * 输入两路：① 直接打字；② 点麦克风**说**——浏览器设备端 ASR（useSpeechRecognition）把语音转成
- * 文字填进同一个输入框，用户可二次编辑再提交。论点红线（ADR-0051）：原始音频不离开浏览器，
- * 服务端只收转写后的文本表征。不支持 Web Speech 的环境自动隐藏麦克风，只留文字输入（渐进增强）。
+ * 输入两路：① 直接打字；② 点麦克风**说**——浏览器 ASR（useSpeechRecognition）把语音转成文字
+ * 填进同一个输入框，用户可二次编辑再提交。论点红线（ADR-0051，诚实表述）：**Chrono 服务端只收
+ * 转写后的文本表征，从不接收音频**；但语音识别由浏览器提供、可能用厂商云服务——UI 如实告知（不
+ * 宣称「音频不离开设备」）。不支持 Web Speech 的环境自动隐藏麦克风，只留文字输入（渐进增强）。
  */
 export function PerceiveView(): JSX.Element {
   const [text, setText] = useState('');
@@ -98,6 +99,11 @@ export function PerceiveView(): JSX.Element {
           </div>
         </div>
         {speech.listening && <p className="perceive__hint muted" role="status">我正在听你说……（说完点「停止」）</p>}
+        {speech.supported && (
+          <p className="perceive__hint muted">
+            语音识别由你的浏览器提供，可能使用浏览器厂商的云服务；Chrono 只接收转写后的文字，不接收音频。
+          </p>
+        )}
         {speech.error && <p className="perceive__hint perceive__hint--error" role="alert">{speech.error}</p>}
         {tooLong && <p className="perceive__hint perceive__hint--error">这段太长了，请精简到 {MAX_LEN} 字以内。</p>}
         {status === 'error' && error && <p className="perceive__hint perceive__hint--error" role="alert">{error}</p>}

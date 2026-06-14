@@ -1,8 +1,13 @@
 /**
  * 浏览器 Web Speech API（语音转写）的纯逻辑与最小类型声明（深化感知 3/3）。
  *
- * 论点红线（ADR-0051）：**ASR 在设备端做**，服务端只收已脱离音频的 transcript（文本表征）。
- * 原始音频从不离开浏览器——SpeechRecognition 直接在端侧把语音转成文字，我们只把文字交给 perceive。
+ * 论点红线（ADR-0051）——**诚实表述**（Codex 复审纠正）：
+ *   ✅ 成立：**Chrono 服务端从不接收原始音频**——SpeechRecognition 在浏览器侧把语音转成文字，
+ *      我们只把转写后的 transcript（文本表征）交给 perceive，服务端契约不变。
+ *   ⚠️ **不能**宣称「音频不离开设备」：Web Speech 不保证端侧识别——部分浏览器（如 Chrome）把音频
+ *      送到**浏览器厂商**的语音服务识别。我们 best-effort 设 processLocally=true 表达本地偏好，但
+ *      该属性是实验性的、且不保证不传音频（MDN 明示）。故 UI 必须如实告知用户「语音识别由浏览器
+ *      提供，可能使用厂商云服务；Chrono 只接收转写文本」。
  *
  * 本文件刻意把所有「可单测的决策逻辑」抽成纯函数（结果合并、错误映射、能力探测），
  * React hook（useSpeechRecognition）只做事件接线。Web Speech 的类型不在标准 DOM lib 里，
@@ -47,6 +52,8 @@ export interface SpeechRecognitionInstance {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
+  /** 本地处理偏好（实验性，部分浏览器才有）。best-effort：能设就设 true 表达本地偏好，但不保证。 */
+  processLocally?: boolean;
   onresult: ((ev: SpeechRecognitionResultEvent) => void) | null;
   onerror: ((ev: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
