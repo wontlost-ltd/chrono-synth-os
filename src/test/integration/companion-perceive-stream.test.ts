@@ -201,4 +201,27 @@ describe('实时流感知 WS', () => {
       ws.close(); await ctx.app.close(); ctx.os.close();
     }
   });
+
+  it('并发 finalize：蒸馏进行中第二个 finalize → BUSY（不重复蒸馏）', async (t) => {
+    const ctx = await setup();
+    if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
+    const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    /* 收集所有响应码（两个 finalize 背靠背，抓 perceived + BUSY）。 */
+    const frames: Array<{ type?: string; code?: string }> = [];
+    ws.addEventListener('message', (e) => { frames.push(JSON.parse(String(e.data)) as { type?: string; code?: string }); });
+    try {
+      await open(ws);
+      ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '一段内容。' }));
+      /* 背靠背两个 finalize：第一个进异步蒸馏（distilling=true），第二个同一 tick 内到达 → BUSY。 */
+      ws.send(JSON.stringify({ type: 'finalize' }));
+      ws.send(JSON.stringify({ type: 'finalize' }));
+      await new Promise((r) => setTimeout(r, 800));
+      const busy = frames.some((f) => f.code === 'BUSY');
+      const perceived = frames.some((f) => f.type === 'perceived');
+      assert.ok(perceived, '第一个 finalize 出 perceived');
+      assert.ok(busy, '蒸馏中的第二个 finalize → BUSY');
+    } finally {
+      ws.close(); await ctx.app.close(); ctx.os.close();
+    }
+  });
 });
