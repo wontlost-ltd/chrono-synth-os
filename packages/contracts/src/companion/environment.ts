@@ -56,9 +56,10 @@ export const EnvironmentRhythmV1Schema = z.object({
   energy: z.number().min(0).max(1),
   /** 离散节律提示。 */
   tempo: z.enum(['calm', 'steady', 'lively']),
-  /** 主导来源通道（数据不足为 null）。 */
+  /** 主导来源通道（数据不足/能量全 0 为 null）。 */
   dominantChannel: z.enum(['sound', 'motion']).nullable(),
-  /** 派生置信度 [0,1]（环境数据不足→低→tempo 退回中性 steady）。 */
+  /** 派生可信度 [0,1]（环境数据足量+稳定→高）。tempo 直接由 energy 决定、**不**受此门控；
+   * consumer 可按 confidence 自行降权/忽略低质派生。 */
   confidence: z.number().min(0).max(1),
 }).strict();
 

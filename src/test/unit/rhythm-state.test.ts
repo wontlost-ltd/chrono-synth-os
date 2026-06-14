@@ -25,10 +25,11 @@ describe('deriveRhythmState', () => {
     assert.equal(r.confidence, 1);
   });
 
-  it('安静+静止 → 低能量 calm', () => {
+  it('安静+静止 → 低能量 calm，能量全 0 时 dominantChannel=null（不任意落 sound）', () => {
     const r = deriveRhythmState(env({ sound: sound('silent'), motion: motion('still') }));
     assert.equal(r.energy, 0);
     assert.equal(r.tempo, 'calm');
+    assert.equal(r.dominantChannel, null, '能量全 0 → 无主导通道');
   });
 
   it('中等声 → steady', () => {

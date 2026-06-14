@@ -19,9 +19,10 @@ export interface RhythmState {
   readonly energy: number;
   /** 离散节律：由 energy 分级（<0.34 calm / <0.67 steady / 否则 lively）。 */
   readonly tempo: RhythmTempo;
-  /** 主导来源：哪个通道贡献最大（供解释/调试；数据不足为 null）。 */
+  /** 主导来源：哪个通道加权能量最大（数据不足/能量全 0 为 null）。 */
   readonly dominantChannel: 'sound' | 'motion' | null;
-  /** 置信度 [0,1]：参与派生的通道置信度均值（环境数据不足→低→tempo 退回 steady 中性）。 */
+  /** 派生可信度 [0,1]：参与派生的通道置信度均值。tempo **不**受此门控（直接由 energy 决定）；
+   * consumer 按需用 confidence 降权/忽略低质派生。 */
   readonly confidence: number;
 }
 
@@ -67,10 +68,12 @@ export function deriveRhythmState(env: EnvironmentState): RhythmState {
   );
   const meanConfidence = clamp01(totalConfidence / contributions.length);
 
-  /* 主导通道：加权能量（energy*confidence）最大者。 */
+  /* 主导通道：加权能量（energy*confidence）最大者。能量全 0（安静+静止）时无主导，返 null
+   * （否则任意落到 sound，语义误导）。 */
   const dominant = contributions
     .slice()
     .sort((a, b) => b.energy * b.confidence - a.energy * a.confidence)[0];
+  const dominantChannel = dominant && dominant.energy * dominant.confidence > 0 ? dominant.channel : null;
 
   /* tempo 直接跟随 energy（energy 本身就是可靠信号）；confidence 单独如实报出，由 consumer 自行
    * 权衡（不在此处用 confidence 把低能量误盖成 steady——那会让真正安静的环境永远到不了 calm，因为
@@ -78,7 +81,7 @@ export function deriveRhythmState(env: EnvironmentState): RhythmState {
   return {
     energy,
     tempo: tempoFor(energy),
-    dominantChannel: dominant?.channel ?? null,
+    dominantChannel,
     confidence: meanConfidence,
   };
 }
