@@ -172,4 +172,32 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
       assert.equal(r.statusCode, 200, `第 ${i} 次应 200`);
     }
   });
+
+  it('配额挡在 provider 调用前：超额 429 时 provider 根本不被调用（防 LLM 成本核心保证）', async () => {
+    const os2 = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os2.start();
+    const fastify = (await import('fastify')).default;
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    /* counting provider：记录被调次数。 */
+    let analyzeCalls = 0;
+    const counting: PerceptionProvider = {
+      name: 'counting',
+      analyze: async (input) => { analyzeCalls++; return new MockPerceptionProvider().analyze(input); },
+    };
+    registerCompanionPerceiveRoutes(local, os2, undefined, undefined, undefined, counting);
+    await local.ready();
+    new QuotaManager(os2.getDatabase()).setLimit('default', 'perception', 1, 60_000);
+
+    await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: '一' } });
+    assert.equal(analyzeCalls, 1, '第一次调 provider');
+    const r2 = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: '二' } });
+    assert.equal(r2.statusCode, 429);
+    assert.equal(analyzeCalls, 1, '超额请求 provider 未被调用（配额挡在 LLM 调用前）');
+    await local.close();
+    os2.close();
+  });
 });
