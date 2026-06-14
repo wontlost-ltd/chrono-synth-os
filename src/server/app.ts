@@ -46,6 +46,7 @@ import { registerMemoryRoutes } from './routes/memories.js';
 import { registerNarrativeRoutes } from './routes/narrative.js';
 import { registerCompanionRoutes } from './routes/companion/me.js';
 import { registerCompanionPerceiveRoutes } from './routes/companion/perceive.js';
+import { registerCompanionEnvironmentRoutes } from './routes/companion/environment.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -645,6 +646,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerNarrativeRoutes(app, deps.os, tenantFactory);
   registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
   registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);
