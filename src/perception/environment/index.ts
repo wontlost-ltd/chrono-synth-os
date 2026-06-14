@@ -13,3 +13,6 @@ export {
 export {
   EnvironmentObserver, type EnvironmentObserveResult,
 } from './environment-observer.js';
+export {
+  deriveRhythmState, type RhythmState, type RhythmTempo,
+} from './rhythm-state.js';

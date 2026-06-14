@@ -63,6 +63,23 @@ describe('ChronoCompanion 环境感知 API 集成测试', () => {
     assert.equal(result.sensedMemoryCount, 0, '默认不沉淀记忆（防泛滥）');
     const me = await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers });
     assert.equal(CompanionMeV1Schema.parse(JSON.parse(me.body).data).memoryCount, 0, '记忆图无环境记忆');
+    /* 节律提示：声压高（noisy）→ 高 energy lively（tempo 跟随 energy；confidence 单独报）。 */
+    assert.equal(result.rhythm.dominantChannel, 'sound');
+    assert.ok(result.rhythm.energy > 0.8, 'noisy → 高 energy');
+    assert.equal(result.rhythm.tempo, 'lively', '高 energy → lively');
+  });
+
+  it('节律提示：安静+静止（足够样本）→ calm 节律', async () => {
+    const auth = await registerAndGetAuth(app, 'env-rhythm-calm@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/companion/me/environment', headers,
+      payload: { samples: [...window('sound', [0.02, 0.01, 0.0, 0.01, 0.0, 0.02, 0.01, 0.0]), ...window('motion', [0.0, 0.0, 0.01, 0.0, 0.0, 0.0, 0.01, 0.0])] },
+    });
+    assert.equal(res.statusCode, 200, res.body);
+    const result = CompanionEnvironmentResultV1Schema.parse(JSON.parse(res.body).data);
+    assert.equal(result.rhythm.tempo, 'calm', '安静+静止 → calm 节律');
+    assert.ok(result.rhythm.energy < 0.2);
   });
 
   it('persist=true（端侧已判定环境变化）：沉淀一条环境记忆，进 memory graph', async () => {

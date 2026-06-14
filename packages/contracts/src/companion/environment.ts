@@ -50,12 +50,27 @@ export const EnvironmentChannelStateV1Schema = z.object({
   confidence: z.number().min(0).max(1),
 }).strict();
 
+/** 节律提示（确定性派生自环境的声/动）：供节律敏感人格（如音乐人格）调表达节奏。 */
+export const EnvironmentRhythmV1Schema = z.object({
+  /** 环境唤起能量 [0,1]（吵闹+活跃高，安静+静止低）。 */
+  energy: z.number().min(0).max(1),
+  /** 离散节律提示。 */
+  tempo: z.enum(['calm', 'steady', 'lively']),
+  /** 主导来源通道（数据不足为 null）。 */
+  dominantChannel: z.enum(['sound', 'motion']).nullable(),
+  /** 派生置信度 [0,1]（环境数据不足→低→tempo 退回中性 steady）。 */
+  confidence: z.number().min(0).max(1),
+}).strict();
+
 export const CompanionEnvironmentResultV1Schema = z.object({
   schemaVersion: z.literal('companion-environment-result.v1'),
   /** 本窗提取的各通道环境状态。 */
   states: z.array(EnvironmentChannelStateV1Schema),
   /** 本窗因环境（相对本次 observer 基线）沉淀的环境记忆条数。 */
   sensedMemoryCount: z.number().int().nonnegative(),
+  /** 确定性派生的节律提示（无 LLM）；consumer 按需读，不读零成本。 */
+  rhythm: EnvironmentRhythmV1Schema,
 }).strict();
 
+export type EnvironmentRhythmV1 = z.infer<typeof EnvironmentRhythmV1Schema>;
 export type CompanionEnvironmentResultV1 = z.infer<typeof CompanionEnvironmentResultV1Schema>;
