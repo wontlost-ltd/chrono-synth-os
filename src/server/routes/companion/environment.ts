@@ -33,6 +33,7 @@ import {
 } from '@chrono/contracts';
 import { EnvironmentSignalExtractor } from '../../../perception/environment/environment-signal-extractor.js';
 import { EnvironmentObserver } from '../../../perception/environment/environment-observer.js';
+import { deriveRhythmState } from '../../../perception/environment/rhythm-state.js';
 import type { EnvironmentState, ChannelState } from '../../../perception/environment/environment-signal.js';
 
 export function registerCompanionEnvironmentRoutes(
@@ -87,10 +88,13 @@ export function registerCompanionEnvironmentRoutes(
     }
 
     const states = collectStates(state);
+    /* 确定性派生节律提示（声/动 → energy/tempo），供节律敏感人格读；无 LLM、不改身份核。 */
+    const rhythm = deriveRhythmState(state);
     const payload: CompanionEnvironmentResultV1 = {
       schemaVersion: 'companion-environment-result.v1',
       states,
       sensedMemoryCount,
+      rhythm,
     };
     return { data: CompanionEnvironmentResultV1Schema.parse(payload) };
   });
