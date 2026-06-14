@@ -48,6 +48,7 @@ import { registerCompanionRoutes } from './routes/companion/me.js';
 import { registerCompanionPerceiveRoutes } from './routes/companion/perceive.js';
 import { registerCompanionPerceiveStreamRoutes } from './routes/companion/perceive-stream.js';
 import { registerCompanionEnvironmentRoutes } from './routes/companion/environment.js';
+import { registerCompanionChatRoutes } from './routes/companion/chat.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -655,6 +656,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
   registerCompanionPerceiveStreamRoutes(app, deps.os, tenantFactory, db, config);
   registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
+  registerCompanionChatRoutes(app, deps.os, tenantFactory, db);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);

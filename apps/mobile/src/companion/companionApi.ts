@@ -11,11 +11,13 @@ import {
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
   CompanionPerceiveResultV1Schema,
+  CompanionChatResultV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
   type CompanionMemoryListV1,
   type CompanionPerceiveRequestV1,
   type CompanionPerceiveResultV1,
+  type CompanionChatResultV1,
 } from '@chrono/contracts';
 import { apiFetch } from '../api/client';
 
@@ -68,6 +70,21 @@ export async function companionPerceive(
     await apiFetch<unknown>('/api/v1/companion/me/perceive', {
       method: 'POST',
       body: JSON.stringify(input),
+    }),
+  );
+}
+
+/**
+ * POST /companion/me/chat —「跟 TA 聊聊」（运行时零 LLM）。
+ *
+ * 回应由确定性离线回应器据人格叙事 + 自己沉淀的记忆生成（ADR-0047「跑为你拥有的人格」）。
+ * 离线/无云仍能聊；无相关记忆时诚实告知，不瞎编。
+ */
+export async function companionChat(message: string): Promise<CompanionChatResultV1> {
+  return CompanionChatResultV1Schema.parse(
+    await apiFetch<unknown>('/api/v1/companion/me/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message }),
     }),
   );
 }

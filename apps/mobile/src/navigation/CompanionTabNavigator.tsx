@@ -1,11 +1,12 @@
 /**
  * 移动端 ChronoCompanion tab 导航（ADR-0046 Phase 2.3）。
- * 个人版五个 tab：我的数字人 / 成长 / 记忆 / 让 TA 听 / 设置。与企业版 TabNavigator 刻意区分。
+ * 个人版六个 tab：我的数字人 / 跟 TA 聊 / 成长 / 记忆 / 让 TA 听 / 设置。与企业版 TabNavigator 刻意区分。
  */
 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import { CompanionHomeScreen } from '../screens/companion/CompanionHomeScreen';
+import { CompanionChatScreen } from '../screens/companion/CompanionChatScreen';
 import { CompanionGrowthScreen } from '../screens/companion/CompanionGrowthScreen';
 import { CompanionMemoriesScreen } from '../screens/companion/CompanionMemoriesScreen';
 import { CompanionPerceiveScreen } from '../screens/companion/CompanionPerceiveScreen';
@@ -16,6 +17,7 @@ const Tab = createBottomTabNavigator();
 
 const TAB_ICONS: Record<string, string> = {
   Me: '🪞',
+  Chat: '💬',
   Growth: '🌱',
   Memories: '📔',
   Perceive: '🎧',
@@ -48,6 +50,9 @@ export function CompanionTabNavigator({ plan, onLogout, accountKey }: CompanionT
       {/* 数据屏用 render-prop 注入 accountKey（缓存隔离），而非 component=，故 queryKey 含账号维度。 */}
       <Tab.Screen name="Me" options={{ title: '我的数字人' }}>
         {() => <CompanionHomeScreen accountKey={accountKey} />}
+      </Tab.Screen>
+      <Tab.Screen name="Chat" options={{ title: '跟 TA 聊' }}>
+        {() => <CompanionChatScreen accountKey={accountKey} />}
       </Tab.Screen>
       <Tab.Screen name="Growth" options={{ title: '成长' }}>
         {() => <CompanionGrowthScreen accountKey={accountKey} />}
