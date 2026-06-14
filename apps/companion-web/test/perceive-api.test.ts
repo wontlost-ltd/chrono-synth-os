@@ -70,3 +70,30 @@ test('perceive: 后端漂移（缺字段）→ 契约校验抛错（不静默渲
   const { api } = await loggedInApi([{ status: 200, body: { schemaVersion: 'companion-perceive-result.v1', perceivedMemories: [] } }]);
   await assert.rejects(() => api.perceive({ modality: 'audio', representation: 'x' }));
 });
+
+test('perceive: 401 → /auth/refresh → 带新 token 重试 POST（关键刷新分支）', async () => {
+  /* login 建会话（tok-1）→ perceive 第一次 401 → refresh 换 tok-2 → 重试 POST 200。 */
+  const calls: FetchCall[] = [];
+  let perceiveAttempt = 0;
+  (globalThis as { document?: { cookie: string } }).document = { cookie: 'csrf=t' };
+  (globalThis as { fetch?: unknown }).fetch = async (url: string, init?: RequestInit) => {
+    const call = { url, method: init?.method ?? 'GET', headers: (init?.headers ?? {}) as Record<string, string>, body: init?.body as string | undefined };
+    calls.push(call);
+    if (url.includes('/auth/login')) return { status: 200, ok: true, json: async () => ({ data: { accessToken: 'tok-1', tenantId: 'default', userId: 'u1' } }) } as Response;
+    if (url.includes('/auth/refresh')) return { status: 200, ok: true, json: async () => ({ data: { accessToken: 'tok-2', tenantId: 'default', userId: 'u1' } }) } as Response;
+    /* perceive：第一次 401，第二次（带新 token）200。 */
+    perceiveAttempt++;
+    if (perceiveAttempt === 1) return { status: 401, ok: false, json: async () => ({}) } as Response;
+    return { status: 200, ok: true, json: async () => ({ data: VALID_RESULT }) } as Response;
+  };
+  const auth = await import('../src/auth.ts');
+  await auth.login('u@test.com', 'pw');
+  const { perceive } = await import('../src/api.ts');
+  const res = await perceive({ modality: 'audio', representation: 'x' });
+
+  /* 重试用了刷新后的新 token。 */
+  const perceiveCalls = calls.filter((c) => c.url.includes('/perceive'));
+  assert.equal(perceiveCalls.length, 2, '401 后重试一次');
+  assert.equal(perceiveCalls[1].headers.authorization, 'Bearer tok-2', '重试带刷新后的新 token');
+  assert.equal(res.perceivedMemories.length, 1);
+});

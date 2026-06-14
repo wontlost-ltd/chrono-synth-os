@@ -33,9 +33,10 @@ export function PerceiveView(): JSX.Element {
       setText('');
     } catch (err) {
       if (err instanceof ApiAuthError) {
-        /* 鉴权失效：App 会话订阅切回登录页；这里只标错避免卡 perceiving。 */
+        /* 401 未登录：App 会话订阅切回登录页；403 是 plan/权限（companion 面向个人版），
+         * 文案区分——不把 403 误导成登录问题（Codex 复审）。 */
         setStatus('error');
-        setError('请重新登录');
+        setError(err.status === 403 ? '当前账号无法使用感知（companion 面向个人版账号）' : '请重新登录');
         return;
       }
       setStatus('error');
