@@ -71,10 +71,10 @@
 
 - `src/perception/`：`PerceptionProvider` 契约 + `MockPerceptionProvider`（确定性、可测、
   无需外部 key）+ `PerceptionDistiller`。
-- 蒸馏候选 source **暂复用 `'knowledge_import'`**（感知 provenance 体现在记忆内容第一人称
-  「我听到/我看到」+ evidence 指向真实记忆 id）。**刻意不**为一个 provenance 标签触发
-  `distilled_artifacts.source` CHECK 约束的 SQLite table-rebuild migration——独立
-  `'perception'` source 待 Phase 3 落 `perception_events` 表时随 migration 一并引入。
+- 蒸馏候选 source 用独立的 **`'perception'`**（v088 已扩 `distilled_artifacts.source` CHECK，
+  SQLite table-rebuild / PG alter constraint），与 `'knowledge_import'`（读文档/导入知识库）区分
+  血缘——溯源/审计能分清一条候选源自「听了段经历」还是「读了篇文档」。感知 provenance 也体现在
+  记忆内容第一人称「我听到/我看到」+ evidence 指向真实记忆 id。
 
 后续阶段（未实现，登记）：
 
