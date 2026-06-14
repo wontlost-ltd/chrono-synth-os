@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import { fetchMe } from '../api.js';
 import { useAsync } from '../useAsync.js';
 import { StateBlock } from './StateBlock.js';
+import { EdgeRuntimeBadge } from './EdgeRuntimeBadge.js';
 
 /** 「我的数字人」主页：叙事 + 最看重的价值 + 最近记忆。 */
 export function HomeView(): JSX.Element {
@@ -13,6 +14,7 @@ export function HomeView(): JSX.Element {
 
   return (
     <section className="view">
+      <EdgeRuntimeBadge />
       <section className="card">
         <h2 className="card__title">此刻的我</h2>
         <p className="narrative">{narrative.trim() || '我还在认识这个世界，和你多聊聊吧。'}</p>
