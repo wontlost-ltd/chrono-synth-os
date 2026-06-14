@@ -11,11 +11,13 @@ import {
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
   CompanionPerceiveResultV1Schema,
+  CompanionChatResultV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
   type CompanionMemoryListV1,
   type CompanionPerceiveRequestV1,
   type CompanionPerceiveResultV1,
+  type CompanionChatResultV1,
 } from '@chrono/contracts';
 import { getSession, tryRefresh } from './auth.js';
 import { decide401Action } from './api-retry.js';
@@ -104,6 +106,11 @@ async function postData(url: string, payload: unknown): Promise<unknown> {
 /** 「让 TA 听/看一段」：提交中间表征 → 人格沉淀记忆 → 返回人格记住的。 */
 export async function perceive(input: CompanionPerceiveRequestV1): Promise<CompanionPerceiveResultV1> {
   return CompanionPerceiveResultV1Schema.parse(await postData('/api/v1/companion/me/perceive', input));
+}
+
+/** 跟数字人对话（零-LLM 确定性回应，据人格记忆生成）。 */
+export async function chat(message: string): Promise<CompanionChatResultV1> {
+  return CompanionChatResultV1Schema.parse(await postData('/api/v1/companion/me/chat', { message }));
 }
 
 export async function fetchMe(): Promise<CompanionMeV1> {

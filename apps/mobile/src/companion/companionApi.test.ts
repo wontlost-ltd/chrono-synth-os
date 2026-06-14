@@ -4,7 +4,7 @@
  * （Codex 审查 Minor：URLSearchParams 构造 + 上下限 clamp）。
  */
 
-import { fetchCompanionMemories, companionPerceive } from './companionApi';
+import { fetchCompanionMemories, companionPerceive, companionChat } from './companionApi';
 import * as client from '../api/client';
 
 /* 一个最小的合法 CompanionMemoryListV1 响应——satisfies schema.parse。 */
@@ -100,5 +100,38 @@ describe('companionPerceive POST 请求形状 + 响应校验', () => {
   it('响应不符合契约（漂移）→ schema.parse 抛错（端到端类型同源守卫）', async () => {
     spy.mockResolvedValue({ schemaVersion: 'wrong', perceivedMemories: 'not-array' } as never);
     await expect(companionPerceive({ modality: 'audio', representation: 'x' })).rejects.toThrow();
+  });
+});
+
+describe('companionChat POST 请求形状 + 响应校验', () => {
+  const OK_RESULT = {
+    schemaVersion: 'companion-chat-result.v1' as const,
+    reply: '我记得你喜欢清晨写代码。',
+    kind: 'knowledge_grounded' as const,
+    confidence: 0.5,
+    groundedMemoryCount: 2,
+  };
+  let spy: jest.SpyInstance;
+  beforeEach(() => { spy = jest.spyOn(client, 'apiFetch').mockResolvedValue(OK_RESULT as never); });
+  afterEach(() => spy.mockRestore());
+
+  it('POST /companion/me/chat，body 是 {message} JSON', async () => {
+    await companionChat('你好');
+    const [path, init] = spy.mock.calls[0]!;
+    expect(path).toBe('/api/v1/companion/me/chat');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(init!.body as string)).toEqual({ message: '你好' });
+  });
+
+  it('返回经 schema 校验的回应（含 kind/confidence/grounded 数）', async () => {
+    const res = await companionChat('你好');
+    expect(res.reply).toBe('我记得你喜欢清晨写代码。');
+    expect(res.kind).toBe('knowledge_grounded');
+    expect(res.groundedMemoryCount).toBe(2);
+  });
+
+  it('响应漂移 → schema.parse 抛错', async () => {
+    spy.mockResolvedValue({ schemaVersion: 'wrong', reply: 123 } as never);
+    await expect(companionChat('x')).rejects.toThrow();
   });
 });

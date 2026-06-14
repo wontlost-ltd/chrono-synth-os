@@ -5,3 +5,4 @@ export * from './drift-compute.js';
 export * from './perceive.js';
 export * from './perceive-stream.js';
 export * from './environment.js';
+export * from './chat.js';

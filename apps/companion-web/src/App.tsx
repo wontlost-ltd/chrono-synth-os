@@ -1,12 +1,13 @@
 import { useState, useSyncExternalStore, type JSX } from 'react';
 import { HomeView } from './views/HomeView.js';
+import { ChatView } from './views/ChatView.js';
 import { GrowthView } from './views/GrowthView.js';
 import { MemoriesView } from './views/MemoriesView.js';
 import { PerceiveView } from './views/PerceiveView.js';
 import { LoginView } from './views/LoginView.js';
 import { subscribeAuth, isAuthenticated, logout } from './auth.js';
 
-type Tab = 'home' | 'growth' | 'memories' | 'perceive';
+type Tab = 'home' | 'chat' | 'growth' | 'memories' | 'perceive';
 
 /** 订阅外部 auth store，登录/登出时驱动整壳重渲染。 */
 function useAuthed(): boolean {
@@ -48,6 +49,14 @@ export function App(): JSX.Element {
               我的数字人
             </button>
             <button
+              role="tab" id="tab-chat" aria-controls="panel-chat"
+              aria-selected={tab === 'chat'}
+              className={tab === 'chat' ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
+              onClick={() => setTab('chat')}
+            >
+              跟 TA 聊
+            </button>
+            <button
               role="tab" id="tab-growth" aria-controls="panel-growth"
               aria-selected={tab === 'growth'}
               className={tab === 'growth' ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
@@ -76,6 +85,9 @@ export function App(): JSX.Element {
           <main className="app__main">
             {tab === 'home' && (
               <div role="tabpanel" id="panel-home" aria-labelledby="tab-home"><HomeView /></div>
+            )}
+            {tab === 'chat' && (
+              <div role="tabpanel" id="panel-chat" aria-labelledby="tab-chat"><ChatView /></div>
             )}
             {tab === 'growth' && (
               <div role="tabpanel" id="panel-growth" aria-labelledby="tab-growth"><GrowthView /></div>

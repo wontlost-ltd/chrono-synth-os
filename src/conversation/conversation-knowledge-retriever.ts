@@ -179,7 +179,10 @@ export class ConversationKnowledgeRetriever {
   }
 }
 
-function tokenize(text: string): string[] {
+/**
+ * 确定性分词（latin 词 + CJK 2/3-gram，去停用词）。导出供 companion 零-LLM 对话复用同一分词质量。
+ */
+export function tokenize(text: string): string[] {
   const lower = text.toLowerCase();
   const tokens = new Set<string>();
   const latinMatches = lower.match(/[a-z0-9¥$€£%]+/g) ?? [];
@@ -198,13 +201,18 @@ function tokenize(text: string): string[] {
   return [...tokens].slice(0, MAX_TOKEN_COUNT);
 }
 
-function scoreByKeyword(row: KnowledgeRow, tokens: string[]): number {
-  const haystack = `${row.title}\n${row.content}`.toLowerCase();
+/** 文本 × tokens 的确定性关键词分（长词权重更高）。导出供 companion 复用同一打分口径。 */
+export function scoreTextByKeyword(haystack: string, tokens: string[]): number {
+  const hay = haystack.toLowerCase();
   let score = 0;
   for (const t of tokens) {
-    if (haystack.includes(t)) score += t.length >= 4 ? 2 : 1;
+    if (hay.includes(t)) score += t.length >= 4 ? 2 : 1;
   }
-  return score * (0.5 + 0.5 * row.confidence);
+  return score;
+}
+
+function scoreByKeyword(row: KnowledgeRow, tokens: string[]): number {
+  return scoreTextByKeyword(`${row.title}\n${row.content}`, tokens) * (0.5 + 0.5 * row.confidence);
 }
 
 function normalizeKeywordScore(score: number, tokenCount: number): number {
