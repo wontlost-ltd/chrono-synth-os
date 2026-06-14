@@ -644,7 +644,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
   registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveRoutes(app, deps.os, tenantFactory);
+  registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);

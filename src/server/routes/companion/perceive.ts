@@ -8,8 +8,8 @@
  * 论点红线（与 ADR-0051/0052 一致）：
  *   - 服务端**绝不接收原始媒体二进制**——只收已脱离媒体的中间表征（前端 ASR / 用户输入）。
  *   - 感知产物经蒸馏门：事实记忆 append，身份层提案默认 pending 人工审批，绝不自动改身份核。
- *   - provider 当前用确定性 MockPerceptionProvider（无 key 可跑、本地可验证全链路）；真实多模态
- *     teacher（BYOK LLM / ollama-llava）是紧跟增量（接入点：provider 注入），不在本切片。
+ *   - provider 按租户 BYOK 选（providerFor）：配了 LLM key → LlmPerceptionProvider（真语义理解，
+ *     ModelRouter 当感官老师）；无 key / provider=mock → 确定性 MockPerceptionProvider（本地可验证）。
  *
  * 复用 companion/me.ts 的访问门控（assertCompanionAccess）+ 租户隔离（getOS）+ 私有缓存头。
  */
@@ -17,8 +17,11 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
+import type { IDatabase } from '../../../storage/database.js';
+import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
-import { AuthorizationError, ErrorCode } from '../../../errors/index.js';
+import type { LLMProviderName } from '@chrono/kernel';
+import { AuthorizationError, ValidationError, ErrorCode } from '../../../errors/index.js';
 import {
   CompanionPerceiveRequestV1Schema,
   CompanionPerceiveResultV1Schema,
@@ -27,19 +30,65 @@ import {
 import { createHash } from 'node:crypto';
 import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
 import { MockPerceptionProvider } from '../../../perception/sources/mock-perception-provider.js';
+import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
 import type { PerceptionProvider } from '../../../perception/perception-provider.js';
+import { ModelRouter } from '../../../intelligence/model-router.js';
+import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
+import { resolveTenantLlmConfig } from '../../../storage/tenant-llm-settings-store.js';
 
 export function registerCompanionPerceiveRoutes(
   app: FastifyInstance,
   os: ChronoSynthOS,
   tenantFactory: TenantOSFactory | undefined,
-  /** provider 可注入（测试 / 未来 BYOK 真 teacher）；缺省用确定性 mock。 */
-  provider: PerceptionProvider = new MockPerceptionProvider(),
+  /** BYOK 选 provider 需要 db + config（缺省构造 LLM teacher）；测试可省略只用注入 provider。 */
+  db?: IDatabase,
+  config?: AppConfig,
+  /** provider 显式注入（测试用）；给定则忽略 BYOK 解析，所有租户用它。 */
+  injectedProvider?: PerceptionProvider,
 ): void {
+  const sharedDb = db ?? os.getDatabase();
+  /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
+  const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
+
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
     if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
     return os;
+  }
+
+  /**
+   * 按租户 BYOK 选「感官老师」provider（论点：LLM 只在摄取阶段当老师）：
+   *   - 显式注入 → 用它（测试）。
+   *   - provider=mock（无真实 LLM）→ 确定性 MockPerceptionProvider。
+   *   - ollama 无需 key / 云 provider 有 apiKey → LLM teacher（真语义，ModelRouter）。
+   *   - 云 provider **无 key** → 退回确定性 mock（租户没配 LLM，仍能用确定性感知）。
+   *   - 云 provider **坏 key**（BYOK 解密失败）→ resolveTenantLlmConfig **fail-closed 抛错**：转成清晰
+   *     ValidationError（不静默降级 mock——租户配了 BYOK 坏 key 不该静默改用别的，与 #97-99 fail-closed
+   *     安全语义一致；让租户知道是 LLM 配置问题，而非裸 500）。
+   */
+  function providerFor(tenantId: string): PerceptionProvider {
+    if (injectedProvider) return injectedProvider;
+    if (!config) return new MockPerceptionProvider();
+    let effective;
+    try {
+      effective = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
+    } catch {
+      /* BYOK fail-closed（坏 row 解密失败）：清晰 400 错误，不静默降级（安全语义保持）。 */
+      throw new ValidationError('LLM 配置不可用，请检查 BYOK 设置');
+    }
+    if (effective.provider === 'mock') return new MockPerceptionProvider();
+    if (effective.provider !== 'ollama' && !effective.apiKey) return new MockPerceptionProvider();
+    const llm = new ModelRouter({
+      provider: effective.provider as LLMProviderName,
+      model: effective.model,
+      embeddingModel: effective.embeddingModel,
+      apiKey: effective.apiKey,
+      baseUrl: effective.baseUrl,
+      maxTokens: config.intelligence.maxTokens,
+      temperature: config.intelligence.temperature,
+      tenantId,
+    });
+    return new LlmPerceptionProvider(llm);
   }
 
   /* 与 companion/me.ts 同款访问门：仅个人用户会话，拒 API-key/service 主体 + enterprise plan。 */
@@ -71,6 +120,8 @@ export function registerCompanionPerceiveRoutes(
     const body = CompanionPerceiveRequestV1Schema.parse(request.body);
     const tenantOS = getOS(request);
 
+    /* 按租户 BYOK 选感官老师（有 LLM key → LLM teacher 真语义；否则确定性 mock）。 */
+    const provider = providerFor(request.tenantId);
     const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
     const result = await distiller.perceive({
       personaId: 'default',
