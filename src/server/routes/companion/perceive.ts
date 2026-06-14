@@ -21,7 +21,8 @@ import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import type { LLMProviderName } from '@chrono/kernel';
-import { AuthorizationError, ValidationError, ErrorCode } from '../../../errors/index.js';
+import { AuthorizationError, ValidationError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
+import { QuotaManager } from '../../../multi-tenant/quota-manager.js';
 import {
   CompanionPerceiveRequestV1Schema,
   CompanionPerceiveResultV1Schema,
@@ -49,6 +50,9 @@ export function registerCompanionPerceiveRoutes(
   const sharedDb = db ?? os.getDatabase();
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
+  /* 感知配额（防 BYOK LLM teacher 被刷爆——LlmPerceptionProvider 每次 perceive 调 LLM 有成本）。
+   * 复用现有 QuotaManager：未设 perception 限额的租户默认无限（consumeQuota 返回 true）。 */
+  const quotaManager = new QuotaManager(sharedDb);
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
@@ -119,6 +123,12 @@ export function registerCompanionPerceiveRoutes(
     setPrivateNoStore(reply);
     const body = CompanionPerceiveRequestV1Schema.parse(request.body);
     const tenantOS = getOS(request);
+
+    /* 感知配额：超额（已设 perception 限额且本窗用尽）→ 拒绝（防 BYOK LLM 刷爆）。
+     * 未设限额的租户默认无限。在调 provider（可能调 LLM，有成本）前扣减。 */
+    if (!quotaManager.consumeQuota(request.tenantId, 'perception')) {
+      throw new QuotaExceededError('感知配额已用尽，请稍后再试');
+    }
 
     /* 按租户 BYOK 选感官老师（有 LLM key → LLM teacher 真语义；否则确定性 mock）。 */
     const provider = providerFor(request.tenantId);
