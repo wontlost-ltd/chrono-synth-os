@@ -75,6 +75,35 @@ chunk is the genuinely-bundled one. Mocks `/auth/login` + `/companion/me` +
 > local-verification policy). Run it locally before shipping changes to the Edge
 > Worker or voice input. Requires `npx playwright install chromium` once.
 
+### 真全栈演示 (`npm run demo:live`)
+
+`e2e/demo-live.mjs` is **not a test** — it's a reusable "show a human the real
+thing" tool. Unlike the E2E specs (which mock the backend), this drives real
+chromium against a **real running backend**: real register + login (real JWT),
+real `PerceptionDistiller` writing real memories, the Edge Worker self-check,
+and voice ASR (a controllable fake `SpeechRecognition` only — the hook/view are
+real). It records the whole run as a `.webm` video plus key-frame PNGs into
+`demo-shots/` (gitignored).
+
+Prereqs — start the full stack first:
+
+```bash
+# 1. backend on :3000 (in-memory/file sqlite, JWT enabled)
+CHRONO_JWT_ENABLED=true \
+CHRONO_JWT_SECRET=local-demo-secret-at-least-32-chars-long-ok \
+CHRONO_DATABASE_DRIVER=sqlite CHRONO_DATABASE_PATH=/tmp/chrono-demo.sqlite \
+node dist/main.js          # (run `npm run build` once first)
+
+# 2. companion-web dev on :5173, proxying /api → :3000
+COMPANION_API_TARGET=http://localhost:3000 npm run dev
+
+# 3. drive + record
+npm run demo:live          # → demo-shots/run.webm + N-*.png
+```
+
+Env: `DEMO_BASE_URL` (default `http://localhost:5173`), `DEMO_HEADED=1` for a
+visible browser.
+
 Run the backend (`chrono-synth-os`) separately; the dev server proxies `/api`
 to it. Log in with a non-enterprise account to see your digital human. The
 access token lives in memory only (a page refresh requires re-login; silent
