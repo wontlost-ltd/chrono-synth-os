@@ -23,6 +23,7 @@ export interface TeacherOutcome {
 }
 
 export interface RunSummary {
+  /** 本轮 pending 快照中的 job 数（注：并发跳过的 job 计入 attempted 但不计 succeeded/failed）。 */
   readonly attempted: number;
   readonly succeeded: number;
   readonly failed: number;
