@@ -7,7 +7,7 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   quotaQueryLimit, quotaQueryUsage,
-  quotaCmdSetLimit, quotaCmdClearLimit, quotaCmdConsume, quotaCmdRecordUsage,
+  quotaCmdSetLimit, quotaCmdClearLimit, quotaCmdConsume, quotaCmdRecordUsage, quotaCmdPruneUsage,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
@@ -64,5 +64,13 @@ export class QuotaManager {
     const windowStart = limit ? ts - (ts % limit.window_ms) : ts;
 
     this.tx.execute(quotaCmdRecordUsage({ tenantId, resource, quantity, windowStart }));
+  }
+
+  /**
+   * 清理一批 window_start < cutoff 的已关闭窗口行（计量只读当前窗口，旧窗口是死重）。
+   * @returns 本批实删行数（< batchSize 表示已清完）。
+   */
+  pruneUsageBefore(cutoff: number, batchSize = 1000): number {
+    return this.tx.execute(quotaCmdPruneUsage({ cutoff, batchSize })).rowsAffected;
   }
 }

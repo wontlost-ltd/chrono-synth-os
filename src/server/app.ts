@@ -147,6 +147,7 @@ import { ApiKnowledgeSource } from '../knowledge/sources/api-source.js';
 import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
 import { LlmKnowledgeSource } from '../knowledge/sources/llm-source.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
+import { QuotaUsageRetentionWorker } from '../multi-tenant/quota-usage-retention-worker.js';
 import { ModelRouter } from '../intelligence/model-router.js';
 import { DecisionEngine } from '../intelligence/decision-engine.js';
 import { RuleEngine } from '../intelligence/rule-engine.js';
@@ -496,6 +497,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   );
   conversationRetentionWorker.start();
   app.addHook('onClose', async () => { await conversationRetentionWorker.stop(); });
+
+  /* quota_usage 旧窗口清理：计量只读当前窗口，关闭的旧窗口行无限累积——周期性删除。 */
+  const quotaUsageRetentionWorker = new QuotaUsageRetentionWorker(conversationQuotaManager, deps.os.getLogger());
+  quotaUsageRetentionWorker.start();
+  app.addHook('onClose', async () => { await quotaUsageRetentionWorker.stop(); });
 
   /* P3 Agent / MCP Server 装配 */
   const toolPermissionService = new ToolPermissionService(tx);

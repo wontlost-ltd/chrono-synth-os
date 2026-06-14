@@ -15,6 +15,7 @@ export const QUOTA_CMD_SET_LIMIT = 'quota.setLimit' as const;
 export const QUOTA_CMD_CLEAR_LIMIT = 'quota.clearLimit' as const;
 export const QUOTA_CMD_CONSUME = 'quota.consume' as const;
 export const QUOTA_CMD_RECORD_USAGE = 'quota.recordUsage' as const;
+export const QUOTA_CMD_PRUNE_USAGE = 'quota.pruneUsage' as const;
 
 /* ── 行类型 ── */
 
@@ -72,6 +73,13 @@ export interface QuotaRecordUsageParams {
   windowStart: number;
 }
 
+export interface QuotaPruneUsageParams {
+  /** 删除 window_start < cutoff 的已关闭窗口行（cutoff 为 epoch ms）。 */
+  cutoff: number;
+  /** 单批最多删除行数（限长事务，避免阻塞写入）。 */
+  batchSize: number;
+}
+
 /* ── Query 工厂 ── */
 
 export function quotaQueryLimit(tenantId: string, resource: string): Query<QuotaLimitRow | null, QuotaLimitLookupParams> {
@@ -98,4 +106,8 @@ export function quotaCmdConsume(params: QuotaConsumeParams): Command<QuotaConsum
 
 export function quotaCmdRecordUsage(params: QuotaRecordUsageParams): Command<QuotaRecordUsageParams> {
   return { kind: QUOTA_CMD_RECORD_USAGE, params };
+}
+
+export function quotaCmdPruneUsage(params: QuotaPruneUsageParams): Command<QuotaPruneUsageParams> {
+  return { kind: QUOTA_CMD_PRUNE_USAGE, params };
 }

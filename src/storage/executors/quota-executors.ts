@@ -7,12 +7,12 @@ import type {
   QuotaLimitRow, QuotaUsageRow,
   QuotaLimitLookupParams, QuotaUsageLookupParams,
   QuotaSetLimitParams, QuotaClearLimitParams,
-  QuotaConsumeParams, QuotaRecordUsageParams,
+  QuotaConsumeParams, QuotaRecordUsageParams, QuotaPruneUsageParams,
 } from '@chrono/kernel';
 import {
   QUOTA_QUERY_LIMIT, QUOTA_QUERY_USAGE,
   QUOTA_CMD_SET_LIMIT, QUOTA_CMD_CLEAR_LIMIT,
-  QUOTA_CMD_CONSUME, QUOTA_CMD_RECORD_USAGE,
+  QUOTA_CMD_CONSUME, QUOTA_CMD_RECORD_USAGE, QUOTA_CMD_PRUNE_USAGE,
 } from '@chrono/kernel';
 
 export function registerQuotaExecutors(): void {
@@ -63,6 +63,22 @@ export function registerQuotaExecutors(): void {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = quota_usage.used + ?`,
     ).run(p.tenantId, p.resource, p.quantity, p.windowStart, p.quantity);
+    return { rowsAffected: result.changes };
+  });
+
+  /* 清理已关闭的旧窗口行（window_start < cutoff）。consumeQuota/checkQuota 只读当前窗口，
+   * 旧窗口行是纯死重——删了不影响计量。组合主键无单列 id，用行值元组 IN 子查询限批（SQLite
+   * DELETE...LIMIT 标准发行版未启用；行值 IN 两库通用）。 */
+  registerCommand<QuotaPruneUsageParams>(QUOTA_CMD_PRUNE_USAGE, (db, p) => {
+    const result = db.prepare<void>(
+      `DELETE FROM quota_usage
+        WHERE (tenant_id, resource, window_start) IN (
+          SELECT tenant_id, resource, window_start FROM quota_usage
+           WHERE window_start < ?
+           ORDER BY window_start ASC
+           LIMIT ?
+        )`,
+    ).run(p.cutoff, p.batchSize);
     return { rowsAffected: result.changes };
   });
 }
