@@ -182,4 +182,38 @@ describe('Teacher job 运行器（ADR-0052 Edge-P4）', () => {
     assert.equal(Number.isFinite(summary.totalCandidates), true, 'totalCandidates 不被 NaN 污染');
     assert.equal(summary.totalCandidates, 0);
   });
+
+  it('并发门（收口）：job 已被抢走（非 pending）→ runner 跳过不重复跑 teacher', async () => {
+    const q = new GrowthJobQueue();
+    const j = q.enqueue('reflection', {}, 1000);
+    /* 模拟另一 runner 已把它推进到 running（markRunning 返回 true 后第二次 false）。 */
+    q.markRunning(j.id);
+    let calls = 0;
+    const runner = new TeacherJobRunner(q, async () => { calls++; return { candidatesIngested: 1 }; });
+    const summary = await runner.runPending();
+    /* job 已 running 不在 pending 快照 → attempted=0；即便在快照里，markRunning 返回 false 也跳过。 */
+    assert.equal(summary.attempted, 0, '已被抢走的 job 不在 pending');
+    assert.equal(calls, 0, 'teacher 未被重复调用');
+  });
+
+  it('failureReason 在重跑时清除（markRunning 清旧 reason）', () => {
+    const q = new GrowthJobQueue();
+    const j = q.enqueue('reflection', {}, 1000);
+    q.markRunning(j.id);
+    q.markFailed(j.id, 'first fail');
+    q.retry(j.id);
+    q.markRunning(j.id);   /* 重跑 → 清旧 reason */
+    assert.equal(q.all().find((x) => x.id === j.id)!.failureReason, undefined, '重跑清旧失败原因');
+  });
+
+  it('schemaVersion（收口）：序列化带版本，未知版本拒绝，缺省视为 v1', () => {
+    const q = new GrowthJobQueue();
+    q.enqueue('reflection', {}, 1000);
+    assert.ok(JSON.parse(q.serialize()).schemaVersion === 1, '序列化带 schemaVersion');
+    /* 未知版本拒绝。 */
+    assert.throws(() => GrowthJobQueue.fromSerialized(JSON.stringify({ schemaVersion: 99, seq: 1, jobs: [] })), /不支持的 schemaVersion/);
+    /* 缺省视为 v1（向后兼容早期落盘）。 */
+    const legacy = GrowthJobQueue.fromSerialized(JSON.stringify({ seq: 0, jobs: [] }));
+    assert.equal(legacy.all().length, 0);
+  });
 });

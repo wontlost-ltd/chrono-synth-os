@@ -1,9 +1,11 @@
 /**
  * 外部感知层（ADR-0051）— 多模态内容理解作为「感官老师」，不进运行时决策。
  *
- * Phase 1（本阶段）：感官老师契约 + 确定性 mock provider + 感知蒸馏器（事实→记忆 + 身份提案→蒸馏门）。
- * 后续：Phase 2 BYOK perception provider + 配额；Phase 3 perception_events 落库 + GDPR + 对象存储；
- * Phase 4 确定性环境旁路（光/波）；Phase 5 实时流。
+ * 已实现：Phase 1 感官老师契约 + 确定性 mock provider + 感知蒸馏器（事实→记忆 + 身份提案→蒸馏门）；
+ * ADR-0052 Edge-P1 确定性环境旁路（environment/，光/声/运动→状态→记忆）；ADR-0052 Edge-P5 媒体引用 +
+ * retention + GDPR（media/，原始媒体绝不进库）。
+ * 未实现（登记债）：Phase 2 BYOK perception provider + 配额；perception_events 落库 + 独立 'perception'
+ * artifact source；实时流；感知节律集成（环境状态影响打扰阈值等）。
  */
 
 export type {

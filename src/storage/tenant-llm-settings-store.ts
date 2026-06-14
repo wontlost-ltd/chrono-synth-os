@@ -166,8 +166,15 @@ export function resolveTenantLlmConfig(
   const sameAsGlobal = provider === global.provider;
   const defaults = PROVIDER_DEFAULT_MODELS[provider] ?? PROVIDER_DEFAULT_MODELS.mock;
 
-  /* 同 provider：全局 key 是该 provider 的合法 fallback；跨 provider：绝不借全局平台 key。 */
-  const keyFallback = sameAsGlobal ? global.apiKey : undefined;
+  /* 有效 endpoint：租户覆盖 → 否则同 provider 沿用全局端点 / 跨 provider undefined。 */
+  const effectiveBaseUrl = settings.base_url ?? (sameAsGlobal ? global.baseUrl : undefined);
+
+  /* 平台 key 仅当「同 provider **且 endpoint 仍是全局平台端点**」时才作合法 fallback。
+   * 安全门（收口审查）：若租户把 base_url 覆盖成自定义 endpoint（≠全局），即便同 provider 也
+   * **绝不**把平台 key 外送到租户可控端点——只用该租户自己的 BYOK key（无则 undefined）。
+   * 跨 provider 一律不借平台 key（既有逻辑）。 */
+  const endpointIsGlobalPlatform = effectiveBaseUrl === global.baseUrl;
+  const keyFallback = (sameAsGlobal && endpointIsGlobalPlatform) ? global.apiKey : undefined;
 
   return {
     provider,
@@ -175,8 +182,7 @@ export function resolveTenantLlmConfig(
     model: settings.model ?? (sameAsGlobal ? global.model : defaults.chat),
     embeddingModel: settings.embedding_model ?? (sameAsGlobal ? global.embeddingModel : defaults.embedding),
     apiKey: resolveLlmApiKey(tx, tenantId, provider, encryption, keyFallback),
-    /* 跨 provider 不沿用全局 baseUrl（那是全局 provider 的端点）。 */
-    baseUrl: settings.base_url ?? (sameAsGlobal ? global.baseUrl : undefined),
+    baseUrl: effectiveBaseUrl,
     fallbacks: global.fallbacks,
   };
 }

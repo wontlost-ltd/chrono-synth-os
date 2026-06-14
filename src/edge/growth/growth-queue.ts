@@ -8,6 +8,11 @@
  * 纯确定性、零依赖、可序列化（复用 Edge-P3 持久化落盘）。
  */
 
+import { cloneJsonObject } from '../json-clone.js';
+
+/** growth-queue 序列化格式版本（前向兼容；不兼容变更须升版本 + 迁移）。 */
+const GROWTH_QUEUE_SCHEMA_VERSION = 1;
+
 /** 成长 job 状态。 */
 export type GrowthJobStatus = 'pending' | 'running' | 'done' | 'failed';
 
@@ -52,12 +57,13 @@ export class GrowthJobQueue {
     return this.jobs.filter((j) => j.status === 'pending').map(cloneJob);
   }
 
-  /** 标记 running（仅 pending→running 合法）。进入 running 即一次尝试 → attempts+1。 */
+  /** 标记 running（仅 pending→running 合法）。进入 running 即一次尝试 → attempts+1；清旧失败原因。 */
   markRunning(id: string): boolean {
     const j = this.find(id, 'pending');
     if (!j) return false;
     j.status = 'running';
     j.attempts++;   /* attempts = 进入 running 的次数 = 真实尝试次数（markFailed 不再重复 +1）。 */
+    j.failureReason = undefined;   /* 重跑清旧失败原因（避免 done/重试后残留 stale reason）。 */
     return true;
   }
 
@@ -91,9 +97,9 @@ export class GrowthJobQueue {
     return this.jobs.map(cloneJob);
   }
 
-  /** 序列化落盘（离线持久化）。 */
+  /** 序列化落盘（离线持久化）。带 schemaVersion 供未来格式演进兼容。 */
   serialize(): string {
-    return JSON.stringify({ seq: this.seq, jobs: this.jobs });
+    return JSON.stringify({ schemaVersion: GROWTH_QUEUE_SCHEMA_VERSION, seq: this.seq, jobs: this.jobs });
   }
 
   /** 查找指定 id 且处于 requiredStatus 的 job（from-state 校验，挡非法转移）。 */
@@ -107,7 +113,11 @@ export class GrowthJobQueue {
    * seq 必须大于已恢复 job 的最大 gjob_N 序号（否则新入队 id 会与旧重复）。
    */
   static fromSerialized(serialized: string): GrowthJobQueue {
-    const parsed = JSON.parse(serialized) as { seq?: unknown; jobs?: unknown };
+    const parsed = JSON.parse(serialized) as { schemaVersion?: unknown; seq?: unknown; jobs?: unknown };
+    const version = parsed.schemaVersion ?? 1;   /* 缺省视为 v1（向后兼容早期无版本落盘）。 */
+    if (version !== GROWTH_QUEUE_SCHEMA_VERSION) {
+      throw new Error(`GrowthJobQueue.fromSerialized: 不支持的 schemaVersion ${String(version)}（期望 ${GROWTH_QUEUE_SCHEMA_VERSION}）`);
+    }
     if (typeof parsed.seq !== 'number' || !Number.isInteger(parsed.seq) || parsed.seq < 0 || !Array.isArray(parsed.jobs)) {
       throw new Error('GrowthJobQueue.fromSerialized: 畸形序列化数据');
     }
@@ -160,6 +170,5 @@ function cloneJob(j: GrowthJob): GrowthJob {
   return { ...j, payload: deepClone(j.payload) };
 }
 
-function deepClone(o: Record<string, unknown>): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(o)) as Record<string, unknown>;
-}
+/* deepClone 复用 edge 本地共享 util（收口审查）。 */
+const deepClone = cloneJsonObject;

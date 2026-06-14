@@ -47,7 +47,9 @@ export class TeacherJobRunner {
     let totalCandidates = 0;
 
     for (const job of jobs) {
-      this.queue.markRunning(job.id);
+      /* 并发门（收口审查）：markRunning 对已被别的 runner 抢走（非 pending）的 job 返回 false →
+       * 跳过，避免并发 runner 重复跑同一 job 的 teacher。 */
+      if (!this.queue.markRunning(job.id)) continue;
       try {
         const outcome = await this.teacher(job);
         /* 校验 teacher outcome：非有限非负 candidatesIngested 视为畸形（teacher 不可信）→ 当失败处理，

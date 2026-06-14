@@ -6,6 +6,11 @@
  * 多设备合并时据此天然去重）。纯确定性、零依赖。
  */
 
+import { cloneJsonObject } from '../json-clone.js';
+
+/** outbox 序列化格式版本（前向兼容；不兼容变更须升版本 + 迁移）。 */
+const OUTBOX_SCHEMA_VERSION = 1;
+
 /** 变更类别（决定冲突解决策略，见 conflict.ts）。 */
 export type ChangeClass = 'fact' | 'projection' | 'identity';
 
@@ -110,9 +115,9 @@ export class SyncOutbox {
     return this.entries.map(cloneEntry);
   }
 
-  /** 序列化（与 UoW 一起落盘）。 */
+  /** 序列化（与 UoW 一起落盘）。带 schemaVersion 供未来格式演进兼容。 */
   serialize(): string {
-    return JSON.stringify({ deviceId: this.deviceId, nextSeq: this.nextSeq, entries: this.entries });
+    return JSON.stringify({ schemaVersion: OUTBOX_SCHEMA_VERSION, deviceId: this.deviceId, nextSeq: this.nextSeq, entries: this.entries });
   }
 
   /**
@@ -124,7 +129,12 @@ export class SyncOutbox {
    * 任一不合法抛错，不构造出违反不变量的 outbox。
    */
   static fromSerialized(serialized: string): SyncOutbox {
-    const parsed = JSON.parse(serialized) as { deviceId?: unknown; nextSeq?: unknown; entries?: unknown };
+    const parsed = JSON.parse(serialized) as { schemaVersion?: unknown; deviceId?: unknown; nextSeq?: unknown; entries?: unknown };
+    /* schemaVersion 兼容：缺省视为 v1（向后兼容早期无版本落盘）；未来不兼容版本在此拒绝。 */
+    const version = parsed.schemaVersion ?? 1;
+    if (version !== OUTBOX_SCHEMA_VERSION) {
+      throw new Error(`SyncOutbox.fromSerialized: 不支持的 schemaVersion ${String(version)}（期望 ${OUTBOX_SCHEMA_VERSION}）`);
+    }
     if (typeof parsed.deviceId !== 'string' || typeof parsed.nextSeq !== 'number'
       || !Number.isInteger(parsed.nextSeq) || parsed.nextSeq < 1 || !Array.isArray(parsed.entries)) {
       throw new Error('SyncOutbox.fromSerialized: 畸形序列化顶层数据');
@@ -149,7 +159,7 @@ export class SyncOutbox {
 
 /** 深拷贝一条 entry（payload 经 JSON round-trip 真深拷贝），防 live reference（含嵌套）外泄。 */
 function cloneEntry(e: OutboxEntry): OutboxEntry {
-  return { ...e, payload: JSON.parse(JSON.stringify(e.payload)) as Record<string, unknown> };
+  return { ...e, payload: cloneJsonObject(e.payload) };
 }
 
 /** 校验并规范化一条落盘 entry：shape + changeClass 与 opKind 推导一致 + seq 正整数。 */
@@ -172,7 +182,7 @@ function validateEntry(raw: unknown, deviceId: string): OutboxEntry {
   if (typeof r.synced !== 'boolean') throw new Error('SyncOutbox.fromSerialized: synced 必须是 boolean');
   return {
     deviceId, seq: r.seq, changeClass: r.changeClass, opKind: r.opKind,
-    payload: JSON.parse(JSON.stringify(r.payload)) as Record<string, unknown>,
+    payload: cloneJsonObject(r.payload as Record<string, unknown>),
     at: r.at, synced: r.synced,
   };
 }
