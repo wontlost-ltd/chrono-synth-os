@@ -96,3 +96,40 @@ body {
 .state { padding: 32px 16px; text-align: center; color: var(--c-muted); }
 .state--error { color: var(--c-neg); }
 .state--auth p { margin: 4px 0; }
+
+/* 「让 TA 听一段」感知视图 */
+.perceive__input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--c-surface-2);
+  border-radius: 10px;
+  background: var(--c-surface-2);
+  color: var(--c-text);
+  font-size: 15px;
+  font-family: inherit;
+  resize: vertical;
+}
+.perceive__input:focus { outline: 2px solid var(--c-brand); outline-offset: 1px; }
+.perceive__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c-gap);
+  margin-top: 10px;
+}
+.perceive__submit {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 999px;
+  background: var(--c-brand);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.perceive__submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.perceive__hint { margin: 8px 0 0; font-size: 14px; }
+.perceive__hint--error { color: var(--c-neg); }
+.perceive__memories { margin: 8px 0 0; padding-left: 18px; }
+.perceive__memory { margin: 4px 0; color: var(--c-text); }

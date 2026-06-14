@@ -2,10 +2,11 @@ import { useState, useSyncExternalStore, type JSX } from 'react';
 import { HomeView } from './views/HomeView.js';
 import { GrowthView } from './views/GrowthView.js';
 import { MemoriesView } from './views/MemoriesView.js';
+import { PerceiveView } from './views/PerceiveView.js';
 import { LoginView } from './views/LoginView.js';
 import { subscribeAuth, isAuthenticated, logout } from './auth.js';
 
-type Tab = 'home' | 'growth' | 'memories';
+type Tab = 'home' | 'growth' | 'memories' | 'perceive';
 
 /** 订阅外部 auth store，登录/登出时驱动整壳重渲染。 */
 function useAuthed(): boolean {
@@ -13,8 +14,9 @@ function useAuthed(): boolean {
 }
 
 /**
- * Companion 最小外壳（roadmap Phase 2.2 alpha）：未登录显示登录页；登录后两个 tab —
- *「我的数字人」+「成长」。鉴权用 Bearer access token（auth.ts），401 自动刷新一次。
+ * Companion 最小外壳（roadmap Phase 2.2 alpha）：未登录显示登录页；登录后四个 tab —
+ *「我的数字人」/「成长」/「记忆」/「让 TA 听」（感知接入）。鉴权用 Bearer access token
+ * （auth.ts），401 自动刷新一次。
  */
 export function App(): JSX.Element {
   const authed = useAuthed();
@@ -61,6 +63,14 @@ export function App(): JSX.Element {
             >
               记忆
             </button>
+            <button
+              role="tab" id="tab-perceive" aria-controls="panel-perceive"
+              aria-selected={tab === 'perceive'}
+              className={tab === 'perceive' ? 'tabs__btn tabs__btn--active' : 'tabs__btn'}
+              onClick={() => setTab('perceive')}
+            >
+              让 TA 听
+            </button>
           </nav>
 
           <main className="app__main">
@@ -72,6 +82,9 @@ export function App(): JSX.Element {
             )}
             {tab === 'memories' && (
               <div role="tabpanel" id="panel-memories" aria-labelledby="tab-memories"><MemoriesView /></div>
+            )}
+            {tab === 'perceive' && (
+              <div role="tabpanel" id="panel-perceive" aria-labelledby="tab-perceive"><PerceiveView /></div>
             )}
           </main>
         </>

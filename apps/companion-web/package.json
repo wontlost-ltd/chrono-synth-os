@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\""
+    "test": "npx tsx --test \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@chrono/contracts": "*",

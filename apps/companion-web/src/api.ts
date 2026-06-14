@@ -10,9 +10,12 @@ import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
+  CompanionPerceiveResultV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
   type CompanionMemoryListV1,
+  type CompanionPerceiveRequestV1,
+  type CompanionPerceiveResultV1,
 } from '@chrono/contracts';
 import { getSession, tryRefresh } from './auth.js';
 import { decide401Action } from './api-retry.js';
@@ -69,6 +72,38 @@ async function getData(url: string): Promise<unknown> {
   }
   const body = (await res.json()) as { data?: unknown };
   return body.data;
+}
+
+/** POST + 统一信封 { data: T }；401 刷新/重试与 getData 同款。400 抛带消息错误（契约校验失败）。 */
+async function postData(url: string, payload: unknown): Promise<unknown> {
+  const sentToken = getSession()?.accessToken ?? null;
+  const doPost = (): Promise<Response> => fetch(url, {
+    method: 'POST', credentials: 'include',
+    headers: { ...authedHeaders(), 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let res = await doPost();
+
+  if (res.status === 401) {
+    const action = decide401Action(sentToken, getSession()?.accessToken ?? null);
+    if (action === 'refresh') {
+      const outcome = await tryRefresh();
+      if (outcome === 'refreshed' || outcome === 'superseded') res = await doPost();
+    } else {
+      res = await doPost();
+    }
+  }
+
+  if (res.status === 401) throw new ApiAuthError(401);
+  if (res.status === 403) throw new ApiAuthError(403);
+  if (!res.ok) throw new Error(`请求失败 ${res.status}: ${url}`);
+  const body = (await res.json()) as { data?: unknown };
+  return body.data;
+}
+
+/** 「让 TA 听/看一段」：提交中间表征 → 人格沉淀记忆 → 返回人格记住的。 */
+export async function perceive(input: CompanionPerceiveRequestV1): Promise<CompanionPerceiveResultV1> {
+  return CompanionPerceiveResultV1Schema.parse(await postData('/api/v1/companion/me/perceive', input));
 }
 
 export async function fetchMe(): Promise<CompanionMeV1> {
