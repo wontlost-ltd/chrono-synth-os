@@ -7,3 +7,4 @@ export * from './persona-template-queries.js';
 export * from './llm-credential-queries.js';
 export * from './tenant-llm-settings-queries.js';
 export * from './perception-media-queries.js';
+export * from './perception-event-queries.js';

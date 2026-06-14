@@ -39,6 +39,8 @@ const TENANT_TABLES = new Set([
   'tenant_llm_settings',
   /* ADR-0052 Edge-P5：感知媒体引用元数据（原始媒体在对象存储，主库只存引用） */
   'perception_media_refs',
+  /* 感知事件审计（哈希+计数+元数据） */
+  'perception_events',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

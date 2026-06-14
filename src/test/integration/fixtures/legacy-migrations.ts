@@ -964,6 +964,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_tenant ON perception_media_refs(tenant_id)",
       "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_expiry ON perception_media_refs(delete_after)"
     ]
+  },
+  {
+    "version": "v087",
+    "description": "Perception layer: perception event audit (hash + counts + metadata, no raw representation)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS perception_events (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    modality TEXT NOT NULL,\n    representation_sha256 TEXT NOT NULL,\n    provider_name TEXT NOT NULL,\n    memory_count INTEGER NOT NULL DEFAULT 0,\n    candidate_count INTEGER NOT NULL DEFAULT 0,\n    pending_count INTEGER NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'done',\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_perception_events_tenant ON perception_events(tenant_id, created_at)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1908,6 +1916,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS perception_media_refs (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    object_key TEXT NOT NULL,\n    sha256 TEXT NOT NULL,\n    mime TEXT NOT NULL,\n    size_bytes BIGINT NOT NULL DEFAULT 0,\n    duration_ms BIGINT NOT NULL DEFAULT 0,\n    retention_class TEXT NOT NULL DEFAULT 'process-and-delete',\n    delete_after BIGINT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    created_at BIGINT NOT NULL\n  )",
       "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_tenant ON perception_media_refs (tenant_id)",
       "CREATE INDEX IF NOT EXISTS idx_perception_media_refs_expiry ON perception_media_refs (delete_after)"
+    ]
+  },
+  {
+    "version": "v089",
+    "description": "Perception layer: perception event audit (hash + counts + metadata, no raw representation)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS perception_events (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    modality TEXT NOT NULL,\n    representation_sha256 TEXT NOT NULL,\n    provider_name TEXT NOT NULL,\n    memory_count BIGINT NOT NULL DEFAULT 0,\n    candidate_count BIGINT NOT NULL DEFAULT 0,\n    pending_count BIGINT NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'done',\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_perception_events_tenant ON perception_events (tenant_id, created_at)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

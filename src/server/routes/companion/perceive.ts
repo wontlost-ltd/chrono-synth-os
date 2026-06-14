@@ -28,7 +28,8 @@ import {
   CompanionPerceiveResultV1Schema,
   type CompanionPerceiveResultV1,
 } from '@chrono/contracts';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { perceptionEventInsert } from '@chrono/kernel';
 import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
 import { MockPerceptionProvider } from '../../../perception/sources/mock-perception-provider.js';
 import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
@@ -130,6 +131,9 @@ export function registerCompanionPerceiveRoutes(
       throw new QuotaExceededError('感知配额已用尽，请稍后再试');
     }
 
+    /* 表征内容哈希（provenance；不存原文——可能含 PII）。 */
+    const representationSha256 = createHash('sha256').update(body.representation).digest('hex');
+
     /* 按租户 BYOK 选感官老师（有 LLM key → LLM teacher 真语义；否则确定性 mock）。 */
     const provider = providerFor(request.tenantId);
     const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
@@ -138,8 +142,7 @@ export function registerCompanionPerceiveRoutes(
       tenantId: request.tenantId,
       media: {
         modality: body.modality,
-        /* mediaSha256：表征内容哈希作 provenance（无原始媒体，用表征哈希）。 */
-        mediaSha256: createHash('sha256').update(body.representation).digest('hex'),
+        mediaSha256: representationSha256,
         durationMs: 0,
         representation: body.representation,
       },
@@ -159,6 +162,28 @@ export function registerCompanionPerceiveRoutes(
     /* 成长候选统计：进蒸馏门的候选数 + 待审批（pending=身份层提案，绝不自动应用）。 */
     const candidates = result.candidates.filter((c) => c.status !== 'rejected');
     const pendingApprovalCount = result.candidates.filter((c) => c.status === 'pending').length;
+
+    /* 记一条感知事件审计（行为审计，不存表征原文——只哈希+计数+元数据）。
+     * best-effort：这是「人格何时感知了什么」的回看轨迹，不是强合规审计。记忆与配额此刻已落库提交，
+     * 审计行写失败绝不能反过来把整个 perceive 打成 500——否则用户重试会重复沉淀记忆+重复扣配额。
+     * 失败只 warn 记日志（与 analytics 事件写入同款非致命语义）。 */
+    try {
+      sharedDb.execute(perceptionEventInsert({
+        id: `pevt_${randomUUID()}`,
+        tenantId: request.tenantId,
+        personaId: 'default',
+        modality: body.modality,
+        representationSha256,
+        providerName: provider.name,
+        memoryCount: result.memoryIds.length,
+        candidateCount: candidates.length,
+        pendingCount: pendingApprovalCount,
+        status: 'done',
+        createdAt: Date.now(),
+      }));
+    } catch (err) {
+      request.log.warn({ err, tenantId: request.tenantId }, 'perception event audit write failed');
+    }
 
     const payload: CompanionPerceiveResultV1 = {
       schemaVersion: 'companion-perceive-result.v1',
