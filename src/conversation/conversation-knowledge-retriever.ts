@@ -211,6 +211,46 @@ export function scoreTextByKeyword(haystack: string, tokens: string[]): number {
   return score;
 }
 
+/**
+ * 连续短语匹配加分（确定性消歧）：从原始查询提取多词/多字的**连续短语**，整段命中 haystack 才加分。
+ * 解决「flat white 怎么冲」被「手冲咖啡」误命中的问题——单个 token（flat/white/咖啡）各算各的会撞车，
+ * 但连续短语「flat white」整体只命中真讲 flat white 的记忆。短语越长加分越高（n 词短语 +2n）。
+ *
+ * 提取规则：latin 连续词序列（≥2 词，去停用词后相邻）+ CJK 连续 4 字+段（比 tokenize 的 2/3-gram 更长，
+ * 抓「手冲咖啡」「人类简史」这类专名）。纯确定性、零模型。
+ */
+export function scorePhraseBonus(haystack: string, query: string): number {
+  const hay = haystack.toLowerCase();
+  const lower = query.toLowerCase();
+  let bonus = 0;
+
+  /* latin：相邻非停用词序列（用空白/标点切），≥2 词的连续短语整体命中加 2×词数。 */
+  const latinWords = (lower.match(/[a-z0-9¥$€£%]+/g) ?? []).filter((w) => w.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(w));
+  for (let len = latinWords.length; len >= 2; len--) {
+    for (let i = 0; i + len <= latinWords.length; i++) {
+      const phrase = latinWords.slice(i, i + len).join(' ');
+      if (hay.includes(phrase)) { bonus += 2 * len; }
+    }
+  }
+
+  /* CJK：在每个连续段内滑 4..6 字窗口（专名级，比 tokenize 的 2/3-gram 更长更特异）。每个段只记一次
+   * 最长命中（避免同段内 4/5/6-gram 重复累加），加分 = 命中窗口字数，给「人类简史」「手冲咖啡」这类
+   * 专名/复合词强信号。 */
+  for (const seg of lower.match(/[一-鿿]{4,}/g) ?? []) {
+    let segBonus = 0;
+    for (let n = Math.min(6, seg.length); n >= 4; n--) {
+      let matched = false;
+      for (let i = 0; i + n <= seg.length; i++) {
+        const gram = seg.slice(i, i + n);
+        if (hay.includes(gram)) { segBonus = n; matched = true; break; }
+      }
+      if (matched) break;  /* 取最长命中即停（不累加更短的子串）。 */
+    }
+    bonus += segBonus;
+  }
+  return bonus;
+}
+
 function scoreByKeyword(row: KnowledgeRow, tokens: string[]): number {
   return scoreTextByKeyword(`${row.title}\n${row.content}`, tokens) * (0.5 + 0.5 * row.confidence);
 }
