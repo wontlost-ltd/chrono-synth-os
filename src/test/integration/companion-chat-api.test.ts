@@ -133,6 +133,23 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('安全（强）：模板正文自带敏感主题但 message 没命中 → 模板正文输出自检拦截（Codex 复审 High）', async () => {
+    /* Codex 构造：intent「账号 找回」（message 不含「密码」→ 输入不 boundary_block），但模板正文含
+     * 「密码」→ 必须被模板正文 never_discuss 输出自检拦下，不发出。 */
+    new ResponseTemplateStore(os.getDatabase(), 'default').appendVersion(
+      'default', '账号 找回', '你的密码是 hunter2，请妥善保管。', null, 1000,
+    );
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '账号怎么找回？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      /* 模板被拦 → 回退记忆 grounding；无相关记忆 → honest_offline。绝不发出模板正文。 */
+      assert.notEqual(result.kind, 'response_template', '含敏感主题的模板正文不得作为 response_template 发出');
+      assert.ok(!result.reply.includes('hunter2'), '绝不泄露模板正文里的凭证');
+    } finally { await local.close(); }
+  });
+
   it('无匹配模板 → 回退记忆 grounding（向后兼容）', async () => {
     os.core.memories.addMemory('episodic', '我每天清晨跑步五公里', 0.5, 0.7);
     const local = await localChatApp(os);

@@ -109,8 +109,7 @@ export function registerCompanionChatRoutes(
     const scored: RelevantKnowledge[] = [];
     for (const node of tenantOS.core.memories.getAllMemories().values()) {
       const score = scoreTextByKeyword(node.content, tokens);
-      /* 最小分门槛：score ≥ 2（一个长词命中=2，或两个短词/bigram）——挡单个泛词/CJK bigram 噪声
-       * 误 grounding（Codex 复审：避免「答非所问地翻记忆」）。 */
+      /* 最小分门槛 MIN_GROUNDING_SCORE=1：任一内容词命中即可（停用词已被 tokenize 剔除）。 */
       if (score < MIN_GROUNDING_SCORE) continue;
       /* 饱和归一化 relevance = score/(score+K)：score 2→0.33、6→0.6，命中即过离线回应器的
        * MIN_USEFUL_RELEVANCE(0.1) 门；不像 score/(tokens*2) 那样被「全 token 满分」的虚高分母压垮。
@@ -171,11 +170,14 @@ export function registerCompanionChatRoutes(
     });
 
     /* response_template 优先（ADR-0047 蒸馏闭环消费端）：命中 intent 匹配的整段模板 → 直接用它，流程型
-     * 问答更流畅有序。**但安全边界优先级最高**——offline.kind===boundary_block（命中 never_discuss）时
-     * 绝不用模板覆盖拒答（防模板泄露敏感主题）。模板视为已蒸馏的高质回应，置信高（0.8）。 */
+     * 问答更流畅有序。**但安全边界优先级最高**：
+     *   ① 用户输入命中 never_discuss（offline.kind===boundary_block）→ 不用模板覆盖拒答；
+     *   ② 模板**正文**经 never_discuss 输出自检（Codex 复审 High：蒸馏审批不能替代运行时最后一道边界；
+     *      模板是直接发给用户的整段，须和 memory/narrative 拼装结果一样过输出自检——挡「输入没命中但
+     *      模板正文自带敏感主题」的绕过）→ 命中则丢弃模板，回退记忆 grounding（由其拒答/诚实离线）。 */
     if (offline.kind !== 'boundary_block') {
       const template = matchResponseTemplate(request.tenantId, body.message);
-      if (template) {
+      if (template && !responder.violatesNeverDiscuss(template, COMPANION_BASELINE_BOUNDARIES)) {
         return {
           data: CompanionChatResultV1Schema.parse({
             schemaVersion: 'companion-chat-result.v1',

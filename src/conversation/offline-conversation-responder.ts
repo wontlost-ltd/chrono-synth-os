@@ -76,6 +76,15 @@ export class OfflineConversationResponder {
   constructor(private readonly matcher?: DeterministicBoundaryMatcher) {}
 
   /**
+   * 公开的 never_discuss 输出自检：任何**绕过 respond() 直接发给用户的文本**（如 response_template
+   * 整段模板）发出前都应过此检查，复用同一套确定性边界匹配（单一事实来源，避免各处替身退化）。
+   * 命中返回 true（调用方应拒答），未命中 false。
+   */
+  violatesNeverDiscuss(text: string, boundaries: BehaviorBoundary[]): boolean {
+    return this.matchesBoundary(text, boundaries, 'never_discuss');
+  }
+
+  /**
    * 生成离线回应。纯函数式：相同输入 → 相同输出（可复现，ADR-0047）。
    */
   respond(input: OfflineResponderInput): OfflineResponse {
