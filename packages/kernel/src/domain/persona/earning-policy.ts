@@ -40,7 +40,34 @@ export interface EarningPolicyConfig {
   readonly failureStreakBreaker: number;
   /** 自主接单要求的最低声誉 */
   readonly minReputationForAutonomy: number;
+  /**
+   * AML 聚合阈值（ADR-0048 related-account cycling / wash-trading 余项）。单 publisher
+   * 现有「取消率」guard 只看质量，不看**跨窗口聚合模式**；这里补三类确定性聚合信号的阈值。
+   */
+  readonly aml: AmlAggregatePolicy;
 }
+
+/**
+ * AML 聚合检测阈值（ADR-0048）。三类确定性聚合模式，全在 24h 滚动窗口上算，阈值刻意宽松
+ * 以**不误伤正常收入**（真实 publisher 一天给 1-2 单远在阈值内）。
+ */
+export interface AmlAggregatePolicy {
+  /** 单 publisher 在窗口内被本 persona 接单数达到此值 → 刷单速率嫌疑（wash-trading）。 */
+  readonly maxTasksPerPublisherPerWindow: number;
+  /** 单 publisher 占窗口报酬暴露的比例达到此值（且窗口任务数 ≥ concentrationMinTasks）→ 单源集中嫌疑（关联环圈）。 */
+  readonly maxPublisherRewardShare: number;
+  /** 触发集中度判定所需的窗口最小任务数（任务太少时占比无统计意义，不判）。 */
+  readonly concentrationMinTasks: number;
+  /** 单 publisher 在窗口内**同额报酬**的接单数达到此值 → 机械刷单嫌疑（identical-reward repeats）。 */
+  readonly maxIdenticalRewardRepeats: number;
+}
+
+export const DEFAULT_AML_AGGREGATE_POLICY: AmlAggregatePolicy = {
+  maxTasksPerPublisherPerWindow: 5,
+  maxPublisherRewardShare: 0.8,
+  concentrationMinTasks: 4,
+  maxIdenticalRewardRepeats: 4,
+};
 
 export const DEFAULT_EARNING_POLICY: EarningPolicyConfig = {
   allowedCategories: ['research', 'writing'],
@@ -49,6 +76,7 @@ export const DEFAULT_EARNING_POLICY: EarningPolicyConfig = {
   maxConcurrentTasks: 3,
   failureStreakBreaker: 2,
   minReputationForAutonomy: 0,
+  aml: DEFAULT_AML_AGGREGATE_POLICY,
 };
 
 /** 准入评估输入 */
@@ -138,4 +166,85 @@ export function evaluateEarningAdmission(input: EarningAdmissionInput): EarningA
 const RISK_ORDER: Record<EarningRiskLevel, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 function maxRisk(a: EarningRiskLevel, b: EarningRiskLevel): EarningRiskLevel {
   return RISK_ORDER[a] >= RISK_ORDER[b] ? a : b;
+}
+
+/** AML 聚合检测输入（纯数据；窗口任务由调用方按 24h 滚动窗口预筛好）。 */
+export interface AmlAggregateInput {
+  /** 候选任务的 publisher（要判它在窗口内的聚合行为）。 */
+  readonly candidatePublisherUserId: string;
+  /** 候选任务的报酬（计入同额重复信号——与速率信号同样把候选这一单算进去，语义一致）。 */
+  readonly candidateReward: number;
+  /**
+   * 本 persona 在 24h 窗口内的**接单行为**任务（调用方预筛好：accepted/completed 且 acceptedAt 在窗口内
+   * ——含 completed 是因 wash-trading 常「快速接单并完成」，只看 accepted 会漏判）。
+   * 调用方负责窗口预筛——kernel 只做确定性聚合，不碰时钟/IO（与 evaluateEarningAdmission 同风格）。
+   */
+  readonly windowAcceptedTasks: readonly MarketplaceTask[];
+  readonly policy: AmlAggregatePolicy;
+}
+
+/** AML 聚合检测结果：blocked=true 时 reasons 非空（拦截原因）。 */
+export interface AmlAggregateResult {
+  readonly blocked: boolean;
+  readonly reasons: readonly string[];
+}
+
+/**
+ * AML 聚合检测（纯函数，ADR-0048 related-account cycling / wash-trading 余项）。
+ *
+ * 现有 per-task `amlBlockReason` 只看「单 publisher 取消率」（质量信号）；本函数补**跨窗口聚合
+ * 模式**——同一 publisher 在 24h 窗口内对本 persona 的接单行为是否呈现刷单/单源集中/机械重复。
+ *
+ * 三类确定性信号（任一触发即 blocked）：
+ *   1. 速率：该 publisher 在窗口内被接单数 ≥ maxTasksPerPublisherPerWindow（高频喂单 = 刷单嫌疑）。
+ *   2. 集中度：该 publisher 占窗口报酬暴露比例 ≥ maxPublisherRewardShare 且窗口任务数 ≥ concentrationMinTasks
+ *      （收入被单一来源主导 = 关联账户环圈嫌疑）。
+ *   3. 同额重复：该 publisher 在窗口内**同额报酬**接单数 ≥ maxIdenticalRewardRepeats（机械刷单嫌疑）。
+ *
+ * 阈值刻意宽松，不误伤正常收入（真实 publisher 一天 1-2 单远低于阈值）。纯确定性、零 LLM/IO。
+ */
+export function evaluateAmlAggregate(input: AmlAggregateInput): AmlAggregateResult {
+  const { candidatePublisherUserId: pub, candidateReward, windowAcceptedTasks, policy } = input;
+  const reasons: string[] = [];
+
+  /* 该 publisher 在窗口内被本 persona 接的单。 */
+  const fromPublisher = windowAcceptedTasks.filter((t) => t.publisherUserId === pub);
+
+  /* 信号 1：接单速率（含候选这一单——所以用 ≥ 而非 >，达到阈值即拦，候选是第 N 单）。 */
+  if (fromPublisher.length + 1 >= policy.maxTasksPerPublisherPerWindow) {
+    reasons.push(
+      `publisher ${pub} 窗口内接单速率过高 (${fromPublisher.length + 1} ≥ ${policy.maxTasksPerPublisherPerWindow})，刷单嫌疑`,
+    );
+  }
+
+  /* 信号 2：报酬集中度（占窗口总暴露比例）。窗口任务太少不判（占比无统计意义）。
+   * 注意：用「已接窗口」算占比，不含候选——候选还没接，占比看已成事实的集中状况。 */
+  if (windowAcceptedTasks.length >= policy.concentrationMinTasks) {
+    const totalReward = windowAcceptedTasks.reduce((s, t) => s + t.reward, 0);
+    const pubReward = fromPublisher.reduce((s, t) => s + t.reward, 0);
+    /* totalReward>0 才算占比（全 0 报酬窗口不触发除零，也无集中度意义）。 */
+    if (totalReward > 0 && pubReward / totalReward >= policy.maxPublisherRewardShare) {
+      reasons.push(
+        `publisher ${pub} 报酬集中度过高 (${pubReward}/${totalReward} ≥ ${policy.maxPublisherRewardShare})，关联环圈嫌疑`,
+      );
+    }
+  }
+
+  /* 信号 3：同额报酬机械重复。统计该 publisher 窗口内各报酬额出现次数 + **候选这一单的报酬**
+   * （与速率信号一致，把候选算进去：窗口已有 3 单同额 + 候选同额 = 4 次即拦，而非放行第 4 单等第 5 单）。
+   * 任一额度达阈值即拦；按报酬额升序输出 reason（reason 文本也确定性，不依赖任务到达顺序）。 */
+  const rewardCounts = new Map<number, number>();
+  rewardCounts.set(candidateReward, 1); /* 候选先记一票 */
+  for (const t of fromPublisher) {
+    rewardCounts.set(t.reward, (rewardCounts.get(t.reward) ?? 0) + 1);
+  }
+  for (const [reward, count] of [...rewardCounts].sort((a, b) => a[0] - b[0])) {
+    if (count >= policy.maxIdenticalRewardRepeats) {
+      reasons.push(
+        `publisher ${pub} 同额报酬 ${reward} 重复 ${count} 次 (≥ ${policy.maxIdenticalRewardRepeats})，机械刷单嫌疑`,
+      );
+    }
+  }
+
+  return { blocked: reasons.length > 0, reasons };
 }

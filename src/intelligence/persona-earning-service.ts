@@ -19,7 +19,9 @@ import type { PersonaLeaseStore } from '../storage/persona-lease-store.js';
 import type { DecisionEngine } from './decision-engine.js';
 import {
   evaluateEarningAdmission,
+  evaluateAmlAggregate,
   DEFAULT_EARNING_POLICY,
+  DEFAULT_AML_AGGREGATE_POLICY,
   type EarningPolicyConfig,
   type EarningPersonaSnapshot,
   type EarningAdmission,
@@ -118,6 +120,10 @@ export class PersonaEarningService {
     const snapshot = this.buildPersonaSnapshot(input, persona);
     /* 今日已接单累计报酬（已接但未结算的任务报酬之和），用于每日暴露上限 */
     let todayExposure = this.computeTodayExposure(input);
+    /* 24h 窗口内本 persona 的接单行为任务（accepted+completed，acceptedAt 在窗口内），供 AML 聚合
+     * guard 算速率/集中度/重复。本 cycle 内每接一单会增量并入（见下方 apply 成功分支）。 */
+    const windowAmlTasks = this.computeAmlWindowTasks(input);
+    const amlPolicy = policy.aml ?? DEFAULT_AML_AGGREGATE_POLICY;
 
     const outcomes: EarningCycleTaskOutcome[] = [];
     let applied = 0, reviewQueued = 0, skipped = 0;
@@ -134,6 +140,20 @@ export class PersonaEarningService {
       const amlReason = this.amlBlockReason(input, task);
       if (amlReason) {
         outcomes.push({ taskId: task.id, title: task.title, decision: 'forbidden', reasons: [`AML: ${amlReason}`] });
+        skipped++;
+        continue;
+      }
+
+      /* AML/滥用 guard 第三道（ADR-0048 related-account cycling 余项）：跨 24h 窗口的**聚合模式**
+       * ——单 publisher 接单速率 / 报酬集中度 / 同额机械重复。kernel 纯函数确定性判定。 */
+      const amlAgg = evaluateAmlAggregate({
+        candidatePublisherUserId: task.publisherUserId,
+        candidateReward: task.reward,
+        windowAcceptedTasks: windowAmlTasks,
+        policy: amlPolicy,
+      });
+      if (amlAgg.blocked) {
+        outcomes.push({ taskId: task.id, title: task.title, decision: 'forbidden', reasons: amlAgg.reasons.map((r) => `AML: ${r}`) });
         skipped++;
         continue;
       }
@@ -177,6 +197,15 @@ export class PersonaEarningService {
       if (ok) {
         applied++;
         todayExposure += task.reward;
+        /* 把刚接的这单并入本地 AML 窗口——否则同一 cycle 内连续接同 publisher 多单时，AML 聚合 guard
+         * 看不到前面刚接的，速率/集中度信号被绕过（Codex 复审 High）。与 todayExposure 增量更新同理。
+         * 形态对齐 computeAmlWindowTasks 的产物（accepted + 本 persona + acceptedAt 在窗口内）。 */
+        windowAmlTasks.push({
+          ...task,
+          status: 'accepted',
+          assigneePersonaId: input.personaId,
+          acceptedAt: this.deps.clock.now(),
+        });
         outcomes.push({ taskId: task.id, title: task.title, decision: 'applied', reasons: ['autonomous apply via pipeline'] });
         this.deps.bus.emit('system:earning-task-applied', {
           tenantId: input.tenantId, personaId: input.personaId, taskId: task.id, reward: task.reward,
@@ -249,14 +278,26 @@ export class PersonaEarningService {
    * 注意：并发触发 earning cycle 的精确防超 cap 需 DB 级 per-persona lease（多实例
    * 部署前必须加，见 ADR-0048）；当前单进程同步执行下按窗口统计已足够。 */
   private computeTodayExposure(input: EarningCycleInput): number {
+    /* exposure 口径：仅「已接未结算」(accepted) 的报酬之和——这是「当前在途暴露」，completed 已结算不计。 */
     const windowStart = this.deps.clock.now() - 86_400_000;
     const detail = this.deps.personaCore.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
     const tasks = detail?.marketplaceTasks ?? [];
     return tasks
-      .filter((t) => t.assigneePersonaId === input.personaId
-        && t.status === 'accepted'
-        && (t.acceptedAt ?? 0) >= windowStart)
+      .filter((t) => t.assigneePersonaId === input.personaId && t.status === 'accepted' && (t.acceptedAt ?? 0) >= windowStart)
       .reduce((sum, t) => sum + t.reward, 0);
+  }
+
+  /** 24h 滚动窗口内本 persona 的**接单行为**任务（AML 聚合 guard 用）。
+   * 口径含 accepted **与 completed**（acceptedAt 在窗口内）——wash-trading 常「快速接单并完成」，
+   * 若只看 accepted，完成后的刷单任务会从窗口消失导致漏判（Codex 复审）。统计「24h 内接了哪些单」
+   * 看 acceptedAt + 非 cancelled/open，比 exposure 的「在途」口径更宽，专为模式检测。 */
+  private computeAmlWindowTasks(input: EarningCycleInput): MarketplaceTask[] {
+    const windowStart = this.deps.clock.now() - 86_400_000;
+    const detail = this.deps.personaCore.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
+    const tasks = detail?.marketplaceTasks ?? [];
+    return tasks.filter((t) => t.assigneePersonaId === input.personaId
+      && (t.status === 'accepted' || t.status === 'completed')
+      && (t.acceptedAt ?? 0) >= windowStart);
   }
 
   private categoryCompleted(input: EarningCycleInput, category: string): number {

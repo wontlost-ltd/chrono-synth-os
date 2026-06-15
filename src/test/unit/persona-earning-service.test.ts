@@ -11,6 +11,7 @@ import { PersonaEarningService } from '../../intelligence/persona-earning-servic
 import type { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import type { DecisionEngine } from '../../intelligence/decision-engine.js';
 import type { ToolInvocationPipeline } from '../../agent/tool-invocation-pipeline.js';
+import { DEFAULT_EARNING_POLICY } from '@chrono/kernel';
 
 const OWNER = 'user_owner';
 const PERSONA = 'p1';
@@ -157,6 +158,58 @@ describe('PersonaEarningService (ADR-0048)', () => {
     const r = await h.svc.runEarningCycle(input);
     assert.equal(r.applied, 0);
     assert.match(JSON.stringify(r.outcomes), /AML/);
+  });
+
+  it('AML 聚合 guard 接线：单 publisher 窗口内接单速率过高 → forbidden（ADR-0048 余项）', async () => {
+    /* 窗口内已与 pub_wash 接了 4 单（accepted，在 24h 窗口内）+ 候选第 5 单 → 速率 5≥5 触发聚合 guard。
+     * 各单不同额、无取消（绕开旧的取消率 guard），证明拦截来自新的聚合 guard。 */
+    const washHistory = [
+      { id: 'w1', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_wash', reward: 10, acceptedAt: 900, updatedAt: 400 },
+      { id: 'w2', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_wash', reward: 11, acceptedAt: 900, updatedAt: 300 },
+      { id: 'w3', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_wash', reward: 12, acceptedAt: 900, updatedAt: 200 },
+      { id: 'w4', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_wash', reward: 13, acceptedAt: 900, updatedAt: 100 },
+    ];
+    const h = harnessWithHistory({ openTasks: [mkTask({ publisherUserId: 'pub_wash' })], decision: '接受任务', history: washHistory });
+    const r = await h.svc.runEarningCycle(input);
+    assert.equal(r.applied, 0, '聚合 guard 应拦下，不接单');
+    assert.match(JSON.stringify(r.outcomes), /接单速率过高/, '拦截原因来自聚合 guard');
+  });
+
+  it('AML 聚合 guard 不误伤：正常单 publisher 少量接单 → 放行', async () => {
+    /* 窗口内与 pub_ok 只接过 1 单 + 候选 1 单 → 远低于所有聚合阈值，应正常接单（不被新 guard 误拦）。 */
+    const okHistory = [
+      { id: 'ok1', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_ok', reward: 10, acceptedAt: 900, updatedAt: 100 },
+    ];
+    const h = harnessWithHistory({ openTasks: [mkTask({ publisherUserId: 'pub_ok' })], decision: '接受任务', history: okHistory });
+    const r = await h.svc.runEarningCycle(input);
+    assert.ok(!JSON.stringify(r.outcomes).includes('接单速率过高'), '正常收入不应被聚合 guard 拦');
+  });
+
+  it('AML 聚合 guard 同周期累积：同 publisher 多 open 单在一个 cycle 内连续接，达阈值后被拦（Codex 复审 High）', async () => {
+    /* 历史窗口已有 pub_burst 2 单（accepted）；本 cycle 又有 4 个 pub_burst 的 open 单。
+     * 接第 3 个 open 单时窗口累计=2历史+2本轮已接+候选=5 ≥ 阈值 → 速率拦截。证明本轮已接的单被并入窗口，
+     * 不是每次都看旧快照（修复前的 bug：4 个都能逐个通过）。需放宽并发上限让多单可接。 */
+    const burstHistory = [
+      /* 一条很久以前完成的 research 单（别的 publisher，acceptedAt 在 24h 窗口外）→ 让 category 已熟悉
+       * （categoryCompletedCount>0，避免「首次接该 category」把决策降级到 needs_human_review），
+       * 且不进 AML 窗口（acceptedAt=0 远早于窗口起点）。 */
+      { id: 'fam', category: 'research', status: 'completed', qualityScore: 0.9, assigneePersonaId: PERSONA, publisherUserId: 'pub_fam', reward: 5, acceptedAt: 0, updatedAt: 50 },
+      { id: 'b1', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_burst', reward: 5, acceptedAt: 900, updatedAt: 200 },
+      { id: 'b2', category: 'research', status: 'accepted', assigneePersonaId: PERSONA, publisherUserId: 'pub_burst', reward: 6, acceptedAt: 900, updatedAt: 100 },
+    ];
+    const openBurst = [
+      mkTask({ id: 'o1', publisherUserId: 'pub_burst', reward: 7 }),
+      mkTask({ id: 'o2', publisherUserId: 'pub_burst', reward: 8 }),
+      mkTask({ id: 'o3', publisherUserId: 'pub_burst', reward: 9 }),
+      mkTask({ id: 'o4', publisherUserId: 'pub_burst', reward: 10 }),
+    ];
+    /* 放宽并发上限，否则 openTaskCount/maxConcurrentTasks 会先于 AML 拦下。 */
+    const loosePolicy = { ...DEFAULT_EARNING_POLICY, maxConcurrentTasks: 100 };
+    const h = harnessWithHistory({ openTasks: openBurst, decision: '接受任务', history: burstHistory });
+    const r = await h.svc.runEarningCycle({ ...input, maxTasksPerCycle: 4, policy: loosePolicy });
+    /* 前两单接成功（窗口 2→3→4），第三单时 4+候选=5≥5 → 被拦；至少一单 forbidden 且原因是速率。 */
+    assert.ok(r.applied >= 1 && r.applied < 4, `应接了部分单后被拦，实测 applied=${r.applied}`);
+    assert.match(JSON.stringify(r.outcomes), /接单速率过高/, '同周期累积达阈值后应被速率信号拦');
   });
 });
 
