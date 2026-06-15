@@ -27,6 +27,7 @@ export interface MockPerceptionOptions {
 
 export class MockPerceptionProvider implements PerceptionProvider {
   readonly name = 'mock-perception';
+  readonly kind = 'deterministic' as const;
 
   constructor(private readonly opts: MockPerceptionOptions = {}) {}
 

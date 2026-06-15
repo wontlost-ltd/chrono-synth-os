@@ -80,10 +80,20 @@ export interface PerceptionAnalyzeOptions {
 }
 
 /**
+ * 感官来源类别：
+ *   - `teacher`：真多模态 LLM 老师（真语义理解）。
+ *   - `deterministic`：确定性本地实现（mock 回退，无 LLM，可本地验证但非真语义）。
+ * 用于向上游/用户**如实透出**「这段感知是真老师教的还是确定性回退」，避免把 mock 误当真老师。
+ */
+export type PerceptionProviderKind = 'teacher' | 'deterministic';
+
+/**
  * 感官老师契约：把媒体表征翻译成结构化感知分析。
  * 实现可以是 mock（确定性）、本地 ollama-llava、云多模态。失败应抛错由调用方降级。
  */
 export interface PerceptionProvider {
   readonly name: string;
+  /** 感官来源类别（真老师 vs 确定性回退）——透明度，路由据此回填响应 perceivedBy。 */
+  readonly kind: PerceptionProviderKind;
   analyze(input: PerceptionInput, options?: PerceptionAnalyzeOptions): Promise<PerceptionAnalysis>;
 }

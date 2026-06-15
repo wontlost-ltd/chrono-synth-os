@@ -218,6 +218,8 @@ export function registerCompanionPerceiveStreamRoutes(
       result: {
         schemaVersion: 'companion-perceive-result.v1',
         perceivedMemories,
+        /* 透明度：真 LLM 老师还是确定性回退（与一次性 perceive 同口径）。 */
+        perceivedBy: provider.kind,
         growthCandidateCount: candidates.length,
         pendingApprovalCount,
       },

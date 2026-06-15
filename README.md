@@ -340,6 +340,7 @@ chrono-synth-os/               # monorepo 根
 | `npm run check:forbidden-imports` | 扫描禁止的跨层导入（IDatabase 泄漏等） |
 | `npm run start` | 启动后端主服务 |
 | `npm run start:observability-worker` | 启动独立 observability worker |
+| `npm run demo:java21` | 可复现 demo：真 LLM 老师教 Java 21 → 零-LLM 确定性问答（需先配老师 env + 起后端，见脚本头部） |
 
 ## 技术栈
 
