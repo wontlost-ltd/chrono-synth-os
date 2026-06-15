@@ -33,8 +33,13 @@ import type { BehaviorBoundary } from '../../../enterprise/persona-template-cata
 
 /** 检索的相关记忆条数上限（喂给离线回应器作 grounding）。 */
 const MAX_GROUNDING_MEMORIES = 5;
-/** 最小关键词分门槛：低于此视为弱匹配噪声，不 grounding（一个长词命中=2）。 */
-const MIN_GROUNDING_SCORE = 2;
+/**
+ * 最小关键词分门槛：≥1 即任一关键词命中即可 grounding。tokenize 已剔除停用词，存活的 token 都是
+ * 内容词——单个短 CJK 内容词（如「跑步」「咖啡」2 字=1 分）也是有效信号，不该被过滤；泛词/助词早被
+ * 停用词表挡掉。设 2 会误伤短关键词召回（真实演示暴露：问「跑步」却答 honest_offline）。relevance
+ * 排序 + top-5 截断保质量，不依赖此门槛兜底噪声。
+ */
+const MIN_GROUNDING_SCORE = 1;
 
 /**
  * companion 个人版基线安全边界（never_discuss）：默认人格无 enterprise 模板边界，但 C 端面向真实

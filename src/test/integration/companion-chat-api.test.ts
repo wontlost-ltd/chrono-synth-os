@@ -74,6 +74,30 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('短关键词召回：单个 2 字 CJK 内容词（如「跑步」）也能 grounding（真实演示暴露的召回回归）', async () => {
+    os.core.memories.addMemory('episodic', '我听到自己开始每天清晨跑步，坚持了一个月', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded', '「跑步」单词命中应 grounding（非 honest_offline）');
+      assert.ok(result.groundedMemoryCount >= 1);
+    } finally { await local.close(); }
+  });
+
+  it('不过度 grounding：完全不相关的问题仍 honest_offline（短门槛不引入噪声）', async () => {
+    os.core.memories.addMemory('episodic', '我喜欢跑步和咖啡', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '量子纠缠的原理是什么？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'honest_offline', '不相关问题不该误命中无关记忆');
+      assert.equal(result.groundedMemoryCount, 0);
+    } finally { await local.close(); }
+  });
+
   it('零-LLM 对话：无相关记忆 → honest_offline（诚实告知离线限制，不瞎编）', async () => {
     const local = await localChatApp(os);
     try {
