@@ -27,15 +27,14 @@ import {
   type CompanionChatResultV1,
 } from '@chrono/contracts';
 import { OfflineConversationResponder } from '../../../conversation/offline-conversation-responder.js';
-import { tokenize, scoreTextByKeyword, scorePhraseBonus } from '../../../conversation/conversation-knowledge-retriever.js';
+import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
+import { retrieveMemoriesDeterministic } from '../../../conversation/deterministic-memory-retrieval.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
 import type { BehaviorBoundary } from '../../../enterprise/persona-template-catalog.js';
 import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
 
 /** companion 默认人格 id（与 perceive/environment 一致）。 */
 const COMPANION_PERSONA_ID = 'default';
-/** 检索的相关记忆条数上限（喂给离线回应器作 grounding）。 */
-const MAX_GROUNDING_MEMORIES = 5;
 /** 命中 response_template 的最小 intent 关键词分门槛——高于记忆 grounding 门槛，避免泛匹配抢答整段模板。 */
 const MIN_TEMPLATE_INTENT_SCORE = 2;
 /** 自我介绍综述取多少条高 salience 记忆。 */
@@ -51,18 +50,6 @@ const SELF_INTRO_PHRASES: readonly string[] = [
   '你是谁', '你会什么', '你都会什么', '你都会些什么', '你会些什么', '你能做什么', '你擅长什么',
   '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
 ];
-/**
- * 最小关键词分门槛：≥1 即任一关键词命中即可 grounding。tokenize 已剔除停用词，存活的 token 都是
- * 内容词——单个短 CJK 内容词（如「跑步」「咖啡」2 字=1 分）也是有效信号，不该被过滤；泛词/助词早被
- * 停用词表挡掉。设 2 会误伤短关键词召回（真实演示暴露：问「跑步」却答 honest_offline）。relevance
- * 排序 + top-5 截断保质量，不依赖此门槛兜底噪声。
- */
-const MIN_GROUNDING_SCORE = 1;
-/** 图遍历扩展：从前 N 条直接命中的记忆出发，沿 memory_edge 拉语义相邻记忆。 */
-const GRAPH_EXPAND_SEEDS = 2;
-/** 边强度门槛：弱于此的语义边不拉邻居（避免噪声边引入无关记忆）。 */
-const MIN_EDGE_STRENGTH = 0.3;
-
 /**
  * companion 个人版基线安全边界（never_discuss）：默认人格无 enterprise 模板边界，但 C 端面向真实
  * 用户，不能因「无配置」就让离线回应器的 never_discuss 输入/输出自检变成 no-op。这里给一组基线敏感
@@ -117,49 +104,16 @@ export function registerCompanionChatRoutes(
   }
 
   /**
-   * 确定性检索：把用户消息分词，对人格自己的记忆按关键词打分，取直接命中；再沿 memory_edge **图遍历**
-   * 拉语义相邻记忆（蒸馏期由老师产的边，运行期仅确定性遍历）。
-   *
-   * 零 LLM、零 embedding——语义在蒸馏期沉淀为边，运行期纯图遍历，保住「相同输入→相同输出」+ 离线可用。
-   * 图遍历让「问轻量级并发也能拉出虚拟线程」这类同义不同词命中——不靠在线 embedding 破坏确定性/离线。
+   * 确定性检索：委托给 deterministic-memory-retrieval 的纯函数（与检索质量基准跑同一份逻辑，
+   * 不再各测一份替身）。零 LLM、零 embedding——语义在蒸馏期沉淀为边，运行期纯图遍历，
+   * 保住「相同输入→相同输出」+ 离线可用。
    */
   function retrieveRelevantMemories(tenantOS: ChronoSynthOS, message: string): RelevantKnowledge[] {
-    const tokens = tokenize(message);
-    if (tokens.length === 0) return [];
-    const allMemories = tenantOS.core.memories.getAllMemories();
-
-    /* 直接命中：关键词分 + 连续短语加分（消歧）。 */
-    const direct: RelevantKnowledge[] = [];
-    for (const node of allMemories.values()) {
-      const score = scoreTextByKeyword(node.content, tokens) + scorePhraseBonus(node.content, message);
-      if (score < MIN_GROUNDING_SCORE) continue;
-      direct.push({ id: node.id, title: '', content: node.content, relevance: score / (score + 4) });
-    }
-    direct.sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
-
-    /* 图遍历扩展：从前 GRAPH_EXPAND_SEEDS 条直接命中出发，沿强边（≥MIN_EDGE_STRENGTH）拉 1 跳语义相邻
-     * 记忆（未直接命中的）。邻居 relevance = 种子 relevance × 边强度 × 0.8（衰减，确保排在直接命中之后）。
-     * 同邻居被多条边拉到取最高分。纯确定性图遍历——边由蒸馏期老师产，运行期不调任何模型。 */
-    const seenIds = new Set(direct.map((d) => d.id));
-    const neighborBest = new Map<string, RelevantKnowledge>();
-    for (const seed of direct.slice(0, GRAPH_EXPAND_SEEDS)) {
-      for (const edge of tenantOS.core.memories.getEdgesFor(seed.id)) {
-        if (edge.strength < MIN_EDGE_STRENGTH) continue;
-        const neighborId = edge.source === seed.id ? edge.target : edge.source;
-        if (seenIds.has(neighborId)) continue;  /* 已直接命中，不重复 */
-        const node = allMemories.get(neighborId);
-        if (!node) continue;
-        const relevance = seed.relevance * edge.strength * 0.8;
-        const existing = neighborBest.get(neighborId);
-        if (!existing || relevance > existing.relevance) {
-          neighborBest.set(neighborId, { id: neighborId, title: '', content: node.content, relevance });
-        }
-      }
-    }
-
-    /* 合并：直接命中（按 relevance）在前，图遍历邻居（按 relevance，id 稳定 tie-break）在后，截断 top-N。 */
-    const neighbors = [...neighborBest.values()].sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
-    return [...direct, ...neighbors].slice(0, MAX_GROUNDING_MEMORIES);
+    return retrieveMemoriesDeterministic(
+      message,
+      tenantOS.core.memories.getAllMemories(),
+      (id) => tenantOS.core.memories.getEdgesFor(id),
+    );
   }
 
   /**
