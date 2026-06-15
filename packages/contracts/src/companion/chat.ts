@@ -19,9 +19,14 @@ export const CompanionChatRequestV1Schema = z.object({
 
 export type CompanionChatRequestV1 = z.infer<typeof CompanionChatRequestV1Schema>;
 
-/** 回应类型（与 OfflineResponseKind 同源）：知识落地 / 诚实离线 / 边界拒答 / 升级。 */
+/**
+ * 回应类型：
+ *   - response_template：命中蒸馏好的回应模板（流程型问答的预编排整段，ADR-0047 蒸馏闭环消费端）。
+ *   - knowledge_grounded / honest_offline / boundary_block / boundary_escalate：与 OfflineResponseKind 同源
+ *     （记忆检索落地 / 诚实离线 / 边界拒答 / 升级）。
+ */
 export const CompanionChatKindV1Schema = z.enum([
-  'knowledge_grounded', 'honest_offline', 'boundary_block', 'boundary_escalate',
+  'response_template', 'knowledge_grounded', 'honest_offline', 'boundary_block', 'boundary_escalate',
 ]);
 
 export const CompanionChatResultV1Schema = z.object({

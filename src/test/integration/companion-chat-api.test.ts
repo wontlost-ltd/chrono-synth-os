@@ -19,6 +19,7 @@ import { TestClock } from '../../utils/clock.js';
 import { CompanionChatResultV1Schema } from '@chrono/contracts';
 import { registerCompanionChatRoutes } from '../../server/routes/companion/chat.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { ResponseTemplateStore } from '../../storage/response-template-store.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -95,6 +96,51 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
       assert.equal(result.kind, 'honest_offline', '不相关问题不该误命中无关记忆');
       assert.equal(result.groundedMemoryCount, 0);
+    } finally { await local.close(); }
+  });
+
+  it('response_template：命中蒸馏好的模板 → 返回整段（流程型问答流畅有序，优先于记忆碎片）', async () => {
+    /* 蒸馏好一个 flat white 步骤模板（intent 关键词「flat white 做法」）。 */
+    new ResponseTemplateStore(os.getDatabase(), 'default').appendVersion(
+      'default', 'flat white 做法步骤',
+      '做 flat white：1）萃取 espresso；2）打微泡奶到 60-65 度；3）缓缓倒入。', null, 1000,
+    );
+    /* 同时有零散记忆——验证模板优先于记忆碎片。 */
+    os.core.memories.addMemory('episodic', '我知道 flat white 比拿铁更浓', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '怎么做 flat white？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'response_template', '命中模板 → 用整段模板');
+      assert.match(result.reply, /1）萃取 espresso/, '返回完整有序步骤');
+      assert.ok(result.confidence >= 0.8, '模板是高质蒸馏回应，置信高');
+    } finally { await local.close(); }
+  });
+
+  it('安全优先：消息命中 never_discuss 时，绝不用模板覆盖拒答', async () => {
+    /* 即使存在能匹配的模板，命中基线 never_discuss 也必须拒答（防模板泄露敏感主题）。 */
+    new ResponseTemplateStore(os.getDatabase(), 'default').appendVersion(
+      'default', '密码 找回', '你的密码是……（这段绝不该被发出）', null, 1000,
+    );
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码怎么找回？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'boundary_block', 'never_discuss 优先级最高，模板不覆盖');
+      assert.ok(!result.reply.includes('你的密码是'), '绝不发出模板里的敏感内容');
+    } finally { await local.close(); }
+  });
+
+  it('无匹配模板 → 回退记忆 grounding（向后兼容）', async () => {
+    os.core.memories.addMemory('episodic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    try {
+      /* 库里没 template，应走原有记忆检索路径。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗？' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded', '无模板 → 回退记忆 grounding');
     } finally { await local.close(); }
   });
 
