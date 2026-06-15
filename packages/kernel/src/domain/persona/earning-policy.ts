@@ -14,6 +14,15 @@ export type EarningRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 /** 准入裁决 */
 export type EarningAdmission = 'autonomous' | 'needs_human_review' | 'forbidden';
 
+/**
+ * category 路由模式（ADR-0048 skill-router 脚手架）：owner 对每个任务 category 设定准入路由。
+ *   - `autonomous`：该 category 可走自主接单（仍受 reward/AML/熔断等其它 guard 约束）。
+ *   - `human_review`：该 category 一律需人工审批（不阻断，但不自动接）。
+ *   - `blocked`：该 category 完全禁止接单（硬禁止）。
+ * 这是「persona 能自主做哪类活」的可配开关——**值由 owner 按风险决定**，脚手架只提供路由机制。
+ */
+export type CategoryRouteMode = 'autonomous' | 'human_review' | 'blocked';
+
 /** 接单决策所需的 persona 侧快照 */
 export interface EarningPersonaSnapshot {
   readonly status: string;
@@ -28,8 +37,19 @@ export interface EarningPersonaSnapshot {
 
 /** 策略配置（owner 通过授权中心设定；此处为纯数据） */
 export interface EarningPolicyConfig {
-  /** 允许自主接单的 category 白名单 */
+  /**
+   * 允许自主接单的 category 白名单（向后兼容字段）。当未设 categoryRoutes 时，由它派生路由：
+   * 在白名单内 → autonomous，其余 → human_review。设了 categoryRoutes 则以后者为准（更细粒度）。
+   */
   readonly allowedCategories: readonly MarketplaceTaskCategory[];
+  /**
+   * per-category 路由表（ADR-0048 skill-router 脚手架，可选）。设了则覆盖 allowedCategories 的派生逻辑：
+   * 显式给每个 category 设 autonomous/human_review/blocked。未在表中的 category 走 defaultCategoryRoute。
+   * 不设此字段 = 维持原 allowedCategories 行为（向后兼容）。
+   */
+  readonly categoryRoutes?: Partial<Record<MarketplaceTaskCategory, CategoryRouteMode>>;
+  /** categoryRoutes 未覆盖的 category 的兜底路由（默认 human_review——保守，未知类别不自动接）。 */
+  readonly defaultCategoryRoute?: CategoryRouteMode;
   /** 单任务最高自主报酬（超过 → 需人工审批） */
   readonly maxAutonomousReward: number;
   /** 每日累计报酬暴露上限（已接单报酬之和） */
@@ -98,6 +118,26 @@ export interface EarningAdmissionResult {
 }
 
 /**
+ * 解析某 category 的路由模式（ADR-0048 skill-router 脚手架，纯函数）。
+ *
+ * 两条互斥路径（取决于是否设了 categoryRoutes）：
+ *   A. routes 模式（设了 categoryRoutes）：categoryRoutes[category] → 命中即用；未列出 → defaultCategoryRoute
+ *      → 仍无则 human_review。此模式下 allowedCategories 不再参与（以 routes 为准）。
+ *   B. legacy 模式（没设 categoryRoutes）：allowedCategories 内 → autonomous，**其余固定 → human_review**。
+ *      此路径**不读 defaultCategoryRoute**（它仅属 routes 模式），确保旧 policy 行为逐字不变（Codex 复审）。
+ */
+export function resolveCategoryRoute(config: EarningPolicyConfig, category: MarketplaceTaskCategory): CategoryRouteMode {
+  /* routes 模式：显式表为准，未列出走 defaultCategoryRoute（默认 human_review）。
+   * defaultCategoryRoute **仅在 routes 模式生效**——不污染 legacy 派生路径（Codex 复审）。 */
+  if (config.categoryRoutes) {
+    return config.categoryRoutes[category] ?? config.defaultCategoryRoute ?? 'human_review';
+  }
+  /* legacy 派生（无 categoryRoutes）：allowedCategories 内 → autonomous，其余固定 → human_review
+   * （与旧行为逐字等价，不受 defaultCategoryRoute 影响）。 */
+  return config.allowedCategories.includes(category) ? 'autonomous' : 'human_review';
+}
+
+/**
  * 经济行为准入评估（纯函数，ADR-0048）。
  *
  * 熔断/硬禁止优先；再按 category/reward/publisher/能力综合定级与裁决。
@@ -106,7 +146,12 @@ export function evaluateEarningAdmission(input: EarningAdmissionInput): EarningA
   const { task, persona, config } = input;
   const reasons: string[] = [];
 
-  /* ── 硬性熔断/禁止（最高优先） ── */
+  /* category 路由模式（skill-router）：决定该类别走自主/人工/禁止。 */
+  const route = resolveCategoryRoute(config, task.category);
+
+  /* ── 硬性熔断/禁止（最高优先） ──
+   * 顺序：系统级 critical 熔断（persona 失活 / 连续失败）优先于 category blocked——blocked 是策略配置
+   * 层面的禁止（high），不应遮蔽更高优先级的系统熔断原因（Codex 复审：让 reason 反映最严重的拦截因）。 */
   if (persona.status !== 'active') {
     return { admission: 'forbidden', risk: 'critical', reasons: ['persona not active'] };
   }
@@ -115,6 +160,10 @@ export function evaluateEarningAdmission(input: EarningAdmissionInput): EarningA
       admission: 'forbidden', risk: 'critical',
       reasons: [`failure streak ${persona.recentFailureStreak} ≥ breaker ${config.failureStreakBreaker} (earning paused)`],
     };
+  }
+  /* category 被 owner 显式禁止（blocked）→ 硬禁止（与「未在白名单」的 needs_human_review 不同，这是完全不接）。 */
+  if (route === 'blocked') {
+    return { admission: 'forbidden', risk: 'high', reasons: [`category '${task.category}' is blocked by policy`] };
   }
   if (persona.openTaskCount >= config.maxConcurrentTasks) {
     return {
@@ -136,9 +185,15 @@ export function evaluateEarningAdmission(input: EarningAdmissionInput): EarningA
     reasons.push(why);
   };
 
-  const categoryAllowed = config.allowedCategories.includes(task.category);
+  /* category 路由：autonomous=可自主；human_review=需人工（升 high，与旧「未在白名单」行为等价）。
+   * blocked 已在上方硬禁止分支返回，这里只剩 autonomous / human_review 两种。
+   * reason 文案：legacy 路径（无 categoryRoutes）保留旧文案逐字不变（Codex 复审：reasons 是公开输出）；
+   * routes 模式用新文案（语义是 owner 显式路由到人工，不是「不在白名单」）。 */
+  const categoryAllowed = route === 'autonomous';
   if (!categoryAllowed) {
-    escalate('high', `category '${task.category}' not in autonomous allowlist`);
+    escalate('high', config.categoryRoutes
+      ? `category '${task.category}' routed to human review (not autonomous)`
+      : `category '${task.category}' not in autonomous allowlist`);
   }
   if (persona.categoryCompletedCount === 0) {
     escalate('medium', `first task in category '${task.category}'`);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   evaluateEarningAdmission,
   evaluateAmlAggregate,
+  resolveCategoryRoute,
   DEFAULT_EARNING_POLICY,
   DEFAULT_AML_AGGREGATE_POLICY,
   type EarningAdmissionInput,
@@ -67,7 +68,7 @@ describe('evaluateEarningAdmission (ADR-0048)', () => {
     assert.match(r.reasons.join(), /daily reward exposure/);
   });
 
-  it('未授权 category → 升 high + needs_human_review', () => {
+  it('未授权 category → 升 high + needs_human_review（legacy reason 文案逐字不变）', () => {
     const r = evaluateEarningAdmission(input({ task: task({ category: 'coding' }) }));
     assert.equal(r.admission, 'needs_human_review');
     assert.equal(r.risk, 'high');
@@ -103,6 +104,93 @@ describe('evaluateEarningAdmission (ADR-0048)', () => {
     const r = evaluateEarningAdmission(input({ task: task({ category: 'coding' }), publisherIsNew: true }));
     assert.equal(r.risk, 'high');
     assert.ok(r.reasons.length >= 2);
+  });
+});
+
+/* ── skill-router 脚手架：per-category 路由（ADR-0048 余项）── */
+
+describe('resolveCategoryRoute + category 路由集成 (ADR-0048 skill-router)', () => {
+  it('向后兼容：未设 categoryRoutes → 从 allowedCategories 派生（白名单内 autonomous，其余 human_review）', () => {
+    /* DEFAULT_EARNING_POLICY.allowedCategories = ['research','writing']，无 categoryRoutes。 */
+    assert.equal(resolveCategoryRoute(DEFAULT_EARNING_POLICY, 'research'), 'autonomous');
+    assert.equal(resolveCategoryRoute(DEFAULT_EARNING_POLICY, 'writing'), 'autonomous');
+    assert.equal(resolveCategoryRoute(DEFAULT_EARNING_POLICY, 'coding'), 'human_review');
+    assert.equal(resolveCategoryRoute(DEFAULT_EARNING_POLICY, 'operations'), 'human_review');
+  });
+
+  it('显式 categoryRoutes 覆盖派生：可单独把 coding 开为 autonomous', () => {
+    const cfg = { ...DEFAULT_EARNING_POLICY, categoryRoutes: { coding: 'autonomous' as const } };
+    assert.equal(resolveCategoryRoute(cfg, 'coding'), 'autonomous');
+    /* 未在 routes 表中的 category 走 defaultCategoryRoute（默认 human_review），不再看 allowedCategories。 */
+    assert.equal(resolveCategoryRoute(cfg, 'research'), 'human_review');
+  });
+
+  it('defaultCategoryRoute 兜底：可把未列出的类别整体设为 blocked', () => {
+    const cfg = {
+      ...DEFAULT_EARNING_POLICY,
+      categoryRoutes: { research: 'autonomous' as const },
+      defaultCategoryRoute: 'blocked' as const,
+    };
+    assert.equal(resolveCategoryRoute(cfg, 'research'), 'autonomous');
+    assert.equal(resolveCategoryRoute(cfg, 'coding'), 'blocked');
+  });
+
+  it('集成：blocked category → forbidden（硬禁止，区别于 human_review）', () => {
+    const cfg = { ...DEFAULT_EARNING_POLICY, categoryRoutes: { coding: 'blocked' as const } };
+    const r = evaluateEarningAdmission(input({ config: cfg, task: task({ category: 'coding' }) }));
+    assert.equal(r.admission, 'forbidden');
+    assert.match(r.reasons.join(), /is blocked by policy/);
+  });
+
+  it('集成：显式 autonomous category + 其它都低风险 → autonomous', () => {
+    const cfg = { ...DEFAULT_EARNING_POLICY, categoryRoutes: { coding: 'autonomous' as const } };
+    const r = evaluateEarningAdmission(input({ config: cfg, task: task({ category: 'coding' }) }));
+    assert.equal(r.admission, 'autonomous');
+    assert.equal(r.risk, 'low');
+  });
+
+  it('集成：human_review category → needs_human_review（升 high，不硬禁）', () => {
+    const cfg = { ...DEFAULT_EARNING_POLICY, categoryRoutes: { coding: 'human_review' as const } };
+    const r = evaluateEarningAdmission(input({ config: cfg, task: task({ category: 'coding' }) }));
+    assert.equal(r.admission, 'needs_human_review');
+    assert.equal(r.risk, 'high');
+  });
+
+  it('向后兼容铁律：旧 policy（无 categoryRoutes）的 research 仍 autonomous、coding 仍 needs_human_review', () => {
+    /* 与改造前逐字等价：research 走自主，coding 走人工。 */
+    const rResearch = evaluateEarningAdmission(input({ task: task({ category: 'research' }) }));
+    assert.equal(rResearch.admission, 'autonomous');
+    const rCoding = evaluateEarningAdmission(input({ task: task({ category: 'coding' }) }));
+    assert.equal(rCoding.admission, 'needs_human_review');
+  });
+
+  it('routes 模式用新文案；legacy 用旧文案（reason 逐字不变，Codex 复审）', () => {
+    const legacy = evaluateEarningAdmission(input({ task: task({ category: 'coding' }) }));
+    assert.match(legacy.reasons.join(), /not in autonomous allowlist/, 'legacy 保留旧文案');
+    const routed = evaluateEarningAdmission(input({
+      config: { ...DEFAULT_EARNING_POLICY, categoryRoutes: { coding: 'human_review' as const } },
+      task: task({ category: 'coding' }),
+    }));
+    assert.match(routed.reasons.join(), /routed to human review/, 'routes 模式用新文案');
+  });
+
+  it('defaultCategoryRoute 不污染 legacy：无 categoryRoutes 时它被忽略（非白名单恒 human_review）', () => {
+    /* 只设 defaultCategoryRoute=blocked 但没 categoryRoutes → coding 仍走 legacy human_review，不被 blocked。 */
+    const cfg = { ...DEFAULT_EARNING_POLICY, defaultCategoryRoute: 'blocked' as const };
+    assert.equal(resolveCategoryRoute(cfg, 'coding'), 'human_review', 'legacy 路径忽略 defaultCategoryRoute');
+    const r = evaluateEarningAdmission(input({ config: cfg, task: task({ category: 'coding' }) }));
+    assert.equal(r.admission, 'needs_human_review', '不应被误判为 blocked/forbidden');
+  });
+
+  it('优先级：系统熔断（failureStreak）优先于 category blocked（reason 反映最严重的因）', () => {
+    /* persona 已连续失败熔断 + 该 category 又 blocked → 应返回 critical/failure streak，不被 blocked 遮蔽。 */
+    const cfg = { ...DEFAULT_EARNING_POLICY, categoryRoutes: { coding: 'blocked' as const } };
+    const r = evaluateEarningAdmission(input({
+      config: cfg, task: task({ category: 'coding' }), persona: persona({ recentFailureStreak: 2 }),
+    }));
+    assert.equal(r.admission, 'forbidden');
+    assert.equal(r.risk, 'critical', 'failure streak 是 critical，优先于 blocked 的 high');
+    assert.match(r.reasons.join(), /failure streak/, 'reason 反映系统熔断而非 blocked');
   });
 });
 
