@@ -38,6 +38,19 @@ const COMPANION_PERSONA_ID = 'default';
 const MAX_GROUNDING_MEMORIES = 5;
 /** 命中 response_template 的最小 intent 关键词分门槛——高于记忆 grounding 门槛，避免泛匹配抢答整段模板。 */
 const MIN_TEMPLATE_INTENT_SCORE = 2;
+/** 自我介绍综述取多少条高 salience 记忆。 */
+const SELF_INTRO_MEMORY_LIMIT = 4;
+/** 自我介绍综述取多少个高权重价值观。 */
+const SELF_INTRO_VALUE_LIMIT = 3;
+/**
+ * 自我介绍元意图关键词（确定性子串匹配）：问「介绍你自己/你是谁/你会什么/你都会些什么/讲讲你自己」
+ * 这类，泛词查不到具体记忆 → 走专门综述，而非 honest_offline。
+ */
+const SELF_INTRO_PHRASES: readonly string[] = [
+  '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
+  '你是谁', '你会什么', '你都会', '你会些什么', '你能做什么', '你擅长什么',
+  '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
+];
 /**
  * 最小关键词分门槛：≥1 即任一关键词命中即可 grounding。tokenize 已剔除停用词，存活的 token 都是
  * 内容词——单个短 CJK 内容词（如「跑步」「咖啡」2 字=1 分）也是有效信号，不该被过滤；泛词/助词早被
@@ -147,6 +160,43 @@ export function registerCompanionChatRoutes(
     return best?.template;
   }
 
+  /** 确定性检测自我介绍元意图（子串匹配，零模型）。 */
+  function detectSelfIntroIntent(message: string): boolean {
+    const m = message.toLowerCase();
+    return SELF_INTRO_PHRASES.some((p) => m.includes(p));
+  }
+
+  /**
+   * 综述自我介绍（确定性，零模型）：叙事 + 最看重的价值观 + 最有印象的记忆（按 salience）。
+   * 解决「介绍一下你自己」泛词查不到具体记忆 → honest_offline 的问题。无任何内容时返回 undefined
+   * （回退诚实离线）。
+   */
+  function buildSelfIntro(tenantOS: ChronoSynthOS): string | undefined {
+    const narrative = tenantOS.core.narrative.get().trim();
+    const topValues = [...tenantOS.core.values.getAll().values()]
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, SELF_INTRO_VALUE_LIMIT)
+      .map((v) => v.label.trim())
+      .filter((l) => l.length > 0);
+    const topMemories = [...tenantOS.core.memories.getAllMemories().values()]
+      .sort((a, b) => b.salience - a.salience)
+      .slice(0, SELF_INTRO_MEMORY_LIMIT)
+      .map((node) => node.content.trim())
+      .filter((c) => c.length > 0);
+
+    if (narrative.length === 0 && topValues.length === 0 && topMemories.length === 0) return undefined;
+
+    const parts: string[] = [];
+    if (narrative.length > 0) parts.push(narrative);
+    if (topValues.length > 0) parts.push(`我最看重的是${topValues.join('、')}。`);
+    if (topMemories.length > 0) {
+      parts.push('我印象比较深的是：');
+      for (const c of topMemories) parts.push(`· ${c}`);
+    }
+    parts.push('（这些都来自我学过、记住的，离线也能告诉你。）');
+    return parts.join('\n');
+  }
+
   /* POST /api/v1/companion/me/chat —「跟数字人聊天」（零 LLM 确定性回应） */
   app.post('/api/v1/companion/me/chat', async (request, reply) => {
     assertCompanionAccess(request);
@@ -189,6 +239,23 @@ export function registerCompanionChatRoutes(
             groundedMemoryCount: 0,
           } satisfies CompanionChatResultV1),
         };
+      }
+
+      /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
+       * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
+      if (detectSelfIntroIntent(body.message)) {
+        const intro = buildSelfIntro(tenantOS);
+        if (intro && !responder.violatesNeverDiscuss(intro, COMPANION_BASELINE_BOUNDARIES)) {
+          return {
+            data: CompanionChatResultV1Schema.parse({
+              schemaVersion: 'companion-chat-result.v1',
+              reply: intro,
+              kind: 'self_intro',
+              confidence: 0.6,
+              groundedMemoryCount: 0,
+            } satisfies CompanionChatResultV1),
+          };
+        }
       }
     }
 

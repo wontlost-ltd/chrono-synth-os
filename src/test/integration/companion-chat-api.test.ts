@@ -175,6 +175,59 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('自我介绍元意图：「介绍一下你自己」→ self_intro 综述（叙事+价值观+高 salience 记忆），非 honest_offline', async () => {
+    os.core.updateNarrative('我是一个喜欢学习新东西的人。');
+    os.core.addValue('好奇心', 0.9);
+    os.core.addValue('专注', 0.7);
+    os.core.memories.addMemory('episodic', '我学会了用 Rust 写并发代码', 0.4, 0.95);  /* 高 salience */
+    os.core.memories.addMemory('episodic', '我喜欢手冲咖啡', 0.3, 0.5);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '介绍一下你自己' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'self_intro', '自我介绍意图 → self_intro 而非 honest_offline');
+      assert.match(result.reply, /喜欢学习新东西/, '含叙事');
+      assert.match(result.reply, /好奇心/, '含最看重的价值观');
+      assert.match(result.reply, /Rust/, '含高 salience 记忆');
+    } finally { await local.close(); }
+  });
+
+  it('自我介绍多种问法都命中（你会什么/你是谁/讲讲你自己）', async () => {
+    os.core.updateNarrative('我是你的数字人。');
+    os.core.addValue('真诚', 0.8);
+    const local = await localChatApp(os);
+    try {
+      for (const q of ['你会什么？', '你是谁', '讲讲你自己']) {
+        const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: q } });
+        const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+        assert.equal(result.kind, 'self_intro', `「${q}」应命中 self_intro`);
+      }
+    } finally { await local.close(); }
+  });
+
+  it('安全：自我介绍综述也过 never_discuss——记忆混入凭证不被综述泄露', async () => {
+    os.core.updateNarrative('我是你的数字人。');
+    os.core.memories.addMemory('episodic', '我的密码是 hunter2', 0, 0.99);  /* 最高 salience，会被综述选中 */
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '介绍一下你自己' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      /* 综述含密码 → 过 never_discuss 输出自检拦下，不作 self_intro 发出。 */
+      assert.notEqual(result.kind, 'self_intro', '综述含敏感主题不得发出');
+      assert.ok(!result.reply.includes('hunter2'), '绝不泄露凭证');
+    } finally { await local.close(); }
+  });
+
+  it('空人格 + 自我介绍意图 → 回退 honest_offline（没内容可综述）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '介绍一下你自己' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'honest_offline', '无叙事/价值观/记忆 → 综述返 undefined → 回退');
+    } finally { await local.close(); }
+  });
+
   it('零-LLM 对话：无相关记忆 → honest_offline（诚实告知离线限制，不瞎编）', async () => {
     const local = await localChatApp(os);
     try {
