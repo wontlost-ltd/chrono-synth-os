@@ -58,6 +58,10 @@ const SELF_INTRO_PHRASES: readonly string[] = [
  * 排序 + top-5 截断保质量，不依赖此门槛兜底噪声。
  */
 const MIN_GROUNDING_SCORE = 1;
+/** 图遍历扩展：从前 N 条直接命中的记忆出发，沿 memory_edge 拉语义相邻记忆。 */
+const GRAPH_EXPAND_SEEDS = 2;
+/** 边强度门槛：弱于此的语义边不拉邻居（避免噪声边引入无关记忆）。 */
+const MIN_EDGE_STRENGTH = 0.3;
 
 /**
  * companion 个人版基线安全边界（never_discuss）：默认人格无 enterprise 模板边界，但 C 端面向真实
@@ -113,27 +117,49 @@ export function registerCompanionChatRoutes(
   }
 
   /**
-   * 确定性检索：把用户消息分词，对人格自己的记忆按关键词打分，取 top-N 作 grounding。
-   * 零 LLM、零 embedding——纯确定性，与离线回应器的「相同输入→相同输出」一致。
+   * 确定性检索：把用户消息分词，对人格自己的记忆按关键词打分，取直接命中；再沿 memory_edge **图遍历**
+   * 拉语义相邻记忆（蒸馏期由老师产的边，运行期仅确定性遍历）。
+   *
+   * 零 LLM、零 embedding——语义在蒸馏期沉淀为边，运行期纯图遍历，保住「相同输入→相同输出」+ 离线可用。
+   * 图遍历让「问轻量级并发也能拉出虚拟线程」这类同义不同词命中——不靠在线 embedding 破坏确定性/离线。
    */
   function retrieveRelevantMemories(tenantOS: ChronoSynthOS, message: string): RelevantKnowledge[] {
     const tokens = tokenize(message);
     if (tokens.length === 0) return [];
-    const scored: RelevantKnowledge[] = [];
-    for (const node of tenantOS.core.memories.getAllMemories().values()) {
-      /* 关键词分 + 连续短语加分（消歧）：「flat white」整段命中真讲 flat white 的记忆得额外分，
-       * 压过只靠泛词「咖啡」撞车的手冲记忆——选出真正特异相关的记忆。 */
+    const allMemories = tenantOS.core.memories.getAllMemories();
+
+    /* 直接命中：关键词分 + 连续短语加分（消歧）。 */
+    const direct: RelevantKnowledge[] = [];
+    for (const node of allMemories.values()) {
       const score = scoreTextByKeyword(node.content, tokens) + scorePhraseBonus(node.content, message);
-      /* 最小分门槛 MIN_GROUNDING_SCORE=1：任一内容词命中即可（停用词已被 tokenize 剔除）。 */
       if (score < MIN_GROUNDING_SCORE) continue;
-      /* 饱和归一化 relevance = score/(score+K)：score 2→0.33、6→0.6，命中即过离线回应器的
-       * MIN_USEFUL_RELEVANCE(0.1) 门；不像 score/(tokens*2) 那样被「全 token 满分」的虚高分母压垮。
-       * 记忆无标题（title 用于 enterprise 知识条目）——空标题，content 即记忆原文。 */
-      const relevance = score / (score + 4);
-      scored.push({ id: node.id, title: '', content: node.content, relevance });
+      direct.push({ id: node.id, title: '', content: node.content, relevance: score / (score + 4) });
     }
-    scored.sort((a, b) => b.relevance - a.relevance);
-    return scored.slice(0, MAX_GROUNDING_MEMORIES);
+    direct.sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
+
+    /* 图遍历扩展：从前 GRAPH_EXPAND_SEEDS 条直接命中出发，沿强边（≥MIN_EDGE_STRENGTH）拉 1 跳语义相邻
+     * 记忆（未直接命中的）。邻居 relevance = 种子 relevance × 边强度 × 0.8（衰减，确保排在直接命中之后）。
+     * 同邻居被多条边拉到取最高分。纯确定性图遍历——边由蒸馏期老师产，运行期不调任何模型。 */
+    const seenIds = new Set(direct.map((d) => d.id));
+    const neighborBest = new Map<string, RelevantKnowledge>();
+    for (const seed of direct.slice(0, GRAPH_EXPAND_SEEDS)) {
+      for (const edge of tenantOS.core.memories.getEdgesFor(seed.id)) {
+        if (edge.strength < MIN_EDGE_STRENGTH) continue;
+        const neighborId = edge.source === seed.id ? edge.target : edge.source;
+        if (seenIds.has(neighborId)) continue;  /* 已直接命中，不重复 */
+        const node = allMemories.get(neighborId);
+        if (!node) continue;
+        const relevance = seed.relevance * edge.strength * 0.8;
+        const existing = neighborBest.get(neighborId);
+        if (!existing || relevance > existing.relevance) {
+          neighborBest.set(neighborId, { id: neighborId, title: '', content: node.content, relevance });
+        }
+      }
+    }
+
+    /* 合并：直接命中（按 relevance）在前，图遍历邻居（按 relevance，id 稳定 tie-break）在后，截断 top-N。 */
+    const neighbors = [...neighborBest.values()].sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
+    return [...direct, ...neighbors].slice(0, MAX_GROUNDING_MEMORIES);
   }
 
   /**
