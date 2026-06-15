@@ -42,6 +42,7 @@
     "start:observability-worker": "node dist/main-observability-worker.js",
     "dev": "npm run build && node dist/main.js",
     "dev:observability-worker": "npm run build && node dist/main-observability-worker.js",
+    "demo:java21": "node scripts/teach-java21-demo.mjs",
     "test:integration:schema-dsl": "env -u NODE_USE_SYSTEM_CA tsc -p tsconfig.integration.json && env -u NODE_USE_SYSTEM_CA node --test --test-force-exit dist/src/test/integration/schema-dsl-*.test.js"
   },
   "keywords": [

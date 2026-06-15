@@ -29,6 +29,7 @@ interface RawAnalysis {
 
 export class LlmPerceptionProvider implements PerceptionProvider {
   readonly name = 'llm-perception';
+  readonly kind = 'teacher' as const;
 
   constructor(private readonly llm: LLMProvider) {}
 

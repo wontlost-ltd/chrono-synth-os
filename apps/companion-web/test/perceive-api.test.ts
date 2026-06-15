@@ -44,6 +44,7 @@ async function loggedInApi(perceiveResponses: Array<{ status: number; body: unkn
 const VALID_RESULT = {
   schemaVersion: 'companion-perceive-result.v1',
   perceivedMemories: [{ id: 'm1', content: '我听到：今天很累', valence: -0.2, salience: 0.6 }],
+  perceivedBy: 'teacher',
   growthCandidateCount: 0,
   pendingApprovalCount: 0,
 };

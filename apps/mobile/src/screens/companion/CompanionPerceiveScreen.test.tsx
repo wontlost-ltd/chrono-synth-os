@@ -20,6 +20,7 @@ function wrap(qc: QueryClient, node: ReactNode) {
 const OK_RESULT = {
   schemaVersion: 'companion-perceive-result.v1' as const,
   perceivedMemories: [{ id: 'mem_1', content: '我听到：今天开会很累', valence: -0.3, salience: 0.6 }],
+  perceivedBy: 'teacher' as const,
   growthCandidateCount: 1,
   pendingApprovalCount: 1,
 };

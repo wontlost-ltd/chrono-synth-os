@@ -178,6 +178,8 @@ export function registerCompanionPerceiveRoutes(
     const payload: CompanionPerceiveResultV1 = {
       schemaVersion: 'companion-perceive-result.v1',
       perceivedMemories,
+      /* 透明度：本次感知由真 LLM 老师还是确定性回退处理（避免把 mock 误当真老师）。 */
+      perceivedBy: provider.kind,
       growthCandidateCount: candidates.length,
       pendingApprovalCount,
     };

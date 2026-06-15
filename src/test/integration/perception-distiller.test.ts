@@ -122,6 +122,7 @@ describe('感知蒸馏器（ADR-0051 Phase 1）', () => {
   it('老师抛错 / 空表征：安全降级为空结果，不抛进主流程', async () => {
     const throwing: PerceptionProvider = {
       name: 'throwing',
+      kind: 'teacher',
       analyze: async () => { throw new Error('teacher down'); },
     };
     const d1 = new PerceptionDistiller(throwing, os.core.memories, os.distillation, new SilentLogger());
@@ -148,6 +149,7 @@ describe('感知蒸馏器（ADR-0051 Phase 1）', () => {
     let analyzeCalls = 0;
     const counting: PerceptionProvider = {
       name: 'counting',
+      kind: 'teacher',
       analyze: async (input) => { analyzeCalls++; return new MockPerceptionProvider().analyze(input); },
     };
     const distiller = new PerceptionDistiller(counting, os.core.memories, os.distillation, new SilentLogger());

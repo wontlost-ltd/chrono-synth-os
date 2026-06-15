@@ -124,7 +124,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
       (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
       (req as { tenantId?: string }).tenantId = 'default';
     });
-    const throwing: PerceptionProvider = { name: 'throwing', analyze: async () => { throw new Error('teacher down'); } };
+    const throwing: PerceptionProvider = { name: 'throwing', kind: 'teacher', analyze: async () => { throw new Error('teacher down'); } };
     registerCompanionPerceiveRoutes(local, os, undefined, undefined, undefined, throwing);
     await local.ready();
     const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: 'x' } });
@@ -263,6 +263,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     let analyzeCalls = 0;
     const counting: PerceptionProvider = {
       name: 'counting',
+      kind: 'teacher',
       analyze: async (input) => { analyzeCalls++; return new MockPerceptionProvider().analyze(input); },
     };
     registerCompanionPerceiveRoutes(local, os2, undefined, undefined, undefined, counting);

@@ -41,10 +41,21 @@ export const PerceivedMemoryV1Schema = z.object({
   salience: z.number().min(0).max(1),
 }).strict();
 
+/**
+ * 感官来源透明度：本次感知由谁处理。
+ *   - `teacher`：真多模态 LLM 老师（按租户 BYOK 或全局配置；真语义理解）。
+ *   - `deterministic`：确定性本地 mock（无 LLM key 时的回退；可本地验证但非真语义）。
+ * 让用户/演示能**如实区分**「真老师教」与「确定性回退」，不把 mock 误当真老师。
+ */
+export const PerceivedBySourceV1Schema = z.enum(['teacher', 'deterministic']);
+export type PerceivedBySourceV1 = z.infer<typeof PerceivedBySourceV1Schema>;
+
 export const CompanionPerceiveResultV1Schema = z.object({
   schemaVersion: z.literal('companion-perceive-result.v1'),
   /** 本次感知新沉淀的事实记忆（人格记住了什么）。 */
   perceivedMemories: z.array(PerceivedMemoryV1Schema),
+  /** 本次感知由谁处理（真 LLM 老师 vs 确定性回退）——透明度，避免把 mock 误当真老师。 */
+  perceivedBy: PerceivedBySourceV1Schema,
   /**
    * 是否产生了「成长候选」（memory_edge / 身份提案进蒸馏门）。身份层候选默认 pending 人工审批，
    * 不自动改人格——前端可据此提示「这段经历可能影响我对你的理解，待你确认」。
