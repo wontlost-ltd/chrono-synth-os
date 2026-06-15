@@ -101,6 +101,48 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('零模型语义：图遍历拉语义相邻记忆——问「虚拟线程」也带出 edge 链接的「M:N映射」（同义不同词）', async () => {
+    /* 「虚拟线程」记忆直接命中；「M:N 映射到 carrier thread」不含「虚拟线程」字样、关键词不命中，
+     * 但有强 memory_edge 链接 → 图遍历应把它拉进来。 */
+    const vt = os.core.memories.addMemory('semantic', '虚拟线程是 JVM 管理的轻量级线程', 0.3, 0.7);
+    const mn = os.core.memories.addMemory('semantic', '它通过 M:N 方式映射到少量 carrier thread', 0.3, 0.6);
+    os.core.memories.addEdge(vt.id, mn.id, 'relates_to', 0.9);  /* 强语义边 */
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '什么是虚拟线程？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      /* 回应应同时含直接命中（虚拟线程）+ 图遍历拉来的相邻（carrier thread）。 */
+      assert.match(result.reply, /轻量级线程/, '直接命中');
+      assert.match(result.reply, /carrier thread/, '图遍历拉来的语义相邻记忆（关键词没命中但有边）');
+    } finally { await local.close(); }
+  });
+
+  it('弱边不拉邻居：strength < 0.3 的边不引入无关记忆', async () => {
+    const a = os.core.memories.addMemory('semantic', '我学过 Python 装饰器', 0.3, 0.7);
+    const b = os.core.memories.addMemory('semantic', '昨天天气不错', 0.3, 0.5);
+    os.core.memories.addEdge(a.id, b.id, 'weak', 0.1);  /* 弱边 < MIN_EDGE_STRENGTH */
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'Python 装饰器是什么？' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.match(result.reply, /装饰器/, '直接命中');
+      assert.ok(!result.reply.includes('天气'), '弱边的无关邻居不被拉进来');
+    } finally { await local.close(); }
+  });
+
+  it('图遍历确定性：相同输入相同输出（含图遍历）', async () => {
+    const a = os.core.memories.addMemory('semantic', '虚拟线程轻量级', 0.3, 0.7);
+    const b = os.core.memories.addMemory('semantic', 'carrier thread 载体', 0.3, 0.6);
+    os.core.memories.addEdge(a.id, b.id, 'relates_to', 0.9);
+    const local = await localChatApp(os);
+    try {
+      const send = async (): Promise<unknown> => JSON.parse((await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '虚拟线程？' } })).body).data;
+      assert.deepEqual(await send(), await send(), '含图遍历仍逐字可复现');
+    } finally { await local.close(); }
+  });
+
   it('不过度 grounding：完全不相关的问题仍 honest_offline（短门槛不引入噪声）', async () => {
     os.core.memories.addMemory('episodic', '我喜欢跑步和咖啡', 0.4, 0.7);
     const local = await localChatApp(os);
