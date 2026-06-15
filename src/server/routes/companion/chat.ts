@@ -27,7 +27,7 @@ import {
   type CompanionChatResultV1,
 } from '@chrono/contracts';
 import { OfflineConversationResponder } from '../../../conversation/offline-conversation-responder.js';
-import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
+import { tokenize, scoreTextByKeyword, scorePhraseBonus } from '../../../conversation/conversation-knowledge-retriever.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
 import type { BehaviorBoundary } from '../../../enterprise/persona-template-catalog.js';
 import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
@@ -108,7 +108,9 @@ export function registerCompanionChatRoutes(
     if (tokens.length === 0) return [];
     const scored: RelevantKnowledge[] = [];
     for (const node of tenantOS.core.memories.getAllMemories().values()) {
-      const score = scoreTextByKeyword(node.content, tokens);
+      /* 关键词分 + 连续短语加分（消歧）：「flat white」整段命中真讲 flat white 的记忆得额外分，
+       * 压过只靠泛词「咖啡」撞车的手冲记忆——选出真正特异相关的记忆。 */
+      const score = scoreTextByKeyword(node.content, tokens) + scorePhraseBonus(node.content, message);
       /* 最小分门槛 MIN_GROUNDING_SCORE=1：任一内容词命中即可（停用词已被 tokenize 剔除）。 */
       if (score < MIN_GROUNDING_SCORE) continue;
       /* 饱和归一化 relevance = score/(score+K)：score 2→0.33、6→0.6，命中即过离线回应器的

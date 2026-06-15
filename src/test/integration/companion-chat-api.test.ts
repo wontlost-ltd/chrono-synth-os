@@ -87,6 +87,20 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('检索消歧：「flat white」短语命中真讲 flat white 的记忆，不被「手冲咖啡」撞车', async () => {
+    os.core.memories.addMemory('episodic', '我研究了手冲咖啡，水温控制在 92 到 96 度', 0.3, 0.6);
+    os.core.memories.addMemory('episodic', '我学会了做 flat white：先萃取 espresso 再倒微泡奶', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '怎么做 flat white？' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      /* phrase 加分让 flat white 记忆排第一 → 回应里出现 espresso/flat white，而非只有手冲。 */
+      assert.match(result.reply, /flat white|espresso/, 'grounding 应命中 flat white 记忆');
+    } finally { await local.close(); }
+  });
+
   it('不过度 grounding：完全不相关的问题仍 honest_offline（短门槛不引入噪声）', async () => {
     os.core.memories.addMemory('episodic', '我喜欢跑步和咖啡', 0.4, 0.7);
     const local = await localChatApp(os);
