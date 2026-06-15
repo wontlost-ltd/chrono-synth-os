@@ -219,6 +219,17 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('意图不误判：「你都会弹吉他吗」答吉他，不误命中 self_intro（子串不过宽，Codex 复审）', async () => {
+    os.core.memories.addMemory('episodic', '我在学弹吉他，最喜欢 Hotel California', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你都会弹吉他吗？' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.notEqual(result.kind, 'self_intro', '具体问题不该误判 self_intro');
+      assert.equal(result.kind, 'knowledge_grounded', '应据吉他记忆回答');
+    } finally { await local.close(); }
+  });
+
   it('空人格 + 自我介绍意图 → 回退 honest_offline（没内容可综述）', async () => {
     const local = await localChatApp(os);
     try {

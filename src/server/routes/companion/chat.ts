@@ -48,7 +48,7 @@ const SELF_INTRO_VALUE_LIMIT = 3;
  */
 const SELF_INTRO_PHRASES: readonly string[] = [
   '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
-  '你是谁', '你会什么', '你都会', '你会些什么', '你能做什么', '你擅长什么',
+  '你是谁', '你会什么', '你都会什么', '你都会些什么', '你会些什么', '你能做什么', '你擅长什么',
   '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
 ];
 /**
@@ -173,13 +173,15 @@ export function registerCompanionChatRoutes(
    */
   function buildSelfIntro(tenantOS: ChronoSynthOS): string | undefined {
     const narrative = tenantOS.core.narrative.get().trim();
+    /* 排序加稳定 tie-breaker（id 字典序）——底层 SELECT 无 ORDER BY，同 weight/salience 时 Map 迭代
+     * 顺序跨 DB/重载会漂移，不应作为契约。加 id 二级键确保「相同人格状态相同输入→相同输出」（Codex 复审）。 */
     const topValues = [...tenantOS.core.values.getAll().values()]
-      .sort((a, b) => b.weight - a.weight)
+      .sort((a, b) => b.weight - a.weight || a.id.localeCompare(b.id))
       .slice(0, SELF_INTRO_VALUE_LIMIT)
       .map((v) => v.label.trim())
       .filter((l) => l.length > 0);
     const topMemories = [...tenantOS.core.memories.getAllMemories().values()]
-      .sort((a, b) => b.salience - a.salience)
+      .sort((a, b) => b.salience - a.salience || a.id.localeCompare(b.id))
       .slice(0, SELF_INTRO_MEMORY_LIMIT)
       .map((node) => node.content.trim())
       .filter((c) => c.length > 0);
