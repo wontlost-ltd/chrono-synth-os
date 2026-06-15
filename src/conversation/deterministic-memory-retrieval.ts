@@ -27,8 +27,10 @@ export const MIN_GROUNDING_SCORE = 1;
 export const GRAPH_EXPAND_SEEDS = 2;
 /** 边强度门槛：弱于此的语义边不拉邻居（避免噪声边引入无关记忆）。 */
 export const MIN_EDGE_STRENGTH = 0.3;
-/** 图遍历邻居相关度衰减系数：邻居 relevance = 种子 relevance × 边强度 × 此系数（确保排在直接命中之后）。 */
+/** 图遍历邻居相关度衰减系数：沿同一路径每跳 relevance = 上一跳 relevance × 边强度 × 此系数（同路径逐跳衰减）。 */
 export const NEIGHBOR_DECAY = 0.8;
+/** 图遍历最大跳数：1 = 仅直接命中的 1 跳邻居（默认，向后兼容）；2+ 启用多跳串联。 */
+export const MAX_HOPS = 1;
 
 /**
  * 取边器：给定记忆 id 返回与之相连的所有边（无向，source/target 任一端等于 id）。
@@ -46,6 +48,8 @@ export interface RetrievalParams {
   readonly expandSeeds: number;
   readonly minEdgeStrength: number;
   readonly neighborDecay: number;
+  /** 图遍历最大跳数（1 = 仅 1 跳邻居，向后兼容；2+ 多跳串联，每跳复合衰减）。 */
+  readonly maxHops: number;
 }
 
 export const DEFAULT_RETRIEVAL_PARAMS: RetrievalParams = {
@@ -54,6 +58,7 @@ export const DEFAULT_RETRIEVAL_PARAMS: RetrievalParams = {
   expandSeeds: GRAPH_EXPAND_SEEDS,
   minEdgeStrength: MIN_EDGE_STRENGTH,
   neighborDecay: NEIGHBOR_DECAY,
+  maxHops: MAX_HOPS,
 };
 
 /**
@@ -84,27 +89,74 @@ export function retrieveMemoriesDeterministic(
   }
   direct.sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
 
-  /* 图遍历扩展：从前 expandSeeds 条直接命中出发，沿强边拉 1 跳语义相邻记忆（未直接命中的）。
-   * 邻居 relevance = 种子 relevance × 边强度 × neighborDecay（衰减，排在直接命中之后）。
-   * 同邻居被多条边拉到取最高分。纯确定性图遍历——边由蒸馏期老师产，运行期不调任何模型。 */
-  const seenIds = new Set(direct.map((d) => d.id));
-  const neighborBest = new Map<MemoryId, RelevantKnowledge>();
-  for (const seed of direct.slice(0, params.expandSeeds)) {
-    for (const edge of edgesFor(seed.id)) {
-      if (edge.strength < params.minEdgeStrength) continue;
-      const neighborId = edge.source === seed.id ? edge.target : edge.source;
-      if (seenIds.has(neighborId)) continue; /* 已直接命中，不重复 */
-      const node = memories.get(neighborId);
-      if (!node) continue;
-      const relevance = seed.relevance * edge.strength * params.neighborDecay;
-      const existing = neighborBest.get(neighborId);
-      if (!existing || relevance > existing.relevance) {
-        neighborBest.set(neighborId, { id: neighborId, title: '', content: node.content, relevance });
-      }
-    }
-  }
+  /* 多跳图遍历扩展（确定性 max-product 松弛）：从前 expandSeeds 条直接命中出发，逐跳沿强边拉语义相邻
+   * 记忆。每跳 relevance = 上一跳 relevance × 边强度 × neighborDecay（复合衰减）。同邻居经任意路径到达取
+   * **全局最高分**（不论路径长短——强 2 跳可胜过弱 1 跳，Codex 复审采纳）。maxHops=1 即原单跳行为。
+   * 纯确定性图遍历——边由蒸馏期老师产，运行期不调任何模型。 */
+  const neighborBest = expandGraph(direct, memories, edgesFor, params);
 
   /* 合并：直接命中（按 relevance）在前，图遍历邻居（按 relevance，id 稳定 tie-break）在后，截断 top-K。 */
   const neighbors = [...neighborBest.values()].sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
   return [...direct, ...neighbors].slice(0, params.maxResults);
+}
+
+/**
+ * 多跳图遍历扩展（确定性 max-product 松弛纯函数）。从 direct 命中的前 expandSeeds 条出发，逐跳扩展到
+ * 未直接命中的语义相邻记忆，返回「邻居 id → **全局最优 relevance** 知识」。
+ *
+ * 语义：邻居 relevance = 「沿任意 ≤maxHops 跳路径」的最大 (起点 relevance × ∏ 边强度 × neighborDecay^跳数)。
+ * 不论路径长短取全局最高——强 2 跳路径可胜过弱 1 跳路径（这是 Dijkstra 式松弛，不是「浅跳锁定」）。
+ *
+ * 确定性保证（与到达顺序/Map 迭代序无关）：
+ *   1. 每波 frontier 显式按 (relevance desc, id asc) 排序后再扩展；
+ *   2. 邻居分**只在严格变大时**更新（松弛），故最终值 = 全局最优，与处理顺序无关；
+ *   3. 直接命中（directIds）是 relevance 下界、永不被邻居覆盖——它们靠关键词直接命中，语义更强。
+ *
+ * 收敛性：relevance 每跳乘 (strength × neighborDecay) < 1 严格递减，故任一节点的最优值必来自 ≤maxHops
+ * 跳的有限路径；外层固定迭代 maxHops 波，每波只把「本波被改善的节点」推进下一波 → 有界、必收敛、无死循环。
+ */
+function expandGraph(
+  direct: readonly RelevantKnowledge[],
+  memories: ReadonlyMap<MemoryId, MemoryNode>,
+  edgesFor: EdgeLookup,
+  params: RetrievalParams,
+): Map<MemoryId, RelevantKnowledge> {
+  const neighborBest = new Map<MemoryId, RelevantKnowledge>();
+  /* 直接命中集：它们的 relevance 是关键词命中的强信号，永不被图遍历邻居分覆盖（下界 + 防回头）。 */
+  const directIds = new Set(direct.map((d) => d.id));
+  /* maxHops 兜底：JS 调用方若传旧形状 params（无 maxHops）→ NaN，Math.max(1,NaN)=NaN 会让循环跳过图扩展。
+   * 这里显式把非有限/小于 1 的值归一到 1（向后兼容旧单跳语义），并向下取整防小数跳数。 */
+  const hops = Number.isFinite(params.maxHops) ? Math.max(1, Math.floor(params.maxHops)) : 1;
+
+  /* 第 0 波 frontier = 前 expandSeeds 条直接命中（作为多跳起点）。 */
+  let frontier: RelevantKnowledge[] = direct.slice(0, params.expandSeeds);
+
+  for (let hop = 0; hop < hops && frontier.length > 0; hop++) {
+    /* 显式稳定排序当前波次——确定性的关键（不靠 Map/插入顺序）。 */
+    const ordered = [...frontier].sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
+    /* 本波被改善（分数严格变大）的邻居 → 下一波 frontier。仅改善者推进，保证有界收敛。 */
+    const improved = new Map<MemoryId, RelevantKnowledge>();
+
+    for (const seed of ordered) {
+      for (const edge of edgesFor(seed.id)) {
+        if (edge.strength < params.minEdgeStrength) continue;
+        const neighborId = edge.source === seed.id ? edge.target : edge.source;
+        if (directIds.has(neighborId)) continue; /* 直接命中不被邻居覆盖（防回头 + 强信号下界） */
+        const node = memories.get(neighborId);
+        if (!node) continue;
+        const relevance = seed.relevance * edge.strength * params.neighborDecay;
+        /* 松弛：仅当严格优于已知最优才更新（全局 max，与处理顺序无关）。 */
+        const existing = neighborBest.get(neighborId);
+        if (!existing || relevance > existing.relevance) {
+          const entry: RelevantKnowledge = { id: neighborId, title: '', content: node.content, relevance };
+          neighborBest.set(neighborId, entry);
+          improved.set(neighborId, entry); /* 被改善 → 下一波从它继续松弛（可能发现更强深路径） */
+        }
+      }
+    }
+
+    frontier = [...improved.values()];
+  }
+
+  return neighborBest;
 }
