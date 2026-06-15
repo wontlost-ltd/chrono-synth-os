@@ -119,6 +119,20 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('安全：敏感记忆仅通过 edge 被图遍历拉入也不泄露（never_discuss 输出自检兜底）', async () => {
+    /* 直接命中一条无害记忆，它有强边链到一条含凭证的敏感记忆 → 图遍历会拉入敏感记忆，
+     * 但整段仍过 never_discuss 输出自检 → boundary_block，不泄露。 */
+    const safe = os.core.memories.addMemory('semantic', '我学过登录认证流程', 0.3, 0.7);
+    const secret = os.core.memories.addMemory('semantic', '我的密码是 hunter2', 0, 0.6);
+    os.core.memories.addEdge(safe.id, secret.id, 'relates_to', 0.9);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '登录认证流程是怎样的？' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('hunter2'), '图遍历拉入的敏感邻居绝不泄露');
+    } finally { await local.close(); }
+  });
+
   it('弱边不拉邻居：strength < 0.3 的边不引入无关记忆', async () => {
     const a = os.core.memories.addMemory('semantic', '我学过 Python 装饰器', 0.3, 0.7);
     const b = os.core.memories.addMemory('semantic', '昨天天气不错', 0.3, 0.5);
