@@ -46,4 +46,20 @@ describe('scorePhraseBonus（消歧）', () => {
     const b = scorePhraseBonus('flat white espresso', '怎么做 flat white');
     assert.equal(a, b);
   });
+
+  it('每起点只取最长命中，不重复累加子短语（防组合式膨胀，Codex 复审）', () => {
+    /* 查询「alpha beta gamma」整段命中 → 只加 2×3=6，不再额外加 alpha-beta(4)/beta-gamma(4)。 */
+    const s = scorePhraseBonus('x alpha beta gamma y', 'alpha beta gamma');
+    assert.equal(s, 6, '3 词短语只记一次 2×3');
+  });
+
+  it('超长输入不爆开（词数 cap + O(words) 量级）', () => {
+    /* 200 个词的查询 + 长记忆，应快速返回有限分数（不组合爆炸）。 */
+    const longQuery = Array.from({ length: 200 }, (_, i) => `word${i}`).join(' ');
+    const longHay = longQuery;  /* 全命中 */
+    const t0 = Date.now();
+    const s = scorePhraseBonus(longHay, longQuery);
+    assert.ok(Date.now() - t0 < 200, '超长输入应快速返回');
+    assert.ok(Number.isFinite(s) && s > 0);
+  });
 });

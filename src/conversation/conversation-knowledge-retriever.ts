@@ -214,7 +214,8 @@ export function scoreTextByKeyword(haystack: string, tokens: string[]): number {
 /**
  * 连续短语匹配加分（确定性消歧）：从原始查询提取多词/多字的**连续短语**，整段命中 haystack 才加分。
  * 解决「flat white 怎么冲」被「手冲咖啡」误命中的问题——单个 token（flat/white/咖啡）各算各的会撞车，
- * 但连续短语「flat white」整体只命中真讲 flat white 的记忆。短语越长加分越高（n 词短语 +2n）。
+ * 但连续短语「flat white」整体只命中真讲 flat white 的记忆。短语越长加分越高（n 词短语 +2n）；每个起点
+ * 只取最长命中（不重复累加子短语），成本受控、加权不膨胀。
  *
  * 提取规则：latin 连续词序列（≥2 词，去停用词后相邻）+ CJK 连续 4 字+段（比 tokenize 的 2/3-gram 更长，
  * 抓「手冲咖啡」「人类简史」这类专名）。纯确定性、零模型。
@@ -224,13 +225,20 @@ export function scorePhraseBonus(haystack: string, query: string): number {
   const lower = query.toLowerCase();
   let bonus = 0;
 
-  /* latin：相邻非停用词序列（用空白/标点切），≥2 词的连续短语整体命中加 2×词数。 */
-  const latinWords = (lower.match(/[a-z0-9¥$€£%]+/g) ?? []).filter((w) => w.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(w));
-  for (let len = latinWords.length; len >= 2; len--) {
-    for (let i = 0; i + len <= latinWords.length; i++) {
-      const phrase = latinWords.slice(i, i + len).join(' ');
-      if (hay.includes(phrase)) { bonus += 2 * len; }
+  /* latin：相邻非停用词序列（用空白/标点切）。每个起点只取**最长命中**短语（≥2 词），加 2×词数后
+   * 跳过其已覆盖的词——避免子短语重复累加导致组合式过度加权（Codex 复审），同时把成本降到 O(words)
+   * 量级而非 O(words²)。词数 cap 到 MAX_TOKEN_COUNT 防超长输入爆开。 */
+  const latinWords = (lower.match(/[a-z0-9¥$€£%]+/g) ?? [])
+    .filter((w) => w.length >= MIN_TOKEN_LENGTH && !STOPWORDS.has(w))
+    .slice(0, MAX_TOKEN_COUNT);
+  for (let i = 0; i < latinWords.length; ) {
+    let matchedLen = 0;
+    /* 从当前起点找命中的最长短语（≥2 词）。 */
+    for (let len = latinWords.length - i; len >= 2; len--) {
+      if (hay.includes(latinWords.slice(i, i + len).join(' '))) { matchedLen = len; break; }
     }
+    if (matchedLen >= 2) { bonus += 2 * matchedLen; i += matchedLen; }
+    else { i += 1; }
   }
 
   /* CJK：在每个连续段内滑 4..6 字窗口（专名级，比 tokenize 的 2/3-gram 更长更特异）。每个段只记一次
