@@ -30,9 +30,14 @@ import { OfflineConversationResponder } from '../../../conversation/offline-conv
 import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
 import type { BehaviorBoundary } from '../../../enterprise/persona-template-catalog.js';
+import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
 
+/** companion 默认人格 id（与 perceive/environment 一致）。 */
+const COMPANION_PERSONA_ID = 'default';
 /** 检索的相关记忆条数上限（喂给离线回应器作 grounding）。 */
 const MAX_GROUNDING_MEMORIES = 5;
+/** 命中 response_template 的最小 intent 关键词分门槛——高于记忆 grounding 门槛，避免泛匹配抢答整段模板。 */
+const MIN_TEMPLATE_INTENT_SCORE = 2;
 /**
  * 最小关键词分门槛：≥1 即任一关键词命中即可 grounding。tokenize 已剔除停用词，存活的 token 都是
  * 内容词——单个短 CJK 内容词（如「跑步」「咖啡」2 字=1 分）也是有效信号，不该被过滤；泛词/助词早被
@@ -104,8 +109,7 @@ export function registerCompanionChatRoutes(
     const scored: RelevantKnowledge[] = [];
     for (const node of tenantOS.core.memories.getAllMemories().values()) {
       const score = scoreTextByKeyword(node.content, tokens);
-      /* 最小分门槛：score ≥ 2（一个长词命中=2，或两个短词/bigram）——挡单个泛词/CJK bigram 噪声
-       * 误 grounding（Codex 复审：避免「答非所问地翻记忆」）。 */
+      /* 最小分门槛 MIN_GROUNDING_SCORE=1：任一内容词命中即可（停用词已被 tokenize 剔除）。 */
       if (score < MIN_GROUNDING_SCORE) continue;
       /* 饱和归一化 relevance = score/(score+K)：score 2→0.33、6→0.6，命中即过离线回应器的
        * MIN_USEFUL_RELEVANCE(0.1) 门；不像 score/(tokens*2) 那样被「全 token 满分」的虚高分母压垮。
@@ -115,6 +119,30 @@ export function registerCompanionChatRoutes(
     }
     scored.sort((a, b) => b.relevance - a.relevance);
     return scored.slice(0, MAX_GROUNDING_MEMORIES);
+  }
+
+  /**
+   * 确定性匹配 response_template（ADR-0047 蒸馏闭环消费端）：把用户消息分词，对每个模板的 intent
+   * 按关键词打分，取最高分（≥门槛）的模板。流程型问答（如「怎么做 flat white」）由蒸馏好的整段模板
+   * 流畅有序回答，而非记忆碎片拼装。零 LLM——纯关键词匹配 + 取库里预编排的整段。
+   * 返回最佳模板文本与分数；无达标返回 undefined（回退记忆 grounding）。
+   */
+  function matchResponseTemplate(tenantId: string, message: string): string | undefined {
+    const tokens = tokenize(message);
+    if (tokens.length === 0) return undefined;
+    const store = new ResponseTemplateStore(sharedDb, tenantId);
+    let best: { template: string; score: number } | undefined;
+    /* listByPersona 每 intent 每版本一行（最新在前）；同 intent 只取首见（最高版本）。 */
+    const seenIntent = new Set<string>();
+    for (const t of store.listByPersona(COMPANION_PERSONA_ID)) {
+      if (seenIntent.has(t.intent)) continue;
+      seenIntent.add(t.intent);
+      const score = scoreTextByKeyword(t.intent, tokens);
+      if (score >= MIN_TEMPLATE_INTENT_SCORE && (!best || score > best.score)) {
+        best = { template: t.template, score };
+      }
+    }
+    return best?.template;
   }
 
   /* POST /api/v1/companion/me/chat —「跟数字人聊天」（零 LLM 确定性回应） */
@@ -140,6 +168,27 @@ export function registerCompanionChatRoutes(
       userInput: body.message,
       relevantKnowledge,
     });
+
+    /* response_template 优先（ADR-0047 蒸馏闭环消费端）：命中 intent 匹配的整段模板 → 直接用它，流程型
+     * 问答更流畅有序。**但安全边界优先级最高**：
+     *   ① 用户输入命中 never_discuss（offline.kind===boundary_block）→ 不用模板覆盖拒答；
+     *   ② 模板**正文**经 never_discuss 输出自检（Codex 复审 High：蒸馏审批不能替代运行时最后一道边界；
+     *      模板是直接发给用户的整段，须和 memory/narrative 拼装结果一样过输出自检——挡「输入没命中但
+     *      模板正文自带敏感主题」的绕过）→ 命中则丢弃模板，回退记忆 grounding（由其拒答/诚实离线）。 */
+    if (offline.kind !== 'boundary_block') {
+      const template = matchResponseTemplate(request.tenantId, body.message);
+      if (template && !responder.violatesNeverDiscuss(template, COMPANION_BASELINE_BOUNDARIES)) {
+        return {
+          data: CompanionChatResultV1Schema.parse({
+            schemaVersion: 'companion-chat-result.v1',
+            reply: template,
+            kind: 'response_template',
+            confidence: 0.8,
+            groundedMemoryCount: 0,
+          } satisfies CompanionChatResultV1),
+        };
+      }
+    }
 
     const payload: CompanionChatResultV1 = {
       schemaVersion: 'companion-chat-result.v1',
