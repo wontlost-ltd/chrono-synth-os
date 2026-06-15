@@ -43,6 +43,26 @@ describe('OfflineConversationResponder', () => {
     assert.ok(r.confidence > 0.2 && r.confidence <= 0.7);
   });
 
+  it('slot-fill lead-in 按问题类型变化（确定性，零模型）', () => {
+    const base = { narrative: '', boundaries: [], relevantKnowledge: [knowledge()] };
+    /* 是非问（…吗）→「关于这个，我记得：」 */
+    const yesNo = responder.respond({ ...base, userInput: '你写作前需要安静吗？' });
+    assert.match(yesNo.content, /关于这个，我记得/);
+    /* how/what（怎么/什么）→「这个我有印象：」 */
+    const howWhat = responder.respond({ ...base, userInput: '你写作时通常怎么准备？' });
+    assert.match(howWhat.content, /这个我有印象/);
+    /* 陈述/其他 → 原默认 lead-in */
+    const general = responder.respond({ ...base, userInput: '我准备写作了' });
+    assert.match(general.content, /根据我已经记住的内容/);
+    /* 三种都仍包含知识内容（slot-fill 不丢内容）。 */
+    for (const r of [yesNo, howWhat, general]) assert.ok(r.content.includes('安静的环境'));
+  });
+
+  it('slot-fill 确定性：同问题同输出', () => {
+    const inp = { narrative: '', boundaries: [], userInput: '你会写作吗？', relevantKnowledge: [knowledge()] };
+    assert.equal(responder.respond(inp).content, responder.respond(inp).content);
+  });
+
   it('无可用知识时诚实告知离线限制，不编造', () => {
     const r = responder.respond({
       narrative: NARRATIVE,

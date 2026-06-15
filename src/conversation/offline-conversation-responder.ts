@@ -101,7 +101,7 @@ export class OfflineConversationResponder {
     /* 策略 2：有可用知识——以人格口吻落地呈现 */
     const usable = this.selectUsableKnowledge(input.relevantKnowledge);
     if (usable.length > 0) {
-      const content = this.composeFromKnowledge(narrative, usable, escalate);
+      const content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput);
       /* 输出自检：拼装结果若仍携带 never_discuss 主题（来自知识/叙事），
        * 则不发出，退化为安全拒答（堵住 userInput 未命中但知识泄露的路径）。 */
       if (this.outputLeaksNeverDiscuss(content, input.boundaries)) {
@@ -166,16 +166,31 @@ export class OfflineConversationResponder {
   }
 
   /** 以叙事口吻把知识拼装为回应 */
+  /**
+   * 按问题类型选自然 lead-in（确定性 slot-fill，零模型）：
+   *   - 是非问（…吗 / 会不会 / 是不是 / 有没有）→「关于这个，我记得：」更口语；
+   *   - how/what（怎么 / 如何 / 什么 / 为什么 / 哪些 / 怎样）→「这个我有印象：」；
+   *   - 其他 → 原「根据我已经记住的内容：」。
+   * 让回应不再生硬罗列「根据我已经记住的内容 · …」。纯子串判断，相同输入相同输出。
+   */
+  private leadInFor(userInput: string): string {
+    const q = userInput.trim();
+    if (/吗[?？]?$|会不会|是不是|有没有/.test(q)) return '关于这个，我记得：';
+    if (/怎么|如何|什么|为什么|哪些|怎样/.test(q)) return '这个我有印象：';
+    return '根据我已经记住的内容：';
+  }
+
   private composeFromKnowledge(
     narrative: string,
     knowledge: RelevantKnowledge[],
     escalate: boolean,
+    userInput: string,
   ): string {
     const parts: string[] = [];
     if (narrative.length > 0) {
       parts.push(narrative);
     }
-    parts.push('根据我已经记住的内容：');
+    parts.push(this.leadInFor(userInput));
     for (const k of knowledge) {
       const snippet = k.content.trim().slice(0, KNOWLEDGE_SNIPPET_CAP);
       parts.push(`· ${snippet}`);
