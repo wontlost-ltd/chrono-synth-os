@@ -13,7 +13,9 @@ describe('server-raw coverage', () => {
       .map(migration => migration.aliases.postgres ?? migration.aliases['sqlite-sql'])
       .sort();
 
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071']);
+    /* v090 = v088_distilled_artifacts_perception_source（pg-aliased v090，SQLite CHECK rebuild / PG alter
+     * constraint，PR #119 加入但当时漏更新本覆盖列表——此处补齐，与 RAW_MIGRATIONS 实际一致）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090']);
   });
 
   it('covers disabled raw migrations', () => {

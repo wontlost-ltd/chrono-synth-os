@@ -52,11 +52,12 @@ export function registerDistilledArtifactExecutors(): void {
   /* 乐观并发：仅当 (id, tenant_id, status=expectedStatus) 命中才推进，
    * 防止并发审批/编译导致状态机被绕过（D3 安全契约）。 */
   registerCommand<DistillSetStatusParams>(DISTILL_CMD_SET_STATUS, (db, p) => {
+    /* compiled_via 用 COALESCE：仅当本次传了（编译到 compiled 时）才写，其余转移保持原值不动。 */
     const result = db.prepare<void>(
       `UPDATE distilled_artifacts
-       SET status = ?, reason = COALESCE(?, reason), compiled_at = ?
+       SET status = ?, reason = COALESCE(?, reason), compiled_at = ?, compiled_via = COALESCE(?, compiled_via)
        WHERE id = ? AND tenant_id = ? AND persona_id = ? AND status = ?`,
-    ).run(p.status, p.reason, p.compiledAt, p.id, p.tenantId, p.personaId, p.expectedStatus);
+    ).run(p.status, p.reason, p.compiledAt, p.compiledVia ?? null, p.id, p.tenantId, p.personaId, p.expectedStatus);
     return { rowsAffected: result.changes };
   });
 }

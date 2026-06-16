@@ -26,7 +26,7 @@ export type ArtifactKind =
 
 /** 蒸馏来源：工件由哪类成长活动产生 */
 export type ArtifactSource =
-  | 'reflection'          /* LLM 反思循环 */
+  | 'reflection'          /* 自我反思（LLM 反思循环 / 确定性收益结果反思——persona 对自身的内部反思，internal 信任层） */
   | 'conversation'        /* 对话沉淀 */
   | 'knowledge_import'    /* 知识摄入（读文档/导入知识库） */
   | 'onboarding'          /* 初始画像 */
@@ -92,7 +92,15 @@ export interface DistilledArtifact {
   readonly createdAt: number;
   /** 编译落库时间（compiled 后写入） */
   readonly compiledAt?: number;
+  /**
+   * 编译路径（compiled 后写入）：'auto'=过门自动编译（未经人工，算「未验证成长」）；
+   * 'approved'=人工审批后编译（已验证）。不确定性预算只数 'auto'——人工审批的不该消耗未验证额度。
+   */
+  readonly compiledVia?: CompiledVia;
 }
+
+/** 编译路径：自动（未验证）vs 人工审批（已验证）。 */
+export type CompiledVia = 'auto' | 'approved';
 
 /** 自动编译门槛配置 */
 export interface DistillationPolicy {
@@ -104,6 +112,15 @@ export interface DistillationPolicy {
   readonly memoryEdgeMinConfidence: number;
   /** memory_edge 自动编译所需最少证据条数 */
   readonly memoryEdgeMinEvidence: number;
+  /**
+   * 不确定性预算窗口（毫秒）：统计这段时间内已 auto-compiled 的 distilled 工件数。
+   */
+  readonly unverifiedGrowthWindowMs: number;
+  /**
+   * 不确定性预算上限：窗口内 auto-compiled distilled 工件数达此值后，后续即使过门也降级人工审批
+   * （防止短期吸收过多未验证成长侵蚀核心人格）。默认极大 = 实际不限（需显式收紧才生效）。
+   */
+  readonly unverifiedGrowthBudgetPerWindow: number;
 }
 
 /**
@@ -116,6 +133,9 @@ export const DEFAULT_DISTILLATION_POLICY: DistillationPolicy = {
   valueShiftMaxDelta: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledValueShiftMaxDelta,
   memoryEdgeMinConfidence: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledMemoryEdgeMinConfidence,
   memoryEdgeMinEvidence: DEFAULT_CORE_UPDATE_GATE_POLICY.distilledMemoryEdgeMinEvidence,
+  /* 默认 24h 窗口；预算从统一门控 policy 派生（同一事实来源，默认 MAX_SAFE_INTEGER=不限）。 */
+  unverifiedGrowthWindowMs: 86_400_000,
+  unverifiedGrowthBudgetPerWindow: DEFAULT_CORE_UPDATE_GATE_POLICY.unverifiedGrowthBudgetPerWindow,
 };
 
 /** value_shift 工件的载荷形状 */
@@ -398,13 +418,14 @@ export function canAutoCompile(
     case 'value_shift': {
       const p = a.payload as ValueShiftPayload;
       return decideCoreUpdateGate(
-        { layer: 'L1', sourceClass: 'distilled', delta: p.delta, confidence: a.confidence, patternAgrees: p.patternAgrees },
+        /* 传 provenance=a.source 启用信任分级（perception 比 reflection 门槛更严）。 */
+        { layer: 'L1', sourceClass: 'distilled', delta: p.delta, confidence: a.confidence, patternAgrees: p.patternAgrees, provenance: a.source },
         gatePolicy,
       ).decision === 'auto';
     }
     case 'memory_edge': {
       return decideCoreUpdateGate(
-        { layer: 'MemoryGraph', sourceClass: 'distilled', confidence: a.confidence, evidenceCount: a.evidence.length },
+        { layer: 'MemoryGraph', sourceClass: 'distilled', confidence: a.confidence, evidenceCount: a.evidence.length, provenance: a.source },
         gatePolicy,
       ).decision === 'auto';
     }

@@ -98,4 +98,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v086_perception_media_refs', aliases: { postgres: 'v088', 'sqlite-sql': 'v086' }, classification: 'schema-simple', notes: 'ADR-0052 Edge-P5: perception media reference metadata' },
   { canonical: 'v087_perception_events', aliases: { postgres: 'v089', 'sqlite-sql': 'v087' }, classification: 'schema-simple', notes: 'Perception layer: perception event audit' },
   { canonical: 'v088_distilled_artifacts_perception_source', aliases: { postgres: 'v090', 'sqlite-sql': 'v088' }, classification: 'schema-raw', notes: 'Perception: add perception source to distilled_artifacts CHECK (SQLite rebuild / PG alter constraint)' },
+  { canonical: 'v089_distilled_compiled_via', aliases: { postgres: 'v091', 'sqlite-sql': 'v089' }, classification: 'schema-simple', notes: 'Growth governance: distilled_artifacts.compiled_via (auto vs approved) for unverified-growth budget' },
 ];
