@@ -16,6 +16,7 @@ import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   personaGovernanceQueryByPersona,
   personaGovernanceCmdUpsert,
+  personaGovernanceCmdUpdateIfVersion,
   personaGovernanceCmdDelete,
   DEFAULT_EARNING_POLICY,
   type EarningPolicyConfig,
@@ -74,16 +75,43 @@ export class PersonaGovernanceStore {
   /**
    * 设置某 persona 的策略覆盖。先 sanitize（白名单 + 类型/范围校验，非法抛错），再落库**规范化后的
    * JSON**（不存用户原始 JSON——杜绝未知字段/脏值进库）。
+   *
+   * 乐观并发（可选）：给定 expectedUpdatedAt 时做 compare-and-set——仅当当前 row 的 updated_at 与之
+   * 匹配（或无 row 且 expected=undefined 视为新建）才写。版本不符返回 false（调用方转 409 冲突），
+   * 防止两个 owner 并发编辑时后写盲覆盖前写。不给 expectedUpdatedAt = 不做版本检查（last-write-wins）。
+   * updated_at 即版本令牌——每次写都变，无需额外 version 列。
    */
-  upsert(personaId: string, override: unknown, updatedBy: string | null, now: number): void {
+  upsert(personaId: string, override: unknown, updatedBy: string | null, now: number, expectedUpdatedAt?: number): boolean {
     const clean = sanitizeGovernanceOverride(override);
+    const policyJson = JSON.stringify(clean);
+    /* updated_at 即版本令牌——必须**严格单调递增**（即使同毫秒连写 / 时钟回拨）才能可靠做乐观锁。
+     * nextVersion = max(now, 当前版本+1)：若 now ≤ 当前版本则强制 +1，保证每次写版本都变。 */
+    const currentVersion = this.getRow(personaId)?.updated_at;
+    const nextVersion = currentVersion !== undefined && now <= currentVersion ? currentVersion + 1 : now;
+
+    if (expectedUpdatedAt !== undefined) {
+      /* DB 级原子 CAS（消除 read-then-write TOCTOU，Codex 复审）：WHERE updated_at=expected。
+       * rowsAffected=0 → 版本不符或行不存在 → 冲突（返回 false，调用方转 409）。 */
+      const result = this.tx.execute(personaGovernanceCmdUpdateIfVersion({
+        tenantId: this.tenantId,
+        personaId,
+        policyJson,
+        updatedBy,
+        now: nextVersion,
+        expectedUpdatedAt,
+      }));
+      return result.rowsAffected > 0;
+    }
+
+    /* 无版本检查：last-write-wins upsert（向后兼容，无并发场景）。 */
     this.tx.execute(personaGovernanceCmdUpsert({
       tenantId: this.tenantId,
       personaId,
-      policyJson: JSON.stringify(clean),
+      policyJson,
       updatedBy,
-      now,
+      now: nextVersion,
     }));
+    return true;
   }
 
   /** 删除某 persona 策略覆盖（恢复默认 / GDPR 擦除）。 */

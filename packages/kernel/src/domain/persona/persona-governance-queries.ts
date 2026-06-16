@@ -11,6 +11,8 @@ import type { Query, Command } from '../../ports/query.js';
 
 export const PERSONA_GOVERNANCE_QUERY_BY_PERSONA = 'personaGovernance.byPersona' as const;
 export const PERSONA_GOVERNANCE_CMD_UPSERT = 'personaGovernance.upsert' as const;
+/** 乐观并发条件更新：仅当当前 updated_at 匹配 expectedUpdatedAt 才写（DB 级原子 CAS，防 TOCTOU）。 */
+export const PERSONA_GOVERNANCE_CMD_UPDATE_IF_VERSION = 'personaGovernance.updateIfVersion' as const;
 export const PERSONA_GOVERNANCE_CMD_DELETE = 'personaGovernance.delete' as const;
 
 /* ── Row ── */
@@ -40,6 +42,16 @@ export interface PersonaGovernanceUpsertParams {
   now: number;
 }
 
+/** 条件更新参数：仅当 updated_at = expectedUpdatedAt 才写（rowsAffected=0 → 版本冲突）。 */
+export interface PersonaGovernanceUpdateIfVersionParams {
+  tenantId: string;
+  personaId: string;
+  policyJson: string;
+  updatedBy: string | null;
+  now: number;
+  expectedUpdatedAt: number;
+}
+
 /* ── 工厂 ── */
 
 /** 取某 persona 的治理策略覆盖（无 row → 调用方回退 DEFAULT_EARNING_POLICY）。 */
@@ -54,6 +66,13 @@ export function personaGovernanceCmdUpsert(
   params: PersonaGovernanceUpsertParams,
 ): Command<PersonaGovernanceUpsertParams> {
   return { kind: PERSONA_GOVERNANCE_CMD_UPSERT, params };
+}
+
+/** 条件更新（DB 级 CAS）：仅当现有行 updated_at = expectedUpdatedAt 才写；rowsAffected=0 → 冲突。 */
+export function personaGovernanceCmdUpdateIfVersion(
+  params: PersonaGovernanceUpdateIfVersionParams,
+): Command<PersonaGovernanceUpdateIfVersionParams> {
+  return { kind: PERSONA_GOVERNANCE_CMD_UPDATE_IF_VERSION, params };
 }
 
 /** 删除某 persona 策略覆盖（恢复默认 / GDPR 擦除）。 */

@@ -1572,6 +1572,7 @@
     "unverifiedGrowthBudgetPlaceholder": "留空=沿用全局默认；0=全部转人工",
     "saved": "治理策略已保存",
     "resetDone": "已恢复默认策略",
-    "unsaved": "有未保存的改动"
+    "unsaved": "有未保存的改动",
+    "conflict": "该策略已被其他会话修改，请刷新后重试"
   }
 }

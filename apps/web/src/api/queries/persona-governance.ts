@@ -73,13 +73,21 @@ export function useGovernancePolicy(personaId: string) {
 }
 
 /** 设置某 persona 的策略覆盖（整体替换）。 */
+/** PUT 入参：override + 可选 ifMatch（乐观并发版本 = 上次读到的 meta.updatedAt）。 */
+export interface SetGovernanceInput {
+  override: GovernanceOverride;
+  /** 客户端读到的版本；带上则做乐观并发——服务端版本不符 → 409。 */
+  ifMatch?: number;
+}
+
 export function useSetGovernancePolicy(personaId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (override: GovernanceOverride) =>
+    mutationFn: ({ override, ifMatch }: SetGovernanceInput) =>
       apiFetch<{ data: GovernancePolicyResponse }>(`/api/v1/persona-core/${personaId}/governance/policy`, {
         method: 'PUT',
         body: JSON.stringify(override),
+        headers: ifMatch !== undefined ? { 'If-Match': String(ifMatch) } : undefined,
       }).then((r) => r.data),
     onSuccess: (data) => qc.setQueryData(policyKey(personaId), data),
   });
