@@ -38,6 +38,7 @@ interface FormState {
   amlMaxPublisherRewardShare: string;
   amlConcentrationMinTasks: string;
   amlMaxIdenticalRewardRepeats: string;
+  unverifiedGrowthBudgetPerWindow: string;
 }
 
 function numOrEmpty(v: number | undefined): string {
@@ -55,6 +56,7 @@ function overrideToForm(o: GovernanceOverride | null): FormState {
     amlMaxPublisherRewardShare: numOrEmpty(o?.aml?.maxPublisherRewardShare),
     amlConcentrationMinTasks: numOrEmpty(o?.aml?.concentrationMinTasks),
     amlMaxIdenticalRewardRepeats: numOrEmpty(o?.aml?.maxIdenticalRewardRepeats),
+    unverifiedGrowthBudgetPerWindow: numOrEmpty(o?.unverifiedGrowthBudgetPerWindow),
   };
 }
 
@@ -79,6 +81,7 @@ function formToOverride(f: FormState): GovernanceOverride {
   setNum(f.amlConcentrationMinTasks, (n) => { aml.concentrationMinTasks = n; });
   setNum(f.amlMaxIdenticalRewardRepeats, (n) => { aml.maxIdenticalRewardRepeats = n; });
   if (Object.keys(aml).length > 0) out.aml = aml;
+  setNum(f.unverifiedGrowthBudgetPerWindow, (n) => { out.unverifiedGrowthBudgetPerWindow = n; });
   return out;
 }
 
@@ -229,6 +232,16 @@ export default function PersonaGovernance() {
         <FormField label={t('governance.amlMaxIdenticalRepeats')}>
           {(p) => <input {...p} type="number" min="1" step="1" className={INPUT_CLASS} value={f.amlMaxIdenticalRewardRepeats}
             onChange={(e) => update({ amlMaxIdenticalRewardRepeats: e.target.value })} placeholder={String(data.effective.aml.maxIdenticalRewardRepeats)} />}
+        </FormField>
+      </section>
+
+      {/* 不确定性预算（成长治理）。effective 不含此值（属 DistillationPolicy），故无 placeholder。 */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-text-primary">{t('governance.uncertaintyBudget')}</h2>
+        <p className="text-xs text-text-secondary">{t('governance.uncertaintyBudgetHint')}</p>
+        <FormField label={t('governance.unverifiedGrowthBudget')}>
+          {(p) => <input {...p} type="number" min="0" step="1" className={INPUT_CLASS} value={f.unverifiedGrowthBudgetPerWindow}
+            onChange={(e) => update({ unverifiedGrowthBudgetPerWindow: e.target.value })} placeholder={t('governance.unverifiedGrowthBudgetPlaceholder')} />}
         </FormField>
       </section>
     </div>

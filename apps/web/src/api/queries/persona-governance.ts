@@ -29,6 +29,8 @@ export interface GovernanceOverride {
   dailyRewardExposureCap?: number;
   maxConcurrentTasks?: number;
   aml?: AmlAggregateOverride;
+  /** 不确定性预算（窗口内 auto-compile 上限；0=完全禁止自动吸收）。 */
+  unverifiedGrowthBudgetPerWindow?: number;
 }
 
 /** 有效策略（DEFAULT ∪ 覆盖）——只读展示用，含完整字段。 */

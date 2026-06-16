@@ -43,9 +43,12 @@ export interface PersonaGovernanceOverride {
   readonly dailyRewardExposureCap?: number;
   readonly maxConcurrentTasks?: number;
   readonly aml?: Partial<AmlAggregatePolicy>;
-  /* 注：不确定性预算（unverifiedGrowthBudgetPerWindow）属 DistillationPolicy 而非 EarningPolicyConfig，
-   * mergeEarningPolicy 不消费它。per-persona 预算的 distillation 侧解析接线是后续（与 ① 预算性能债一起做）；
-   * 此处暂不纳入覆盖面，避免存一个对 earning 无效的字段（Codex 复审 Medium）。 */
+  /**
+   * 不确定性预算（窗口内 auto-compile 上限）。属 DistillationPolicy 而非 EarningPolicyConfig——
+   * mergeEarningPolicy 不消费它；由 distillation 侧 budgetResolver 单独取用（resolvePersonaUnverifiedGrowthBudget）。
+   * 允许 0（= 完全禁止自动吸收未验证成长，全部转人工审批）。
+   */
+  readonly unverifiedGrowthBudgetPerWindow?: number;
 }
 
 export class PersonaGovernanceStore {
@@ -103,6 +106,19 @@ export function resolvePersonaEarningPolicy(
   return mergeEarningPolicy(DEFAULT_EARNING_POLICY, override);
 }
 
+/**
+ * 解析某 persona 的不确定性预算覆盖（distillation 侧 budgetResolver 用）。
+ * 返回 owner 设的 per-persona 预算上限；无覆盖 → undefined（调用方回退全局 DistillationPolicy 预算）。
+ * 与 earning policy 分开解析——预算属 DistillationPolicy，不进 mergeEarningPolicy。
+ */
+export function resolvePersonaUnverifiedGrowthBudget(
+  tx: SyncWriteUnitOfWork,
+  tenantId: string,
+  personaId: string,
+): number | undefined {
+  return new PersonaGovernanceStore(tx, tenantId).getOverride(personaId)?.unverifiedGrowthBudgetPerWindow;
+}
+
 /** 把覆盖 merge over base（仅覆盖给出的字段；aml 深合并；其余浅合并）。纯函数。 */
 export function mergeEarningPolicy(base: EarningPolicyConfig, override: PersonaGovernanceOverride): EarningPolicyConfig {
   return {
@@ -142,6 +158,10 @@ export function sanitizeGovernanceOverride(input: unknown): PersonaGovernanceOve
   }
   if (o.aml !== undefined) {
     out.aml = sanitizeAml(o.aml);
+  }
+  if (o.unverifiedGrowthBudgetPerWindow !== undefined) {
+    /* 允许 0（完全禁止自动吸收）；非负整数。 */
+    out.unverifiedGrowthBudgetPerWindow = requireNonNegativeInt(o.unverifiedGrowthBudgetPerWindow, 'unverifiedGrowthBudgetPerWindow');
   }
   return out;
 }
@@ -183,6 +203,11 @@ function requireNonNegativeNumber(v: unknown, field: string): number {
 
 function requirePositiveInt(v: unknown, field: string): number {
   if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) throw new Error(`${field} 必须是正整数`);
+  return v;
+}
+
+function requireNonNegativeInt(v: unknown, field: string): number {
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) throw new Error(`${field} 必须是非负整数`);
   return v;
 }
 

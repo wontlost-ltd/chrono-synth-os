@@ -6,6 +6,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
+import { PersonaGovernanceStore } from '../../storage/persona-governance-store.js';
 import type { ArtifactEvidence } from '@chrono/kernel';
 
 const EV: ArtifactEvidence[] = [
@@ -250,5 +251,44 @@ describe('Distillation 不确定性预算（ADR-0047 成长治理）', () => {
     assert.equal(ingestValueShift(v3.id, 0.5).status, 'compiled', 'auto 计数 1<2，人工审批的不占预算');
     /* 第 4 条自动 → auto 计数=2 达预算 → 降级。 */
     assert.equal(ingestValueShift(v4.id, 0.5).status, 'pending', 'auto 计数达 2 → 降级');
+  });
+});
+
+/* ── 债1：per-persona 预算覆盖全局（governance store 配的预算优先）── */
+describe('Distillation per-persona 预算覆盖（governance 配置）', () => {
+  let os: ChronoSynthOS;
+
+  beforeEach(() => {
+    /* 全局预算不限（默认）；靠 per-persona governance 覆盖收紧。 */
+    os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os.start();
+  });
+  afterEach(() => os.close());
+
+  function ingest(personaId: string, valueId: string) {
+    return os.distillation.ingest(personaId, {
+      kind: 'value_shift', source: 'reflection',
+      payload: { valueId, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
+      confidence: 0.85, evidence: EV,
+    });
+  }
+
+  it('p1 配 per-persona 预算=1 → 第 2 条降级；p2 无覆盖 → 不限', () => {
+    /* p1 经 governance store 配预算 1。 */
+    new PersonaGovernanceStore(os.getDatabase(), 'default').upsert('p1', { unverifiedGrowthBudgetPerWindow: 1 }, 'owner', 1000);
+    const a = os.core.addValue('a', 0.5);
+    const b = os.core.addValue('b', 0.5);
+    const c = os.core.addValue('c', 0.5);
+    /* p1 第 1 条 auto-compile（计数 0<1）→ compiled；第 2 条（计数 1≥1）→ 降级 pending。 */
+    assert.equal(ingest('p1', a.id).status, 'compiled', 'p1 第 1 条预算内');
+    assert.equal(ingest('p1', b.id).status, 'pending', 'p1 第 2 条达 per-persona 预算 1 → 降级');
+    /* p2 无 governance 覆盖 → 回退全局（不限）→ 仍 compiled（证明 per-persona 隔离，不误伤别人）。 */
+    assert.equal(ingest('p2', c.id).status, 'compiled', 'p2 无覆盖 → 全局不限');
+  });
+
+  it('per-persona 预算=0 → 完全禁止自动吸收（第 1 条即降级）', () => {
+    new PersonaGovernanceStore(os.getDatabase(), 'default').upsert('p1', { unverifiedGrowthBudgetPerWindow: 0 }, 'owner', 1000);
+    const a = os.core.addValue('a', 0.5);
+    assert.equal(ingest('p1', a.id).status, 'pending', '预算 0 → 第 1 条即转人工');
   });
 });
