@@ -699,6 +699,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerEarningRoutes(app, {
     earning: personaEarningService,
     personaCore: bulkImportPersonaCoreService,
+    db,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);

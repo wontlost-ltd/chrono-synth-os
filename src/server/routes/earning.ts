@@ -12,13 +12,17 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { PersonaEarningService } from '../../intelligence/persona-earning-service.js';
 import type { PersonaCoreService } from '../../persona-core/persona-core-service.js';
+import type { IDatabase } from '../../storage/database.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index.js';
 import { EarningCycleBodySchema } from '../schemas/api-schemas.js';
+import { resolvePersonaEarningPolicy } from '../../storage/persona-governance-store.js';
 
 interface EarningRouteServices {
   earning: PersonaEarningService;
   personaCore: PersonaCoreService;
+  /** 解析 per-persona 治理策略覆盖用（缺省 → 始终 DEFAULT_EARNING_POLICY，向后兼容）。 */
+  db?: IDatabase;
 }
 
 function requireJwtUser(request: FastifyRequest): JwtPayload {
@@ -41,7 +45,7 @@ function perPersonaKey(request: FastifyRequest): string {
 }
 
 export function registerEarningRoutes(app: FastifyInstance, services: EarningRouteServices): void {
-  const { earning, personaCore } = services;
+  const { earning, personaCore, db } = services;
 
   /* 触发挣钱周期（限流：自主劳动是经济行为，防风暴） */
   app.post<{ Params: { personaId: string } }>(
@@ -52,11 +56,14 @@ export function registerEarningRoutes(app: FastifyInstance, services: EarningRou
       const { personaId } = request.params;
       assertOwner(personaCore, request.tenantId, user.sub, personaId);
       const body = EarningCycleBodySchema.parse(request.body ?? {});
+      /* per-persona 治理策略：有覆盖用之，无则 DEFAULT_EARNING_POLICY（resolve 内回退，向后兼容）。 */
+      const policy = db ? resolvePersonaEarningPolicy(db, request.tenantId, personaId) : undefined;
       const result = await earning.runEarningCycle({
         tenantId: request.tenantId,
         personaId,
         ownerUserId: user.sub,
         maxTasksPerCycle: body.maxTasksPerCycle,
+        policy,
       });
       return reply.status(200).send({ data: result });
     },

@@ -1,0 +1,120 @@
+/**
+ * per-persona 治理策略 store + 有效策略解析（ADR-0048 治理可配化）。
+ *
+ * 验证：upsert/get/delete + sanitize 白名单（非法值抛错、未知字段丢弃）+ resolve merge over DEFAULT
+ * （无 row 回退 DEFAULT，向后兼容）+ tenant/persona 隔离。
+ */
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import {
+  PersonaGovernanceStore,
+  resolvePersonaEarningPolicy,
+  sanitizeGovernanceOverride,
+  mergeEarningPolicy,
+} from '../../storage/persona-governance-store.js';
+import { DEFAULT_EARNING_POLICY } from '@chrono/kernel';
+import type { IDatabase } from '../../storage/index.js';
+
+const TENANT = 'tenant_a';
+const PERSONA = 'persona_1';
+
+describe('per-persona 治理策略 store（ADR-0048）', () => {
+  let db: IDatabase;
+
+  beforeEach(() => {
+    db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+  });
+  afterEach(() => db.close());
+
+  it('无覆盖 → resolve 完全回退 DEFAULT_EARNING_POLICY（向后兼容）', () => {
+    const policy = resolvePersonaEarningPolicy(db, TENANT, PERSONA);
+    assert.deepEqual(policy, DEFAULT_EARNING_POLICY);
+  });
+
+  it('upsert 部分覆盖 → resolve merge over DEFAULT（只改给出的字段）', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    store.upsert(PERSONA, { maxAutonomousReward: 100, categoryRoutes: { coding: 'autonomous' } }, 'owner_1', 1000);
+    const policy = resolvePersonaEarningPolicy(db, TENANT, PERSONA);
+    assert.equal(policy.maxAutonomousReward, 100, '覆盖生效');
+    assert.deepEqual(policy.categoryRoutes, { coding: 'autonomous' });
+    /* 未覆盖的字段沿用 DEFAULT。 */
+    assert.equal(policy.dailyRewardExposureCap, DEFAULT_EARNING_POLICY.dailyRewardExposureCap);
+    assert.deepEqual(policy.aml, DEFAULT_EARNING_POLICY.aml, 'aml 未覆盖沿用默认');
+  });
+
+  it('aml 深合并：只覆盖给出的 aml 子字段，其余沿用默认', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    store.upsert(PERSONA, { aml: { maxTasksPerPublisherPerWindow: 3 } }, 'owner_1', 1000);
+    const policy = resolvePersonaEarningPolicy(db, TENANT, PERSONA);
+    assert.equal(policy.aml.maxTasksPerPublisherPerWindow, 3, 'aml 子字段覆盖');
+    assert.equal(policy.aml.maxPublisherRewardShare, DEFAULT_EARNING_POLICY.aml.maxPublisherRewardShare, '其余 aml 沿用默认');
+  });
+
+  it('sanitize 白名单：未知字段被丢弃（不落库脏数据）', () => {
+    const clean = sanitizeGovernanceOverride({ maxAutonomousReward: 50, bogusField: 'x', __proto__: { polluted: true } });
+    assert.equal(clean.maxAutonomousReward, 50);
+    assert.equal((clean as Record<string, unknown>).bogusField, undefined, '未知字段丢弃');
+    assert.equal(({} as Record<string, unknown>).polluted, undefined, '原型未污染');
+  });
+
+  it('sanitize 恶意 JSON 边界：constructor/嵌套/数组/非对象输入均安全（Codex 复审）', () => {
+    /* constructor 污染尝试。 */
+    sanitizeGovernanceOverride(JSON.parse('{"constructor": {"prototype": {"polluted": true}}, "maxAutonomousReward": 10}'));
+    assert.equal(({} as Record<string, unknown>).polluted, undefined, 'constructor 污染未生效');
+    /* categoryRoutes 值是嵌套对象（非字符串 mode）→ 抛错，不静默接受。 */
+    assert.throws(() => sanitizeGovernanceOverride({ categoryRoutes: { coding: { nested: 'evil' } } }), /autonomous/);
+    /* aml 是数组而非对象 → 当对象遍历但字段都 undefined → 返回空 aml（不崩）。 */
+    assert.deepEqual(sanitizeGovernanceOverride({ aml: [] }).aml, {});
+    /* 顶层非对象输入（null/string/number/array）→ 返回空覆盖，不崩。 */
+    assert.deepEqual(sanitizeGovernanceOverride(null), {});
+    assert.deepEqual(sanitizeGovernanceOverride('evil'), {});
+    assert.deepEqual(sanitizeGovernanceOverride(42), {});
+    assert.deepEqual(sanitizeGovernanceOverride([1, 2, 3]), {});
+    /* NaN/Infinity 数值被 finite 校验挡住。 */
+    assert.throws(() => sanitizeGovernanceOverride({ maxAutonomousReward: Infinity }), /非负有限/);
+    assert.throws(() => sanitizeGovernanceOverride({ dailyRewardExposureCap: NaN }), /非负有限/);
+  });
+
+  it('sanitize 校验：非法值抛错（宁可拒写不落脏策略）', () => {
+    assert.throws(() => sanitizeGovernanceOverride({ maxAutonomousReward: -1 }), /非负/);
+    assert.throws(() => sanitizeGovernanceOverride({ maxConcurrentTasks: 0 }), /正整数/);
+    assert.throws(() => sanitizeGovernanceOverride({ categoryRoutes: { coding: 'invalid_mode' } }), /autonomous/);
+    assert.throws(() => sanitizeGovernanceOverride({ categoryRoutes: { bogus_category: 'autonomous' } }), /非法 category/);
+    assert.throws(() => sanitizeGovernanceOverride({ aml: { maxPublisherRewardShare: 1.5 } }), /\[0,1\]/);
+    assert.throws(() => sanitizeGovernanceOverride({ defaultCategoryRoute: 'nope' }), /autonomous/);
+  });
+
+  it('upsert 落库规范化 JSON（非用户原始）：getOverride 取回 sanitize 后的对象', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    store.upsert(PERSONA, { maxAutonomousReward: 80, junk: 'drop' } as unknown, 'owner_1', 1000);
+    const override = store.getOverride(PERSONA);
+    assert.deepEqual(override, { maxAutonomousReward: 80 }, 'junk 未落库');
+  });
+
+  it('delete → 恢复默认', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    store.upsert(PERSONA, { maxAutonomousReward: 100 }, 'owner_1', 1000);
+    store.delete(PERSONA);
+    assert.equal(store.getOverride(PERSONA), undefined);
+    assert.deepEqual(resolvePersonaEarningPolicy(db, TENANT, PERSONA), DEFAULT_EARNING_POLICY);
+  });
+
+  it('persona 隔离：persona_1 的覆盖不影响 persona_2', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    store.upsert('persona_1', { maxAutonomousReward: 100 }, 'owner_1', 1000);
+    assert.equal(resolvePersonaEarningPolicy(db, TENANT, 'persona_2').maxAutonomousReward, DEFAULT_EARNING_POLICY.maxAutonomousReward);
+  });
+
+  it('tenant 隔离：tenant_a 的覆盖不影响 tenant_b', () => {
+    new PersonaGovernanceStore(db, 'tenant_a').upsert(PERSONA, { maxAutonomousReward: 100 }, 'o', 1000);
+    assert.equal(resolvePersonaEarningPolicy(db, 'tenant_b', PERSONA).maxAutonomousReward, DEFAULT_EARNING_POLICY.maxAutonomousReward);
+  });
+
+  it('mergeEarningPolicy 纯函数：不改 base', () => {
+    const merged = mergeEarningPolicy(DEFAULT_EARNING_POLICY, { maxAutonomousReward: 999 });
+    assert.equal(merged.maxAutonomousReward, 999);
+    assert.equal(DEFAULT_EARNING_POLICY.maxAutonomousReward, 50, 'base 未被改');
+  });
+});

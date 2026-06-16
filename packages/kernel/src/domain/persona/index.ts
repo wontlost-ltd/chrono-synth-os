@@ -15,3 +15,4 @@ export * from './snapshot-types.js';
 export * from './persona-engine-queries.js';
 export * from './cognitive-memory-queries.js';
 export * from './persona-core-queries.js';
+export * from './persona-governance-queries.js';
