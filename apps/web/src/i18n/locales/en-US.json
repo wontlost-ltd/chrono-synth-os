@@ -757,7 +757,8 @@
       "review": "Review",
       "transfer": "Transfer",
       "death": "Death"
-    }
+    },
+    "governancePolicy": "Governance Policy"
   },
   "marketplace": {
     "title": "Marketplace",
@@ -1368,10 +1369,22 @@
         "subtitleSelected": "Manage members for {{org}}.",
         "subtitleEmpty": "Select an organization first."
       },
-      "personas": { "title": "Personas", "subtitle": "Current persona fleet, ownership, and wallet posture." },
-      "tasks": { "title": "Tasks", "subtitle": "Marketplace backlog and completion posture." },
-      "wallets": { "title": "Wallets", "subtitle": "Persona wallet exposure and settlement freshness." },
-      "governance": { "title": "Governance", "subtitle": "Open cases, appeals, and recent moderation actions." },
+      "personas": {
+        "title": "Personas",
+        "subtitle": "Current persona fleet, ownership, and wallet posture."
+      },
+      "tasks": {
+        "title": "Tasks",
+        "subtitle": "Marketplace backlog and completion posture."
+      },
+      "wallets": {
+        "title": "Wallets",
+        "subtitle": "Persona wallet exposure and settlement freshness."
+      },
+      "governance": {
+        "title": "Governance",
+        "subtitle": "Open cases, appeals, and recent moderation actions."
+      },
       "tenantKeyVersions": {
         "title": "Tenant Key Versions",
         "subtitle": "Platform-managed encryption keys for this tenant. Rotate to issue a new version; revoke to retire a compromised key."
@@ -1515,5 +1528,43 @@
       "organizationCreated": "Organization {{name}} created.",
       "memberBindingsUpdated": "Organization member bindings updated."
     }
+  },
+  "governance": {
+    "title": "Governance Policy",
+    "subtitle": "Override the default governance policy for persona {{personaId}}",
+    "loadError": "Failed to load governance policy",
+    "save": "Save",
+    "saving": "Saving…",
+    "saveError": "Save failed: {{message}}",
+    "reset": "Reset to default",
+    "lastUpdated": "Last updated by {{by}} at {{at}}",
+    "categoryRoutes": "Task category routing",
+    "categoryRoutesHint": "Set how the persona takes each task category. Categories left as default follow the persona's default route. This is the full routing table — saving replaces it.",
+    "routeDefault": "Default (use persona default)",
+    "economicLimits": "Economic limits",
+    "maxAutonomousReward": "Max autonomous reward per task",
+    "maxAutonomousRewardHint": "Tasks above this reward require human review. Leave blank to use default.",
+    "dailyRewardExposureCap": "Daily reward exposure cap",
+    "maxConcurrentTasks": "Max concurrent open tasks",
+    "amlThresholds": "AML aggregate thresholds",
+    "amlHint": "Anti–wash-trading thresholds over a 24h window. Leave blank to use default.",
+    "amlMaxTasksPerPublisher": "Max tasks per publisher per window",
+    "amlMaxRewardShare": "Max publisher reward concentration",
+    "amlMaxRewardShareHint": "0–1; a single publisher exceeding this share of window reward is treated as related-account cycling.",
+    "amlConcentrationMinTasks": "Min tasks to trigger concentration check",
+    "amlMaxIdenticalRepeats": "Max identical-reward repeats per publisher",
+    "routeMode": {
+      "autonomous": "Autonomous",
+      "human_review": "Human review",
+      "blocked": "Blocked"
+    },
+    "category": {
+      "writing": "Writing",
+      "coding": "Coding",
+      "research": "Research",
+      "operations": "Operations",
+      "general": "General"
+    },
+    "defaultRoute": "Unset categories"
   }
 }

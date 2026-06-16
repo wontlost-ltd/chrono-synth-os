@@ -172,7 +172,9 @@ export function registerEarningRoutes(app: FastifyInstance, services: EarningRou
       store.upsert(personaId, clean, user.sub, Date.now());
       const override = store.getOverride(personaId) ?? null;
       const effective = resolvePersonaEarningPolicy(database, request.tenantId, personaId);
-      return reply.status(200).send({ data: { override, effective } });
+      const row = store.getRow(personaId);
+      const meta = row ? { updatedBy: row.updated_by, updatedAt: row.updated_at } : null;
+      return reply.status(200).send({ data: { override, effective, meta } });
     },
   );
 
@@ -185,7 +187,10 @@ export function registerEarningRoutes(app: FastifyInstance, services: EarningRou
       assertOwner(personaCore, request.tenantId, user.sub, personaId);
       const database = requireDb();
       new PersonaGovernanceStore(database, request.tenantId).delete(personaId);
-      return reply.status(200).send({ data: { override: null, effective: resolvePersonaEarningPolicy(database, request.tenantId, personaId) } });
+      /* 删除后无 row → meta=null（与 GET 无覆盖一致）。 */
+      return reply.status(200).send({
+        data: { override: null, effective: resolvePersonaEarningPolicy(database, request.tenantId, personaId), meta: null },
+      });
     },
   );
 }

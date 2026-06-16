@@ -40,6 +40,7 @@ const AutorunConfigPage = lazy(() => import('./features/autorun/pages/AutorunCon
 const AutorunRunsPage = lazy(() => import('./features/autorun/pages/AutorunRunsPage'));
 const PersonaListPage = lazy(() => import('./features/personas/pages/PersonaListPage'));
 const PersonaCorePage = lazy(() => import('./features/persona-core/pages/PersonaCorePage'));
+const PersonaGovernance = lazy(() => import('./pages/PersonaGovernance'));
 const MarketplacePage = lazy(() => import('./features/marketplace/pages/MarketplacePage'));
 const ConflictInboxPage = lazy(() => import('./features/conflicts/ConflictInboxPage').then(m => ({ default: m.ConflictInboxPage })));
 const NotFound = lazy(() => import('./pages/NotFound').then(m => ({ default: m.NotFound })));
@@ -94,6 +95,8 @@ export const routes: RouteObject[] = [
   { path: '/agent/oauth/google', element: <Protected><AgentOauthGoogle /></Protected> },
   { path: '/agent/confirmations', element: <Protected><AgentPendingConfirmations /></Protected> },
   { path: '/sso/callback', element: <LazyPage><SSOCallback /></LazyPage> },
+  /* per-persona 治理策略配置（owner-only，路由内 assertOwner 二次校验） */
+  { path: '/persona/:personaId/governance', element: <Protected><PersonaGovernance /></Protected> },
   /* 分身管理 */
   { path: '/avatars', element: <Protected><AvatarListPage /></Protected> },
   { path: '/avatars/:id', element: <Protected><AvatarDetailPage /></Protected> },
