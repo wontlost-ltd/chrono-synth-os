@@ -991,6 +991,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "ALTER TABLE distilled_artifacts ADD COLUMN compiled_via TEXT"
     ]
+  },
+  {
+    "version": "v090",
+    "description": "Governance config: per-persona earning/AML/budget policy override (JSON blob)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS persona_governance_policy (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    policy_json TEXT NOT NULL DEFAULT '{}',\n    updated_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1958,6 +1965,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "Growth governance: distilled_artifacts.compiled_via (auto vs approved) for unverified-growth budget",
     "sql": [
       "ALTER TABLE distilled_artifacts ADD COLUMN compiled_via TEXT"
+    ]
+  },
+  {
+    "version": "v092",
+    "description": "Governance config: per-persona earning/AML/budget policy override (JSON blob)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS persona_governance_policy (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    policy_json TEXT NOT NULL DEFAULT '{}',\n    updated_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

@@ -52,6 +52,8 @@ const TENANT_TABLES = [
   'tenant_llm_settings',
   /* perception_events：感知行为审计（哈希+计数+元数据，无敏感列；表征原文不落库），A 类标准导出+擦除 */
   'perception_events',
+  /* persona_governance_policy：per-persona 治理策略覆盖（categoryRoutes/AML/预算，非 secret 配置），A 类 */
+  'persona_governance_policy',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

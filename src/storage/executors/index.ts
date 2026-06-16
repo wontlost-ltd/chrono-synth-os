@@ -63,6 +63,7 @@ import { registerLlmCredentialExecutors } from './llm-credential-executors.js';
 import { registerTenantLlmSettingsExecutors } from './tenant-llm-settings-executors.js';
 import { registerPerceptionMediaExecutors } from './perception-media-executors.js';
 import { registerPerceptionEventExecutors } from './perception-event-executors.js';
+import { registerPersonaGovernanceExecutors } from './persona-governance-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -100,6 +101,7 @@ import {
   TENANT_LLM_SETTINGS_QUERY_BY_TENANT,
   MEDIA_REF_QUERY_BY_ID,
   PERCEPTION_EVENT_QUERY_BY_TENANT,
+  PERSONA_GOVERNANCE_QUERY_BY_PERSONA,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -169,6 +171,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(TENANT_LLM_SETTINGS_QUERY_BY_TENANT)) registerTenantLlmSettingsExecutors();
   if (!resolveQueryExecutor(MEDIA_REF_QUERY_BY_ID)) registerPerceptionMediaExecutors();
   if (!resolveQueryExecutor(PERCEPTION_EVENT_QUERY_BY_TENANT)) registerPerceptionEventExecutors();
+  if (!resolveQueryExecutor(PERSONA_GOVERNANCE_QUERY_BY_PERSONA)) registerPersonaGovernanceExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
