@@ -8,7 +8,7 @@
  * 走 effective 的 defaultCategoryRoute）。空表单字段 = 不覆盖该项 → 沿用默认。
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -98,6 +98,10 @@ export default function PersonaGovernance() {
   const resetMutation = useResetGovernancePolicy(personaId);
 
   const [form, setForm] = useState<FormState | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  /* 切换 persona 时清本地状态——否则旧表单会残留并可能误存到新 persona（Codex 复审 High：
+   * 路由 /persona/:personaId/governance 不强制 remount，React Router 复用组件实例）。 */
+  useEffect(() => { setForm(null); setSuccessMsg(null); }, [personaId]);
   /* 首次/刷新拿到数据时用 override 初始化表单（仅当本地未编辑过）。 */
   const initialForm = useMemo(() => (data ? overrideToForm(data.override) : null), [data]);
   const effectiveForm = form ?? initialForm;
@@ -112,13 +116,20 @@ export default function PersonaGovernance() {
   }
 
   const f = effectiveForm;
-  const update = (patch: Partial<FormState>) => setForm({ ...f, ...patch });
+  /* dirty：本地编辑过（form 非空）且与已保存 override 派生的表单不一致——有未保存改动。 */
+  const isDirty = form !== null && initialForm !== null && JSON.stringify(form) !== JSON.stringify(initialForm);
+  /* 编辑即清掉上次的成功提示（避免「显示已保存但其实又改了」的误导）。 */
+  const update = (patch: Partial<FormState>) => { setForm({ ...f, ...patch }); setSuccessMsg(null); };
 
   const onSave = () => {
-    setMutation.mutate(formToOverride(f), { onSuccess: (res) => setForm(overrideToForm(res.override)) });
+    setMutation.mutate(formToOverride(f), {
+      onSuccess: (res) => { setForm(overrideToForm(res.override)); setSuccessMsg(t('governance.saved')); },
+    });
   };
   const onReset = () => {
-    resetMutation.mutate(undefined, { onSuccess: () => setForm(overrideToForm(null)) });
+    resetMutation.mutate(undefined, {
+      onSuccess: () => { setForm(overrideToForm(null)); setSuccessMsg(t('governance.resetDone')); },
+    });
   };
 
   const saveError = setMutation.error instanceof Error ? setMutation.error.message : null;
@@ -129,7 +140,8 @@ export default function PersonaGovernance() {
         title={t('governance.title')}
         subtitle={t('governance.subtitle', { personaId })}
         actions={
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {isDirty && <span className="text-xs text-warning">{t('governance.unsaved')}</span>}
             <button
               type="button"
               onClick={onReset}
@@ -141,7 +153,7 @@ export default function PersonaGovernance() {
             <button
               type="button"
               onClick={onSave}
-              disabled={setMutation.isPending}
+              disabled={setMutation.isPending || !isDirty}
               className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
             >
               {setMutation.isPending ? t('governance.saving') : t('governance.save')}
@@ -150,6 +162,9 @@ export default function PersonaGovernance() {
         }
       />
 
+      {successMsg && (
+        <div className="rounded-lg bg-success/10 px-4 py-2 text-sm text-success" role="status">{successMsg}</div>
+      )}
       {saveError && <p role="alert" className="text-sm text-warning">{t('governance.saveError', { message: saveError })}</p>}
       {data.meta && (
         <p className="text-xs text-text-secondary">
