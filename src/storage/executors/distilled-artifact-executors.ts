@@ -13,7 +13,9 @@ import type {
 } from '@chrono/kernel';
 import {
   DISTILL_QUERY_BY_ID, DISTILL_QUERY_BY_PERSONA, DISTILL_QUERY_BY_STATUS,
+  DISTILL_QUERY_COUNT_AUTO_COMPILED,
   DISTILL_CMD_INSERT, DISTILL_CMD_SET_STATUS,
+  type DistillCountAutoCompiledParams,
 } from '@chrono/kernel';
 
 export function registerDistilledArtifactExecutors(): void {
@@ -36,6 +38,15 @@ export function registerDistilledArtifactExecutors(): void {
     return db.prepare<DistilledArtifactRow>(
       'SELECT * FROM distilled_artifacts WHERE tenant_id = ? AND persona_id = ? AND status = ? ORDER BY created_at DESC',
     ).all(p.tenantId, p.personaId, p.status);
+  });
+
+  /* 数窗口内 auto-compiled 未验证工件——不确定性预算用，SQL COUNT 代替全表扫（性能债还清）。 */
+  registerQuery<{ count: number }, DistillCountAutoCompiledParams>(DISTILL_QUERY_COUNT_AUTO_COMPILED, (db, p) => {
+    const row = db.prepare<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM distilled_artifacts
+       WHERE tenant_id = ? AND persona_id = ? AND status = 'compiled' AND compiled_via = 'auto' AND compiled_at >= ?`,
+    ).get(p.tenantId, p.personaId, p.since);
+    return { count: row?.count ?? 0 };
   });
 
   /* ── Commands ── */

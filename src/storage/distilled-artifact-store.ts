@@ -7,7 +7,7 @@
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
-  distillQueryById, distillQueryByPersona, distillQueryByStatus,
+  distillQueryById, distillQueryByPersona, distillQueryByStatus, distillQueryCountAutoCompiled,
   distillCmdInsert, distillCmdSetStatus,
   type DistilledArtifact,
   type DistilledArtifactRow,
@@ -79,6 +79,11 @@ export class DistilledArtifactStore {
   listByPersona(personaId: string): DistilledArtifact[] {
     const rows = [...this.tx.queryMany(distillQueryByPersona({ tenantId: this.tenantId, personaId }))];
     return rows.map((r) => this.toArtifact(r));
+  }
+
+  /** 数 since 起窗口内 auto-compiled（未验证）工件数——不确定性预算用，SQL COUNT 不拉全表。 */
+  countAutoCompiledSince(personaId: string, since: number): number {
+    return this.tx.queryOne(distillQueryCountAutoCompiled({ tenantId: this.tenantId, personaId, since }))?.count ?? 0;
   }
 
   listByStatus(personaId: string, status: ArtifactStatus): DistilledArtifact[] {
