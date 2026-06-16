@@ -6,10 +6,10 @@ import type { DecisionStyle } from '../types/personality-os.js';
 import type { Clock } from '../utils/clock.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import {
-  getDecisionStyle, setDecisionStyle,
+  getDecisionStyle, setDecisionStyle, decisionStyleGet,
   DEFAULT_DECISION_STYLE,
 } from '@chrono/kernel';
-import type { KernelClock, SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { KernelClock, SyncWriteUnitOfWork, DecisionStyleRow } from '@chrono/kernel';
 
 export { DEFAULT_DECISION_STYLE };
 
@@ -26,6 +26,16 @@ export class DecisionStyleStore {
   /** 获取决策风格（未设置时返回默认值） */
   get(): DecisionStyle {
     return getDecisionStyle(this.tx, this.tenantId);
+  }
+
+  /**
+   * 是否已写过决策风格 row（≠懒默认）。供「出生未演化」判定——比看 updatedAt 可靠：
+   * setDecisionStyle 用 clock.now() 写 updatedAt，时钟从 0 起时 updatedAt 仍是 0，用 updatedAt===0
+   * 判「未演化」会误判已扰动的 persona（Codex 复审）。直接看 row 存在性，与时钟无关。
+   */
+  exists(): boolean {
+    const row = this.tx.queryOne(decisionStyleGet(this.tenantId)) as DecisionStyleRow | null;
+    return row !== null && !!row.styleJson;
   }
 
   /** 设置决策风格（合并更新） */
