@@ -103,6 +103,39 @@ describe('per-persona 治理策略 API（ADR-0048 PR-B）', () => {
     assert.equal(res.json().data.effective.maxAutonomousReward, DEFAULT_EARNING_POLICY.maxAutonomousReward);
   });
 
+  it('乐观并发：If-Match 版本匹配 → 200；过期版本 → 409（防盲覆盖）', async () => {
+    /* 第 1 次 PUT 建立 override + 拿到版本（updatedAt）。 */
+    const first = await app.inject({ method: 'PUT', url: URL, payload: { maxAutonomousReward: 100 } });
+    const version1 = first.json().data.meta.updatedAt;
+    /* 用正确版本再 PUT → 200。 */
+    const ok = await app.inject({ method: 'PUT', url: URL, headers: { 'if-match': String(version1) }, payload: { maxAutonomousReward: 110 } });
+    assert.equal(ok.statusCode, 200, ok.body);
+    const version2 = ok.json().data.meta.updatedAt;
+    /* 用过期版本（version1）再 PUT → 409 冲突（别人已把它推进到 version2）。 */
+    const stale = await app.inject({ method: 'PUT', url: URL, headers: { 'if-match': String(version1) }, payload: { maxAutonomousReward: 120 } });
+    assert.equal(stale.statusCode, 409, stale.body);
+    assert.match(stale.json().error, /version mismatch/);
+    /* 冲突未落库：override 仍是 version2 时的值（110），不是冲突尝试的 120。 */
+    const get = await app.inject({ method: 'GET', url: URL });
+    assert.equal(get.json().data.override.maxAutonomousReward, 110, '冲突的 120 未落库');
+    /* 用最新版本（version2）→ 200（证明拿到最新后能继续保存）。 */
+    const retry = await app.inject({ method: 'PUT', url: URL, headers: { 'if-match': String(version2) }, payload: { maxAutonomousReward: 130 } });
+    assert.equal(retry.statusCode, 200, retry.body);
+  });
+
+  it('不带 If-Match → last-write-wins（向后兼容，无版本检查）', async () => {
+    await app.inject({ method: 'PUT', url: URL, payload: { maxAutonomousReward: 100 } });
+    /* 不带 If-Match 直接 PUT → 200 覆盖（旧客户端/无并发场景不受影响）。 */
+    const res = await app.inject({ method: 'PUT', url: URL, payload: { maxAutonomousReward: 200 } });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(res.json().data.override.maxAutonomousReward, 200);
+  });
+
+  it('If-Match 非数值 → 400', async () => {
+    const res = await app.inject({ method: 'PUT', url: URL, headers: { 'if-match': 'not-a-number' }, payload: { maxAutonomousReward: 100 } });
+    assert.equal(res.statusCode, 400, res.body);
+  });
+
   it('owner 门控：非 owner persona → 404（不泄露存在性，与 earning 同款）', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/persona-core/not_owned/governance/policy' });
     assert.equal(res.statusCode, 404, res.body);

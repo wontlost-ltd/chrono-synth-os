@@ -1572,6 +1572,7 @@
     "unverifiedGrowthBudgetPlaceholder": "Blank = global default; 0 = all to human review",
     "saved": "Governance policy saved",
     "resetDone": "Reset to default",
-    "unsaved": "Unsaved changes"
+    "unsaved": "Unsaved changes",
+    "conflict": "This policy was changed by another session — refresh and retry"
   }
 }

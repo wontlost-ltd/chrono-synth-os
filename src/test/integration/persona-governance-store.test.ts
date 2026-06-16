@@ -106,6 +106,27 @@ describe('per-persona 治理策略 store（ADR-0048）', () => {
     assert.deepEqual(resolvePersonaEarningPolicy(db, TENANT, PERSONA), DEFAULT_EARNING_POLICY);
   });
 
+  it('乐观并发：版本严格单调（同毫秒连写版本仍递增）+ CAS 冲突返回 false', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    /* 同 now=1000 连写两次——版本必须递增（否则同毫秒两写版本相同，乐观锁失效）。 */
+    assert.equal(store.upsert(PERSONA, { maxAutonomousReward: 10 }, 'o', 1000), true);
+    const v1 = store.getRow(PERSONA)!.updated_at;
+    assert.equal(store.upsert(PERSONA, { maxAutonomousReward: 20 }, 'o', 1000), true, '同毫秒第2写成功');
+    const v2 = store.getRow(PERSONA)!.updated_at;
+    assert.ok(v2 > v1, `版本严格递增 v2(${v2})>v1(${v1})`);
+    /* 用过期版本 v1 做 CAS → false（冲突）；用最新 v2 → true。 */
+    assert.equal(store.upsert(PERSONA, { maxAutonomousReward: 30 }, 'o', 1000, v1), false, '过期版本 → 冲突');
+    assert.equal(store.getRow(PERSONA)!.updated_at, v2, '冲突未写，版本不变');
+    assert.equal(store.upsert(PERSONA, { maxAutonomousReward: 30 }, 'o', 1000, v2), true, '最新版本 → 成功');
+  });
+
+  it('DB 级 CAS：对不存在的 row 带 expectedUpdatedAt → false（无行可改=冲突，原子）', () => {
+    const store = new PersonaGovernanceStore(db, TENANT);
+    /* p_new 无 row，但客户端以为存在版本 999 → 条件 UPDATE 影响 0 行 → false。 */
+    assert.equal(store.upsert('p_new', { maxAutonomousReward: 10 }, 'o', 1000, 999), false, '无行 → CAS false');
+    assert.equal(store.getOverride('p_new'), undefined, '未创建');
+  });
+
   it('persona 隔离：persona_1 的覆盖不影响 persona_2', () => {
     const store = new PersonaGovernanceStore(db, TENANT);
     store.upsert('persona_1', { maxAutonomousReward: 100 }, 'owner_1', 1000);

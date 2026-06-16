@@ -122,9 +122,11 @@ export default function PersonaGovernance() {
   const update = (patch: Partial<FormState>) => { setForm({ ...f, ...patch }); setSuccessMsg(null); };
 
   const onSave = () => {
-    setMutation.mutate(formToOverride(f), {
-      onSuccess: (res) => { setForm(overrideToForm(res.override)); setSuccessMsg(t('governance.saved')); },
-    });
+    /* 带上读到的版本（meta.updatedAt）做乐观并发——别人已改则 409，避免盲覆盖。 */
+    setMutation.mutate(
+      { override: formToOverride(f), ifMatch: data.meta?.updatedAt },
+      { onSuccess: (res) => { setForm(overrideToForm(res.override)); setSuccessMsg(t('governance.saved')); } },
+    );
   };
   const onReset = () => {
     resetMutation.mutate(undefined, {
@@ -132,7 +134,10 @@ export default function PersonaGovernance() {
     });
   };
 
-  const saveError = setMutation.error instanceof Error ? setMutation.error.message : null;
+  /* 409 = 版本冲突（别人已改），单独文案提示「重新读取后再保存」。 */
+  const saveErr = setMutation.error;
+  const isConflict = saveErr instanceof Error && 'status' in saveErr && (saveErr as { status?: number }).status === 409;
+  const saveError = saveErr instanceof Error ? (isConflict ? t('governance.conflict') : saveErr.message) : null;
 
   return (
     <div className="space-y-6 p-6">
@@ -165,7 +170,11 @@ export default function PersonaGovernance() {
       {successMsg && (
         <div className="rounded-lg bg-success/10 px-4 py-2 text-sm text-success" role="status">{successMsg}</div>
       )}
-      {saveError && <p role="alert" className="text-sm text-warning">{t('governance.saveError', { message: saveError })}</p>}
+      {saveError && (
+        <p role="alert" className="text-sm text-warning">
+          {isConflict ? saveError : t('governance.saveError', { message: saveError })}
+        </p>
+      )}
       {data.meta && (
         <p className="text-xs text-text-secondary">
           {t('governance.lastUpdated', { by: data.meta.updatedBy ?? '—', at: new Date(data.meta.updatedAt).toLocaleString() })}

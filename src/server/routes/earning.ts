@@ -169,7 +169,20 @@ export function registerEarningRoutes(app: FastifyInstance, services: EarningRou
           ErrorCode.VALIDATION_FORMAT,
         );
       }
-      store.upsert(personaId, clean, user.sub, Date.now());
+      /* 乐观并发：If-Match 头携带客户端读到的版本（= GET meta.updatedAt）。给定则做 CAS——
+       * 版本不符（别人已改）→ 409 冲突，防后写盲覆盖前写。不带头 = last-write-wins（向后兼容）。 */
+      const ifMatchRaw = request.headers['if-match'];
+      const expectedUpdatedAt = typeof ifMatchRaw === 'string' && ifMatchRaw.trim() !== '' ? Number(ifMatchRaw) : undefined;
+      if (expectedUpdatedAt !== undefined && !Number.isFinite(expectedUpdatedAt)) {
+        throw new ValidationError('If-Match 必须是数值版本（GET meta.updatedAt）', ErrorCode.VALIDATION_FORMAT);
+      }
+      const ok = store.upsert(personaId, clean, user.sub, Date.now(), expectedUpdatedAt);
+      if (!ok) {
+        return reply.status(409).send({
+          error: 'governance policy version mismatch',
+          message: '该策略已被其他会话修改，请重新读取后再保存（GET 拿最新版本）',
+        });
+      }
       const override = store.getOverride(personaId) ?? null;
       const effective = resolvePersonaEarningPolicy(database, request.tenantId, personaId);
       const row = store.getRow(personaId);
