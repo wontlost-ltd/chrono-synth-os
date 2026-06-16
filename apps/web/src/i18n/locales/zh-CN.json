@@ -1565,6 +1565,10 @@
       "operations": "运营",
       "general": "通用"
     },
-    "defaultRoute": "未设定的类别"
+    "defaultRoute": "未设定的类别",
+    "uncertaintyBudget": "不确定性预算",
+    "uncertaintyBudgetHint": "限制数字人在 24h 窗口内自动吸收多少「未验证成长」（LLM 老师蒸馏、自动编译进核心的人格变更）。达上限后，后续成长一律转人工审批。留空沿用全局默认。",
+    "unverifiedGrowthBudget": "窗口内自动吸收成长上限",
+    "unverifiedGrowthBudgetPlaceholder": "留空=沿用全局默认；0=全部转人工"
   }
 }

@@ -72,6 +72,12 @@ export interface DistillationServiceDeps {
   tenantId?: string;
   policy?: DistillationPolicy;
   /**
+   * per-persona 不确定性预算解析器（可选 DI）：给定 personaId 返回该 persona 的预算上限覆盖，
+   * 无覆盖返回 undefined（回退全局 policy 预算）。未注入 → 始终用全局 policy 预算（向后兼容）。
+   * 由 app 接线为查 governance store（避免 DistillationService 直依赖 governance store）。
+   */
+  budgetResolver?: (personaId: string) => number | undefined;
+  /**
    * 租户级全局 compile mutex（ADR-0047 多实例 gating item）。可选：未注入时为
    * 单进程同步语义（向后兼容）；注入后用 GLOBAL_LEASE_PERSONA_ID 串行化整个租户的
    * 编译（**非 per-persona**——restoreFromSnapshot 回滚的是 system-global 快照，
@@ -137,7 +143,8 @@ export class DistillationService {
    * 全表扫（Codex 复审性能债已还清）。默认预算极大 → 恒 false（向后兼容，不限，跳过查询）。
    */
   private unverifiedGrowthBudgetExceeded(personaId: string): boolean {
-    const budget = this.policy.unverifiedGrowthBudgetPerWindow;
+    /* per-persona 覆盖优先（owner 经 governance 配置）；无覆盖回退全局 policy 预算。 */
+    const budget = this.deps.budgetResolver?.(personaId) ?? this.policy.unverifiedGrowthBudgetPerWindow;
     if (budget >= Number.MAX_SAFE_INTEGER) return false; /* 不限：跳过统计开销 */
     const windowStart = this.deps.clock.now() - this.policy.unverifiedGrowthWindowMs;
     const count = this.deps.store.countAutoCompiledSince(personaId, windowStart);

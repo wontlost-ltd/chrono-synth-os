@@ -1565,6 +1565,10 @@
       "operations": "Operations",
       "general": "General"
     },
-    "defaultRoute": "Unset categories"
+    "defaultRoute": "Unset categories",
+    "uncertaintyBudget": "Uncertainty budget",
+    "uncertaintyBudgetHint": "Limit how much unverified growth (LLM-teacher-distilled persona changes auto-compiled into the core) the persona absorbs per 24h window. Beyond the cap, further growth goes to human review. Leave blank to use the global default.",
+    "unverifiedGrowthBudget": "Max auto-absorbed growth per window",
+    "unverifiedGrowthBudgetPlaceholder": "Blank = global default; 0 = all to human review"
   }
 }

@@ -85,6 +85,10 @@ describe('per-persona 治理策略 store（ADR-0048）', () => {
     assert.throws(() => sanitizeGovernanceOverride({ categoryRoutes: { bogus_category: 'autonomous' } }), /非法 category/);
     assert.throws(() => sanitizeGovernanceOverride({ aml: { maxPublisherRewardShare: 1.5 } }), /\[0,1\]/);
     assert.throws(() => sanitizeGovernanceOverride({ defaultCategoryRoute: 'nope' }), /autonomous/);
+    /* 不确定性预算：负数/小数非法，但 0 合法（完全禁止自动吸收）。 */
+    assert.throws(() => sanitizeGovernanceOverride({ unverifiedGrowthBudgetPerWindow: -1 }), /非负整数/);
+    assert.throws(() => sanitizeGovernanceOverride({ unverifiedGrowthBudgetPerWindow: 1.5 }), /非负整数/);
+    assert.equal(sanitizeGovernanceOverride({ unverifiedGrowthBudgetPerWindow: 0 }).unverifiedGrowthBudgetPerWindow, 0, '0 合法');
   });
 
   it('upsert 落库规范化 JSON（非用户原始）：getOverride 取回 sanitize 后的对象', () => {

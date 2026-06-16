@@ -17,6 +17,7 @@ import { LifeSimulationService } from './simulation/life-simulation-service.js';
 import { LifeSimulationStore } from './storage/life-simulation-store.js';
 import { type IDatabase, createMemoryDatabase } from './storage/index.js';
 import { runDslSqliteMigrations } from './storage/dsl-migrations-runner.js';
+import { resolvePersonaUnverifiedGrowthBudget } from './storage/persona-governance-store.js';
 import { registerCoreSelfExecutors } from './storage/executors/index.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
@@ -183,6 +184,9 @@ export class ChronoSynthOS {
       logger: this.logger,
       tenantId: this.tenantId,
       leaseStore: this.personaLeases,
+      /* per-persona 预算解析：查 governance store 的 unverifiedGrowthBudgetPerWindow 覆盖
+       * （无覆盖 → undefined → distillation 回退全局 policy 预算）。 */
+      budgetResolver: (personaId: string) => resolvePersonaUnverifiedGrowthBudget(this.db, this.tenantId, personaId),
     });
     /* ADR-0048：收益蒸馏器复用蒸馏门，把任务收益转为成长候选 */
     this.earningDistiller = new EarningOutcomeDistiller(this.distillation, this.logger);
