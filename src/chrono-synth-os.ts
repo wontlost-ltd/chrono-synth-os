@@ -31,7 +31,10 @@ import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
-import { DEFAULT_DISTILLATION_POLICY, type DistillationPolicy, perturbDecisionStyle } from '@chrono/kernel';
+import {
+  DEFAULT_DISTILLATION_POLICY, type DistillationPolicy,
+  perturbDecisionStyle, archetypeDecisionStyle, type PersonalityArchetype,
+} from '@chrono/kernel';
 import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
 import { PersonaLeaseStore } from './storage/persona-lease-store.js';
@@ -55,11 +58,13 @@ export interface ChronoSynthOSConfig {
   /** 蒸馏策略（含不确定性预算：窗口内 auto-compile 上限）；缺省用 DEFAULT_DISTILLATION_POLICY */
   distillationPolicy?: Partial<DistillationPolicy>;
   /**
-   * 性格出生随机化（③ 多样性出生机制）：给定时，**新 persona**（决策风格仍为默认、未演化）在 start()
-   * 时对 6 维 decision style 加可复现扰动，让同源 persona 出生即略不同。seed 一般用 personaId/tenantId
-   * （同 seed → 同扰动，可复现）；magnitude 0..1 扰动幅度。缺省 → 不扰动（向后兼容，旧行为不变）。
+   * 性格出生设定（②原型 + ③随机化）：**新 persona**（决策风格未写过）在 start() 时设定性格——
+   *   - archetype（可选，②）：出生取该原型的 6 维基准（explorer/guardian/analyst/doer）；不给则用默认。
+   *   - seed + magnitude（可选，③）：在基准上加可复现扰动，同原型也有个体差异；magnitude 缺省/0 不扰动。
+   * 二者叠加：archetype 给基准性格，扰动给个体差异。全缺省 → 默认风格（向后兼容，旧行为不变）。
+   * seed 一般用 personaId/tenantId（同 seed → 同结果，可复现）。
    */
-  personalitySeed?: { seed: string; magnitude: number };
+  personalitySeed?: { seed?: string; magnitude?: number; archetype?: PersonalityArchetype };
   /** 记忆模式提取配置 */
   patternExtractionConfig?: Partial<PatternExtractionConfig>;
   /** 人生模拟引擎配置 */
@@ -110,8 +115,8 @@ export class ChronoSynthOS {
   private readonly clock: Clock;
   private readonly logger: Logger;
   private readonly tenantId: string;
-  /** 性格出生随机化配置（③）；缺省不扰动。仅在 start() 用一次。 */
-  private readonly personalitySeed?: { seed: string; magnitude: number };
+  /** 性格出生设定（②原型 + ③随机化）；缺省不设。仅在 start() 用一次。 */
+  private readonly personalitySeed?: { seed?: string; magnitude?: number; archetype?: PersonalityArchetype };
   private stopped = false;
   private closed = false;
 
@@ -256,15 +261,21 @@ export class ChronoSynthOS {
    */
   private maybeSeedPersonality(): void {
     const cfg = this.personalitySeed;
-    if (!cfg || !(cfg.magnitude > 0)) return;
+    if (!cfg) return;
+    const hasArchetype = cfg.archetype !== undefined;
+    const hasPerturb = (cfg.magnitude ?? 0) > 0 && cfg.seed !== undefined;
+    if (!hasArchetype && !hasPerturb) return; /* 既无原型也无扰动 → 不设（向后兼容） */
     /* 守卫「出生未演化」用 **row 存在性** 而非 updatedAt===0——setDecisionStyle 用 clock.now() 写
-     * updatedAt，时钟从 0 起（TestClock 默认）时 updatedAt 仍 0，用 updatedAt 判会误判已扰动 persona 为
-     * 未演化而重启重复扰动→漂移（Codex 复审）。看 row 存在性与时钟无关，重启不漂移。 */
-    if (this.core.decisionStyle.exists()) return; /* 已写过（扰动/演化/恢复）→ 不扰动 */
-    const current = this.core.getState().decisionStyle;
-    const seeded = perturbDecisionStyle(current, cfg.seed, cfg.magnitude, this.clock.now());
+     * updatedAt，时钟从 0 起（TestClock 默认）时 updatedAt 仍 0，用 updatedAt 判会误判已设置 persona 为
+     * 未演化而重启重复设置→漂移（Codex 复审）。看 row 存在性与时钟无关，重启不漂移。 */
+    if (this.core.decisionStyle.exists()) return; /* 已写过（设置/演化/恢复）→ 不动 */
+    const now = this.clock.now();
+    /* ② 基准：有原型用原型的 6 维，否则用当前默认。 */
+    const base = hasArchetype ? archetypeDecisionStyle(cfg.archetype!, now) : this.core.getState().decisionStyle;
+    /* ③ 个体扰动：在基准上加可复现扰动（无扰动配置则直接用基准）。 */
+    const seeded = hasPerturb ? perturbDecisionStyle(base, cfg.seed!, cfg.magnitude!, now) : base;
     this.core.setDecisionStyle(seeded);
-    this.logger.info('System', `性格出生随机化：seed=${cfg.seed} magnitude=${cfg.magnitude}`);
+    this.logger.info('System', `性格出生设定：archetype=${cfg.archetype ?? '—'} seed=${cfg.seed ?? '—'} magnitude=${cfg.magnitude ?? 0}`);
   }
 
   /** 创建系统快照（事务读取确保一致性） */
