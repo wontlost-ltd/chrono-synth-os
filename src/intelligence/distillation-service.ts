@@ -132,18 +132,15 @@ export class DistillationService {
 
   /**
    * 不确定性预算判定：该 persona 在 unverifiedGrowthWindowMs 窗口内已 auto-compiled 的 distilled 工件数
-   * 是否达预算上限。统计「compiledAt 在窗口内 且 status=compiled」的工件——这些就是已落核的未验证成长。
-   * 纯读 + 确定性（窗口边界用 clock.now()）。默认预算极大 → 恒 false（向后兼容，不限）。
+   * 是否达预算上限。用 store SQL COUNT（status=compiled ∧ compiled_via='auto' ∧ compiled_at≥窗口起点）——
+   * 只数 auto（未验证）；人工审批(approved)已验证、历史(null)保守，均不计入。SQL COUNT 取代 listByPersona
+   * 全表扫（Codex 复审性能债已还清）。默认预算极大 → 恒 false（向后兼容，不限，跳过查询）。
    */
   private unverifiedGrowthBudgetExceeded(personaId: string): boolean {
     const budget = this.policy.unverifiedGrowthBudgetPerWindow;
     if (budget >= Number.MAX_SAFE_INTEGER) return false; /* 不限：跳过统计开销 */
     const windowStart = this.deps.clock.now() - this.policy.unverifiedGrowthWindowMs;
-    /* 只数 compiledVia='auto'（自动编译=未验证成长）；人工审批(compiledVia='approved')已验证不计入，
-     * 历史行(compiledVia=null)保守不计入（Codex 复审：预算只该限制未验证的自动吸收）。 */
-    const count = this.deps.store.listByPersona(personaId).filter(
-      (a) => a.status === 'compiled' && a.compiledVia === 'auto' && (a.compiledAt ?? 0) >= windowStart,
-    ).length;
+    const count = this.deps.store.countAutoCompiledSince(personaId, windowStart);
     if (count >= budget) {
       this.deps.logger.info(LAYER, `不确定性预算已用尽 persona=${personaId} (${count}≥${budget})，降级人工审批`);
       return true;

@@ -13,6 +13,7 @@ import {
   sanitizeGovernanceOverride,
   mergeEarningPolicy,
 } from '../../storage/persona-governance-store.js';
+import { DistilledArtifactStore } from '../../storage/distilled-artifact-store.js';
 import { DEFAULT_EARNING_POLICY } from '@chrono/kernel';
 import type { IDatabase } from '../../storage/index.js';
 
@@ -116,5 +117,37 @@ describe('per-persona 治理策略 store（ADR-0048）', () => {
     const merged = mergeEarningPolicy(DEFAULT_EARNING_POLICY, { maxAutonomousReward: 999 });
     assert.equal(merged.maxAutonomousReward, 999);
     assert.equal(DEFAULT_EARNING_POLICY.maxAutonomousReward, 50, 'base 未被改');
+  });
+});
+
+describe('countAutoCompiledSince（不确定性预算性能查询，①）', () => {
+  let db: IDatabase;
+
+  beforeEach(() => {
+    db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+  });
+  afterEach(() => db.close());
+
+  /** 直接造一条 compiled 工件行（绕过状态机，专测 count 查询的过滤口径）。 */
+  function insertCompiled(personaId: string, via: 'auto' | 'approved' | null, compiledAt: number | null): void {
+    db.prepare<void>(
+      `INSERT INTO distilled_artifacts (id, tenant_id, persona_id, kind, source, payload, confidence, evidence, status, reason, created_at, compiled_at, compiled_via)
+       VALUES (?, 'default', ?, 'value_shift', 'reflection', '{}', 0.9, '[]', 'compiled', 'x', 0, ?, ?)`,
+    ).run(`d_${Math.random().toString(36).slice(2)}`, personaId, compiledAt, via);
+  }
+
+  it('只数 compiled_via=auto 且 compiled_at>=since（approved/null/窗口外不计）', () => {
+    const dstore = new DistilledArtifactStore(db, 'default');
+    insertCompiled('p1', 'auto', 1000);     /* 计入 */
+    insertCompiled('p1', 'auto', 500);      /* 窗口外（<since） */
+    insertCompiled('p1', 'approved', 1000); /* 已验证不计 */
+    insertCompiled('p1', null, 1000);       /* 历史不计 */
+    insertCompiled('p2', 'auto', 1000);     /* 别的 persona 不计 */
+    /* 边界：compiled_at===since 计入（>= 含等号）。 */
+    assert.equal(dstore.countAutoCompiledSince('p1', 1000), 1, '只 1 条 auto 在窗口内');
+    assert.equal(dstore.countAutoCompiledSince('p1', 500), 2, '放宽窗口起点到 500 → 2 条');
+    assert.equal(dstore.countAutoCompiledSince('p2', 1000), 1, 'persona 隔离');
+    assert.equal(dstore.countAutoCompiledSince('p3', 1000), 0, '无记录 → 0');
   });
 });

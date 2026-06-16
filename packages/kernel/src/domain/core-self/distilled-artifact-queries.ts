@@ -10,6 +10,8 @@ import type { Query, Command } from '../../ports/query.js';
 export const DISTILL_QUERY_BY_ID = 'distilledArtifact.byId' as const;
 export const DISTILL_QUERY_BY_PERSONA = 'distilledArtifact.byPersona' as const;
 export const DISTILL_QUERY_BY_STATUS = 'distilledArtifact.byStatus' as const;
+/** 数窗口内 auto-compiled（未验证）工件数——不确定性预算用，避免 listByPersona 全量扫（性能债）。 */
+export const DISTILL_QUERY_COUNT_AUTO_COMPILED = 'distilledArtifact.countAutoCompiledSince' as const;
 
 /* ── Command Kinds ── */
 
@@ -84,6 +86,14 @@ export interface DistillByStatusParams {
   status: string;
 }
 
+/** 数窗口内 auto-compiled 工件参数：status=compiled ∧ compiled_via='auto' ∧ compiled_at ≥ since。 */
+export interface DistillCountAutoCompiledParams {
+  tenantId: string;
+  personaId: string;
+  /** 窗口起点（epoch ms）；compiled_at ≥ since 才计入。 */
+  since: number;
+}
+
 /* ── Query 工厂 ── */
 
 export function distillQueryById(params: DistillByIdScopedParams): Query<DistilledArtifactRow | null, DistillByIdScopedParams> {
@@ -96,6 +106,11 @@ export function distillQueryByPersona(params: DistillByPersonaParams): Query<Dis
 
 export function distillQueryByStatus(params: DistillByStatusParams): Query<DistilledArtifactRow, DistillByStatusParams> {
   return { kind: DISTILL_QUERY_BY_STATUS, params };
+}
+
+/** 数窗口内 auto-compiled（未验证）工件数（返回单个 count）。 */
+export function distillQueryCountAutoCompiled(params: DistillCountAutoCompiledParams): Query<{ count: number }, DistillCountAutoCompiledParams> {
+  return { kind: DISTILL_QUERY_COUNT_AUTO_COMPILED, params };
 }
 
 /* ── Command 工厂 ── */
