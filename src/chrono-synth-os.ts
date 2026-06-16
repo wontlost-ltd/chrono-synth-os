@@ -31,7 +31,7 @@ import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
-import { DEFAULT_DISTILLATION_POLICY, type DistillationPolicy } from '@chrono/kernel';
+import { DEFAULT_DISTILLATION_POLICY, type DistillationPolicy, perturbDecisionStyle } from '@chrono/kernel';
 import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
 import { PersonaLeaseStore } from './storage/persona-lease-store.js';
@@ -54,6 +54,12 @@ export interface ChronoSynthOSConfig {
   updateGateConfig?: Partial<UpdateGateConfig>;
   /** 蒸馏策略（含不确定性预算：窗口内 auto-compile 上限）；缺省用 DEFAULT_DISTILLATION_POLICY */
   distillationPolicy?: Partial<DistillationPolicy>;
+  /**
+   * 性格出生随机化（③ 多样性出生机制）：给定时，**新 persona**（决策风格仍为默认、未演化）在 start()
+   * 时对 6 维 decision style 加可复现扰动，让同源 persona 出生即略不同。seed 一般用 personaId/tenantId
+   * （同 seed → 同扰动，可复现）；magnitude 0..1 扰动幅度。缺省 → 不扰动（向后兼容，旧行为不变）。
+   */
+  personalitySeed?: { seed: string; magnitude: number };
   /** 记忆模式提取配置 */
   patternExtractionConfig?: Partial<PatternExtractionConfig>;
   /** 人生模拟引擎配置 */
@@ -104,10 +110,13 @@ export class ChronoSynthOS {
   private readonly clock: Clock;
   private readonly logger: Logger;
   private readonly tenantId: string;
+  /** 性格出生随机化配置（③）；缺省不扰动。仅在 start() 用一次。 */
+  private readonly personalitySeed?: { seed: string; magnitude: number };
   private stopped = false;
   private closed = false;
 
   constructor(config: ChronoSynthOSConfig = {}) {
+    this.personalitySeed = config.personalitySeed;
     this.db = config.db ?? createMemoryDatabase();
     this.clock = config.clock ?? realClock;
     this.logger = config.logger ?? new ConsoleLogger('info');
@@ -235,8 +244,27 @@ export class ChronoSynthOS {
   /** 启动系统 */
   start(): void {
     this.auditChainAnchors?.start();
+    this.maybeSeedPersonality();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
+  }
+
+  /**
+   * 性格出生随机化（③）：仅当配了 personalitySeed **且**决策风格 row 尚未写过（懒默认、全新 persona、
+   * 未演化/未恢复快照）时，对 6 维 decision style 加可复现扰动。
+   * 已写过 row（扰动/演化/恢复）的 persona 不再扰动，保证重启不漂移。
+   */
+  private maybeSeedPersonality(): void {
+    const cfg = this.personalitySeed;
+    if (!cfg || !(cfg.magnitude > 0)) return;
+    /* 守卫「出生未演化」用 **row 存在性** 而非 updatedAt===0——setDecisionStyle 用 clock.now() 写
+     * updatedAt，时钟从 0 起（TestClock 默认）时 updatedAt 仍 0，用 updatedAt 判会误判已扰动 persona 为
+     * 未演化而重启重复扰动→漂移（Codex 复审）。看 row 存在性与时钟无关，重启不漂移。 */
+    if (this.core.decisionStyle.exists()) return; /* 已写过（扰动/演化/恢复）→ 不扰动 */
+    const current = this.core.getState().decisionStyle;
+    const seeded = perturbDecisionStyle(current, cfg.seed, cfg.magnitude, this.clock.now());
+    this.core.setDecisionStyle(seeded);
+    this.logger.info('System', `性格出生随机化：seed=${cfg.seed} magnitude=${cfg.magnitude}`);
   }
 
   /** 创建系统快照（事务读取确保一致性） */

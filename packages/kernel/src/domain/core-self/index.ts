@@ -12,6 +12,7 @@ export * from './decision-style-types.js';
 export * from './decision-style-queries.js';
 export * from './decision-style-service.js';
 export * from './personality-diversity.js';
+export * from './decision-style-perturbation.js';
 export * from './cognitive-model-types.js';
 export * from './cognitive-model-queries.js';
 export * from './cognitive-model-service.js';
