@@ -14,9 +14,13 @@ import type { PersonaEarningService } from '../../intelligence/persona-earning-s
 import type { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import type { IDatabase } from '../../storage/database.js';
 import type { JwtPayload } from '../../types/auth.js';
-import { AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index.js';
+import { AuthorizationError, NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { EarningCycleBodySchema } from '../schemas/api-schemas.js';
-import { resolvePersonaEarningPolicy } from '../../storage/persona-governance-store.js';
+import {
+  resolvePersonaEarningPolicy,
+  PersonaGovernanceStore,
+  sanitizeGovernanceOverride,
+} from '../../storage/persona-governance-store.js';
 
 interface EarningRouteServices {
   earning: PersonaEarningService;
@@ -42,6 +46,11 @@ function assertOwner(personaCore: PersonaCoreService, tenantId: string, ownerUse
 function perPersonaKey(request: FastifyRequest): string {
   const params = request.params as { personaId?: string };
   return `${request.tenantId ?? 'default'}:earn:${params.personaId ?? 'unknown'}`;
+}
+
+function perPersonaGovKey(request: FastifyRequest): string {
+  const params = request.params as { personaId?: string };
+  return `${request.tenantId ?? 'default'}:gov:${params.personaId ?? 'unknown'}`;
 }
 
 export function registerEarningRoutes(app: FastifyInstance, services: EarningRouteServices): void {
@@ -109,6 +118,74 @@ export function registerEarningRoutes(app: FastifyInstance, services: EarningRou
           withdrawalPolicy: 'human_confirmation_required',
         },
       });
+    },
+  );
+
+  /* ── per-persona 治理策略配置（ADR-0048 治理可配化）。owner-only，与 earning 同款鉴权。 ── */
+
+  function requireDb(): IDatabase {
+    if (!db) throw new ValidationError('治理策略配置不可用（未注入 db）', ErrorCode.VALIDATION_FORMAT);
+    return db;
+  }
+
+  /* GET：返回该 persona 的「有效策略」+「owner 覆盖」。无覆盖 → override=null，effective=DEFAULT。 */
+  app.get<{ Params: { personaId: string } }>(
+    '/api/v1/persona-core/:personaId/governance/policy',
+    async (request, reply) => {
+      const user = requireJwtUser(request);
+      const { personaId } = request.params;
+      assertOwner(personaCore, request.tenantId, user.sub, personaId);
+      const database = requireDb();
+      const store = new PersonaGovernanceStore(database, request.tenantId);
+      const override = store.getOverride(personaId) ?? null;
+      const effective = resolvePersonaEarningPolicy(database, request.tenantId, personaId);
+      /* meta：供控制台显示「谁何时改的」（无覆盖时 null）。 */
+      const row = store.getRow(personaId);
+      const meta = row ? { updatedBy: row.updated_by, updatedAt: row.updated_at } : null;
+      return reply.status(200).send({ data: { override, effective, meta } });
+    },
+  );
+
+  /* PUT：设置该 persona 的策略覆盖（sanitize 白名单校验；非法 → 400 ValidationError）。
+   * 整体替换语义（非 patch）——传入即为完整覆盖对象；categoryRoutes 是完整路由表。
+   * 限流：写端点，per-persona 温和限流防控制台误连点/脚本风暴（owner-only 影响面已小，但写就限）。 */
+  app.put<{ Params: { personaId: string } }>(
+    '/api/v1/persona-core/:personaId/governance/policy',
+    { config: { rateLimit: { max: 20, timeWindow: '1 minute', keyGenerator: perPersonaGovKey } } },
+    async (request, reply) => {
+      const user = requireJwtUser(request);
+      const { personaId } = request.params;
+      assertOwner(personaCore, request.tenantId, user.sub, personaId);
+      const database = requireDb();
+      const store = new PersonaGovernanceStore(database, request.tenantId);
+      /* 先在 route 层 sanitize——只把**校验错**转 400（窄 catch）。DB upsert 放在 catch 外，
+       * 基础设施错误（连接/约束/执行器）保持 500，不被误报成「400 策略非法」（Codex 复审 Medium）。 */
+      let clean;
+      try {
+        clean = sanitizeGovernanceOverride(request.body ?? {});
+      } catch (err) {
+        throw new ValidationError(
+          `治理策略非法: ${err instanceof Error ? err.message : String(err)}`,
+          ErrorCode.VALIDATION_FORMAT,
+        );
+      }
+      store.upsert(personaId, clean, user.sub, Date.now());
+      const override = store.getOverride(personaId) ?? null;
+      const effective = resolvePersonaEarningPolicy(database, request.tenantId, personaId);
+      return reply.status(200).send({ data: { override, effective } });
+    },
+  );
+
+  /* DELETE：清除该 persona 的策略覆盖（恢复 DEFAULT）。 */
+  app.delete<{ Params: { personaId: string } }>(
+    '/api/v1/persona-core/:personaId/governance/policy',
+    async (request, reply) => {
+      const user = requireJwtUser(request);
+      const { personaId } = request.params;
+      assertOwner(personaCore, request.tenantId, user.sub, personaId);
+      const database = requireDb();
+      new PersonaGovernanceStore(database, request.tenantId).delete(personaId);
+      return reply.status(200).send({ data: { override: null, effective: resolvePersonaEarningPolicy(database, request.tenantId, personaId) } });
     },
   );
 }
