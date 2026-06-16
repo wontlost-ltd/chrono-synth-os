@@ -235,7 +235,9 @@ describe('provider 输出畸形 corpus：不崩、不写脏数据进内核（WP-
   it('对照：合法 value_shift 候选确实能编译（证明门不是「全拒」的死门）', () => {
     const seeded = os.core.addValue('探索', 0.5);
     const result = os.distillation.ingest(PERSONA, {
-      kind: 'value_shift', source: 'conversation', confidence: 0.85,
+      /* conversation=semi 信任层：value_shift 门槛 0.8×1.1=0.88，故 confidence 取 0.9 过门
+       * （信任分级后 conversation 来源比 reflection 略严，这是 ① 的预期行为）。 */
+      kind: 'value_shift', source: 'conversation', confidence: 0.9,
       evidence: goodEvidence,
       payload: { valueId: seeded.id, currentWeight: 0.5, suggestedWeight: 0.55, delta: 0.05, patternAgrees: true },
     });

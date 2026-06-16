@@ -31,6 +31,8 @@ export interface DistilledArtifactRow {
   readonly reason: string | null;
   readonly created_at: number;
   readonly compiled_at: number | null;
+  /** 编译路径（compiled 后写入）：'auto'=自动编译（未验证）/'approved'=人工审批（已验证）/null=未编译或历史行 */
+  readonly compiled_via: string | null;
 }
 
 /* ── 参数类型 ── */
@@ -60,6 +62,8 @@ export interface DistillSetStatusParams {
   reason: string | null;
   /** 进入 compiled 时写入；其余传 null */
   compiledAt: number | null;
+  /** 进入 compiled 时写入编译路径（'auto'/'approved'）；其余传 null（不确定性预算据此只数 auto） */
+  compiledVia?: string | null;
 }
 
 /** 按 id + tenant + persona 精确定位单件工件（对象级授权） */

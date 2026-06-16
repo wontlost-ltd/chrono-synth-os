@@ -30,6 +30,7 @@ import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
+import { DEFAULT_DISTILLATION_POLICY, type DistillationPolicy } from '@chrono/kernel';
 import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
 import { PersonaLeaseStore } from './storage/persona-lease-store.js';
@@ -50,6 +51,8 @@ export interface ChronoSynthOSConfig {
   cognitionConfig?: Partial<MemoryCognitionConfig>;
   /** 更新闸门配置 */
   updateGateConfig?: Partial<UpdateGateConfig>;
+  /** 蒸馏策略（含不确定性预算：窗口内 auto-compile 上限）；缺省用 DEFAULT_DISTILLATION_POLICY */
+  distillationPolicy?: Partial<DistillationPolicy>;
   /** 记忆模式提取配置 */
   patternExtractionConfig?: Partial<PatternExtractionConfig>;
   /** 人生模拟引擎配置 */
@@ -168,6 +171,9 @@ export class ChronoSynthOS {
     this.distillation = new DistillationService({
       store: artifactStore,
       compiler: artifactCompiler,
+      policy: config.distillationPolicy
+        ? { ...DEFAULT_DISTILLATION_POLICY, ...config.distillationPolicy }
+        : undefined,
       snapshotGuard: {
         snapshot: () => this.createSnapshot('manual').id,
         rollback: (snapshotId: string) => this.restoreFromSnapshot(snapshotId),

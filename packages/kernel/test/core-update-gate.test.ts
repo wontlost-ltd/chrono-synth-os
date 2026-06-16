@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   decideCoreUpdateGate,
+  trustTierOf,
   DEFAULT_CORE_UPDATE_GATE_POLICY,
 } from '../src/domain/core-self/core-update-gate.js';
 import { requiresConfirmation, DEFAULT_UPDATE_GATE_CONFIG } from '../src/domain/persona/update-gate-logic.js';
@@ -44,6 +45,92 @@ describe('decideCoreUpdateGate (ADR-0047 统一门控)', () => {
       for (const layer of ['L2', 'L3', 'Narrative', 'Rule', 'Template'] as const) {
         assert.equal(decideCoreUpdateGate({ layer, sourceClass: 'distilled', confidence: 0.99 }).decision, 'confirm');
       }
+    });
+  });
+
+  describe('① 来源信任分级（provenance → trust tier → confidence 门槛乘数）', () => {
+    it('trustTierOf 映射：reflection/onboarding=internal，conversation/knowledge_import=semi，perception=external', () => {
+      assert.equal(trustTierOf('reflection'), 'internal');
+      assert.equal(trustTierOf('onboarding'), 'internal');
+      assert.equal(trustTierOf('conversation'), 'semi');
+      assert.equal(trustTierOf('knowledge_import'), 'semi');
+      assert.equal(trustTierOf('perception'), 'external');
+    });
+
+    it('向后兼容：不给 provenance = tier internal（乘数 1.0），与旧二元行为逐字等价', () => {
+      /* conf 0.8 在默认阈值 0.8 边界：不给 provenance 应仍 auto（internal 乘数 1.0，门槛 0.8）。 */
+      const r = decideCoreUpdateGate({ layer: 'L1', sourceClass: 'distilled', delta: 0.05, confidence: 0.8, patternAgrees: true });
+      assert.equal(r.decision, 'auto');
+    });
+
+    it('external(perception) 门槛被抬高：同 conf 0.8 在 reflection 自动、在 perception 需确认', () => {
+      const base = { layer: 'L1' as const, sourceClass: 'distilled' as const, delta: 0.05, confidence: 0.8, patternAgrees: true };
+      /* reflection(internal 1.0)：门槛 0.8，conf 0.8 → auto。 */
+      assert.equal(decideCoreUpdateGate({ ...base, provenance: 'reflection' }).decision, 'auto');
+      /* perception(external 1.25)：门槛 0.8×1.25=1.0，conf 0.8 < 1.0 → confirm（外部输入更谨慎）。 */
+      assert.equal(decideCoreUpdateGate({ ...base, provenance: 'perception' }).decision, 'confirm');
+    });
+
+    it('perception 高置信仍可自动（门槛抬高但非禁止）：conf 1.0 过 external 门', () => {
+      /* memory_edge external 门槛 0.75×1.25=0.9375；conf 1.0 ≥ 0.9375 → auto。 */
+      const r = decideCoreUpdateGate({
+        layer: 'MemoryGraph', sourceClass: 'distilled', confidence: 1.0, evidenceCount: 2, provenance: 'perception',
+      });
+      assert.equal(r.decision, 'auto');
+      assert.match(r.reason, /external/);
+    });
+
+    it('semi(conversation) 介于两者之间：门槛 0.8×1.1=0.88，conf 0.85 需确认、0.9 自动', () => {
+      const base = { layer: 'L1' as const, sourceClass: 'distilled' as const, delta: 0.05, patternAgrees: true, provenance: 'conversation' as const };
+      assert.equal(decideCoreUpdateGate({ ...base, confidence: 0.85 }).decision, 'confirm');
+      assert.equal(decideCoreUpdateGate({ ...base, confidence: 0.9 }).decision, 'auto');
+    });
+
+    it('信任分级只影响 distilled：deterministic 来源给了 provenance 也不受乘数影响', () => {
+      /* deterministic L1 不看 confidence/provenance，只看 delta。 */
+      const r = decideCoreUpdateGate({ layer: 'L1', sourceClass: 'deterministic', delta: 0.1, confidence: 0.1, provenance: 'perception' });
+      assert.equal(r.decision, 'auto');
+    });
+  });
+
+  describe('② 不确定性预算（窗口内未验证成长累计达上限 → 降级 confirm）', () => {
+    const budgeted = { ...DEFAULT_CORE_UPDATE_GATE_POLICY, unverifiedGrowthBudgetPerWindow: 3 };
+    /* 一条本会 auto 的 distilled value_shift。 */
+    const passingInput = { layer: 'L1' as const, sourceClass: 'distilled' as const, delta: 0.05, confidence: 0.85, patternAgrees: true };
+
+    it('向后兼容：不传 unverifiedGrowthInWindow = 不计预算（默认预算极大也不限）', () => {
+      assert.equal(decideCoreUpdateGate(passingInput).decision, 'auto');
+      assert.equal(decideCoreUpdateGate({ ...passingInput, unverifiedGrowthInWindow: 999 }).decision, 'auto', '默认 policy 预算 MAX_SAFE_INTEGER');
+    });
+
+    it('窗口未用尽（< 预算）→ 仍 auto', () => {
+      assert.equal(decideCoreUpdateGate({ ...passingInput, unverifiedGrowthInWindow: 2 }, budgeted).decision, 'auto');
+    });
+
+    it('窗口达预算上限（>= 预算）→ 本条即使过门也降级 confirm', () => {
+      const r = decideCoreUpdateGate({ ...passingInput, unverifiedGrowthInWindow: 3 }, budgeted);
+      assert.equal(r.decision, 'confirm');
+      assert.match(r.reason, /budget reached/);
+    });
+
+    it('预算只降级 auto，不影响本就 confirm 的（confirm 已需人工，不必再降级）', () => {
+      /* 一条本就 confirm 的（conf 0.5 不过门）+ 窗口超预算 → 仍 confirm，但 reason 是门控失败而非预算。 */
+      const r = decideCoreUpdateGate(
+        { layer: 'L1', sourceClass: 'distilled', delta: 0.05, confidence: 0.5, patternAgrees: true, unverifiedGrowthInWindow: 99 },
+        budgeted,
+      );
+      assert.equal(r.decision, 'confirm');
+      assert.match(r.reason, /fails one of/, '是门控失败原因，不是预算降级');
+    });
+
+    it('预算与信任分级叠加：external 门槛抬高 + 窗口超预算，两道都生效', () => {
+      /* perception conf 0.95 过 external 门（0.9375）但窗口超预算 → 仍降级 confirm。 */
+      const r = decideCoreUpdateGate(
+        { layer: 'MemoryGraph', sourceClass: 'distilled', confidence: 0.95, evidenceCount: 2, provenance: 'perception', unverifiedGrowthInWindow: 3 },
+        budgeted,
+      );
+      assert.equal(r.decision, 'confirm');
+      assert.match(r.reason, /budget reached/);
     });
   });
 

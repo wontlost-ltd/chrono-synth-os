@@ -984,6 +984,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_persona ON distilled_artifacts(tenant_id, persona_id)",
       "CREATE INDEX IF NOT EXISTS idx_distilled_artifacts_status ON distilled_artifacts(tenant_id, persona_id, status)"
     ]
+  },
+  {
+    "version": "v089",
+    "description": "Growth governance: distilled_artifacts.compiled_via (auto vs approved) for unverified-growth budget",
+    "sql": [
+      "ALTER TABLE distilled_artifacts ADD COLUMN compiled_via TEXT"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1944,6 +1951,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "ALTER TABLE distilled_artifacts DROP CONSTRAINT IF EXISTS distilled_artifacts_source_check",
       "ALTER TABLE distilled_artifacts ADD CONSTRAINT distilled_artifacts_source_check CHECK (source IN ('reflection', 'conversation', 'knowledge_import', 'onboarding', 'perception'))"
+    ]
+  },
+  {
+    "version": "v091",
+    "description": "Growth governance: distilled_artifacts.compiled_via (auto vs approved) for unverified-growth budget",
+    "sql": [
+      "ALTER TABLE distilled_artifacts ADD COLUMN compiled_via TEXT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

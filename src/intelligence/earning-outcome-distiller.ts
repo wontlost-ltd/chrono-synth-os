@@ -77,7 +77,10 @@ export class EarningOutcomeDistiller {
       const actualDelta = round(suggestedWeight - currentWeight, 4);
       const r = this.distillation.ingest(input.personaId, {
         kind: 'value_shift',
-        source: 'conversation',
+        /* source=reflection：收益蒸馏是 persona 对**自己任务结果**的确定性反思（internal 信任层），
+         * 不是外部/交互输入。改前误标 conversation（信任分级前 source 仅作血缘，未当信任信号）；
+         * 信任分级后必须准确——internal 层 ×1.0 不抬门槛，保住自进化闭环且血缘更真。 */
+        source: 'reflection',
         payload: { valueId, currentWeight, suggestedWeight, delta: actualDelta, patternAgrees },
         confidence,
         evidence,
@@ -91,7 +94,8 @@ export class EarningOutcomeDistiller {
       const { sourceId, targetId, relation } = input.linkMemory;
       const r = this.distillation.ingest(input.personaId, {
         kind: 'memory_edge',
-        source: 'conversation',
+        /* 同上：收益学习是 internal 反思（见 value_shift 分支注释），source=reflection。 */
+        source: 'reflection',
         payload: { sourceId, targetId, relation, strength: clamp01(quality) },
         confidence,
         evidence,

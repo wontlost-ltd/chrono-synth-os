@@ -29,6 +29,7 @@ import {
   type ArtifactSource,
   type ArtifactEvidence,
   type ArtifactStatus,
+  type CompiledVia,
 } from '@chrono/kernel';
 
 const LAYER = 'DistillationService';
@@ -111,7 +112,10 @@ export class DistillationService {
 
     this.deps.store.insert(personaId, artifact);
 
-    if (canAutoCompile(artifact, this.policy)) {
+    /* 不确定性预算（ADR-0047 成长治理）：本条满足自动编译门，但若该 persona 在窗口内已 auto-compiled
+     * 的未验证(distilled)工件数达预算上限，则**降级人工审批**——防止短期吸收过多未验证成长侵蚀核心
+     * 人格。预算检查在 canAutoCompile 之后（先确认本条够格，再看预算），降级即留 candidate 待审批。 */
+    if (canAutoCompile(artifact, this.policy) && !this.unverifiedGrowthBudgetExceeded(personaId)) {
       const compiled = this.compileAndPersist(personaId, artifact);
       if (compiled === 'lease_busy') {
         /* 全局 compile 锁被占：工件已 approved 落库，留待重试编译，按 pending 返回（非失败） */
@@ -124,6 +128,27 @@ export class DistillationService {
 
     this.deps.logger.info(LAYER, `候选入库待审批: ${artifact.id} [${artifact.kind}]`);
     return { status: 'pending', artifact };
+  }
+
+  /**
+   * 不确定性预算判定：该 persona 在 unverifiedGrowthWindowMs 窗口内已 auto-compiled 的 distilled 工件数
+   * 是否达预算上限。统计「compiledAt 在窗口内 且 status=compiled」的工件——这些就是已落核的未验证成长。
+   * 纯读 + 确定性（窗口边界用 clock.now()）。默认预算极大 → 恒 false（向后兼容，不限）。
+   */
+  private unverifiedGrowthBudgetExceeded(personaId: string): boolean {
+    const budget = this.policy.unverifiedGrowthBudgetPerWindow;
+    if (budget >= Number.MAX_SAFE_INTEGER) return false; /* 不限：跳过统计开销 */
+    const windowStart = this.deps.clock.now() - this.policy.unverifiedGrowthWindowMs;
+    /* 只数 compiledVia='auto'（自动编译=未验证成长）；人工审批(compiledVia='approved')已验证不计入，
+     * 历史行(compiledVia=null)保守不计入（Codex 复审：预算只该限制未验证的自动吸收）。 */
+    const count = this.deps.store.listByPersona(personaId).filter(
+      (a) => a.status === 'compiled' && a.compiledVia === 'auto' && (a.compiledAt ?? 0) >= windowStart,
+    ).length;
+    if (count >= budget) {
+      this.deps.logger.info(LAYER, `不确定性预算已用尽 persona=${personaId} (${count}≥${budget})，降级人工审批`);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -145,7 +170,8 @@ export class DistillationService {
       if (retryProblems.length > 0) {
         return { ok: false, reason: `invalid artifact: ${retryProblems.join('; ')}` };
       }
-      return this.finishCompile(personaId, this.compileApproved(personaId, artifact));
+      /* via='approved'：人工审批路径——已验证，不进未确定性预算统计。 */
+      return this.finishCompile(personaId, this.compileApproved(personaId, artifact, 'approved'));
     }
 
     if (artifact.status !== 'candidate') {
@@ -159,7 +185,8 @@ export class DistillationService {
     if (!this.deps.store.setStatus(personaId, artifactId, 'candidate', 'approved', 'manually approved', null)) {
       return { ok: false, reason: 'status changed concurrently' };
     }
-    return this.finishCompile(personaId, this.compileApproved(personaId, { ...artifact, status: 'approved' }));
+    /* via='approved'：人工审批路径——已验证，不进未确定性预算统计。 */
+    return this.finishCompile(personaId, this.compileApproved(personaId, { ...artifact, status: 'approved' }, 'approved'));
   }
 
   /** 把 compileApproved 的三态结果（编译件 / lease_busy / undefined）映射为 ReviewResult。 */
@@ -202,7 +229,8 @@ export class DistillationService {
       this.deps.logger.warn(LAYER, `自动编译前置状态推进失败: ${artifact.id}`);
       return undefined;
     }
-    return this.compileApproved(personaId, { ...artifact, status: 'approved' });
+    /* via='auto'：自动编译路径——记为未验证成长，进不确定性预算统计。 */
+    return this.compileApproved(personaId, { ...artifact, status: 'approved' }, 'auto');
   }
 
   /**
@@ -215,9 +243,9 @@ export class DistillationService {
    * 锁覆盖快照→编译→状态推进→补偿全程。未注入 leaseStore = 单进程同步语义。
    * 拿不到锁说明另一实例/另一 persona 正在编译，返回 'lease_busy'（工件留 approved 待重试）。
    */
-  private compileApproved(personaId: string, artifact: DistilledArtifact): DistilledArtifact | 'lease_busy' | undefined {
+  private compileApproved(personaId: string, artifact: DistilledArtifact, via: CompiledVia): DistilledArtifact | 'lease_busy' | undefined {
     if (!this.deps.leaseStore) {
-      return this.compileApprovedLocked(personaId, artifact);
+      return this.compileApprovedLocked(personaId, artifact, via);
     }
     const handle: LeaseHandle | null = this.deps.leaseStore.acquire(
       GLOBAL_LEASE_PERSONA_ID, 'compile', this.deps.clock.now(), COMPILE_LEASE_TTL_MS,
@@ -227,14 +255,14 @@ export class DistillationService {
       return 'lease_busy';
     }
     try {
-      return this.compileApprovedLocked(personaId, artifact);
+      return this.compileApprovedLocked(personaId, artifact, via);
     } finally {
       this.deps.leaseStore.release(handle);
     }
   }
 
-  /** 编译主体：持有 compile 锁（如启用）期间执行。 */
-  private compileApprovedLocked(personaId: string, artifact: DistilledArtifact): DistilledArtifact | undefined {
+  /** 编译主体：持有 compile 锁（如启用）期间执行。via 标记编译路径（auto/approved），随状态推进落库。 */
+  private compileApprovedLocked(personaId: string, artifact: DistilledArtifact, via: CompiledVia): DistilledArtifact | undefined {
     const snapshotId = this.deps.snapshotGuard.snapshot();
     const outcome = this.deps.compiler.compile(personaId, artifact);
 
@@ -250,7 +278,7 @@ export class DistillationService {
     const compiledAt = this.deps.clock.now();
     let advanced = false;
     try {
-      advanced = this.deps.store.setStatus(personaId, artifact.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt);
+      advanced = this.deps.store.setStatus(personaId, artifact.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt, via);
     } catch (err) {
       this.compensateAfterCompile(personaId, artifact.id, snapshotId, `status advance threw: ${err instanceof Error ? err.message : String(err)}`);
       return undefined;

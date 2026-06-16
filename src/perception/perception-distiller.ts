@@ -14,8 +14,10 @@
  *     （value_shift 因 patternAgrees=false 永不满足自动门；narrative_patch 门控默认 pending）。
  *   - 绝不调 CoreRhythmLayer 的身份写方法（updateValueParams/updateNarrative/setDecisionStyle 等）。
  *   - **会自动写的只有事实层**：事实型观察 append 为 memory node，相邻事实间 memory_edge 候选满足门
- *     （confidence≥0.75∧evidence≥2）会自动编译为记忆边——但**只链接刚写入的两条真实记忆**，不创造
- *     身份、不改 value/narrative，与 ADR-0047 既有 memory_edge 自动编译同属「仅链接真实记忆，安全」。
+ *     会自动编译为记忆边——但**只链接刚写入的两条真实记忆**，不创造身份、不改 value/narrative，与
+ *     ADR-0047 既有 memory_edge 自动编译同属「仅链接真实记忆，安全」。注意 perception 是 external 信任层
+ *     （成长门控信任分级），memory_edge 自动门实际是 confidence≥0.75×1.25=0.9375∧evidence≥2——外部
+ *     感知来源比 reflection 更严，与「不可信外部输入最谨慎」一致。
  *   - 蒸馏候选 source 用独立的 'perception'（v088 已扩 distilled_artifacts.source CHECK），与
  *     'knowledge_import'（读文档/导入知识库）区分血缘——溯源/审计时能分清一条候选源自「听了段
  *     经历」还是「读了篇文档」。感知 provenance 也体现在 memory content 第一人称「我听到/我看到」+

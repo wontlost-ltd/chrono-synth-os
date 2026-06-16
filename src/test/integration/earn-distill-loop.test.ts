@@ -91,12 +91,13 @@ describe('earn→distill 闭环（WP-0）', () => {
     });
     assert.equal(cRes.statusCode, 200, cRes.body);
 
-    /* 4. 精确闭环断言（Codex WP-0 Major）：产生了一个 value_shift 工件，source=conversation，
+    /* 4. 精确闭环断言（Codex WP-0 Major）：产生了一个 value_shift 工件，source=reflection
+     *    （收益学习是 persona 对自己任务结果的 internal 反思，信任分级修正了旧 conversation 误标），
      *    指向 seeded value，且已 compiled；core 中该 value 权重从 0.5 上升。 */
     const artifacts = os.distillation.listByPersona(personaId);
     const vs = artifacts.find((a) => a.kind === 'value_shift');
     assert.ok(vs, `应产生 value_shift 工件，实际: ${artifacts.map((a) => a.kind).join(',')}`);
-    assert.equal(vs!.source, 'conversation', 'earning 蒸馏来源应为 conversation');
+    assert.equal(vs!.source, 'reflection', 'earning 蒸馏来源应为 reflection（internal 反思）');
     assert.equal((vs!.payload as { valueId: string }).valueId, seeded.id, 'value_shift 应指向 research 价值');
     assert.equal(vs!.status, 'compiled', '强信号(0.95)应自动编译进核心');
     const afterWeight = os.core.values.getById(seeded.id)?.weight ?? 0;

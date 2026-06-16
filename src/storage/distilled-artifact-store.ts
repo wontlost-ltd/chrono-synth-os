@@ -15,6 +15,7 @@ import {
   type ArtifactSource,
   type ArtifactStatus,
   type ArtifactEvidence,
+  type CompiledVia,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from './executors/index.js';
 
@@ -54,6 +55,7 @@ export class DistilledArtifactStore {
     next: ArtifactStatus,
     reason: string | null,
     compiledAt: number | null,
+    compiledVia: CompiledVia | null = null,
   ): boolean {
     const result = this.tx.execute(distillCmdSetStatus({
       id,
@@ -63,6 +65,7 @@ export class DistilledArtifactStore {
       status: next,
       reason,
       compiledAt,
+      compiledVia,
     }));
     return result.rowsAffected > 0;
   }
@@ -94,7 +97,10 @@ export class DistilledArtifactStore {
       status: row.status as ArtifactStatus,
       createdAt: row.created_at,
     };
-    return row.compiled_at !== null ? { ...base, compiledAt: row.compiled_at } : base;
+    const withCompiledAt = row.compiled_at !== null ? { ...base, compiledAt: row.compiled_at } : base;
+    return row.compiled_via !== null
+      ? { ...withCompiledAt, compiledVia: row.compiled_via as CompiledVia }
+      : withCompiledAt;
   }
 }
 

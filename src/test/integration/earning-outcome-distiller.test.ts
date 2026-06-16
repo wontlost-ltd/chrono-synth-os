@@ -99,6 +99,8 @@ describe('EarningOutcomeDistiller (ADR-0048 D5)', () => {
     const all = os.distillation.listByPersona('p1');
     assert.equal(all.length, 1);
     assert.equal(all[0].kind, 'value_shift');
-    assert.equal(all[0].source, 'conversation');
+    /* source=reflection：收益学习是 persona 对自己任务结果的 internal 反思（信任分级修正了旧的
+     * conversation 误标，见 EarningOutcomeDistiller 注释）。 */
+    assert.equal(all[0].source, 'reflection');
   });
 });
