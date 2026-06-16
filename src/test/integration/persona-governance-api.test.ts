@@ -71,6 +71,9 @@ describe('per-persona 治理策略 API（ADR-0048 PR-B）', () => {
     assert.equal(data.override.maxAutonomousReward, 120);
     assert.equal(data.effective.maxAutonomousReward, 120);
     assert.deepEqual(data.effective.categoryRoutes, { coding: 'autonomous' });
+    /* PUT 响应也带 meta（Codex 复审 Medium：保存后 last-updated 不消失）。 */
+    assert.equal(data.meta.updatedBy, 'user_1');
+    assert.ok(data.meta.updatedAt > 0);
     /* GET 再读应持久 + meta 反映谁改的。 */
     const get = await app.inject({ method: 'GET', url: URL });
     assert.equal(get.json().data.override.maxAutonomousReward, 120);
@@ -96,6 +99,7 @@ describe('per-persona 治理策略 API（ADR-0048 PR-B）', () => {
     const res = await app.inject({ method: 'DELETE', url: URL });
     assert.equal(res.statusCode, 200, res.body);
     assert.equal(res.json().data.override, null);
+    assert.equal(res.json().data.meta, null, 'DELETE 后 meta=null');
     assert.equal(res.json().data.effective.maxAutonomousReward, DEFAULT_EARNING_POLICY.maxAutonomousReward);
   });
 

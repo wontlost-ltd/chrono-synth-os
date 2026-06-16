@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '../../../components/layout/PageHeader';
 import { DataTable, type Column } from '../../../components/ui/DataTable';
@@ -188,7 +189,17 @@ export default function PersonaCorePage() {
               <h2 className="text-lg font-semibold text-text-primary">{t('personaCore.detailTitle')}</h2>
               <p className="text-sm text-text-secondary">{selected?.displayName ?? t('personaCore.noSelection')}</p>
             </div>
-            {selectedPersonaId && <DeceaseButton personaId={selectedPersonaId} />}
+            {selectedPersonaId && (
+              <div className="flex items-center gap-2">
+                <Link
+                  to={`/persona/${selectedPersonaId}/governance`}
+                  className="rounded-md border border-border px-3 py-1.5 text-sm text-text-secondary hover:bg-surface-hover"
+                >
+                  {t('personaCore.governancePolicy')}
+                </Link>
+                <DeceaseButton personaId={selectedPersonaId} />
+              </div>
+            )}
           </div>
 
           {detail.error ? (

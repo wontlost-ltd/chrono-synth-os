@@ -757,7 +757,8 @@
       "review": "复核",
       "transfer": "转移",
       "death": "死亡"
-    }
+    },
+    "governancePolicy": "治理策略"
   },
   "marketplace": {
     "title": "任务市场",
@@ -1368,10 +1369,22 @@
         "subtitleSelected": "管理 {{org}} 的成员。",
         "subtitleEmpty": "请先选择一个组织。"
       },
-      "personas": { "title": "人格", "subtitle": "当前人格阵列、所有权与钱包态势。" },
-      "tasks": { "title": "任务", "subtitle": "市场任务积压与完成态势。" },
-      "wallets": { "title": "钱包", "subtitle": "人格钱包敞口与结算时效性。" },
-      "governance": { "title": "治理", "subtitle": "未决案件、申诉与最近的审核操作。" },
+      "personas": {
+        "title": "人格",
+        "subtitle": "当前人格阵列、所有权与钱包态势。"
+      },
+      "tasks": {
+        "title": "任务",
+        "subtitle": "市场任务积压与完成态势。"
+      },
+      "wallets": {
+        "title": "钱包",
+        "subtitle": "人格钱包敞口与结算时效性。"
+      },
+      "governance": {
+        "title": "治理",
+        "subtitle": "未决案件、申诉与最近的审核操作。"
+      },
       "tenantKeyVersions": {
         "title": "租户密钥版本",
         "subtitle": "本租户的平台托管加密密钥。轮转以签发新版本；吊销以下线已泄露的密钥。"
@@ -1515,5 +1528,43 @@
       "organizationCreated": "组织 {{name}} 已创建。",
       "memberBindingsUpdated": "组织成员角色绑定已更新。"
     }
+  },
+  "governance": {
+    "title": "治理策略配置",
+    "subtitle": "为数字人 {{personaId}} 覆盖默认治理策略",
+    "loadError": "加载治理策略失败",
+    "save": "保存",
+    "saving": "保存中…",
+    "saveError": "保存失败：{{message}}",
+    "reset": "恢复默认",
+    "lastUpdated": "上次由 {{by}} 于 {{at}} 修改",
+    "categoryRoutes": "接单类别路由",
+    "categoryRoutesHint": "为每个任务类别设定接单方式。未设定（默认）的类别沿用人格的默认路由。这是完整路由表——保存即整体覆盖。",
+    "routeDefault": "默认（沿用人格默认）",
+    "economicLimits": "经济上限",
+    "maxAutonomousReward": "单任务自主报酬上限",
+    "maxAutonomousRewardHint": "超过此额度的任务需人工审批。留空沿用默认。",
+    "dailyRewardExposureCap": "每日报酬暴露上限",
+    "maxConcurrentTasks": "最大并发未完成任务数",
+    "amlThresholds": "AML 聚合阈值",
+    "amlHint": "跨 24h 窗口的反刷单阈值。留空沿用默认。",
+    "amlMaxTasksPerPublisher": "单发布方窗口内接单上限",
+    "amlMaxRewardShare": "单发布方报酬集中度上限",
+    "amlMaxRewardShareHint": "0–1 之间；单一发布方占窗口报酬比例超过此值视为关联环圈嫌疑。",
+    "amlConcentrationMinTasks": "触发集中度判定的最小任务数",
+    "amlMaxIdenticalRepeats": "单发布方同额报酬重复上限",
+    "routeMode": {
+      "autonomous": "自主接单",
+      "human_review": "需人工审批",
+      "blocked": "禁止接单"
+    },
+    "category": {
+      "writing": "写作",
+      "coding": "编程",
+      "research": "研究",
+      "operations": "运营",
+      "general": "通用"
+    },
+    "defaultRoute": "未设定的类别"
   }
 }
