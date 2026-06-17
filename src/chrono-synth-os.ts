@@ -265,13 +265,30 @@ export class ChronoSynthOS {
     const hasArchetype = cfg.archetype !== undefined;
     const hasPerturb = (cfg.magnitude ?? 0) > 0 && cfg.seed !== undefined;
     if (!hasArchetype && !hasPerturb) return; /* 既无原型也无扰动 → 不设（向后兼容） */
-    /* 守卫「出生未演化」用 **row 存在性** 而非 updatedAt===0——setDecisionStyle 用 clock.now() 写
-     * updatedAt，时钟从 0 起（TestClock 默认）时 updatedAt 仍 0，用 updatedAt 判会误判已设置 persona 为
-     * 未演化而重启重复设置→漂移（Codex 复审）。看 row 存在性与时钟无关，重启不漂移。 */
-    if (this.core.decisionStyle.exists()) return; /* 已写过（设置/演化/恢复）→ 不动 */
+    /* 出生扰动只能作用于**全新** persona——多租户工厂按 tenantId 派生 seed 接线后，「现有租户」
+     * 不能被首次出生扰动改写已落库人格。判定「全新」必须看**整个核心是否纯净**，而非仅某一维 row：
+     * 现有租户可能只写过 memories（/perceive、chat）/ survival anchors（/pos/survival）/ cognitive
+     * model（POS L3），却从未写 decision_style，若只看部分维度会被误判新生而扰动（Codex 两轮退回）。
+     * 因此覆盖 CoreSelfState 全部 7 个持久核心维度：values/memories/edges/narrative/survivalAnchors/
+     * decisionStyle/cognitiveModel——任一非空即非纯净新生。
+     * 边界：纯净以**核心人格状态**为界，不以租户所有业务表（distilled_artifacts/wallet/avatars 等
+     * 外围/操作状态）为界——只要核心人格仍是懒默认，出生时初始化 decision style 是安全的。
+     * decision_style/cognitive_model 用 row 存在性（而非 updatedAt===0）判——set* 用 clock.now() 写
+     * updatedAt，TestClock(0) 下 updatedAt 仍 0，用 updatedAt 会误判已写维度为未写→重启漂移；row
+     * 存在性与时钟无关。 */
+    const state = this.core.getState();
+    const isPristine =
+      !this.core.decisionStyle.exists() &&
+      !this.core.cognitiveModel.exists() &&
+      state.values.size === 0 &&
+      state.memories.size === 0 &&
+      state.edges.length === 0 &&
+      state.survivalAnchors.length === 0 &&
+      state.narrative.trim() === '';
+    if (!isPristine) return; /* 非纯净新生（已有任何核心持久状态）→ 不动 */
     const now = this.clock.now();
     /* ② 基准：有原型用原型的 6 维，否则用当前默认。 */
-    const base = hasArchetype ? archetypeDecisionStyle(cfg.archetype!, now) : this.core.getState().decisionStyle;
+    const base = hasArchetype ? archetypeDecisionStyle(cfg.archetype!, now) : state.decisionStyle;
     /* ③ 个体扰动：在基准上加可复现扰动（无扰动配置则直接用基准）。 */
     const seeded = hasPerturb ? perturbDecisionStyle(base, cfg.seed!, cfg.magnitude!, now) : base;
     this.core.setDecisionStyle(seeded);

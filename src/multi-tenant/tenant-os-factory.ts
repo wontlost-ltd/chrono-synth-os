@@ -14,7 +14,17 @@ import { normalizeTenantId } from './tenant-context.js';
 export interface TenantOSFactoryConfig {
   /** LRU 缓存容量（默认 64） */
   maxCachedTenants?: number;
+  /**
+   * 性格出生扰动幅度（②③ 出生机制接线）。每个租户按 tenantId 派生确定性 seed，对 6 维决策风格
+   * 加 ±magnitude 有界扰动，让不同租户的人格出生即略有不同（性格分布从一个点变成一团）。
+   * 0 = 关闭扰动（出生同质，旧行为）。默认 0.15（[0,1] 维约 ±0.15，有界且温和）。
+   * 仅影响**全新** persona——已写过 decision style row 的租户（已设置/演化/恢复）不受影响。
+   */
+  personalityBirthMagnitude?: number;
 }
+
+/** 默认出生扰动幅度——温和有界，让租户人格出生即有可度量差异（diversityScore>0）。 */
+const DEFAULT_PERSONALITY_BIRTH_MAGNITUDE = 0.15;
 
 /** LRU 缓存条目 */
 interface CacheEntry {
@@ -27,6 +37,7 @@ export class TenantOSFactory {
   private readonly maxCached: number;
 
   private readonly encryptionConfig?: EncryptionConfig;
+  private readonly personalityBirthMagnitude: number;
 
   constructor(
     private readonly db: IDatabase,
@@ -37,6 +48,7 @@ export class TenantOSFactory {
   ) {
     this.maxCached = config?.maxCachedTenants ?? 64;
     this.encryptionConfig = encryptionConfig;
+    this.personalityBirthMagnitude = config?.personalityBirthMagnitude ?? DEFAULT_PERSONALITY_BIRTH_MAGNITUDE;
   }
 
   /** 获取或创建租户 OS 实例 */
@@ -92,6 +104,10 @@ export class TenantOSFactory {
       encryptionConfig: this.encryptionConfig,
       skipMigrations: true,  /* 迁移由宿主数据库统一管理 */
       tenantId,
+      /* ②③ 出生机制接线：按已规范化的 tenantId 派生确定性 seed（同租户恒同扰动、可复现），
+       * 让不同租户的人格出生即略有不同。exists() 守卫保证仅作用于全新 persona，现有租户不漂移。
+       * tenantId 此处已由 getTenantOS 规范化，直接作 seed。 */
+      personalitySeed: { seed: tenantId, magnitude: this.personalityBirthMagnitude },
     });
     os.start();
     this.logger.info('TenantOSFactory', `租户 OS 实例已创建: ${tenantId}`);
