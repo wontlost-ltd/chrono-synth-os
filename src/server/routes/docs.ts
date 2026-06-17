@@ -310,6 +310,19 @@ const API_DOCS = {
       request_schema: { sessionId: 'string', source: 'journal|decisions|values', entries: 'ImportEntry[]' },
       response_schema: { data: '{ imported: number, memoriesCreated: number }' },
     },
+    {
+      method: 'GET',
+      path: '/api/v1/onboarding/archetypes',
+      description: '列出可选性格原型（出生模板：explorer/guardian/analyst/doer）',
+      response_schema: { data: 'ArchetypeProfile[]' },
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/onboarding/archetype',
+      description: '用选中的性格原型作为出生基准决策风格',
+      request_schema: { archetype: 'explorer|guardian|analyst|doer' },
+      response_schema: { data: '{ archetype: string, decisionStyle: DecisionStyle }' },
+    },
 
     /* ===== 可视化 ===== */
     {

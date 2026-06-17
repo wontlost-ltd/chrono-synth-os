@@ -344,6 +344,10 @@
   ],
   "onboarding.ts": [
     {
+      "name": "ApplyArchetypeSchema",
+      "hash": "baaea9fbb8e1a45c68730af17736948d4a4d7522a278fceb358dbb794794eb15"
+    },
+    {
       "name": "OnboardingImportSchema",
       "hash": "0662f0e51a29b5d25913942f20c365ab0fe8aa747d6638f0cff26a38567dbb32"
     },
