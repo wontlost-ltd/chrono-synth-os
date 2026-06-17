@@ -19,7 +19,7 @@ function makePersonaState(overrides?: Partial<PersonaOSState>): PersonaOSState {
     },
     L3: {
       beliefs: new Map(), biasWeights: new Map(),
-      attributionStyle: 0.5, growthMindset: 0.5, updatedAt: 1000,
+      attributionStyle: 0.5, growthMindset: 0.5, ambiguityTolerance: 0.5, analyticalIntuitive: 0.5, updatedAt: 1000,
     },
     L4: { memories: new Map(), edges: [], narrative: '' },
     ...overrides,

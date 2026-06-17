@@ -206,17 +206,26 @@ const DECISION_STYLE_CONSTRAINTS: Readonly<Record<keyof DecisionStylePatchPayloa
 const DECISION_STYLE_FIELDS = Object.keys(DECISION_STYLE_CONSTRAINTS) as Array<keyof DecisionStylePatchPayload>;
 
 /**
- * L3 认知模型校准载荷（部分更新）。attributionStyle/growthMindset 是 [0,1] 标量；
- * beliefs/biasWeights 是 key→[0,1] 的映射（对象形式，编译器转 Map）。至少一个字段非空。
+ * L3 认知模型校准载荷（部分更新）。attributionStyle/growthMindset/ambiguityTolerance/
+ * analyticalIntuitive 是 [0,1] 标量；beliefs/biasWeights 是 key→[0,1] 的映射（对象形式，
+ * 编译器转 Map）。至少一个字段非空。
  */
 export interface CognitiveModelPatchPayload {
   readonly attributionStyle?: number;
   readonly growthMindset?: number;
+  /* ④ L3 扩展：模糊容忍 / 直觉↔分析，[0,1] 标量，可被蒸馏成长管线学习并落地。 */
+  readonly ambiguityTolerance?: number;
+  readonly analyticalIntuitive?: number;
   readonly beliefs?: Readonly<Record<string, number>>;
   readonly biasWeights?: Readonly<Record<string, number>>;
 }
 
-const COGNITIVE_SCALAR_FIELDS = ['attributionStyle', 'growthMindset'] as const;
+const COGNITIVE_SCALAR_FIELDS = [
+  'attributionStyle',
+  'growthMindset',
+  'ambiguityTolerance',
+  'analyticalIntuitive',
+] as const;
 const COGNITIVE_MAP_FIELDS = ['beliefs', 'biasWeights'] as const;
 
 /** 合法状态转移表 */

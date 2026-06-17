@@ -28,7 +28,7 @@ function makeBaseState(): PersonaOSState {
     L3: {
       beliefs: new Map([['growth', 0.7]]),
       biasWeights: new Map([['confirmation', 0.3]]),
-      attributionStyle: 0.5, growthMindset: 0.8, updatedAt: now,
+      attributionStyle: 0.5, growthMindset: 0.8, ambiguityTolerance: 0.5, analyticalIntuitive: 0.5, updatedAt: now,
     },
     L4: {
       narrative: '测试叙事',

@@ -162,6 +162,8 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
         biasWeights: Object.fromEntries(model.biasWeights),
         attributionStyle: model.attributionStyle,
         growthMindset: model.growthMindset,
+        ambiguityTolerance: model.ambiguityTolerance,
+        analyticalIntuitive: model.analyticalIntuitive,
         updatedAt: model.updatedAt,
       },
     };
@@ -174,6 +176,8 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
     const model = tenantOS.core.setCognitiveModel({
       attributionStyle: body.attributionStyle,
       growthMindset: body.growthMindset,
+      ambiguityTolerance: body.ambiguityTolerance,
+      analyticalIntuitive: body.analyticalIntuitive,
       ...(body.beliefs ? { beliefs: new Map(Object.entries(body.beliefs)) } : {}),
       ...(body.biasWeights ? { biasWeights: new Map(Object.entries(body.biasWeights)) } : {}),
     });
@@ -183,6 +187,8 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
         biasWeights: Object.fromEntries(model.biasWeights),
         attributionStyle: model.attributionStyle,
         growthMindset: model.growthMindset,
+        ambiguityTolerance: model.ambiguityTolerance,
+        analyticalIntuitive: model.analyticalIntuitive,
         updatedAt: model.updatedAt,
       },
     };
@@ -242,6 +248,8 @@ export function registerPosRoutes(app: FastifyInstance, os: ChronoSynthOS, tenan
           biasWeights: Object.fromEntries(state.L3.biasWeights),
           attributionStyle: state.L3.attributionStyle,
           growthMindset: state.L3.growthMindset,
+          ambiguityTolerance: state.L3.ambiguityTolerance,
+          analyticalIntuitive: state.L3.analyticalIntuitive,
           updatedAt: state.L3.updatedAt,
         },
         L4: {

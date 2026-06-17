@@ -64,6 +64,40 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     assert.equal(after.beliefs.get('world-is-learnable'), 0.85, 'beliefs map 应被合并');
   });
 
+  it('cognitive_model_patch → ④ L3 扩展维度（模糊容忍 / 直觉↔分析）经成长管线学习落地', () => {
+    /* Codex 退回核心：新维度若不接入 patch payload + 编译器，就是只能内部手写的半死字段。
+     * 此处证明蒸馏成长管线（ingest→审批→编译）能真正学习并落地这两个维度。 */
+    const before = os.core.cognitiveModel.get();
+    assert.equal(before.ambiguityTolerance, 0.5, '初始模糊容忍应为中性 0.5');
+    assert.equal(before.analyticalIntuitive, 0.5, '初始直觉↔分析应为中性 0.5');
+
+    const ing = os.distillation.ingest('p1', {
+      kind: 'cognitive_model_patch', source: 'reflection',
+      payload: { ambiguityTolerance: 0.85, analyticalIntuitive: 0.2 },
+      confidence: 0.9, evidence: EV,
+    });
+    assert.equal(ing.status, 'pending');
+    if (ing.status !== 'pending') return;
+
+    const ap = os.distillation.approve('p1', ing.artifact.id);
+    assert.ok(ap.ok, `审批应成功: ${ap.ok ? '' : ap.reason}`);
+    assert.equal(ap.artifact.status, 'compiled', `审批后应编译，实际 ${ap.artifact.status}`);
+
+    const after = os.core.cognitiveModel.get();
+    assert.equal(after.ambiguityTolerance, 0.85, '模糊容忍应被成长管线校准');
+    assert.equal(after.analyticalIntuitive, 0.2, '直觉↔分析应被成长管线校准');
+    /* 未提供的旧字段不变（部分更新语义）。 */
+    assert.equal(after.growthMindset, before.growthMindset, '未提供字段不应变');
+  });
+
+  it('cognitive_model_patch ④ 新维度 [0,1] 越界 → ingest 拒绝', () => {
+    const ing = os.distillation.ingest('p1', {
+      kind: 'cognitive_model_patch', source: 'reflection',
+      payload: { ambiguityTolerance: 1.5 }, confidence: 0.9, evidence: EV,
+    });
+    assert.equal(ing.status, 'rejected', '越界新维度应被 schema 校验拒绝');
+  });
+
   it('decision_style_patch 领域字段约束：lossAversion≥1 + deliberationDepth 1..5 整数（编译不抛）', () => {
     /* Codex WP-1 Critical：lossAversion/deliberationDepth 不是 [0,1]。合法值应编译成功不抛 RangeError。 */
     const ing = os.distillation.ingest('p1', {

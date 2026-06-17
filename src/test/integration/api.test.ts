@@ -498,6 +498,33 @@ describe('API 集成测试', () => {
       assert.equal(body.data.growthMindset, 0.9);
     });
 
+    it('PUT/GET /api/v1/pos/cognitive-model ④ L3 扩展维度经 API 读写往返', async () => {
+      /* Codex 复审非阻塞建议：补 POS API 层显式新字段往返，证明两维可经 HTTP 设置/读取。 */
+      const put = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/pos/cognitive-model',
+        payload: { ambiguityTolerance: 0.8, analyticalIntuitive: 0.3 },
+      });
+      assert.equal(put.statusCode, 200);
+      const putBody = JSON.parse(put.body);
+      assert.equal(putBody.data.ambiguityTolerance, 0.8);
+      assert.equal(putBody.data.analyticalIntuitive, 0.3);
+
+      const get = await app.inject({ method: 'GET', url: '/api/v1/pos/cognitive-model' });
+      const getBody = JSON.parse(get.body);
+      assert.equal(getBody.data.ambiguityTolerance, 0.8, 'GET 应读回已设置的模糊容忍');
+      assert.equal(getBody.data.analyticalIntuitive, 0.3, 'GET 应读回已设置的直觉↔分析');
+    });
+
+    it('PUT /api/v1/pos/cognitive-model ④ 新维度越界 → 400', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/v1/pos/cognitive-model',
+        payload: { ambiguityTolerance: 1.5 },
+      });
+      assert.equal(res.statusCode, 400, '越界新维度应被 schema 拒绝');
+    });
+
     it('GET /api/v1/pos/state 获取完整五层状态', async () => {
       os.core.addValue('诚实', 0.8);
       os.core.addSurvivalAnchor('底线', 'constraint', null, 5);

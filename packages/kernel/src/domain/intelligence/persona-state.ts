@@ -65,7 +65,8 @@ export function summarizeForPrompt(state: FullPersonaState): string {
     .join('\n');
   sections.push(
     `## 认知模型 (L3)\n` +
-    `  归因风格=${c.attributionStyle.toFixed(2)} | 成长心态=${c.growthMindset.toFixed(2)}\n` +
+    `  归因风格=${c.attributionStyle.toFixed(2)} | 成长心态=${c.growthMindset.toFixed(2)} | ` +
+    `模糊容忍=${c.ambiguityTolerance.toFixed(2)} | 直觉↔分析=${c.analyticalIntuitive.toFixed(2)}\n` +
     (beliefLines ? `  信念:\n${beliefLines}\n` : '') +
     (biasLines ? `  偏误权重:\n${biasLines}` : ''),
   );

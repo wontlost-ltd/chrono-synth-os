@@ -140,6 +140,8 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
           biasWeights: Object.fromEntries(projected.L3.biasWeights),
           attributionStyle: projected.L3.attributionStyle,
           growthMindset: projected.L3.growthMindset,
+          ambiguityTolerance: projected.L3.ambiguityTolerance,
+          analyticalIntuitive: projected.L3.analyticalIntuitive,
         },
         L4: {
           narrative: projected.L4.narrative,
@@ -186,6 +188,8 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
           biasWeights: Object.fromEntries(projected.L3.biasWeights),
           attributionStyle: projected.L3.attributionStyle,
           growthMindset: projected.L3.growthMindset,
+          ambiguityTolerance: projected.L3.ambiguityTolerance,
+          analyticalIntuitive: projected.L3.analyticalIntuitive,
         },
         L4: {
           narrative: projected.L4.narrative,

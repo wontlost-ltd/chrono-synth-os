@@ -400,6 +400,9 @@ export const UpdateCognitiveModelSchema = z.object({
   biasWeights: z.record(z.string(), z.number().min(0).max(1)).optional(),
   attributionStyle: z.number().min(0).max(1).optional(),
   growthMindset: z.number().min(0).max(1).optional(),
+  /* ④ L3 扩展：模糊容忍 / 直觉↔分析，[0,1]，可选（旧客户端不传→保持原值）。 */
+  ambiguityTolerance: z.number().min(0).max(1).optional(),
+  analyticalIntuitive: z.number().min(0).max(1).optional(),
 });
 
 /* 引导流程 */
