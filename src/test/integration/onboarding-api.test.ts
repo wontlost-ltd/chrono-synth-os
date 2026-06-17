@@ -146,9 +146,11 @@ describe('引导 API 集成测试', () => {
       assert.equal(body.data.length, 4, '应有 4 个原型');
       const archetypes = body.data.map((p: { archetype: string }) => p.archetype).sort();
       assert.deepEqual(archetypes, ['analyst', 'doer', 'explorer', 'guardian']);
-      /* 每个原型应带中文 label + 描述（供 UI 渲染）。 */
+      /* 每个原型应带中文 label + 描述（供 UI 渲染）+ 稳定 i18n key（供多语言前端本地化）。 */
       for (const p of body.data) {
         assert.ok(p.label && p.description, `原型 ${p.archetype} 应有 label + description`);
+        assert.equal(p.labelI18nKey, `onboarding.archetype.${p.archetype}.label`, 'label i18n key 应稳定');
+        assert.equal(p.descriptionI18nKey, `onboarding.archetype.${p.archetype}.description`, 'desc i18n key 应稳定');
       }
     });
 

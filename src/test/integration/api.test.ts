@@ -1005,4 +1005,63 @@ describe('API Key 认证', () => {
     });
     assert.equal(apiRes.statusCode, 401);
   });
+
+  it('/metrics 配了平台 scrape key 后，拒绝普通 API key/JWT（跨租户聚合仅平台可见）', async () => {
+    await app.close();
+    const tightConfig = loadConfig({
+      rateLimit: { max: 10_000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      auth: {
+        enabled: true,
+        apiKeys: ['tenant-static-key'],
+        metricsApiKeys: ['platform-scrape-key'],
+        requireDbKeys: false,
+      },
+      jwt: { enabled: true, secret: 'metrics-tight-secret-at-least-32-chars', issuer: 'test' },
+    });
+    app = await createApp({ os, config: tightConfig });
+
+    /* 平台 scrape key → 200（header / query / bearer 三种入口都认）。 */
+    for (const inject of [
+      { headers: { 'x-api-key': 'platform-scrape-key' } },
+      { headers: { authorization: 'Bearer platform-scrape-key' } },
+    ]) {
+      const ok = await app.inject({ method: 'GET', url: '/metrics', ...inject });
+      assert.equal(ok.statusCode, 200, `平台 scrape key 应放行: ${JSON.stringify(inject)}`);
+    }
+    const okQuery = await app.inject({ method: 'GET', url: '/metrics?apiKey=platform-scrape-key' });
+    assert.equal(okQuery.statusCode, 200, '平台 scrape key（query）应放行');
+
+    /* 普通租户 static key → 403（不再因 metricsRoute 被放宽到 /metrics）。 */
+    const tenantKey = await app.inject({
+      method: 'GET', url: '/metrics', headers: { 'x-api-key': 'tenant-static-key' },
+    });
+    assert.equal(tenantKey.statusCode, 403, '普通租户 key 不该看到跨租户聚合指标');
+
+    /* 无 key → 403。 */
+    const noKey = await app.inject({ method: 'GET', url: '/metrics' });
+    assert.equal(noKey.statusCode, 403, '无 scrape key 应拒绝');
+
+    /* prometheus 端点同样收紧。 */
+    const promTenant = await app.inject({
+      method: 'GET', url: '/metrics/prometheus', headers: { 'x-api-key': 'tenant-static-key' },
+    });
+    assert.equal(promTenant.statusCode, 403, 'prometheus 端点同样仅平台 key');
+  });
+
+  it('/metrics 未配平台 scrape key 时保持既有行为（向后兼容，普通 key 仍可访问）', async () => {
+    await app.close();
+    const legacyConfig = loadConfig({
+      rateLimit: { max: 10_000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      auth: { enabled: true, apiKeys: ['legacy-key'], metricsApiKeys: [], requireDbKeys: false },
+    });
+    app = await createApp({ os, config: legacyConfig });
+
+    /* metricsApiKeys 空 → 普通 key 仍能访问 /metrics（不破坏未设 scrape key 的部署）。 */
+    const res = await app.inject({
+      method: 'GET', url: '/metrics', headers: { 'x-api-key': 'legacy-key' },
+    });
+    assert.equal(res.statusCode, 200, '未配 scrape key 时普通 key 应保持可访问（向后兼容）');
+  });
 });

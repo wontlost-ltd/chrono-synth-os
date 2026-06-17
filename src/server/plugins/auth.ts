@@ -71,6 +71,36 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
     const path = request.url.split('?')[0];
     const metricsRoute = isMetricsPath(path);
 
+    /* 平台指标收紧（debt）：/metrics 暴露的是**跨租户聚合**（人群多样性、计费/观测平台 rollup 等），
+     * 不该被单个租户的 key/JWT 看到。一旦显式配置了平台 scrape key（metricsApiKeys 非空），metrics
+     * 路由就**只**接受该 scrape key——拒绝租户 DB key、通用 apiKeys、JWT 用户。
+     * 未配置（默认空）时保持既有行为（向后兼容，不破坏未设 scrape key 的部署）。
+     * 此 gate 放在 JWT/APIKey 分支之前，确保 JWT 租户用户也被挡在跨租户指标之外。 */
+    if (metricsRoute && metricsKeys.length > 0) {
+      const headerKey = request.headers['x-api-key'];
+      const queryKey = (request.query as Record<string, string>)?.apiKey;
+      const authz = request.headers.authorization;
+      const bearer = typeof authz === 'string' && authz.startsWith('Bearer ')
+        ? authz.slice('Bearer '.length).trim() : undefined;
+      const presented = typeof headerKey === 'string' ? headerKey
+        : typeof queryKey === 'string' ? queryKey
+        : bearer;
+      const isPlatformScrapeKey = typeof presented === 'string'
+        && metricsKeys.some((k) => safeCompare(presented, k));
+      if (!isPlatformScrapeKey) {
+        return reply.status(403).send({
+          error: 'AuthorizationError',
+          code: 'AUTH_INVALID_KEY',
+          message: '平台指标仅接受平台 scrape key（metricsApiKeys）',
+        });
+      }
+      /* scrape key 校验通过：绑定平台运营者身份（非任一租户），放行。 */
+      request.user = {
+        sub: 'metrics:scrape', tenantId: 'default', role: 'member', planId: 'free', iat: 0, exp: 0,
+      };
+      return done();
+    }
+
     /* 如果已经通过 JWT 认证（由 jwt-auth 插件设置），跳过 API Key 检查 */
     if (request.user) {
       return done();

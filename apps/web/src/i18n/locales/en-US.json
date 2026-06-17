@@ -341,7 +341,25 @@
     "templateExplorer": "Explorer",
     "templateExplorerDesc": "Seek freedom and rich life experiences",
     "templateCustom": "Custom",
-    "templateCustomDesc": "Define your values from scratch"
+    "templateCustomDesc": "Define your values from scratch",
+    "archetype": {
+      "explorer": {
+        "label": "Explorer",
+        "description": "Bold and decisive — high exploration, high risk, quick to act, short-to-mid horizon."
+      },
+      "guardian": {
+        "label": "Guardian",
+        "description": "Cautious and loss-averse — low risk, high loss aversion, deliberate, long horizon."
+      },
+      "analyst": {
+        "label": "Analyst",
+        "description": "Thoughtful and data-driven — deepest deliberation, longest horizon, high regret sensitivity, neutral risk."
+      },
+      "doer": {
+        "label": "Doer",
+        "description": "Fast-moving and present-focused — high risk, shallowest deliberation, shortest horizon, low loss aversion."
+      }
+    }
   },
   "settings": {
     "title": "Settings",
