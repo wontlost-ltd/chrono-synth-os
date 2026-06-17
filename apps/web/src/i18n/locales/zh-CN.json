@@ -341,7 +341,25 @@
     "templateExplorer": "探索型",
     "templateExplorerDesc": "追求自由和丰富的人生体验",
     "templateCustom": "自定义",
-    "templateCustomDesc": "从零开始定义您的价值观"
+    "templateCustomDesc": "从零开始定义您的价值观",
+    "archetype": {
+      "explorer": {
+        "label": "探索者",
+        "description": "大胆试新、果断——高探索、高风险、浅思、短中期。"
+      },
+      "guardian": {
+        "label": "守护者",
+        "description": "谨慎、规避损失——低风险、高损失厌恶、深思、长期。"
+      },
+      "analyst": {
+        "label": "分析师",
+        "description": "深思、远见、重数据——最深思、最长期、高后悔敏感、中性风险。"
+      },
+      "doer": {
+        "label": "行动者",
+        "description": "快速行动、当下导向——高风险、最浅思、最短期、低损失厌恶。"
+      }
+    }
   },
   "settings": {
     "title": "设置",

@@ -69,23 +69,38 @@ const ARCHETYPE_SEEDS: Readonly<Record<PersonalityArchetype, ArchetypeSeed>> = {
   },
 };
 
-/** 原型展示元数据（供 onboarding/API 让产品面渲染选择卡片；中文标签 + 一句话画像）。 */
+/**
+ * 原型展示元数据（供 onboarding/API 让产品面渲染选择卡片）。
+ * - label/description：内置中文文案，非 i18n 消费者（C 端默认）直接用，向后兼容。
+ * - labelI18nKey/descriptionI18nKey：稳定 i18n key，做多语言的前端用它查本地化资源，缺失回退内置文案。
+ */
 export interface ArchetypeProfile {
   readonly archetype: PersonalityArchetype;
   readonly label: string;
   readonly description: string;
+  readonly labelI18nKey: string;
+  readonly descriptionI18nKey: string;
 }
 
 /**
  * 4 原型的展示画像（单一来源，与 ARCHETYPE_SEEDS 的设计语义一致）。API 直接 surface，避免在
- * 路由层重复描述文案。
+ * 路由层重复描述文案。i18n key 命名 `onboarding.archetype.<archetype>.{label,description}`，稳定不变。
  */
-export const ARCHETYPE_PROFILES: readonly ArchetypeProfile[] = [
-  { archetype: 'explorer', label: '探索者', description: '大胆试新、果断——高探索、高风险、浅思、短中期。' },
-  { archetype: 'guardian', label: '守护者', description: '谨慎、规避损失——低风险、高损失厌恶、深思、长期。' },
-  { archetype: 'analyst', label: '分析师', description: '深思、远见、重数据——最深思、最长期、高后悔敏感、中性风险。' },
-  { archetype: 'doer', label: '行动者', description: '快速行动、当下导向——高风险、最浅思、最短期、低损失厌恶。' },
-];
+export const ARCHETYPE_PROFILES: readonly ArchetypeProfile[] = PERSONALITY_ARCHETYPES.map((archetype) => {
+  const copy: Record<PersonalityArchetype, { label: string; description: string }> = {
+    explorer: { label: '探索者', description: '大胆试新、果断——高探索、高风险、浅思、短中期。' },
+    guardian: { label: '守护者', description: '谨慎、规避损失——低风险、高损失厌恶、深思、长期。' },
+    analyst: { label: '分析师', description: '深思、远见、重数据——最深思、最长期、高后悔敏感、中性风险。' },
+    doer: { label: '行动者', description: '快速行动、当下导向——高风险、最浅思、最短期、低损失厌恶。' },
+  };
+  return {
+    archetype,
+    label: copy[archetype].label,
+    description: copy[archetype].description,
+    labelI18nKey: `onboarding.archetype.${archetype}.label`,
+    descriptionI18nKey: `onboarding.archetype.${archetype}.description`,
+  };
+});
 
 /**
  * 取某原型的 decision style 种子（写入给定时间戳）。纯函数。
