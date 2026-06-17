@@ -58,6 +58,17 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         persona_count: os.accelerated.getAllPersonas().length,
         conflict_count: os.meta.conflicts.getUnresolved().length,
         snapshot_count: os.snapshots.list().length,
+        /* ①度量 surface：平台人群多样性（跨租户 decision_style 群体统计）。
+         * initialized_population = 已写过决策风格 row 的租户数（懒默认租户不计入）。 */
+        population_diversity: (() => {
+          const d = metricsService.getPopulationDiversity();
+          return {
+            initialized_population: d.count,
+            diversity_score: Math.round(d.diversityScore * 10_000) / 10_000,
+            per_dimension_spread: d.perDimensionSpread,
+            per_dimension_mean: d.perDimensionMean,
+          };
+        })(),
       },
       billing: {
         meter_events_enqueued: billingMetrics.meterEventsEnqueued,
@@ -177,6 +188,21 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     lines.push('# HELP chrono_snapshots_total 快照总数');
     lines.push('# TYPE chrono_snapshots_total gauge');
     lines.push(`chrono_snapshots_total ${snapshotCount}`);
+    /* ①度量 surface：平台人群多样性（跨租户 decision_style 群体统计）。 */
+    const diversity = metricsService.getPopulationDiversity();
+    /* 口径：population = **已初始化 decision_style row** 的租户数，非全部租户——懒默认（从未写过
+     * 决策风格）的租户不计入，也不参与多样性。指标名带 _initialized_ 明确这一口径，避免误读为总租户数。 */
+    lines.push('# HELP chrono_persona_population_initialized_total 已初始化决策风格的人格数（跨租户，多样性度量基数；不含懒默认租户）');
+    lines.push('# TYPE chrono_persona_population_initialized_total gauge');
+    lines.push(`chrono_persona_population_initialized_total ${diversity.count}`);
+    lines.push('# HELP chrono_persona_diversity_score 平台人群性格多样性 [0,1]（0=全同，越大越分散；基于已初始化人格）');
+    lines.push('# TYPE chrono_persona_diversity_score gauge');
+    lines.push(`chrono_persona_diversity_score ${Math.round(diversity.diversityScore * 10_000) / 10_000}`);
+    lines.push('# HELP chrono_persona_diversity_dimension_spread 各决策维度归一化 spread（指出多样性来源维度）');
+    lines.push('# TYPE chrono_persona_diversity_dimension_spread gauge');
+    for (const [dim, val] of Object.entries(diversity.perDimensionSpread)) {
+      lines.push(`chrono_persona_diversity_dimension_spread{dimension="${dim}"} ${Math.round(val * 10_000) / 10_000}`);
+    }
     lines.push('# HELP chrono_ws_connections_active 活跃 WebSocket 连接数');
     lines.push('# TYPE chrono_ws_connections_active gauge');
     lines.push(`chrono_ws_connections_active ${getWsConnectionCount()}`);

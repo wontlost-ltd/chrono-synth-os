@@ -5,6 +5,10 @@ import { registerMetricsRoutes } from '../../server/routes/metrics.js';
 import type { IDatabase, IPreparedStatement, SqlValue } from '../../storage/database.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
+import { SilentLogger } from '../../utils/logger.js';
+import { TestClock } from '../../utils/clock.js';
 import type { Query, Command, ExecResult } from '@chrono/kernel';
 
 function createStatement<T>(handler: (...params: SqlValue[]) => T | T[] | undefined): IPreparedStatement<T> {
@@ -118,5 +122,36 @@ describe('metrics routes', () => {
     assert.equal(body.observability.wallet.avg_settlement_latency_ms, 320);
     assert.equal(body.observability.last_updated_at, '2026-03-14T12:23:45.000Z');
     assert.equal(body.queue.pending, 1);
+  });
+
+  it('/metrics + /metrics/prometheus 暴露平台人群多样性（①度量 surface）', async () => {
+    /* 真实内存库 + 多租户出生扰动 → 群体多样性应被两个端点 surface。 */
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const factory = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+      personalityBirthMagnitude: 0.15,
+    });
+    for (const t of ['t-a', 't-b', 't-c']) factory.getTenantOS(t);
+
+    app = Fastify({ logger: false });
+    const fakeOs = {
+      getDatabase: () => db,
+      accelerated: { getAllPersonas: () => [] },
+      meta: { conflicts: { getUnresolved: () => [] } },
+      snapshots: { list: () => [] },
+    };
+    registerMetricsRoutes(app, fakeOs as never);
+
+    /* JSON：business.population_diversity 出现且 initialized_population=3、score>0。 */
+    const json = JSON.parse((await app.inject({ method: 'GET', url: '/metrics' })).body);
+    assert.equal(json.business.population_diversity.initialized_population, 3);
+    assert.ok(json.business.population_diversity.diversity_score > 0, '多租户 score 应>0');
+    assert.ok(json.business.population_diversity.per_dimension_spread, '应含 per-dimension spread');
+
+    /* Prometheus：三个 gauge 行出现，且 initialized population gauge=3。 */
+    const prom = (await app.inject({ method: 'GET', url: '/metrics/prometheus' })).body;
+    assert.match(prom, /# TYPE chrono_persona_diversity_score gauge/);
+    assert.match(prom, /chrono_persona_population_initialized_total 3/);
+    assert.match(prom, /chrono_persona_diversity_dimension_spread\{dimension="riskAppetite"\}/);
   });
 });
