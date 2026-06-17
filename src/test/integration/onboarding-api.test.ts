@@ -138,6 +138,45 @@ describe('引导 API 集成测试', () => {
     });
   });
 
+  describe('性格原型选择（②原型接入 onboarding/API）', () => {
+    it('GET /api/v1/onboarding/archetypes 列出 4 个原型 + 画像', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/onboarding/archetypes' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.length, 4, '应有 4 个原型');
+      const archetypes = body.data.map((p: { archetype: string }) => p.archetype).sort();
+      assert.deepEqual(archetypes, ['analyst', 'doer', 'explorer', 'guardian']);
+      /* 每个原型应带中文 label + 描述（供 UI 渲染）。 */
+      for (const p of body.data) {
+        assert.ok(p.label && p.description, `原型 ${p.archetype} 应有 label + description`);
+      }
+    });
+
+    it('POST /api/v1/onboarding/archetype 用 guardian 出生 → 决策风格匹配守护者种子', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/onboarding/archetype',
+        payload: { archetype: 'guardian' },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.archetype, 'guardian');
+      /* 守护者：低风险、高损失厌恶、深思（与 ARCHETYPE_SEEDS.guardian 一致）。 */
+      assert.equal(body.data.decisionStyle.riskAppetite, 0.2);
+      assert.equal(body.data.decisionStyle.lossAversion, 3.0);
+      assert.equal(body.data.decisionStyle.deliberationDepth, 4);
+    });
+
+    it('POST /api/v1/onboarding/archetype 非法原型返回 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/onboarding/archetype',
+        payload: { archetype: 'wizard' },
+      });
+      assert.equal(res.statusCode, 400, '非法原型应被 schema 拒绝');
+    });
+  });
+
   describe('POST /api/v1/onboarding/import', () => {
     it('导入日记条目', async () => {
       const res = await app.inject({

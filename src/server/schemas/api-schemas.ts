@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { PERSONALITY_ARCHETYPES } from '@chrono/kernel';
 export {
   ConflictInboxItemV1Schema,
   ConflictResolveRequestV1Schema,
@@ -442,6 +443,12 @@ export const OnboardingImportSchema = z.object({
     description: z.string().min(1),
     outcome: z.string().min(1).optional(),
   })).optional(),
+});
+
+/* 出生原型选择（②原型接入 onboarding/API）：用户挑一个性格原型作为出生基准决策风格。
+ * 允许值从 kernel PERSONALITY_ARCHETYPES 派生（单一来源，避免 schema 与 kernel 漂移）。 */
+export const ApplyArchetypeSchema = z.object({
+  archetype: z.enum(PERSONALITY_ARCHETYPES as unknown as [string, ...string[]]),
 });
 
 /* W2.1 agent-governance onboarding v2 (5-step wizard) */

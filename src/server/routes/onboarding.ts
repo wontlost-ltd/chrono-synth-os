@@ -30,12 +30,14 @@ import { CostTracker } from '../../intelligence/cost-tracker.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
+import { ARCHETYPE_PROFILES, archetypeDecisionStyle, isPersonalityArchetype } from '@chrono/kernel';
 import {
   OnboardingStep1Schema,
   OnboardingStep2Schema,
   OnboardingStep3Schema,
   OnboardingQuestionnaireSchema,
   OnboardingImportSchema,
+  ApplyArchetypeSchema,
 } from '../schemas/api-schemas.js';
 
 function safeJsonParse(json: string | null | undefined, fallback: unknown = null): unknown {
@@ -270,6 +272,26 @@ export function registerOnboardingRoutes(
       tenantOS.core.setCognitiveModel(result.cognitiveModel);
     }
     return { data: result };
+  });
+
+  /* GET /api/v1/onboarding/archetypes — 列出可选性格原型（供产品面渲染选择卡片）。 */
+  app.get('/api/v1/onboarding/archetypes', async () => {
+    return { data: ARCHETYPE_PROFILES };
+  });
+
+  /* POST /api/v1/onboarding/archetype — 用选中的性格原型作为出生基准决策风格（②原型接入）。 */
+  app.post('/api/v1/onboarding/archetype', async (request) => {
+    const tenantId = request.tenantId;
+    const tenantOS = getOS(tenantId);
+    const body = ApplyArchetypeSchema.parse(request.body);
+    /* schema 已限定枚举；isPersonalityArchetype 把 string 收窄回 PersonalityArchetype（类型 + 防御）。 */
+    if (!isPersonalityArchetype(body.archetype)) {
+      throw new ValidationError(`未知性格原型: ${body.archetype}`, ErrorCode.VALIDATION_RANGE);
+    }
+    /* archetypeDecisionStyle 给完整 6 维种子；setDecisionStyle 会用自身 clock 覆写 updatedAt。 */
+    const seeded = archetypeDecisionStyle(body.archetype, tenantOS.getClock().now());
+    const style = tenantOS.core.setDecisionStyle(seeded);
+    return { data: { archetype: body.archetype, decisionStyle: style } };
   });
 
   /* POST /api/v1/onboarding/import — 限流: 5 次/分钟 */

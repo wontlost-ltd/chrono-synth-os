@@ -69,6 +69,24 @@ const ARCHETYPE_SEEDS: Readonly<Record<PersonalityArchetype, ArchetypeSeed>> = {
   },
 };
 
+/** 原型展示元数据（供 onboarding/API 让产品面渲染选择卡片；中文标签 + 一句话画像）。 */
+export interface ArchetypeProfile {
+  readonly archetype: PersonalityArchetype;
+  readonly label: string;
+  readonly description: string;
+}
+
+/**
+ * 4 原型的展示画像（单一来源，与 ARCHETYPE_SEEDS 的设计语义一致）。API 直接 surface，避免在
+ * 路由层重复描述文案。
+ */
+export const ARCHETYPE_PROFILES: readonly ArchetypeProfile[] = [
+  { archetype: 'explorer', label: '探索者', description: '大胆试新、果断——高探索、高风险、浅思、短中期。' },
+  { archetype: 'guardian', label: '守护者', description: '谨慎、规避损失——低风险、高损失厌恶、深思、长期。' },
+  { archetype: 'analyst', label: '分析师', description: '深思、远见、重数据——最深思、最长期、高后悔敏感、中性风险。' },
+  { archetype: 'doer', label: '行动者', description: '快速行动、当下导向——高风险、最浅思、最短期、低损失厌恶。' },
+];
+
 /**
  * 取某原型的 decision style 种子（写入给定时间戳）。纯函数。
  * 非法/未知原型抛错（避免出生一个无定义性格）。
