@@ -4,10 +4,11 @@
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
-import type { MtrxRollupRow } from '@chrono/kernel';
+import type { MtrxRollupRow, DecisionStyle, PersonalityDiversityResult } from '@chrono/kernel';
 import {
   mtrxQueryQueueCount, mtrxQueryRollupSummary,
   mtrxQueryBillingOutboxCount, mtrxQueryTenantUsage,
+  decisionStyleListAll, DEFAULT_DECISION_STYLE, personalityDiversity,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { getObservabilityOutboxBacklog } from './observability-outbox.js';
@@ -64,7 +65,13 @@ function rollupRowToSummary(row?: MtrxRollupRow | null): ObservabilitySummary {
   };
 }
 
+/** 人群多样性 on-scrape 计算的 TTL 缓存（避免高频 scrape 反复全表扫 + O(n²) 阻塞 event loop）。 */
+const DIVERSITY_CACHE_TTL_MS = 30_000;
+
 export class MetricsQueryService {
+  /* 多样性度量缓存：{ 计算时刻, 结果 }；TTL 内复用，过期重算。null=未算过。 */
+  private diversityCache: { computedAt: number; result: PersonalityDiversityResult } | null = null;
+
   constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
   }
@@ -112,5 +119,41 @@ export class MetricsQueryService {
       const rows = this.tx.queryMany(mtrxQueryTenantUsage({ cutoff, limit }));
       return [...rows];
     } catch { return []; }
+  }
+
+  /**
+   * 平台级人群多样性度量（①度量 surface）：跨租户读取所有 decision_style，计算 personalityDiversity。
+   * decision_style PK=tenant_id（每租户一份决策风格），故「人群多样性」是跨租户群体统计——平台运营者
+   * 视角的合法全局聚合（同 getTenantUsage）。空/单租户时 diversityScore=0（kernel 纯函数已保证）。
+   * 畸形 style_json 行被跳过（不污染度量），而非整体失败。
+   *
+   * 性能：全表扫 + personalityDiversity 是 O(n²) 成对距离。/metrics 高频 scrape 时用 TTL 缓存避免反复
+   * 重算阻塞 event loop——TTL 内复用上次结果（指标本就是慢变量，30s 陈旧可接受）。`now` 供测试注入。
+   */
+  getPopulationDiversity(now: number = Date.now()): PersonalityDiversityResult {
+    if (this.diversityCache && now - this.diversityCache.computedAt < DIVERSITY_CACHE_TTL_MS) {
+      return this.diversityCache.result;
+    }
+    const result = this.computePopulationDiversity();
+    this.diversityCache = { computedAt: now, result };
+    return result;
+  }
+
+  private computePopulationDiversity(): PersonalityDiversityResult {
+    try {
+      const rows = this.tx.queryMany(decisionStyleListAll());
+      const styles: DecisionStyle[] = [];
+      for (const row of rows) {
+        if (!row.styleJson) continue;
+        try {
+          const parsed = JSON.parse(row.styleJson) as Partial<Omit<DecisionStyle, 'updatedAt'>>;
+          /* 与 getDecisionStyle 同款：缺字段回退 DEFAULT，容忍旧/部分行。 */
+          styles.push({ ...DEFAULT_DECISION_STYLE, ...parsed, updatedAt: 0 });
+        } catch { /* 跳过畸形行，不污染群体度量 */ }
+      }
+      return personalityDiversity(styles);
+    } catch {
+      return personalityDiversity([]);
+    }
   }
 }
