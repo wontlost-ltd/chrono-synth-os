@@ -173,7 +173,7 @@ const API_DOCS = {
       method: 'PUT',
       path: '/api/v1/pos/cognitive-model',
       description: '设置 L3 认知模型',
-      request_schema: { beliefs: 'Record<string, number>', biasWeights: 'Record<string, number>', attributionStyle: 'number', growthMindset: 'number' },
+      request_schema: { beliefs: 'Record<string, number>', biasWeights: 'Record<string, number>', attributionStyle: 'number', growthMindset: 'number', ambiguityTolerance: 'number', analyticalIntuitive: 'number' },
       response_schema: { data: 'CognitiveModel' },
     },
     {

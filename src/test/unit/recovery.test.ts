@@ -30,7 +30,7 @@ describe('SnapshotStore', () => {
         },
         cognitiveModel: {
           beliefs: new Map(), biasWeights: new Map(),
-          attributionStyle: 0.5, growthMindset: 0.5, updatedAt: 0,
+          attributionStyle: 0.5, growthMindset: 0.5, ambiguityTolerance: 0.5, analyticalIntuitive: 0.5, updatedAt: 0,
         },
         updatedAt: createdAt,
       },

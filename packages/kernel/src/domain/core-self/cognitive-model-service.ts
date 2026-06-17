@@ -28,6 +28,8 @@ export function validateCognitiveModel(model: CognitiveModel): void {
   const checks: Array<[string, number]> = [
     ['attributionStyle', model.attributionStyle],
     ['growthMindset', model.growthMindset],
+    ['ambiguityTolerance', model.ambiguityTolerance],
+    ['analyticalIntuitive', model.analyticalIntuitive],
   ];
   for (const [name, val] of checks) {
     if (!Number.isFinite(val) || val < 0 || val > 1) {
@@ -42,6 +44,8 @@ function buildDefault(): CognitiveModel {
     biasWeights: new Map<string, number>(),
     attributionStyle: 0.5,
     growthMindset: 0.5,
+    ambiguityTolerance: 0.5,
+    analyticalIntuitive: 0.5,
     updatedAt: 0,
   };
 }
@@ -51,6 +55,8 @@ interface CognitiveModelPayload {
   biasWeights: string;
   attributionStyle: number;
   growthMindset: number;
+  ambiguityTolerance: number;
+  analyticalIntuitive: number;
 }
 
 /* ── 领域服务函数 ── */
@@ -65,6 +71,9 @@ export function getCognitiveModel(tx: SyncReadUnitOfWork, tenantId: string): Cog
     biasWeights: payload.biasWeights ? jsonToMap<number>(payload.biasWeights) : defaults.biasWeights,
     attributionStyle: payload.attributionStyle ?? defaults.attributionStyle,
     growthMindset: payload.growthMindset ?? defaults.growthMindset,
+    /* 旧 row 无新字段 → 回退默认 0.5（向后兼容，已落库的认知模型不需迁移）。 */
+    ambiguityTolerance: payload.ambiguityTolerance ?? defaults.ambiguityTolerance,
+    analyticalIntuitive: payload.analyticalIntuitive ?? defaults.analyticalIntuitive,
     updatedAt: row.updatedAt,
   };
 }
@@ -82,6 +91,8 @@ export function setCognitiveModel(
     biasWeights: patch.biasWeights ?? current.biasWeights,
     attributionStyle: patch.attributionStyle ?? current.attributionStyle,
     growthMindset: patch.growthMindset ?? current.growthMindset,
+    ambiguityTolerance: patch.ambiguityTolerance ?? current.ambiguityTolerance,
+    analyticalIntuitive: patch.analyticalIntuitive ?? current.analyticalIntuitive,
     updatedAt: now,
   };
   validateCognitiveModel(next);
@@ -90,6 +101,8 @@ export function setCognitiveModel(
     biasWeights: mapToJson(next.biasWeights),
     attributionStyle: next.attributionStyle,
     growthMindset: next.growthMindset,
+    ambiguityTolerance: next.ambiguityTolerance,
+    analyticalIntuitive: next.analyticalIntuitive,
   };
   tx.execute(cognitiveModelSetCmd({ tenantId, modelJson: JSON.stringify(payload), updatedAt: now }));
   return next;

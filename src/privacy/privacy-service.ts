@@ -435,6 +435,8 @@ export class PrivacyService {
             biasWeights: Object.fromEntries(persona.L3.biasWeights),
             attributionStyle: persona.L3.attributionStyle,
             growthMindset: persona.L3.growthMindset,
+            ambiguityTolerance: persona.L3.ambiguityTolerance,
+            analyticalIntuitive: persona.L3.analyticalIntuitive,
           },
           L4: {
             narrative: persona.L4.narrative,

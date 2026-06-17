@@ -147,7 +147,22 @@ describe('P-OS v0.1 五层人格模型', () => {
       assert.equal(model.beliefs.size, 0);
       assert.equal(model.attributionStyle, 0.5);
       assert.equal(model.growthMindset, 0.5);
+      /* ④ 新维度默认 0.5（中性）。 */
+      assert.equal(model.ambiguityTolerance, 0.5);
+      assert.equal(model.analyticalIntuitive, 0.5);
       assert.equal(model.updatedAt, 0);
+    });
+
+    it('④ 新维度 set/roundtrip + 校验范围', () => {
+      const model = store.set({ ambiguityTolerance: 0.8, analyticalIntuitive: 0.2 });
+      assert.equal(model.ambiguityTolerance, 0.8);
+      assert.equal(model.analyticalIntuitive, 0.2);
+      const loaded = store.get();
+      assert.equal(loaded.ambiguityTolerance, 0.8, '落库可读回');
+      assert.equal(loaded.analyticalIntuitive, 0.2);
+      /* 超范围抛错。 */
+      assert.throws(() => store.set({ ambiguityTolerance: 1.5 }), { name: 'RangeError' });
+      assert.throws(() => store.set({ analyticalIntuitive: -0.1 }), { name: 'RangeError' });
     });
 
     it('设置信念和偏误', () => {

@@ -159,6 +159,9 @@ export class ArtifactCompiler {
     const patch: Record<string, unknown> = {};
     if (typeof p.attributionStyle === 'number') patch.attributionStyle = p.attributionStyle;
     if (typeof p.growthMindset === 'number') patch.growthMindset = p.growthMindset;
+    /* ④ L3 扩展标量：模糊容忍 / 直觉↔分析，编译进认知模型（成长管线可学习落地）。 */
+    if (typeof p.ambiguityTolerance === 'number') patch.ambiguityTolerance = p.ambiguityTolerance;
+    if (typeof p.analyticalIntuitive === 'number') patch.analyticalIntuitive = p.analyticalIntuitive;
     if (p.beliefs) {
       const merged = new Map<string, number>(current.beliefs);
       for (const [k, v] of Object.entries(p.beliefs)) merged.set(k, Number(v));

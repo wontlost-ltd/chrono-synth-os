@@ -88,9 +88,26 @@ function computeCognitiveBias(
   }
   total *= growthFactor;
 
+  /* ④ analyticalIntuitive（直觉↔分析）：越分析(→1)越**阻尼**认知偏差驱动的调整（更理性，不被直觉偏差
+   * 左右）；越直觉(→0)越放大。中性 0.5 → 系数 1（不变，向后兼容旧无字段模型）。系数范围 [0.6,1.4]。
+   * 仅作用于 biasWeights+growth 派生的 total（偏差部分），不动 ambiguity/attribution 这类显式调整。 */
+  const analytical = clamp01(cognitiveModel.analyticalIntuitive ?? 0.5);
+  const analyticalDamp = 1 - (analytical - 0.5) * 0.8; /* 0.5→1, 1→0.6, 0→1.4 */
+  for (const key of Object.keys(adjustments)) {
+    adjustments[key] *= analyticalDamp;
+  }
+  total *= analyticalDamp;
+
   const attributionAdjustment = (1 - clamp01(cognitiveModel.attributionStyle)) * 0.02;
   adjustments.attribution_style = (adjustments.attribution_style ?? 0) + attributionAdjustment;
   total += attributionAdjustment;
+
+  /* ④ ambiguityTolerance（模糊容忍）：对**不确定/高风险**选项的偏好调节。高容忍 + 高 risk → 正向 boost
+   * （更敢选不确定选项）；低容忍 → 负向（回避）。中性 0.5 → 0（无影响，向后兼容）。量级与 attribution 同级。 */
+  const ambiguity = clamp01(cognitiveModel.ambiguityTolerance ?? 0.5);
+  const ambiguityAdjustment = (ambiguity - 0.5) * clampedRisk * 0.06;
+  adjustments.ambiguity_tolerance = (adjustments.ambiguity_tolerance ?? 0) + ambiguityAdjustment;
+  total += ambiguityAdjustment;
 
   return { total, adjustments };
 }

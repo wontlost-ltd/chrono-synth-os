@@ -14,7 +14,7 @@ const DEFAULT_STYLE: DecisionStyle = {
 };
 
 const DEFAULT_COGNITIVE: CognitiveModel = {
-  beliefs: new Map(), biasWeights: new Map(), attributionStyle: 0.5, growthMindset: 0.5, updatedAt: 1000,
+  beliefs: new Map(), biasWeights: new Map(), attributionStyle: 0.5, growthMindset: 0.5, ambiguityTolerance: 0.5, analyticalIntuitive: 0.5, updatedAt: 1000,
 };
 
 function makeInput(overrides: Partial<StructuralScoreInput> = {}): StructuralScoreInput {
@@ -93,6 +93,8 @@ describe('computeStructuralScore', () => {
       biasWeights: new Map([['confirmation', 0.8], ['loss_aversion', 0.5]]),
       attributionStyle: 0.5,
       growthMindset: 0.5,
+      ambiguityTolerance: 0.5,
+      analyticalIntuitive: 0.5,
       updatedAt: 1000,
     };
     const result = computeStructuralScore(makeInput({ cognitiveModel: biased }));
@@ -103,10 +105,10 @@ describe('computeStructuralScore', () => {
   it('高成长心态缩减偏差幅度', () => {
     const biases = new Map([['confirmation', 0.9]]);
     const fixedMindset: CognitiveModel = {
-      beliefs: new Map(), biasWeights: biases, attributionStyle: 0.5, growthMindset: 0.0, updatedAt: 1000,
+      beliefs: new Map(), biasWeights: biases, attributionStyle: 0.5, growthMindset: 0.0, ambiguityTolerance: 0.5, analyticalIntuitive: 0.5, updatedAt: 1000,
     };
     const growthMindset: CognitiveModel = {
-      beliefs: new Map(), biasWeights: biases, attributionStyle: 0.5, growthMindset: 1.0, updatedAt: 1000,
+      beliefs: new Map(), biasWeights: biases, attributionStyle: 0.5, growthMindset: 1.0, ambiguityTolerance: 0.5, analyticalIntuitive: 0.5, updatedAt: 1000,
     };
     const r1 = computeStructuralScore(makeInput({ cognitiveModel: fixedMindset }));
     const r2 = computeStructuralScore(makeInput({ cognitiveModel: growthMindset }));
@@ -131,6 +133,8 @@ describe('computeStructuralScore', () => {
       biasWeights: new Map([['confirmation', 10], ['optimism', 10]]),
       attributionStyle: 0.5,
       growthMindset: 1.0,
+      ambiguityTolerance: 0.5,
+      analyticalIntuitive: 0.5,
       updatedAt: 1000,
     };
     const result = computeStructuralScore(makeInput({ cognitiveModel: extremeBias }));
@@ -227,5 +231,45 @@ describe('computeStructuralScore', () => {
     const rLow = computeStructuralScore(makeInput({ anchors: [lowSev], violations: ['违规'] }));
     assert.ok(rHigh.constraintPenalty >= rLow.constraintPenalty,
       `highSev=${rHigh.constraintPenalty} lowSev=${rLow.constraintPenalty}`);
+  });
+});
+
+/* ── ④ L3 认知扩展：ambiguityTolerance + analyticalIntuitive 接入打分（真影响 overallScore，非死字段）── */
+describe('L3 认知扩展接入打分（④）', () => {
+  function cog(over: Partial<CognitiveModel>): CognitiveModel {
+    return { ...DEFAULT_COGNITIVE, ...over };
+  }
+
+  it('ambiguityTolerance：高容忍在高 risk 选项下加分，低容忍减分（中性 0.5 无影响）', () => {
+    const base = makeInput({ riskScore: 1.0 }); /* 高不确定/风险选项 */
+    const neutral = computeStructuralScore({ ...base, cognitiveModel: cog({ ambiguityTolerance: 0.5 }) }).overallScore;
+    const high = computeStructuralScore({ ...base, cognitiveModel: cog({ ambiguityTolerance: 1.0 }) }).overallScore;
+    const low = computeStructuralScore({ ...base, cognitiveModel: cog({ ambiguityTolerance: 0.0 }) }).overallScore;
+    assert.ok(high > neutral, `高容忍 ${high} > 中性 ${neutral}`);
+    assert.ok(low < neutral, `低容忍 ${low} < 中性 ${neutral}`);
+  });
+
+  it('ambiguityTolerance：低 risk 选项下影响微弱（容忍只在不确定时起作用）', () => {
+    const base = makeInput({ riskScore: 0 }); /* 确定选项 */
+    const high = computeStructuralScore({ ...base, cognitiveModel: cog({ ambiguityTolerance: 1.0 }) }).overallScore;
+    const low = computeStructuralScore({ ...base, cognitiveModel: cog({ ambiguityTolerance: 0.0 }) }).overallScore;
+    assert.ok(Math.abs(high - low) < 1e-9, 'risk=0 时 ambiguity 无影响');
+  });
+
+  it('analyticalIntuitive：越分析越阻尼认知偏差（理性，少受偏差左右）', () => {
+    const biased = cog({ biasWeights: new Map([['confirmation', 0.8], ['optimism', 0.6]]) });
+    const base = makeInput({ riskScore: 0.5 });
+    const intuitive = computeStructuralScore({ ...base, cognitiveModel: { ...biased, analyticalIntuitive: 0.0 } });
+    const analytical = computeStructuralScore({ ...base, cognitiveModel: { ...biased, analyticalIntuitive: 1.0 } });
+    /* 偏差驱动的 cognitiveBias：直觉型放大、分析型阻尼 → |分析的 bias| < |直觉的 bias|。 */
+    assert.ok(Math.abs(analytical.cognitiveBias) < Math.abs(intuitive.cognitiveBias),
+      `分析 ${analytical.cognitiveBias} 应比直觉 ${intuitive.cognitiveBias} 更受阻尼`);
+  });
+
+  it('向后兼容：无偏差 + 中性新维度 → overallScore 与不含新维度的旧行为一致', () => {
+    /* 中性 0.5 的新维度 + 无 biasWeights → cognitiveBias 仅来自 attribution（旧逻辑），新维度贡献 0。 */
+    const r = computeStructuralScore(makeInput({ riskScore: 0.5, cognitiveModel: cog({ ambiguityTolerance: 0.5, analyticalIntuitive: 0.5 }) }));
+    /* attributionAdjustment = (1-0.5)*0.02 = 0.01；中性新维度不加不减。 */
+    assert.ok(Math.abs(r.cognitiveBias - 0.01) < 1e-9, `中性新维度 cognitiveBias 应为旧值 0.01，实测 ${r.cognitiveBias}`);
   });
 });
