@@ -1,0 +1,212 @@
+/**
+ * Companion 对话层多语种资源（ADR-0055 多语种）——确定性、零-LLM。
+ *
+ * 集中**所有按语言变化的对话资源**：身份意图模式（起名/问名字）、寒暄/疑问判定词、
+ * 固定回复模板。各对话模块（identity-intent / conversation-memory-capture /
+ * offline-conversation-responder / chat）从这里按 locale 取资源，而非各自硬编码中文。
+ *
+ * 加新语言 = 在 LOCALE_RESOURCES 加一个 locale 块（结构由 CompanionLocaleResources 约束，
+ * TS 编译期保证不漏字段）。当前支持 zh-CN / en（与 i18n SUPPORTED_LOCALES 对齐）。
+ *
+ * 论点保持：全部是确定性正则/模板，零运行时 LLM。中文资源 = 既有行为（不回归），英文 = 对等新增。
+ */
+
+import type { SupportedLocale } from '../i18n/locale-resolver.js';
+
+/** 一种语言的全部对话资源。 */
+export interface CompanionLocaleResources {
+  /** 身份「起名」模式：捕获组 1 = 名字（已按该语言收敛误判）。 */
+  readonly nameDefinePatterns: readonly RegExp[];
+  /** 起名否决（可选）：命中则即便 define 模式匹配也不当起名（如英文疑问/转述上下文）。 */
+  readonly nameDefineVeto?: RegExp;
+  /** 身份「问名字」模式（命中即在问名字，无捕获）。 */
+  readonly nameAskPatterns: readonly RegExp[];
+  /** 纯寒暄词（整句归一化后命中即不沉淀对话记忆）。 */
+  readonly smallTalk: ReadonlySet<string>;
+  /** 疑问判定（命中即视为问句，不沉淀对话记忆）。 */
+  readonly isQuestion: (text: string) => boolean;
+  /** 回复模板（第一人称，确定性）。 */
+  readonly reply: {
+    /** 起名成功确认（{name}）。 */
+    readonly nameConfirmed: (name: string) => string;
+    /** 起名但名字命中敏感主题（never_discuss）→ 拒绝（语义：不方便用）。 */
+    readonly nameRejectedSensitive: string;
+    /** 起名但名字清洗后为空/无效 → 温和重问。 */
+    readonly nameRejectedUnclear: string;
+    /** 问名字、已有名字（{name}）。 */
+    readonly myNameIs: (name: string) => string;
+    /** 问名字、尚未起名 → 第一人称邀请。 */
+    readonly noNameYet: string;
+    /** 知识回应的 lead-in（按问句类型可不同；此处给通用一句）。 */
+    readonly knowledgeLeadIn: (userInput: string) => string;
+    /** 知识回应末尾的「离线声明」。 */
+    readonly offlineNote: string;
+    /** 无知识时的诚实离线回应主体。 */
+    readonly honestOffline: string;
+    /** 主动 follow-up（邀请继续）。 */
+    readonly inviteContinue: string;
+    /** self_intro：名字前缀（{name}）。 */
+    readonly selfIntroName: (name: string) => string;
+    /** self_intro：价值观引导（{values}）。 */
+    readonly selfIntroValues: (values: string) => string;
+    /** self_intro：记忆引导。 */
+    readonly selfIntroMemories: string;
+    /** self_intro：结尾声明。 */
+    readonly selfIntroFooter: string;
+  };
+  /** 自我介绍元意图短语（「介绍你自己」类，子串匹配，已小写）。 */
+  readonly selfIntroPhrases: readonly string[];
+}
+
+/* ── 中文（zh-CN）：抽取既有行为，逐字对齐原硬编码字符串，确保零回归 ─────────────── */
+
+const ZH_NAME_CHARS = "[^\\s，。,.!！?？、的了吧呀啊呢嘛吗什么谁啥]{1,16}";
+const ZH_BARE_NAME_CHARS = "[^\\s，。,.!！?？、的了吧呀啊呢嘛吗什么谁啥来去过下别乱动一声我他她它们个把要让给帮叫喊得真服务员外卖起床过来车餐客服救护]{1,6}";
+const ZH_NAME_TAIL = "(?:[\\s，。,.!！、了吧呀啊嘛]*)$";
+const ZH_ASK_ADVERB = '(?:现在|目前|这会儿|如今|到底|究竟|平时|一般|now)?';
+
+const ZH_SMALL_TALK: ReadonlySet<string> = new Set([
+  '你好', '您好', '嗨', '哈喽', '在吗', '在不在', '谢谢', '多谢', '感谢', '再见', '拜拜',
+  '好的', '好', '嗯', '嗯嗯', '哦', '哦哦', '哈哈', '呵呵', '嘿', 'ok', 'okay', '行', '收到',
+]);
+
+const ZH_QUESTION_MARK = /[?？]/;
+const ZH_QUESTION_PARTICLE = /[吗呢]/;
+const ZH_QUESTION_WORDS = /什么|怎么|怎样|为什么|为何|如何|多少|哪里|哪儿|哪个|哪|谁|几时|几点/;
+
+const zhCN: CompanionLocaleResources = {
+  nameDefinePatterns: [
+    new RegExp(`(?:给|帮)你(?:起|取)(?:个)?名(?:字)?(?:叫|是|为)?\\s*(${ZH_NAME_CHARS})`),
+    new RegExp(`你的名字(?:就)?(?:是|叫|为)\\s*(${ZH_NAME_CHARS})`),
+    new RegExp(`管你叫\\s*(${ZH_NAME_CHARS})`),
+    new RegExp(`(?:以后|从今(?:以后|往后)?|从现在起)?(?:我)?(?:就)?叫你\\s*(${ZH_BARE_NAME_CHARS})${ZH_NAME_TAIL}`),
+    new RegExp(`你(?:就|以后|现在|从此)?(?:开始)?叫\\s*(${ZH_BARE_NAME_CHARS})${ZH_NAME_TAIL}`),
+  ],
+  nameAskPatterns: [
+    new RegExp(`你${ZH_ASK_ADVERB}叫(什么|啥|甚么)`),
+    /你(的)?名字(是什么|叫什么|是啥)/,
+    /你(的)?名字(呢|吗|是啥)?[?？]?$/,
+    /你(的)?名字(是|叫)?(什么|啥)/,
+    /怎么称呼你/,
+  ],
+  smallTalk: ZH_SMALL_TALK,
+  isQuestion: (text) => ZH_QUESTION_MARK.test(text) || ZH_QUESTION_PARTICLE.test(text) || ZH_QUESTION_WORDS.test(text),
+  reply: {
+    nameConfirmed: (name) => `好的，我记住了——我叫${name}。以后你就这么叫我吧。`,
+    nameRejectedSensitive: '这个名字我不太方便用，换一个好吗？',
+    nameRejectedUnclear: '这个名字我没太听清，你想叫我什么？',
+    myNameIs: (name) => `我叫${name}。`,
+    noNameYet: '我还没有名字呢。你想叫我什么？',
+    knowledgeLeadIn: (userInput) => {
+      const q = userInput.trim();
+      if (/吗[?？]?$|会不会|是不是|有没有/.test(q)) return '关于这个，我记得：';
+      if (/怎么|如何|什么|为什么|哪些|怎样/.test(q)) return '这个我有印象：';
+      return '根据我已经记住的内容：';
+    },
+    offlineNote: '（当前离线，以上基于已学习的内容；联网后我可以补充更多。）',
+    honestOffline: '我现在处于离线状态，还无法就这个新话题学习或展开。我已经把它记下，等联网后会一起整理再回应你。',
+    inviteContinue: '如果你愿意，我们可以接着这个话题多聊一会儿。',
+    selfIntroName: (name) => `我叫${name}。`,
+    selfIntroValues: (values) => `我最看重的是${values}。`,
+    selfIntroMemories: '我印象比较深的是：',
+    selfIntroFooter: '（这些都来自我学过、记住的，离线也能告诉你。）',
+  },
+  selfIntroPhrases: [
+    '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
+    '你是谁', '你会什么', '你都会什么', '你都会些什么', '你会些什么', '你能做什么', '你擅长什么',
+    '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
+  ],
+};
+
+/* ── 英文（en）：与中文对等的新增资源 ──────────────────────────────────── */
+
+/** 英文名字 token：字母/数字/连字符/撇号/点/空格（多词名如 "Mary Jane"），1..24。 */
+const EN_NAME_CHARS = "[A-Za-z][A-Za-z0-9'.\\- ]{0,23}";
+/** 英文起名后缀：名字后只允许陈述标点/空白 + 结束。**不含 ?**——「Can I call you Max?」是询问不是定义。 */
+const EN_NAME_TAIL = "(?:[\\s.,!'\"]*)$";
+/** 起名定义不得出现在疑问上下文：以情态/助动词 + 「I/we call you」开头（Can I call you X? / Should I…）
+ * 或第三人称（they/people call you X）——这些是询问/转述，非用户定义。命中则不 define。 */
+const EN_DEFINE_QUESTION_GUARD = /^(?:can|could|may|might|should|shall|would|will|do|does|did)\s+(?:i|we|you)\b|^(?:they|people|everyone|others|folks|we)\s+call\s+you\b|^(?:would|do)\s+you\s+(?:like|want|mind)\b/i;
+/** 「call you X」里 X 不能以这些词开头——排除「call you back / a taxi / later / after lunch / from work /
+ * me / your mom / maybe / not Max」等动作/介词/指代/否定短语（否则会被当名字）。负向先行，词边界。 */
+const EN_NOT_NAME_LEAD = "(?!(?:back|a|an|the|later|now|soon|up|out|in|on|over|off|again|tomorrow|today|tonight|" +
+  "after|before|from|once|when|while|until|about|around|maybe|perhaps|sometime|anytime|" +
+  "me|him|her|them|us|your|my|his|their|our|this|that|these|those|please|if|right|asap|first|not|never|guys?)\\b)";
+
+const EN_SMALL_TALK: ReadonlySet<string> = new Set([
+  'hi', 'hello', 'hey', 'heya', 'yo', 'hiya', 'sup', 'thanks', 'thank you', 'thx', 'ty',
+  'bye', 'goodbye', 'cya', 'ok', 'okay', 'k', 'kk', 'yeah', 'yep', 'yup', 'nope', 'lol', 'haha',
+  'cool', 'nice', 'great', 'got it', 'sure',
+]);
+
+/* 英文 wh-疑问词开头（what/who/where/when/why/which/whose/whom/how）——这些开头基本就是问句，
+ * 误判为陈述的概率低（避免英文问句被当陈述沉淀）。 */
+const EN_WH_LEAD = /^(what|who|where|when|why|which|whose|whom|how)\b/i;
+/* 助动词 + 代词（you/we/i/they）开头 = 明显疑问倒装（do you…/can you…/are you…/would you…），
+ * 即使省略问号也判疑问。而「Will Smith is…」「May is…」助动词后接专名/系动词而非代词，不命中。 */
+const EN_AUX_INVERSION = /^(do|does|did|are|is|was|were|can|could|will|would|shall|should|may|might|have|has|had|am)\s+(you|we|i|they)\b/i;
+
+const en: CompanionLocaleResources = {
+  nameDefineVeto: EN_DEFINE_QUESTION_GUARD,
+  nameDefinePatterns: [
+    // 显式起名：your name is X —— 排除否定「is not X」（\b 词边界防 "isn't"）
+    new RegExp(`your name\\s+(?:is|will be|shall be)\\s+${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+    // name you X / I'll name you X（\bname 防 rename/surname）
+    new RegExp(`\\b(?:i(?:'| a| wi)?ll\\s+)?name\\s+you\\s+${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+    // call you X / I'll call you X —— \bcall 防 recall；负向先行排除动作/介词短语 + 紧接句尾
+    new RegExp(`\\bcall\\s+you\\s+${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+    // you're called X / you are named X / you shall be called X
+    new RegExp(`you(?:'re| are)\\s+(?:called\\s+|named\\s+)${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+    new RegExp(`you(?:'ll| will| shall)?\\s+be\\s+(?:called|named)\\s+${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+  ],
+  nameAskPatterns: [
+    // 必须含「name/called」语义，不允许裸 what are you / what is your（否则 what are you doing 误拦）
+    /what(?:'s|s| is|'re| are)\s+your\s+name/i,    // what's/whats/what is/what are your name
+    /what\s+are\s+you\s+called/i,                  // what are you called
+    /what\s+(?:should|do|can|shall)\s+i\s+call\s+you/i,  // what should I call you
+    /(?:do you have|have you got|got)\s+a\s+name/i, // do you have a name
+    /your\s+name\s*\?\s*$/i,                         // "your name?"（必须带问号，防陈述「your name is X」）
+    /who\s+are\s+you\s+called/i,
+    /tell me your name/i,
+  ],
+  smallTalk: EN_SMALL_TALK,
+  isQuestion: (text) => {
+    const t = text.trim();
+    if (/[?]\s*$/.test(t)) return true;               // 问号结尾 → 疑问
+    if (EN_WH_LEAD.test(t)) return true;              // wh-词开头 → 疑问（误判低）
+    if (EN_AUX_INVERSION.test(t)) return true;        // 助动词+代词倒装（do you…/can you…）→ 疑问，即便无问号
+    return false;                                      // 否则当陈述（如 "Will Smith is…" 不误判）
+  },
+  reply: {
+    nameConfirmed: (name) => `Got it — my name is ${name}. That's what you can call me from now on.`,
+    nameRejectedSensitive: "I'd rather not use that as a name. Could you pick another?",
+    nameRejectedUnclear: "I didn't quite catch that name. What would you like to call me?",
+    myNameIs: (name) => `My name is ${name}.`,
+    noNameYet: "I don't have a name yet. What would you like to call me?",
+    knowledgeLeadIn: () => "Here's what I remember:",
+    offlineNote: "(I'm offline right now, so this is from what I've already learned; I can add more once I'm online.)",
+    honestOffline: "I'm offline right now and can't look into this new topic yet. I've made a note of it and will get back to you once I'm online.",
+    inviteContinue: 'If you like, we can keep talking about this.',
+    selfIntroName: (name) => `My name is ${name}.`,
+    selfIntroValues: (values) => `What I care about most is ${values}.`,
+    selfIntroMemories: 'Some things that stand out to me:',
+    selfIntroFooter: "(This all comes from what I've learned and remembered — I can tell you even offline.)",
+  },
+  selfIntroPhrases: [
+    'introduce yourself', 'tell me about yourself', 'about yourself', 'who are you',
+    'what can you do', 'what do you do', 'what are you good at', 'what are you capable of',
+    'tell me about you', 'describe yourself',
+  ],
+};
+
+/* ── 注册表 ────────────────────────────────────────────────────────── */
+
+const LOCALE_RESOURCES: Record<SupportedLocale, CompanionLocaleResources> = {
+  'zh-CN': zhCN,
+  en,
+};
+
+/** 取某语言的对话资源（未知 locale 回退英文）。 */
+export function companionLocale(locale: SupportedLocale): CompanionLocaleResources {
+  return LOCALE_RESOURCES[locale] ?? en;
+}
