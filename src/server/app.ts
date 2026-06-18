@@ -268,7 +268,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     db,
     deps.os.getClock(),
     deps.os.getLogger(),
-    undefined,
+    /* ADR-0054 主动性配置透传给所有租户 OS（生产可达关闭/红线 3）。 */
+    deps.config?.proactivity ? { proactivity: deps.config.proactivity } : undefined,
     deps.config?.encryption,
   );
   app.addHook('onClose', () => { tenantFactory.clear(); });

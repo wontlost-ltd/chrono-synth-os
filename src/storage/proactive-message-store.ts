@@ -15,6 +15,7 @@ import {
   proactiveMessageCmdEnqueue,
   proactiveMessageQueryList,
   proactiveMessageQueryById,
+  proactiveMessageQueryWindowStats,
   proactiveMessageCmdMarkRead,
   type ProactiveMessageRow,
 } from '@chrono/kernel';
@@ -76,6 +77,20 @@ export class ProactiveMessageStore {
   /** 列出某 persona 的未读主动消息。 */
   listUnread(personaId: string, limit = 50): ProactiveMessageRow[] {
     return this.list(personaId, { status: 'unread', limit });
+  }
+
+  /**
+   * 窗口统计：windowCount=created_at≥since 的消息数（频率上限）；lastCreatedAt=最近一条时间（静默期）。
+   * 供 ProactiveGate 节制判定（ADR-0054 红线 3：主动≠骚扰）。
+   */
+  windowStats(personaId: string, since: number): { windowCount: number; lastCreatedAt: number | null } {
+    const row = this.tx.queryOne(proactiveMessageQueryWindowStats({
+      tenantId: this.tenantId, personaId, since,
+    }));
+    return {
+      windowCount: row?.window_count ?? 0,
+      lastCreatedAt: row?.last_created_at ?? null,
+    };
   }
 
   /**

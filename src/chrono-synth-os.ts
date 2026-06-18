@@ -3,6 +3,8 @@
  * 协调三层架构（慢层/快层/元调控层）+ 恢复/演化机制
  */
 
+import { ProactiveEngine } from './proactivity/proactive-engine.js';
+import { ProactiveMessageStore } from './storage/proactive-message-store.js';
 import { AcceleratedLayer } from './accelerated/accelerated-layer.js';
 import { CoreRhythmLayer } from './core/core-rhythm-layer.js';
 import { MemoryPatternExtractor, type PatternExtractionConfig, type ValueUpdateProposal } from './core/memory-pattern-extractor.js';
@@ -34,6 +36,7 @@ import { DistillationService } from './intelligence/distillation-service.js';
 import {
   DEFAULT_DISTILLATION_POLICY, type DistillationPolicy,
   perturbDecisionStyle, archetypeDecisionStyle, type PersonalityArchetype,
+  DEFAULT_PROACTIVE_GATE_CONFIG, type ProactiveGateConfig,
 } from '@chrono/kernel';
 import { EarningOutcomeDistiller } from './intelligence/earning-outcome-distiller.js';
 import { DistilledArtifactStore } from './storage/distilled-artifact-store.js';
@@ -57,6 +60,11 @@ export interface ChronoSynthOSConfig {
   updateGateConfig?: Partial<UpdateGateConfig>;
   /** 蒸馏策略（含不确定性预算：窗口内 auto-compile 上限）；缺省用 DEFAULT_DISTILLATION_POLICY */
   distillationPolicy?: Partial<DistillationPolicy>;
+  /**
+   * 主动性门控配置（ADR-0054）：覆盖 DEFAULT_PROACTIVE_GATE_CONFIG。生产可达的关闭入口
+   * （红线 3）：`{ enabled: false }` 完全关闭主动消息；也可调静默期/频率上限。缺省用默认（保守）。
+   */
+  proactivity?: Partial<ProactiveGateConfig>;
   /**
    * 性格出生设定（②原型 + ③随机化）：**新 persona**（决策风格未写过）在 start() 时设定性格——
    *   - archetype（可选，②）：出生取该原型的 6 维基准（explorer/guardian/analyst/doer）；不给则用默认。
@@ -110,6 +118,9 @@ export class ChronoSynthOS {
    *  Web 通过 /api/v1/feature-flags/{bootstrap,stream} 消费，
    *  后端 worker 通过 isEnabled() 直接查询。 */
   readonly featureFlags: FeatureFlagService;
+
+  /** ADR-0054 主动性引擎：订阅内部信号 → 确定性门控 → 主动消息入队（start() 时启动）。 */
+  private readonly proactiveEngine: ProactiveEngine;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -224,6 +235,17 @@ export class ChronoSynthOS {
     } else {
       this.auditChainAnchors = undefined;
     }
+
+    /* ADR-0054 主动性引擎：订阅内部信号 → 确定性门控 → 主动消息入队。start() 时订阅。
+     * 生产可达关闭入口（红线 3）：config.proactivity 覆盖默认（保守）配置，{enabled:false} 全关。 */
+    this.proactiveEngine = new ProactiveEngine({
+      bus: this.bus,
+      store: new ProactiveMessageStore(this.db, () => this.clock.now(), this.tenantId),
+      now: () => this.clock.now(),
+      logger: this.logger,
+      tenantId: this.tenantId,
+      config: { ...DEFAULT_PROACTIVE_GATE_CONFIG, ...config.proactivity },
+    });
   }
 
   /** 获取数据库实例 */
@@ -250,6 +272,7 @@ export class ChronoSynthOS {
   start(): void {
     this.auditChainAnchors?.start();
     this.maybeSeedPersonality();
+    this.proactiveEngine.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -474,6 +497,7 @@ export class ChronoSynthOS {
     if (this.stopped) return;
     this.stopped = true;
     try {
+      this.proactiveEngine.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');

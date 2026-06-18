@@ -15,6 +15,7 @@ import type { Query, Command } from '../../ports/query.js';
 export const PROACTIVE_MESSAGE_CMD_ENQUEUE = 'proactiveMessage.enqueue' as const;
 export const PROACTIVE_MESSAGE_QUERY_LIST = 'proactiveMessage.list' as const;
 export const PROACTIVE_MESSAGE_QUERY_BY_ID = 'proactiveMessage.byId' as const;
+export const PROACTIVE_MESSAGE_QUERY_WINDOW_STATS = 'proactiveMessage.windowStats' as const;
 export const PROACTIVE_MESSAGE_CMD_MARK_READ = 'proactiveMessage.markRead' as const;
 
 /* ── Row ── */
@@ -61,6 +62,20 @@ export interface ProactiveMessageByIdParams {
   personaId: string;
 }
 
+export interface ProactiveMessageWindowStatsParams {
+  tenantId: string;
+  personaId: string;
+  /** 频率上限窗口起点（epoch ms）：统计 created_at ≥ since 的消息数。 */
+  since: number;
+}
+
+/** 窗口统计：用于 Gate 的频率上限（windowCount）+ 静默期（lastCreatedAt）。 */
+export interface ProactiveMessageWindowStatsRow {
+  readonly window_count: number;
+  /** 该 persona 最近一条主动消息的 created_at（无则 null）。 */
+  readonly last_created_at: number | null;
+}
+
 export interface ProactiveMessageMarkReadParams {
   id: string;
   tenantId: string;
@@ -84,6 +99,13 @@ export function proactiveMessageQueryList(
   params: ProactiveMessageListParams,
 ): Query<ProactiveMessageRow, ProactiveMessageListParams> {
   return { kind: PROACTIVE_MESSAGE_QUERY_LIST, params };
+}
+
+/** 窗口统计（窗口内消息数 + 最近一条时间）——供 Gate 的频率上限 + 静默期判定。 */
+export function proactiveMessageQueryWindowStats(
+  params: ProactiveMessageWindowStatsParams,
+): Query<ProactiveMessageWindowStatsRow | null, ProactiveMessageWindowStatsParams> {
+  return { kind: PROACTIVE_MESSAGE_QUERY_WINDOW_STATS, params };
 }
 
 /** 按 id 取某条主动消息（带租户/persona 归属，供 markRead 区分 404 vs 已读幂等）。 */

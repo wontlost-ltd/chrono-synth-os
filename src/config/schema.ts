@@ -499,6 +499,20 @@ const safetySchema = z.object({
   alerts: { webhookUrl: '', webhookTimeoutMs: 5_000, webhookSecret: '' },
 });
 
+/** 主动性配置（ADR-0054）：生产可达的关闭/调节入口（红线 3）。 */
+const proactivitySchema = z.object({
+  /** 主动消息总开关。false → 完全关闭（红线 3，0=关闭语义）。默认开启（配合保守静默期/频率上限）。 */
+  enabled: z.coerce.boolean().default(true),
+  /** 静默期（ms）：距上次主动消息不足此值则抑制。默认 4h。 */
+  quietPeriodMs: z.coerce.number().int().min(0).default(4 * 60 * 60 * 1000),
+  /** 频率上限：窗口内主动消息上限。默认 3。 */
+  maxPerWindow: z.coerce.number().int().min(0).default(3),
+  /** 频率上限窗口（ms）。默认 24h。 */
+  windowMs: z.coerce.number().int().min(1).default(24 * 60 * 60 * 1000),
+}).default({
+  enabled: true, quietPeriodMs: 4 * 60 * 60 * 1000, maxPerWindow: 3, windowMs: 24 * 60 * 60 * 1000,
+});
+
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
   db: dbSchema.default({ driver: 'sqlite', path: ':memory:', pool: { max: 10, idleTimeoutMs: 30_000 } }),
@@ -607,6 +621,7 @@ export const AppConfigSchema = z.object({
     presignTtlSeconds: 3600,
   }),
   safety: safetySchema,
+  proactivity: proactivitySchema,
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -706,6 +721,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_AGENT_TOOL_INVOCATIONS_RETENTION_DAYS: (v) => { deepSet(env, 'agent.toolInvocationsRetentionDays', parseInt(v, 10)); },
     CHRONO_SAFETY_DRIFT_WARNING_THRESHOLD:  (v) => { deepSet(env, 'safety.drift.warningThreshold', parseFloat(v)); },
     CHRONO_SAFETY_DRIFT_CRITICAL_THRESHOLD: (v) => { deepSet(env, 'safety.drift.criticalThreshold', parseFloat(v)); },
+    /* ADR-0054 主动性总开关（生产可达关闭，红线 3）：CHRONO_PROACTIVITY_ENABLED=false 完全关闭。 */
+    CHRONO_PROACTIVITY_ENABLED:             (v) => { deepSet(env, 'proactivity.enabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },
