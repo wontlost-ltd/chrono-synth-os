@@ -31,6 +31,7 @@ import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation
 import { retrieveMemoriesDeterministic } from '../../../conversation/deterministic-memory-retrieval.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
 import { COMPANION_BASELINE_BOUNDARIES } from '../../../conversation/companion-boundaries.js';
+import { buildRecentGrowthPhrase } from './recent-growth.js';
 import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
 
 /** companion 默认人格 id（与 perceive/environment 一致）。 */
@@ -185,14 +186,16 @@ export function registerCompanionChatRoutes(
 
     /* 确定性离线回应（零 LLM）。喂基线安全边界——never_discuss 输入/输出自检对凭证类敏感主题真生效
      * （不因 companion 默认人格无 enterprise 配置就让安全自检 no-op）。 */
+    /* ADR-0054 Phase 5：近期成长片段（drift→成长，确定性）——让知识回应的主动 follow-up 真带
+     * 「我最近也在变化：<成长>」。getLatest 读已存报告(cheap)，无基线/无方向 → undefined(仅泛泛邀请)。 */
+    const recentGrowth = buildRecentGrowthPhrase(sharedDb, request.tenantId);
     const offline = responder.respond({
       narrative,
       boundaries: COMPANION_BASELINE_BOUNDARIES,
       userInput: body.message,
       relevantKnowledge,
-      /* ADR-0054 Phase 5 主动响应增强：知识回应后追加确定性 follow-up（邀请继续；
-       * 近期成长片段留待后续从 drift→成长接入，当前先开邀请延展）。仅作用于 knowledge_grounded。 */
-      proactiveReply: {},
+      /* 仅作用于 knowledge_grounded 回应（block/escalate/honest_offline 不追）。 */
+      proactiveReply: recentGrowth !== undefined ? { recentGrowth } : {},
     });
 
     /* response_template 优先（ADR-0047 蒸馏闭环消费端）：命中 intent 匹配的整段模板 → 直接用它，流程型

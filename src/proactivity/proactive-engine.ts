@@ -14,6 +14,7 @@
  *     绝不默认归 'default'（隔离须在信号入口成立）。
  */
 
+import { createHash } from 'node:crypto';
 import type { EventBus } from '../events/event-bus.js';
 import type { Logger } from '../utils/logger.js';
 import type { ProactiveMessageStore } from '../storage/proactive-message-store.js';
@@ -70,24 +71,24 @@ const SIGNAL_SOURCE_ID: Readonly<Record<ProactiveSignalType, (p: Record<string, 
   },
   /* 叙事变化用新叙事内容的稳定指纹（同一份新叙事 → 同 id，重放不重复）。 */
   'core:narrative-changed': (p) => {
-    return typeof p.narrative === 'string' ? `nc:${fnv1a(p.narrative)}` : undefined;
+    return typeof p.narrative === 'string' ? `nc:${contentFingerprint(p.narrative)}` : undefined;
   },
   /* 演化完成用合并版本集的稳定指纹。 */
   'system:evolution-completed': (p) => {
     const ids = p.mergedVersionIds;
     if (!Array.isArray(ids) || ids.length === 0) return undefined;
-    return `ev:${fnv1a([...ids].sort().join(','))}`;
+    return `ev:${contentFingerprint([...ids].sort().join(','))}`;
   },
 };
 
-/** FNV-1a 32-bit 十六进制——确定性内容指纹（同串恒同值，零依赖）。 */
-function fnv1a(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16);
+/**
+ * 内容指纹（确定性，同串恒同值）：SHA-256 截断 16 hex（64-bit）。取代原 FNV-1a 32-bit——
+ * 32-bit 在主动消息量上来后有可观碰撞概率（两不同 narrative/version 集→同指纹→后者被幂等键
+ * 误吞漏发，Codex P3 非阻塞建议）。64-bit 把碰撞概率压到可忽略。src/proactivity 非 kernel-purity
+ * 路径，node:crypto 可用（id-generator 亦用）。
+ */
+function contentFingerprint(s: string): string {
+  return createHash('sha256').update(s).digest('hex').slice(0, 16);
 }
 
 export class ProactiveEngine {
