@@ -11,12 +11,15 @@ import type {
   ProactiveMessageEnqueueParams,
   ProactiveMessageListParams,
   ProactiveMessageByIdParams,
+  ProactiveMessageWindowStatsParams,
+  ProactiveMessageWindowStatsRow,
   ProactiveMessageMarkReadParams,
 } from '@chrono/kernel';
 import {
   PROACTIVE_MESSAGE_CMD_ENQUEUE,
   PROACTIVE_MESSAGE_QUERY_LIST,
   PROACTIVE_MESSAGE_QUERY_BY_ID,
+  PROACTIVE_MESSAGE_QUERY_WINDOW_STATS,
   PROACTIVE_MESSAGE_CMD_MARK_READ,
 } from '@chrono/kernel';
 
@@ -69,4 +72,23 @@ export function registerProactiveMessageExecutors(): void {
       'SELECT * FROM proactive_messages WHERE id = ? AND tenant_id = ? AND persona_id = ?',
     ).get(p.id, p.tenantId, p.personaId) ?? null;
   });
+
+  /* 窗口统计（频率上限 + 静默期）：窗口内消息数 + 该 persona 最近一条 created_at。 */
+  registerQuery<ProactiveMessageWindowStatsRow | null, ProactiveMessageWindowStatsParams>(
+    PROACTIVE_MESSAGE_QUERY_WINDOW_STATS,
+    (db, p) => {
+      const row = db.prepare<{ window_count: number | bigint; last_created_at: number | bigint | null }>(
+        `SELECT
+           COUNT(CASE WHEN created_at >= ? THEN 1 END) AS window_count,
+           MAX(created_at) AS last_created_at
+         FROM proactive_messages
+         WHERE tenant_id = ? AND persona_id = ?`,
+      ).get(p.since, p.tenantId, p.personaId);
+      if (!row) return { window_count: 0, last_created_at: null };
+      return {
+        window_count: Number(row.window_count),
+        last_created_at: row.last_created_at === null ? null : Number(row.last_created_at),
+      };
+    },
+  );
 }

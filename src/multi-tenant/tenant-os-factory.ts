@@ -10,6 +10,7 @@ import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import { TenantDatabase } from './tenant-database.js';
 import { normalizeTenantId } from './tenant-context.js';
+import type { ProactiveGateConfig } from '@chrono/kernel';
 
 export interface TenantOSFactoryConfig {
   /** LRU 缓存容量（默认 64） */
@@ -21,6 +22,11 @@ export interface TenantOSFactoryConfig {
    * 仅影响**全新** persona——已写过 decision style row 的租户（已设置/演化/恢复）不受影响。
    */
   personalityBirthMagnitude?: number;
+  /**
+   * 主动性门控配置（ADR-0054，生产可达关闭入口/红线 3）。透传给每个租户 OS——`{ enabled: false }`
+   * 关闭该部署所有租户的主动消息。缺省 → 各租户用 DEFAULT_PROACTIVE_GATE_CONFIG（保守）。
+   */
+  proactivity?: Partial<ProactiveGateConfig>;
 }
 
 /** 默认出生扰动幅度——温和有界，让租户人格出生即有可度量差异（diversityScore>0）。 */
@@ -38,6 +44,7 @@ export class TenantOSFactory {
 
   private readonly encryptionConfig?: EncryptionConfig;
   private readonly personalityBirthMagnitude: number;
+  private readonly proactivity?: Partial<ProactiveGateConfig>;
 
   constructor(
     private readonly db: IDatabase,
@@ -49,6 +56,7 @@ export class TenantOSFactory {
     this.maxCached = config?.maxCachedTenants ?? 64;
     this.encryptionConfig = encryptionConfig;
     this.personalityBirthMagnitude = config?.personalityBirthMagnitude ?? DEFAULT_PERSONALITY_BIRTH_MAGNITUDE;
+    this.proactivity = config?.proactivity;
   }
 
   /** 获取或创建租户 OS 实例 */
@@ -108,6 +116,8 @@ export class TenantOSFactory {
        * 让不同租户的人格出生即略有不同。exists() 守卫保证仅作用于全新 persona，现有租户不漂移。
        * tenantId 此处已由 getTenantOS 规范化，直接作 seed。 */
       personalitySeed: { seed: tenantId, magnitude: this.personalityBirthMagnitude },
+      /* ADR-0054 主动性配置透传（生产可达关闭/红线 3）；缺省 → 租户 OS 用默认保守配置。 */
+      ...(this.proactivity ? { proactivity: this.proactivity } : {}),
     });
     os.start();
     this.logger.info('TenantOSFactory', `租户 OS 实例已创建: ${tenantId}`);

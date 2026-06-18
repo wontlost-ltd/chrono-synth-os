@@ -31,6 +31,8 @@ const os = new ChronoSynthOS({
   },
   cognitionConfig: config.cognition,
   encryptionConfig: config.encryption,
+  /* ADR-0054 主动性配置（生产可达关闭/红线 3）。 */
+  proactivity: config.proactivity,
   skipMigrations: true,
 });
 

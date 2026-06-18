@@ -5,6 +5,7 @@ import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import type { IDatabase } from '../../storage/database.js';
+import { ProactiveMessageStore } from '../../storage/proactive-message-store.js';
 import { personalityDiversity } from '@chrono/kernel';
 
 describe('TenantOSFactory', () => {
@@ -67,6 +68,21 @@ describe('TenantOSFactory', () => {
     factory.getTenantOS('t1');
     factory.evict('nonexistent');
     assert.equal(factory.cachedCount, 1);
+  });
+
+  it('主动性配置透传到租户 OS（ADR-0054 生产可达关闭/红线 3）', () => {
+    /* 配 proactivity.enabled=false → 该工厂创建的租户 OS 主动性应关闭：
+     * 触发显著信号后不产生主动消息。 */
+    const off = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+      proactivity: { enabled: false },
+    });
+    const os = off.getTenantOS('tenant-quiet');
+    os.bus.emit('system:evolution-completed', {
+      mergedVersionIds: ['v1'], diffReport: {} as never, tenantId: 'tenant-quiet',
+    });
+    /* 主动性关闭 → proactive_messages 表无消息（经 store 读回验证）。 */
+    const store = new ProactiveMessageStore(os.getDatabase(), () => 1000, 'tenant-quiet');
+    assert.equal(store.list('default').length, 0, 'enabled=false 应让租户 OS 不产生主动消息');
   });
 
   describe('性格出生机制接线（②③ → 生产路径）', () => {
