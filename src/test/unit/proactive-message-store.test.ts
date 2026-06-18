@@ -26,9 +26,10 @@ describe('ProactiveMessageStore（ADR-0054 Phase 2 outbound 管道）', () => {
       personaId: 'default', signalType: 'core:memory-consolidated',
       sourceId: 'mem-1', body: '我最近一直在想这件事', kind: 'memory',
     });
-    assert.equal(inserted, true, '首次入队应真插入');
+    assert.ok(typeof inserted === 'string' && inserted.startsWith('pmsg'), '首次入队应返回新消息 id');
     const rows = store.list('default');
     assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, inserted, '返回的 id 即落库行 id');
     assert.equal(rows[0].body, '我最近一直在想这件事');
     assert.equal(rows[0].status, 'unread');
     assert.equal(rows[0].kind, 'memory');
@@ -36,9 +37,9 @@ describe('ProactiveMessageStore（ADR-0054 Phase 2 outbound 管道）', () => {
 
   it('幂等（红线 8）：同一信号重复 enqueue 只落一条', () => {
     const sig = { personaId: 'default', signalType: 'core:narrative-changed', sourceId: 'nar-1', signalVersion: 3, body: 'A' };
-    assert.equal(store.enqueue(sig), true, '首次应插入');
-    assert.equal(store.enqueue({ ...sig, body: 'B' }), false, '同信号重复应被幂等忽略');
-    assert.equal(store.enqueue({ ...sig, body: 'C' }), false, '再次重复仍忽略');
+    assert.ok(store.enqueue(sig), '首次应插入（返回 id）');
+    assert.equal(store.enqueue({ ...sig, body: 'B' }), null, '同信号重复应被幂等忽略（返回 null）');
+    assert.equal(store.enqueue({ ...sig, body: 'C' }), null, '再次重复仍忽略');
     const rows = store.list('default');
     assert.equal(rows.length, 1, '同信号最多一条');
     assert.equal(rows[0].body, 'A', '保留首次入队内容，不被后续覆盖');
@@ -46,8 +47,8 @@ describe('ProactiveMessageStore（ADR-0054 Phase 2 outbound 管道）', () => {
 
   it('signalVersion 不同 → 视为不同信号，各落一条', () => {
     const base = { personaId: 'default', signalType: 'system:evolution-completed', sourceId: 'evo-1', body: 'x' };
-    assert.equal(store.enqueue({ ...base, signalVersion: 1 }), true);
-    assert.equal(store.enqueue({ ...base, signalVersion: 2 }), true);
+    assert.ok(store.enqueue({ ...base, signalVersion: 1 }), '应插入（返回 id）');
+    assert.ok(store.enqueue({ ...base, signalVersion: 2 }), '应插入（返回 id）');
     assert.equal(store.list('default').length, 2, '不同 signalVersion 是不同信号');
   });
 

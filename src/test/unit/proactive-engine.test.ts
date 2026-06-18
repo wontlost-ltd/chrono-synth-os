@@ -5,6 +5,7 @@ import { ProactiveMessageStore } from '../../storage/proactive-message-store.js'
 import { ProactiveEngine } from '../../proactivity/proactive-engine.js';
 import { EventBus } from '../../events/event-bus.js';
 import { SilentLogger } from '../../utils/logger.js';
+import { VALID_EVENTS } from '../../server/plugins/websocket.js';
 import type { IDatabase } from '../../storage/database.js';
 
 /**
@@ -222,5 +223,39 @@ describe('ProactiveEngine（ADR-0054 Phase 3 触发逻辑）', () => {
     const msgs = store.list('default');
     assert.equal(msgs.length, 1);
     assert.ok(!msgs[0].body.includes('「'), '无 context 用基线模板');
+  });
+
+  it('P6：真入队 → 发 companion:nudge-created（in-app push 刷新信号，不带 body）', () => {
+    makeEngine();
+    const received: Array<{ nudgeId: string; kind: string; tenantId?: string }> = [];
+    bus.on('companion:nudge-created', (p) => received.push(p));
+    bus.emit('system:evolution-completed', {
+      mergedVersionIds: ['v1'], diffReport: {} as never, tenantId: 'tenant-a',
+    });
+    assert.equal(received.length, 1, '真入队应发一条 nudge-created');
+    assert.equal(received[0].tenantId, 'tenant-a', '带 tenantId（供 SSE 租户过滤）');
+    assert.equal(received[0].kind, 'growth');
+    assert.ok(received[0].nudgeId.startsWith('pmsg'), '带 nudgeId（客户端据此拉取）');
+    /* 事件不含 body——正文经认证 GET /nudges 取。 */
+    assert.ok(!('body' in received[0]), 'nudge-created 不带 body');
+  });
+
+  it('P6：幂等忽略（同信号重放）→ 不重复发 nudge-created', () => {
+    makeEngine();
+    const received: unknown[] = [];
+    bus.on('companion:nudge-created', (p) => received.push(p));
+    const fire = (): void => {
+      bus.emit('system:evolution-completed', {
+        mergedVersionIds: ['v1'], diffReport: {} as never, tenantId: 'tenant-a',
+      });
+    };
+    fire();
+    fire(); /* 同信号 → 幂等忽略 → 不应再发事件 */
+    assert.equal(received.length, 1, '幂等忽略不重复发 nudge-created');
+  });
+
+  it('P6：companion:nudge-created 在 SSE/WS 转发白名单 VALID_EVENTS 中', () => {
+    /* 不在白名单 → SSE/WS 不会转发该事件，in-app push 失效。 */
+    assert.ok(VALID_EVENTS.has('companion:nudge-created'), 'nudge-created 必须在 SSE/WS 转发白名单');
   });
 });

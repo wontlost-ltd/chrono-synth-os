@@ -47,11 +47,13 @@ export class ProactiveMessageStore {
   }
 
   /**
-   * 入队一条主动消息（幂等）。返回 true=真插入；false=该信号已入过队（幂等忽略）。
+   * 入队一条主动消息（幂等）。返回新消息 id（真插入）；返回 null = 该信号已入过队（幂等忽略）。
+   * 调用方据此判断「是否真产生了一条新主动消息」（如 P6 据 id 发 nudge-created 事件）。
    */
-  enqueue(input: ProactiveMessageInput): boolean {
+  enqueue(input: ProactiveMessageInput): string | null {
+    const id = generatePrefixedId('pmsg');
     const result = this.tx.execute(proactiveMessageCmdEnqueue({
-      id: generatePrefixedId('pmsg'),
+      id,
       tenantId: this.tenantId,
       personaId: input.personaId,
       signalType: input.signalType,
@@ -61,7 +63,7 @@ export class ProactiveMessageStore {
       kind: input.kind ?? 'general',
       now: this.now(),
     }));
-    return result.rowsAffected > 0;
+    return result.rowsAffected > 0 ? id : null;
   }
 
   /** 列出某 persona 的主动消息（可按 status 过滤，最新在前）。 */

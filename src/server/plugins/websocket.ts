@@ -58,6 +58,8 @@ export const VALID_EVENTS: ReadonlySet<string> = new Set<SystemEventName>([
   'avatar:drift-detected',
   'avatar:drift-review-submitted',
   'knowledge:ingested',
+  /* ADR-0054 Phase 6：主动消息入队刷新信号（不带 body，仅 nudgeId+kind）。 */
+  'companion:nudge-created',
 ]);
 
 /** 最近事件环形缓冲区（用于断线重连重放） */
