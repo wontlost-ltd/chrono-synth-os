@@ -2,6 +2,7 @@ import { useCallback, useState, type JSX } from 'react';
 import type { CompanionNudgeV1 } from '@chrono/contracts';
 import { fetchNudges, markNudgeRead } from '../api.js';
 import { useAsync } from '../useAsync.js';
+import { useNudgeStream } from '../useNudgeStream.js';
 import { StateBlock } from './StateBlock.js';
 
 /** 各 nudge 类别的中文标签（供分组/图标渲染）。 */
@@ -33,6 +34,10 @@ export function NudgesView(): JSX.Element {
   /* 标记已读后 bump reloadKey 触发 useAsync 重取（列表 + 未读态刷新）。 */
   const [reloadKey, setReloadKey] = useState(0);
   const nudges = useAsync(() => fetchNudges('all'), [reloadKey]);
+
+  /* ADR-0054 Phase 6：订阅 companion:nudge-created SSE——数字人新主动开口时实时刷新列表。 */
+  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  useNudgeStream(refresh);
 
   const onRead = useCallback(async (id: string) => {
     try {
