@@ -5,11 +5,16 @@
  * 检索）生成。离线/无云仍能聊——这是 ADR-0047 核心论点的 C 端体现：数字人是你拥有的、可离线运行的
  * 人格，LLM 只在成长阶段当老师，不在运行时。
  *
+ * ADR-0055「对话即经历」：回应**完全确定后**，把这轮对话确定性沉淀为低显著 episodic 记忆——
+ * read-then-append，让数字人「记得跟你聊过」（如被起名张三）。沉淀是确定性 append 而非语义理解，
+ * 论点不破；身份核（价值/叙事）仍只读。语义内化仍走 reflect（联网），对话记忆成其原料。
+ *
  * 论点红线：
- *   - 绝不调 LLM（OfflineConversationResponder 是纯确定性，相同输入→相同输出）。
- *   - 只读人格状态（narrative + memories），绝不改身份核。
+ *   - 绝不调 LLM（回应生成是纯确定性）。可复现性 = 「相同输入 + 相同人格状态 + 相同配置 → 相同回应
+ *     与相同状态变更」；chat 现在是确定性状态转移（read-then-append），非无副作用只读。
+ *   - 只改记忆层（追加经历），绝不改身份核（价值/叙事/认知模型）。
  *   - never_discuss 输入/输出自检：喂 companion 基线安全边界（凭证类敏感主题），离线同样强制；
- *     per-persona 自定义边界是后续（默认人格无 enterprise 模板边界）。
+ *     敏感输入（boundary_block）绝不沉淀为记忆；per-persona 自定义边界是后续。
  *
  * 复用 companion/me.ts 的访问门 + 租户隔离 + 私有缓存头 + perception 同款配额口径。
  */
@@ -33,6 +38,12 @@ import type { RelevantKnowledge } from '../../../conversation/conversation-types
 import { COMPANION_BASELINE_BOUNDARIES } from '../../../conversation/companion-boundaries.js';
 import { buildRecentGrowthPhrase } from './recent-growth.js';
 import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
+import {
+  decideConversationCapture,
+  CONVERSATION_MEMORY_SALIENCE,
+  CONVERSATION_MEMORY_VALENCE,
+} from '../../../conversation/conversation-memory-capture.js';
+import type { AppConfig } from '../../../config/schema.js';
 
 /** companion 默认人格 id（与 perceive/environment 一致）。 */
 const COMPANION_PERSONA_ID = 'default';
@@ -59,11 +70,14 @@ export function registerCompanionChatRoutes(
   os: ChronoSynthOS,
   tenantFactory: TenantOSFactory | undefined,
   db?: IDatabase,
+  config?: AppConfig,
 ): void {
   const sharedDb = db ?? os.getDatabase();
   const quotaManager = new QuotaManager(sharedDb);
   /* 离线回应器：无 matcher（回退保守子串匹配——已足够匹配基线敏感主题的 never_discuss 自检）。 */
   const responder = new OfflineConversationResponder();
+  /* 对话记忆开关（ADR-0055）：缺省（无 config）默认开，与 schema 默认一致。 */
+  const conversationMemoryEnabled = config?.companion.conversationMemoryEnabled ?? true;
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
@@ -203,40 +217,31 @@ export function registerCompanionChatRoutes(
      *   ① 用户输入命中 never_discuss（offline.kind===boundary_block）→ 不用模板覆盖拒答；
      *   ② 模板**正文**经 never_discuss 输出自检（Codex 复审 High：蒸馏审批不能替代运行时最后一道边界；
      *      模板是直接发给用户的整段，须和 memory/narrative 拼装结果一样过输出自检——挡「输入没命中但
-     *      模板正文自带敏感主题」的绕过）→ 命中则丢弃模板，回退记忆 grounding（由其拒答/诚实离线）。 */
+     *      模板正文自带敏感主题」的绕过）→ 命中则丢弃模板，回退记忆 grounding（由其拒答/诚实离线）。
+     * 决策结果先存入 payload 变量（不提前 return），以便统一在末尾沉淀对话记忆——避免沉淀写入影响
+     * **本轮**的 self_intro/检索（曾出现：沉淀的记忆让空人格 self_intro 误判为非空）。 */
+    let payload: CompanionChatResultV1 | undefined;
     if (offline.kind !== 'boundary_block') {
       const template = matchResponseTemplate(request.tenantId, body.message);
       if (template && !responder.violatesNeverDiscuss(template, COMPANION_BASELINE_BOUNDARIES)) {
-        return {
-          data: CompanionChatResultV1Schema.parse({
-            schemaVersion: 'companion-chat-result.v1',
-            reply: template,
-            kind: 'response_template',
-            confidence: 0.8,
-            groundedMemoryCount: 0,
-          } satisfies CompanionChatResultV1),
+        payload = {
+          schemaVersion: 'companion-chat-result.v1',
+          reply: template, kind: 'response_template', confidence: 0.8, groundedMemoryCount: 0,
         };
-      }
-
-      /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
-       * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
-      if (detectSelfIntroIntent(body.message)) {
+      } else if (detectSelfIntroIntent(body.message)) {
+        /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
+         * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
         const intro = buildSelfIntro(tenantOS);
         if (intro && !responder.violatesNeverDiscuss(intro, COMPANION_BASELINE_BOUNDARIES)) {
-          return {
-            data: CompanionChatResultV1Schema.parse({
-              schemaVersion: 'companion-chat-result.v1',
-              reply: intro,
-              kind: 'self_intro',
-              confidence: 0.6,
-              groundedMemoryCount: 0,
-            } satisfies CompanionChatResultV1),
+          payload = {
+            schemaVersion: 'companion-chat-result.v1',
+            reply: intro, kind: 'self_intro', confidence: 0.6, groundedMemoryCount: 0,
           };
         }
       }
     }
 
-    const payload: CompanionChatResultV1 = {
+    payload ??= {
       schemaVersion: 'companion-chat-result.v1',
       reply: offline.content,
       kind: offline.kind,
@@ -246,6 +251,25 @@ export function registerCompanionChatRoutes(
        * 也与「引用了几条记忆」语义不符（拒答没引用）。 */
       groundedMemoryCount: offline.kind === 'knowledge_grounded' ? relevantKnowledge.length : 0,
     };
+
+    /* ADR-0055「对话即经历」：本轮回应已完全确定后，把这轮对话确定性沉淀为低显著 episodic 记忆，
+     * 让数字人「记得跟你聊过」。零-LLM（沉淀=确定性 append 非语义理解；语义内化仍走 reflect）。
+     * **置于末尾**：沉淀写入绝不影响本轮回应（检索/self_intro 已在前面跑完）。安全门：
+     *   ① 开关关 → 不沉淀；② 输入命中 never_discuss（boundary_block）→ 不沉淀（不持久化敏感内容）；
+     *   ③ 不够格（空/过短/纯寒暄/纯疑问）→ 不沉淀；④ 沉淀正文再过 never_discuss 输出自检 → 命中不写。 */
+    if (conversationMemoryEnabled && offline.kind !== 'boundary_block') {
+      const decision = decideConversationCapture(body.message);
+      if (decision.capture && !responder.violatesNeverDiscuss(decision.content, COMPANION_BASELINE_BOUNDARIES)) {
+        /* 去重：已存在完全相同正文的记忆则不重复写——防「反复说同一句」无限追加噪声（Codex 复审）。 */
+        const already = [...tenantOS.core.memories.getAllMemories().values()].some((m) => m.content === decision.content);
+        if (!already) {
+          tenantOS.core.memories.addMemory(
+            'episodic', decision.content, CONVERSATION_MEMORY_VALENCE, CONVERSATION_MEMORY_SALIENCE,
+          );
+        }
+      }
+    }
+
     return { data: CompanionChatResultV1Schema.parse(payload) };
   });
 }

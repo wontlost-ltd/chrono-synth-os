@@ -370,4 +370,89 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       assert.equal(result.groundedMemoryCount, 0, '边界拒答不报引用数（防侧信道泄露）');
     } finally { await local.close(); }
   });
+
+  /* ── ADR-0055「对话即经历」：对话沉淀经历记忆，让数字人通过问答成长（零-LLM 确定性）── */
+
+  it('对话即经历：告诉它名字 → 下一轮问名字能从沉淀的对话记忆答出来（端到端，零-LLM）', async () => {
+    const local = await localChatApp(os);
+    try {
+      /* 第一轮：告诉它名字。此时还查不到（首次提及）→ 但这轮被确定性沉淀为 episodic 记忆。 */
+      const before = os.core.memories.getAllMemories().size;
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫张三' } });
+      const after = os.core.memories.getAllMemories().size;
+      assert.equal(after, before + 1, '这轮对话应被沉淀为 1 条经历记忆');
+
+      /* 沉淀的记忆是低显著 episodic、带来源前缀、含原话关键词。 */
+      const captured = [...os.core.memories.getAllMemories().values()].find((m) => m.content.includes('张三'));
+      assert.ok(captured, '应能找到含「张三」的沉淀记忆');
+      assert.equal(captured!.kind, 'episodic');
+      assert.ok(captured!.salience < 0.5, '对话记忆低显著，不盖过老师教的知识');
+      assert.match(captured!.content, /来自对话/, '带来源前缀');
+
+      /* 第二轮：问名字 → 检索命中沉淀的对话记忆 → grounded 答出张三。运行时零-LLM、确定性。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起的名字叫什么' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded', '应据沉淀的对话记忆回答，而非 honest_offline');
+      assert.match(result.reply, /张三/, '答得出它被起名张三');
+    } finally { await local.close(); }
+  });
+
+  it('对话沉淀去重：反复说同一句话不重复追加记忆（防噪声膨胀，Codex 复审）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const before = os.core.memories.getAllMemories().size;
+      for (let i = 0; i < 3; i++) {
+        await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫张三' } });
+      }
+      assert.equal(os.core.memories.getAllMemories().size, before + 1, '同句沉淀只写一次（去重）');
+    } finally { await local.close(); }
+  });
+
+  it('对话沉淀：纯寒暄不沉淀（避免垃圾记忆污染知识核）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const before = os.core.memories.getAllMemories().size;
+      for (const greeting of ['你好', '嗯嗯', '哈哈']) {
+        await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: greeting } });
+      }
+      assert.equal(os.core.memories.getAllMemories().size, before, '寒暄不应沉淀任何记忆');
+    } finally { await local.close(); }
+  });
+
+  it('对话沉淀安全：命中 never_discuss 的输入不被持久化（不存敏感内容）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const before = os.core.memories.getAllMemories().size;
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码是 hunter2 请记住' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'boundary_block', '敏感输入拒答');
+      assert.equal(os.core.memories.getAllMemories().size, before, '敏感输入绝不沉淀为记忆');
+      const leaked = [...os.core.memories.getAllMemories().values()].some((m) => m.content.includes('hunter2'));
+      assert.ok(!leaked, '记忆里绝不出现凭证');
+    } finally { await local.close(); }
+  });
+
+  it('对话沉淀开关：CHRONO_COMPANION_CONVERSATION_MEMORY=false → 不沉淀（生产可关）', async () => {
+    const fastify = (await import('fastify')).default;
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    /* 显式传 conversationMemoryEnabled=false 的 config。 */
+    const offConfig = loadConfig({
+      rateLimit: { max: 10000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
+      companion: { conversationMemoryEnabled: false },
+    });
+    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    await local.ready();
+    try {
+      const before = os.core.memories.getAllMemories().size;
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫张三' } });
+      assert.equal(os.core.memories.getAllMemories().size, before, '开关关闭 → 不沉淀');
+    } finally { await local.close(); }
+  });
 });
