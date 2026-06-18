@@ -18,6 +18,8 @@
 
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 import type { ConversationHistoryEntry, RelevantKnowledge } from './conversation-types.js';
+import type { SupportedLocale } from '../i18n/locale-resolver.js';
+import { companionLocale } from './companion-locale.js';
 
 /** 离线回应器所需的确定性边界匹配能力（由 ValueGuard 提供） */
 export interface DeterministicBoundaryMatcher {
@@ -54,6 +56,8 @@ export interface OfflineResponderInput {
     /** 近期成长片段（如「最近在更主动地尝试新事物」）；有则 follow-up 提及它。 */
     recentGrowth?: string;
   };
+  /** 对话语言（ADR-0055 多语种）：决定固定回复用哪套模板。缺省 'zh-CN'（向后兼容，旧行为不变）。 */
+  locale?: SupportedLocale;
 }
 
 export type OfflineResponseKind =
@@ -100,6 +104,8 @@ export class OfflineConversationResponder {
    */
   respond(input: OfflineResponderInput): OfflineResponse {
     const narrative = input.narrative.trim();
+    /* 多语种：缺省 zh-CN（向后兼容，旧行为不变）。固定回复模板取自 companion-locale。 */
+    const locale = input.locale ?? 'zh-CN';
 
     /* 策略 1：never_discuss——输入命中即安全拒答（离线同样不泄露） */
     if (this.matchesBoundary(input.userInput, input.boundaries, 'never_discuss')) {
@@ -112,10 +118,10 @@ export class OfflineConversationResponder {
     /* 策略 2：有可用知识——以人格口吻落地呈现 */
     const usable = this.selectUsableKnowledge(input.relevantKnowledge);
     if (usable.length > 0) {
-      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput);
+      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput, locale);
       /* P5 主动响应增强：知识回应后追加确定性 follow-up（提近期成长/邀请继续），
        * 仅在非 escalate 时追加（escalate 已是人工跟进语义，不再主动延展话题）。 */
-      const followUp = !escalate ? this.composeProactiveFollowUp(input.proactiveReply) : '';
+      const followUp = !escalate ? this.composeProactiveFollowUp(input.proactiveReply, locale) : '';
       if (followUp.length > 0) content = `${content}\n${followUp}`;
       /* 输出自检：拼装结果（含 follow-up）若携带 never_discuss 主题（来自知识/叙事/成长片段），
        * 则不发出，退化为安全拒答（堵住 userInput 未命中但内容泄露的路径，红线 4 覆盖 follow-up）。 */
@@ -132,7 +138,7 @@ export class OfflineConversationResponder {
     }
 
     /* 策略 3：无知识——诚实告知离线限制，不编造 */
-    const honest = this.composeHonestOffline(narrative, escalate);
+    const honest = this.composeHonestOffline(narrative, escalate, locale);
     /* 叙事本身也可能携带受限主题 */
     if (this.outputLeaksNeverDiscuss(honest, input.boundaries)) {
       return this.blockResponse();
@@ -180,39 +186,27 @@ export class OfflineConversationResponder {
       .slice(0, MAX_KNOWLEDGE_ITEMS);
   }
 
-  /** 以叙事口吻把知识拼装为回应 */
-  /**
-   * 按问题类型选自然 lead-in（确定性 slot-fill，零模型）：
-   *   - 是非问（…吗 / 会不会 / 是不是 / 有没有）→「关于这个，我记得：」更口语；
-   *   - how/what（怎么 / 如何 / 什么 / 为什么 / 哪些 / 怎样）→「这个我有印象：」；
-   *   - 其他 → 原「根据我已经记住的内容：」。
-   * 让回应不再生硬罗列「根据我已经记住的内容 · …」。纯子串判断，相同输入相同输出。
-   */
-  private leadInFor(userInput: string): string {
-    const q = userInput.trim();
-    if (/吗[?？]?$|会不会|是不是|有没有/.test(q)) return '关于这个，我记得：';
-    if (/怎么|如何|什么|为什么|哪些|怎样/.test(q)) return '这个我有印象：';
-    return '根据我已经记住的内容：';
-  }
-
+  /** 以叙事口吻把知识拼装为回应（lead-in 按 locale 取自 companion-locale.knowledgeLeadIn）。 */
   private composeFromKnowledge(
     narrative: string,
     knowledge: RelevantKnowledge[],
     escalate: boolean,
     userInput: string,
+    locale: SupportedLocale,
   ): string {
+    const t = companionLocale(locale).reply;
     const parts: string[] = [];
     if (narrative.length > 0) {
       parts.push(narrative);
     }
-    parts.push(this.leadInFor(userInput));
+    parts.push(t.knowledgeLeadIn(userInput));
     for (const k of knowledge) {
       const snippet = k.content.trim().slice(0, KNOWLEDGE_SNIPPET_CAP);
       parts.push(`· ${snippet}`);
     }
-    parts.push('（当前离线，以上基于已学习的内容；联网后我可以补充更多。）');
+    parts.push(t.offlineNote);
     if (escalate) {
-      parts.push('（已记录为需要人工跟进）');
+      parts.push(locale === 'zh-CN' ? '（已记录为需要人工跟进）' : '(Flagged for human follow-up.)');
     }
     return parts.join('\n');
   }
@@ -223,21 +217,24 @@ export class OfflineConversationResponder {
    *   - 无成长片段 → 仅邀请继续。
    * 缺省（proactiveReply 未传）→ 返回空串（不追加，向后兼容）。相同输入 → 相同输出。
    */
-  private composeProactiveFollowUp(cfg?: { recentGrowth?: string }): string {
+  private composeProactiveFollowUp(cfg: { recentGrowth?: string } | undefined, locale: SupportedLocale): string {
     if (!cfg) return '';
+    const t = companionLocale(locale).reply;
     const growth = cfg.recentGrowth?.trim().replace(/\s+/g, ' ') ?? '';
     if (growth.length > 0) {
       const snippet = growth.length > PROACTIVE_GROWTH_CAP ? `${growth.slice(0, PROACTIVE_GROWTH_CAP)}…` : growth;
-      return `对了——我最近也在变化：${snippet}。你要是好奇，我们可以接着聊。`;
+      return locale === 'zh-CN'
+        ? `对了——我最近也在变化：${snippet}。你要是好奇，我们可以接着聊。`
+        : `By the way — I've been changing lately: ${snippet}. If you're curious, we can keep talking.`;
     }
-    return '如果你愿意，我们可以接着这个话题多聊一会儿。';
+    return t.inviteContinue;
   }
 
   /** 无知识时的诚实离线回应 */
-  private composeHonestOffline(narrative: string, escalate: boolean): string {
+  private composeHonestOffline(narrative: string, escalate: boolean, locale: SupportedLocale): string {
+    const t = companionLocale(locale).reply;
     const lead = narrative.length > 0 ? `${narrative}\n` : '';
-    const body = '我现在处于离线状态，还无法就这个新话题学习或展开。我已经把它记下，等联网后会一起整理再回应你。';
-    const tail = escalate ? '\n（已记录为需要人工跟进）' : '';
-    return `${lead}${body}${tail}`;
+    const tail = escalate ? (locale === 'zh-CN' ? '\n（已记录为需要人工跟进）' : '\n(Flagged for human follow-up.)') : '';
+    return `${lead}${t.honestOffline}${tail}`;
   }
 }

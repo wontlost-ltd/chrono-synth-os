@@ -45,6 +45,9 @@ import {
 } from '../../../conversation/conversation-memory-capture.js';
 import { detectIdentityIntent } from '../../../conversation/identity-intent.js';
 import { CompanionIdentityStore } from '../../../storage/companion-identity-store.js';
+import { detectLanguage } from '../../../conversation/language-detect.js';
+import { companionLocale } from '../../../conversation/companion-locale.js';
+import type { SupportedLocale } from '../../../i18n/locale-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 
 /** companion 默认人格 id（与 perceive/environment 一致）。 */
@@ -55,15 +58,8 @@ const MIN_TEMPLATE_INTENT_SCORE = 2;
 const SELF_INTRO_MEMORY_LIMIT = 4;
 /** 自我介绍综述取多少个高权重价值观。 */
 const SELF_INTRO_VALUE_LIMIT = 3;
-/**
- * 自我介绍元意图关键词（确定性子串匹配）：问「介绍你自己/你是谁/你会什么/你都会些什么/讲讲你自己」
- * 这类，泛词查不到具体记忆 → 走专门综述，而非 honest_offline。
- */
-const SELF_INTRO_PHRASES: readonly string[] = [
-  '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
-  '你是谁', '你会什么', '你都会什么', '你都会些什么', '你会些什么', '你能做什么', '你擅长什么',
-  '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
-];
+/* 自我介绍元意图关键词（「介绍你自己/你是谁/introduce yourself」）已移到 companion-locale 按 locale 取，
+ * 见 detectSelfIntroIntent。 */
 /* companion 基线安全边界（never_discuss）已抽到 ../../../conversation/companion-boundaries.js
  * （chat / 主动 nudge 共用同一份，避免漂移）。 */
 
@@ -146,10 +142,10 @@ export function registerCompanionChatRoutes(
     return best?.template;
   }
 
-  /** 确定性检测自我介绍元意图（子串匹配，零模型）。 */
-  function detectSelfIntroIntent(message: string): boolean {
+  /** 确定性检测自我介绍元意图（子串匹配，零模型；按 locale 取短语集）。 */
+  function detectSelfIntroIntent(message: string, locale: SupportedLocale): boolean {
     const m = message.toLowerCase();
-    return SELF_INTRO_PHRASES.some((p) => m.includes(p));
+    return companionLocale(locale).selfIntroPhrases.some((p) => m.includes(p));
   }
 
   /**
@@ -157,7 +153,8 @@ export function registerCompanionChatRoutes(
    * 解决「介绍一下你自己」泛词查不到具体记忆 → honest_offline 的问题。无任何内容时返回 undefined
    * （回退诚实离线）。
    */
-  function buildSelfIntro(tenantOS: ChronoSynthOS, myName?: string): string | undefined {
+  function buildSelfIntro(tenantOS: ChronoSynthOS, locale: SupportedLocale, myName?: string): string | undefined {
+    const t = companionLocale(locale).reply;
     const narrative = tenantOS.core.narrative.get().trim();
     /* 排序加稳定 tie-breaker（id 字典序）——底层 SELECT 无 ORDER BY，同 weight/salience 时 Map 迭代
      * 顺序跨 DB/重载会漂移，不应作为契约。加 id 二级键确保「相同人格状态相同输入→相同输出」（Codex 复审）。 */
@@ -177,14 +174,14 @@ export function registerCompanionChatRoutes(
     if (narrative.length === 0 && topValues.length === 0 && topMemories.length === 0 && !name) return undefined;
 
     const parts: string[] = [];
-    if (name) parts.push(`我叫${name}。`);
+    if (name) parts.push(t.selfIntroName(name));
     if (narrative.length > 0) parts.push(narrative);
-    if (topValues.length > 0) parts.push(`我最看重的是${topValues.join('、')}。`);
+    if (topValues.length > 0) parts.push(t.selfIntroValues(topValues.join(locale === 'zh-CN' ? '、' : ', ')));
     if (topMemories.length > 0) {
-      parts.push('我印象比较深的是：');
+      parts.push(t.selfIntroMemories);
       for (const c of topMemories) parts.push(`· ${c}`);
     }
-    parts.push('（这些都来自我学过、记住的，离线也能告诉你。）');
+    parts.push(t.selfIntroFooter);
     return parts.join('\n');
   }
 
@@ -200,16 +197,22 @@ export function registerCompanionChatRoutes(
       throw new QuotaExceededError('对话配额已用尽，请稍后再试');
     }
 
+    /* ADR-0055 多语种：按用户这句话确定性检测语言（zh-CN/en），固定回复/身份识别用对应语言。
+     * 零-LLM——「what's your name」自动英文回，「你叫什么」自动中文回。 */
+    const locale = detectLanguage(body.message);
+    const t = companionLocale(locale).reply;
+
     /* ADR-0055「自我意识」：先处理身份意图（起名 / 问名字），第一人称落地，优先于普通检索。
-     * 视角转换：用户的第二人称「你叫X」→ 内化为第一人称身份「我叫X」，绝不当第二人称记忆原样复述。 */
+     * 视角转换：用户对「你」的称呼 = 数字人自己，内化为第一人称身份「我叫X」，绝不当第二人称记忆复述。 */
     const identity = new CompanionIdentityStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
-    const identityIntent = detectIdentityIntent(body.message);
+    const identityIntent = detectIdentityIntent(body.message, locale);
     if (identityIntent.kind === 'define' && identityIntent.name) {
-      /* 名字过 never_discuss 自检（防把敏感主题设成名字后被第一人称复述出去）。命中 → 拒绝设置。 */
+      /* 名字过 never_discuss 自检（防把敏感主题设成名字后被第一人称复述出去）。命中 → 拒绝设置。
+       * kind=honest_offline（与原行为一致，中文零回归）。 */
       if (responder.violatesNeverDiscuss(identityIntent.name, COMPANION_BASELINE_BOUNDARIES)) {
         return { data: CompanionChatResultV1Schema.parse({
           schemaVersion: 'companion-chat-result.v1',
-          reply: '这个名字我不太方便用，换一个好吗？', kind: 'honest_offline', confidence: 0.4, groundedMemoryCount: 0,
+          reply: t.nameRejectedSensitive, kind: 'honest_offline', confidence: 0.4, groundedMemoryCount: 0,
         } satisfies CompanionChatResultV1) };
       }
       /* store 清洗后为空（如名字全是被剥的尖括号/控制字符）会抛错——温和拒绝而非 500（防御纵深）。 */
@@ -219,13 +222,13 @@ export function registerCompanionChatRoutes(
       } catch {
         return { data: CompanionChatResultV1Schema.parse({
           schemaVersion: 'companion-chat-result.v1',
-          reply: '这个名字我没太听清，你想叫我什么？', kind: 'self_identity', confidence: 0.4, groundedMemoryCount: 0,
+          reply: t.nameRejectedUnclear, kind: 'self_identity', confidence: 0.4, groundedMemoryCount: 0,
         } satisfies CompanionChatResultV1) };
       }
       /* 第一人称确认——「好的，我记住了，我叫X」。这句不沉淀为对话记忆（身份已结构化存储，避免回声）。 */
       return { data: CompanionChatResultV1Schema.parse({
         schemaVersion: 'companion-chat-result.v1',
-        reply: `好的，我记住了——我叫${saved}。以后你就这么叫我吧。`, kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
+        reply: t.nameConfirmed(saved), kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
       } satisfies CompanionChatResultV1) };
     }
     if (identityIntent.kind === 'ask') {
@@ -233,13 +236,13 @@ export function registerCompanionChatRoutes(
       if (myName) {
         return { data: CompanionChatResultV1Schema.parse({
           schemaVersion: 'companion-chat-result.v1',
-          reply: `我叫${myName}。`, kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
+          reply: t.myNameIs(myName), kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
         } satisfies CompanionChatResultV1) };
       }
       /* 还没起名 → 第一人称邀请用户起名（而非 honest_offline 的「无法学习」冷回应）。 */
       return { data: CompanionChatResultV1Schema.parse({
         schemaVersion: 'companion-chat-result.v1',
-        reply: '我还没有名字呢。你想叫我什么？', kind: 'self_identity', confidence: 0.6, groundedMemoryCount: 0,
+        reply: t.noNameYet, kind: 'self_identity', confidence: 0.6, groundedMemoryCount: 0,
       } satisfies CompanionChatResultV1) };
     }
 
@@ -256,6 +259,7 @@ export function registerCompanionChatRoutes(
       boundaries: COMPANION_BASELINE_BOUNDARIES,
       userInput: body.message,
       relevantKnowledge,
+      locale,
       /* 仅作用于 knowledge_grounded 回应（block/escalate/honest_offline 不追）。 */
       proactiveReply: recentGrowth !== undefined ? { recentGrowth } : {},
     });
@@ -276,10 +280,10 @@ export function registerCompanionChatRoutes(
           schemaVersion: 'companion-chat-result.v1',
           reply: template, kind: 'response_template', confidence: 0.8, groundedMemoryCount: 0,
         };
-      } else if (detectSelfIntroIntent(body.message)) {
+      } else if (detectSelfIntroIntent(body.message, locale)) {
         /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
          * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
-        const intro = buildSelfIntro(tenantOS, identity.getName());
+        const intro = buildSelfIntro(tenantOS, locale, identity.getName());
         if (intro && !responder.violatesNeverDiscuss(intro, COMPANION_BASELINE_BOUNDARIES)) {
           payload = {
             schemaVersion: 'companion-chat-result.v1',
@@ -306,7 +310,7 @@ export function registerCompanionChatRoutes(
      *   ① 开关关 → 不沉淀；② 输入命中 never_discuss（boundary_block）→ 不沉淀（不持久化敏感内容）；
      *   ③ 不够格（空/过短/纯寒暄/纯疑问）→ 不沉淀；④ 沉淀正文再过 never_discuss 输出自检 → 命中不写。 */
     if (conversationMemoryEnabled && offline.kind !== 'boundary_block') {
-      const decision = decideConversationCapture(body.message);
+      const decision = decideConversationCapture(body.message, locale);
       if (decision.capture && !responder.violatesNeverDiscuss(decision.content, COMPANION_BASELINE_BOUNDARIES)) {
         /* 去重：已存在完全相同正文的记忆则不重复写——防「反复说同一句」无限追加噪声（Codex 复审）。 */
         const already = [...tenantOS.core.memories.getAllMemories().values()].some((m) => m.content === decision.content);

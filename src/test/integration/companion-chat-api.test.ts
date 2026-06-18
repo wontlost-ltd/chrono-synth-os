@@ -371,6 +371,62 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0055 多语种：英文用户对话——英文识别 + 英文回复（零-LLM 确定性）── */
+
+  it('多语种：英文问名字 → 英文第一人称回应（端到端）', async () => {
+    const local = await localChatApp(os);
+    try {
+      /* 英文起名 → 英文确认。 */
+      const set = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'call you Max' } });
+      assert.equal(set.statusCode, 200, set.body);
+      const setResult = CompanionChatResultV1Schema.parse(JSON.parse(set.body).data);
+      assert.equal(setResult.kind, 'self_identity');
+      assert.match(setResult.reply, /my name is Max/i, '英文起名确认');
+      assert.ok(!/[一-鿿]/.test(setResult.reply), '英文回应不含中文');
+
+      /* 英文问名字 → 英文第一人称答。 */
+      const ask = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: "what's your name?" } });
+      const askResult = CompanionChatResultV1Schema.parse(JSON.parse(ask.body).data);
+      assert.equal(askResult.kind, 'self_identity');
+      assert.equal(askResult.reply, 'My name is Max.', '英文第一人称回答');
+    } finally { await local.close(); }
+  });
+
+  it('多语种：英文无相关记忆 → 英文 honest_offline（不是中文）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'what is quantum entanglement' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'honest_offline');
+      assert.match(result.reply, /offline/i, '英文离线声明');
+      assert.ok(!/[一-鿿]/.test(result.reply), '英文用户不该看到中文');
+    } finally { await local.close(); }
+  });
+
+  it('多语种：英文有记忆 → 英文 grounded 回应（lead-in/footer 都是英文）', async () => {
+    os.core.memories.addMemory('semantic', 'I practice guitar every morning', 0.3, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'do you play guitar?' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded', JSON.stringify(result));
+      assert.match(result.reply, /Here's what I remember|offline/i, '英文 lead-in/footer');
+      assert.ok(!/根据我|离线|印象/.test(result.reply), '不混中文模板');
+    } finally { await local.close(); }
+  });
+
+  it('多语种：中文路径不受影响（同一实例中英各自适配）', async () => {
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫小黑' } });
+      const zh = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
+      assert.equal(CompanionChatResultV1Schema.parse(JSON.parse(zh.body).data).reply, '我叫小黑。', '中文仍中文回应');
+      /* 同一数字人，换英文问 → 英文回（名字一致）。 */
+      const en = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: "what's your name" } });
+      assert.equal(CompanionChatResultV1Schema.parse(JSON.parse(en.body).data).reply, 'My name is 小黑.', '英文问→英文回，名字不变');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055「自我意识」：第一人称身份层——起名 / 问名字 / 自我介绍带名字（零-LLM 确定性）── */
 
   it('自我意识：给它起名 → 第一人称确认；再问名字 → 第一人称答「我叫X」（端到端）', async () => {
@@ -421,8 +477,10 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     try {
       const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫密码' } });
       const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
-      /* 名字「密码」命中基线 never_discuss → 拒绝设置（不落库、不复述）。 */
+      /* 名字「密码」命中基线 never_discuss → 拒绝设置（不落库、不复述）。锁定原文案+kind（中文零回归）。 */
       assert.notEqual(result.reply, '我叫密码。');
+      assert.equal(result.reply, '这个名字我不太方便用，换一个好吗？', '敏感名拒绝文案不回归');
+      assert.equal(result.kind, 'honest_offline', '敏感名拒绝 kind 不回归');
       /* 之后问名字仍未起名。 */
       const ask = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
       const askResult = CompanionChatResultV1Schema.parse(JSON.parse(ask.body).data);

@@ -16,7 +16,7 @@ describe('detectIdentityIntent', () => {
       ['给你起名叫阿黄', '阿黄'],
     ];
     for (const [input, name] of cases) {
-      const r = detectIdentityIntent(input);
+      const r = detectIdentityIntent(input, 'zh-CN');
       assert.equal(r.kind, 'define', `「${input}」应为 define`);
       assert.equal(r.name, name, `「${input}」应提取名字「${name}」`);
     }
@@ -27,25 +27,25 @@ describe('detectIdentityIntent', () => {
       '你叫什么', '你叫什么名字', '你的名字呢', '你的名字', '你的名字是什么', '怎么称呼你', '你叫啥',
       '你现在叫什么', '你到底叫什么', '你究竟叫啥', '你现在叫什么名字', '你这会儿叫什么',
     ]) {
-      assert.equal(detectIdentityIntent(q).kind, 'ask', `「${q}」应为 ask`);
+      assert.equal(detectIdentityIntent(q, 'zh-CN').kind, 'ask', `「${q}」应为 ask`);
     }
   });
 
   it('「你是谁」更宽 → 交给 self_intro 综述，不在此拦为 ask', () => {
-    assert.equal(detectIdentityIntent('你是谁').kind, 'none', '「你是谁」不归 identity-ask（self_intro 处理）');
+    assert.equal(detectIdentityIntent('你是谁', 'zh-CN').kind, 'none', '「你是谁」不归 identity-ask（self_intro 处理）');
   });
 
   it('ask 优先于 define：「你的名字是什么」是询问不是起名', () => {
-    assert.equal(detectIdentityIntent('你的名字是什么').kind, 'ask');
+    assert.equal(detectIdentityIntent('你的名字是什么', 'zh-CN').kind, 'ask');
     /* 而「你的名字是小May」是起名。 */
-    const define = detectIdentityIntent('你的名字是小May');
+    const define = detectIdentityIntent('你的名字是小May', 'zh-CN');
     assert.equal(define.kind, 'define');
     assert.equal(define.name, '小May');
   });
 
   it('非身份意图 → none', () => {
     for (const s of ['今天天气不错', '我喜欢跑步', '怎么做 flat white', '介绍一下你自己']) {
-      assert.equal(detectIdentityIntent(s).kind, 'none', `「${s}」应为 none`);
+      assert.equal(detectIdentityIntent(s, 'zh-CN').kind, 'none', `「${s}」应为 none`);
     }
   });
 
@@ -58,23 +58,80 @@ describe('detectIdentityIntent', () => {
       '你现在叫车', '你现在叫救护车', '你现在叫客服', '你从此叫车',
     ];
     for (const s of adversarial) {
-      assert.notEqual(detectIdentityIntent(s).kind, 'define', `「${s}」绝不应被当起名`);
+      assert.notEqual(detectIdentityIntent(s, 'zh-CN').kind, 'define', `「${s}」绝不应被当起名`);
     }
   });
 
   it('名字清洗：剥离句尾语气词，不把「了/呢」并入名字', () => {
-    assert.equal(detectIdentityIntent('以后你就叫张三了').name, '张三');
-    assert.equal(detectIdentityIntent('你叫小明吧').name, '小明');
+    assert.equal(detectIdentityIntent('以后你就叫张三了', 'zh-CN').name, '张三');
+    assert.equal(detectIdentityIntent('你叫小明吧', 'zh-CN').name, '小明');
   });
 
   it('控制字符：显式起名结构里的名字仍清洗控制字符', () => {
     /* 显式起名结构（给你起名叫X）允许稍复杂名字；提取后名字不含控制字符。 */
-    const r = detectIdentityIntent('给你起名叫小明');
+    const r = detectIdentityIntent('给你起名叫小明', 'zh-CN');
     assert.equal(r.kind, 'define');
     assert.ok(!/[\n\t]/.test(r.name ?? ''), '名字不含控制字符');
   });
 
   it('确定性：相同输入 → 相同输出', () => {
-    assert.deepEqual(detectIdentityIntent('我叫你Max'), detectIdentityIntent('我叫你Max'));
+    assert.deepEqual(detectIdentityIntent('我叫你Max', 'zh-CN'), detectIdentityIntent('我叫你Max', 'zh-CN'));
+  });
+});
+
+/* ADR-0055 多语种：英文身份意图（en locale）。 */
+describe('detectIdentityIntent (en)', () => {
+  it('起名（define）：多种英文说法都识别并提取名字', () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['call you Max', 'Max'],
+      ["I'll call you Echo", 'Echo'],
+      ['your name is Luna', 'Luna'],
+      ['your name will be Aria', 'Aria'],
+      ["you're called Sam", 'Sam'],
+      ['name you Pip', 'Pip'],
+    ];
+    for (const [input, name] of cases) {
+      const r = detectIdentityIntent(input, 'en');
+      assert.equal(r.kind, 'define', `「${input}」应为 define`);
+      assert.equal(r.name, name, `「${input}」应提取「${name}」`);
+    }
+  });
+
+  it('问名字（ask）：英文问法识别为询问（含 whats 无撇号）', () => {
+    for (const q of ["what's your name", 'what is your name', 'whats your name', 'what are you called', 'what should I call you', 'do you have a name', 'your name?', 'tell me your name']) {
+      assert.equal(detectIdentityIntent(q, 'en').kind, 'ask', `「${q}」应为 ask`);
+    }
+  });
+
+  it('对抗（Codex 复审）：英文普通 what-问题不被误拦为问名字', () => {
+    /* 「what are you doing / what is your favorite color」不是问名字，不该走身份回答。 */
+    for (const q of ['what are you doing', 'what is your favorite color', 'what are you thinking', "what's your plan"]) {
+      assert.notEqual(detectIdentityIntent(q, 'en').kind, 'ask', `「${q}」不该被当问名字`);
+    }
+  });
+
+  it('对抗（Codex 复审）：英文「call/name you + 动作/介词/否定」不误判为起名', () => {
+    for (const s of [
+      'call you back', 'call you a taxi', 'call you later', 'call you tomorrow morning',
+      "I'll call you after lunch", 'I can call you from work', 'call you maybe', 'recall you Max',
+      'your name is not Max',
+    ]) {
+      assert.notEqual(detectIdentityIntent(s, 'en').kind, 'define', `「${s}」不应被当起名`);
+    }
+  });
+
+  it('对抗（Codex 复审 2）：英文疑问/转述上下文的 call you X 不误判为起名', () => {
+    for (const s of [
+      'Can I call you Max?', 'May I call you Echo?', 'Should I call you Luna?', 'Do I call you Sam?',
+      'Would you like me to call you Aria?', 'They call you Max.', 'People call you Echo.',
+    ]) {
+      assert.notEqual(detectIdentityIntent(s, 'en').kind, 'define', `「${s}」是疑问/转述，不应起名`);
+    }
+  });
+
+  it('非身份意图 → none', () => {
+    for (const s of ['I like running', 'how are you', 'the weather is nice']) {
+      assert.equal(detectIdentityIntent(s, 'en').kind, 'none', `「${s}」应为 none`);
+    }
   });
 });
