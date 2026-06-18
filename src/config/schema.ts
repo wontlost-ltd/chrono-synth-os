@@ -513,6 +513,13 @@ const proactivitySchema = z.object({
   enabled: true, quietPeriodMs: 4 * 60 * 60 * 1000, maxPerWindow: 3, windowMs: 24 * 60 * 60 * 1000,
 });
 
+/** ChronoCompanion C 端行为配置（ADR-0055「对话即经历」）。 */
+const companionSchema = z.object({
+  /** 对话记忆：chat 后把这轮对话确定性沉淀为低显著 episodic 记忆，让数字人「记得跟你聊过」
+   * （零-LLM：沉淀是确定性 append 而非语义理解；语义内化仍走 reflect）。默认开。 */
+  conversationMemoryEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true });
+
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
   db: dbSchema.default({ driver: 'sqlite', path: ':memory:', pool: { max: 10, idleTimeoutMs: 30_000 } }),
@@ -622,6 +629,7 @@ export const AppConfigSchema = z.object({
   }),
   safety: safetySchema,
   proactivity: proactivitySchema,
+  companion: companionSchema,
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -723,6 +731,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_SAFETY_DRIFT_CRITICAL_THRESHOLD: (v) => { deepSet(env, 'safety.drift.criticalThreshold', parseFloat(v)); },
     /* ADR-0054 主动性总开关（生产可达关闭，红线 3）：CHRONO_PROACTIVITY_ENABLED=false 完全关闭。 */
     CHRONO_PROACTIVITY_ENABLED:             (v) => { deepSet(env, 'proactivity.enabled', v !== 'false' && v !== '0'); },
+    /* ADR-0055 对话记忆开关（默认开，可关）：CHRONO_COMPANION_CONVERSATION_MEMORY=false 关闭对话沉淀。 */
+    CHRONO_COMPANION_CONVERSATION_MEMORY:   (v) => { deepSet(env, 'companion.conversationMemoryEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },
