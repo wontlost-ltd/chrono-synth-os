@@ -6,6 +6,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import { CompanionHomeScreen } from '../screens/companion/CompanionHomeScreen';
+import { CompanionNudgesScreen } from '../screens/companion/CompanionNudgesScreen';
 import { CompanionChatScreen } from '../screens/companion/CompanionChatScreen';
 import { CompanionGrowthScreen } from '../screens/companion/CompanionGrowthScreen';
 import { CompanionMemoriesScreen } from '../screens/companion/CompanionMemoriesScreen';
@@ -17,6 +18,7 @@ const Tab = createBottomTabNavigator();
 
 const TAB_ICONS: Record<string, string> = {
   Me: '🪞',
+  Nudges: '🔔',
   Chat: '💬',
   Growth: '🌱',
   Memories: '📔',
@@ -50,6 +52,9 @@ export function CompanionTabNavigator({ plan, onLogout, accountKey }: CompanionT
       {/* 数据屏用 render-prop 注入 accountKey（缓存隔离），而非 component=，故 queryKey 含账号维度。 */}
       <Tab.Screen name="Me" options={{ title: '我的数字人' }}>
         {() => <CompanionHomeScreen accountKey={accountKey} />}
+      </Tab.Screen>
+      <Tab.Screen name="Nudges" options={{ title: 'TA 说' }}>
+        {() => <CompanionNudgesScreen accountKey={accountKey} />}
       </Tab.Screen>
       <Tab.Screen name="Chat" options={{ title: '跟 TA 聊' }}>
         {() => <CompanionChatScreen accountKey={accountKey} />}
