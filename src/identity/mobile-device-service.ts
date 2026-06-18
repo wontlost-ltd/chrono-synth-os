@@ -6,7 +6,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SyncWriteUnitOfWork, MdevDeviceRow } from '@chrono/kernel';
 import {
-  mdevQueryByUid, mdevQueryById, mdevQueryListByUser, mdevQueryOwned,
+  mdevQueryByUid, mdevQueryById, mdevQueryListByUser, mdevQueryListByTenantUser, mdevQueryOwned,
   mdevCmdCreate, mdevCmdUpdateOnRegister, mdevCmdUpdatePushToken,
   mdevCmdMarkTokenInvalid, mdevCmdDelete,
 } from '@chrono/kernel';
@@ -18,6 +18,19 @@ export interface RegisterDeviceInput {
   platform: string;
   pushToken?: string | null;
   appVersion?: string | null;
+}
+
+/** device row → C 端 DTO（listByUser / listByTenantUser 共用）。 */
+function mapDeviceRow(r: MdevDeviceRow) {
+  return {
+    id: r.id,
+    deviceUid: r.device_uid,
+    platform: r.platform,
+    pushToken: r.push_token,
+    appVersion: r.app_version,
+    lastSeenAt: r.last_seen_at,
+    createdAt: r.created_at,
+  };
 }
 
 export class MobileDeviceService {
@@ -54,16 +67,16 @@ export class MobileDeviceService {
 
   listByUser(userId: string) {
     const rows = this.tx.queryMany(mdevQueryListByUser(userId));
+    return rows.map(mapDeviceRow);
+  }
 
-    return rows.map(r => ({
-      id: r.id,
-      deviceUid: r.device_uid,
-      platform: r.platform,
-      pushToken: r.push_token,
-      appVersion: r.app_version,
-      lastSeenAt: r.last_seen_at,
-      createdAt: r.created_at,
-    }));
+  /**
+   * 显式按 (tenantId, userId) 列设备——宿主 DB 上必须用它（listByUser 只按 user_id，在宿主 DB
+   * 无租户隔离，跨租户场景有风险，Codex 退回 High）。租户 scoped 调用方（如 push 桥）一律用此方法。
+   */
+  listByTenantUser(tenantId: string, userId: string) {
+    const rows = this.tx.queryMany(mdevQueryListByTenantUser({ tenantId, userId }));
+    return rows.map(mapDeviceRow);
   }
 
   updatePushToken(deviceId: string, userId: string, pushToken: string) {

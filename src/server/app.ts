@@ -10,6 +10,7 @@ import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { PinoLogger } from '../logging/pino-logger.js';
 import type { IDatabase } from '../storage/database.js';
 import { buildAppServices } from './app-services.js';
+import { NudgePushBridge } from './services/nudge-push-bridge.js';
 import type { AppConfig } from '../config/schema.js';
 import { NodeEventPublisher } from '../events/node-event-publisher.js';
 import { NodeUnitOfWorkFactory } from '../storage/node-unit-of-work.js';
@@ -286,6 +287,19 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     await observabilityWorker.start();
     app.addHook('onClose', async () => { await observabilityWorker!.stop(); });
   }
+
+  /* ADR-0054 ③ OS 推送桥：订阅 companion:nudge-created → 同意门控（红线9）→ 系统推送（不带正文）。
+   * 服务层（核心 OS 不认识 user/device/push）。订阅 root os.bus（默认租户）——多租户 factory OS 的
+   * bus 桥接是登记的后续（同 SSE/WS 现状）。 */
+  const nudgePushBridge = new NudgePushBridge({
+    bus: deps.os.bus,
+    db,
+    pushService: services.pushService,
+    logger: deps.os.getLogger(),
+    now: () => deps.os.getClock().now(),
+  });
+  nudgePushBridge.start();
+  app.addHook('onClose', () => { nudgePushBridge.stop(); });
 
   if (config.runtime.recovery.enabled) {
     runtimeRecoveryWorker = new RuntimeRecoveryWorker(

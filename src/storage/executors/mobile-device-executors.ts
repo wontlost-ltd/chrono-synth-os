@@ -4,12 +4,12 @@
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
-  MDEV_QUERY_BY_UID, MDEV_QUERY_BY_ID, MDEV_QUERY_LIST_BY_USER, MDEV_QUERY_OWNED,
+  MDEV_QUERY_BY_UID, MDEV_QUERY_BY_ID, MDEV_QUERY_LIST_BY_USER, MDEV_QUERY_LIST_BY_TENANT_USER, MDEV_QUERY_OWNED,
   MDEV_CMD_CREATE, MDEV_CMD_UPDATE_ON_REGISTER, MDEV_CMD_UPDATE_PUSH_TOKEN,
   MDEV_CMD_MARK_TOKEN_INVALID, MDEV_CMD_DELETE,
 } from '@chrono/kernel';
 import type {
-  MdevDeviceRow, MdevByUidParams, MdevOwnedParams,
+  MdevDeviceRow, MdevByUidParams, MdevListByTenantUserParams, MdevOwnedParams,
   MdevCreateParams, MdevUpdateOnRegisterParams, MdevUpdatePushTokenParams,
   MdevMarkTokenInvalidParams,
 } from '@chrono/kernel';
@@ -31,6 +31,14 @@ export function registerMobileDeviceExecutors(): void {
     return db.prepare<MdevDeviceRow>(
       'SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen_at DESC',
     ).all(userId);
+  });
+
+  /* 显式 (tenant_id, user_id) 列设备——宿主 DB 上的租户隔离（listByUser 无 tenant 谓词在宿主 DB
+   * 不隔离，跨租户推送风险，Codex 退回 High）。 */
+  registerQuery<readonly MdevDeviceRow[], MdevListByTenantUserParams>(MDEV_QUERY_LIST_BY_TENANT_USER, (db, p) => {
+    return db.prepare<MdevDeviceRow>(
+      'SELECT * FROM devices WHERE tenant_id = ? AND user_id = ? ORDER BY last_seen_at DESC',
+    ).all(p.tenantId, p.userId);
   });
 
   registerQuery<MdevDeviceRow | null, MdevOwnedParams>(MDEV_QUERY_OWNED, (db, p) => {
