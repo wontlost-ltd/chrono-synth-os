@@ -25,11 +25,14 @@ import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
+  CompanionNudgeListV1Schema,
   driftReportToGrowth,
   type CompanionMeV1,
   type CompanionValueV1,
   type CompanionMemoryV1,
   type CompanionMemoryListV1,
+  type CompanionNudgeV1,
+  type CompanionNudgeListV1,
 } from '@chrono/contracts';
 import { MemoryFacade } from '../../../core/memory-facade.js';
 import { ProactiveMessageStore } from '../../../storage/proactive-message-store.js';
@@ -65,10 +68,8 @@ export function toCompanionMemory(m: MemoryNode): CompanionMemoryV1 {
   };
 }
 
-/** 主动消息 row → C 端 nudge DTO（ADR-0054 Phase 2）。 */
-export function toCompanionNudge(r: ProactiveMessageRow): {
-  id: string; kind: string; body: string; status: string; createdAt: number; readAt: number | null;
-} {
+/** 主动消息 row → C 端 nudge DTO（ADR-0054）。返回共享契约类型 CompanionNudgeV1。 */
+export function toCompanionNudge(r: ProactiveMessageRow): CompanionNudgeV1 {
   return {
     id: r.id,
     kind: r.kind,
@@ -232,12 +233,12 @@ export function registerCompanionRoutes(
     setPrivateNoStore(reply);
     const { status, limit } = parseNudgeQuery(request.query as Record<string, unknown>);
     const rows = proactiveStore(request).list(COMPANION_PERSONA_ID, { status, limit });
-    return {
-      data: {
-        schemaVersion: 'companion-nudge-list.v1',
-        items: rows.map(toCompanionNudge),
-      },
+    /* 契约校验：后端输出严格符合前端共享类型 CompanionNudgeListV1（防 DTO 漂移）。 */
+    const payload: CompanionNudgeListV1 = {
+      schemaVersion: 'companion-nudge-list.v1',
+      items: rows.map(toCompanionNudge),
     };
+    return { data: CompanionNudgeListV1Schema.parse(payload) };
   });
 
   /* POST /api/v1/companion/me/nudges/:id/read — 标记主动消息已读（归属校验，绝不跨租户） */
