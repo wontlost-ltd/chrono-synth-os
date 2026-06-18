@@ -11,6 +11,11 @@ dist-test/
 .npmrc
 !packages/schema-dsl/.npmrc
 *.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+data/
+.ccg/
 backups/
 **/.DS_Store
 packages/*/*.tgz

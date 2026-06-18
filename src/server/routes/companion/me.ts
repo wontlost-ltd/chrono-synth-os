@@ -16,7 +16,8 @@ import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js
 import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
-import { AuthorizationError, NotFoundError, ErrorCode } from '../../../errors/index.js';
+import { AuthorizationError, NotFoundError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
+import { QuotaManager } from '../../../multi-tenant/quota-manager.js';
 import {
   PersonaDriftAnalyzer,
   resolveDriftThresholds,
@@ -37,6 +38,11 @@ import {
 import { MemoryFacade } from '../../../core/memory-facade.js';
 import { ProactiveMessageStore } from '../../../storage/proactive-message-store.js';
 import { parsePagination } from '../../plugins/pagination.js';
+import { ModelRouter } from '../../../intelligence/model-router.js';
+import { LlmReflectionDistiller, type ReflectMemory, type ReflectValue } from '../../../intelligence/llm-reflection-distiller.js';
+import { resolveTenantLlmConfig } from '../../../storage/tenant-llm-settings-store.js';
+import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
+import type { LLMProviderName } from '@chrono/kernel';
 
 /** companion 单 persona core-self 的 personaId（与 chat.ts 一致）。 */
 const COMPANION_PERSONA_ID = 'default';
@@ -102,6 +108,31 @@ export function countTenantSnapshots(db: IDatabase, tenantId: string): number {
       WHERE tenant_id = ? OR (tenant_id IS NULL AND ? = 'default')`,
   ).get(tenantId, tenantId);
   return row?.n ?? 0;
+}
+
+/** 顶级职业经理人的价值内核（label, 初始权重）。反思会据已学记忆在此基础上微调强化。 */
+const MANAGER_GENESIS_VALUES: ReadonlyArray<readonly [string, number]> = [
+  ['长期主义', 0.7],
+  ['结果导向', 0.7],
+  ['培养他人', 0.65],
+  ['正直诚信', 0.75],
+  ['客户与价值创造', 0.7],
+  ['果断决策', 0.6],
+  ['团队信任', 0.65],
+];
+
+/** companion genesis 价值底盘 bootstrap（与 reflection 是不同关注点：这是「出生/初始化」，
+ * reflection 是「内化」）。幂等 + pristine 守卫：仅当人格还没有任何价值时注入，对已有价值
+ * （出生扰动 personalitySeed 或已学）的人格零副作用，绝不覆写。注入即审计留痕（成长 provenance）。
+ *
+ * 设计取舍：价值内核理应在人格出生（personalitySeed）时建立。companion 当前出生路径未播种
+ * archetype 价值，故在首次自反思时一次性兜底——这是有意的懒 bootstrap，非 reflection 逻辑的一部分。 */
+function ensureCompanionGenesisValues(core: ChronoSynthOS['core'], logger?: { info(layer: string, msg: string): void }): void {
+  if (core.values.getAll().size > 0) return;
+  for (const [label, weight] of MANAGER_GENESIS_VALUES) {
+    core.values.create(label, weight);
+  }
+  logger?.info('CompanionGenesis', `首次反思 bootstrap 经理人价值内核（${MANAGER_GENESIS_VALUES.length} 个）`);
 }
 
 /* ── 路由注册 ──────────────────────────────────────────────────── */
@@ -251,5 +282,70 @@ export function registerCompanionRoutes(
       throw new NotFoundError('主动消息不存在', ErrorCode.NOT_FOUND_PROACTIVE_MESSAGE);
     }
     return { data: { id: request.params.id, status: 'read' } };
+  });
+
+  /* BYOK 解析 per-tenant LLM key（缺失回退全局 config）——reflect 的「反思老师」。 */
+  const reflectLlmEncryption = tryByokEncryption(config.encryption);
+  /* 反思配额：与 perceive 同套路（route 级 per-feature 配额，防 BYOK/平台 key 被刷爆）。 */
+  const reflectQuota = new QuotaManager(db);
+
+  /* POST /api/v1/companion/me/reflect —「自主学习」：让数字人反思已学记忆，自己内化成长。
+   * ADR-0047 growth 档：LLM 当老师反思最近高显著记忆 + 叙事 → 产成长候选（value_shift/memory_edge/
+   * narrative_patch）过统一蒸馏门。这是**摄取/成长阶段**，运行时 chat 仍零-LLM。 */
+  app.post('/api/v1/companion/me/reflect', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const tenantOS = getOS(request);
+    const core = tenantOS.core;
+
+    /* 从已水合的核心存储读（与 /me 同路径），不用 getState() 快照——后者对 companion 可能未水合。 */
+    const memories: ReflectMemory[] = [...core.memories.getAllMemories().values()]
+      .sort((a, b) => b.salience - a.salience)
+      .slice(0, 24)
+      .map((m) => ({ id: m.id, content: m.content, salience: m.salience, valence: m.valence }));
+    if (memories.length === 0) {
+      return { data: { candidatesIngested: 0, reason: 'no_material' } };
+    }
+
+    /* 配额先于任何有成本/有副作用的步骤扣减：超额拒绝且**无 core 副作用**（不写 genesis、不调 LLM）。
+     * no_material 短路不扣 quota（无意义的空请求）。未设限额的租户默认无限。 */
+    if (!reflectQuota.consumeQuota(request.tenantId, 'reflection')) {
+      throw new QuotaExceededError('反思配额已用尽，请稍后再试');
+    }
+
+    /* 反思必须有价值内核可强化。已学了记忆却无价值内核的人格（perceive 只写记忆/边、不建价值，
+     * 且未经出生扰动播种价值）——在此一次性 bootstrap 经理人价值底盘（genesis）。幂等且 pristine：
+     * 仅当 values 为空时建，对已有价值的人格零副作用（不覆写出生扰动/已学价值）。之后反思据记忆强化。 */
+    ensureCompanionGenesisValues(core, tenantOS.getLogger());
+    const values: ReflectValue[] = [...core.values.getAll().values()].map((v) => ({ id: v.id, label: v.label, weight: v.weight }));
+    if (values.length === 0) {
+      return { data: { candidatesIngested: 0, reason: 'no_values' } };
+    }
+
+    /* BYOK：解析本租户有效 LLM 配置（缺失回退全局 config 的 gpt-5.5 老师）。 */
+    const effectiveLlm = resolveTenantLlmConfig(db, request.tenantId, config.intelligence, reflectLlmEncryption);
+    const llm = new ModelRouter({
+      provider: effectiveLlm.provider as LLMProviderName,
+      model: effectiveLlm.model,
+      embeddingModel: effectiveLlm.embeddingModel,
+      apiKey: effectiveLlm.apiKey,
+      baseUrl: effectiveLlm.baseUrl,
+      fallbacks: config.intelligence.fallbacks,
+      maxTokens: config.intelligence.maxTokens,
+      temperature: config.intelligence.temperature,
+      tenantId: request.tenantId,
+    });
+    const distiller = new LlmReflectionDistiller(tenantOS.distillation, llm, tenantOS.getLogger());
+    /* 独立反思触发（无并发认知周期）→ appliedDeltas 空。 */
+    const result = await distiller.distill({
+      personaId: COMPANION_PERSONA_ID, narrative: core.narrative.get(), values, memories, appliedDeltas: new Map(),
+    });
+    /* 区分自动编译 vs 待审批（实际门控由 DistillationService.canAutoCompile 决定）：
+     * narrative_patch 恒入待审批（改「我是谁」更谨慎）；memory_edge 足证据自动编译；
+     * value_shift 在 confidence≥阈值 ∧ |delta|≤MAX_REFLECTION_DELTA ∧ patternAgrees 时可自动编译，
+     * 否则入待审批。两类都算「自反思产出的成长」。 */
+    const compiled = result.results.filter((r) => r.status === 'compiled').length;
+    const pending = result.results.filter((r) => r.status === 'pending').length;
+    return { data: { candidatesIngested: result.candidatesIngested, compiled, pending } };
   });
 }

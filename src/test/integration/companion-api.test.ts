@@ -22,6 +22,7 @@ import {
   CompanionMemoryListV1Schema,
 } from '@chrono/contracts';
 import { ProactiveMessageStore } from '../../storage/proactive-message-store.js';
+import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -285,5 +286,83 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     /* 标记不存在的 nudge → 404。 */
     const missRes = await app.inject({ method: 'POST', url: '/api/v1/companion/me/nudges/pmsg-nope/read', headers });
     assert.equal(missRes.statusCode, 404);
+  });
+
+  it('POST /companion/me/reflect 无记忆 → no_material（不报错，不产候选）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-reflect-empty@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.match(String(res.headers['cache-control']), /no-store/);
+    const data = JSON.parse(res.body).data as { candidatesIngested: number; reason?: string };
+    assert.equal(data.candidatesIngested, 0);
+    assert.equal(data.reason, 'no_material', '无记忆应短路返回 no_material');
+  });
+
+  it('POST /companion/me/reflect 有记忆但无价值 → 一次性建立经理人价值内核（genesis）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-reflect-genesis@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    /* 只写记忆、不写价值（模拟 perceive 教完后的状态：有记忆、无价值内核）。 */
+    for (const content of ['做对的事比把事做对更重要', '人才密度决定组织上限', '坏消息要早讲清楚']) {
+      const r = await app.inject({
+        method: 'POST', url: '/api/v1/memories', headers,
+        payload: { kind: 'semantic', content, valence: 0.3, salience: 0.8 },
+      });
+      assert.equal(r.statusCode, 201, r.body);
+    }
+
+    /* 反思前：价值内核为空。 */
+    const before = JSON.parse((await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers })).body).data;
+    assert.equal(before.valueCount, 0, '反思前应无价值');
+
+    /* 触发反思：mock LLM 不产合法 JSON 提案 → 0 候选，但 genesis 价值内核必被建立。 */
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
+    assert.equal(res.statusCode, 200, res.body);
+    const data = JSON.parse(res.body).data as { candidatesIngested: number; reason?: string };
+    assert.notEqual(data.reason, 'no_material', '有记忆不应短路');
+
+    /* 反思后：经理人价值内核已落库（7 个 genesis 价值）。 */
+    const after = JSON.parse((await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers })).body).data;
+    assert.equal(after.valueCount, 7, '应建立 7 个经理人 genesis 价值');
+    assert.ok(after.topValues.some((v: { label: string }) => v.label === '正直诚信'), '应含正直诚信价值');
+
+    /* 幂等：再次反思不应重复建价值。 */
+    await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
+    const again = JSON.parse((await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers })).body).data;
+    assert.equal(again.valueCount, 7, 'genesis 建价值应幂等，不重复');
+  });
+
+  it('POST /companion/me/reflect 配额用尽 → 429 且无副作用（不建 genesis 价值、不调 LLM）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-reflect-quota@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    /* 写一条记忆（越过 no_material 短路）。 */
+    const m = await app.inject({
+      method: 'POST', url: '/api/v1/memories', headers,
+      payload: { kind: 'semantic', content: '结果导向', valence: 0.2, salience: 0.7 },
+    });
+    assert.equal(m.statusCode, 201, m.body);
+
+    /* 把 reflection 配额设为 0：本窗口直接用尽。 */
+    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'reflection', 0, 60_000);
+
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
+    assert.equal(res.statusCode, 429, `配额用尽应 429，实得 ${res.statusCode}: ${res.body}`);
+
+    /* 关键：被配额拒绝的请求不应产生 core 副作用——价值内核仍为空（genesis 未写）。 */
+    const me = JSON.parse((await app.inject({ method: 'GET', url: '/api/v1/companion/me', headers })).body).data;
+    assert.equal(me.valueCount, 0, '配额拒绝后不应写入 genesis 价值');
+  });
+
+  it('plan 门控：enterprise 账号访问 /companion/me/reflect → 403', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-reflect-ent@test.com');
+    const entToken = (app as unknown as {
+      jwt: { sign: (payload: Record<string, unknown>) => string };
+    }).jwt.sign({ sub: auth.userId, tenantId: auth.tenantId, role: 'member', planId: 'enterprise' });
+    const headers = { authorization: `Bearer ${entToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
+    assert.equal(res.statusCode, 403, `expected 403, got ${res.statusCode}: ${res.body}`);
   });
 });
