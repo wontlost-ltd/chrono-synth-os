@@ -81,6 +81,10 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 48 | [Autonomous earning loop & its governance](0048-autonomous-earning-loop-governance.md) | Accepted |
 | 49 | [Consolidate web + desktop app hosts into the monorepo](0049-consolidate-app-hosts-into-monorepo.md) | Accepted |
 | 50 | [Architecture budget: core-persona progress gates new enterprise surface](0050-architecture-budget-core-over-enterprise.md) | Accepted |
+| 51 | [External perception is a sensory teacher, not a runtime sense](0051-external-perception-as-sensory-teacher.md) | Accepted |
+| 52 | [Edge autonomy & perception phase re-rank](0052-edge-autonomy-and-perception-phase-rerank.md) | Accepted |
+| 53 | [Firmware persona subset spec](0053-firmware-persona-subset-spec.md) | Accepted |
+| 54 | [Proactivity is a deterministic gate over existing signals, not a new reasoning loop](0054-proactive-persona-self-initiated-contact.md) | Accepted |
 
 The first 31 records were back-filled in P1.5 to cover kernel
 architecture, storage, agent layer, deployment, and product policy.
