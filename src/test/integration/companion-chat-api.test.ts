@@ -371,30 +371,111 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
-  /* ── ADR-0055「对话即经历」：对话沉淀经历记忆，让数字人通过问答成长（零-LLM 确定性）── */
+  /* ── ADR-0055「自我意识」：第一人称身份层——起名 / 问名字 / 自我介绍带名字（零-LLM 确定性）── */
 
-  it('对话即经历：告诉它名字 → 下一轮问名字能从沉淀的对话记忆答出来（端到端，零-LLM）', async () => {
+  it('自我意识：给它起名 → 第一人称确认；再问名字 → 第一人称答「我叫X」（端到端）', async () => {
     const local = await localChatApp(os);
     try {
-      /* 第一轮：告诉它名字。此时还查不到（首次提及）→ 但这轮被确定性沉淀为 episodic 记忆。 */
+      /* 起名。 */
+      const set = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫张三' } });
+      assert.equal(set.statusCode, 200, set.body);
+      const setResult = CompanionChatResultV1Schema.parse(JSON.parse(set.body).data);
+      assert.equal(setResult.kind, 'self_identity', '起名 → self_identity');
+      assert.match(setResult.reply, /我叫张三/, '第一人称确认');
+
+      /* 起名这句不应被沉淀为第二人称对话记忆（修主语错位 bug）。 */
+      const echoed = [...os.core.memories.getAllMemories().values()].some((m) => m.content.includes('你叫') || m.content.includes('起个名字'));
+      assert.ok(!echoed, '起名句不沉淀为第二人称记忆');
+
+      /* 问名字 → 第一人称答「我叫张三」，不是「（来自对话）你叫张三」。 */
+      const ask = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么名字' } });
+      const askResult = CompanionChatResultV1Schema.parse(JSON.parse(ask.body).data);
+      assert.equal(askResult.kind, 'self_identity', '问名字 → self_identity');
+      assert.equal(askResult.reply, '我叫张三。', '第一人称回答，无「（来自对话）你叫」回声');
+    } finally { await local.close(); }
+  });
+
+  it('自我意识：未起名时问名字 → 第一人称邀请（非 honest_offline 冷回应）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'self_identity');
+      assert.match(result.reply, /还没有名字|想叫我什么/, '邀请用户起名');
+    } finally { await local.close(); }
+  });
+
+  it('自我意识：改名 → 覆盖（用户显式定义合法覆盖，非 pristine 锁）', async () => {
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫小黑' } });
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '以后你叫大白' } });
+      const ask = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(ask.body).data);
+      assert.equal(result.reply, '我叫大白。', '改名后用新名字');
+    } finally { await local.close(); }
+  });
+
+  it('自我意识安全：把敏感主题设成名字 → 拒绝（不让 never_discuss 主题被第一人称复述）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫密码' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      /* 名字「密码」命中基线 never_discuss → 拒绝设置（不落库、不复述）。 */
+      assert.notEqual(result.reply, '我叫密码。');
+      /* 之后问名字仍未起名。 */
+      const ask = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
+      const askResult = CompanionChatResultV1Schema.parse(JSON.parse(ask.body).data);
+      assert.match(askResult.reply, /还没有名字|想叫我什么/, '敏感名未被设置');
+    } finally { await local.close(); }
+  });
+
+  it('自我意识健壮性：起名提取后清洗为空（如「你叫<>」）→ 不 500，温和回应（Codex 复审）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫<>' } });
+      assert.equal(res.statusCode, 200, '清洗后空名不应 500');
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('<'), '不复述 markup');
+    } finally { await local.close(); }
+  });
+
+  it('自我意识：自我介绍以「我叫X」第一人称开头', async () => {
+    os.core.updateNarrative('我喜欢学习新东西。');
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起名叫Echo' } });
+      const intro = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '介绍一下你自己' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(intro.body).data);
+      assert.equal(result.kind, 'self_intro');
+      assert.match(result.reply, /^我叫Echo。/, '自我介绍以第一人称名字开头');
+    } finally { await local.close(); }
+  });
+
+  /* ── ADR-0055「对话即经历」：对话沉淀经历记忆，让数字人通过问答成长（零-LLM 确定性）── */
+
+  it('对话即经历：告诉它一件事 → 下一轮问能从沉淀的对话记忆答出来（端到端，零-LLM）', async () => {
+    const local = await localChatApp(os);
+    try {
+      /* 第一轮：陈述一件事（非起名）。此时还查不到 → 但这轮被确定性沉淀为 episodic 记忆。 */
       const before = os.core.memories.getAllMemories().size;
-      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫张三' } });
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我最近在学弹吉他，每天练半小时' } });
       const after = os.core.memories.getAllMemories().size;
       assert.equal(after, before + 1, '这轮对话应被沉淀为 1 条经历记忆');
 
-      /* 沉淀的记忆是低显著 episodic、带来源前缀、含原话关键词。 */
-      const captured = [...os.core.memories.getAllMemories().values()].find((m) => m.content.includes('张三'));
-      assert.ok(captured, '应能找到含「张三」的沉淀记忆');
+      /* 沉淀的记忆是低显著 episodic、带来源前缀。 */
+      const captured = [...os.core.memories.getAllMemories().values()].find((m) => m.content.includes('吉他'));
+      assert.ok(captured, '应能找到含「吉他」的沉淀记忆');
       assert.equal(captured!.kind, 'episodic');
       assert.ok(captured!.salience < 0.5, '对话记忆低显著，不盖过老师教的知识');
       assert.match(captured!.content, /来自对话/, '带来源前缀');
 
-      /* 第二轮：问名字 → 检索命中沉淀的对话记忆 → grounded 答出张三。运行时零-LLM、确定性。 */
-      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起的名字叫什么' } });
+      /* 第二轮：问相关 → 检索命中沉淀的对话记忆 → grounded。运行时零-LLM、确定性。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你还记得我在学什么乐器' } });
       assert.equal(res.statusCode, 200, res.body);
       const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
       assert.equal(result.kind, 'knowledge_grounded', '应据沉淀的对话记忆回答，而非 honest_offline');
-      assert.match(result.reply, /张三/, '答得出它被起名张三');
+      assert.match(result.reply, /吉他/, '答得出我在学吉他');
     } finally { await local.close(); }
   });
 
@@ -403,7 +484,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     try {
       const before = os.core.memories.getAllMemories().size;
       for (let i = 0; i < 3; i++) {
-        await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫张三' } });
+        await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我最近在学弹吉他' } });
       }
       assert.equal(os.core.memories.getAllMemories().size, before + 1, '同句沉淀只写一次（去重）');
     } finally { await local.close(); }

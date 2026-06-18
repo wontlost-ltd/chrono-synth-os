@@ -58,6 +58,8 @@ const TENANT_TABLES = [
   'proactive_messages',
   /* notification_preferences：ADR-0054 红线9 per-user 推送同意+安静时段（非 secret 配置），A 类 */
   'notification_preferences',
+  /* companion_identity：ADR-0055 数字人第一人称身份（name，per-persona，无敏感列），A 类标准导出+擦除 */
+  'companion_identity',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',
