@@ -190,6 +190,9 @@ export function registerCompanionChatRoutes(
       boundaries: COMPANION_BASELINE_BOUNDARIES,
       userInput: body.message,
       relevantKnowledge,
+      /* ADR-0054 Phase 5 主动响应增强：知识回应后追加确定性 follow-up（邀请继续；
+       * 近期成长片段留待后续从 drift→成长接入，当前先开邀请延展）。仅作用于 knowledge_grounded。 */
+      proactiveReply: {},
     });
 
     /* response_template 优先（ADR-0047 蒸馏闭环消费端）：命中 intent 匹配的整段模板 → 直接用它，流程型

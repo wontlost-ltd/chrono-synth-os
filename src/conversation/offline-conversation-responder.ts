@@ -31,6 +31,8 @@ const KNOWLEDGE_SNIPPET_CAP = 280;
 const MAX_KNOWLEDGE_ITEMS = 3;
 /** 知识相关度低于此阈值视为"无可靠知识" */
 const MIN_USEFUL_RELEVANCE = 0.1;
+/** 主动响应 follow-up 引用的近期成长片段最大字符数（P5；不复述整段，降外泄面） */
+const PROACTIVE_GROWTH_CAP = 50;
 
 export interface OfflineResponderInput {
   /** persona 叙事（"我是谁"） */
@@ -43,6 +45,15 @@ export interface OfflineResponderInput {
   relevantKnowledge: RelevantKnowledge[];
   /** 调用方对话历史（可选，用于轻量指代） */
   history?: ConversationHistoryEntry[];
+  /**
+   * 主动响应增强（ADR-0054 Phase 5）：让被动回答更主动——回答后追加确定性 follow-up
+   * （提近期成长 / 邀请继续）。仅对 knowledge_grounded 回应追加（block/escalate/honest_offline
+   * 各有语义不追）。缺省 → 不追加（向后兼容，旧行为不变）。
+   */
+  proactiveReply?: {
+    /** 近期成长片段（如「最近在更主动地尝试新事物」）；有则 follow-up 提及它。 */
+    recentGrowth?: string;
+  };
 }
 
 export type OfflineResponseKind =
@@ -101,9 +112,13 @@ export class OfflineConversationResponder {
     /* 策略 2：有可用知识——以人格口吻落地呈现 */
     const usable = this.selectUsableKnowledge(input.relevantKnowledge);
     if (usable.length > 0) {
-      const content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput);
-      /* 输出自检：拼装结果若仍携带 never_discuss 主题（来自知识/叙事），
-       * 则不发出，退化为安全拒答（堵住 userInput 未命中但知识泄露的路径）。 */
+      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput);
+      /* P5 主动响应增强：知识回应后追加确定性 follow-up（提近期成长/邀请继续），
+       * 仅在非 escalate 时追加（escalate 已是人工跟进语义，不再主动延展话题）。 */
+      const followUp = !escalate ? this.composeProactiveFollowUp(input.proactiveReply) : '';
+      if (followUp.length > 0) content = `${content}\n${followUp}`;
+      /* 输出自检：拼装结果（含 follow-up）若携带 never_discuss 主题（来自知识/叙事/成长片段），
+       * 则不发出，退化为安全拒答（堵住 userInput 未命中但内容泄露的路径，红线 4 覆盖 follow-up）。 */
       if (this.outputLeaksNeverDiscuss(content, input.boundaries)) {
         return this.blockResponse();
       }
@@ -200,6 +215,22 @@ export class OfflineConversationResponder {
       parts.push('（已记录为需要人工跟进）');
     }
     return parts.join('\n');
+  }
+
+  /**
+   * 主动响应 follow-up（ADR-0054 Phase 5，确定性零-LLM）：知识回应后追加一句主动延展——
+   *   - 有近期成长片段 → 提及它 + 邀请继续（让对话像有内在生活的人，而非问答机器）；
+   *   - 无成长片段 → 仅邀请继续。
+   * 缺省（proactiveReply 未传）→ 返回空串（不追加，向后兼容）。相同输入 → 相同输出。
+   */
+  private composeProactiveFollowUp(cfg?: { recentGrowth?: string }): string {
+    if (!cfg) return '';
+    const growth = cfg.recentGrowth?.trim().replace(/\s+/g, ' ') ?? '';
+    if (growth.length > 0) {
+      const snippet = growth.length > PROACTIVE_GROWTH_CAP ? `${growth.slice(0, PROACTIVE_GROWTH_CAP)}…` : growth;
+      return `对了——我最近也在变化：${snippet}。你要是好奇，我们可以接着聊。`;
+    }
+    return '如果你愿意，我们可以接着这个话题多聊一会儿。';
   }
 
   /** 无知识时的诚实离线回应 */

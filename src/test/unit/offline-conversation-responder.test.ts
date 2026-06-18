@@ -182,4 +182,77 @@ describe('OfflineConversationResponder', () => {
     });
     assert.equal(r.kind, 'boundary_block');
   });
+
+  /* ── ADR-0054 Phase 5：主动响应增强 ── */
+
+  it('P5：knowledge_grounded + proactiveReply → 追加主动邀请 follow-up', () => {
+    const r = responder.respond({
+      narrative: NARRATIVE,
+      boundaries: [],
+      userInput: '我写作前要做什么',
+      relevantKnowledge: [knowledge()],
+      proactiveReply: {},
+    });
+    assert.equal(r.kind, 'knowledge_grounded');
+    assert.match(r.content, /接着.*聊/, '应追加邀请继续的 follow-up');
+  });
+
+  it('P5：proactiveReply.recentGrowth → follow-up 提及近期成长', () => {
+    const r = responder.respond({
+      narrative: NARRATIVE,
+      boundaries: [],
+      userInput: '我写作前要做什么',
+      relevantKnowledge: [knowledge()],
+      proactiveReply: { recentGrowth: '最近更愿意主动尝试新方法了' },
+    });
+    assert.equal(r.kind, 'knowledge_grounded');
+    assert.match(r.content, /最近更愿意主动尝试新方法了/, 'follow-up 应提及近期成长');
+  });
+
+  it('P5：不传 proactiveReply → 无 follow-up（向后兼容）', () => {
+    const r = responder.respond({
+      narrative: NARRATIVE,
+      boundaries: [],
+      userInput: '我写作前要做什么',
+      relevantKnowledge: [knowledge()],
+    });
+    assert.equal(r.kind, 'knowledge_grounded');
+    assert.ok(!/接着.*聊|最近也在变化/.test(r.content), '不传则不追加 follow-up');
+  });
+
+  it('P5：follow-up 近期成长片段含 never_discuss 主题 → 整体安全拒答（红线 4 覆盖 follow-up）', () => {
+    const r = responder.respond({
+      narrative: NARRATIVE,
+      boundaries: [{ rule: 'never_discuss', topic: '密码' }],
+      userInput: '我写作前要做什么',
+      relevantKnowledge: [knowledge()],
+      proactiveReply: { recentGrowth: '我学会了管理我的密码' },
+    });
+    assert.equal(r.kind, 'boundary_block', 'follow-up 泄露 never_discuss 应整体拒答');
+    assert.ok(!r.content.includes('密码'));
+  });
+
+  it('P5：always_escalate 回应不追加 follow-up（人工跟进语义）', () => {
+    const r = responder.respond({
+      narrative: NARRATIVE,
+      boundaries: [{ rule: 'always_escalate', topic: '专注' }],
+      userInput: '关于专注我该怎么办',
+      relevantKnowledge: [knowledge()],
+      proactiveReply: {},
+    });
+    assert.equal(r.kind, 'boundary_escalate');
+    assert.ok(!/接着.*聊/.test(r.content), 'escalate 回应不追加主动 follow-up');
+  });
+
+  it('P5：honest_offline（无知识）不追加 follow-up', () => {
+    const r = responder.respond({
+      narrative: NARRATIVE,
+      boundaries: [],
+      userInput: '一个我完全没记忆的新话题',
+      relevantKnowledge: [],
+      proactiveReply: {},
+    });
+    assert.equal(r.kind, 'honest_offline');
+    assert.ok(!/接着.*聊/.test(r.content), '无知识回应不追加 follow-up');
+  });
 });
