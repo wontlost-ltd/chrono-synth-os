@@ -16,3 +16,4 @@ export * from './persona-engine-queries.js';
 export * from './cognitive-memory-queries.js';
 export * from './persona-core-queries.js';
 export * from './persona-governance-queries.js';
+export * from './proactive-message-queries.js';

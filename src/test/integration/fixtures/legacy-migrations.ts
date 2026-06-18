@@ -998,6 +998,15 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS persona_governance_policy (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    policy_json TEXT NOT NULL DEFAULT '{}',\n    updated_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
     ]
+  },
+  {
+    "version": "v091",
+    "description": "ADR-0054 Phase 2: proactive outbound message queue (self-initiated nudges)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS proactive_messages (\n    id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    signal_type TEXT NOT NULL,\n    source_id TEXT NOT NULL,\n    signal_version INTEGER NOT NULL DEFAULT 0,\n    body TEXT NOT NULL,\n    kind TEXT NOT NULL DEFAULT 'general',\n    status TEXT NOT NULL DEFAULT 'unread',\n    created_at INTEGER NOT NULL,\n    read_at INTEGER,\n    PRIMARY KEY (id)\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_proactive_messages_signal ON proactive_messages(tenant_id, persona_id, signal_type, source_id, signal_version)",
+      "CREATE INDEX IF NOT EXISTS idx_proactive_messages_unread ON proactive_messages(tenant_id, persona_id, status)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1972,6 +1981,15 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "Governance config: per-persona earning/AML/budget policy override (JSON blob)",
     "sql": [
       "CREATE TABLE IF NOT EXISTS persona_governance_policy (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    policy_json TEXT NOT NULL DEFAULT '{}',\n    updated_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v093",
+    "description": "ADR-0054 Phase 2: proactive outbound message queue (self-initiated nudges)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS proactive_messages (\n    id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    signal_type TEXT NOT NULL,\n    source_id TEXT NOT NULL,\n    signal_version BIGINT NOT NULL DEFAULT 0,\n    body TEXT NOT NULL,\n    kind TEXT NOT NULL DEFAULT 'general',\n    status TEXT NOT NULL DEFAULT 'unread',\n    created_at BIGINT NOT NULL,\n    read_at BIGINT,\n    PRIMARY KEY (id)\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_proactive_messages_signal ON proactive_messages (tenant_id, persona_id, signal_type, source_id, signal_version)",
+      "CREATE INDEX IF NOT EXISTS idx_proactive_messages_unread ON proactive_messages (tenant_id, persona_id, status)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

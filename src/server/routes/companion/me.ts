@@ -16,7 +16,7 @@ import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js
 import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
-import { AuthorizationError, ErrorCode } from '../../../errors/index.js';
+import { AuthorizationError, NotFoundError, ErrorCode } from '../../../errors/index.js';
 import {
   PersonaDriftAnalyzer,
   resolveDriftThresholds,
@@ -32,9 +32,14 @@ import {
   type CompanionMemoryListV1,
 } from '@chrono/contracts';
 import { MemoryFacade } from '../../../core/memory-facade.js';
+import { ProactiveMessageStore } from '../../../storage/proactive-message-store.js';
 import { parsePagination } from '../../plugins/pagination.js';
+
+/** companion 单 persona core-self 的 personaId（与 chat.ts 一致）。 */
+const COMPANION_PERSONA_ID = 'default';
 import type { CoreValue } from '@chrono/kernel';
 import type { MemoryNode } from '@chrono/kernel';
+import type { ProactiveMessageRow } from '@chrono/kernel';
 
 /** 主页价值列表默认条数（按 weight 降序取 topN）。 */
 const TOP_VALUES_LIMIT = 5;
@@ -58,6 +63,32 @@ export function toCompanionMemory(m: MemoryNode): CompanionMemoryV1 {
     salience: m.salience,
     createdAt: m.createdAt,
   };
+}
+
+/** 主动消息 row → C 端 nudge DTO（ADR-0054 Phase 2）。 */
+export function toCompanionNudge(r: ProactiveMessageRow): {
+  id: string; kind: string; body: string; status: string; createdAt: number; readAt: number | null;
+} {
+  return {
+    id: r.id,
+    kind: r.kind,
+    body: r.body,
+    status: r.status,
+    createdAt: r.created_at,
+    readAt: r.read_at,
+  };
+}
+
+/** 合法 nudge status 过滤值（'all' → 不过滤）。未知值收敛为默认 'unread'（不返回空列表误导）。 */
+const VALID_NUDGE_STATUSES: ReadonlySet<string> = new Set(['unread', 'read', 'dismissed', 'all']);
+
+/** 解析 nudges 列表查询参数：status（默认 'unread'，'all' → 不过滤）+ limit（1..100，默认 50）。 */
+function parseNudgeQuery(q: Record<string, unknown>): { status?: string; limit: number } {
+  const rawStatus = typeof q.status === 'string' && VALID_NUDGE_STATUSES.has(q.status) ? q.status : 'unread';
+  const status = rawStatus === 'all' ? undefined : rawStatus;
+  const rawLimit = Number(q.limit);
+  const limit = Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 50;
+  return { status, limit };
 }
 
 /* drift→「你最近探索的方向」映射已抽到 @chrono/contracts（driftReportToGrowth），服务端与
@@ -187,5 +218,37 @@ export function registerCompanionRoutes(
       pagination: result.pagination,
     };
     return { data: CompanionMemoryListV1Schema.parse(payload) };
+  });
+
+  /* 构造主动消息 store（tenant-scoped DB + clock）。ADR-0054 Phase 2 管道。 */
+  function proactiveStore(request: FastifyRequest): ProactiveMessageStore {
+    const tenantOS = getOS(request);
+    return new ProactiveMessageStore(tenantOS.getDatabase(), () => tenantOS.getClock().now(), request.tenantId);
+  }
+
+  /* GET /api/v1/companion/me/nudges —「TA 主动跟我说的」未读主动消息（ADR-0054 Phase 2） */
+  app.get('/api/v1/companion/me/nudges', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const { status, limit } = parseNudgeQuery(request.query as Record<string, unknown>);
+    const rows = proactiveStore(request).list(COMPANION_PERSONA_ID, { status, limit });
+    return {
+      data: {
+        schemaVersion: 'companion-nudge-list.v1',
+        items: rows.map(toCompanionNudge),
+      },
+    };
+  });
+
+  /* POST /api/v1/companion/me/nudges/:id/read — 标记主动消息已读（归属校验，绝不跨租户） */
+  app.post<{ Params: { id: string } }>('/api/v1/companion/me/nudges/:id/read', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const outcome = proactiveStore(request).markRead(request.params.id, COMPANION_PERSONA_ID);
+    /* 仅「不存在/非本租户」→ 404；「已读」幂等 → 200（客户端重试友好，Codex 建议）。 */
+    if (outcome === 'not_found') {
+      throw new NotFoundError('主动消息不存在', ErrorCode.NOT_FOUND_PROACTIVE_MESSAGE);
+    }
+    return { data: { id: request.params.id, status: 'read' } };
   });
 }

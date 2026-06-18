@@ -21,6 +21,7 @@ import {
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
 } from '@chrono/contracts';
+import { ProactiveMessageStore } from '../../storage/proactive-message-store.js';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 
@@ -249,5 +250,40 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
   it('未授权访问 companion → 401/403', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/companion/me' });
     assert.ok(res.statusCode === 401 || res.statusCode === 403, `expected 401/403, got ${res.statusCode}`);
+  });
+
+  it('GET /companion/me/nudges + POST .../read —「TA 主动跟我说的」拉取 + 已读（ADR-0054 Phase 2）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-nudge@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+
+    /* Phase 2 触发逻辑（ProactiveEngine）尚未接入——直接经 store 播种两条主动消息（同租户）。 */
+    const store = new ProactiveMessageStore(os.getDatabase(), () => 1000, auth.tenantId);
+    store.enqueue({ personaId: 'default', signalType: 'core:memory-consolidated', sourceId: 'm-1', body: '我最近一直在想我们上次聊的', kind: 'memory' });
+    store.enqueue({ personaId: 'default', signalType: 'system:evolution-completed', sourceId: 'e-1', body: '我好像又成长了一点', kind: 'growth' });
+
+    /* 拉取未读 nudge。 */
+    const listRes = await app.inject({ method: 'GET', url: '/api/v1/companion/me/nudges', headers });
+    assert.equal(listRes.statusCode, 200, listRes.body);
+    assert.match(String(listRes.headers['cache-control']), /no-store/);
+    const items = JSON.parse(listRes.body).data.items as Array<{ id: string; body: string; status: string; kind: string }>;
+    assert.equal(items.length, 2, '应拉到两条未读主动消息');
+    assert.ok(items.every((i) => i.status === 'unread'));
+
+    /* 标记一条已读 → 未读列表减一。 */
+    const target = items[0];
+    const readRes = await app.inject({ method: 'POST', url: `/api/v1/companion/me/nudges/${target.id}/read`, headers });
+    assert.equal(readRes.statusCode, 200, readRes.body);
+
+    const afterRes = await app.inject({ method: 'GET', url: '/api/v1/companion/me/nudges', headers });
+    const afterItems = JSON.parse(afterRes.body).data.items as Array<unknown>;
+    assert.equal(afterItems.length, 1, '标记已读后未读列表减一');
+
+    /* 重复标记已读 → 幂等 200（客户端重试友好）。 */
+    const reReadRes = await app.inject({ method: 'POST', url: `/api/v1/companion/me/nudges/${target.id}/read`, headers });
+    assert.equal(reReadRes.statusCode, 200, '已读再标记应幂等 200');
+
+    /* 标记不存在的 nudge → 404。 */
+    const missRes = await app.inject({ method: 'POST', url: '/api/v1/companion/me/nudges/pmsg-nope/read', headers });
+    assert.equal(missRes.statusCode, 404);
   });
 });
