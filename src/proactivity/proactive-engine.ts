@@ -159,7 +159,7 @@ export class ProactiveEngine {
         ? composeNudge(signalType) /* 无 ctx → 基线 */
         : personalized;
 
-      this.deps.store.enqueue({
+      const nudgeId = this.deps.store.enqueue({
         personaId: PERSONA_ID,
         signalType,
         sourceId,
@@ -167,6 +167,15 @@ export class ProactiveEngine {
         body: safe.body,
         kind: safe.kind,
       });
+
+      /* P6 in-app push（红线 9）：真入队一条新消息才发刷新信号；幂等忽略（nudgeId=null）不发。
+       * 事件**不带 body**——只载 nudgeId + kind 触发在线客户端刷新；正文仍经认证 GET /nudges 取，
+       * 消息内容绝不过 SSE/WS 广播面。 */
+      if (nudgeId !== null) {
+        this.deps.bus.emit('companion:nudge-created', {
+          nudgeId, kind: safe.kind, tenantId: this.deps.tenantId,
+        });
+      }
     } catch (err) {
       /* 失败隔离：记录但绝不外抛（红线 5/10）。 */
       this.deps.logger.error(LAYER, `主动性评估失败（已隔离，不影响主流程）: ${signalType}`, err as Error);

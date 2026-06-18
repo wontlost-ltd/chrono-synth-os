@@ -89,6 +89,12 @@ export interface SystemEventMap {
   'system:earning-task-applied': TenantTagged<{ personaId: string; taskId: string; reward: number }>;
   'system:started': TenantTagged<{ timestamp: number }>;
   'system:stopping': TenantTagged<{ timestamp: number }>;
+  /**
+   * ADR-0054 Phase 6：数字人主动消息已入队（in-app push 刷新信号）。
+   * **不带 body 内容**——只载 nudgeId + kind 作为「有新主动消息」的刷新触发；正文仍经认证
+   * GET /companion/me/nudges 取，消息内容绝不过 SSE/WS 广播面。
+   */
+  'companion:nudge-created': TenantTagged<{ nudgeId: string; kind: string }>;
 }
 
 /** 事件名称联合类型 */
