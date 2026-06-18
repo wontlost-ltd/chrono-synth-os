@@ -10,11 +10,13 @@ import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
+  CompanionNudgeListV1Schema,
   CompanionPerceiveResultV1Schema,
   CompanionChatResultV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
   type CompanionMemoryListV1,
+  type CompanionNudgeListV1,
   type CompanionPerceiveRequestV1,
   type CompanionPerceiveResultV1,
   type CompanionChatResultV1,
@@ -124,4 +126,14 @@ export async function fetchGrowth(): Promise<CompanionGrowthV1> {
 export async function fetchMemories(page: number, pageSize = 20): Promise<CompanionMemoryListV1> {
   const url = `/api/v1/companion/me/memories?page=${page}&pageSize=${pageSize}`;
   return CompanionMemoryListV1Schema.parse(await getData(url));
+}
+
+/** 「TA 主动跟我说的」：拉取主动消息（ADR-0054）。status 缺省取未读，'all' 取全部。 */
+export async function fetchNudges(status: 'unread' | 'all' = 'unread'): Promise<CompanionNudgeListV1> {
+  return CompanionNudgeListV1Schema.parse(await getData(`/api/v1/companion/me/nudges?status=${status}`));
+}
+
+/** 标记一条主动消息已读（幂等：已读再标记也返回成功）。 */
+export async function markNudgeRead(id: string): Promise<void> {
+  await postData(`/api/v1/companion/me/nudges/${encodeURIComponent(id)}/read`, {});
 }

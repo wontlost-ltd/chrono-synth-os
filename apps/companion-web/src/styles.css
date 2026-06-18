@@ -93,6 +93,17 @@ body {
 .direction__desc { color: var(--c-muted); font-size: 13px; }
 .direction__bar { grid-column: 1 / -1; }
 
+/* ADR-0054 主动消息（nudges）：「TA 主动跟我说的」列表。 */
+.nudges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.nudge { padding: 14px; background: var(--c-surface); border-radius: 12px; border: 1px solid var(--c-surface-2); }
+.nudge--unread { border-color: var(--c-brand); }
+.nudge__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.nudge__kind { font-size: 12px; font-weight: 600; color: var(--c-brand); }
+.nudge__time { font-size: 12px; color: var(--c-muted); }
+.nudge__body { margin: 0; font-size: 15px; line-height: 1.5; }
+.nudge__read-btn { margin-top: 10px; padding: 6px 12px; font-size: 13px; border: 1px solid var(--c-surface-2); border-radius: 999px; background: transparent; color: var(--c-muted); cursor: pointer; }
+.nudge__read-btn:hover { border-color: var(--c-brand); color: var(--c-brand); }
+
 .state { padding: 32px 16px; text-align: center; color: var(--c-muted); }
 .state--error { color: var(--c-neg); }
 .state--auth p { margin: 4px 0; }
