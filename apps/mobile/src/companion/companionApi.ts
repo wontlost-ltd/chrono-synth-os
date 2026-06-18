@@ -10,11 +10,13 @@ import {
   CompanionMeV1Schema,
   CompanionGrowthV1Schema,
   CompanionMemoryListV1Schema,
+  CompanionNudgeListV1Schema,
   CompanionPerceiveResultV1Schema,
   CompanionChatResultV1Schema,
   type CompanionMeV1,
   type CompanionGrowthV1,
   type CompanionMemoryListV1,
+  type CompanionNudgeListV1,
   type CompanionPerceiveRequestV1,
   type CompanionPerceiveResultV1,
   type CompanionChatResultV1,
@@ -53,6 +55,23 @@ export async function fetchCompanionMemories(
   return CompanionMemoryListV1Schema.parse(
     await apiFetch<unknown>(`/api/v1/companion/me/memories?${qs.toString()}`),
   );
+}
+
+/** GET /companion/me/nudges —「TA 主动跟我说的」主动消息（ADR-0054）。 */
+export async function fetchCompanionNudges(
+  status: 'unread' | 'all' = 'unread',
+): Promise<CompanionNudgeListV1> {
+  return CompanionNudgeListV1Schema.parse(
+    await apiFetch<unknown>(`/api/v1/companion/me/nudges?status=${status}`),
+  );
+}
+
+/** POST /companion/me/nudges/:id/read —标记主动消息已读（幂等）。 */
+export async function markCompanionNudgeRead(id: string): Promise<void> {
+  await apiFetch<unknown>(`/api/v1/companion/me/nudges/${encodeURIComponent(id)}/read`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
 }
 
 /**

@@ -4,7 +4,10 @@
  * （Codex 审查 Minor：URLSearchParams 构造 + 上下限 clamp）。
  */
 
-import { fetchCompanionMemories, companionPerceive, companionChat } from './companionApi';
+import {
+  fetchCompanionMemories, companionPerceive, companionChat,
+  fetchCompanionNudges, markCompanionNudgeRead,
+} from './companionApi';
 import * as client from '../api/client';
 
 /* 一个最小的合法 CompanionMemoryListV1 响应——satisfies schema.parse。 */
@@ -134,5 +137,39 @@ describe('companionChat POST 请求形状 + 响应校验', () => {
   it('响应漂移 → schema.parse 抛错', async () => {
     spy.mockResolvedValue({ schemaVersion: 'wrong', reply: 123 } as never);
     await expect(companionChat('x')).rejects.toThrow();
+  });
+});
+
+describe('主动消息 API（ADR-0054）', () => {
+  let spy: jest.SpyInstance;
+  const NUDGE_LIST = {
+    schemaVersion: 'companion-nudge-list.v1',
+    items: [{ id: 'pmsg-1', kind: 'growth', body: '我成长了。', status: 'unread', createdAt: 1_700_000_000_000, readAt: null }],
+  };
+  beforeEach(() => { spy = jest.spyOn(client, 'apiFetch').mockResolvedValue(NUDGE_LIST as never); });
+  afterEach(() => spy.mockRestore());
+
+  it('fetchCompanionNudges：GET 正确 url（status=all）+ 契约校验', async () => {
+    const res = await fetchCompanionNudges('all');
+    expect(spy.mock.calls[0]![0]).toBe('/api/v1/companion/me/nudges?status=all');
+    expect(res.items[0].body).toBe('我成长了。');
+  });
+
+  it('fetchCompanionNudges：缺省 status=unread', async () => {
+    await fetchCompanionNudges();
+    expect(spy.mock.calls[0]![0]).toBe('/api/v1/companion/me/nudges?status=unread');
+  });
+
+  it('fetchCompanionNudges：响应漂移（多余字段）→ strict 契约抛', async () => {
+    spy.mockResolvedValue({ ...NUDGE_LIST, items: [{ ...NUDGE_LIST.items[0], signal_type: 'leak' }] } as never);
+    await expect(fetchCompanionNudges('all')).rejects.toThrow();
+  });
+
+  it('markCompanionNudgeRead：POST 正确 url（id 转义）', async () => {
+    spy.mockResolvedValue(undefined as never);
+    await markCompanionNudgeRead('pmsg-1');
+    const [path, init] = spy.mock.calls[0]!;
+    expect(path).toBe('/api/v1/companion/me/nudges/pmsg-1/read');
+    expect(init?.method).toBe('POST');
   });
 });
