@@ -65,6 +65,7 @@ import { registerPerceptionMediaExecutors } from './perception-media-executors.j
 import { registerPerceptionEventExecutors } from './perception-event-executors.js';
 import { registerPersonaGovernanceExecutors } from './persona-governance-executors.js';
 import { registerProactiveMessageExecutors } from './proactive-message-executors.js';
+import { registerNotificationPreferenceExecutors } from './notification-preference-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -104,6 +105,7 @@ import {
   PERCEPTION_EVENT_QUERY_BY_TENANT,
   PERSONA_GOVERNANCE_QUERY_BY_PERSONA,
   PROACTIVE_MESSAGE_QUERY_LIST,
+  NOTIF_PREF_QUERY_BY_USER,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -175,6 +177,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(PERCEPTION_EVENT_QUERY_BY_TENANT)) registerPerceptionEventExecutors();
   if (!resolveQueryExecutor(PERSONA_GOVERNANCE_QUERY_BY_PERSONA)) registerPersonaGovernanceExecutors();
   if (!resolveQueryExecutor(PROACTIVE_MESSAGE_QUERY_LIST)) registerProactiveMessageExecutors();
+  if (!resolveQueryExecutor(NOTIF_PREF_QUERY_BY_USER)) registerNotificationPreferenceExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

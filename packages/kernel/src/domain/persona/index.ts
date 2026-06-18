@@ -18,3 +18,5 @@ export * from './persona-core-queries.js';
 export * from './persona-governance-queries.js';
 export * from './proactive-message-queries.js';
 export * from './proactive-gate.js';
+export * from './notification-gate.js';
+export * from './notification-preference-queries.js';

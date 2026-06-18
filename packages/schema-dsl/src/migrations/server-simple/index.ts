@@ -80,6 +80,7 @@ export { v087_perception_events } from './v087.js';
 export { v089_distilled_compiled_via } from './v089.js';
 export { v090_persona_governance_policy } from './v090.js';
 export { v091_proactive_messages } from './v091.js';
+export { v092_notification_preferences } from './v092.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -164,6 +165,7 @@ import { v087_perception_events } from './v087.js';
 import { v089_distilled_compiled_via } from './v089.js';
 import { v090_persona_governance_policy } from './v090.js';
 import { v091_proactive_messages } from './v091.js';
+import { v092_notification_preferences } from './v092.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -248,4 +250,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v089_distilled_compiled_via,
   v090_persona_governance_policy,
   v091_proactive_messages,
+  v092_notification_preferences,
 ];

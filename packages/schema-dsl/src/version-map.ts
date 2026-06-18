@@ -101,4 +101,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v089_distilled_compiled_via', aliases: { postgres: 'v091', 'sqlite-sql': 'v089' }, classification: 'schema-simple', notes: 'Growth governance: distilled_artifacts.compiled_via (auto vs approved) for unverified-growth budget' },
   { canonical: 'v090_persona_governance_policy', aliases: { postgres: 'v092', 'sqlite-sql': 'v090' }, classification: 'schema-simple', notes: 'Governance config: per-persona earning/AML/budget policy override (JSON blob)' },
   { canonical: 'v091_proactive_messages', aliases: { postgres: 'v093', 'sqlite-sql': 'v091' }, classification: 'schema-simple', notes: 'ADR-0054 Phase 2: proactive outbound message queue (self-initiated nudges)' },
+  { canonical: 'v092_notification_preferences', aliases: { postgres: 'v094', 'sqlite-sql': 'v092' }, classification: 'schema-simple', notes: 'ADR-0054 red-line 9: per-user notification preferences (push opt-in + quiet hours)' },
 ];
