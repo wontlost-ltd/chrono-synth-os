@@ -9,6 +9,9 @@ import type { Query, Command } from '../../ports/query.js';
 export const MDEV_QUERY_BY_UID = 'mobileDevice.byUid' as const;
 export const MDEV_QUERY_BY_ID = 'mobileDevice.byId' as const;
 export const MDEV_QUERY_LIST_BY_USER = 'mobileDevice.listByUser' as const;
+/** 显式 (tenant_id, user_id) 列设备——宿主 DB 上必须用它，listByUser 只按 user_id 在宿主 DB
+ * 无 tenant 隔离（跨租户推送风险，Codex 退回 High）。 */
+export const MDEV_QUERY_LIST_BY_TENANT_USER = 'mobileDevice.listByTenantUser' as const;
 export const MDEV_QUERY_OWNED = 'mobileDevice.owned' as const;
 
 /* ── Command Kinds ── */
@@ -43,6 +46,11 @@ export interface MdevByUidParams {
   tenantId: string;
   userId: string;
   deviceUid: string;
+}
+
+export interface MdevListByTenantUserParams {
+  tenantId: string;
+  userId: string;
 }
 
 export interface MdevOwnedParams {
@@ -103,6 +111,11 @@ export function mdevQueryById(deviceId: string): Query<MdevDeviceRow | null, str
 
 export function mdevQueryListByUser(userId: string): Query<MdevDeviceRow, string> {
   return { kind: MDEV_QUERY_LIST_BY_USER, params: userId };
+}
+
+/** 显式 (tenant_id, user_id) 列设备——宿主 DB 上的租户隔离（Codex 退回 High）。 */
+export function mdevQueryListByTenantUser(params: MdevListByTenantUserParams): Query<MdevDeviceRow, MdevListByTenantUserParams> {
+  return { kind: MDEV_QUERY_LIST_BY_TENANT_USER, params };
 }
 
 export function mdevQueryOwned(params: MdevOwnedParams): Query<MdevDeviceRow | null, MdevOwnedParams> {

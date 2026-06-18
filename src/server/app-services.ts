@@ -25,6 +25,7 @@ import { ApiKeyService } from '../billing/api-key-service.js';
 import { ConfigService } from '../config/config-service.js';
 import { KnowledgeSourceService } from '../knowledge/knowledge-source-service.js';
 import { MockPushService } from './services/push-service.js';
+import type { PushService } from '../types/push.js';
 
 export interface AppServices {
   readonly db: IDatabase;
@@ -34,6 +35,8 @@ export interface AppServices {
   readonly collaboration: CollaborationService;
   readonly mobileDevice: MobileDeviceService;
   readonly mobileDeviceFacade: MobileDeviceFacade;
+  /** 推送服务（ADR-0054 ③ nudge push 桥复用同一实例；生产可换 FCM/APNs provider）。 */
+  readonly pushService: PushService;
   readonly userProfile: UserProfileService;
   readonly organization: OrganizationService;
   readonly tenantProfile: TenantEnterpriseProfileService;
@@ -60,6 +63,7 @@ export function buildAppServices(
     collaboration: new CollaborationService(tx),
     mobileDevice: new MobileDeviceService(tx),
     mobileDeviceFacade: new MobileDeviceFacade(tx, pushService),
+    pushService,
     userProfile: new UserProfileService(tx),
     organization: new OrganizationService(tx),
     tenantProfile: new TenantEnterpriseProfileService(tx, appConfig, logger),
