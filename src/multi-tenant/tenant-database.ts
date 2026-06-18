@@ -45,6 +45,8 @@ const TENANT_TABLES = new Set([
   'persona_governance_policy',
   /* ADR-0054 主动消息 outbound 队列（self-initiated nudges） */
   'proactive_messages',
+  /* ADR-0054 红线9 per-user 推送同意 + 安静时段 */
+  'notification_preferences',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

@@ -56,6 +56,8 @@ const TENANT_TABLES = [
   'persona_governance_policy',
   /* proactive_messages：ADR-0054 主动消息 outbound 队列（确定性文本+信号溯源，无敏感列），A 类标准导出+擦除 */
   'proactive_messages',
+  /* notification_preferences：ADR-0054 红线9 per-user 推送同意+安静时段（非 secret 配置），A 类 */
+  'notification_preferences',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

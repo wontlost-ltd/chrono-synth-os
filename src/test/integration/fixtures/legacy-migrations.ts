@@ -1007,6 +1007,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_proactive_messages_signal ON proactive_messages(tenant_id, persona_id, signal_type, source_id, signal_version)",
       "CREATE INDEX IF NOT EXISTS idx_proactive_messages_unread ON proactive_messages(tenant_id, persona_id, status)"
     ]
+  },
+  {
+    "version": "v092",
+    "description": "ADR-0054 red-line 9: per-user notification preferences (push opt-in + quiet hours)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS notification_preferences (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    user_id TEXT NOT NULL,\n    nudge_push_enabled INTEGER NOT NULL DEFAULT 0,\n    quiet_start_minute INTEGER,\n    quiet_end_minute INTEGER,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, user_id)\n  )"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -1990,6 +1997,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS proactive_messages (\n    id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    signal_type TEXT NOT NULL,\n    source_id TEXT NOT NULL,\n    signal_version BIGINT NOT NULL DEFAULT 0,\n    body TEXT NOT NULL,\n    kind TEXT NOT NULL DEFAULT 'general',\n    status TEXT NOT NULL DEFAULT 'unread',\n    created_at BIGINT NOT NULL,\n    read_at BIGINT,\n    PRIMARY KEY (id)\n  )",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_proactive_messages_signal ON proactive_messages (tenant_id, persona_id, signal_type, source_id, signal_version)",
       "CREATE INDEX IF NOT EXISTS idx_proactive_messages_unread ON proactive_messages (tenant_id, persona_id, status)"
+    ]
+  },
+  {
+    "version": "v094",
+    "description": "ADR-0054 red-line 9: per-user notification preferences (push opt-in + quiet hours)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS notification_preferences (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    user_id TEXT NOT NULL,\n    nudge_push_enabled BOOLEAN NOT NULL DEFAULT FALSE,\n    quiet_start_minute INTEGER,\n    quiet_end_minute INTEGER,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, user_id)\n  )"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
