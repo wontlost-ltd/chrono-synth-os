@@ -43,6 +43,8 @@ import {
   CONVERSATION_MEMORY_SALIENCE,
   CONVERSATION_MEMORY_VALENCE,
 } from '../../../conversation/conversation-memory-capture.js';
+import { detectIdentityIntent } from '../../../conversation/identity-intent.js';
+import { CompanionIdentityStore } from '../../../storage/companion-identity-store.js';
 import type { AppConfig } from '../../../config/schema.js';
 
 /** companion 默认人格 id（与 perceive/environment 一致）。 */
@@ -155,7 +157,7 @@ export function registerCompanionChatRoutes(
    * 解决「介绍一下你自己」泛词查不到具体记忆 → honest_offline 的问题。无任何内容时返回 undefined
    * （回退诚实离线）。
    */
-  function buildSelfIntro(tenantOS: ChronoSynthOS): string | undefined {
+  function buildSelfIntro(tenantOS: ChronoSynthOS, myName?: string): string | undefined {
     const narrative = tenantOS.core.narrative.get().trim();
     /* 排序加稳定 tie-breaker（id 字典序）——底层 SELECT 无 ORDER BY，同 weight/salience 时 Map 迭代
      * 顺序跨 DB/重载会漂移，不应作为契约。加 id 二级键确保「相同人格状态相同输入→相同输出」（Codex 复审）。 */
@@ -170,9 +172,12 @@ export function registerCompanionChatRoutes(
       .map((node) => node.content.trim())
       .filter((c) => c.length > 0);
 
-    if (narrative.length === 0 && topValues.length === 0 && topMemories.length === 0) return undefined;
+    /* 有名字时即便其余皆空也能自我介绍（「我叫X」本身就是有效自述）。 */
+    const name = myName?.trim();
+    if (narrative.length === 0 && topValues.length === 0 && topMemories.length === 0 && !name) return undefined;
 
     const parts: string[] = [];
+    if (name) parts.push(`我叫${name}。`);
     if (narrative.length > 0) parts.push(narrative);
     if (topValues.length > 0) parts.push(`我最看重的是${topValues.join('、')}。`);
     if (topMemories.length > 0) {
@@ -193,6 +198,49 @@ export function registerCompanionChatRoutes(
     /* 配额（与 perception 同口径——对话也算一次 companion 交互，防滥用）。未设限额默认无限。 */
     if (!quotaManager.consumeQuota(request.tenantId, 'companion_chat')) {
       throw new QuotaExceededError('对话配额已用尽，请稍后再试');
+    }
+
+    /* ADR-0055「自我意识」：先处理身份意图（起名 / 问名字），第一人称落地，优先于普通检索。
+     * 视角转换：用户的第二人称「你叫X」→ 内化为第一人称身份「我叫X」，绝不当第二人称记忆原样复述。 */
+    const identity = new CompanionIdentityStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
+    const identityIntent = detectIdentityIntent(body.message);
+    if (identityIntent.kind === 'define' && identityIntent.name) {
+      /* 名字过 never_discuss 自检（防把敏感主题设成名字后被第一人称复述出去）。命中 → 拒绝设置。 */
+      if (responder.violatesNeverDiscuss(identityIntent.name, COMPANION_BASELINE_BOUNDARIES)) {
+        return { data: CompanionChatResultV1Schema.parse({
+          schemaVersion: 'companion-chat-result.v1',
+          reply: '这个名字我不太方便用，换一个好吗？', kind: 'honest_offline', confidence: 0.4, groundedMemoryCount: 0,
+        } satisfies CompanionChatResultV1) };
+      }
+      /* store 清洗后为空（如名字全是被剥的尖括号/控制字符）会抛错——温和拒绝而非 500（防御纵深）。 */
+      let saved: string;
+      try {
+        saved = identity.setName(identityIntent.name, Date.now());
+      } catch {
+        return { data: CompanionChatResultV1Schema.parse({
+          schemaVersion: 'companion-chat-result.v1',
+          reply: '这个名字我没太听清，你想叫我什么？', kind: 'self_identity', confidence: 0.4, groundedMemoryCount: 0,
+        } satisfies CompanionChatResultV1) };
+      }
+      /* 第一人称确认——「好的，我记住了，我叫X」。这句不沉淀为对话记忆（身份已结构化存储，避免回声）。 */
+      return { data: CompanionChatResultV1Schema.parse({
+        schemaVersion: 'companion-chat-result.v1',
+        reply: `好的，我记住了——我叫${saved}。以后你就这么叫我吧。`, kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
+      } satisfies CompanionChatResultV1) };
+    }
+    if (identityIntent.kind === 'ask') {
+      const myName = identity.getName();
+      if (myName) {
+        return { data: CompanionChatResultV1Schema.parse({
+          schemaVersion: 'companion-chat-result.v1',
+          reply: `我叫${myName}。`, kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
+        } satisfies CompanionChatResultV1) };
+      }
+      /* 还没起名 → 第一人称邀请用户起名（而非 honest_offline 的「无法学习」冷回应）。 */
+      return { data: CompanionChatResultV1Schema.parse({
+        schemaVersion: 'companion-chat-result.v1',
+        reply: '我还没有名字呢。你想叫我什么？', kind: 'self_identity', confidence: 0.6, groundedMemoryCount: 0,
+      } satisfies CompanionChatResultV1) };
     }
 
     const narrative = tenantOS.core.narrative.get();
@@ -231,7 +279,7 @@ export function registerCompanionChatRoutes(
       } else if (detectSelfIntroIntent(body.message)) {
         /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
          * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
-        const intro = buildSelfIntro(tenantOS);
+        const intro = buildSelfIntro(tenantOS, identity.getName());
         if (intro && !responder.violatesNeverDiscuss(intro, COMPANION_BASELINE_BOUNDARIES)) {
           payload = {
             schemaVersion: 'companion-chat-result.v1',

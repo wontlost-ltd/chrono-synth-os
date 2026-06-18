@@ -6,13 +6,26 @@ interface ChatMessage {
   readonly id: string;
   readonly role: 'user' | 'persona';
   readonly text: string;
-  /** persona 消息：是否基于记忆（grounded）——透明展示回应有据。 */
-  readonly grounded?: boolean;
+  /** persona 消息的 meta 标签（按回应类型，透明展示回应来源）。 */
+  readonly meta?: string;
 }
 
 const MAX_LEN = 2000;
 let seq = 0;
 const nextId = (): string => `m${seq++}`;
+
+/** 按回应类型给 meta 标签（不同 kind 来源不同，避免一律标「我还不了解这个」）。 */
+function metaForKind(kind: string, groundedCount: number): string {
+  switch (kind) {
+    case 'self_identity': return '这是我自己';
+    case 'self_intro': return '我介绍我自己';
+    case 'response_template': return '我学过的';
+    case 'knowledge_grounded': return '据我记得的';
+    case 'boundary_block':
+    case 'boundary_escalate': return '这个我不方便聊';
+    default: return groundedCount > 0 ? '据我记得的' : '我还不了解这个';
+  }
+}
 
 /**
  * 「跟 TA 聊聊」：跟你的数字人对话。回应**运行时零 LLM**——由确定性离线回应器据人格叙事 + 数字人
@@ -37,7 +50,7 @@ export function ChatView(): JSX.Element {
     try {
       const res = await chat(trimmed);
       setMessages((prev) => [...prev, {
-        id: nextId(), role: 'persona', text: res.reply, grounded: res.groundedMemoryCount > 0,
+        id: nextId(), role: 'persona', text: res.reply, meta: metaForKind(res.kind, res.groundedMemoryCount),
       }]);
     } catch (err) {
       if (err instanceof ApiAuthError) {
@@ -67,7 +80,7 @@ export function ChatView(): JSX.Element {
             <div key={m.id} className={`chat__bubble chat__bubble--${m.role}`}>
               <p className="chat__text">{m.text}</p>
               {m.role === 'persona' && (
-                <span className="chat__meta">{m.grounded ? '据我记得的' : '我还不了解这个'}</span>
+                <span className="chat__meta">{m.meta ?? ''}</span>
               )}
             </div>
           ))
