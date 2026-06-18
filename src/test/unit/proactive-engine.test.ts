@@ -154,4 +154,73 @@ describe('ProactiveEngine（ADR-0054 Phase 3 触发逻辑）', () => {
     });
     assert.equal(store.list('default').length, 0, 'stop 后信号不再入队');
   });
+
+  it('P4 个性化：memory-consolidated 取触发记忆 content 进文案（配 boundaryChecker）', () => {
+    const engine = new ProactiveEngine({
+      bus, store: new ProactiveMessageStore(db, () => clock, 'tenant-a'),
+      now: () => clock, logger: new SilentLogger(), tenantId: 'tenant-a',
+      context: {
+        getNarrative: () => '我是一个爱探索的人',
+        getMemoryContent: (id) => (id === 'mem-X' ? '那次徒步到山顶看云海' : undefined),
+      },
+      boundaryChecker: { violates: () => false },
+    });
+    engine.start();
+    bus.emit('core:memory-consolidated', {
+      result: { originalId: 'm0', consolidatedId: 'mem-X', newKind: 'semantic' }, tenantId: 'tenant-a',
+    });
+    const msgs = store.list('default');
+    assert.equal(msgs.length, 1);
+    assert.match(msgs[0].body, /那次徒步到山顶看云海/, '个性化文案应引用触发记忆内容');
+  });
+
+  it('P4 红线 4 不变量：有 context 但无 boundaryChecker → 不个性化（不绕过边界）', () => {
+    const engine = new ProactiveEngine({
+      bus, store: new ProactiveMessageStore(db, () => clock, 'tenant-a'),
+      now: () => clock, logger: new SilentLogger(), tenantId: 'tenant-a',
+      context: {
+        getNarrative: () => 'x',
+        getMemoryContent: () => '一段没过自检的内容',
+      },
+      /* 故意不传 boundaryChecker */
+    });
+    engine.start();
+    bus.emit('core:memory-consolidated', {
+      result: { originalId: 'm0', consolidatedId: 'mem-X', newKind: 'semantic' }, tenantId: 'tenant-a',
+    });
+    const msgs = store.list('default');
+    assert.equal(msgs.length, 1);
+    assert.ok(!msgs[0].body.includes('「'), '无自检能力 → 退基线模板，绝不个性化（红线 4 不变量）');
+    assert.ok(!msgs[0].body.includes('一段没过自检的内容'), '无 checker 不引用任何记忆/叙事内容');
+  });
+
+  it('P4 红线 4：个性化文案命中 never_discuss → 回退基线模板', () => {
+    const engine = new ProactiveEngine({
+      bus, store: new ProactiveMessageStore(db, () => clock, 'tenant-a'),
+      now: () => clock, logger: new SilentLogger(), tenantId: 'tenant-a',
+      context: {
+        getNarrative: () => 'x',
+        getMemoryContent: () => '我的银行卡号是 1234', /* 含敏感主题 */
+      },
+      boundaryChecker: { violates: (text) => text.includes('银行卡号') },
+    });
+    engine.start();
+    bus.emit('core:memory-consolidated', {
+      result: { originalId: 'm0', consolidatedId: 'mem-Y', newKind: 'semantic' }, tenantId: 'tenant-a',
+    });
+    const msgs = store.list('default');
+    assert.equal(msgs.length, 1);
+    assert.ok(!msgs[0].body.includes('银行卡号'), '命中 never_discuss 应回退安全基线模板');
+    assert.ok(!msgs[0].body.includes('「'), '回退的是基线模板（无引号片段）');
+  });
+
+  it('P4 无 context → 仍用基线模板入队（向后兼容 P3）', () => {
+    makeEngine(); /* 无 context/boundaryChecker */
+    bus.emit('core:memory-consolidated', {
+      result: { originalId: 'm0', consolidatedId: 'mem-Z', newKind: 'semantic' }, tenantId: 'tenant-a',
+    });
+    const msgs = store.list('default');
+    assert.equal(msgs.length, 1);
+    assert.ok(!msgs[0].body.includes('「'), '无 context 用基线模板');
+  });
 });

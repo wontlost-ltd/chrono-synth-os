@@ -5,6 +5,8 @@
 
 import { ProactiveEngine } from './proactivity/proactive-engine.js';
 import { ProactiveMessageStore } from './storage/proactive-message-store.js';
+import { OfflineConversationResponder } from './conversation/offline-conversation-responder.js';
+import { COMPANION_BASELINE_BOUNDARIES } from './conversation/companion-boundaries.js';
 import { AcceleratedLayer } from './accelerated/accelerated-layer.js';
 import { CoreRhythmLayer } from './core/core-rhythm-layer.js';
 import { MemoryPatternExtractor, type PatternExtractionConfig, type ValueUpdateProposal } from './core/memory-pattern-extractor.js';
@@ -237,7 +239,9 @@ export class ChronoSynthOS {
     }
 
     /* ADR-0054 主动性引擎：订阅内部信号 → 确定性门控 → 主动消息入队。start() 时订阅。
-     * 生产可达关闭入口（红线 3）：config.proactivity 覆盖默认（保守）配置，{enabled:false} 全关。 */
+     * 生产可达关闭入口（红线 3）：config.proactivity 覆盖默认（保守）配置，{enabled:false} 全关。
+     * P4 个性化：只读人格状态（叙事 + 纯读记忆，红线 2 不改身份）+ never_discuss 自检（红线 4）。 */
+    const proactiveResponder = new OfflineConversationResponder();
     this.proactiveEngine = new ProactiveEngine({
       bus: this.bus,
       store: new ProactiveMessageStore(this.db, () => this.clock.now(), this.tenantId),
@@ -245,6 +249,13 @@ export class ChronoSynthOS {
       logger: this.logger,
       tenantId: this.tenantId,
       config: { ...DEFAULT_PROACTIVE_GATE_CONFIG, ...config.proactivity },
+      context: {
+        getNarrative: () => this.core.narrative.get(),
+        getMemoryContent: (id) => this.core.memories.getMemory(id)?.content,
+      },
+      boundaryChecker: {
+        violates: (text) => proactiveResponder.violatesNeverDiscuss(text, COMPANION_BASELINE_BOUNDARIES),
+      },
     });
   }
 
