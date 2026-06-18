@@ -23,12 +23,28 @@ import {
   type ProactiveGateConfig,
   type ProactiveSignalType,
 } from '@chrono/kernel';
-import { composeNudge } from './proactive-composer.js';
+import { composeNudge, type PersonalizationContext } from './proactive-composer.js';
 
 const LAYER = 'ProactiveEngine';
 
 /** 引擎 personaId——companion 单 core-self 模型（与 chat/me 路由一致）。 */
 const PERSONA_ID = 'default';
+
+/**
+ * 只读人格状态读取器（P4 个性化用）——接口隔离：引擎只需「读叙事 + 按 id 纯读记忆」，
+ * 不需要整个 CoreRhythmLayer。纯读：绝不触发 salience 强化等副作用（红线 2 不改身份）。
+ */
+export interface PersonaContextReader {
+  /** 当前叙事（「我是谁」）。 */
+  getNarrative(): string;
+  /** 按 id 纯读记忆内容（无副作用）；无则 undefined。 */
+  getMemoryContent(id: string): string | undefined;
+}
+
+/** never_discuss 输出自检（红线 4）——主动文案发出前必须过；复用 OfflineConversationResponder。 */
+export interface ProactiveBoundaryChecker {
+  violates(text: string): boolean;
+}
 
 export interface ProactiveEngineDeps {
   readonly bus: EventBus;
@@ -38,6 +54,10 @@ export interface ProactiveEngineDeps {
   /** 本引擎所属租户——信号 tenantId 必须与之一致才处理（红线 7）。 */
   readonly tenantId: string;
   readonly config?: ProactiveGateConfig;
+  /** P4 个性化：只读人格状态。缺省 → 不个性化，用基线模板（向后兼容 P3）。 */
+  readonly context?: PersonaContextReader;
+  /** P4 输出自检：never_discuss（红线 4）。缺省 → 不自检（仅基线模板时安全）。 */
+  readonly boundaryChecker?: ProactiveBoundaryChecker;
 }
 
 /** 各信号类型如何从载荷里取**确定性信号身份**（sourceId，幂等键组成；ADR-0054 红线 8）。
@@ -129,18 +149,47 @@ export class ProactiveEngine {
       });
       if (!decision.emit) return;
 
-      const nudge = composeNudge(signalType);
+      /* P4 个性化：据叙事/触发记忆生成 opener。**红线 4 不变量**：个性化文本引用记忆/叙事，
+       * 必须过 never_discuss 自检——故**仅当配了 boundaryChecker 才个性化**（无自检能力 → 不个性化，
+       * 退基线模板）。不能让「主动」成为绕过边界的口子，即使生产已接 checker，API 层也不留绕过路径。 */
+      const ctx = this.deps.boundaryChecker ? this.buildContext(signalType, payload) : undefined;
+      const personalized = composeNudge(signalType, ctx);
+      /* 个性化文案命中 never_discuss → 回退基线模板（基线模板已审，安全）。 */
+      const safe = this.deps.boundaryChecker?.violates(personalized.body)
+        ? composeNudge(signalType) /* 无 ctx → 基线 */
+        : personalized;
+
       this.deps.store.enqueue({
         personaId: PERSONA_ID,
         signalType,
         sourceId,
         signalVersion: 0,
-        body: nudge.body,
-        kind: nudge.kind,
+        body: safe.body,
+        kind: safe.kind,
       });
     } catch (err) {
       /* 失败隔离：记录但绝不外抛（红线 5/10）。 */
       this.deps.logger.error(LAYER, `主动性评估失败（已隔离，不影响主流程）: ${signalType}`, err as Error);
+    }
+  }
+
+  /** 据信号类型从只读人格状态取个性化片段（P4）；无 reader → undefined（回退基线模板）。 */
+  private buildContext(signalType: ProactiveSignalType, payload: Record<string, unknown>): PersonalizationContext | undefined {
+    const reader = this.deps.context;
+    if (!reader) return undefined;
+    switch (signalType) {
+      case 'core:memory-consolidated': {
+        const r = payload.result as { consolidatedId?: unknown } | undefined;
+        const snippet = typeof r?.consolidatedId === 'string' ? reader.getMemoryContent(r.consolidatedId) : undefined;
+        return { snippet };
+      }
+      case 'core:narrative-changed':
+        return { snippet: typeof payload.narrative === 'string' ? payload.narrative : undefined };
+      case 'system:evolution-completed':
+        /* 演化后用当前叙事作自我描述片段。 */
+        return { snippet: reader.getNarrative() };
+      default:
+        return undefined;
     }
   }
 }

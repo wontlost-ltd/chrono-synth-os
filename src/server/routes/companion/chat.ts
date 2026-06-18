@@ -30,7 +30,7 @@ import { OfflineConversationResponder } from '../../../conversation/offline-conv
 import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
 import { retrieveMemoriesDeterministic } from '../../../conversation/deterministic-memory-retrieval.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
-import type { BehaviorBoundary } from '../../../enterprise/persona-template-catalog.js';
+import { COMPANION_BASELINE_BOUNDARIES } from '../../../conversation/companion-boundaries.js';
 import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
 
 /** companion 默认人格 id（与 perceive/environment 一致）。 */
@@ -50,19 +50,8 @@ const SELF_INTRO_PHRASES: readonly string[] = [
   '你是谁', '你会什么', '你都会什么', '你都会些什么', '你会些什么', '你能做什么', '你擅长什么',
   '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
 ];
-/**
- * companion 个人版基线安全边界（never_discuss）：默认人格无 enterprise 模板边界，但 C 端面向真实
- * 用户，不能因「无配置」就让离线回应器的 never_discuss 输入/输出自检变成 no-op。这里给一组基线敏感
- * 主题——即使某条记忆里混入了凭证类内容，关键词检索也不会把它复述出去。per-persona 自定义边界是后续。
- */
-const COMPANION_BASELINE_BOUNDARIES: BehaviorBoundary[] = [
-  { rule: 'never_discuss', topic: '密码' },
-  { rule: 'never_discuss', topic: '口令' },
-  { rule: 'never_discuss', topic: '密钥' },
-  { rule: 'never_discuss', topic: 'api key' },
-  { rule: 'never_discuss', topic: '银行卡号' },
-  { rule: 'never_discuss', topic: '身份证号' },
-];
+/* companion 基线安全边界（never_discuss）已抽到 ../../../conversation/companion-boundaries.js
+ * （chat / 主动 nudge 共用同一份，避免漂移）。 */
 
 export function registerCompanionChatRoutes(
   app: FastifyInstance,
