@@ -37,6 +37,8 @@ export const MAX_HOPS = 1;
  * 生产用 tenantOS.core.memories.getEdgesFor；基准/测试可注入内存实现。
  */
 export type EdgeLookup = (id: MemoryId) => MemoryEdge[];
+/** 取记忆用于匹配/呈现的文本（多语：目标语言变体优先，无则原 content）。缺省 = node.content。 */
+export type ContentFor = (node: MemoryNode) => string;
 
 /**
  * 检索可调参数（默认取上面常量）。② 多跳/边权重调参时通过此入参覆盖，不改内核签名——
@@ -76,16 +78,22 @@ export function retrieveMemoriesDeterministic(
   memories: ReadonlyMap<MemoryId, MemoryNode>,
   edgesFor: EdgeLookup,
   params: RetrievalParams = DEFAULT_RETRIEVAL_PARAMS,
+  contentFor?: ContentFor,
 ): RelevantKnowledge[] {
   const tokens = tokenize(message);
   if (tokens.length === 0) return [];
 
+  /* 取记忆用于**匹配**的文本（多语：目标语言变体优先，无则原 content）；呈现也用同一文本。
+   * 这让英文 query 能命中已翻译成英文的中文记忆，并以英文变体呈现（变体由成长期老师预翻，运行时零-LLM）。 */
+  const textOf = (node: MemoryNode): string => contentFor?.(node) ?? node.content;
+
   /* 直接命中：关键词分 + 连续短语加分（消歧）。relevance 饱和归一化 score/(score+4)。 */
   const direct: RelevantKnowledge[] = [];
   for (const node of memories.values()) {
-    const score = scoreTextByKeyword(node.content, tokens) + scorePhraseBonus(node.content, message);
+    const text = textOf(node);
+    const score = scoreTextByKeyword(text, tokens) + scorePhraseBonus(text, message);
     if (score < params.minScore) continue;
-    direct.push({ id: node.id, title: '', content: node.content, relevance: score / (score + 4) });
+    direct.push({ id: node.id, title: '', content: text, relevance: score / (score + 4) });
   }
   direct.sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
 
@@ -93,7 +101,7 @@ export function retrieveMemoriesDeterministic(
    * 记忆。每跳 relevance = 上一跳 relevance × 边强度 × neighborDecay（复合衰减）。同邻居经任意路径到达取
    * **全局最高分**（不论路径长短——强 2 跳可胜过弱 1 跳，Codex 复审采纳）。maxHops=1 即原单跳行为。
    * 纯确定性图遍历——边由蒸馏期老师产，运行期不调任何模型。 */
-  const neighborBest = expandGraph(direct, memories, edgesFor, params);
+  const neighborBest = expandGraph(direct, memories, edgesFor, params, textOf);
 
   /* 合并：直接命中（按 relevance）在前，图遍历邻居（按 relevance，id 稳定 tie-break）在后，截断 top-K。 */
   const neighbors = [...neighborBest.values()].sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
@@ -120,6 +128,7 @@ function expandGraph(
   memories: ReadonlyMap<MemoryId, MemoryNode>,
   edgesFor: EdgeLookup,
   params: RetrievalParams,
+  textOf: (node: MemoryNode) => string,
 ): Map<MemoryId, RelevantKnowledge> {
   const neighborBest = new Map<MemoryId, RelevantKnowledge>();
   /* 直接命中集：它们的 relevance 是关键词命中的强信号，永不被图遍历邻居分覆盖（下界 + 防回头）。 */
@@ -148,7 +157,7 @@ function expandGraph(
         /* 松弛：仅当严格优于已知最优才更新（全局 max，与处理顺序无关）。 */
         const existing = neighborBest.get(neighborId);
         if (!existing || relevance > existing.relevance) {
-          const entry: RelevantKnowledge = { id: neighborId, title: '', content: node.content, relevance };
+          const entry: RelevantKnowledge = { id: neighborId, title: '', content: textOf(node), relevance };
           neighborBest.set(neighborId, entry);
           improved.set(neighborId, entry); /* 被改善 → 下一波从它继续松弛（可能发现更强深路径） */
         }

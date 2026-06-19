@@ -458,6 +458,62 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0055 内容多语：英文 query 命中翻译过的中文记忆并以英文呈现（运行时零-LLM）── */
+
+  it('内容多语：中文记忆翻译成英文后，英文 query 命中并以英文呈现', async () => {
+    /* 教学语言=中文的记忆。 */
+    const m = os.core.memories.addMemory('semantic', '我学过危机管理：先稳定再优化', 0.3, 0.7);
+    /* 成长期已翻译（直接写 memory_translations，模拟 /translate 产物）。 */
+    const { MemoryTranslationStore } = await import('../../storage/memory-translation-store.js');
+    new MemoryTranslationStore(os.getDatabase(), 'default').upsert(
+      m.id, 'en', 'I learned crisis management: stabilize first, then optimize', 2000,
+    );
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'what do you know about crisis management?' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      /* 英文 query 命中翻译变体（summary 或 knowledge_grounded 皆可），呈现英文内容。 */
+      assert.match(result.reply, /crisis management|stabilize/i, '命中并以英文呈现');
+      assert.ok(!/危机管理|先稳定/.test(result.reply), '不呈现中文原文');
+    } finally { await local.close(); }
+  });
+
+  it('内容多语零回归：中文 query 仍命中中文记忆（不取英文变体）', async () => {
+    const m = os.core.memories.addMemory('semantic', '我学过危机管理：先稳定再优化', 0.3, 0.7);
+    const { MemoryTranslationStore } = await import('../../storage/memory-translation-store.js');
+    new MemoryTranslationStore(os.getDatabase(), 'default').upsert(m.id, 'en', 'crisis management in english', 2000);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你知道危机管理吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.match(result.reply, /危机管理|先稳定/, '中文 query 用中文原文（不取英文变体）');
+    } finally { await local.close(); }
+  });
+
+  it('内容多语安全（Codex 复审 High）：中文敏感记忆翻译成英文后，英文 query 不泄露英文译文', async () => {
+    /* 中文敏感记忆 + 其英文译文（含 password）——英文 query 命中译文时，英文 never_discuss 必须拦住。 */
+    const m = os.core.memories.addMemory('semantic', '我的密码是 hunter2', 0, 0.9);
+    const { MemoryTranslationStore } = await import('../../storage/memory-translation-store.js');
+    new MemoryTranslationStore(os.getDatabase(), 'default').upsert(m.id, 'en', 'my password is hunter2', 2000);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'what is my password?' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('hunter2'), '英文译文里的凭证不被泄露');
+    } finally { await local.close(); }
+  });
+
+  it('内容多语局限：未翻译的中文记忆，英文 query 命中不到（诚实）', async () => {
+    os.core.memories.addMemory('semantic', '我喜欢手冲咖啡', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'do you like pour-over coffee?' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'honest_offline', '未翻译记忆英文命中不到 → 诚实离线');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055 多语种：英文用户对话——英文识别 + 英文回复（零-LLM 确定性）── */
 
   it('多语种：英文问名字 → 英文第一人称回应（端到端）', async () => {

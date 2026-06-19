@@ -365,4 +365,43 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
     assert.equal(res.statusCode, 403, `expected 403, got ${res.statusCode}: ${res.body}`);
   });
+
+  /* ── ADR-0055 内容多语 /translate 端点 ── */
+
+  it('POST /companion/me/translate 非法 language → 400', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-translate-badlang@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/translate', headers, payload: { language: 'klingon' } });
+    assert.equal(res.statusCode, 400, res.body);
+  });
+
+  it('POST /companion/me/translate 无记忆 → up_to_date（不调 LLM、不扣配额）', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-translate-empty@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/translate', headers, payload: { language: 'en' } });
+    assert.equal(res.statusCode, 200, res.body);
+    const data = JSON.parse(res.body).data as { translated: number; reason?: string };
+    assert.equal(data.translated, 0);
+    assert.equal(data.reason, 'up_to_date', '无记忆应短路 up_to_date');
+  });
+
+  it('POST /companion/me/translate 配额用尽 → 429', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-translate-quota@test.com');
+    const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
+    /* 写一条记忆（越过 up_to_date 短路）。 */
+    await app.inject({ method: 'POST', url: '/api/v1/memories', headers, payload: { kind: 'semantic', content: '我学过授权', valence: 0.2, salience: 0.7 } });
+    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'translation', 0, 60_000);
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/translate', headers, payload: { language: 'en' } });
+    assert.equal(res.statusCode, 429, `配额用尽应 429，实得 ${res.statusCode}: ${res.body}`);
+  });
+
+  it('plan 门控：enterprise 账号访问 /companion/me/translate → 403', async () => {
+    const auth = await registerAndGetAuth(app, 'companion-translate-ent@test.com');
+    const entToken = (app as unknown as {
+      jwt: { sign: (payload: Record<string, unknown>) => string };
+    }).jwt.sign({ sub: auth.userId, tenantId: auth.tenantId, role: 'member', planId: 'enterprise' });
+    const headers = { authorization: `Bearer ${entToken}`, 'x-tenant-id': auth.tenantId };
+    const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/translate', headers, payload: { language: 'en' } });
+    assert.equal(res.statusCode, 403, `expected 403, got ${res.statusCode}: ${res.body}`);
+  });
 });

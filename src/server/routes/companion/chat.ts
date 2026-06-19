@@ -34,6 +34,8 @@ import {
 import { OfflineConversationResponder } from '../../../conversation/offline-conversation-responder.js';
 import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
 import { retrieveMemoriesDeterministic } from '../../../conversation/deterministic-memory-retrieval.js';
+import type { ContentFor } from '../../../conversation/deterministic-memory-retrieval.js';
+import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
 import { COMPANION_BASELINE_BOUNDARIES } from '../../../conversation/companion-boundaries.js';
 import { buildRecentGrowthPhrase } from './recent-growth.js';
@@ -111,11 +113,13 @@ export function registerCompanionChatRoutes(
    * 不再各测一份替身）。零 LLM、零 embedding——语义在蒸馏期沉淀为边，运行期纯图遍历，
    * 保住「相同输入→相同输出」+ 离线可用。
    */
-  function retrieveRelevantMemories(tenantOS: ChronoSynthOS, message: string): RelevantKnowledge[] {
+  function retrieveRelevantMemories(tenantOS: ChronoSynthOS, message: string, contentFor?: ContentFor): RelevantKnowledge[] {
     return retrieveMemoriesDeterministic(
       message,
       tenantOS.core.memories.getAllMemories(),
       (id) => tenantOS.core.memories.getEdgesFor(id),
+      undefined,
+      contentFor,
     );
   }
 
@@ -247,8 +251,17 @@ export function registerCompanionChatRoutes(
       } satisfies CompanionChatResultV1) };
     }
 
+    /* ADR-0055 内容多语：非默认语言（zh-CN）时，加载本租户该语言的记忆翻译变体，
+     * 让检索匹配变体（英文 query 命中已翻译的中文记忆）并以变体呈现。zh-CN 不取变体 = 零回归。
+     * 变体由成长期 /translate 预翻，运行时只读（零-LLM）。 */
+    let contentFor: ContentFor | undefined;
+    if (locale !== 'zh-CN') {
+      const variants = new MemoryTranslationStore(sharedDb, request.tenantId).listByLanguage(locale);
+      if (variants.size > 0) contentFor = (node) => variants.get(node.id) ?? node.content;
+    }
+
     const narrative = tenantOS.core.narrative.get();
-    const relevantKnowledge = retrieveRelevantMemories(tenantOS, body.message);
+    const relevantKnowledge = retrieveRelevantMemories(tenantOS, body.message, contentFor);
 
     /* 确定性离线回应（零 LLM）。喂基线安全边界——never_discuss 输入/输出自检对凭证类敏感主题真生效
      * （不因 companion 默认人格无 enterprise 配置就让安全自检 no-op）。 */
@@ -292,6 +305,7 @@ export function registerCompanionChatRoutes(
           edgesFor: (id) => tenantOS.core.memories.getEdgesFor(id),
           topic: summaryIntent.topic,
           locale,
+          contentFor,
         });
         if (summary && !responder.violatesNeverDiscuss(summary, COMPANION_BASELINE_BOUNDARIES)) {
           payload = {

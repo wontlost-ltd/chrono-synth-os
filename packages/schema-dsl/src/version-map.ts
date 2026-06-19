@@ -103,4 +103,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v091_proactive_messages', aliases: { postgres: 'v093', 'sqlite-sql': 'v091' }, classification: 'schema-simple', notes: 'ADR-0054 Phase 2: proactive outbound message queue (self-initiated nudges)' },
   { canonical: 'v092_notification_preferences', aliases: { postgres: 'v094', 'sqlite-sql': 'v092' }, classification: 'schema-simple', notes: 'ADR-0054 red-line 9: per-user notification preferences (push opt-in + quiet hours)' },
   { canonical: 'v093_companion_identity', aliases: { postgres: 'v095', 'sqlite-sql': 'v093' }, classification: 'schema-simple', notes: 'ADR-0055 self-awareness: per-persona first-person identity (name)' },
+  { canonical: 'v094_memory_translations', aliases: { postgres: 'v096', 'sqlite-sql': 'v094' }, classification: 'schema-simple', notes: 'ADR-0055 content multilingual: per-language memory content variants' },
 ];
