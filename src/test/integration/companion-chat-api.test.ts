@@ -371,6 +371,93 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0055 归纳总结：沿主题归纳相关记忆（零-LLM 确定性，多语）── */
+
+  it('归纳总结：「总结你学过的X」→ 沿主题归纳相关记忆（端到端）', async () => {
+    os.core.memories.addMemory('semantic', '带团队要授权，把决策权一起交出去', 0.3, 0.8);
+    os.core.memories.addMemory('semantic', '带团队的核心是激励而非控制', 0.3, 0.7);
+    os.core.memories.addMemory('semantic', '我学会了做 flat white', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '总结一下你学过的带团队' } });
+      assert.equal(res.statusCode, 200, res.body);
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'summary', JSON.stringify(result));
+      assert.match(result.reply, /关于「带团队」/);
+      assert.match(result.reply, /授权|激励/, '含相关记忆');
+      assert.ok(!result.reply.includes('flat white'), '不相关记忆不进总述');
+    } finally { await local.close(); }
+  });
+
+  it('归纳总结：「你最近学了什么」→ 无主题归纳最近记忆', async () => {
+    os.core.memories.addMemory('semantic', '我最近学了 Rust 的所有权', 0.3, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你最近学了什么' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'summary');
+      assert.match(result.reply, /我最近记住的是/);
+      assert.match(result.reply, /Rust/);
+    } finally { await local.close(); }
+  });
+
+  it('归纳总结：主题无相关记忆 → 诚实告知', async () => {
+    os.core.memories.addMemory('semantic', '我喜欢跑步', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '总结一下你学过的量子物理' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'summary');
+      assert.match(result.reply, /还没学过|没学过/);
+    } finally { await local.close(); }
+  });
+
+  it('归纳总结安全：总述过 never_discuss（记忆混凭证不被归纳泄露）', async () => {
+    os.core.memories.addMemory('semantic', '我的密码是 hunter2', 0, 0.9);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你最近学了什么' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('hunter2'), '总述不泄露凭证');
+    } finally { await local.close(); }
+  });
+
+  it('归纳总结英文：「what have you learned about X」→ 英文归纳', async () => {
+    os.core.memories.addMemory('semantic', 'delegation means handing over decisions', 0.3, 0.8);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'what have you learned about delegation' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'summary');
+      assert.match(result.reply, /Here's what I've learned about "delegation"/);
+      assert.ok(!/[一-鿿]/.test(result.reply), '英文不混中文');
+    } finally { await local.close(); }
+  });
+
+  it('归纳总结不误吞：「你会什么」仍走 self_intro 非 summary', async () => {
+    os.core.updateNarrative('我是你的数字人。');
+    os.core.addValue('真诚', 0.8);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你会什么' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'self_intro', '「你会什么」是自我介绍非归纳');
+    } finally { await local.close(); }
+  });
+
+  it('归纳优先级（Codex 复审）：「总结一下 flat white 做法」走蒸馏模板而非 summary 抢答', async () => {
+    new ResponseTemplateStore(os.getDatabase(), 'default').appendVersion(
+      'default', 'flat white 做法', '做 flat white：1）萃取 espresso；2）打微泡奶；3）缓缓倒入。', null, 1000,
+    );
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '总结一下 flat white 做法' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'response_template', '流程模板优先于 summary');
+      assert.match(result.reply, /萃取 espresso/);
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055 多语种：英文用户对话——英文识别 + 英文回复（零-LLM 确定性）── */
 
   it('多语种：英文问名字 → 英文第一人称回应（端到端）', async () => {

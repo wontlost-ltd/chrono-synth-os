@@ -53,9 +53,21 @@ export interface CompanionLocaleResources {
     readonly selfIntroMemories: string;
     /** self_intro：结尾声明。 */
     readonly selfIntroFooter: string;
+    /** summary：有主题的归纳引导（{topic}）。 */
+    readonly summaryLeadIn: (topic: string) => string;
+    /** summary：无主题（最近学了什么）的引导。 */
+    readonly summaryRecentLeadIn: string;
+    /** summary：结尾（{count}=相关记忆条数）。 */
+    readonly summaryFooter: (count: number) => string;
+    /** summary：该主题无相关记忆（{topic}）。 */
+    readonly summaryEmpty: (topic: string) => string;
+    /** summary：完全没有记忆可总结。 */
+    readonly summaryNothing: string;
   };
   /** 自我介绍元意图短语（「介绍你自己」类，子串匹配，已小写）。 */
   readonly selfIntroPhrases: readonly string[];
+  /** 归纳总结意图模式：捕获组 1 = 主题（可选，无捕获/空 = 最近学了什么）。 */
+  readonly summaryPatterns: readonly RegExp[];
 }
 
 /* ── 中文（zh-CN）：抽取既有行为，逐字对齐原硬编码字符串，确保零回归 ─────────────── */
@@ -110,11 +122,27 @@ const zhCN: CompanionLocaleResources = {
     selfIntroValues: (values) => `我最看重的是${values}。`,
     selfIntroMemories: '我印象比较深的是：',
     selfIntroFooter: '（这些都来自我学过、记住的，离线也能告诉你。）',
+    summaryLeadIn: (topic) => `关于「${topic}」，我学过这些：`,
+    summaryRecentLeadIn: '我最近记住的是：',
+    summaryFooter: (count) => `（以上归纳自我相关的 ${count} 条记忆，确定性整理、离线可复现。）`,
+    summaryEmpty: (topic) => `关于「${topic}」我还没学过什么，你可以教教我。`,
+    summaryNothing: '我现在还没有可总结的记忆呢，多教我一些吧。',
   },
   selfIntroPhrases: [
     '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
     '你是谁', '你会什么', '你都会什么', '你都会些什么', '你会些什么', '你能做什么', '你擅长什么',
     '讲讲你自己', '说说你自己', '聊聊你自己', '你是什么样',
+  ],
+  /* 归纳总结**人格自己学过的东西**（必须含「你+学/知/记/了解」语义，区别于「总结这份文档」等
+   * 总结外部对象的请求——后者不该当人格记忆归纳，应走普通问答/模板）。 */
+  summaryPatterns: [
+    // 无主题（先于有主题，更具体）：你最近学了什么 / 总结一下你学到的东西 / 你都学了些什么
+    /你最近(?:学|记)了(?:些)?什么/,
+    /(?:总结|归纳|概括)(?:一下)?你(?:学到|学过|记住)的(?:东西|内容|知识)?$/,
+    /你都?学了些?什么/,
+    // 有主题：必须有「你+学/知/记/了解」框架，主题在其后
+    /(?:总结|归纳|概括|梳理)(?:一下|下)?你(?:学过|知道|记得|了解)的?\s*(?:关于)?\s*([^\s，。,.!！?？、的吗呢]{1,20})/,
+    /你(?:学过|知道|记得|了解)的?\s*(?:关于)?\s*([^\s，。,.!！?？、的吗呢]{1,20})(?:都?有些?什么|方面)/,
   ],
 };
 
@@ -191,11 +219,27 @@ const en: CompanionLocaleResources = {
     selfIntroValues: (values) => `What I care about most is ${values}.`,
     selfIntroMemories: 'Some things that stand out to me:',
     selfIntroFooter: "(This all comes from what I've learned and remembered — I can tell you even offline.)",
+    summaryLeadIn: (topic) => `Here's what I've learned about "${topic}":`,
+    summaryRecentLeadIn: "Here's what I've picked up recently:",
+    summaryFooter: (count) => `(Summarized from ${count} of my related memories — deterministic, reproducible offline.)`,
+    summaryEmpty: (topic) => `I haven't learned anything about "${topic}" yet — you could teach me.`,
+    summaryNothing: "I don't have any memories to summarize yet. Teach me some more!",
   },
   selfIntroPhrases: [
     'introduce yourself', 'tell me about yourself', 'about yourself', 'who are you',
     'what can you do', 'what do you do', 'what are you good at', 'what are you capable of',
     'tell me about you', 'describe yourself',
+  ],
+  /* 归纳总结**人格自己学过的东西**：必须含 you've learned / you know 框架，区别于
+   * 「summarize this document」等总结外部对象（后者不该当人格记忆归纳）。 */
+  summaryPatterns: [
+    // no topic (先于有主题，更具体): what have you learned (recently) / summarize what you've learned
+    /what\s+have\s+you\s+learned(?:\s+(?:so far|recently|lately))?\s*\??$/i,
+    /(?:summari[sz]e|sum up)\s+what\s+you(?:'ve| have)?\s+learned\s*\??$/i,
+    // with topic: 必须 you've learned/you know about X（不接受裸 summarize X）
+    /what\s+(?:have|did)\s+you\s+learn(?:ed)?\s+about\s+([a-z0-9][a-z0-9 '\-]{0,30})/i,
+    /what\s+do\s+you\s+know\s+about\s+([a-z0-9][a-z0-9 '\-]{0,30})/i,
+    /(?:summari[sz]e|sum up)\s+(?:what\s+you\s+(?:know|learned|remember)\s+about|your\s+knowledge\s+of)\s+([a-z0-9][a-z0-9 '\-]{0,30})/i,
   ],
 };
 

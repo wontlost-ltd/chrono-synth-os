@@ -47,6 +47,7 @@ import { detectIdentityIntent } from '../../../conversation/identity-intent.js';
 import { CompanionIdentityStore } from '../../../storage/companion-identity-store.js';
 import { detectLanguage } from '../../../conversation/language-detect.js';
 import { companionLocale } from '../../../conversation/companion-locale.js';
+import { detectSummaryIntent, buildSummary } from '../../../conversation/summary-builder.js';
 import type { SupportedLocale } from '../../../i18n/locale-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 
@@ -274,12 +275,30 @@ export function registerCompanionChatRoutes(
      * **本轮**的 self_intro/检索（曾出现：沉淀的记忆让空人格 self_intro 误判为非空）。 */
     let payload: CompanionChatResultV1 | undefined;
     if (offline.kind !== 'boundary_block') {
+      /* response_template 最优先（蒸馏好的高质流程模板，如「flat white 做法」步骤）——避免「总结一下
+       * flat white 做法」被 summary 抢答成零散记忆（Codex 复审）。 */
       const template = matchResponseTemplate(request.tenantId, body.message);
+      const summaryIntent = template ? { matched: false } : detectSummaryIntent(body.message, locale);
       if (template && !responder.violatesNeverDiscuss(template, COMPANION_BASELINE_BOUNDARIES)) {
         payload = {
           schemaVersion: 'companion-chat-result.v1',
           reply: template, kind: 'response_template', confidence: 0.8, groundedMemoryCount: 0,
         };
+      } else if (summaryIntent.matched) {
+        /* ADR-0055 归纳总结意图（「总结你学过的X / 你最近学了什么」）：确定性沿主题归纳相关记忆。
+         * 在模板之后、自我介绍之前。总述过 never_discuss 输出自检（防泄露敏感记忆）。 */
+        const summary = buildSummary({
+          memories: tenantOS.core.memories.getAllMemories(),
+          edgesFor: (id) => tenantOS.core.memories.getEdgesFor(id),
+          topic: summaryIntent.topic,
+          locale,
+        });
+        if (summary && !responder.violatesNeverDiscuss(summary, COMPANION_BASELINE_BOUNDARIES)) {
+          payload = {
+            schemaVersion: 'companion-chat-result.v1',
+            reply: summary, kind: 'summary', confidence: 0.6, groundedMemoryCount: 0,
+          };
+        }
       } else if (detectSelfIntroIntent(body.message, locale)) {
         /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
          * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
@@ -308,8 +327,11 @@ export function registerCompanionChatRoutes(
      * 让数字人「记得跟你聊过」。零-LLM（沉淀=确定性 append 非语义理解；语义内化仍走 reflect）。
      * **置于末尾**：沉淀写入绝不影响本轮回应（检索/self_intro 已在前面跑完）。安全门：
      *   ① 开关关 → 不沉淀；② 输入命中 never_discuss（boundary_block）→ 不沉淀（不持久化敏感内容）；
-     *   ③ 不够格（空/过短/纯寒暄/纯疑问）→ 不沉淀；④ 沉淀正文再过 never_discuss 输出自检 → 命中不写。 */
-    if (conversationMemoryEnabled && offline.kind !== 'boundary_block') {
+     *   ③ 不够格（空/过短/纯寒暄/纯疑问）→ 不沉淀；④ 沉淀正文再过 never_discuss 输出自检 → 命中不写；
+     *   ⑤ 元意图请求（summary/self_intro/self_identity/response_template）是查询/指令非用户陈述 → 不沉淀。 */
+    const isMetaIntent = payload.kind === 'summary' || payload.kind === 'self_intro'
+      || payload.kind === 'self_identity' || payload.kind === 'response_template';
+    if (conversationMemoryEnabled && offline.kind !== 'boundary_block' && !isMetaIntent) {
       const decision = decideConversationCapture(body.message, locale);
       if (decision.capture && !responder.violatesNeverDiscuss(decision.content, COMPANION_BASELINE_BOUNDARIES)) {
         /* 去重：已存在完全相同正文的记忆则不重复写——防「反复说同一句」无限追加噪声（Codex 复审）。 */

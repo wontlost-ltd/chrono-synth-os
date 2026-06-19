@@ -19,6 +19,7 @@ function metaForKind(kind: string, groundedCount: number): string {
   switch (kind) {
     case 'self_identity': return '这是我自己';
     case 'self_intro': return '我介绍我自己';
+    case 'summary': return '我归纳的';
     case 'response_template': return '我学过的';
     case 'knowledge_grounded': return '据我记得的';
     case 'boundary_block':
