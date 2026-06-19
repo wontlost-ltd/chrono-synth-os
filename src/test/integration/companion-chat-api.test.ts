@@ -504,6 +504,34 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  it('内容多语：英文 self_intro 呈现翻译变体（非中文原文）', async () => {
+    os.core.updateNarrative('I help people stay focused.');
+    const m = os.core.memories.addMemory('semantic', '我学会了用 Rust 写并发代码', 0.4, 0.95);
+    const { MemoryTranslationStore } = await import('../../storage/memory-translation-store.js');
+    new MemoryTranslationStore(os.getDatabase(), 'default').upsert(m.id, 'en', 'I learned to write concurrent code in Rust', 2000);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'introduce yourself' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'self_intro');
+      assert.match(result.reply, /concurrent code in Rust/, 'self_intro 含英文记忆变体');
+      assert.ok(!result.reply.includes('并发代码'), 'self_intro 不含中文记忆原文');
+    } finally { await local.close(); }
+  });
+
+  it('内容多语安全：英文 self_intro 也过输出自检（敏感英文译文不泄露）', async () => {
+    os.core.updateNarrative('I am your companion.');
+    const m = os.core.memories.addMemory('semantic', '我的密码是 hunter2', 0, 0.99);
+    const { MemoryTranslationStore } = await import('../../storage/memory-translation-store.js');
+    new MemoryTranslationStore(os.getDatabase(), 'default').upsert(m.id, 'en', 'my password is hunter2', 2000);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'introduce yourself' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('hunter2'), 'self_intro 综述含敏感英文译文 → 输出自检拦下，不泄露');
+    } finally { await local.close(); }
+  });
+
   it('内容多语局限：未翻译的中文记忆，英文 query 命中不到（诚实）', async () => {
     os.core.memories.addMemory('semantic', '我喜欢手冲咖啡', 0.3, 0.6);
     const local = await localChatApp(os);
