@@ -15,7 +15,7 @@ import type { MemoryId, MemoryNode } from '@chrono/kernel';
 import type { SupportedLocale } from '../i18n/locale-resolver.js';
 import { companionLocale } from './companion-locale.js';
 import { retrieveMemoriesDeterministic } from './deterministic-memory-retrieval.js';
-import type { EdgeLookup } from './deterministic-memory-retrieval.js';
+import type { EdgeLookup, ContentFor } from './deterministic-memory-retrieval.js';
 
 /** 总述取多少条记忆（与 self_intro 量级一致，避免过长）。 */
 const SUMMARY_MEMORY_LIMIT = 6;
@@ -51,15 +51,18 @@ export function buildSummary(args: {
   edgesFor: EdgeLookup;
   topic: string | undefined;
   locale: SupportedLocale;
+  /** 多语：取记忆呈现文本（目标语言变体优先）。缺省 = node.content（原语言）。 */
+  contentFor?: ContentFor;
 }): string | undefined {
   const t = companionLocale(args.locale).reply;
+  const textOf = (m: MemoryNode): string => args.contentFor?.(m) ?? m.content;
   const all = [...args.memories.values()];
   if (all.length === 0) return t.summaryNothing;
 
   let selected: MemoryNode[];
   if (args.topic) {
-    /* 有主题：沿关键词 + 图扩展检索相关记忆。 */
-    const hits = retrieveMemoriesDeterministic(args.topic, args.memories, args.edgesFor);
+    /* 有主题：沿关键词 + 图扩展检索相关记忆（多语变体参与匹配）。 */
+    const hits = retrieveMemoriesDeterministic(args.topic, args.memories, args.edgesFor, undefined, args.contentFor);
     const byId = new Map(all.map((m) => [m.id, m]));
     selected = hits.map((h) => byId.get(h.id)).filter((m): m is MemoryNode => m !== undefined);
     if (selected.length === 0) return t.summaryEmpty(args.topic);
@@ -72,7 +75,7 @@ export function buildSummary(args: {
   const seen = new Set<string>();
   const lines: string[] = [];
   for (const m of selected) {
-    const content = m.content.trim();
+    const content = textOf(m).trim();
     if (content.length === 0 || seen.has(content)) continue;
     seen.add(content);
     lines.push(`· ${content.slice(0, SUMMARY_SNIPPET_CAP)}`);

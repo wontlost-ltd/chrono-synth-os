@@ -82,6 +82,7 @@ export { v090_persona_governance_policy } from './v090.js';
 export { v091_proactive_messages } from './v091.js';
 export { v092_notification_preferences } from './v092.js';
 export { v093_companion_identity } from './v093.js';
+export { v094_memory_translations } from './v094.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -168,6 +169,7 @@ import { v090_persona_governance_policy } from './v090.js';
 import { v091_proactive_messages } from './v091.js';
 import { v092_notification_preferences } from './v092.js';
 import { v093_companion_identity } from './v093.js';
+import { v094_memory_translations } from './v094.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -254,4 +256,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v091_proactive_messages,
   v092_notification_preferences,
   v093_companion_identity,
+  v094_memory_translations,
 ];

@@ -16,7 +16,7 @@ import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js
 import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
-import { AuthorizationError, NotFoundError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
+import { AuthorizationError, NotFoundError, QuotaExceededError, ValidationError, ErrorCode } from '../../../errors/index.js';
 import { QuotaManager } from '../../../multi-tenant/quota-manager.js';
 import {
   PersonaDriftAnalyzer,
@@ -42,6 +42,9 @@ import { ModelRouter } from '../../../intelligence/model-router.js';
 import { LlmReflectionDistiller, type ReflectMemory, type ReflectValue } from '../../../intelligence/llm-reflection-distiller.js';
 import { resolveTenantLlmConfig } from '../../../storage/tenant-llm-settings-store.js';
 import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
+import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
+import { LlmTranslationService, TRANSLATION_BATCH_SIZE, MAX_TRANSLATE_PER_CALL, type TranslatableMemory } from '../../../intelligence/llm-translation-service.js';
+import { isSupportedLocale, type SupportedLocale } from '../../../i18n/locale-resolver.js';
 import type { LLMProviderName } from '@chrono/kernel';
 
 /** companion 单 persona core-self 的 personaId（与 chat.ts 一致）。 */
@@ -347,5 +350,71 @@ export function registerCompanionRoutes(
     const compiled = result.results.filter((r) => r.status === 'compiled').length;
     const pending = result.results.filter((r) => r.status === 'pending').length;
     return { data: { candidatesIngested: result.candidatesIngested, compiled, pending } };
+  });
+
+  /* POST /api/v1/companion/me/translate —「内容多语」：成长期 LLM 老师把记忆内容翻译成目标语言，
+   * 存 memory_translations。ADR-0055 内容多语成长档——运行时 chat 只读取已存变体（零-LLM）。
+   * 增量：只翻译尚无该语言变体的记忆（幂等、省 token）。 */
+  app.post('/api/v1/companion/me/translate', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const tenantOS = getOS(request);
+
+    /* 目标语言：body.language，必须是受支持 locale。 */
+    const rawLang = (request.body as { language?: unknown } | undefined)?.language;
+    if (typeof rawLang !== 'string' || !isSupportedLocale(rawLang)) {
+      throw new ValidationError('language 必须是受支持的语言（en / zh-CN）');
+    }
+    const targetLanguage: SupportedLocale = rawLang;
+
+    const translationStore = new MemoryTranslationStore(db, request.tenantId);
+    const already = translationStore.translatedIds(targetLanguage);
+    /* 只翻译尚无该语言变体的记忆（增量）。稳定排序（createdAt+id）让多次调用顺序确定、可续翻。 */
+    const allPending: TranslatableMemory[] = [...tenantOS.core.memories.getAllMemories().values()]
+      .filter((m) => !already.has(m.id) && m.content.trim().length > 0)
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+      .map((m): TranslatableMemory => ({ id: m.id, content: m.content }));
+    if (allPending.length === 0) {
+      return { data: { translated: 0, remaining: 0, hasMore: false, reason: 'up_to_date' } };
+    }
+    /* **有界同步**（Codex 复审 High）：单次最多翻译 MAX_TRANSLATE_PER_CALL 条，避免长任务超时
+     * （HTTP 报失败但库已部分写）。增量幂等（translatedIds 跳过已翻），客户端据 hasMore 多次调用续翻。 */
+    const pending = allPending.slice(0, MAX_TRANSLATE_PER_CALL);
+
+    /* 配额：在调 LLM（有成本）前扣减；超额拒绝、无副作用。 */
+    if (!reflectQuota.consumeQuota(request.tenantId, 'translation')) {
+      throw new QuotaExceededError('翻译配额已用尽，请稍后再试');
+    }
+
+    /* BYOK：解析本租户有效 LLM 配置（缺失回退全局 config 老师）。 */
+    const effectiveLlm = resolveTenantLlmConfig(db, request.tenantId, config.intelligence, reflectLlmEncryption);
+    const llm = new ModelRouter({
+      provider: effectiveLlm.provider as LLMProviderName,
+      model: effectiveLlm.model,
+      embeddingModel: effectiveLlm.embeddingModel,
+      apiKey: effectiveLlm.apiKey,
+      baseUrl: effectiveLlm.baseUrl,
+      fallbacks: config.intelligence.fallbacks,
+      maxTokens: config.intelligence.maxTokens,
+      temperature: config.intelligence.temperature,
+      tenantId: request.tenantId,
+    });
+    const translator = new LlmTranslationService(llm, tenantOS.getLogger());
+
+    /* 分批翻译并落库（每批失败安全降级返回空，不阻断其余批）。 */
+    let translated = 0;
+    const now = tenantOS.getClock().now();
+    for (let i = 0; i < pending.length; i += TRANSLATION_BATCH_SIZE) {
+      const batch = pending.slice(i, i + TRANSLATION_BATCH_SIZE);
+      const result = await translator.translate(batch, targetLanguage);
+      for (const [memoryId, text] of result) {
+        translationStore.upsert(memoryId, targetLanguage, text, now);
+        translated += 1;
+      }
+    }
+    /* remaining 按**实际写入数**算（不是 pending 切片数）——本批内 LLM/JSON 失败未写入的条目仍算未翻，
+     * 下次会重试（translatedIds 不含它们）。避免部分失败时 hasMore 误报 false（Codex 复审）。 */
+    const remainingAfter = allPending.length - translated;
+    return { data: { translated, remaining: remainingAfter, hasMore: remainingAfter > 0, language: targetLanguage } };
   });
 }

@@ -60,6 +60,8 @@ const TENANT_TABLES = [
   'notification_preferences',
   /* companion_identity：ADR-0055 数字人第一人称身份（name，per-persona，无敏感列），A 类标准导出+擦除 */
   'companion_identity',
+  /* memory_translations：ADR-0055 记忆内容多语变体（无敏感列，随 memory 级联），A 类标准导出+擦除 */
+  'memory_translations',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

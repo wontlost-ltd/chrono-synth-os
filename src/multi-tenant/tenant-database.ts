@@ -49,6 +49,8 @@ const TENANT_TABLES = new Set([
   'notification_preferences',
   /* ADR-0055 数字人第一人称身份（name，per-persona） */
   'companion_identity',
+  /* ADR-0055 记忆内容多语变体（per memory+language） */
+  'memory_translations',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
