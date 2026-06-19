@@ -24,12 +24,13 @@ export type CompanionChatRequestV1 = z.infer<typeof CompanionChatRequestV1Schema
  *   - self_identity：第一人称身份回应（ADR-0055）——起名确认「我叫X」/ 问名字答「我叫X」/ 未起名邀请。
  *   - self_intro：自我介绍元意图（「介绍你自己/你会什么/你是谁」）→ 按叙事+价值观+高 salience 记忆
  *     综述，而非要求关键词命中（确定性）。
+ *   - summary：归纳总结意图（「总结你学过的X/你最近学了什么」）→ 沿主题检索相关记忆确定性归纳（ADR-0055）。
  *   - response_template：命中蒸馏好的回应模板（流程型问答的预编排整段，ADR-0047 蒸馏闭环消费端）。
  *   - knowledge_grounded / honest_offline / boundary_block / boundary_escalate：与 OfflineResponseKind 同源
  *     （记忆检索落地 / 诚实离线 / 边界拒答 / 升级）。
  */
 export const CompanionChatKindV1Schema = z.enum([
-  'self_identity', 'self_intro', 'response_template', 'knowledge_grounded', 'honest_offline', 'boundary_block', 'boundary_escalate',
+  'self_identity', 'self_intro', 'summary', 'response_template', 'knowledge_grounded', 'honest_offline', 'boundary_block', 'boundary_escalate',
 ]);
 
 export const CompanionChatResultV1Schema = z.object({
