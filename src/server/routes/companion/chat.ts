@@ -158,7 +158,7 @@ export function registerCompanionChatRoutes(
    * 解决「介绍一下你自己」泛词查不到具体记忆 → honest_offline 的问题。无任何内容时返回 undefined
    * （回退诚实离线）。
    */
-  function buildSelfIntro(tenantOS: ChronoSynthOS, locale: SupportedLocale, myName?: string): string | undefined {
+  function buildSelfIntro(tenantOS: ChronoSynthOS, locale: SupportedLocale, myName?: string, contentFor?: ContentFor): string | undefined {
     const t = companionLocale(locale).reply;
     const narrative = tenantOS.core.narrative.get().trim();
     /* 排序加稳定 tie-breaker（id 字典序）——底层 SELECT 无 ORDER BY，同 weight/salience 时 Map 迭代
@@ -168,10 +168,11 @@ export function registerCompanionChatRoutes(
       .slice(0, SELF_INTRO_VALUE_LIMIT)
       .map((v) => v.label.trim())
       .filter((l) => l.length > 0);
+    /* 记忆内容按 locale 取翻译变体（多语：英文 self_intro 呈现英文变体，无则原文）。 */
     const topMemories = [...tenantOS.core.memories.getAllMemories().values()]
       .sort((a, b) => b.salience - a.salience || a.id.localeCompare(b.id))
       .slice(0, SELF_INTRO_MEMORY_LIMIT)
-      .map((node) => node.content.trim())
+      .map((node) => (contentFor?.(node) ?? node.content).trim())
       .filter((c) => c.length > 0);
 
     /* 有名字时即便其余皆空也能自我介绍（「我叫X」本身就是有效自述）。 */
@@ -316,7 +317,7 @@ export function registerCompanionChatRoutes(
       } else if (detectSelfIntroIntent(body.message, locale)) {
         /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
          * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
-        const intro = buildSelfIntro(tenantOS, locale, identity.getName());
+        const intro = buildSelfIntro(tenantOS, locale, identity.getName(), contentFor);
         if (intro && !responder.violatesNeverDiscuss(intro, COMPANION_BASELINE_BOUNDARIES)) {
           payload = {
             schemaVersion: 'companion-chat-result.v1',
