@@ -8,6 +8,7 @@ import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { PersonaGovernanceStore } from '../../storage/persona-governance-store.js';
 import type { ArtifactEvidence } from '@chrono/kernel';
+import { archetypeDecisionStyle } from '@chrono/kernel';
 
 const EV: ArtifactEvidence[] = [
   { type: 'pattern', id: 'e1', score: 0.8 },
@@ -323,6 +324,37 @@ describe('Distillation 动态成长预算（ADR-0048，默认开）', () => {
     assert.equal(ingest('default', vals[1].id).status, 'compiled', '第 2 条 (1<3)');
     assert.equal(ingest('default', vals[2].id).status, 'compiled', '第 3 条 (2<3)');
     assert.equal(ingest('default', vals[3].id).status, 'pending', '第 4 条 (3≥3) → 动态预算降级');
+  });
+
+  it('性格调激进度：explorer 风格人格比 guardian 风格自动吸收更多（同记忆数）', () => {
+    /* 起两个 OS，分别设 explorer / guardian 真原型决策风格，喂同样多的成长候选，比 compiled 数。 */
+    function countCompiled(archetype: 'explorer' | 'guardian'): number {
+      const o = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+      o.start();
+      try {
+        /* 用真原型风格（合法 6 维：lossAversion≥1、deliberationDepth 整数等）。exists()=true → resolver
+         * 据 explorationBias/riskAppetite 派生激进度。 */
+        o.core.setDecisionStyle(archetypeDecisionStyle(archetype, 1000));
+        /* 加 100 条记忆 → M=100，此时 ceil 差异（explorer 40 vs guardian 15）才显现（M=0 都是 floor）。 */
+        for (let i = 0; i < 100; i++) o.core.memories.addMemory('semantic', `mem ${i}`, 0, 0.5);
+        let compiled = 0;
+        /* 喂 50 条成长候选——explorer ceil 高会比 guardian 多自动编译。 */
+        for (let i = 0; i < 50; i++) {
+          const v = o.core.addValue(`v${i}`, 0.5);
+          const r = o.distillation.ingest('default', {
+            kind: 'value_shift', source: 'reflection',
+            payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
+            confidence: 0.85, evidence: [{ type: 'memory', id: 'm', score: 0.9 }, { type: 'memory', id: 'm2', score: 0.8 }],
+          });
+          if (r.status === 'compiled') compiled++;
+        }
+        return compiled;
+      } finally { o.close(); }
+    }
+    const explorerCompiled = countCompiled('explorer');
+    const guardianCompiled = countCompiled('guardian');
+    assert.ok(explorerCompiled > guardianCompiled,
+      `explorer 自动吸收(${explorerCompiled}) > guardian(${guardianCompiled})`);
   });
 
   it('动态开启时全局 policy 上限仍生效（取 min，Codex 复审）：policy=1 → 第 2 条降级', () => {
