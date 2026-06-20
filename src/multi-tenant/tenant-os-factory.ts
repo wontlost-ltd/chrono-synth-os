@@ -27,6 +27,8 @@ export interface TenantOSFactoryConfig {
    * 关闭该部署所有租户的主动消息。缺省 → 各租户用 DEFAULT_PROACTIVE_GATE_CONFIG（保守）。
    */
   proactivity?: Partial<ProactiveGateConfig>;
+  /** 动态成长预算（ADR-0048）：透传给每个租户 OS。默认开（婴儿激进/成熟保守）；false 回退静态。 */
+  dynamicGrowthBudgetEnabled?: boolean;
 }
 
 /** 默认出生扰动幅度——温和有界，让租户人格出生即有可度量差异（diversityScore>0）。 */
@@ -45,6 +47,7 @@ export class TenantOSFactory {
   private readonly encryptionConfig?: EncryptionConfig;
   private readonly personalityBirthMagnitude: number;
   private readonly proactivity?: Partial<ProactiveGateConfig>;
+  private readonly dynamicGrowthBudgetEnabled?: boolean;
 
   constructor(
     private readonly db: IDatabase,
@@ -57,6 +60,7 @@ export class TenantOSFactory {
     this.encryptionConfig = encryptionConfig;
     this.personalityBirthMagnitude = config?.personalityBirthMagnitude ?? DEFAULT_PERSONALITY_BIRTH_MAGNITUDE;
     this.proactivity = config?.proactivity;
+    this.dynamicGrowthBudgetEnabled = config?.dynamicGrowthBudgetEnabled;
   }
 
   /** 获取或创建租户 OS 实例 */
@@ -118,6 +122,8 @@ export class TenantOSFactory {
       personalitySeed: { seed: tenantId, magnitude: this.personalityBirthMagnitude },
       /* ADR-0054 主动性配置透传（生产可达关闭/红线 3）；缺省 → 租户 OS 用默认保守配置。 */
       ...(this.proactivity ? { proactivity: this.proactivity } : {}),
+      /* ADR-0048 动态成长预算透传（缺省 → ChronoSynthOS 默认开）。 */
+      ...(this.dynamicGrowthBudgetEnabled !== undefined ? { dynamicGrowthBudgetEnabled: this.dynamicGrowthBudgetEnabled } : {}),
     });
     os.start();
     this.logger.info('TenantOSFactory', `租户 OS 实例已创建: ${tenantId}`);

@@ -185,11 +185,13 @@ describe('Distillation 不确定性预算（ADR-0047 成长治理）', () => {
   let os: ChronoSynthOS;
 
   beforeEach(() => {
-    /* 收紧预算到 2：窗口内最多 auto-compile 2 条未验证成长，第 3 条起降级 confirm。 */
+    /* 收紧预算到 2：窗口内最多 auto-compile 2 条未验证成长，第 3 条起降级 confirm。
+     * 关动态成长预算——本组测**全局静态 policy 旧行为**（动态另有 policy-min 行为单独测）。 */
     os = new ChronoSynthOS({
       clock: new TestClock(1000),
       logger: new SilentLogger(),
       distillationPolicy: { unverifiedGrowthBudgetPerWindow: 2 },
+      dynamicGrowthBudgetEnabled: false,
     });
     os.start();
   });
@@ -259,8 +261,9 @@ describe('Distillation per-persona 预算覆盖（governance 配置）', () => {
   let os: ChronoSynthOS;
 
   beforeEach(() => {
-    /* 全局预算不限（默认）；靠 per-persona governance 覆盖收紧。 */
-    os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    /* 全局预算不限（默认）；靠 per-persona governance 覆盖收紧。关动态预算——本组测 per-persona
+     * override 语义（无覆盖应回退全局不限），dynamic 开启会让无覆盖人格走动态有界（ADR-0048）。 */
+    os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger(), dynamicGrowthBudgetEnabled: false });
     os.start();
   });
   afterEach(() => os.close());
@@ -290,5 +293,71 @@ describe('Distillation per-persona 预算覆盖（governance 配置）', () => {
     new PersonaGovernanceStore(os.getDatabase(), 'default').upsert('p1', { unverifiedGrowthBudgetPerWindow: 0 }, 'owner', 1000);
     const a = os.core.addValue('a', 0.5);
     assert.equal(ingest('p1', a.id).status, 'pending', '预算 0 → 第 1 条即转人工');
+  });
+});
+
+/* ── ADR-0048 动态成长预算（默认开）：无 override 的人格按核心成熟度 U 形自适应 ── */
+describe('Distillation 动态成长预算（ADR-0048，默认开）', () => {
+  let os: ChronoSynthOS;
+
+  beforeEach(() => {
+    /* 动态预算默认开（不传 dynamicGrowthBudgetEnabled）；无 per-persona override。 */
+    os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os.start();
+  });
+  afterEach(() => os.close());
+
+  function ingest(personaId: string, valueId: string) {
+    return os.distillation.ingest(personaId, {
+      kind: 'value_shift', source: 'reflection',
+      payload: { valueId, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
+      confidence: 0.85, evidence: [{ type: 'memory', id: 'm', score: 0.9 }, { type: 'memory', id: 'm2', score: 0.8 }],
+    });
+  }
+
+  it('婴儿期（记忆少）→ 动态预算=floor(3)：前 3 条自动，第 4 条降级', () => {
+    /* core 无记忆 → computeDynamicGrowthBudget(0)=floor=3。 */
+    const vals = ['a', 'b', 'c', 'd'].map((l) => os.core.addValue(l, 0.5));
+    /* personaId='default'：与 os.core 同一人格（动态预算读 os.core 记忆数=0→3）。 */
+    assert.equal(ingest('default', vals[0].id).status, 'compiled', '第 1 条 (0<3)');
+    assert.equal(ingest('default', vals[1].id).status, 'compiled', '第 2 条 (1<3)');
+    assert.equal(ingest('default', vals[2].id).status, 'compiled', '第 3 条 (2<3)');
+    assert.equal(ingest('default', vals[3].id).status, 'pending', '第 4 条 (3≥3) → 动态预算降级');
+  });
+
+  it('动态开启时全局 policy 上限仍生效（取 min，Codex 复审）：policy=1 → 第 2 条降级', () => {
+    /* 运维设全局上限 1（比动态 floor 3 更紧）→ 动态与 policy 取 min=1。 */
+    const capped = new ChronoSynthOS({
+      clock: new TestClock(1000), logger: new SilentLogger(),
+      distillationPolicy: { unverifiedGrowthBudgetPerWindow: 1 },
+      /* dynamicGrowthBudgetEnabled 默认开 */
+    });
+    capped.start();
+    try {
+      const vals = ['a', 'b'].map((l) => capped.core.addValue(l, 0.5));
+      const mk = (vid: string) => capped.distillation.ingest('default', {
+        kind: 'value_shift', source: 'reflection',
+        payload: { valueId: vid, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
+        confidence: 0.85, evidence: [{ type: 'memory', id: 'm', score: 0.9 }, { type: 'memory', id: 'm2', score: 0.8 }],
+      });
+      assert.equal(mk(vals[0].id).status, 'compiled', '第 1 条 (0<min(动态,1)=1)');
+      assert.equal(mk(vals[1].id).status, 'pending', '第 2 条 (1≥1) → 全局上限生效，动态不绕过');
+    } finally { capped.close(); }
+  });
+
+  it('关动态预算 → 无 override 回退全局不限（旧行为，可逃生）', () => {
+    const off = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger(), dynamicGrowthBudgetEnabled: false });
+    off.start();
+    try {
+      const vals = ['a', 'b', 'c', 'd', 'e'].map((l) => off.core.addValue(l, 0.5));
+      for (let i = 0; i < 5; i++) {
+        const r = off.distillation.ingest('default', {
+          kind: 'value_shift', source: 'reflection',
+          payload: { valueId: vals[i].id, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
+          confidence: 0.85, evidence: [{ type: 'memory', id: 'm', score: 0.9 }, { type: 'memory', id: 'm2', score: 0.8 }],
+        });
+        assert.equal(r.status, 'compiled', `关动态后第 ${i + 1} 条仍自动（不限）`);
+      }
+    } finally { off.close(); }
   });
 });

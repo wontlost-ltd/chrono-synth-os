@@ -269,8 +269,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     db,
     deps.os.getClock(),
     deps.os.getLogger(),
-    /* ADR-0054 主动性配置透传给所有租户 OS（生产可达关闭/红线 3）。 */
-    deps.config?.proactivity ? { proactivity: deps.config.proactivity } : undefined,
+    /* 透传给所有租户 OS：①ADR-0054 主动性配置（红线 3）；②ADR-0048 动态成长预算开关。 */
+    {
+      ...(deps.config?.proactivity ? { proactivity: deps.config.proactivity } : {}),
+      ...(deps.config?.companion ? { dynamicGrowthBudgetEnabled: deps.config.companion.dynamicGrowthBudgetEnabled } : {}),
+    },
     deps.config?.encryption,
   );
   app.addHook('onClose', () => { tenantFactory.clear(); });
