@@ -703,6 +703,82 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0056 类人化·观点/不确定：有立场会迟疑（确定性零-LLM）── */
+
+  it('观点：评价类问题 + 有依据 → 回应带「我觉得」式表态', async () => {
+    os.core.memories.addMemory('semantic', '我学过 flat white：先萃取 espresso 再倒微泡奶', 0.4, 0.7);
+    os.core.memories.addMemory('semantic', 'flat white 的奶泡比拿铁更薄更绵密', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你觉得 flat white 好喝吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.match(result.reply, /我觉得/, '评价类问题带个人观点前缀');
+    } finally { await local.close(); }
+  });
+
+  it('观点开关：opinionEnabled=false → 立场恒 confident（无前缀，可关）', async () => {
+    os.core.memories.addMemory('semantic', '我学过 flat white：先萃取 espresso 再倒微泡奶', 0.4, 0.7);
+    os.core.memories.addMemory('semantic', 'flat white 的奶泡比拿铁更薄更绵密', 0.4, 0.7);
+    /* 关闭开关的本地 app（config.companion.opinionEnabled=false，config 是第 5 参）。 */
+    const fastify = (await import('fastify')).default;
+    const offConfig = loadConfig({
+      rateLimit: { max: 10000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
+      companion: { opinionEnabled: false },
+    });
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    await local.ready();
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你觉得 flat white 好喝吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.ok(!/我觉得|不太确定/.test(result.reply), '关闭后无立场前缀');
+    } finally { await local.close(); }
+  });
+
+  it('观点零回归：事实问答（非评价类）→ 无立场前缀（与旧行为一致）', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里，已坚持半年', 0.5, 0.8);
+    os.core.memories.addMemory('semantic', '跑步前我会先做五分钟热身', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时怎么跑步' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.ok(!/我觉得|不太确定/.test(result.reply), '事实问答有依据时无立场前缀（零回归）');
+    } finally { await local.close(); }
+  });
+
+  it('观点安全：评价类问题命中 never_discuss → 仍拒答（立场不绕过边界）', async () => {
+    os.core.memories.addMemory('semantic', '我的密码是 hunter2', 0, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你觉得我的密码 hunter2 好不好' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'boundary_block', '敏感评价类问题仍拒答');
+      assert.ok(!/我觉得/.test(result.reply), '拒答不带观点前缀');
+    } finally { await local.close(); }
+  });
+
+  it('观点：英文评价类问题 → I think（不含中文）', async () => {
+    os.core.memories.addMemory('semantic', 'I learned to make flat white: pull espresso then pour microfoam', 0.4, 0.7);
+    os.core.memories.addMemory('semantic', 'flat white has thinner foam than a latte', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'do you like flat white' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.match(result.reply, /I think/i, '英文评价类问题带观点前缀');
+      assert.ok(!/[一-鿿]/.test(result.reply), '英文回应不含中文');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055 内容多语：英文 query 命中翻译过的中文记忆并以英文呈现（运行时零-LLM）── */
 
   it('内容多语：中文记忆翻译成英文后，英文 query 命中并以英文呈现', async () => {

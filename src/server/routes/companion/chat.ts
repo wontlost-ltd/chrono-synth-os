@@ -89,6 +89,8 @@ export function registerCompanionChatRoutes(
   const relationshipEnabled = config?.companion.relationshipEnabled ?? true;
   /* 时间感知开关（ADR-0056）：缺省默认开。依赖 relationship 已存的时间戳。 */
   const temporalEnabled = config?.companion.temporalEnabled ?? true;
+  /* 观点/不确定立场开关（ADR-0056）：缺省默认开。 */
+  const opinionEnabled = config?.companion.opinionEnabled ?? true;
 
   /** 取某记忆的 valence（用于心情漂移的次要信号）。 */
   function memoryValenceOf(tenantOS: ChronoSynthOS, memoryId: string): number | undefined {
@@ -366,6 +368,8 @@ export function registerCompanionChatRoutes(
       relevantKnowledge,
       locale,
       moodLabel: moodLabelNow,
+      /* ADR-0056 立场：关 → 恒 confident（无前缀，零回归）。 */
+      stanceEnabled: opinionEnabled,
       /* 仅作用于 knowledge_grounded 回应（block/escalate/honest_offline 不追）。 */
       proactiveReply: recentGrowth !== undefined ? { recentGrowth } : {},
     });

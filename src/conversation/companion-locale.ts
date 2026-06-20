@@ -77,11 +77,16 @@ export interface CompanionLocaleResources {
     /** 时间感知问候前缀（ADR-0056）：按久别档 + 认识天数，sameSession→空（不每句打招呼）。
      * {gap}=久别档（first/longGap/dayGap/sameSession），{userName}可空，{days}=认识天数。 */
     readonly greetingPrefix: (gap: TimeGap, userName: string | undefined, days: number) => string;
+    /** 立场前缀（ADR-0056）：confident→空（零回归），tentative→「我记得好像…不太确定」，
+     * opinion→「我觉得 / 在我看来」。{stance}=confident/tentative/opinion。 */
+    readonly stancePrefix: (stance: 'confident' | 'tentative' | 'opinion') => string;
   };
   /** 自我介绍元意图短语（「介绍你自己」类，子串匹配，已小写）。 */
   readonly selfIntroPhrases: readonly string[];
   /** 归纳总结意图模式：捕获组 1 = 主题（可选，无捕获/空 = 最近学了什么）。 */
   readonly summaryPatterns: readonly RegExp[];
+  /** 评价/看法类问题模式（你觉得X怎么样 / 你喜欢X吗 / X好不好）——命中则回应可带「我觉得」式观点。 */
+  readonly opinionQuestionPatterns: readonly RegExp[];
 }
 
 /* ── 中文（zh-CN）：抽取既有行为，逐字对齐原硬编码字符串，确保零回归 ─────────────── */
@@ -170,6 +175,13 @@ const zhCN: CompanionLocaleResources = {
         default: return ''; // first / sameSession 不打招呼前缀（first 由起名/认识流程承接）
       }
     },
+    stancePrefix: (stance) => {
+      switch (stance) {
+        case 'tentative': return '我记得好像是这样，不过我也不太确定——';
+        case 'opinion': return '我觉得，';
+        default: return ''; // confident → 无前缀（零回归）
+      }
+    },
   },
   selfIntroPhrases: [
     '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
@@ -186,6 +198,16 @@ const zhCN: CompanionLocaleResources = {
     // 有主题：必须有「你+学/知/记/了解」框架，主题在其后
     /(?:总结|归纳|概括|梳理)(?:一下|下)?你(?:学过|知道|记得|了解)的?\s*(?:关于)?\s*([^\s，。,.!！?？、的吗呢]{1,20})/,
     /你(?:学过|知道|记得|了解)的?\s*(?:关于)?\s*([^\s，。,.!！?？、的吗呢]{1,20})(?:都?有些?什么|方面)/,
+  ],
+  /* 评价/看法类问题：问的是「好不好/喜不喜欢/怎么看」而非纯事实——命中则回应可带「我觉得」。
+   * 注意：裸「你看」过宽（「你看过/你看一下」是事实/指令非评价，Codex 复审），故只收「你怎么看 /
+   * 在你看来 / 依你看 / 你看好」这类明确征求看法的措辞。 */
+  opinionQuestionPatterns: [
+    /你(?:觉得|认为)/,
+    /你怎么(?:看|想)/,
+    /你(?:喜欢|讨厌|爱|偏好|看好)/,
+    /(?:好不好|好喝吗|好吃吗|好用吗|值不值|值得吗|该不该|要不要|应不应该|对不对|行不行|靠谱吗)/,
+    /在你看来|依你看|你的看法|你的观点/,
   ],
 };
 
@@ -297,6 +319,13 @@ const en: CompanionLocaleResources = {
         default: return '';
       }
     },
+    stancePrefix: (stance) => {
+      switch (stance) {
+        case 'tentative': return "I think this is right, but I'm not entirely sure — ";
+        case 'opinion': return 'I think ';
+        default: return ''; // confident → no prefix (zero regression)
+      }
+    },
   },
   selfIntroPhrases: [
     'introduce yourself', 'tell me about yourself', 'about yourself', 'who are you',
@@ -313,6 +342,15 @@ const en: CompanionLocaleResources = {
     /what\s+(?:have|did)\s+you\s+learn(?:ed)?\s+about\s+([a-z0-9][a-z0-9 '\-]{0,30})/i,
     /what\s+do\s+you\s+know\s+about\s+([a-z0-9][a-z0-9 '\-]{0,30})/i,
     /(?:summari[sz]e|sum up)\s+(?:what\s+you\s+(?:know|learned|remember)\s+about|your\s+knowledge\s+of)\s+([a-z0-9][a-z0-9 '\-]{0,30})/i,
+  ],
+  /* 评价/看法类问题：what do you think / do you like / is X good——命中则回应可带「I think」。 */
+  opinionQuestionPatterns: [
+    /what\s+do\s+you\s+think(?:\s+(?:of|about))?\b/i,
+    /how\s+do\s+you\s+(?:feel|see)\s+(?:about)?\b/i,
+    /do\s+you\s+(?:like|prefer|enjoy|hate|dislike|recommend)\b/i,
+    /\b(?:is|are|was|were)\s+[a-z0-9][^?]*\b(?:good|bad|better|worth|worthwhile|right|wrong|ok|okay)\b/i,
+    /in\s+your\s+(?:opinion|view)|your\s+(?:take|thoughts?)\s+on\b/i,
+    /should\s+i\b/i,
   ],
 };
 
