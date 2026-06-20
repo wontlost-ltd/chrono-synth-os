@@ -600,6 +600,109 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0056 类人化·时间感知：久别重逢/隔天再见问候（确定性零-LLM）── */
+
+  it('时间感知：久别重逢（>3天）→ 回应开头带「好久不见」+ 认识天数', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    const clock = os.getClock() as TestClock;
+    try {
+      /* 第一次见面（建立 first_met/last_seen），无问候。 */
+      const first = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      assert.ok(!/好久不见/.test(JSON.parse(first.body).data.reply), '第一次见面不打招呼');
+      /* 时钟前进 5 天 → 下一轮应触发久别重逢。 */
+      clock.advance(5 * 24 * 60 * 60 * 1000);
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded', '仍是正常回应，只是开头多了问候');
+      assert.match(result.reply, /好久不见/, '久别重逢带问候前缀');
+      assert.match(result.reply, /认识 5 天/, '带认识天数');
+    } finally { await local.close(); }
+  });
+
+  it('时间感知零回归：同段对话连续聊（间隔短）→ 不重复打招呼', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      /* 紧接着再聊（同 session，clock 不变）→ 不应有问候前缀。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!/好久不见|又见面了/.test(result.reply), '同段对话不重复打招呼（零回归）');
+    } finally { await local.close(); }
+  });
+
+  it('时间感知：隔段时间又见（>12h, ≤3天）→ 带「又见面了」', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    const clock = os.getClock() as TestClock;
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      clock.advance(13 * 60 * 60 * 1000);   // 13 小时
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.match(result.reply, /又见面了/, '隔段时间又见带轻问候');
+    } finally { await local.close(); }
+  });
+
+  it('时间感知安全：禁忌输入不算互动 → 不更新 last_seen（不被禁忌输入刷新久别状态）', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    const clock = os.getClock() as TestClock;
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      clock.advance(5 * 24 * 60 * 60 * 1000);
+      /* 久别后先发一句禁忌输入（不应刷新 last_seen）→ 再正常对话仍应触发久别重逢。 */
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码是 hunter2' } });
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.match(result.reply, /好久不见/, '禁忌输入未刷新 last_seen，久别重逢仍触发');
+    } finally { await local.close(); }
+  });
+
+  it('时间感知（Codex 复审）：久别后问名字（identity-ask 早返回）也带问候', async () => {
+    const local = await localChatApp(os);
+    const clock = os.getClock() as TestClock;
+    try {
+      /* 先起名 + 建立 last_seen。 */
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫Echo' } });
+      clock.advance(5 * 24 * 60 * 60 * 1000);
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'self_identity');
+      assert.match(result.reply, /好久不见/, '久别后问名字也该说好久不见（不冷脸）');
+      assert.match(result.reply, /Echo/, '仍答出名字');
+    } finally { await local.close(); }
+  });
+
+  it('时间感知（Codex 复审）：久别后自报名字（relationship 早返回）也带问候', async () => {
+    const local = await localChatApp(os);
+    const clock = os.getClock() as TestClock;
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你好啊' } });
+      clock.advance(5 * 24 * 60 * 60 * 1000);
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我叫小明' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'relationship');
+      assert.match(result.reply, /好久不见/, '久别后自报名字也该说好久不见');
+      assert.match(result.reply, /小明/, '仍记下名字');
+    } finally { await local.close(); }
+  });
+
+  it('时间感知：英文久别重逢 → long time no see（不含中文）', async () => {
+    os.core.memories.addMemory('semantic', 'I run five kilometers every morning', 0.5, 0.7);
+    const local = await localChatApp(os);
+    const clock = os.getClock() as TestClock;
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'do you run every day?' } });
+      clock.advance(5 * 24 * 60 * 60 * 1000);
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'do you run every day?' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.match(result.reply, /long time no see/i, '英文久别重逢问候');
+      assert.ok(!/[一-鿿]/.test(result.reply), '英文回应不含中文');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055 内容多语：英文 query 命中翻译过的中文记忆并以英文呈现（运行时零-LLM）── */
 
   it('内容多语：中文记忆翻译成英文后，英文 query 命中并以英文呈现', async () => {

@@ -12,6 +12,7 @@
  */
 
 import type { SupportedLocale } from '../i18n/locale-resolver.js';
+import type { TimeGap } from './temporal.js';
 
 /** 一种语言的全部对话资源。 */
 export interface CompanionLocaleResources {
@@ -73,6 +74,9 @@ export interface CompanionLocaleResources {
     readonly userNameNoted: (name: string) => string;
     /** 关系：self_intro 里「我们的关系」一句（{userName}=用户名 可空, {count}=互动次数）。 */
     readonly relationshipLine: (userName: string | undefined, count: number) => string;
+    /** 时间感知问候前缀（ADR-0056）：按久别档 + 认识天数，sameSession→空（不每句打招呼）。
+     * {gap}=久别档（first/longGap/dayGap/sameSession），{userName}可空，{days}=认识天数。 */
+    readonly greetingPrefix: (gap: TimeGap, userName: string | undefined, days: number) => string;
   };
   /** 自我介绍元意图短语（「介绍你自己」类，子串匹配，已小写）。 */
   readonly selfIntroPhrases: readonly string[];
@@ -157,6 +161,14 @@ const zhCN: CompanionLocaleResources = {
       if (count >= 5) return `${who}我们已经聊过 ${count} 次了，挺熟的。`;
       if (count >= 1) return `${who}我们聊过几次了。`;
       return who ? `${who}很高兴认识你。` : '';
+    },
+    greetingPrefix: (gap, userName, days) => {
+      const name = userName ? userName : '';
+      switch (gap) {
+        case 'longGap': return days >= 1 ? `${name ? name + '，' : ''}好久不见！我们认识 ${days} 天了。` : `${name ? name + '，' : ''}好久不见！`;
+        case 'dayGap': return `${name ? name + '，' : ''}又见面了～`;
+        default: return ''; // first / sameSession 不打招呼前缀（first 由起名/认识流程承接）
+      }
     },
   },
   selfIntroPhrases: [
@@ -276,6 +288,14 @@ const en: CompanionLocaleResources = {
       if (count >= 5) return `${who}we've talked ${count} times now — we know each other pretty well.`;
       if (count >= 1) return `${who}we've talked a few times.`;
       return who ? `${who}nice to know you.` : '';
+    },
+    greetingPrefix: (gap, userName, days) => {
+      const name = userName ? `${userName}, ` : '';
+      switch (gap) {
+        case 'longGap': return days >= 1 ? `${name}long time no see! We've known each other for ${days} days.` : `${name}long time no see!`;
+        case 'dayGap': return `${name}good to see you again~`;
+        default: return '';
+      }
     },
   },
   selfIntroPhrases: [
