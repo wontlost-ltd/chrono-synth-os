@@ -106,4 +106,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v094_memory_translations', aliases: { postgres: 'v096', 'sqlite-sql': 'v094' }, classification: 'schema-simple', notes: 'ADR-0055 content multilingual: per-language memory content variants' },
   { canonical: 'v095_companion_mood', aliases: { postgres: 'v097', 'sqlite-sql': 'v095' }, classification: 'schema-simple', notes: 'ADR-0056 humanization: per-persona current mood (valence/arousal)' },
   { canonical: 'v096_companion_relationship', aliases: { postgres: 'v098', 'sqlite-sql': 'v096' }, classification: 'schema-simple', notes: 'ADR-0056 humanization: I-you relationship memory (user name + interaction count)' },
+  { canonical: 'v097_digital_workforce', aliases: { postgres: 'v099', 'sqlite-sql': 'v097' }, classification: 'schema-simple', notes: 'Digital workforce M1: org chart + deterministic goal decomposition + delegation/report (zero-LLM)' },
 ];
