@@ -104,4 +104,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v092_notification_preferences', aliases: { postgres: 'v094', 'sqlite-sql': 'v092' }, classification: 'schema-simple', notes: 'ADR-0054 red-line 9: per-user notification preferences (push opt-in + quiet hours)' },
   { canonical: 'v093_companion_identity', aliases: { postgres: 'v095', 'sqlite-sql': 'v093' }, classification: 'schema-simple', notes: 'ADR-0055 self-awareness: per-persona first-person identity (name)' },
   { canonical: 'v094_memory_translations', aliases: { postgres: 'v096', 'sqlite-sql': 'v094' }, classification: 'schema-simple', notes: 'ADR-0055 content multilingual: per-language memory content variants' },
+  { canonical: 'v095_companion_mood', aliases: { postgres: 'v097', 'sqlite-sql': 'v095' }, classification: 'schema-simple', notes: 'ADR-0056 humanization: per-persona current mood (valence/arousal)' },
 ];

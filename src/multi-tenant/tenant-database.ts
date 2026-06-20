@@ -51,6 +51,8 @@ const TENANT_TABLES = new Set([
   'companion_identity',
   /* ADR-0055 记忆内容多语变体（per memory+language） */
   'memory_translations',
+  /* ADR-0056 数字人当前心情（valence/arousal，per-persona） */
+  'companion_mood',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

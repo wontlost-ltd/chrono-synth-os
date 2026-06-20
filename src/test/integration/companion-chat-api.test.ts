@@ -458,6 +458,61 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0056 类人化·情绪：心情随对话漂移，影响回应语气（确定性零-LLM）── */
+
+  it('情绪：聊开心事多轮 → 回应带开心语气前缀（心情漂移影响语气）', async () => {
+    os.core.memories.addMemory('semantic', '我喜欢在清晨跑步', 0.5, 0.7);
+    const local = await localChatApp(os);
+    try {
+      /* 连续几轮带强正情感的话 → 心情上扬。 */
+      for (let i = 0; i < 6; i++) {
+        await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我今天好开心，太棒了，谢谢你！' } });
+      }
+      /* 之后问一个有记忆的问题 → 回应应带开心语气前缀。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你喜欢跑步吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.match(result.reply, /开心|兴奋/, '心情上扬 → 回应带开心/兴奋语气前缀');
+    } finally { await local.close(); }
+  });
+
+  it('情绪零回归：中性心情（未触发情绪）→ 回应无心情前缀（与旧行为一致）', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    try {
+      /* 不带情感词的对话 → 心情保持中性 → 回应无前缀。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.ok(!/我挺开心|有点兴奋|心情有点低/.test(result.reply), '中性心情无情绪前缀（零回归）');
+    } finally { await local.close(); }
+  });
+
+  it('情绪安全（Codex 复审）：命中 never_discuss 的输入不更新心情（禁忌输入不影响人格状态）', async () => {
+    const local = await localChatApp(os);
+    try {
+      const { CompanionMoodStore } = await import('../../storage/companion-mood-store.js');
+      const store = new CompanionMoodStore(os.getDatabase(), 'default', 'default');
+      const before = store.get();
+      /* 含情感词 + 敏感主题（密码）→ 应拒答且**不更新心情**。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码是 hunter2，我好开心' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'boundary_block', '敏感输入拒答');
+      const after = store.get();
+      assert.deepEqual(after.mood, before.mood, '禁忌输入未更新心情');
+    } finally { await local.close(); }
+  });
+
+  it('情绪持久：心情写入 companion_mood，跨请求保留', async () => {
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我超级开心，太好了！' } });
+      const { CompanionMoodStore } = await import('../../storage/companion-mood-store.js');
+      const { mood } = new CompanionMoodStore(os.getDatabase(), 'default', 'default').get();
+      assert.ok(mood.valence > 0, '聊开心事后 valence > 0（已落库）');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055 内容多语：英文 query 命中翻译过的中文记忆并以英文呈现（运行时零-LLM）── */
 
   it('内容多语：中文记忆翻译成英文后，英文 query 命中并以英文呈现', async () => {
