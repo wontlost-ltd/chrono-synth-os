@@ -9,7 +9,7 @@
 import type { IDatabase } from './database.js';
 import type {
   OrgPosition, DigitalWorker, ReportingEdge, OrgGoal, OrgTask, TaskReport,
-  Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, ReportType,
+  Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, ReportType, RiskLevel,
 } from '../workforce/types.js';
 
 /** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → 0（这些列非空）。 */
@@ -21,6 +21,22 @@ function num(v: unknown): number {
 /** 可空时间戳/外键的强转：null/undefined 保留 null。 */
 function nullableStr(v: unknown): string | null {
   return v === null || v === undefined ? null : String(v);
+}
+
+/** risk_level 白名单兜底：非 low/medium/high → low（防脏值，A0 契约暴露前收口）。 */
+function coerceRiskLevel(v: unknown): RiskLevel {
+  return v === 'medium' || v === 'high' ? v : 'low';
+}
+
+/** required_capabilities 反序列化：JSON 数组字符串 → string[]；脏数据/null → 空数组（不崩）。 */
+function parseCapabilities(v: unknown): readonly string[] {
+  if (typeof v !== 'string' || v.length === 0) return [];
+  try {
+    const parsed = JSON.parse(v) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 export class OrgWorkforceStore {
@@ -122,9 +138,13 @@ export class OrgWorkforceStore {
 
   insertTask(t: Omit<OrgTask, 'tenantId'>): void {
     this.db.prepare<void>(
-      `INSERT INTO org_tasks (id, tenant_id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, result_summary, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(t.id, this.tenantId, t.orgId, t.goalId, t.parentTaskId, t.assignedToWorkerId, t.accountableWorkerId, t.title, t.taskType, t.status, t.resultSummary, t.createdAt, t.updatedAt);
+      `INSERT INTO org_tasks (id, tenant_id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      t.id, this.tenantId, t.orgId, t.goalId, t.parentTaskId, t.assignedToWorkerId, t.accountableWorkerId, t.title, t.taskType, t.status,
+      t.riskLevel, t.allowsToolExecution ? 1 : 0, t.acceptanceCriteria, JSON.stringify(t.requiredCapabilities),
+      t.resultSummary, t.createdAt, t.updatedAt,
+    );
   }
 
   updateTaskExecution(orgId: string, taskId: string, status: TaskStatus, resultSummary: string | null, now: number): void {
@@ -136,7 +156,7 @@ export class OrgWorkforceStore {
   /** 取某目标的任务（确定性排序：created_at 升序、id 升序兜底）。 */
   listTasksByGoal(orgId: string, goalId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, result_summary, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND goal_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, goalId);
@@ -193,7 +213,14 @@ export class OrgWorkforceStore {
       id: r.id, tenantId: this.tenantId, orgId: r.org_id, goalId: r.goal_id,
       parentTaskId: nullableStr(r.parent_task_id), assignedToWorkerId: nullableStr(r.assigned_to_worker_id),
       accountableWorkerId: r.accountable_worker_id, title: r.title, taskType: r.task_type,
-      status: r.status as TaskStatus, resultSummary: nullableStr(r.result_summary),
+      status: r.status as TaskStatus,
+      /* 脏值兜底：非白名单 → low（防 API 暴露前读到脏 risk_level）。 */
+      riskLevel: coerceRiskLevel(r.risk_level),
+      /* SQLite 存 0/1，PG 存 integer；Number() 后判真。 */
+      allowsToolExecution: num(r.allows_tool_execution) === 1,
+      acceptanceCriteria: r.acceptance_criteria ?? '',
+      requiredCapabilities: parseCapabilities(r.required_capabilities),
+      resultSummary: nullableStr(r.result_summary),
       createdAt: num(r.created_at), updatedAt: num(r.updated_at),
     };
   }
@@ -211,5 +238,5 @@ export class OrgWorkforceStore {
 interface RawPosition { id: string; org_id: string; title: string; job_family: string; seniority: string; role_code: string; created_at: unknown; }
 interface RawWorker { id: string; org_id: string; persona_id: string; position_id: string; display_name: string; employment_status: string; created_at: unknown; updated_at: unknown; }
 interface RawEdge { id: string; org_id: string; manager_worker_id: unknown; report_worker_id: string; edge_type: string; created_at: unknown; }
-interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; result_summary: unknown; created_at: unknown; updated_at: unknown; }
+interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; created_at: unknown; updated_at: unknown; }
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }

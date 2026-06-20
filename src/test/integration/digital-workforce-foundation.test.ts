@@ -151,6 +151,27 @@ describe('数字员工组织奠基（M1：分解-委派-执行-汇报-聚合，�
     assert.equal(Number(taskRows?.n ?? 0), 0, '失败不留半成品 task');
   });
 
+  it('A0 契约持久化：任务带 risk/tool-eligible/acceptance/capabilities 落库并 round-trip', () => {
+    const boot = chart.bootstrap('org-1', contentPodSpecs());
+    const result = planning.runGoal(
+      'org-1', boot.workerIdByRole.get('managing_editor')!,
+      { title: '主题C', description: '', goalType: GOAL_TYPE_CONTENT_PIECE },
+      boot.workerIdByRole,
+    );
+    const tasks = store.listTasksByGoal('org-1', result.goalId);
+    /* 契约字段确实落库 + 读回正确（含 JSON capabilities + bool）。 */
+    const publish = tasks.find((t) => t.taskType === 'publish_prep')!;
+    assert.equal(publish.riskLevel, 'high', '发布环节高风险落库');
+    assert.equal(publish.allowsToolExecution, true, 'bool round-trip（int 1→true）');
+    assert.ok(publish.acceptanceCriteria.includes('确认'), '验收标准落库');
+    const research = tasks.find((t) => t.taskType === 'research')!;
+    assert.deepEqual(research.requiredCapabilities, ['research'], 'capabilities JSON round-trip');
+    assert.equal(research.allowsToolExecution, false, 'bool round-trip（int 0→false）');
+    /* 每个任务都有完整契约（供 B/D/E 引用）。 */
+    assert.ok(tasks.every((t) => ['low', 'medium', 'high'].includes(t.riskLevel)));
+    assert.ok(tasks.every((t) => t.requiredCapabilities.length > 0));
+  });
+
   it('汇报链可观测：reportTrail 返回完整证据链', () => {
     const boot = chart.bootstrap('org-1', contentPodSpecs());
     const result = planning.runGoal(
