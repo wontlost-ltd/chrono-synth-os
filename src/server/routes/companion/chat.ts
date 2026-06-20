@@ -52,6 +52,7 @@ import { companionLocale } from '../../../conversation/companion-locale.js';
 import { CompanionMoodStore } from '../../../storage/companion-mood-store.js';
 import { updateMood, extractEmotionSignal, moodLabel, type MoodLabel } from '../../../conversation/mood.js';
 import { CompanionRelationshipStore } from '../../../storage/companion-relationship-store.js';
+import { timeGap, daysSinceFirstMet } from '../../../conversation/temporal.js';
 import { detectSummaryIntent, buildSummary } from '../../../conversation/summary-builder.js';
 import type { SupportedLocale } from '../../../i18n/locale-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
@@ -86,6 +87,8 @@ export function registerCompanionChatRoutes(
   const moodEnabled = config?.companion.moodEnabled ?? true;
   /* 我-你关系记忆开关（ADR-0056）：缺省默认开。 */
   const relationshipEnabled = config?.companion.relationshipEnabled ?? true;
+  /* 时间感知开关（ADR-0056）：缺省默认开。依赖 relationship 已存的时间戳。 */
+  const temporalEnabled = config?.companion.temporalEnabled ?? true;
 
   /** 取某记忆的 valence（用于心情漂移的次要信号）。 */
   function memoryValenceOf(tenantOS: ChronoSynthOS, memoryId: string): number | undefined {
@@ -230,11 +233,28 @@ export function registerCompanionChatRoutes(
      * 在所有早返回**之前**算，统一守卫。 */
     const inputBlocked = responder.violatesNeverDiscuss(body.message, COMPANION_BASELINE_BOUNDARIES);
 
-    /* ADR-0056 类人化·关系层：**每轮非禁忌输入**都记一次互动（++次数、更新 last_seen，首次设 first_met）。
-     * 置于所有早返回（身份/用户名/普通对话）之前——「你叫什么」「我叫你Max」等也算真实互动（Codex 复审）。 */
+    /* ADR-0056 类人化·关系层 + 时间感知：**每轮非禁忌输入**都记一次互动（++次数、更新 last_seen，
+     * 首次设 first_met）。置于所有早返回之前——「你叫什么」等也算真实互动（Codex 复审）。
+     * 时间感知：在 record **之前**读旧 last_seen/first_met → 算久别档 → 生成确定性问候前缀
+     * （好久不见/又见面了），sameSession 不打招呼。零-LLM、基于 now 时刻可复现。 */
+    let greetingPrefix = '';
     if (relationshipEnabled && !inputBlocked) {
-      new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID).recordInteraction(tenantOS.getClock().now());
+      const relStore = new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
+      const now = tenantOS.getClock().now();
+      if (temporalEnabled) {
+        const rel = relStore.get();   // 旧状态（record 前）
+        const gap = timeGap(rel.lastSeenAt, now);
+        const days = daysSinceFirstMet(rel.firstMetAt, now);
+        greetingPrefix = t.greetingPrefix(gap, rel.userName, days);
+      }
+      relStore.recordInteraction(now);
     }
+
+    /* 在回应**开头**拼久别问候前缀（好久不见/又见面了）。sameSession/first/关闭 → 前缀空 → 原文不变（零回归）。
+     * 用于自然对话回应 + 身份问名/关系确认这类「久别后第一句」也算重逢（Codex 复审：避免久别后问名字却冷脸）。
+     * **不**用于：边界拒答（拒绝不寒暄）、起名拒绝/清洗失败（纠错非重逢）——这些是修正不是问候，保持冷静。 */
+    const withGreeting = (reply: string): string =>
+      greetingPrefix.length > 0 ? `${greetingPrefix}\n\n${reply}` : reply;
 
     /* ADR-0055「自我意识」：先处理身份意图（起名 / 问名字），第一人称落地，优先于普通检索。
      * 视角转换：用户对「你」的称呼 = 数字人自己，内化为第一人称身份「我叫X」，绝不当第二人称记忆复述。 */
@@ -275,13 +295,13 @@ export function registerCompanionChatRoutes(
       if (myName) {
         return { data: CompanionChatResultV1Schema.parse({
           schemaVersion: 'companion-chat-result.v1',
-          reply: t.myNameIs(myName), kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
+          reply: withGreeting(t.myNameIs(myName)), kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
         } satisfies CompanionChatResultV1) };
       }
       /* 还没起名 → 第一人称邀请用户起名（而非 honest_offline 的「无法学习」冷回应）。 */
       return { data: CompanionChatResultV1Schema.parse({
         schemaVersion: 'companion-chat-result.v1',
-        reply: t.noNameYet, kind: 'self_identity', confidence: 0.6, groundedMemoryCount: 0,
+        reply: withGreeting(t.noNameYet), kind: 'self_identity', confidence: 0.6, groundedMemoryCount: 0,
       } satisfies CompanionChatResultV1) };
     }
 
@@ -294,7 +314,7 @@ export function registerCompanionChatRoutes(
           const saved = new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID).setUserName(userName, tenantOS.getClock().now());
           return { data: CompanionChatResultV1Schema.parse({
             schemaVersion: 'companion-chat-result.v1',
-            reply: t.userNameNoted(saved), kind: 'relationship', confidence: 0.9, groundedMemoryCount: 0,
+            reply: withGreeting(t.userNameNoted(saved)), kind: 'relationship', confidence: 0.9, groundedMemoryCount: 0,
           } satisfies CompanionChatResultV1) };
         } catch { /* 清洗后空名 → 忽略，继续正常对话 */ }
       }
@@ -412,6 +432,14 @@ export function registerCompanionChatRoutes(
        * 也与「引用了几条记忆」语义不符（拒答没引用）。 */
       groundedMemoryCount: offline.kind === 'knowledge_grounded' ? relevantKnowledge.length : 0,
     };
+
+    /* ADR-0056 时间感知：久别重逢/隔天再见 → 在回应**开头**加确定性问候前缀（好久不见/又见面了）。
+     * 只加在自然对话回应（knowledge_grounded / honest_offline / self_intro）上——不加在边界拒答
+     * （boundary_block 是拒绝，加问候很怪）、结构化模板/总结（response_template/summary 自带结构）上。
+     * 身份问名/关系确认的早返回路径已在上方各自 withGreeting。sameSession/first/关闭 → 前缀空 → 零回归。 */
+    if (payload.kind === 'knowledge_grounded' || payload.kind === 'honest_offline' || payload.kind === 'self_intro') {
+      payload = { ...payload, reply: withGreeting(payload.reply) };
+    }
 
     /* ADR-0055「对话即经历」：本轮回应已完全确定后，把这轮对话确定性沉淀为低显著 episodic 记忆，
      * 让数字人「记得跟你聊过」。零-LLM（沉淀=确定性 append 非语义理解；语义内化仍走 reflect）。

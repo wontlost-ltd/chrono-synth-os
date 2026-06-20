@@ -526,7 +526,9 @@ const companionSchema = z.object({
   moodEnabled: z.coerce.boolean().default(true),
   /** 我-你关系记忆（ADR-0056 类人化）：记住用户名/互动次数/时间，自我介绍带关系。默认开。 */
   relationshipEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true });
+  /** 时间感知（ADR-0056 类人化）：好久不见/又见面了/认识N天，存在的连续性。默认开。 */
+  temporalEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -747,6 +749,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COMPANION_MOOD:                  (v) => { deepSet(env, 'companion.moodEnabled', v !== 'false' && v !== '0'); },
     /* ADR-0056 关系记忆开关（默认开，可关）：CHRONO_COMPANION_RELATIONSHIP=false 关闭关系记忆。 */
     CHRONO_COMPANION_RELATIONSHIP:          (v) => { deepSet(env, 'companion.relationshipEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0056 时间感知开关（默认开，可关）：CHRONO_COMPANION_TEMPORAL=false 关闭久别重逢问候。 */
+    CHRONO_COMPANION_TEMPORAL:              (v) => { deepSet(env, 'companion.temporalEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },
