@@ -49,6 +49,8 @@ import { detectIdentityIntent } from '../../../conversation/identity-intent.js';
 import { CompanionIdentityStore } from '../../../storage/companion-identity-store.js';
 import { detectLanguage } from '../../../conversation/language-detect.js';
 import { companionLocale } from '../../../conversation/companion-locale.js';
+import { CompanionMoodStore } from '../../../storage/companion-mood-store.js';
+import { updateMood, extractEmotionSignal, moodLabel, type MoodLabel } from '../../../conversation/mood.js';
 import { detectSummaryIntent, buildSummary } from '../../../conversation/summary-builder.js';
 import type { SupportedLocale } from '../../../i18n/locale-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
@@ -79,6 +81,17 @@ export function registerCompanionChatRoutes(
   const responder = new OfflineConversationResponder();
   /* 对话记忆开关（ADR-0055）：缺省（无 config）默认开，与 schema 默认一致。 */
   const conversationMemoryEnabled = config?.companion.conversationMemoryEnabled ?? true;
+  /* 情绪/心情开关（ADR-0056）：缺省默认开。 */
+  const moodEnabled = config?.companion.moodEnabled ?? true;
+
+  /** 取某记忆的 valence（用于心情漂移的次要信号）。 */
+  function memoryValenceOf(tenantOS: ChronoSynthOS, memoryId: string): number | undefined {
+    return tenantOS.core.memories.getMemory(memoryId)?.valence;
+  }
+  /** clamp 到 [-1,1]。 */
+  function clampUnit(x: number): number {
+    return Number.isFinite(x) ? Math.max(-1, Math.min(1, x)) : 0;
+  }
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
@@ -264,6 +277,28 @@ export function registerCompanionChatRoutes(
     const narrative = tenantOS.core.narrative.get();
     const relevantKnowledge = retrieveRelevantMemories(tenantOS, body.message, contentFor);
 
+    /* ADR-0056 类人化·情绪：读当前心情 → 据本轮情感信号（用户输入情感词 + 检索记忆均值 valence）
+     * 确定性漂移 + 时间回归 → 存回。本轮回应用**更新后**的心情语气（聊到开心事这轮就更开心）。
+     * 默认开；关 → 心情恒中性（无前缀，零回归）。可复现：相同输入+相同心情+相同时刻→相同输出。
+     * 安全（Codex 复审 High）：命中 never_discuss 的输入**不更新心情**——禁忌输入不应影响人格状态。 */
+    const inputBlocked = responder.violatesNeverDiscuss(body.message, COMPANION_BASELINE_BOUNDARIES);
+    let moodLabelNow: MoodLabel = 'neutral';
+    if (moodEnabled && !inputBlocked) {
+      const moodStore = new CompanionMoodStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
+      const { mood, updatedAt } = moodStore.get();
+      const now = tenantOS.getClock().now();
+      const elapsedMs = updatedAt !== null ? Math.max(0, now - updatedAt) : 0;
+      /* 情感信号：用户输入情感词（主）+ 检索到的相关记忆均值 valence（次，权重小）。 */
+      const inputSignal = extractEmotionSignal(body.message, locale);
+      const memSignal = relevantKnowledge.length > 0
+        ? relevantKnowledge.reduce((s, k) => s + (memoryValenceOf(tenantOS, k.id) ?? 0), 0) / relevantKnowledge.length
+        : 0;
+      const valenceSignal = clampUnit(inputSignal * 0.75 + memSignal * 0.25);
+      const next = updateMood(mood, { valenceSignal }, elapsedMs);
+      moodStore.set(next, now);
+      moodLabelNow = moodLabel(next);
+    }
+
     /* 确定性离线回应（零 LLM）。喂基线安全边界——never_discuss 输入/输出自检对凭证类敏感主题真生效
      * （不因 companion 默认人格无 enterprise 配置就让安全自检 no-op）。 */
     /* ADR-0054 Phase 5：近期成长片段（drift→成长，确定性）——让知识回应的主动 follow-up 真带
@@ -275,6 +310,7 @@ export function registerCompanionChatRoutes(
       userInput: body.message,
       relevantKnowledge,
       locale,
+      moodLabel: moodLabelNow,
       /* 仅作用于 knowledge_grounded 回应（block/escalate/honest_offline 不追）。 */
       proactiveReply: recentGrowth !== undefined ? { recentGrowth } : {},
     });

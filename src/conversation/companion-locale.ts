@@ -45,6 +45,9 @@ export interface CompanionLocaleResources {
     readonly honestOffline: string;
     /** 主动 follow-up（邀请继续）。 */
     readonly inviteContinue: string;
+    /** 心情前缀（ADR-0056）：按当前心情标签给一句语气前缀，neutral → 空串（零回归）。
+     * 拼在知识/离线回应最前，让回应「有心情」。 */
+    readonly moodPrefix: (label: 'positive' | 'negative' | 'excited' | 'calm' | 'neutral') => string;
     /** self_intro：名字前缀（{name}）。 */
     readonly selfIntroName: (name: string) => string;
     /** self_intro：价值观引导（{values}）。 */
@@ -118,6 +121,15 @@ const zhCN: CompanionLocaleResources = {
     offlineNote: '（当前离线，以上基于已学习的内容；联网后我可以补充更多。）',
     honestOffline: '我现在处于离线状态，还无法就这个新话题学习或展开。我已经把它记下，等联网后会一起整理再回应你。',
     inviteContinue: '如果你愿意，我们可以接着这个话题多聊一会儿。',
+    moodPrefix: (label) => {
+      switch (label) {
+        case 'positive': return '聊到这个我挺开心的～';
+        case 'excited': return '哇，说到这个我有点兴奋！';
+        case 'negative': return '嗯…我这会儿心情有点低，不过——';
+        case 'calm': return '（我现在很平静）';
+        default: return '';
+      }
+    },
     selfIntroName: (name) => `我叫${name}。`,
     selfIntroValues: (values) => `我最看重的是${values}。`,
     selfIntroMemories: '我印象比较深的是：',
@@ -215,6 +227,15 @@ const en: CompanionLocaleResources = {
     offlineNote: "(I'm offline right now, so this is from what I've already learned; I can add more once I'm online.)",
     honestOffline: "I'm offline right now and can't look into this new topic yet. I've made a note of it and will get back to you once I'm online.",
     inviteContinue: 'If you like, we can keep talking about this.',
+    moodPrefix: (label) => {
+      switch (label) {
+        case 'positive': return "I'm really enjoying talking about this —";
+        case 'excited': return "Oh, this gets me a little excited!";
+        case 'negative': return "Hmm, I'm feeling a bit low right now, but —";
+        case 'calm': return "(I'm feeling calm right now)";
+        default: return '';
+      }
+    },
     selfIntroName: (name) => `My name is ${name}.`,
     selfIntroValues: (values) => `What I care about most is ${values}.`,
     selfIntroMemories: 'Some things that stand out to me:',

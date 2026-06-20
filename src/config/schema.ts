@@ -521,7 +521,10 @@ const companionSchema = z.object({
   /** 动态成长预算（ADR-0048）：未确定性预算随核心成熟度 U 形自适应（婴儿激进/成熟保守）。
    * 默认开。关闭 → 无 per-persona override 的人格回退全局 policy 预算（默认不限，旧行为）。 */
   dynamicGrowthBudgetEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true });
+  /** 情绪/心情（ADR-0056 类人化）：当前心情随对话确定性漂移，影响回应语气。默认开。
+   * 关闭 → 不更新/不读心情，回应无心情前缀（旧行为）。 */
+  moodEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -738,6 +741,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COMPANION_CONVERSATION_MEMORY:   (v) => { deepSet(env, 'companion.conversationMemoryEnabled', v !== 'false' && v !== '0'); },
     /* ADR-0048 动态成长预算开关（默认开，可关）：CHRONO_DYNAMIC_GROWTH_BUDGET=false 回退全局静态预算。 */
     CHRONO_DYNAMIC_GROWTH_BUDGET:           (v) => { deepSet(env, 'companion.dynamicGrowthBudgetEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0056 情绪/心情开关（默认开，可关）：CHRONO_COMPANION_MOOD=false 关闭心情。 */
+    CHRONO_COMPANION_MOOD:                  (v) => { deepSet(env, 'companion.moodEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },

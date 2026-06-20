@@ -58,6 +58,8 @@ export interface OfflineResponderInput {
   };
   /** 对话语言（ADR-0055 多语种）：决定固定回复用哪套模板。缺省 'zh-CN'（向后兼容，旧行为不变）。 */
   locale?: SupportedLocale;
+  /** 当前心情标签（ADR-0056 类人化）：给知识/离线回应加心情前缀。缺省/neutral → 无前缀（零回归）。 */
+  moodLabel?: 'positive' | 'negative' | 'excited' | 'calm' | 'neutral';
 }
 
 export type OfflineResponseKind =
@@ -106,6 +108,8 @@ export class OfflineConversationResponder {
     const narrative = input.narrative.trim();
     /* 多语种：缺省 zh-CN（向后兼容，旧行为不变）。固定回复模板取自 companion-locale。 */
     const locale = input.locale ?? 'zh-CN';
+    /* 心情前缀（ADR-0056）：neutral/缺省 → 空（零回归）。仅用于非 escalate 的知识/离线回应。 */
+    const moodPrefix = companionLocale(locale).reply.moodPrefix(input.moodLabel ?? 'neutral');
 
     /* 策略 1：never_discuss——输入命中即安全拒答（离线同样不泄露） */
     if (this.matchesBoundary(input.userInput, input.boundaries, 'never_discuss')) {
@@ -119,6 +123,8 @@ export class OfflineConversationResponder {
     const usable = this.selectUsableKnowledge(input.relevantKnowledge);
     if (usable.length > 0) {
       let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput, locale);
+      /* 心情前缀（非 escalate）：拼在最前，让回应「有心情」。neutral → 空，输出与原一致（零回归）。 */
+      if (!escalate && moodPrefix.length > 0) content = `${moodPrefix}\n${content}`;
       /* P5 主动响应增强：知识回应后追加确定性 follow-up（提近期成长/邀请继续），
        * 仅在非 escalate 时追加（escalate 已是人工跟进语义，不再主动延展话题）。 */
       const followUp = !escalate ? this.composeProactiveFollowUp(input.proactiveReply, locale) : '';
@@ -138,7 +144,8 @@ export class OfflineConversationResponder {
     }
 
     /* 策略 3：无知识——诚实告知离线限制，不编造 */
-    const honest = this.composeHonestOffline(narrative, escalate, locale);
+    let honest = this.composeHonestOffline(narrative, escalate, locale);
+    if (!escalate && moodPrefix.length > 0) honest = `${moodPrefix}\n${honest}`;
     /* 叙事本身也可能携带受限主题 */
     if (this.outputLeaksNeverDiscuss(honest, input.boundaries)) {
       return this.blockResponse();
