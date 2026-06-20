@@ -528,7 +528,9 @@ const companionSchema = z.object({
   relationshipEnabled: z.coerce.boolean().default(true),
   /** 时间感知（ADR-0056 类人化）：好久不见/又见面了/认识N天，存在的连续性。默认开。 */
   temporalEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true });
+  /** 观点/不确定立场（ADR-0056 类人化）：grounding 弱时迟疑、评价问题给「我觉得」。默认开。 */
+  opinionEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true, opinionEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -751,6 +753,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COMPANION_RELATIONSHIP:          (v) => { deepSet(env, 'companion.relationshipEnabled', v !== 'false' && v !== '0'); },
     /* ADR-0056 时间感知开关（默认开，可关）：CHRONO_COMPANION_TEMPORAL=false 关闭久别重逢问候。 */
     CHRONO_COMPANION_TEMPORAL:              (v) => { deepSet(env, 'companion.temporalEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0056 观点/立场开关（默认开，可关）：CHRONO_COMPANION_OPINION=false 关闭迟疑/「我觉得」。 */
+    CHRONO_COMPANION_OPINION:               (v) => { deepSet(env, 'companion.opinionEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },

@@ -20,6 +20,7 @@ import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js
 import type { ConversationHistoryEntry, RelevantKnowledge } from './conversation-types.js';
 import type { SupportedLocale } from '../i18n/locale-resolver.js';
 import { companionLocale } from './companion-locale.js';
+import { classifyStance, isOpinionQuestion, type Stance } from './stance.js';
 
 /** 离线回应器所需的确定性边界匹配能力（由 ValueGuard 提供） */
 export interface DeterministicBoundaryMatcher {
@@ -60,6 +61,8 @@ export interface OfflineResponderInput {
   locale?: SupportedLocale;
   /** 当前心情标签（ADR-0056 类人化）：给知识/离线回应加心情前缀。缺省/neutral → 无前缀（零回归）。 */
   moodLabel?: 'positive' | 'negative' | 'excited' | 'calm' | 'neutral';
+  /** 观点/不确定立场开关（ADR-0056 类人化）：关 → 立场恒 confident（无前缀，零回归）。缺省开。 */
+  stanceEnabled?: boolean;
 }
 
 export type OfflineResponseKind =
@@ -122,7 +125,15 @@ export class OfflineConversationResponder {
     /* 策略 2：有可用知识——以人格口吻落地呈现 */
     const usable = this.selectUsableKnowledge(input.relevantKnowledge);
     if (usable.length > 0) {
-      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput, locale);
+      /* ADR-0056 立场：依 grounding 强度 + 是否评价类问题确定性判（confident/tentative/opinion）。
+       * escalate（人工跟进）不带个人观点/迟疑，保持中立——立场仅作用于普通知识回应。 */
+      const stance: Stance = escalate || input.stanceEnabled === false
+        ? 'confident'
+        : classifyStance(isOpinionQuestion(input.userInput, locale), {
+            topRelevance: usable[0]?.relevance ?? MIN_USEFUL_RELEVANCE,
+            count: usable.length,
+          });
+      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput, locale, stance);
       /* 心情前缀（非 escalate）：拼在最前，让回应「有心情」。neutral → 空，输出与原一致（零回归）。 */
       if (!escalate && moodPrefix.length > 0) content = `${moodPrefix}\n${content}`;
       /* P5 主动响应增强：知识回应后追加确定性 follow-up（提近期成长/邀请继续），
@@ -200,13 +211,15 @@ export class OfflineConversationResponder {
     escalate: boolean,
     userInput: string,
     locale: SupportedLocale,
+    stance: Stance = 'confident',
   ): string {
     const t = companionLocale(locale).reply;
     const parts: string[] = [];
     if (narrative.length > 0) {
       parts.push(narrative);
     }
-    parts.push(t.knowledgeLeadIn(userInput));
+    /* ADR-0056 立场前缀：迟疑（不太确定）/表态（我觉得）拼在 lead-in 前。confident → 空（零回归）。 */
+    parts.push(`${t.stancePrefix(stance)}${t.knowledgeLeadIn(userInput)}`);
     for (const k of knowledge) {
       const snippet = k.content.trim().slice(0, KNOWLEDGE_SNIPPET_CAP);
       parts.push(`· ${snippet}`);
