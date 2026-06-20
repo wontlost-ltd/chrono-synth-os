@@ -532,7 +532,9 @@ const companionSchema = z.object({
   opinionEnabled: z.coerce.boolean().default(true),
   /** 回应变化性（ADR-0056 类人化）：按轮次确定性轮换措辞，消除复读机感。默认开。 */
   variabilityEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true, opinionEnabled: true, variabilityEnabled: true });
+  /** 内在驱动·主动性（ADR-0056 类人化）：主动「我突然想到你之前提到过X」回想过往对话。默认开。 */
+  proactiveEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true, opinionEnabled: true, variabilityEnabled: true, proactiveEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -759,6 +761,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COMPANION_OPINION:               (v) => { deepSet(env, 'companion.opinionEnabled', v !== 'false' && v !== '0'); },
     /* ADR-0056 回应变化性开关（默认开，可关）：CHRONO_COMPANION_VARIABILITY=false 固定措辞不轮换。 */
     CHRONO_COMPANION_VARIABILITY:           (v) => { deepSet(env, 'companion.variabilityEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0056 主动性开关（默认开，可关）：CHRONO_COMPANION_PROACTIVE=false 关闭「我突然想到」回想。 */
+    CHRONO_COMPANION_PROACTIVE:             (v) => { deepSet(env, 'companion.proactiveEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },

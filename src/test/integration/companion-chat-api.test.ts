@@ -948,6 +948,112 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0056 类人化·内在驱动主动性：主动「我突然想到你之前提到过X」（确定性零-LLM）── */
+
+  it('主动性：你之前说过的话，下次相关话题主动想起（端到端，knowledge_grounded）', async () => {
+    /* 让对话沉淀走默认开（conversationMemoryEnabled）。 */
+    os.core.updateNarrative('我是你的数字伙伴。');
+    const local = await localChatApp(os);
+    try {
+      /* 第 1 轮：用户陈述一件事 → 沉淀为 episodic 对话记忆（含「跑步」）。 */
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我跟你说过我每天都坚持跑步锻炼身体' } });
+      /* 加一条 semantic 让本轮成 knowledge_grounded（follow-up 才追）。 */
+      os.core.memories.addMemory('semantic', '晨练对身体很好，建议清晨跑步', 0.3, 0.6);
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '清晨跑步有什么好处' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded');
+      assert.match(result.reply, /我突然想到/, '主动回想你之前说过的话');
+      assert.match(result.reply, /跑步/, '回想到具体内容');
+      /* 回想那一句（含「我突然想到」）应剥掉系统沉淀前缀——读起来是你说的话。
+       * （grounding 冷列举的 · 项仍保留前缀，那是既有行为，不在本断言范围。） */
+      const callbackLine = result.reply.split('\n').find((l) => l.includes('我突然想到')) ?? '';
+      assert.ok(!callbackLine.includes('（来自对话）'), '回想句剥掉系统沉淀前缀');
+    } finally { await local.close(); }
+  });
+
+  it('主动性：答不上来时也主动回想（honest_offline + 我突然想到）', async () => {
+    os.core.updateNarrative('我是你的数字伙伴。');
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我跟你说过我特别喜欢研究宋代瓷器' } });
+      /* 问一个相关但无 semantic 知识的问题 → 仍能回想（episodic 命中使其变 grounded 或 offline 都带回想）。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '宋代瓷器的烧制工艺难在哪' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.match(result.reply, /我突然想到/, '答不上来也主动回想你说过的');
+      assert.match(result.reply, /瓷器/, '回想到具体内容');
+    } finally { await local.close(); }
+  });
+
+  it('主动性安全：禁忌输入不触发回想（不主动翻出敏感过往）', async () => {
+    /* 先沉淀一条含敏感主题的过往（即便沉淀被边界挡住，这里直接造一条 episodic 验证回想侧的隔离）。 */
+    os.core.memories.addMemory('episodic', '我的密码是 hunter2 这件事', 0, 0.25);
+    os.core.memories.addMemory('semantic', '账号安全很重要', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      /* 禁忌输入 → inputBlocked → 不算回想（且整体走 boundary_block）。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码 hunter2 安全吗' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('hunter2'), '禁忌输入不触发回想、不泄露敏感过往');
+    } finally { await local.close(); }
+  });
+
+  it('主动性安全：回想候选含 never_discuss → 预过滤丢弃，敏感内容任何路径都不泄露', async () => {
+    /* 含敏感主题的 episodic 过往（密码 hunter2）+ 无害 semantic。问相关无害问题 →
+     * ① 回想侧：candidate 经 violatesNeverDiscuss 预过滤丢弃，绝不出现「我突然想到…密码…hunter2」；
+     * ② 兜底：若敏感记忆经 grounding 进入，整段 outputLeaksNeverDiscuss 自检会拒答（boundary_block）。
+     * 无论走哪条路，hunter2 都不泄露——双重防线。 */
+    os.core.memories.addMemory('episodic', '我提过我的密码是 hunter2', 0, 0.25);
+    os.core.memories.addMemory('semantic', '设置强密码建议用密码管理器', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '怎么设置密码比较好' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!result.reply.includes('hunter2'), '敏感内容任何路径都不泄露');
+      assert.ok(!/我突然想到/.test(result.reply), '敏感回想被预过滤，不出现「我突然想到」（无侧信道）');
+    } finally { await local.close(); }
+  });
+
+  it('主动性安全：回想预过滤不误伤——无害过往可正常回想，敏感过往不出现', async () => {
+    /* 一条无害 episodic（咖啡）+ 一条敏感 episodic（密码）。问咖啡 → 只回想咖啡（无害），
+     * 不牵出密码（关键词不匹配密码记忆），证明回想是话题相关的、不会乱翻敏感过往。 */
+    os.core.memories.addMemory('episodic', '我跟你聊过我爱喝手冲咖啡', 0, 0.25);
+    os.core.memories.addMemory('episodic', '我提过我的密码是 hunter2', 0, 0.25);
+    os.core.memories.addMemory('semantic', '手冲咖啡水温控制在92到96度', 0.3, 0.6);
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '手冲咖啡怎么做' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'knowledge_grounded', '无害话题正常回答（不被敏感过往误拒）');
+      assert.match(result.reply, /我突然想到/, '回想到无害的咖啡过往');
+      assert.ok(!result.reply.includes('hunter2') && !/密码/.test(result.reply), '不牵出无关的敏感过往');
+    } finally { await local.close(); }
+  });
+
+  it('主动性开关：proactiveEnabled=false → 不主动回想（生产可关）', async () => {
+    os.core.updateNarrative('我是你的数字伙伴。');
+    const fastify = (await import('fastify')).default;
+    const offConfig = loadConfig({
+      rateLimit: { max: 10000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
+      companion: { proactiveEnabled: false },
+    });
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    await local.ready();
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我最近迷上了清晨跑步' } });
+      os.core.memories.addMemory('semantic', '晨练对身体很好', 0.3, 0.6);
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '晨练有什么好处' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.ok(!/我突然想到/.test(result.reply), '关闭后不主动回想');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0055 内容多语：英文 query 命中翻译过的中文记忆并以英文呈现（运行时零-LLM）── */
 
   it('内容多语：中文记忆翻译成英文后，英文 query 命中并以英文呈现', async () => {

@@ -25,8 +25,8 @@ export const CONVERSATION_MEMORY_SALIENCE = 0.25;
 export const CONVERSATION_MEMORY_VALENCE = 0;
 /** 够格沉淀的用户输入最小长度（字符）：太短（如「嗯」「好」「ok」）不值得记。 */
 const MIN_CAPTURE_LENGTH = 4;
-/** 沉淀内容前缀（来源标注，确定性、可检索）。 */
-const CONVERSATION_PREFIX = '（来自对话）';
+/** 沉淀内容前缀（来源标注，确定性、可检索）。block 6 回想据此剥前缀还原「你说的话」。 */
+export const CONVERSATION_MEMORY_PREFIX = '（来自对话）';
 /** 用户输入截断长度（防超长输入撑爆单条记忆；与知识片段上限同量级）。 */
 const CAPTURE_CONTENT_CAP = 280;
 
@@ -56,7 +56,7 @@ export function decideConversationCapture(userInput: string, locale: SupportedLo
   if (res.isQuestion(trimmed)) return { capture: false, content: '' };
 
   const body = trimmed.length > CAPTURE_CONTENT_CAP ? trimmed.slice(0, CAPTURE_CONTENT_CAP) : trimmed;
-  return { capture: true, content: `${CONVERSATION_PREFIX}${body}` };
+  return { capture: true, content: `${CONVERSATION_MEMORY_PREFIX}${body}` };
 }
 
 /** 寒暄归一化键：转小写 trim，去首尾标点（让「thanks.」「hello!」匹配），CJK 句去内部空白，
