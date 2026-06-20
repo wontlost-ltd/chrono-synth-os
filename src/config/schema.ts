@@ -530,7 +530,9 @@ const companionSchema = z.object({
   temporalEnabled: z.coerce.boolean().default(true),
   /** 观点/不确定立场（ADR-0056 类人化）：grounding 弱时迟疑、评价问题给「我觉得」。默认开。 */
   opinionEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true, opinionEnabled: true });
+  /** 回应变化性（ADR-0056 类人化）：按轮次确定性轮换措辞，消除复读机感。默认开。 */
+  variabilityEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true, temporalEnabled: true, opinionEnabled: true, variabilityEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -755,6 +757,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_COMPANION_TEMPORAL:              (v) => { deepSet(env, 'companion.temporalEnabled', v !== 'false' && v !== '0'); },
     /* ADR-0056 观点/立场开关（默认开，可关）：CHRONO_COMPANION_OPINION=false 关闭迟疑/「我觉得」。 */
     CHRONO_COMPANION_OPINION:               (v) => { deepSet(env, 'companion.opinionEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0056 回应变化性开关（默认开，可关）：CHRONO_COMPANION_VARIABILITY=false 固定措辞不轮换。 */
+    CHRONO_COMPANION_VARIABILITY:           (v) => { deepSet(env, 'companion.variabilityEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },

@@ -91,6 +91,8 @@ export function registerCompanionChatRoutes(
   const temporalEnabled = config?.companion.temporalEnabled ?? true;
   /* 观点/不确定立场开关（ADR-0056）：缺省默认开。 */
   const opinionEnabled = config?.companion.opinionEnabled ?? true;
+  /* 回应变化性开关（ADR-0056）：缺省默认开。 */
+  const variabilityEnabled = config?.companion.variabilityEnabled ?? true;
 
   /** 取某记忆的 valence（用于心情漂移的次要信号）。 */
   function memoryValenceOf(tenantOS: ChronoSynthOS, memoryId: string): number | undefined {
@@ -240,6 +242,9 @@ export function registerCompanionChatRoutes(
      * 时间感知：在 record **之前**读旧 last_seen/first_met → 算久别档 → 生成确定性问候前缀
      * （好久不见/又见面了），sameSession 不打招呼。零-LLM、基于 now 时刻可复现。 */
     let greetingPrefix = '';
+    /* 回应变化性的轮次索引（ADR-0056）：用 record **后**的互动次数作确定性 seed——同状态同变体、
+     * 随关系推进自然轮换。关系关/禁忌输入 → 0 → 取原文（零回归）。 */
+    let variantSeed = 0;
     if (relationshipEnabled && !inputBlocked) {
       const relStore = new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
       const now = tenantOS.getClock().now();
@@ -250,6 +255,7 @@ export function registerCompanionChatRoutes(
         greetingPrefix = t.greetingPrefix(gap, rel.userName, days);
       }
       relStore.recordInteraction(now);
+      variantSeed = relStore.get().interactionCount;   // record 后的次数
     }
 
     /* 在回应**开头**拼久别问候前缀（好久不见/又见面了）。sameSession/first/关闭 → 前缀空 → 原文不变（零回归）。
@@ -370,6 +376,9 @@ export function registerCompanionChatRoutes(
       moodLabel: moodLabelNow,
       /* ADR-0056 立场：关 → 恒 confident（无前缀，零回归）。 */
       stanceEnabled: opinionEnabled,
+      /* ADR-0056 变化性：轮次 seed = 互动次数；关 → 取原文（零回归）。 */
+      variantSeed,
+      variabilityEnabled,
       /* 仅作用于 knowledge_grounded 回应（block/escalate/honest_offline 不追）。 */
       proactiveReply: recentGrowth !== undefined ? { recentGrowth } : {},
     });
