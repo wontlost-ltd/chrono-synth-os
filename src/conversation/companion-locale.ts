@@ -87,6 +87,14 @@ export interface CompanionLocaleResources {
   readonly summaryPatterns: readonly RegExp[];
   /** 评价/看法类问题模式（你觉得X怎么样 / 你喜欢X吗 / X好不好）——命中则回应可带「我觉得」式观点。 */
   readonly opinionQuestionPatterns: readonly RegExp[];
+  /** 回应变化性变体库（ADR-0056）：按轮次确定性轮换措辞，消除复读机感。每库**第 0 个=既有原文**
+   * （seed=0/缺省 → 取原文 → 零回归）。仅用于语义等价的表层措辞，绝不改变回应实质/安全性。 */
+  readonly replyVariants: {
+    /** knowledge 回应后的「邀请继续」一句（inviteContinue 的变体；[0]=原文）。 */
+    readonly inviteContinue: readonly string[];
+    /** knowledge 回应的离线说明脚注（offlineNote 的变体；[0]=原文）。 */
+    readonly offlineNote: readonly string[];
+  };
 }
 
 /* ── 中文（zh-CN）：抽取既有行为，逐字对齐原硬编码字符串，确保零回归 ─────────────── */
@@ -209,6 +217,25 @@ const zhCN: CompanionLocaleResources = {
     /(?:好不好|好喝吗|好吃吗|好用吗|值不值|值得吗|该不该|要不要|应不应该|对不对|行不行|靠谱吗)/,
     /在你看来|依你看|你的看法|你的观点/,
   ],
+  /* 回应变化性变体库（语义等价，仅换措辞，[0]=既有原文，零回归；周期错峰：邀请语 6 个、
+   * 脚注 5 个，不同周期降低「就这几句循环」的察觉感）。 */
+  replyVariants: {
+    inviteContinue: [
+      '如果你愿意，我们可以接着这个话题多聊一会儿。',  // [0] 原文
+      '这个话题挺有意思的，要不要再多聊聊？',
+      '你要是还想继续，我随时都在。',
+      '关于这个，我们可以再深入一点，如果你有兴趣的话。',
+      '想接着聊的话，我很乐意继续。',
+      '这里头还有不少可以展开的，你说呢？',
+    ],
+    offlineNote: [
+      '（当前离线，以上基于已学习的内容；联网后我可以补充更多。）',  // [0] 原文
+      '（这些都是我离线时已经记住的；等联网了我能讲得更全。）',
+      '（眼下离线，我只能基于学过的回答，联网后再帮你补充。）',
+      '（这是我离线状态下凭记忆给的，联网后能讲得更细。）',
+      '（以上来自我已学到的内容；等能联网时我再帮你查漏补缺。）',
+    ],
+  },
 };
 
 /* ── 英文（en）：与中文对等的新增资源 ──────────────────────────────────── */
@@ -352,6 +379,24 @@ const en: CompanionLocaleResources = {
     /in\s+your\s+(?:opinion|view)|your\s+(?:take|thoughts?)\s+on\b/i,
     /should\s+i\b/i,
   ],
+  /* 回应变化性变体库（语义等价，[0]=既有原文，零回归；周期错峰 6/5）。 */
+  replyVariants: {
+    inviteContinue: [
+      'If you like, we can keep talking about this.',  // [0] 原文
+      'This is an interesting topic — want to dig into it a bit more?',
+      "I'm here whenever you'd like to keep going.",
+      "We could go deeper on this, if you're curious.",
+      "Happy to keep going if you'd like.",
+      "There's more we could unpack here — what do you think?",
+    ],
+    offlineNote: [
+      "(I'm offline right now, so this is from what I've already learned; I can add more once I'm online.)",  // [0] 原文
+      "(This is all from what I'd already remembered offline; I can be more thorough once I'm online.)",
+      "(Offline for now, so I'm answering from what I've learned — I'll fill in more when I'm back online.)",
+      "(This is from memory while I'm offline; I can go into more detail once I'm connected.)",
+      "(All from what I've learned so far; I'll round it out when I can get online.)",
+    ],
+  },
 };
 
 /* ── 注册表 ────────────────────────────────────────────────────────── */

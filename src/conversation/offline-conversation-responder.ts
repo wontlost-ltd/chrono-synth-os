@@ -21,6 +21,7 @@ import type { ConversationHistoryEntry, RelevantKnowledge } from './conversation
 import type { SupportedLocale } from '../i18n/locale-resolver.js';
 import { companionLocale } from './companion-locale.js';
 import { classifyStance, isOpinionQuestion, type Stance } from './stance.js';
+import { variantPick } from './variability.js';
 
 /** 离线回应器所需的确定性边界匹配能力（由 ValueGuard 提供） */
 export interface DeterministicBoundaryMatcher {
@@ -63,6 +64,13 @@ export interface OfflineResponderInput {
   moodLabel?: 'positive' | 'negative' | 'excited' | 'calm' | 'neutral';
   /** 观点/不确定立场开关（ADR-0056 类人化）：关 → 立场恒 confident（无前缀，零回归）。缺省开。 */
   stanceEnabled?: boolean;
+  /**
+   * 回应变化性（ADR-0056 类人化）：确定性轮换措辞变体的「轮次索引」（通常传 interactionCount）。
+   * 同一状态 → 同变体（可复现）；随关系推进自然轮换，消除复读机感。缺省/0 → 取原文（零回归）。
+   * variabilityEnabled=false → 强制取原文（生产可关）。
+   */
+  variantSeed?: number;
+  variabilityEnabled?: boolean;
 }
 
 export type OfflineResponseKind =
@@ -113,6 +121,8 @@ export class OfflineConversationResponder {
     const locale = input.locale ?? 'zh-CN';
     /* 心情前缀（ADR-0056）：neutral/缺省 → 空（零回归）。仅用于非 escalate 的知识/离线回应。 */
     const moodPrefix = companionLocale(locale).reply.moodPrefix(input.moodLabel ?? 'neutral');
+    /* 回应变化性（ADR-0056）：轮次索引（关闭/缺省 → 0 → 取原文，零回归）。 */
+    const variantSeed = input.variabilityEnabled === false ? 0 : (input.variantSeed ?? 0);
 
     /* 策略 1：never_discuss——输入命中即安全拒答（离线同样不泄露） */
     if (this.matchesBoundary(input.userInput, input.boundaries, 'never_discuss')) {
@@ -133,12 +143,12 @@ export class OfflineConversationResponder {
             topRelevance: usable[0]?.relevance ?? MIN_USEFUL_RELEVANCE,
             count: usable.length,
           });
-      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput, locale, stance);
+      let content = this.composeFromKnowledge(narrative, usable, escalate, input.userInput, locale, stance, variantSeed);
       /* 心情前缀（非 escalate）：拼在最前，让回应「有心情」。neutral → 空，输出与原一致（零回归）。 */
       if (!escalate && moodPrefix.length > 0) content = `${moodPrefix}\n${content}`;
       /* P5 主动响应增强：知识回应后追加确定性 follow-up（提近期成长/邀请继续），
        * 仅在非 escalate 时追加（escalate 已是人工跟进语义，不再主动延展话题）。 */
-      const followUp = !escalate ? this.composeProactiveFollowUp(input.proactiveReply, locale) : '';
+      const followUp = !escalate ? this.composeProactiveFollowUp(input.proactiveReply, locale, variantSeed) : '';
       if (followUp.length > 0) content = `${content}\n${followUp}`;
       /* 输出自检：拼装结果（含 follow-up）若携带 never_discuss 主题（来自知识/叙事/成长片段），
        * 则不发出，退化为安全拒答（堵住 userInput 未命中但内容泄露的路径，红线 4 覆盖 follow-up）。 */
@@ -212,8 +222,10 @@ export class OfflineConversationResponder {
     userInput: string,
     locale: SupportedLocale,
     stance: Stance = 'confident',
+    variantSeed = 0,
   ): string {
-    const t = companionLocale(locale).reply;
+    const resources = companionLocale(locale);
+    const t = resources.reply;
     const parts: string[] = [];
     if (narrative.length > 0) {
       parts.push(narrative);
@@ -224,7 +236,8 @@ export class OfflineConversationResponder {
       const snippet = k.content.trim().slice(0, KNOWLEDGE_SNIPPET_CAP);
       parts.push(`· ${snippet}`);
     }
-    parts.push(t.offlineNote);
+    /* ADR-0056 变化性：离线脚注按轮次确定性轮换（seed=0 → 原文，零回归）。 */
+    parts.push(variantPick(resources.replyVariants.offlineNote, variantSeed));
     if (escalate) {
       parts.push(locale === 'zh-CN' ? '（已记录为需要人工跟进）' : '(Flagged for human follow-up.)');
     }
@@ -237,9 +250,9 @@ export class OfflineConversationResponder {
    *   - 无成长片段 → 仅邀请继续。
    * 缺省（proactiveReply 未传）→ 返回空串（不追加，向后兼容）。相同输入 → 相同输出。
    */
-  private composeProactiveFollowUp(cfg: { recentGrowth?: string } | undefined, locale: SupportedLocale): string {
+  private composeProactiveFollowUp(cfg: { recentGrowth?: string } | undefined, locale: SupportedLocale, variantSeed = 0): string {
     if (!cfg) return '';
-    const t = companionLocale(locale).reply;
+    const resources = companionLocale(locale);
     const growth = cfg.recentGrowth?.trim().replace(/\s+/g, ' ') ?? '';
     if (growth.length > 0) {
       const snippet = growth.length > PROACTIVE_GROWTH_CAP ? `${growth.slice(0, PROACTIVE_GROWTH_CAP)}…` : growth;
@@ -247,7 +260,8 @@ export class OfflineConversationResponder {
         ? `对了——我最近也在变化：${snippet}。你要是好奇，我们可以接着聊。`
         : `By the way — I've been changing lately: ${snippet}. If you're curious, we can keep talking.`;
     }
-    return t.inviteContinue;
+    /* ADR-0056 变化性：邀请继续语按轮次确定性轮换（seed=0 → 原文，零回归）。 */
+    return variantPick(resources.replyVariants.inviteContinue, variantSeed);
   }
 
   /** 无知识时的诚实离线回应 */

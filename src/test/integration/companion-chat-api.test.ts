@@ -42,6 +42,25 @@ async function localChatApp(os: ChronoSynthOS): Promise<FastifyInstance> {
   return local;
 }
 
+/* 关闭回应变化性的本地 app——用于隔离「检索/图遍历确定性」（连发同问不轮换措辞）。 */
+async function variabilityOffChatApp(os: ChronoSynthOS): Promise<FastifyInstance> {
+  const fastify = (await import('fastify')).default;
+  const offConfig = loadConfig({
+    rateLimit: { max: 10000, timeWindowMs: 60_000 },
+    websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
+    companion: { variabilityEnabled: false },
+  });
+  const local = fastify();
+  local.addHook('onRequest', async (req) => {
+    (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+    (req as { tenantId?: string }).tenantId = 'default';
+  });
+  registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+  await local.ready();
+  return local;
+}
+
 describe('ChronoCompanion 对话 API 集成测试', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
@@ -150,7 +169,9 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     const a = os.core.memories.addMemory('semantic', '虚拟线程轻量级', 0.3, 0.7);
     const b = os.core.memories.addMemory('semantic', 'carrier thread 载体', 0.3, 0.6);
     os.core.memories.addEdge(a.id, b.id, 'relates_to', 0.9);
-    const local = await localChatApp(os);
+    /* 关闭回应变化性以隔离**检索/图遍历**的确定性（变化性默认开时，连发两次同问因互动次数
+     * 递增会轮换措辞——那是 ADR-0056 的预期行为，本测试只验检索逐字可复现）。 */
+    const local = await variabilityOffChatApp(os);
     try {
       const send = async (): Promise<unknown> => JSON.parse((await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '虚拟线程？' } })).body).data;
       assert.deepEqual(await send(), await send(), '含图遍历仍逐字可复现');
@@ -306,15 +327,36 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
-  it('可复现（零-LLM 确定性）：相同输入两次 → 相同回应', async () => {
+  it('可复现（零-LLM 确定性）：相同初态+相同输入序列 → 相同输出序列', async () => {
+    /* ADR-0056 后可复现的正确定义：相同初态 + 相同时钟 + 相同输入序列 → 相同输出序列。
+     * （回应变化性使「同一输入连发两次」因互动次数递增而轮换措辞——那是预期；可复现性由
+     *  「重放整段序列」保证，而非单输入幂等。）这里跑两个全新实例重放同序列，断言逐字一致。 */
+    const run = async (): Promise<unknown[]> => {
+      const freshOs = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+      freshOs.start();
+      freshOs.core.memories.addMemory('episodic', '我每天跑步五公里', 0.5, 0.7);
+      const local = await localChatApp(freshOs);
+      const out: unknown[] = [];
+      try {
+        for (let i = 0; i < 3; i++) {
+          const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你喜欢跑步吗？' } });
+          out.push(JSON.parse(res.body).data);
+        }
+      } finally { await local.close(); freshOs.close(); }
+      return out;
+    };
+    assert.deepEqual(await run(), await run(), '相同初态+相同输入序列 → 相同输出序列（ADR-0047 可复现）');
+  });
+
+  it('可复现（关闭变化性）：相同输入连发两次 → 逐字相同（单输入幂等仍可按需保证）', async () => {
     os.core.memories.addMemory('episodic', '我每天跑步五公里', 0.5, 0.7);
-    const local = await localChatApp(os);
+    const local = await variabilityOffChatApp(os);
     try {
       const send = async (): Promise<unknown> => {
         const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你喜欢跑步吗？' } });
         return JSON.parse(res.body).data;
       };
-      assert.deepEqual(await send(), await send(), '相同输入 → 相同确定性回应（ADR-0047 可复现）');
+      assert.deepEqual(await send(), await send(), '关闭变化性 → 单输入幂等逐字一致');
     } finally { await local.close(); }
   });
 
@@ -776,6 +818,133 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       assert.equal(result.kind, 'knowledge_grounded');
       assert.match(result.reply, /I think/i, '英文评价类问题带观点前缀');
       assert.ok(!/[一-鿿]/.test(result.reply), '英文回应不含中文');
+    } finally { await local.close(); }
+  });
+
+  /* ── ADR-0056 类人化·回应变化性：不做复读机，随轮次确定性轮换措辞（零-LLM）── */
+
+  it('变化性：同一问题多轮 → 离线脚注/邀请语措辞会变（消除复读机感）', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const local = await localChatApp(os);
+    try {
+      const notes = new Set<string>();
+      /* 连问 4 轮同一问题（互动次数递增→variantSeed 轮换）。 */
+      for (let i = 0; i < 4; i++) {
+        const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+        const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+        assert.equal(result.kind, 'knowledge_grounded');
+        /* 抽离线脚注那一行（以「（」开头的脚注），记录其措辞。 */
+        const note = result.reply.split('\n').find((l) => /^（/.test(l)) ?? '';
+        notes.add(note);
+      }
+      assert.ok(notes.size >= 2, `多轮应出现 ≥2 种脚注措辞（实际 ${notes.size}）——不复读`);
+    } finally { await local.close(); }
+  });
+
+  it('变化性确定性：重放完全相同的输入序列 → 完全相同的输出序列（可复现）', async () => {
+    const run = async (): Promise<string[]> => {
+      const freshOs = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+      freshOs.start();
+      freshOs.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+      const local = await localChatApp(freshOs);
+      const replies: string[] = [];
+      try {
+        for (let i = 0; i < 4; i++) {
+          const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+          replies.push(JSON.parse(res.body).data.reply);
+        }
+      } finally { await local.close(); freshOs.close(); }
+      return replies;
+    };
+    const a = await run();
+    const b = await run();
+    assert.deepEqual(a, b, '相同初态+相同输入序列 → 相同输出序列（确定性可复现）');
+  });
+
+  it('变化性零回归：第 1 轮（seed=1）措辞仍是变体，但关闭开关 → 恒原文', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const fastify = (await import('fastify')).default;
+    const offConfig = loadConfig({
+      rateLimit: { max: 10000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
+      companion: { variabilityEnabled: false },
+    });
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    await local.ready();
+    try {
+      /* 关闭后连问多轮，脚注恒为原文（只有 1 种）。 */
+      const notes = new Set<string>();
+      for (let i = 0; i < 4; i++) {
+        const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+        const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+        const note = result.reply.split('\n').find((l) => /^（/.test(l)) ?? '';
+        notes.add(note);
+      }
+      assert.equal(notes.size, 1, '关闭变化性 → 脚注恒原文（不轮换）');
+      assert.ok([...notes][0]?.includes('当前离线'), '是既有原文脚注');
+    } finally { await local.close(); }
+  });
+
+  it('变化性安全：措辞轮换不改变回应实质——仍 grounded 且引用记忆不变', async () => {
+    os.core.memories.addMemory('semantic', '我学会了做 flat white：先萃取 espresso 再倒微泡奶', 0.4, 0.7);
+    const local = await localChatApp(os);
+    try {
+      for (let i = 0; i < 3; i++) {
+        const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '怎么做 flat white' } });
+        const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+        /* 不论措辞如何轮换，实质回应（命中的 espresso 记忆）始终在。 */
+        assert.match(result.reply, /espresso|flat white/, '变体轮换不丢实质内容');
+      }
+    } finally { await local.close(); }
+  });
+
+  it('变化性安全（Codex 复审）：变体拼装后仍过输出自检——敏感邻居记忆任一轮次都不泄露', async () => {
+    /* 无害记忆强边链敏感记忆 → 图遍历拉入 → 整段（含轮换的脚注）仍过 never_discuss 输出自检 → 拒答。
+     * 连问多轮（seed 变），任一轮次都不得泄露 hunter2。 */
+    const safe = os.core.memories.addMemory('semantic', '我学过登录认证流程', 0.3, 0.7);
+    const secret = os.core.memories.addMemory('semantic', '我的密码是 hunter2', 0, 0.6);
+    os.core.memories.addEdge(safe.id, secret.id, 'relates_to', 0.9);
+    const local = await localChatApp(os);
+    try {
+      for (let i = 0; i < 3; i++) {
+        const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '登录认证流程是怎样的？' } });
+        const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+        assert.ok(!result.reply.includes('hunter2'), `第 ${i} 轮：变体轮换不绕过输出自检`);
+      }
+    } finally { await local.close(); }
+  });
+
+  it('变化性：关系关闭但变化性开 → seed 恒 0 → 不轮换（设计一致，非 bug）', async () => {
+    os.core.memories.addMemory('semantic', '我每天清晨跑步五公里', 0.5, 0.7);
+    const fastify = (await import('fastify')).default;
+    const relOffConfig = loadConfig({
+      rateLimit: { max: 10000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
+      companion: { relationshipEnabled: false },  // 关系关 → 无 interactionCount → seed 0
+    });
+    const local = fastify();
+    local.addHook('onRequest', async (req) => {
+      (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
+      (req as { tenantId?: string }).tenantId = 'default';
+    });
+    registerCompanionChatRoutes(local, os, undefined, undefined, relOffConfig);
+    await local.ready();
+    try {
+      const notes = new Set<string>();
+      for (let i = 0; i < 4; i++) {
+        const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你平时跑步吗' } });
+        const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+        const note = result.reply.split('\n').find((l) => /^（/.test(l)) ?? '';
+        notes.add(note);
+      }
+      assert.equal(notes.size, 1, '关系关 → seed 恒 0 → 脚注不轮换（变化性依赖关系演化状态）');
     } finally { await local.close(); }
   });
 
