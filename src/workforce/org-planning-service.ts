@@ -103,7 +103,11 @@ export class OrgPlanningService {
         this.store.insertTask({
           id: taskId, orgId, goalId, parentTaskId: null, assignedToWorkerId: assigneeId,
           accountableWorkerId: managerWorkerId, title: spec.title, taskType: spec.taskType,
-          status: 'delegated', resultSummary: null, createdAt: ts, updatedAt: ts,
+          status: 'delegated',
+          /* A0 契约字段落库（来自 playbook 的稳定契约，供 B/D/E 复用）。 */
+          riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
+          acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
+          resultSummary: null, createdAt: ts, updatedAt: ts,
         });
         steps++; /* 任务创建 + 委派 */
 
@@ -123,7 +127,10 @@ export class OrgPlanningService {
         tasks.push({
           id: taskId, tenantId: '', orgId, goalId, parentTaskId: null, assignedToWorkerId: assigneeId,
           accountableWorkerId: managerWorkerId, title: spec.title, taskType: spec.taskType,
-          status: 'submitted', resultSummary: result, createdAt: ts, updatedAt: tsExec,
+          status: 'submitted',
+          riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
+          acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
+          resultSummary: result, createdAt: ts, updatedAt: tsExec,
         });
       }
 

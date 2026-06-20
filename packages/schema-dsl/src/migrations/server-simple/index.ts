@@ -86,6 +86,7 @@ export { v094_memory_translations } from './v094.js';
 export { v095_companion_mood } from './v095.js';
 export { v096_companion_relationship } from './v096.js';
 export { v097_digital_workforce } from './v097.js';
+export { v098_workforce_task_contract } from './v098.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -176,6 +177,7 @@ import { v094_memory_translations } from './v094.js';
 import { v095_companion_mood } from './v095.js';
 import { v096_companion_relationship } from './v096.js';
 import { v097_digital_workforce } from './v097.js';
+import { v098_workforce_task_contract } from './v098.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -266,4 +268,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v095_companion_mood,
   v096_companion_relationship,
   v097_digital_workforce,
+  v098_workforce_task_contract,
 ];

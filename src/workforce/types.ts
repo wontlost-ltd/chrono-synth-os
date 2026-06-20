@@ -93,6 +93,11 @@ export interface OrgTask {
   readonly title: string;
   readonly taskType: string;
   readonly status: TaskStatus;
+  /* ── A0 契约字段（来自 TaskSpec，落库供 B/D/E 复用）── */
+  readonly riskLevel: RiskLevel;
+  readonly allowsToolExecution: boolean;
+  readonly acceptanceCriteria: string;
+  readonly requiredCapabilities: readonly string[];
   /** 执行产出摘要（null = 未完成）。 */
   readonly resultSummary: string | null;
   readonly createdAt: number;
@@ -115,14 +120,37 @@ export interface TaskReport {
   readonly createdAt: number;
 }
 
+/** 任务风险等级（A0 契约：D 真实执行据此决定走不走人类审批门）。 */
+export type RiskLevel = 'low' | 'medium' | 'high';
+
 /* ── 确定性分解 playbook 接口（智能来源：本切片硬编码 reference，未来由蒸馏编译）── */
 
-/** 分解出的一个任务规格（playbook 输出，尚未落库）。 */
+/**
+ * 分解出的一个任务规格（playbook 输出，尚未落库）——**稳定契约**（A0）。
+ * 后续切片据此协作/执行/展示，不再各自发明临时字段：
+ *   - riskLevel：D 真实执行据此决定审批门。
+ *   - allowsToolExecution：标记该任务**未来**是否允许走真实工具(ToolInvocationPipeline)。字段可为 true
+ *     （如发布环节），但 **A0 不据此启用真实工具**——执行仍由 service stub 完成；D 切片接入后才生效。
+ *   - acceptanceCriteria：E 展示 / D 判定完成。
+ *   - requiredCapabilities：B/D 据此匹配（能力标签）。
+ */
 export interface TaskSpec {
   /** 该任务该由哪个岗位 role_code 的下属执行（manager 据此在下属里匹配）。 */
   readonly assigneeRoleCode: string;
   readonly title: string;
   readonly taskType: string;
+  readonly riskLevel: RiskLevel;
+  readonly allowsToolExecution: boolean;
+  readonly acceptanceCriteria: string;
+  readonly requiredCapabilities: readonly string[];
+}
+
+/** 质量验收维度（playbook 级 rubric；E 展示 / 未来质检用）。 */
+export interface QualityRubricDimension {
+  /** 维度名（如「准确性」「完整性」）。 */
+  readonly dimension: string;
+  /** 该维度的验收说明。 */
+  readonly description: string;
 }
 
 /**
@@ -132,6 +160,8 @@ export interface TaskSpec {
 export interface DecompositionPlaybook {
   /** 适用的 goalType。 */
   readonly goalType: string;
+  /** 该 goal type 的质量验收维度（rubric）——稳定契约，后续质检/展示复用。 */
+  readonly qualityRubric: readonly QualityRubricDimension[];
   /** 分解函数：给定目标标题/描述，确定性产出任务规格序列。 */
   decompose(goal: { readonly title: string; readonly description: string }): readonly TaskSpec[];
 }
