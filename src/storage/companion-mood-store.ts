@@ -29,7 +29,10 @@ export class CompanionMoodStore {
         valence: clampRange(row.valence, -1, 1),
         arousal: clampRange(row.arousal, 0, 1),
       },
-      updatedAt: typeof row.updated_at === 'number' ? row.updated_at : null,
+      /* updated_at 是 bigint：SQLite 返回 number，Postgres node-pg 返回 string。统一 Number() 强转
+       * （非有限 → null）——否则 PG 上 typeof!=='number' 误判为 null，elapsedMs 恒 0，心情时间回归
+       * 整块在 Postgres 上静默失效。与 companion-relationship-store / avatar-autorun-store 同款口径。 */
+      updatedAt: coerceTimestamp(row.updated_at),
     };
   }
 
@@ -47,4 +50,11 @@ export class CompanionMoodStore {
 /** 落库/读出时再夹一次范围（防脏数据）。 */
 function clampRange(x: number, lo: number, hi: number): number {
   return Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : (lo + hi) / 2;
+}
+
+/** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → null。 */
+function coerceTimestamp(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }

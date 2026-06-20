@@ -37,9 +37,12 @@ export class CompanionRelationshipStore {
     const name = row.user_name?.trim();
     return {
       userName: name && name.length > 0 ? name : undefined,
-      interactionCount: Number.isFinite(row.interaction_count) ? row.interaction_count : 0,
-      firstMetAt: typeof row.first_met_at === 'number' ? row.first_met_at : null,
-      lastSeenAt: typeof row.last_seen_at === 'number' ? row.last_seen_at : null,
+      /* 时间戳是 bigint：SQLite 返回 number，Postgres node-pg 返回 string。统一用 Number() 强转
+       * （非 null 才转，保留「从未互动」的 null 语义）——否则 PG 上 typeof!=='number' 误判为 null，
+       * 导致时间感知（好久不见/认识N天）整块在 Postgres 上静默失效。与 avatar-autorun-store 同款口径。 */
+      interactionCount: coerceNumber(row.interaction_count) ?? 0,
+      firstMetAt: coerceNumber(row.first_met_at),
+      lastSeenAt: coerceNumber(row.last_seen_at),
     };
   }
 
@@ -65,6 +68,16 @@ export class CompanionRelationshipStore {
     ).run(this.tenantId, this.personaId, clean, now, now);
     return clean;
   }
+}
+
+/**
+ * 把 DB 返回的数值列强转为 number；null/undefined → null，NaN → null。
+ * 跨驱动统一：SQLite 返回 number，Postgres bigint 返回 string，Number() 两者皆可。
+ */
+function coerceNumber(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** 用户名清洗：去控制字符/尖括号/首尾标点，截断 40。 */
