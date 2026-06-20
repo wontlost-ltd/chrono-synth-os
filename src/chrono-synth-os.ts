@@ -22,7 +22,12 @@ import { LifeSimulationStore } from './storage/life-simulation-store.js';
 import { type IDatabase, createMemoryDatabase } from './storage/index.js';
 import { runDslSqliteMigrations } from './storage/dsl-migrations-runner.js';
 import { resolvePersonaUnverifiedGrowthBudget } from './storage/persona-governance-store.js';
-import { computeDynamicGrowthBudget } from './intelligence/dynamic-growth-budget.js';
+import {
+  computeDynamicGrowthBudget,
+  growthAggressivenessFromDecisionStyle,
+  paramsForAggressiveness,
+  DEFAULT_DYNAMIC_GROWTH_BUDGET_PARAMS,
+} from './intelligence/dynamic-growth-budget.js';
 import { registerCoreSelfExecutors } from './storage/executors/index.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
@@ -228,7 +233,13 @@ export class ChronoSynthOS {
         const override = resolvePersonaUnverifiedGrowthBudget(this.db, this.tenantId, personaId);
         if (override !== undefined) return override;
         if (config.dynamicGrowthBudgetEnabled === false) return undefined;
-        const dynamic = computeDynamicGrowthBudget(this.core.memories.getMemoryCount());
+        /* 按性格调制动态预算曲线（ADR-0048）：从已落库 decision style 的 explorationBias+riskAppetite
+         * 派生激进度（explorer 激进/guardian 保守），调 openRatioMax/ceil。decision style 未写过
+         * （极早期连默认都没写）→ 用默认中性参数。U 形随成熟度机制不变，仅曲线高低随性格。 */
+        const params = this.core.decisionStyle.exists()
+          ? paramsForAggressiveness(growthAggressivenessFromDecisionStyle(this.core.decisionStyle.get()))
+          : DEFAULT_DYNAMIC_GROWTH_BUDGET_PARAMS;
+        const dynamic = computeDynamicGrowthBudget(this.core.memories.getMemoryCount(), params);
         return Math.min(dynamic, distillationPolicy.unverifiedGrowthBudgetPerWindow);
       },
     });

@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeDynamicGrowthBudget,
+  growthAggressivenessFromDecisionStyle,
+  paramsForAggressiveness,
+  NEUTRAL_AGGRESSIVENESS,
   DEFAULT_DYNAMIC_GROWTH_BUDGET_PARAMS as P,
 } from '../../intelligence/dynamic-growth-budget.js';
 
@@ -74,5 +77,68 @@ describe('computeDynamicGrowthBudget', () => {
       const b = computeDynamicGrowthBudget(100, bad);
       assert.ok(Number.isFinite(b) && b >= 0, `非法参数 ${JSON.stringify(bad)} → ${b} 应有限非负`);
     }
+  });
+});
+
+/* ── 成长激进度按性格调制（从 decision style 派生）── */
+describe('growthAggressivenessFromDecisionStyle', () => {
+  it('explorer（爱探索+敢冒险）→ 高激进度', () => {
+    const a = growthAggressivenessFromDecisionStyle({ explorationBias: 0.85, riskAppetite: 0.8 });
+    assert.ok(a > 0.7, `explorer aggr ${a} 应高`);
+  });
+  it('guardian（规避损失，真实原型值 exp0.15/risk0.2）→ 低激进度', () => {
+    const a = growthAggressivenessFromDecisionStyle({ explorationBias: 0.15, riskAppetite: 0.2 });
+    assert.ok(a < 0.3, `guardian aggr ${a} 应低`);
+  });
+  it('中性 → ≈0.5', () => {
+    const a = growthAggressivenessFromDecisionStyle({ explorationBias: 0.5, riskAppetite: 0.5 });
+    assert.equal(a, 0.5);
+  });
+  it('越界值 clamp 到 [0,1]，NaN → 0.5', () => {
+    assert.ok(growthAggressivenessFromDecisionStyle({ explorationBias: 5, riskAppetite: -3 }) >= 0);
+    assert.equal(growthAggressivenessFromDecisionStyle({ explorationBias: NaN, riskAppetite: 0.5 }), 0.5);
+  });
+});
+
+describe('paramsForAggressiveness + 端到端调制', () => {
+  it('激进度只调曲线高低（openRatioMax/ceil），floor/halfMemories 不变', () => {
+    const p = paramsForAggressiveness(0.8);
+    assert.equal(p.floor, P.floor, 'floor 保底不变');
+    assert.equal(p.halfMemories, P.halfMemories, '衰减半衰点不变');
+    assert.ok(p.openRatioMax > P.openRatioMax * 0.5);
+    assert.ok(p.ceil > 30, '激进 ceil 更高');
+  });
+
+  it('零回归（Codex 复审）：默认人格激进度(0.4)→DEFAULT params，与无 row 预算一致', () => {
+    /* 默认 decision style exp0.3/risk0.5 → aggr=0.4=NEUTRAL_AGGRESSIVENESS → 恰好 DEFAULT_PARAMS。
+     * 保证「有/无默认 decision_style row」的默认人格预算一致（既有 persona 不突变）。 */
+    assert.equal(NEUTRAL_AGGRESSIVENESS, 0.4);
+    const neutral = paramsForAggressiveness(NEUTRAL_AGGRESSIVENESS);
+    assert.equal(neutral.openRatioMax, P.openRatioMax, '中性 openRatioMax = DEFAULT');
+    assert.equal(neutral.ceil, P.ceil, '中性 ceil = DEFAULT');
+    /* 端到端：默认人格各 M 下预算 = 无 row 默认预算。 */
+    for (const M of [0, 10, 100, 500, 2000]) {
+      assert.equal(
+        computeDynamicGrowthBudget(M, neutral),
+        computeDynamicGrowthBudget(M, P),
+        `M=${M} 默认人格无突变`,
+      );
+    }
+  });
+
+  it('同成熟度下：explorer 预算 > 中性 > guardian（性格调激进度）', () => {
+    const M = 100;
+    const ea = growthAggressivenessFromDecisionStyle({ explorationBias: 0.85, riskAppetite: 0.8 });
+    const ga = growthAggressivenessFromDecisionStyle({ explorationBias: 0.3, riskAppetite: 0.2 });
+    const explorer = computeDynamicGrowthBudget(M, paramsForAggressiveness(ea));
+    const neutral = computeDynamicGrowthBudget(M, paramsForAggressiveness(0.5));
+    const guardian = computeDynamicGrowthBudget(M, paramsForAggressiveness(ga));
+    assert.ok(explorer > neutral && neutral > guardian, `应 explorer(${explorer}) > 中性(${neutral}) > guardian(${guardian})`);
+  });
+
+  it('保留 U 形：同性格下相对核心侵蚀比例仍随 M 递减', () => {
+    const p = paramsForAggressiveness(0.5);
+    const ratios = [10, 100, 500, 2000].map((m) => computeDynamicGrowthBudget(m, p) / m);
+    for (let i = 1; i < ratios.length; i++) assert.ok(ratios[i] <= ratios[i - 1]);
   });
 });
