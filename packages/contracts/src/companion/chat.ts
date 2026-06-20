@@ -30,7 +30,7 @@ export type CompanionChatRequestV1 = z.infer<typeof CompanionChatRequestV1Schema
  *     （记忆检索落地 / 诚实离线 / 边界拒答 / 升级）。
  */
 export const CompanionChatKindV1Schema = z.enum([
-  'self_identity', 'self_intro', 'summary', 'response_template', 'knowledge_grounded', 'honest_offline', 'boundary_block', 'boundary_escalate',
+  'self_identity', 'self_intro', 'summary', 'relationship', 'response_template', 'knowledge_grounded', 'honest_offline', 'boundary_block', 'boundary_escalate',
 ]);
 
 export const CompanionChatResultV1Schema = z.object({

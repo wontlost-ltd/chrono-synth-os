@@ -45,12 +45,13 @@ import {
   CONVERSATION_MEMORY_SALIENCE,
   CONVERSATION_MEMORY_VALENCE,
 } from '../../../conversation/conversation-memory-capture.js';
-import { detectIdentityIntent } from '../../../conversation/identity-intent.js';
+import { detectIdentityIntent, detectUserName } from '../../../conversation/identity-intent.js';
 import { CompanionIdentityStore } from '../../../storage/companion-identity-store.js';
 import { detectLanguage } from '../../../conversation/language-detect.js';
 import { companionLocale } from '../../../conversation/companion-locale.js';
 import { CompanionMoodStore } from '../../../storage/companion-mood-store.js';
 import { updateMood, extractEmotionSignal, moodLabel, type MoodLabel } from '../../../conversation/mood.js';
+import { CompanionRelationshipStore } from '../../../storage/companion-relationship-store.js';
 import { detectSummaryIntent, buildSummary } from '../../../conversation/summary-builder.js';
 import type { SupportedLocale } from '../../../i18n/locale-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
@@ -83,6 +84,8 @@ export function registerCompanionChatRoutes(
   const conversationMemoryEnabled = config?.companion.conversationMemoryEnabled ?? true;
   /* 情绪/心情开关（ADR-0056）：缺省默认开。 */
   const moodEnabled = config?.companion.moodEnabled ?? true;
+  /* 我-你关系记忆开关（ADR-0056）：缺省默认开。 */
+  const relationshipEnabled = config?.companion.relationshipEnabled ?? true;
 
   /** 取某记忆的 valence（用于心情漂移的次要信号）。 */
   function memoryValenceOf(tenantOS: ChronoSynthOS, memoryId: string): number | undefined {
@@ -171,7 +174,7 @@ export function registerCompanionChatRoutes(
    * 解决「介绍一下你自己」泛词查不到具体记忆 → honest_offline 的问题。无任何内容时返回 undefined
    * （回退诚实离线）。
    */
-  function buildSelfIntro(tenantOS: ChronoSynthOS, locale: SupportedLocale, myName?: string, contentFor?: ContentFor): string | undefined {
+  function buildSelfIntro(tenantOS: ChronoSynthOS, locale: SupportedLocale, myName?: string, contentFor?: ContentFor, relationshipLine?: string): string | undefined {
     const t = companionLocale(locale).reply;
     const narrative = tenantOS.core.narrative.get().trim();
     /* 排序加稳定 tie-breaker（id 字典序）——底层 SELECT 无 ORDER BY，同 weight/salience 时 Map 迭代
@@ -200,6 +203,8 @@ export function registerCompanionChatRoutes(
       parts.push(t.selfIntroMemories);
       for (const c of topMemories) parts.push(`· ${c}`);
     }
+    /* 关系层（ADR-0056）：自我介绍带「我们的关系」（你是X / 我们聊过N次）。 */
+    if (relationshipLine && relationshipLine.length > 0) parts.push(relationshipLine);
     parts.push(t.selfIntroFooter);
     return parts.join('\n');
   }
@@ -221,11 +226,26 @@ export function registerCompanionChatRoutes(
     const locale = detectLanguage(body.message);
     const t = companionLocale(locale).reply;
 
+    /* 命中 never_discuss 的输入：不影响人格状态（不记关系/不更新心情/不沉淀）——禁忌输入隔离。
+     * 在所有早返回**之前**算，统一守卫。 */
+    const inputBlocked = responder.violatesNeverDiscuss(body.message, COMPANION_BASELINE_BOUNDARIES);
+
+    /* ADR-0056 类人化·关系层：**每轮非禁忌输入**都记一次互动（++次数、更新 last_seen，首次设 first_met）。
+     * 置于所有早返回（身份/用户名/普通对话）之前——「你叫什么」「我叫你Max」等也算真实互动（Codex 复审）。 */
+    if (relationshipEnabled && !inputBlocked) {
+      new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID).recordInteraction(tenantOS.getClock().now());
+    }
+
     /* ADR-0055「自我意识」：先处理身份意图（起名 / 问名字），第一人称落地，优先于普通检索。
      * 视角转换：用户对「你」的称呼 = 数字人自己，内化为第一人称身份「我叫X」，绝不当第二人称记忆复述。 */
     const identity = new CompanionIdentityStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
     const identityIntent = detectIdentityIntent(body.message, locale);
-    if (identityIntent.kind === 'define' && identityIntent.name) {
+    /* 安全（Codex 复审 High）：输入命中 never_discuss **但敏感主题不在名字本身**（如「我的密码是X，
+     * 你叫小黑」——名字「小黑」干净但句子泄密）→ **跳过身份处理**，落到 responder 走 boundary_block，
+     * 不让起名绕过边界拒答。若敏感主题就是名字本身（「你叫密码」）→ 不跳过，由下方 name 自检给温和拒绝。 */
+    const blockedButNameClean = inputBlocked && identityIntent.kind === 'define'
+      && !!identityIntent.name && !responder.violatesNeverDiscuss(identityIntent.name, COMPANION_BASELINE_BOUNDARIES);
+    if (!blockedButNameClean && identityIntent.kind === 'define' && identityIntent.name) {
       /* 名字过 never_discuss 自检（防把敏感主题设成名字后被第一人称复述出去）。命中 → 拒绝设置。
        * kind=honest_offline（与原行为一致，中文零回归）。 */
       if (responder.violatesNeverDiscuss(identityIntent.name, COMPANION_BASELINE_BOUNDARIES)) {
@@ -250,7 +270,7 @@ export function registerCompanionChatRoutes(
         reply: t.nameConfirmed(saved), kind: 'self_identity', confidence: 0.9, groundedMemoryCount: 0,
       } satisfies CompanionChatResultV1) };
     }
-    if (identityIntent.kind === 'ask') {
+    if (identityIntent.kind === 'ask' && !inputBlocked) {
       const myName = identity.getName();
       if (myName) {
         return { data: CompanionChatResultV1Schema.parse({
@@ -263,6 +283,21 @@ export function registerCompanionChatRoutes(
         schemaVersion: 'companion-chat-result.v1',
         reply: t.noNameYet, kind: 'self_identity', confidence: 0.6, groundedMemoryCount: 0,
       } satisfies CompanionChatResultV1) };
+    }
+
+    /* ADR-0056 关系层：识别用户自报名字（「我叫X / call me X」）→ 存 + 第一人称问候带名字。
+     * 在身份意图之后（「我叫你Max」是给数字人起名，已被 identity 处理，不会到这）。 */
+    if (relationshipEnabled && !inputBlocked) {
+      const userName = detectUserName(body.message, locale);
+      if (userName && !responder.violatesNeverDiscuss(userName, COMPANION_BASELINE_BOUNDARIES)) {
+        try {
+          const saved = new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID).setUserName(userName, tenantOS.getClock().now());
+          return { data: CompanionChatResultV1Schema.parse({
+            schemaVersion: 'companion-chat-result.v1',
+            reply: t.userNameNoted(saved), kind: 'relationship', confidence: 0.9, groundedMemoryCount: 0,
+          } satisfies CompanionChatResultV1) };
+        } catch { /* 清洗后空名 → 忽略，继续正常对话 */ }
+      }
     }
 
     /* ADR-0055 内容多语：非默认语言（zh-CN）时，加载本租户该语言的记忆翻译变体，
@@ -280,8 +315,8 @@ export function registerCompanionChatRoutes(
     /* ADR-0056 类人化·情绪：读当前心情 → 据本轮情感信号（用户输入情感词 + 检索记忆均值 valence）
      * 确定性漂移 + 时间回归 → 存回。本轮回应用**更新后**的心情语气（聊到开心事这轮就更开心）。
      * 默认开；关 → 心情恒中性（无前缀，零回归）。可复现：相同输入+相同心情+相同时刻→相同输出。
-     * 安全（Codex 复审 High）：命中 never_discuss 的输入**不更新心情**——禁忌输入不应影响人格状态。 */
-    const inputBlocked = responder.violatesNeverDiscuss(body.message, COMPANION_BASELINE_BOUNDARIES);
+     * 安全（Codex 复审 High）：命中 never_discuss 的输入**不更新心情**（inputBlocked 上方已算）——
+     * 禁忌输入不应影响人格状态。 */
     let moodLabelNow: MoodLabel = 'neutral';
     if (moodEnabled && !inputBlocked) {
       const moodStore = new CompanionMoodStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID);
@@ -353,7 +388,11 @@ export function registerCompanionChatRoutes(
       } else if (detectSelfIntroIntent(body.message, locale)) {
         /* 自我介绍元意图（「介绍你自己/你会什么」）：泛词查不到具体记忆，走综述（叙事+价值观+高 salience
          * 记忆），而非 honest_offline。综述同样过 never_discuss 输出自检（防记忆里混入敏感主题被综述出去）。 */
-        const intro = buildSelfIntro(tenantOS, locale, identity.getName(), contentFor);
+        /* 自我介绍带关系（ADR-0056）：你是X / 我们聊过N次。关闭时 relLine 为空，行为不变。 */
+        const relLine = relationshipEnabled
+          ? (() => { const r = new CompanionRelationshipStore(sharedDb, request.tenantId, COMPANION_PERSONA_ID).get(); return t.relationshipLine(r.userName, r.interactionCount); })()
+          : '';
+        const intro = buildSelfIntro(tenantOS, locale, identity.getName(), contentFor, relLine);
         if (intro && !responder.violatesNeverDiscuss(intro, COMPANION_BASELINE_BOUNDARIES)) {
           payload = {
             schemaVersion: 'companion-chat-result.v1',

@@ -19,6 +19,9 @@ export interface CompanionLocaleResources {
   readonly nameDefinePatterns: readonly RegExp[];
   /** 起名否决（可选）：命中则即便 define 模式匹配也不当起名（如英文疑问/转述上下文）。 */
   readonly nameDefineVeto?: RegExp;
+  /** 用户自报名字模式（ADR-0056 关系层）：捕获组 1 = 用户名（「我叫X」「叫我X」「call me X」）。
+   * 与 nameDefinePatterns（给数字人起名「你叫X」）区分——这是用户说自己叫什么。 */
+  readonly userNameDefinePatterns: readonly RegExp[];
   /** 身份「问名字」模式（命中即在问名字，无捕获）。 */
   readonly nameAskPatterns: readonly RegExp[];
   /** 纯寒暄词（整句归一化后命中即不沉淀对话记忆）。 */
@@ -66,6 +69,10 @@ export interface CompanionLocaleResources {
     readonly summaryEmpty: (topic: string) => string;
     /** summary：完全没有记忆可总结。 */
     readonly summaryNothing: string;
+    /** 关系（ADR-0056）：用户自报名字后的确认（{name}）。 */
+    readonly userNameNoted: (name: string) => string;
+    /** 关系：self_intro 里「我们的关系」一句（{userName}=用户名 可空, {count}=互动次数）。 */
+    readonly relationshipLine: (userName: string | undefined, count: number) => string;
   };
   /** 自我介绍元意图短语（「介绍你自己」类，子串匹配，已小写）。 */
   readonly selfIntroPhrases: readonly string[];
@@ -104,6 +111,11 @@ const zhCN: CompanionLocaleResources = {
     /你(的)?名字(是|叫)?(什么|啥)/,
     /怎么称呼你/,
   ],
+  /* 用户自报名字（「我叫X」「叫我X」「我的名字是X」）。名字 token 同身份层（短、排除分隔/语气词）。 */
+  userNameDefinePatterns: [
+    new RegExp(`(?:我(?:的名字)?(?:就)?叫|你可以叫我|请叫我|叫我)\\s*(${ZH_BARE_NAME_CHARS})${ZH_NAME_TAIL}`),
+    new RegExp(`我的名字(?:是|叫)\\s*(${ZH_NAME_CHARS})`),
+  ],
   smallTalk: ZH_SMALL_TALK,
   isQuestion: (text) => ZH_QUESTION_MARK.test(text) || ZH_QUESTION_PARTICLE.test(text) || ZH_QUESTION_WORDS.test(text),
   reply: {
@@ -139,6 +151,13 @@ const zhCN: CompanionLocaleResources = {
     summaryFooter: (count) => `（以上归纳自我相关的 ${count} 条记忆，确定性整理、离线可复现。）`,
     summaryEmpty: (topic) => `关于「${topic}」我还没学过什么，你可以教教我。`,
     summaryNothing: '我现在还没有可总结的记忆呢，多教我一些吧。',
+    userNameNoted: (name) => `很高兴认识你，${name}！我记住啦。`,
+    relationshipLine: (userName, count) => {
+      const who = userName ? `你是${userName}，` : '';
+      if (count >= 5) return `${who}我们已经聊过 ${count} 次了，挺熟的。`;
+      if (count >= 1) return `${who}我们聊过几次了。`;
+      return who ? `${who}很高兴认识你。` : '';
+    },
   },
   selfIntroPhrases: [
     '介绍一下你自己', '介绍下你自己', '自我介绍', '介绍你自己', '介绍一下自己',
@@ -209,6 +228,12 @@ const en: CompanionLocaleResources = {
     /who\s+are\s+you\s+called/i,
     /tell me your name/i,
   ],
+  /* 用户自报名字（call me X / my name is X）——只用**显式起名结构**，词边界。
+   * 不要裸 「I am X」（Codex 复审：会把 I am happy/tired/going home 误当用户名 happy/tired/going）。 */
+  userNameDefinePatterns: [
+    new RegExp(`\\bcall\\s+me\\s+${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+    new RegExp(`\\bmy\\s+name\\s+(?:is|'s)\\s+${EN_NOT_NAME_LEAD}(${EN_NAME_CHARS})${EN_NAME_TAIL}`, 'i'),
+  ],
   smallTalk: EN_SMALL_TALK,
   isQuestion: (text) => {
     const t = text.trim();
@@ -245,6 +270,13 @@ const en: CompanionLocaleResources = {
     summaryFooter: (count) => `(Summarized from ${count} of my related memories — deterministic, reproducible offline.)`,
     summaryEmpty: (topic) => `I haven't learned anything about "${topic}" yet — you could teach me.`,
     summaryNothing: "I don't have any memories to summarize yet. Teach me some more!",
+    userNameNoted: (name) => `Nice to meet you, ${name}! I'll remember that.`,
+    relationshipLine: (userName, count) => {
+      const who = userName ? `You're ${userName}, ` : '';
+      if (count >= 5) return `${who}we've talked ${count} times now — we know each other pretty well.`;
+      if (count >= 1) return `${who}we've talked a few times.`;
+      return who ? `${who}nice to know you.` : '';
+    },
   },
   selfIntroPhrases: [
     'introduce yourself', 'tell me about yourself', 'about yourself', 'who are you',

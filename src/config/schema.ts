@@ -524,7 +524,9 @@ const companionSchema = z.object({
   /** 情绪/心情（ADR-0056 类人化）：当前心情随对话确定性漂移，影响回应语气。默认开。
    * 关闭 → 不更新/不读心情，回应无心情前缀（旧行为）。 */
   moodEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true });
+  /** 我-你关系记忆（ADR-0056 类人化）：记住用户名/互动次数/时间，自我介绍带关系。默认开。 */
+  relationshipEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true, moodEnabled: true, relationshipEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -743,6 +745,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_DYNAMIC_GROWTH_BUDGET:           (v) => { deepSet(env, 'companion.dynamicGrowthBudgetEnabled', v !== 'false' && v !== '0'); },
     /* ADR-0056 情绪/心情开关（默认开，可关）：CHRONO_COMPANION_MOOD=false 关闭心情。 */
     CHRONO_COMPANION_MOOD:                  (v) => { deepSet(env, 'companion.moodEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0056 关系记忆开关（默认开，可关）：CHRONO_COMPANION_RELATIONSHIP=false 关闭关系记忆。 */
+    CHRONO_COMPANION_RELATIONSHIP:          (v) => { deepSet(env, 'companion.relationshipEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },
