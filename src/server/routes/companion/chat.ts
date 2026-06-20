@@ -39,6 +39,7 @@ import { MemoryTranslationStore } from '../../../storage/memory-translation-stor
 import type { RelevantKnowledge } from '../../../conversation/conversation-types.js';
 import { COMPANION_BASELINE_BOUNDARIES } from '../../../conversation/companion-boundaries.js';
 import { buildRecentGrowthPhrase } from './recent-growth.js';
+import { buildConversationCallback } from './conversation-callback.js';
 import { ResponseTemplateStore } from '../../../storage/response-template-store.js';
 import {
   decideConversationCapture,
@@ -93,6 +94,8 @@ export function registerCompanionChatRoutes(
   const opinionEnabled = config?.companion.opinionEnabled ?? true;
   /* 回应变化性开关（ADR-0056）：缺省默认开。 */
   const variabilityEnabled = config?.companion.variabilityEnabled ?? true;
+  /* 内在驱动·主动性开关（ADR-0056 block 6）：缺省默认开。 */
+  const proactiveEnabled = config?.companion.proactiveEnabled ?? true;
 
   /** 取某记忆的 valence（用于心情漂移的次要信号）。 */
   function memoryValenceOf(tenantOS: ChronoSynthOS, memoryId: string): number | undefined {
@@ -367,6 +370,17 @@ export function registerCompanionChatRoutes(
     /* ADR-0054 Phase 5：近期成长片段（drift→成长，确定性）——让知识回应的主动 follow-up 真带
      * 「我最近也在变化：<成长>」。getLatest 读已存报告(cheap)，无基线/无方向 → undefined(仅泛泛邀请)。 */
     const recentGrowth = buildRecentGrowthPhrase(sharedDb, request.tenantId);
+    /* ADR-0056 block 6 内在驱动·对话回想：取一条与当前话题相关的**过往对话记忆**（你之前说过的），
+     * 让回应主动「我突然想到你之前提到过 X」。开关关/禁忌输入 → 不回想。安全：回想片段须过
+     * never_discuss 输出自检——命中则丢弃该回想（不让敏感过往对话被主动翻出，也避免整段被自检拒答
+     * 而丢掉本可正常回答的内容）。最终拼装结果仍会再过一次输出自检兜底。 */
+    let conversationCallback: string | undefined;
+    if (proactiveEnabled && !inputBlocked) {
+      const candidate = buildConversationCallback(tenantOS, body.message, locale);
+      if (candidate !== undefined && !responder.violatesNeverDiscuss(candidate, COMPANION_BASELINE_BOUNDARIES)) {
+        conversationCallback = candidate;
+      }
+    }
     const offline = responder.respond({
       narrative,
       boundaries: COMPANION_BASELINE_BOUNDARIES,
@@ -380,7 +394,7 @@ export function registerCompanionChatRoutes(
       variantSeed,
       variabilityEnabled,
       /* 仅作用于 knowledge_grounded 回应（block/escalate/honest_offline 不追）。 */
-      proactiveReply: recentGrowth !== undefined ? { recentGrowth } : {},
+      proactiveReply: { ...(recentGrowth !== undefined ? { recentGrowth } : {}), ...(conversationCallback !== undefined ? { conversationCallback } : {}) },
     });
 
     /* response_template 优先（ADR-0047 蒸馏闭环消费端）：命中 intent 匹配的整段模板 → 直接用它，流程型

@@ -57,6 +57,12 @@ export interface OfflineResponderInput {
   proactiveReply?: {
     /** 近期成长片段（如「最近在更主动地尝试新事物」）；有则 follow-up 提及它。 */
     recentGrowth?: string;
+    /**
+     * 内在驱动·对话回想（ADR-0056 类人化 block 6）：与当前话题相关的**过往对话记忆**片段
+     * （已脱敏、确定性检索的你之前说过的话）。有则 follow-up 主动「我突然想到你之前提到过 X」，
+     * 体现「记得你、会想起你」的内在生活。缺省 → 不回想（无相关过往 → 不编造）。
+     */
+    conversationCallback?: string;
   };
   /** 对话语言（ADR-0055 多语种）：决定固定回复用哪套模板。缺省 'zh-CN'（向后兼容，旧行为不变）。 */
   locale?: SupportedLocale;
@@ -167,7 +173,21 @@ export class OfflineConversationResponder {
     /* 策略 3：无知识——诚实告知离线限制，不编造 */
     let honest = this.composeHonestOffline(narrative, escalate, locale);
     if (!escalate && moodPrefix.length > 0) honest = `${moodPrefix}\n${honest}`;
-    /* 叙事本身也可能携带受限主题 */
+    /* ADR-0056 block 6 内在驱动：当前答不上来时，主动想起你之前说过的相关话——这是回想最有价值的时刻
+     * （「这个我还不了解，不过我突然想到你提过 X」）。仅追 conversationCallback（不追泛泛邀请，避免空话），
+     * 非 escalate（人工跟进语义不延展）。 */
+    if (!escalate) {
+      const callbackFollowUp = this.composeProactiveFollowUp(
+        input.proactiveReply?.conversationCallback !== undefined ? { conversationCallback: input.proactiveReply.conversationCallback } : undefined,
+        locale,
+      );
+      /* 仅当确有 callback（非泛泛邀请）才追——composeProactiveFollowUp 无 callback 时会返回邀请语，
+       * 故这里只在 proactiveReply.conversationCallback 存在时调用并追加。 */
+      if (input.proactiveReply?.conversationCallback !== undefined && callbackFollowUp.length > 0) {
+        honest = `${honest}\n${callbackFollowUp}`;
+      }
+    }
+    /* 叙事本身或回想片段也可能携带受限主题——拼装后再过输出自检兜底。 */
     if (this.outputLeaksNeverDiscuss(honest, input.boundaries)) {
       return this.blockResponse();
     }
@@ -245,14 +265,29 @@ export class OfflineConversationResponder {
   }
 
   /**
-   * 主动响应 follow-up（ADR-0054 Phase 5，确定性零-LLM）：知识回应后追加一句主动延展——
-   *   - 有近期成长片段 → 提及它 + 邀请继续（让对话像有内在生活的人，而非问答机器）；
-   *   - 无成长片段 → 仅邀请继续。
+   * 主动响应 follow-up（ADR-0054 Phase 5 + ADR-0056 block 6，确定性零-LLM）：知识回应后追加一句
+   * 主动延展——优先级：
+   *   1. 内在驱动·对话回想（conversationCallback）→ 「我突然想到你之前提到过 X」（体现「记得你」）；
+   *   2. 近期成长片段（recentGrowth）→ 「我最近也在变化：<成长>」；
+   *   3. 都无 → 仅邀请继续（按轮次轮换措辞）。
    * 缺省（proactiveReply 未传）→ 返回空串（不追加，向后兼容）。相同输入 → 相同输出。
    */
-  private composeProactiveFollowUp(cfg: { recentGrowth?: string } | undefined, locale: SupportedLocale, variantSeed = 0): string {
+  private composeProactiveFollowUp(
+    cfg: { recentGrowth?: string; conversationCallback?: string } | undefined,
+    locale: SupportedLocale,
+    variantSeed = 0,
+  ): string {
     if (!cfg) return '';
     const resources = companionLocale(locale);
+    /* 1. 对话回想最优先：想起你之前说过的（内在生活感最强）。 */
+    const callback = cfg.conversationCallback?.trim().replace(/\s+/g, ' ') ?? '';
+    if (callback.length > 0) {
+      const snippet = callback.length > PROACTIVE_GROWTH_CAP ? `${callback.slice(0, PROACTIVE_GROWTH_CAP)}…` : callback;
+      return locale === 'zh-CN'
+        ? `对了——我突然想到，你之前提到过「${snippet}」。我一直记着呢，要不要接着聊聊？`
+        : `By the way — it just came to me that you mentioned "${snippet}" before. I've kept it in mind; want to pick that back up?`;
+    }
+    /* 2. 近期成长片段。 */
     const growth = cfg.recentGrowth?.trim().replace(/\s+/g, ' ') ?? '';
     if (growth.length > 0) {
       const snippet = growth.length > PROACTIVE_GROWTH_CAP ? `${growth.slice(0, PROACTIVE_GROWTH_CAP)}…` : growth;
@@ -260,7 +295,7 @@ export class OfflineConversationResponder {
         ? `对了——我最近也在变化：${snippet}。你要是好奇，我们可以接着聊。`
         : `By the way — I've been changing lately: ${snippet}. If you're curious, we can keep talking.`;
     }
-    /* ADR-0056 变化性：邀请继续语按轮次确定性轮换（seed=0 → 原文，零回归）。 */
+    /* 3. ADR-0056 变化性：邀请继续语按轮次确定性轮换（seed=0 → 原文，零回归）。 */
     return variantPick(resources.replyVariants.inviteContinue, variantSeed);
   }
 
