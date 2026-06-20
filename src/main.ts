@@ -33,6 +33,8 @@ const os = new ChronoSynthOS({
   encryptionConfig: config.encryption,
   /* ADR-0054 主动性配置（生产可达关闭/红线 3）。 */
   proactivity: config.proactivity,
+  /* ADR-0048 动态成长预算（婴儿激进/成熟保守，默认开）。 */
+  dynamicGrowthBudgetEnabled: config.companion.dynamicGrowthBudgetEnabled,
   skipMigrations: true,
 });
 

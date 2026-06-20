@@ -518,7 +518,10 @@ const companionSchema = z.object({
   /** 对话记忆：chat 后把这轮对话确定性沉淀为低显著 episodic 记忆，让数字人「记得跟你聊过」
    * （零-LLM：沉淀是确定性 append 而非语义理解；语义内化仍走 reflect）。默认开。 */
   conversationMemoryEnabled: z.coerce.boolean().default(true),
-}).default({ conversationMemoryEnabled: true });
+  /** 动态成长预算（ADR-0048）：未确定性预算随核心成熟度 U 形自适应（婴儿激进/成熟保守）。
+   * 默认开。关闭 → 无 per-persona override 的人格回退全局 policy 预算（默认不限，旧行为）。 */
+  dynamicGrowthBudgetEnabled: z.coerce.boolean().default(true),
+}).default({ conversationMemoryEnabled: true, dynamicGrowthBudgetEnabled: true });
 
 export const AppConfigSchema = z.object({
   region: z.string().min(1).default('local'),
@@ -733,6 +736,8 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_PROACTIVITY_ENABLED:             (v) => { deepSet(env, 'proactivity.enabled', v !== 'false' && v !== '0'); },
     /* ADR-0055 对话记忆开关（默认开，可关）：CHRONO_COMPANION_CONVERSATION_MEMORY=false 关闭对话沉淀。 */
     CHRONO_COMPANION_CONVERSATION_MEMORY:   (v) => { deepSet(env, 'companion.conversationMemoryEnabled', v !== 'false' && v !== '0'); },
+    /* ADR-0048 动态成长预算开关（默认开，可关）：CHRONO_DYNAMIC_GROWTH_BUDGET=false 回退全局静态预算。 */
+    CHRONO_DYNAMIC_GROWTH_BUDGET:           (v) => { deepSet(env, 'companion.dynamicGrowthBudgetEnabled', v !== 'false' && v !== '0'); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_URL:       (v) => { deepSet(env, 'safety.alerts.webhookUrl', v); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_TIMEOUT_MS:(v) => { deepSet(env, 'safety.alerts.webhookTimeoutMs', parseInt(v, 10)); },
     CHRONO_SAFETY_ALERTS_WEBHOOK_SECRET:    (v) => { deepSet(env, 'safety.alerts.webhookSecret', v); },

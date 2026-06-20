@@ -22,6 +22,7 @@ import { LifeSimulationStore } from './storage/life-simulation-store.js';
 import { type IDatabase, createMemoryDatabase } from './storage/index.js';
 import { runDslSqliteMigrations } from './storage/dsl-migrations-runner.js';
 import { resolvePersonaUnverifiedGrowthBudget } from './storage/persona-governance-store.js';
+import { computeDynamicGrowthBudget } from './intelligence/dynamic-growth-budget.js';
 import { registerCoreSelfExecutors } from './storage/executors/index.js';
 import type { SystemSnapshot, EvolutionDiffReport } from './types/snapshot.js';
 import type { SimulationScenario } from './types/persona-version.js';
@@ -62,6 +63,9 @@ export interface ChronoSynthOSConfig {
   updateGateConfig?: Partial<UpdateGateConfig>;
   /** 蒸馏策略（含不确定性预算：窗口内 auto-compile 上限）；缺省用 DEFAULT_DISTILLATION_POLICY */
   distillationPolicy?: Partial<DistillationPolicy>;
+  /** 动态成长预算（ADR-0048）：无 per-persona override 的人格，不确定性预算随核心成熟度 U 形自适应
+   * （婴儿激进/成熟保守）。默认 true。false → 回退全局 policy 静态预算（旧行为，默认不限）。 */
+  dynamicGrowthBudgetEnabled?: boolean;
   /**
    * 主动性门控配置（ADR-0054）：覆盖 DEFAULT_PROACTIVE_GATE_CONFIG。生产可达的关闭入口
    * （红线 3）：`{ enabled: false }` 完全关闭主动消息；也可调静默期/频率上限。缺省用默认（保守）。
@@ -196,12 +200,14 @@ export class ChronoSynthOS {
     /* ADR-0047/0048 多实例 gating：并发锁，供租户级全局 compile mutex 与 per-persona
      * earning lease 共用（同一个 store，不同 scope）。 */
     this.personaLeases = new PersonaLeaseStore(this.db, this.tenantId);
+    /* 有效蒸馏策略（含全局不确定性预算上限——运维/部署级安全天花板，默认不限）。 */
+    const distillationPolicy = config.distillationPolicy
+      ? { ...DEFAULT_DISTILLATION_POLICY, ...config.distillationPolicy }
+      : DEFAULT_DISTILLATION_POLICY;
     this.distillation = new DistillationService({
       store: artifactStore,
       compiler: artifactCompiler,
-      policy: config.distillationPolicy
-        ? { ...DEFAULT_DISTILLATION_POLICY, ...config.distillationPolicy }
-        : undefined,
+      policy: distillationPolicy,
       snapshotGuard: {
         snapshot: () => this.createSnapshot('manual').id,
         rollback: (snapshotId: string) => this.restoreFromSnapshot(snapshotId),
@@ -211,9 +217,20 @@ export class ChronoSynthOS {
       logger: this.logger,
       tenantId: this.tenantId,
       leaseStore: this.personaLeases,
-      /* per-persona 预算解析：查 governance store 的 unverifiedGrowthBudgetPerWindow 覆盖
-       * （无覆盖 → undefined → distillation 回退全局 policy 预算）。 */
-      budgetResolver: (personaId: string) => resolvePersonaUnverifiedGrowthBudget(this.db, this.tenantId, personaId),
+      /* 预算解析（ADR-0048）：①用户显式 per-persona override **绝对优先**；②否则若动态开启（默认），
+       * 按当前核心记忆数 U 形动态算（婴儿激进/成熟保守），并与全局 policy 上限取 **min**——动态不绕过
+       * 运维安全天花板（Codex 复审：全局 policy 设了上限就该生效，默认 policy=不限故 min 不影响动态）；
+       * ③动态关闭 → undefined → 回退全局静态 policy 预算（旧行为）。
+       * 用 getMemoryCount()（SELECT COUNT(*)）取核心规模，不全量加载解密（Codex 复审性能）。
+       * 注：动态读 tenant-global core 的记忆数——companion 单人格('default')语义正确；多 persona 租户
+       * 的预算分桶（按 personaId 计数）vs 核心写入（共享 this.core）是既有蒸馏设计属性，非本变更引入。 */
+      budgetResolver: (personaId: string) => {
+        const override = resolvePersonaUnverifiedGrowthBudget(this.db, this.tenantId, personaId);
+        if (override !== undefined) return override;
+        if (config.dynamicGrowthBudgetEnabled === false) return undefined;
+        const dynamic = computeDynamicGrowthBudget(this.core.memories.getMemoryCount());
+        return Math.min(dynamic, distillationPolicy.unverifiedGrowthBudgetPerWindow);
+      },
     });
     /* ADR-0048：收益蒸馏器复用蒸馏门，把任务收益转为成长候选 */
     this.earningDistiller = new EarningOutcomeDistiller(this.distillation, this.logger);
