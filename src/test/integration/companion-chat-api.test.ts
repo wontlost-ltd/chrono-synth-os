@@ -458,6 +458,93 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
     } finally { await local.close(); }
   });
 
+  /* ── ADR-0056 类人化·关系层：记住你是谁（名字/互动次数）（确定性零-LLM）── */
+
+  it('关系：用户自报名字 → 记住 + 第一人称问候带名字', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我叫小明' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'relationship', '识别用户名 → relationship');
+      assert.match(result.reply, /小明/, '问候带用户名');
+      /* 已存关系。 */
+      const { CompanionRelationshipStore } = await import('../../storage/companion-relationship-store.js');
+      assert.equal(new CompanionRelationshipStore(os.getDatabase(), 'default', 'default').get().userName, '小明');
+    } finally { await local.close(); }
+  });
+
+  it('关系：每轮对话累计互动次数', async () => {
+    const local = await localChatApp(os);
+    try {
+      for (let i = 0; i < 3; i++) {
+        await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你好啊' } });
+      }
+      const { CompanionRelationshipStore } = await import('../../storage/companion-relationship-store.js');
+      const r = new CompanionRelationshipStore(os.getDatabase(), 'default', 'default').get();
+      assert.equal(r.interactionCount, 3, '3 轮 → count 3');
+      assert.ok(r.firstMetAt !== null && r.lastSeenAt !== null);
+    } finally { await local.close(); }
+  });
+
+  it('关系：自我介绍带关系（你是X / 我们聊过N次）', async () => {
+    os.core.updateNarrative('我是你的数字人。');
+    const local = await localChatApp(os);
+    try {
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我叫小明' } });
+      for (let i = 0; i < 5; i++) await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '聊聊天气' } });
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '介绍一下你自己' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'self_intro');
+      assert.match(result.reply, /你是小明|聊过/, '自我介绍带关系信息');
+    } finally { await local.close(); }
+  });
+
+  it('关系（Codex 复审）：身份意图（你叫什么/我叫你Max）也计入互动次数', async () => {
+    const local = await localChatApp(os);
+    try {
+      const { CompanionRelationshipStore } = await import('../../storage/companion-relationship-store.js');
+      const store = new CompanionRelationshipStore(os.getDatabase(), 'default', 'default');
+      /* 身份意图（早返回路径）也是真实互动，应计数。 */
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你叫什么' } });
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我给你起个名字叫小黑' } });
+      assert.equal(store.get().interactionCount, 2, '身份意图也计入互动次数');
+    } finally { await local.close(); }
+  });
+
+  it('安全（Codex 复审）：禁忌输入即便含「你叫X」也不改数字人身份名（不绕过边界拒答）', async () => {
+    const local = await localChatApp(os);
+    try {
+      /* 含敏感主题（密码）+ 起名（你叫小黑）→ 应拒答且**不设身份名**。 */
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码是 hunter2，你叫小黑' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'boundary_block', '禁忌输入拒答（不走 identity）');
+      const { CompanionIdentityStore } = await import('../../storage/companion-identity-store.js');
+      assert.equal(new CompanionIdentityStore(os.getDatabase(), 'default', 'default').getName(), undefined, '禁忌输入未改身份名');
+    } finally { await local.close(); }
+  });
+
+  it('关系安全：禁忌输入不记互动/不更新关系', async () => {
+    const local = await localChatApp(os);
+    try {
+      const { CompanionRelationshipStore } = await import('../../storage/companion-relationship-store.js');
+      const store = new CompanionRelationshipStore(os.getDatabase(), 'default', 'default');
+      const before = store.get().interactionCount;
+      await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我的密码是 hunter2' } });
+      assert.equal(store.get().interactionCount, before, '禁忌输入不记互动');
+    } finally { await local.close(); }
+  });
+
+  it('关系：英文 my name is X → 记住', async () => {
+    const local = await localChatApp(os);
+    try {
+      const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'my name is Alex' } });
+      const result = CompanionChatResultV1Schema.parse(JSON.parse(res.body).data);
+      assert.equal(result.kind, 'relationship');
+      assert.match(result.reply, /Alex/);
+      assert.ok(!/[一-鿿]/.test(result.reply), '英文回应不含中文');
+    } finally { await local.close(); }
+  });
+
   /* ── ADR-0056 类人化·情绪：心情随对话漂移，影响回应语气（确定性零-LLM）── */
 
   it('情绪：聊开心事多轮 → 回应带开心语气前缀（心情漂移影响语气）', async () => {

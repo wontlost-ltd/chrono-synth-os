@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectIdentityIntent } from '../../conversation/identity-intent.js';
+import { detectIdentityIntent, detectUserName } from '../../conversation/identity-intent.js';
 
 /* ADR-0055 第一人称身份意图识别——纯确定性，相同输入相同输出。 */
 describe('detectIdentityIntent', () => {
@@ -76,6 +76,28 @@ describe('detectIdentityIntent', () => {
 
   it('确定性：相同输入 → 相同输出', () => {
     assert.deepEqual(detectIdentityIntent('我叫你Max', 'zh-CN'), detectIdentityIntent('我叫你Max', 'zh-CN'));
+  });
+});
+
+/* ADR-0056 关系层：用户自报名字识别。 */
+describe('detectUserName', () => {
+  it('中文：我叫X / 叫我X / 我的名字是X → 用户名', () => {
+    assert.equal(detectUserName('我叫小明', 'zh-CN'), '小明');
+    assert.equal(detectUserName('叫我老王', 'zh-CN'), '老王');
+    assert.equal(detectUserName('我的名字是张三', 'zh-CN'), '张三');
+  });
+  it('英文：call me X / my name is X → 用户名', () => {
+    assert.equal(detectUserName('call me Alex', 'en'), 'Alex');
+    assert.equal(detectUserName('my name is Sarah', 'en'), 'Sarah');
+  });
+  it('对抗（Codex 复审）：英文「I am 形容词/状态/动作」不当用户名', () => {
+    for (const s of ['I am happy', 'I am tired', "I'm okay", "I'm sorry", 'I am going home', 'I am working late']) {
+      assert.equal(detectUserName(s, 'en'), undefined, `「${s}」不该被当用户名`);
+    }
+  });
+  it('不误判：「你叫X」（给数字人起名）不当用户自报', () => {
+    assert.equal(detectUserName('你叫Max', 'zh-CN'), undefined);
+    assert.equal(detectUserName('what is your name', 'en'), undefined);
   });
 });
 

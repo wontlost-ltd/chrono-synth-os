@@ -54,6 +54,21 @@ export function detectIdentityIntent(userInput: string, locale: SupportedLocale)
   return { kind: 'none' };
 }
 
+/** 用户自报名字识别（ADR-0056 关系层）：「我叫X / 叫我X / my name is X / call me X」→ 用户名。
+ * 与 detectIdentityIntent（给数字人起名「你叫X」）区分——这是用户说自己叫什么。返回名字或 undefined。 */
+export function detectUserName(userInput: string, locale: SupportedLocale): string | undefined {
+  const text = userInput.trim();
+  if (text.length === 0) return undefined;
+  for (const re of companionLocale(locale).userNameDefinePatterns) {
+    const m = re.exec(text);
+    if (m && m[1]) {
+      const name = sanitizeName(m[1]);
+      if (name.length > 0) return name;
+    }
+  }
+  return undefined;
+}
+
 /** 清洗提取的名字：去 ASCII 控制字符（含换行/制表）与尖括号（防 markup）与首尾标点空白，截断。
  * 与 store 的 cleanName 一致——意图层即剥空：清洗后为空 → 调用方判 length===0 不 define，
  * 避免「你叫<>」这类清洗后空名走到 setName 抛错触发 route 500。 */
