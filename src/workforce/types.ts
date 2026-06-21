@@ -100,6 +100,8 @@ export interface OrgTask {
   readonly requiredCapabilities: readonly string[];
   /** 执行产出摘要（null = 未完成）。 */
   readonly resultSummary: string | null;
+  /** SLA 截止时间（毫秒时间戳）；null = 无截止（不计入 SLA 信号）。C 链时间感知用。 */
+  readonly dueAt: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -143,6 +145,11 @@ export interface TaskSpec {
   readonly allowsToolExecution: boolean;
   readonly acceptanceCriteria: string;
   readonly requiredCapabilities: readonly string[];
+  /**
+   * SLA 时限（毫秒，相对委派时刻）：runGoal 据此算 due_at = now + slaMs。可选；缺省=无截止。
+   * C 链时间感知：让 worker 信号能确定性派生 overdue/due_soon（B 端 SLA，非「心情」）。
+   */
+  readonly slaMs?: number;
 }
 
 /* ── B1 协作（结构化消息，不是自由聊天）── */

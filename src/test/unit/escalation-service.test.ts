@@ -47,7 +47,7 @@ describe('EscalationService（B 链升级链）', () => {
     store.insertTask({
       id: taskId, orgId: 'org-1', goalId: 'g1', parentTaskId: null, assignedToWorkerId: icId, accountableWorkerId: mgrId,
       title: '阻塞任务', taskType: 'x', status: 'delegated', riskLevel: 'low', allowsToolExecution: false,
-      acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, createdAt: 1000, updatedAt: 1000,
+      acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000,
     });
     svc = new EscalationService(store, () => clock, () => `es-${++counter}`, 'tenant-a');
   });
@@ -102,7 +102,7 @@ describe('EscalationService（B 链升级链）', () => {
     store.insertTask({
       id: topTask, orgId: 'org-1', goalId: 'g1', parentTaskId: null, assignedToWorkerId: topId, accountableWorkerId: topId,
       title: 't', taskType: 'x', status: 'delegated', riskLevel: 'low', allowsToolExecution: false,
-      acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, createdAt: 1000, updatedAt: 1000,
+      acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000,
     });
     assert.throws(() => svc.raise({ orgId: 'org-1', taskId: topTask, fromWorkerId: topId, reason: 'x' }), /没有直接上级/);
   });

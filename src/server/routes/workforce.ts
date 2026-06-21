@@ -16,6 +16,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { Clock } from '../../utils/clock.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index.js';
 import { OrgWorkforceStore } from '../../storage/org-workforce-store.js';
@@ -33,8 +34,9 @@ function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
   return user;
 }
 
-export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase): void {
+export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase, clock: Clock): void {
   const storeFor = (request: FastifyRequest): OrgWorkforceStore => new OrgWorkforceStore(db, request.tenantId);
+  const now = (): number => clock.now();
 
   /* 支持的 goal type + 各自质量 rubric（前端建目标时可见）。 */
   app.get('/api/v1/workforce/goal-types', async (request) => {
@@ -71,7 +73,7 @@ export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase): vo
   app.get<{ Params: { orgId: string; workerId: string } }>('/api/v1/workforce/orgs/:orgId/workers/:workerId/signal', async (request) => {
     requireJwtUser(request);
     const { orgId, workerId } = request.params;
-    const signal = new WorkerSignalsService(storeFor(request)).getOperatingSignal(orgId, workerId);
+    const signal = new WorkerSignalsService(storeFor(request), now).getOperatingSignal(orgId, workerId);
     if (!signal) throw new NotFoundError(`数字员工 ${workerId} 不存在`, ErrorCode.NOT_FOUND_TASK);
     return { data: signal };
   });
@@ -81,7 +83,7 @@ export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase): vo
     requireJwtUser(request);
     const { orgId, workerId } = request.params;
     const store = storeFor(request);
-    const svc = new WorkerPersonaSignalsService(new WorkerSignalsService(store), new WorkerCollaborationMemoryStore(db, request.tenantId));
+    const svc = new WorkerPersonaSignalsService(new WorkerSignalsService(store, now), new WorkerCollaborationMemoryStore(db, request.tenantId));
     const signal = svc.getPersonaSignal(orgId, workerId);
     if (!signal) throw new NotFoundError(`数字员工 ${workerId} 不存在`, ErrorCode.NOT_FOUND_TASK);
     return { data: signal };

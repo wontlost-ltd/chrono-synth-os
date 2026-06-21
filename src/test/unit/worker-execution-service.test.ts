@@ -47,7 +47,7 @@ describe('WorkerExecutionService（D3 真实执行接线）', () => {
     store.insertTask({
       orgId: 'org-1', goalId: 'g1', parentTaskId: null, assignedToWorkerId: assignee, accountableWorkerId: mgrId,
       title: '写一段', taskType: 'draft', status, riskLevel: risk, allowsToolExecution: allowsTool,
-      acceptanceCriteria: '达标', requiredCapabilities: [], resultSummary: null, id,
+      acceptanceCriteria: '达标', requiredCapabilities: [], resultSummary: null, dueAt: null, id,
       createdAt: clock, updatedAt: clock,
     });
     return id;

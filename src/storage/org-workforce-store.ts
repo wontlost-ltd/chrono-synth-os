@@ -176,12 +176,12 @@ export class OrgWorkforceStore {
 
   insertTask(t: Omit<OrgTask, 'tenantId'>): void {
     this.db.prepare<void>(
-      `INSERT INTO org_tasks (id, tenant_id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO org_tasks (id, tenant_id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       t.id, this.tenantId, t.orgId, t.goalId, t.parentTaskId, t.assignedToWorkerId, t.accountableWorkerId, t.title, t.taskType, t.status,
       t.riskLevel, t.allowsToolExecution ? 1 : 0, t.acceptanceCriteria, JSON.stringify(t.requiredCapabilities),
-      t.resultSummary, t.createdAt, t.updatedAt,
+      t.resultSummary, t.dueAt, t.createdAt, t.updatedAt,
     );
   }
 
@@ -207,7 +207,7 @@ export class OrgWorkforceStore {
   /** 取单个任务；无 → undefined。 */
   getTask(orgId: string, taskId: string): OrgTask | undefined {
     const row = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND id = ?`,
     ).get(this.tenantId, orgId, taskId);
     return row ? this.toTask(row) : undefined;
@@ -228,7 +228,7 @@ export class OrgWorkforceStore {
   /** 取某 worker 当前被指派的任务（确定性排序）。用于算 worker 运行信号/负载。 */
   listTasksByAssignee(orgId: string, workerId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND assigned_to_worker_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, workerId);
@@ -238,7 +238,7 @@ export class OrgWorkforceStore {
   /** 取某目标的任务（确定性排序：created_at 升序、id 升序兜底）。 */
   listTasksByGoal(orgId: string, goalId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND goal_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, goalId);
@@ -557,6 +557,8 @@ export class OrgWorkforceStore {
       acceptanceCriteria: r.acceptance_criteria ?? '',
       requiredCapabilities: parseCapabilities(r.required_capabilities),
       resultSummary: nullableStr(r.result_summary),
+      /* due_at 可空 bigint：null 保留 null；否则 Number() 强转（node-pg 返回 string）。 */
+      dueAt: r.due_at === null || r.due_at === undefined ? null : num(r.due_at),
       createdAt: num(r.created_at), updatedAt: num(r.updated_at),
     };
   }
@@ -575,7 +577,7 @@ interface RawPosition { id: string; org_id: string; title: string; job_family: s
 interface RawWorker { id: string; org_id: string; persona_id: string; position_id: string; display_name: string; employment_status: string; created_at: unknown; updated_at: unknown; }
 interface RawEdge { id: string; org_id: string; manager_worker_id: unknown; report_worker_id: string; edge_type: string; created_at: unknown; }
 interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; created_at: unknown; updated_at: unknown; }
-interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; created_at: unknown; updated_at: unknown; }
+interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; due_at: unknown; created_at: unknown; updated_at: unknown; }
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
 interface RawMessage { id: string; org_id: string; thread_id: string; from_worker_id: string; to_worker_id: unknown; message_type: string; content: string; correlation_id: unknown; created_at: unknown; }

@@ -278,6 +278,8 @@ function WorkerSignalCell({ orgId, workerId }: { orgId: string; workerId: string
         {t('workforce.decisionConfidenceLabel')}<span className={`font-medium ${confidenceColor}`}>{data.decisionConfidence}</span>
         <span className="ml-2 text-gray-500">{t('workforce.load')} {data.operating.load}</span>
         <span className="ml-2 text-gray-500">{t('workforce.collaboration')} {data.collaborationReach}</span>
+        {data.operating.overdueTaskCount > 0 && <span className="ml-2 font-medium text-red-600">{t('workforce.overdue')} {data.operating.overdueTaskCount}</span>}
+        {data.operating.dueSoonTaskCount > 0 && <span className="ml-2 text-amber-600">{t('workforce.dueSoon')} {data.operating.dueSoonTaskCount}</span>}
       </span>
       {data.shouldReport && <span className="font-medium text-red-600">⚠ {t('workforce.needsAttentionLabel')}{data.confidenceRationale}</span>}
     </div>

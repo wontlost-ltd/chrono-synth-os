@@ -175,7 +175,7 @@ describe('数字员工组织只读 API（E1）', () => {
       (req as { tenantId?: string }).tenantId = 'default';
     });
     const { registerWorkforceRoutes } = await import('../../server/routes/workforce.js');
-    registerWorkforceRoutes(local, os.getDatabase());
+    registerWorkforceRoutes(local, os.getDatabase(), os.getClock());
     await local.ready();
     try {
       const res = await local.inject({ method: 'GET', url: '/api/v1/workforce/goal-types' });

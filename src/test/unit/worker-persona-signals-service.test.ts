@@ -31,7 +31,7 @@ describe('WorkerPersonaSignalsService（C2 worker 人格信号）', () => {
       id, orgId: 'org-1', goalId: 'g', parentTaskId: null, assignedToWorkerId: workerId,
       accountableWorkerId: 'mgr', title: id, taskType: 'x', status,
       riskLevel: risk, allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [],
-      resultSummary: null, createdAt: 1000, updatedAt: 1000,
+      resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000,
     };
     store.insertTask(t);
   }
@@ -78,6 +78,24 @@ describe('WorkerPersonaSignalsService（C2 worker 人格信号）', () => {
     seedTask('t1', 'approved', 'low');
     const s = svc.getPersonaSignal('org-1', workerId)!;
     assert.equal(s.decisionConfidence, 'medium');
+  });
+
+  it('★SLA★：只有逾期（无阻塞无高风险）→ low + 该汇报，依据是逾期不是「0 个高风险」（Codex 复审）', () => {
+    const now = 10_000_000;
+    /* 一个在手且已逾期的 low 风险任务（无阻塞、无高风险）。 */
+    store.insertTask({
+      id: 'overdue', orgId: 'org-1', goalId: 'g', parentTaskId: null, assignedToWorkerId: workerId,
+      accountableWorkerId: 'mgr', title: 'overdue', taskType: 'x', status: 'delegated',
+      riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [],
+      resultSummary: null, dueAt: now - 1, createdAt: 1000, updatedAt: 1000,
+    });
+    /* persona-signals 用带真实时钟的 signal service。 */
+    const slaSvc = new WorkerPersonaSignalsService(new WorkerSignalsService(store, () => now), collab);
+    const s = slaSvc.getPersonaSignal('org-1', workerId)!;
+    assert.equal(s.decisionConfidence, 'low');
+    assert.equal(s.shouldReport, true, '逾期该主动汇报');
+    assert.match(s.confidenceRationale, /逾期/, '依据是逾期');
+    assert.doesNotMatch(s.confidenceRationale, /0 个高风险/, '不再错报「0 个高风险」');
   });
 
   it('协作广度（relationship→reach）：协作过 3 个不同对手方 → reach=3，无串味', () => {
