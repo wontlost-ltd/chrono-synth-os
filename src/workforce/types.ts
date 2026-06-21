@@ -185,6 +185,24 @@ export interface OrgMessage {
   readonly createdAt: number;
 }
 
+/* ── C1 协作记忆（per-counterpart，解串味）── */
+
+/** 对手方类型：同事 worker / 团队 / 外部干系人。 */
+export type CounterpartType = 'worker' | 'team' | 'external';
+
+/** 一个数字员工对某 counterpart 的协作记忆（per-counterpart，互不串味）。 */
+export interface WorkerCollaborationMemory {
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly workerId: string;
+  readonly counterpartType: CounterpartType;
+  readonly counterpartId: string;
+  readonly interactionCount: number;
+  readonly firstCollaboratedAt: number | null;
+  readonly lastCollaboratedAt: number | null;
+  readonly note: string | null;
+}
+
 /* ── B2 任务 handoff（交接协商）── */
 
 /** handoff 状态机。 */
