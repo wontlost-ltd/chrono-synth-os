@@ -49,6 +49,7 @@ const PersonaHealthPage = lazy(() =>
   import('./features/dashboards/PersonaHealth').then((m) => ({ default: m.PersonaHealth })),
 );
 const GrowthPage = lazy(() => import('./pages/GrowthPage'));
+const WorkforceConsole = lazy(() => import('./pages/WorkforceConsole'));
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return (
@@ -87,6 +88,7 @@ export const routes: RouteObject[] = [
   { path: '/billing', element: <Protected><Billing /></Protected> },
   { path: '/settings', element: <Protected><Settings /></Protected> },
   { path: '/enterprise', element: <Protected><AdminOnly><EnterpriseConsole /></AdminOnly></Protected> },
+  { path: '/workforce', element: <Protected><AdminOnly><WorkforceConsole /></AdminOnly></Protected> },
   { path: '/admin/config', element: <Protected><AdminOnly><AdminConfig /></AdminOnly></Protected> },
   { path: '/admin/safety/drift', element: <Protected><AdminOnly><SafetyDriftReport /></AdminOnly></Protected> },
   { path: '/admin/tool-permissions', element: <Protected><AdminOnly><AdminToolPermissions /></AdminOnly></Protected> },
