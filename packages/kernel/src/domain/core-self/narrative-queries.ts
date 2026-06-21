@@ -4,15 +4,16 @@ import type { Query, Command } from '../../ports/query.js';
 export const NARRATIVE_QUERY_GET = 'narrative.get' as const;
 export const NARRATIVE_CMD_SET = 'narrative.set' as const;
 
-export interface NarrativeGetParams { readonly tenantId: string }
+export interface NarrativeGetParams { readonly tenantId: string; readonly personaId: string }
 export interface NarrativeSetParams {
   readonly tenantId: string;
+  readonly personaId: string;
   readonly content: string;
   readonly updatedAt: number;
 }
 
-export function narrativeGet(tenantId: string): Query<string, NarrativeGetParams> {
-  return { kind: NARRATIVE_QUERY_GET, params: { tenantId } };
+export function narrativeGet(tenantId: string, personaId: string): Query<string, NarrativeGetParams> {
+  return { kind: NARRATIVE_QUERY_GET, params: { tenantId, personaId } };
 }
 
 export function narrativeSetCmd(params: NarrativeSetParams): Command<NarrativeSetParams> {

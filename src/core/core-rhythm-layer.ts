@@ -40,15 +40,19 @@ export class CoreRhythmLayer {
     cognitionConfig?: Partial<MemoryCognitionConfig>,
     encryption?: FieldEncryption,
     private readonly tenantId?: string,
+    /** K2(ADR-0056)：人格实例身份。缺省 'default' = legacy 单人格；K3 起 per-persona core 传不同 personaId。 */
+    private readonly personaId: string = 'default',
   ) {
     registerCoreSelfExecutors();
     const tx = db;
     this.values = new ValueStore(tx, clock);
     this.memories = new CognitiveMemoryGraph(tx, clock, cognitionConfig, encryption);
-    this.narrative = new NarrativeStore(tx, clock, tenantId);
+    /* 人格特征三件套(叙事/决策风格/认知模型)按 (tenant, persona) 隔离——同租户不同 persona 各异。
+     * values/memories/survival 仍 tenant 键(persona_id 列已加但 executor 未扩，留后续子片)。 */
+    this.narrative = new NarrativeStore(tx, clock, tenantId, this.personaId);
     this.survival = new SurvivalAnchorStore(tx, clock);
-    this.decisionStyle = new DecisionStyleStore(tx, clock, tenantId);
-    this.cognitiveModel = new CognitiveModelStore(tx, clock, tenantId);
+    this.decisionStyle = new DecisionStyleStore(tx, clock, tenantId, this.personaId);
+    this.cognitiveModel = new CognitiveModelStore(tx, clock, tenantId, this.personaId);
   }
 
   /** 添加核心价值 */

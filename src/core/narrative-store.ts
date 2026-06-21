@@ -9,21 +9,23 @@ import type { KernelClock, SyncWriteUnitOfWork } from '@chrono/kernel';
 
 export class NarrativeStore {
   private readonly tenantId: string;
+  private readonly personaId: string;
   private readonly kernelClock: KernelClock;
 
-  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, tenantId = 'default') {
+  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, tenantId = 'default', personaId = 'default') {
     registerCoreSelfExecutors();
     this.tenantId = tenantId;
+    this.personaId = personaId;
     this.kernelClock = { now: () => clock.now() };
   }
 
   /** 获取当前叙事 */
   get(): string {
-    return getNarrative(this.tx, this.tenantId);
+    return getNarrative(this.tx, this.tenantId, this.personaId);
   }
 
   /** 设置叙事内容；返回旧叙事 */
   set(content: string): string {
-    return setNarrative(this.tx, this.kernelClock, this.tenantId, content);
+    return setNarrative(this.tx, this.kernelClock, this.tenantId, content, this.personaId);
   }
 }

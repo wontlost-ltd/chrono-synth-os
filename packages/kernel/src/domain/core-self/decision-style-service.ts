@@ -33,8 +33,9 @@ export function validateDecisionStyle(style: DecisionStyle): void {
 
 /* ── 领域服务函数 ── */
 
-export function getDecisionStyle(tx: SyncReadUnitOfWork, tenantId: string): DecisionStyle {
-  const row = tx.queryOne(decisionStyleGet(tenantId)) as DecisionStyleRow | null;
+/** K2(ADR-0056)：personaId 缺省 'default'——旧调用方(companion/manager-persona)不传时命中 default 人格行。 */
+export function getDecisionStyle(tx: SyncReadUnitOfWork, tenantId: string, personaId = 'default'): DecisionStyle {
+  const row = tx.queryOne(decisionStyleGet(tenantId, personaId)) as DecisionStyleRow | null;
   if (!row || !row.styleJson) return { ...DEFAULT_DECISION_STYLE, updatedAt: 0 };
   const parsed = JSON.parse(row.styleJson) as Partial<Omit<DecisionStyle, 'updatedAt'>>;
   return { ...DEFAULT_DECISION_STYLE, ...parsed, updatedAt: row.updatedAt };
@@ -45,8 +46,9 @@ export function setDecisionStyle(
   clock: KernelClock,
   tenantId: string,
   patch: Partial<DecisionStyle>,
+  personaId = 'default',
 ): DecisionStyle {
-  const current = getDecisionStyle(tx, tenantId);
+  const current = getDecisionStyle(tx, tenantId, personaId);
   const now = clock.now();
   const next: DecisionStyle = {
     riskAppetite: patch.riskAppetite ?? current.riskAppetite,
@@ -59,6 +61,6 @@ export function setDecisionStyle(
   };
   validateDecisionStyle(next);
   const { updatedAt: _, ...payload } = next;
-  tx.execute(decisionStyleSetCmd({ tenantId, styleJson: JSON.stringify(payload), updatedAt: now }));
+  tx.execute(decisionStyleSetCmd({ tenantId, personaId, styleJson: JSON.stringify(payload), updatedAt: now }));
   return next;
 }

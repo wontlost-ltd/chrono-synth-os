@@ -43,22 +43,31 @@ describe('adapter-web narrative executors', () => {
     const { tx } = setupAll();
     tx.execute(narrativeSetCmd({
       tenantId: 'default',
+      personaId: 'default',
       content: '我是一名耐心的助手',
       updatedAt: 1700000000000,
     }));
-    assert.equal(tx.queryOne(narrativeGet('default')), '我是一名耐心的助手');
+    assert.equal(tx.queryOne(narrativeGet('default', 'default')), '我是一名耐心的助手');
   });
 
   it('get returns null before any set', () => {
     const { tx } = setupAll();
-    assert.equal(tx.queryOne(narrativeGet('unknown')), null);
+    assert.equal(tx.queryOne(narrativeGet('unknown', 'default')), null);
   });
 
   it('repeated set overwrites the same row', () => {
     const { tx } = setupAll();
-    tx.execute(narrativeSetCmd({ tenantId: 'default', content: 'v1', updatedAt: 1 }));
-    tx.execute(narrativeSetCmd({ tenantId: 'default', content: 'v2', updatedAt: 2 }));
-    assert.equal(tx.queryOne(narrativeGet('default')), 'v2');
+    tx.execute(narrativeSetCmd({ tenantId: 'default', personaId: 'default', content: 'v1', updatedAt: 1 }));
+    tx.execute(narrativeSetCmd({ tenantId: 'default', personaId: 'default', content: 'v2', updatedAt: 2 }));
+    assert.equal(tx.queryOne(narrativeGet('default', 'default')), 'v2');
+  });
+
+  it('★K2 persona 隔离★：同租户两 persona 各自叙事，互不覆盖（web adapter 路径）', () => {
+    const { tx } = setupAll();
+    tx.execute(narrativeSetCmd({ tenantId: 't1', personaId: 'explorer', content: '我是探索者', updatedAt: 1 }));
+    tx.execute(narrativeSetCmd({ tenantId: 't1', personaId: 'guardian', content: '我是守护者', updatedAt: 1 }));
+    assert.equal(tx.queryOne(narrativeGet('t1', 'explorer')), '我是探索者');
+    assert.equal(tx.queryOne(narrativeGet('t1', 'guardian')), '我是守护者', 'guardian 未被 explorer 覆盖');
   });
 });
 
@@ -67,17 +76,38 @@ describe('adapter-web decision-style executors', () => {
     const { tx } = setupAll();
     tx.execute(decisionStyleSetCmd({
       tenantId: 'default',
+      personaId: 'default',
       styleJson: '{"riskTolerance":0.4}',
       updatedAt: 1700000000000,
     }));
-    const row = tx.queryOne(decisionStyleGet('default'));
+    const row = tx.queryOne(decisionStyleGet('default', 'default'));
     assert.equal(row?.styleJson, '{"riskTolerance":0.4}');
     assert.equal(row?.updatedAt, 1700000000000);
   });
 
   it('get returns null before any set', () => {
     const { tx } = setupAll();
-    assert.equal(tx.queryOne(decisionStyleGet('default')), null);
+    assert.equal(tx.queryOne(decisionStyleGet('default', 'default')), null);
+  });
+
+  it('★K2 persona 隔离★：同租户两 persona 各自决策风格，互不覆盖（web adapter 路径）', () => {
+    const { tx } = setupAll();
+    tx.execute(decisionStyleSetCmd({ tenantId: 't1', personaId: 'explorer', styleJson: '{"riskAppetite":0.9}', updatedAt: 1 }));
+    tx.execute(decisionStyleSetCmd({ tenantId: 't1', personaId: 'guardian', styleJson: '{"riskAppetite":0.1}', updatedAt: 1 }));
+    assert.equal(tx.queryOne(decisionStyleGet('t1', 'explorer'))?.styleJson, '{"riskAppetite":0.9}');
+    assert.equal(tx.queryOne(decisionStyleGet('t1', 'guardian'))?.styleJson, '{"riskAppetite":0.1}', 'guardian 未被 explorer 覆盖');
+  });
+
+  it('★旧 web 快照向后兼容★：无 persona_id 的旧行被当 default 读到（hydrate 无 backfill）', () => {
+    const { tables, tx } = setupAll();
+    /* 模拟旧版本写入的 web 快照行——无 persona_id。 */
+    tables.defineTable('decision_style');
+    tables.upsert('decision_style', { id: 'ds_t1', tenant_id: 't1', style_json: '{"riskAppetite":0.42}', updated_at: 5 });
+    tables.defineTable('narrative');
+    tables.upsert('narrative', { id: 'narr_t1', tenant_id: 't1', content: '旧叙事', updated_at: 5 });
+    /* 新 query 按 default persona 读——旧行(无 persona_id)被当 default 命中。 */
+    assert.equal(tx.queryOne(decisionStyleGet('t1', 'default'))?.styleJson, '{"riskAppetite":0.42}', '旧 ds 行读到');
+    assert.equal(tx.queryOne(narrativeGet('t1', 'default')), '旧叙事', '旧 narrative 行读到');
   });
 });
 

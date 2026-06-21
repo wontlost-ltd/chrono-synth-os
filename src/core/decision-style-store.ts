@@ -15,17 +15,19 @@ export { DEFAULT_DECISION_STYLE };
 
 export class DecisionStyleStore {
   private readonly tenantId: string;
+  private readonly personaId: string;
   private readonly kernelClock: KernelClock;
 
-  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, tenantId = 'default') {
+  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, tenantId = 'default', personaId = 'default') {
     registerCoreSelfExecutors();
     this.tenantId = tenantId;
+    this.personaId = personaId;
     this.kernelClock = { now: () => clock.now() };
   }
 
   /** 获取决策风格（未设置时返回默认值） */
   get(): DecisionStyle {
-    return getDecisionStyle(this.tx, this.tenantId);
+    return getDecisionStyle(this.tx, this.tenantId, this.personaId);
   }
 
   /**
@@ -34,12 +36,12 @@ export class DecisionStyleStore {
    * 判「未演化」会误判已扰动的 persona（Codex 复审）。直接看 row 存在性，与时钟无关。
    */
   exists(): boolean {
-    const row = this.tx.queryOne(decisionStyleGet(this.tenantId)) as DecisionStyleRow | null;
+    const row = this.tx.queryOne(decisionStyleGet(this.tenantId, this.personaId)) as DecisionStyleRow | null;
     return row !== null && !!row.styleJson;
   }
 
   /** 设置决策风格（合并更新） */
   set(patch: Partial<DecisionStyle>): DecisionStyle {
-    return setDecisionStyle(this.tx, this.kernelClock, this.tenantId, patch);
+    return setDecisionStyle(this.tx, this.kernelClock, this.tenantId, patch, this.personaId);
   }
 }

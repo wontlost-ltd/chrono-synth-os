@@ -11,6 +11,7 @@ import { v071_pg_pgvector } from './v071_pg.js';
 import { v072_pg_drop_embedding_json } from './v072_pg_disabled.js';
 import { v088_distilled_artifacts_perception_source } from './v088.js';
 import { v106_persona_id_core_isolation } from './v106.js';
+import { v107_persona_character_pk } from './v107.js';
 
 export { v007_tenant_id } from './v007.js';
 export { v027_identities_avatars_backfill } from './v027.js';
@@ -24,6 +25,7 @@ export { v071_pg_pgvector } from './v071_pg.js';
 export { v072_pg_drop_embedding_json } from './v072_pg_disabled.js';
 export { v088_distilled_artifacts_perception_source } from './v088.js';
 export { v106_persona_id_core_isolation } from './v106.js';
+export { v107_persona_character_pk } from './v107.js';
 
 export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v007_tenant_id,
@@ -37,6 +39,7 @@ export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v071_pg_pgvector,
   v088_distilled_artifacts_perception_source,
   v106_persona_id_core_isolation,
+  v107_persona_character_pk,
 ];
 
 export const DISABLED_MIGRATIONS: readonly RawMigration[] = [

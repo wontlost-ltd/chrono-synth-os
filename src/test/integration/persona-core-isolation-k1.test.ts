@@ -40,23 +40,24 @@ describe('K1 ADR-0056 每-(租户,人格) 认知核心隔离·数据层', () => 
     }
   });
 
-  it('★K1 不改主键（向后兼容）★：单例核心表主键仍是 (tenant_id)，留待 K2 与 executor 原子改', () => {
+  it('★人格特征三表主键已复合（K2 落地后）★：decision_style/cognitive_model/narrative = (tenant_id, persona_id)', () => {
+    /* 本测试跑全量迁移链(含 K2 v107)，故三张人格特征表主键已是复合。 */
     for (const t of SINGLETON_TABLES) {
       const pkCols = cols(t).filter((c) => c.pk > 0).map((c) => c.name).sort();
-      assert.deepEqual(pkCols, ['tenant_id'], `${t} 主键 K1 仍 (tenant_id)，不破 ON CONFLICT(tenant_id)`);
+      assert.deepEqual(pkCols, ['persona_id', 'tenant_id'], `${t} 主键应为 (tenant_id, persona_id)`);
     }
   });
 
-  it('★legacy executor 不破★：旧 ON CONFLICT(tenant_id) upsert 仍正常（persona_id 落 default）', () => {
-    /* 模拟现有 decision-style executor 的 SQL（K2 前不变）。 */
-    const ins = `INSERT INTO decision_style (tenant_id, style_json, updated_at) VALUES (?, ?, ?)
-                 ON CONFLICT(tenant_id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`;
-    db.prepare<void>(ins).run('t1', '{"v":1}', 1000);
-    db.prepare<void>(ins).run('t1', '{"v":2}', 2000); /* upsert 同 tenant */
-    const rows = db.prepare<{ persona_id: string; style_json: string }>(`SELECT persona_id, style_json FROM decision_style WHERE tenant_id='t1'`).all();
-    assert.equal(rows.length, 1, '旧 ON CONFLICT(tenant_id) 仍唯一(主键未变)');
-    assert.equal(rows[0]!.persona_id, 'default', 'persona_id 自动落 default');
-    assert.match(rows[0]!.style_json, /"v":2/, 'upsert 更新');
+  it('★K2 executor ON CONFLICT(tenant_id, persona_id)★：同 (tenant,persona) upsert 唯一，多 persona 共存', () => {
+    const ins = `INSERT INTO decision_style (tenant_id, persona_id, style_json, updated_at) VALUES (?, ?, ?, ?)
+                 ON CONFLICT(tenant_id, persona_id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`;
+    db.prepare<void>(ins).run('t1', 'p1', '{"v":1}', 1000);
+    db.prepare<void>(ins).run('t1', 'p1', '{"v":2}', 2000); /* 同 (t1,p1) → upsert */
+    db.prepare<void>(ins).run('t1', 'p2', '{"v":9}', 1000); /* 不同 persona → 新行 */
+    const rows = db.prepare<{ persona_id: string; style_json: string }>(`SELECT persona_id, style_json FROM decision_style WHERE tenant_id='t1' ORDER BY persona_id`).all();
+    assert.equal(rows.length, 2, '两 persona 各一行');
+    assert.match(rows[0]!.style_json, /"v":2/, 'p1 upsert 更新');
+    assert.match(rows[1]!.style_json, /"v":9/, 'p2 独立');
   });
 
   it('★按 persona_id 列区分★：宽表 core_values 可按 persona_id 过滤出不同 persona 的数据', () => {
