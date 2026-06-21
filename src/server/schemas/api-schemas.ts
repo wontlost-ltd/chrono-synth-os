@@ -929,3 +929,60 @@ export const DistillationRejectBodySchema = z.object({
 export const EarningCycleBodySchema = z.object({
   maxTasksPerCycle: z.number().int().min(1).max(20).optional(),
 });
+
+/* ── ADR-0055 E3 数字员工组织交互控制台（写/动作）── */
+
+/* 发起目标：由某 manager 数字员工运行一个目标（确定性分解→委派→执行→汇报→聚合）。 */
+export const WorkforceRunGoalBodySchema = z.object({
+  managerWorkerId: z.string().min(1).max(128),
+  title: z.string().min(1).max(200),
+  description: z.string().min(0).max(2000),
+  goalType: z.string().min(1).max(64),
+});
+
+/* 人类决定一个待审批（approve/reject）。reason 拒绝时建议填，approve 可选。 */
+export const WorkforceApprovalDecisionBodySchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  reason: z.string().max(500).optional(),
+});
+
+/* 触发数字员工真实执行一个已委派任务（D3：接 ToolInvocationPipeline，全确定性门控）。 */
+export const WorkforceExecuteTaskBodySchema = z.object({
+  workerId: z.string().min(1).max(128),
+  toolId: z.string().min(1).max(128),
+  arguments: z.record(z.string(), z.unknown()).default({}),
+  /* 非 low 任务必填：已放行且绑定本次执行的审批 id（D3 审批门按 subject/发起者/风险校验）。 */
+  approvalId: z.string().min(1).max(128).optional(),
+  /* 仅在上次返回 needs_pipeline_confirmation 后由人类显式提供（铁律4，service 绝不自动补）。 */
+  confirmationToken: z.string().min(1).max(256).optional(),
+  /* 额外风险信号（来自可信工具 metadata/编排层，不可信调用方不应随意填低——后端会再夹 A0 任务风险）。 */
+  riskSignals: z.object({
+    toolRisk: z.enum(['low', 'medium', 'high']).optional(),
+    outboundCommitment: z.boolean().optional(),
+    sensitiveData: z.boolean().optional(),
+    funds: z.boolean().optional(),
+    irreversible: z.boolean().optional(),
+    requireConfirmation: z.boolean().optional(),
+  }).optional(),
+});
+
+/* 请求一个执行审批（执行前先按有效风险拿审批 id；low 直接 auto_cleared）。 */
+export const WorkforceRequestApprovalBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  requesterWorkerId: z.string().min(1).max(128),
+  toolId: z.string().min(1).max(128).optional(),
+  /* 工具参数：用于服务端按 args 派生动态高风险（isHighRisk(args)）——与 execute 用同一 args，避免
+   * 「申请审批 auto_cleared 但执行又 needs_approval」的坏流程（Codex 复审）。 */
+  arguments: z.record(z.string(), z.unknown()).default({}),
+  /* enterprise policy：是否允许上级数字员工审批 medium（默认 false=只人类）。 */
+  allowWorkerApproval: z.boolean().default(false),
+  ttlMs: z.number().int().min(1000).max(7 * 24 * 3600 * 1000).optional(),
+  riskSignals: z.object({
+    toolRisk: z.enum(['low', 'medium', 'high']).optional(),
+    outboundCommitment: z.boolean().optional(),
+    sensitiveData: z.boolean().optional(),
+    funds: z.boolean().optional(),
+    irreversible: z.boolean().optional(),
+    requireConfirmation: z.boolean().optional(),
+  }).optional(),
+});

@@ -65,7 +65,8 @@ export class OrgWorkforceStore {
   listPositions(orgId: string): OrgPosition[] {
     const rows = this.db.prepare<RawPosition>(
       `SELECT id, org_id, title, job_family, seniority, role_code, created_at
-       FROM org_positions WHERE tenant_id = ? AND org_id = ?`,
+       FROM org_positions WHERE tenant_id = ? AND org_id = ?
+       ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId);
     return rows.map((r) => this.toPosition(r));
   }
@@ -82,7 +83,8 @@ export class OrgWorkforceStore {
   listWorkers(orgId: string): DigitalWorker[] {
     const rows = this.db.prepare<RawWorker>(
       `SELECT id, org_id, persona_id, position_id, display_name, employment_status, created_at, updated_at
-       FROM digital_workers WHERE tenant_id = ? AND org_id = ?`,
+       FROM digital_workers WHERE tenant_id = ? AND org_id = ?
+       ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId);
     return rows.map((r) => this.toWorker(r));
   }
@@ -359,6 +361,16 @@ export class OrgWorkforceStore {
        FROM org_approvals WHERE tenant_id = ? AND org_id = ? AND subject_type = ? AND subject_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, subjectType, subjectId);
+    return rows.map((r) => this.toApproval(r));
+  }
+
+  /** 列出某 org 当前 pending 的审批（E3 控制台「待我审批」视图用；确定性排序）。调用方应先 expireStaleApprovals。 */
+  listPendingApprovals(orgId: string): OrgApproval[] {
+    const rows = this.db.prepare<RawApproval>(
+      `SELECT id, org_id, subject_type, subject_id, requester_worker_id, effective_risk, requires_human, approval_mode, status, approver_worker_id, approver_user_id, reason, correlation_id, created_at, expires_at, decided_at
+       FROM org_approvals WHERE tenant_id = ? AND org_id = ? AND status = 'pending'
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId);
     return rows.map((r) => this.toApproval(r));
   }
 
