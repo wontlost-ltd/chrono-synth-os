@@ -112,6 +112,8 @@ export class OrgPlanningService {
       for (const { spec, assigneeId } of resolved) {
         const ts = this.now();
         const taskId = this.idgen();
+        /* SLA 截止：playbook 指定 slaMs → due_at = 委派时刻 + slaMs（C 链时间感知）；缺省=无截止。 */
+        const dueAt = spec.slaMs !== undefined ? ts + spec.slaMs : null;
         this.store.insertTask({
           id: taskId, orgId, goalId, parentTaskId: null, assignedToWorkerId: assigneeId,
           accountableWorkerId: managerWorkerId, title: spec.title, taskType: spec.taskType,
@@ -119,7 +121,7 @@ export class OrgPlanningService {
           /* A0 契约字段落库（来自 playbook 的稳定契约，供 B/D/E 复用）。 */
           riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
           acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-          resultSummary: null, createdAt: ts, updatedAt: ts,
+          resultSummary: null, dueAt, createdAt: ts, updatedAt: ts,
         });
         steps++; /* 任务创建 + 委派 */
 
@@ -138,7 +140,7 @@ export class OrgPlanningService {
             status: 'delegated',
             riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
             acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-            resultSummary: null, createdAt: ts, updatedAt: ts,
+            resultSummary: null, dueAt, createdAt: ts, updatedAt: ts,
           });
           continue;
         }
@@ -162,7 +164,7 @@ export class OrgPlanningService {
           status: 'submitted',
           riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
           acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-          resultSummary: result, createdAt: ts, updatedAt: tsExec,
+          resultSummary: result, dueAt, createdAt: ts, updatedAt: tsExec,
         });
       }
 

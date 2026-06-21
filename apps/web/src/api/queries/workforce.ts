@@ -93,6 +93,10 @@ export interface WorkerOperatingSignal {
   deliveredTaskCount: number;
   blockedTaskCount: number;
   highRiskTaskCount: number;
+  /** 在手且已逾期的任务数（C 链 SLA 时间感知）。 */
+  overdueTaskCount: number;
+  /** 在手且临近截止的任务数。 */
+  dueSoonTaskCount: number;
   load: 'idle' | 'normal' | 'heavy';
   needsAttention: boolean;
 }

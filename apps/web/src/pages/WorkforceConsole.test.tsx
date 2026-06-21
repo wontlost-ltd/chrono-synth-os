@@ -63,7 +63,7 @@ describe('WorkforceConsole（E2 只读控制台）', () => {
     });
     mockGoals.mockReturnValue({ data: [{ id: 'g1', orgId: 'org-1', ownerWorkerId: 'w1', title: '咖啡指南', description: '', goalType: 'content_piece', status: 'completed', createdAt: 1, updatedAt: 1 }], isLoading: false, error: null });
     mockSignal.mockReturnValue({
-      data: { workerId: 'w1', decisionConfidence: 'high', confidenceRationale: '稳定交付', collaborationReach: 2, shouldReport: false, operating: { workerId: 'w1', activeTaskCount: 0, deliveredTaskCount: 3, blockedTaskCount: 0, highRiskTaskCount: 0, load: 'normal', needsAttention: false } },
+      data: { workerId: 'w1', decisionConfidence: 'high', confidenceRationale: '稳定交付', collaborationReach: 2, shouldReport: false, operating: { workerId: 'w1', activeTaskCount: 0, deliveredTaskCount: 3, blockedTaskCount: 0, highRiskTaskCount: 0, overdueTaskCount: 0, dueSoonTaskCount: 0, load: 'normal', needsAttention: false } },
       isLoading: false, error: null,
     });
 
@@ -92,7 +92,7 @@ describe('WorkforceConsole（E2 只读控制台）', () => {
     });
     mockGoals.mockReturnValue({ data: [], isLoading: false, error: null });
     mockSignal.mockReturnValue({
-      data: { workerId: 'w1', decisionConfidence: 'low', confidenceRationale: '有 1 个阻塞任务', collaborationReach: 0, shouldReport: true, operating: { workerId: 'w1', activeTaskCount: 1, deliveredTaskCount: 0, blockedTaskCount: 1, highRiskTaskCount: 0, load: 'heavy', needsAttention: true } },
+      data: { workerId: 'w1', decisionConfidence: 'low', confidenceRationale: '有 1 个阻塞任务', collaborationReach: 0, shouldReport: true, operating: { workerId: 'w1', activeTaskCount: 1, deliveredTaskCount: 0, blockedTaskCount: 1, highRiskTaskCount: 0, overdueTaskCount: 0, dueSoonTaskCount: 0, load: 'heavy', needsAttention: true } },
       isLoading: false, error: null,
     });
     renderConsole();

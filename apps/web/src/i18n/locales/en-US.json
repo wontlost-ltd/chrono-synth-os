@@ -1650,6 +1650,8 @@
     "confirmReject": "Reject this pending approval?",
     "decisionConfidenceLabel": "Decision confidence: ",
     "needsAttentionLabel": "Needs attention: ",
-    "goalStartedWithPending": "Goal started ({{count}} tasks, {{pending}} pending real execution/approval)"
+    "goalStartedWithPending": "Goal started ({{count}} tasks, {{pending}} pending real execution/approval)",
+    "overdue": "overdue",
+    "dueSoon": "due soon"
   }
 }

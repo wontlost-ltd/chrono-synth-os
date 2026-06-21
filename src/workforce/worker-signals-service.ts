@@ -24,13 +24,17 @@ export interface WorkerOperatingSignal {
   readonly blockedTaskCount: number;
   /** 高风险在手任务数（riskLevel=high）。 */
   readonly highRiskTaskCount: number;
+  /** 在手且**已逾期**（dueAt < now）的任务数（SLA 信号，C 链时间感知）。 */
+  readonly overdueTaskCount: number;
+  /** 在手且**临近截止**（now ≤ dueAt < now + DUE_SOON_WINDOW）的任务数。 */
+  readonly dueSoonTaskCount: number;
   /**
-   * 负载等级（确定性派生）：idle（无在手）/ normal / heavy（在手多或有高风险/阻塞）。
+   * 负载等级（确定性派生）：idle（无在手）/ normal / heavy（在手多或有高风险/阻塞/逾期）。
    * 管理者据此知道哪个 worker 需要关注/复核/再分配。
    */
   readonly load: 'idle' | 'normal' | 'heavy';
   /**
-   * 是否需要人工关注（确定性）：有阻塞 或 有高风险在手 → true。这是「健康度」信号，不是情绪。
+   * 是否需要人工关注（确定性）：有阻塞 或 有高风险在手 或**有逾期** → true。这是「健康度」信号，不是情绪。
    */
   readonly needsAttention: boolean;
 }
@@ -41,32 +45,50 @@ const ACTIVE_STATUSES: ReadonlySet<OrgTask['status']> = new Set(['delegated', 'i
 const DELIVERED_STATUSES: ReadonlySet<OrgTask['status']> = new Set(['submitted', 'approved']);
 /** 负载判 heavy 的在手任务阈值。 */
 const HEAVY_ACTIVE_THRESHOLD = 4;
+/** 「临近截止」窗口（24h 内未到期算 due_soon）。确定性常量。 */
+const DUE_SOON_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export class WorkerSignalsService {
-  constructor(private readonly store: OrgWorkforceStore) {}
+  /**
+   * @param now 时钟（C 链 SLA 时间感知用：据 now 与任务 due_at 算 overdue/due_soon）。
+   *   缺省 0：无截止判定（旧调用方不传时不报逾期，保持向后兼容——但应传真实时钟才有 SLA 信号）。
+   */
+  constructor(
+    private readonly store: OrgWorkforceStore,
+    private readonly now: () => number = () => 0,
+  ) {}
 
   /**
    * 算一个 worker 的运行信号（确定性，零-LLM）。worker 不存在 → undefined。
    * 信号只读 org_tasks（worker 自己的任务），不碰 companion 任何东西，per-(org, worker) 无串味。
+   * SLA：据 now 与在手任务 due_at 确定性派生 overdue/due_soon（now=0 时不报，向后兼容）。
    */
   getOperatingSignal(orgId: string, workerId: string): WorkerOperatingSignal | undefined {
     if (!this.store.getWorker(orgId, workerId)) return undefined;
     const tasks = this.store.listTasksByAssignee(orgId, workerId);
+    const nowMs = this.now();
 
     let activeTaskCount = 0;
     let deliveredTaskCount = 0;
     let blockedTaskCount = 0;
     let highRiskActive = 0;
+    let overdueTaskCount = 0;
+    let dueSoonTaskCount = 0;
     for (const t of tasks) {
       if (ACTIVE_STATUSES.has(t.status)) {
         activeTaskCount++;
         if (t.riskLevel === 'high') highRiskActive++;
+        /* SLA 时间感知（仅在手任务、有截止、有真实时钟才判）：逾期 / 临近。 */
+        if (t.dueAt !== null && nowMs > 0) {
+          if (t.dueAt < nowMs) overdueTaskCount++;
+          else if (t.dueAt < nowMs + DUE_SOON_WINDOW_MS) dueSoonTaskCount++;
+        }
       }
       if (DELIVERED_STATUSES.has(t.status)) deliveredTaskCount++;
       if (t.status === 'blocked') blockedTaskCount++;
     }
 
-    const needsAttention = blockedTaskCount > 0 || highRiskActive > 0;
+    const needsAttention = blockedTaskCount > 0 || highRiskActive > 0 || overdueTaskCount > 0;
     const load: WorkerOperatingSignal['load'] =
       activeTaskCount === 0 ? 'idle'
         : (activeTaskCount >= HEAVY_ACTIVE_THRESHOLD || needsAttention) ? 'heavy'
@@ -78,6 +100,8 @@ export class WorkerSignalsService {
       deliveredTaskCount,
       blockedTaskCount,
       highRiskTaskCount: highRiskActive,
+      overdueTaskCount,
+      dueSoonTaskCount,
       load,
       needsAttention,
     };

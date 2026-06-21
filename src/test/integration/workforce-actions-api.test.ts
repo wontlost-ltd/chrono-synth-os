@@ -77,7 +77,7 @@ describe('数字员工组织交互控制台 API（E3）', () => {
     store.insertTask({
       id, orgId: 'org-1', goalId: 'g-seed', parentTaskId: null, assignedToWorkerId: assignee, accountableWorkerId: tenantA.mgrId,
       title: '执行用任务', taskType: 'publish_prep', status: 'delegated', riskLevel: risk, allowsToolExecution: allowsTool,
-      acceptanceCriteria: '就绪', requiredCapabilities: [], resultSummary: null, createdAt: 1000, updatedAt: 1000,
+      acceptanceCriteria: '就绪', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000,
     });
     return id;
   }
@@ -277,7 +277,7 @@ describe('数字员工组织交互控制台 API（E3）', () => {
     store.insertTask({
       id, orgId: 'org-1', goalId: 'g-seed', parentTaskId: null, assignedToWorkerId: icId, accountableWorkerId: tenantA.mgrId,
       title: '已提交', taskType: 'x', status: 'submitted', riskLevel: 'low', allowsToolExecution: true,
-      acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, createdAt: 1000, updatedAt: 1000,
+      acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000,
     });
     const res = await app.inject({
       method: 'POST', url: `/api/v1/workforce/orgs/${orgId}/tasks/${id}/execute`, headers,

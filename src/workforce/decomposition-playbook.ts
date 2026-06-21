@@ -17,6 +17,11 @@ export const GOAL_TYPE_SUPPORT_TICKET = 'support_ticket';
 /** 受限 goal type：数据分析「完成一个分析需求」。 */
 export const GOAL_TYPE_DATA_ANALYSIS = 'data_analysis';
 
+/* C 链 SLA 时限常量（相对委派时刻的毫秒，确定性）：对外/时间敏感环节带截止，让 worker 信号能感知逾期/临期。 */
+const SLA_2_DAYS = 2 * 24 * 60 * 60 * 1000;
+const SLA_1_DAY = 24 * 60 * 60 * 1000;
+const SLA_4_HOURS = 4 * 60 * 60 * 1000;
+
 /**
  * 内容运营分解 playbook：一篇内容 = 研究 → 写作 → 审核 → 发布准备，分派给对应岗位。
  * 这是「数字主管(managing_editor)」确定性拆解一个内容目标的规则。每个任务带 A0 稳定契约字段
@@ -38,8 +43,8 @@ const CONTENT_PIECE_PLAYBOOK: DecompositionPlaybook = {
       { assigneeRoleCode: 'researcher_ic', title: `研究主题：${topic}`, taskType: 'research', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '收集到可引用的事实与来源', requiredCapabilities: ['research'] },
       { assigneeRoleCode: 'writer_ic', title: `撰写初稿：${topic}`, taskType: 'writing', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '初稿覆盖研究要点、结构完整', requiredCapabilities: ['writing'] },
       { assigneeRoleCode: 'reviewer_ic', title: `审核内容：${topic}`, taskType: 'review', riskLevel: 'medium', allowsToolExecution: false, acceptanceCriteria: '事实/风格/合规均通过，标注修改', requiredCapabilities: ['review', 'compliance'] },
-      /* 发布环节涉及对外动作，未来由 D 真实执行（故标 allowsToolExecution=true + 风险更高）；D 接入前仍 stub。 */
-      { assigneeRoleCode: 'publisher_ic', title: `准备发布：${topic}`, taskType: 'publish_prep', riskLevel: 'high', allowsToolExecution: true, acceptanceCriteria: '发布清单就绪，待人类/上级最终确认', requiredCapabilities: ['publishing'] },
+      /* 发布环节涉及对外动作，由 D 真实执行（allowsToolExecution=true + 风险更高）；带 SLA 截止（C 链时间感知）。 */
+      { assigneeRoleCode: 'publisher_ic', title: `准备发布：${topic}`, taskType: 'publish_prep', riskLevel: 'high', allowsToolExecution: true, acceptanceCriteria: '发布清单就绪，待人类/上级最终确认', requiredCapabilities: ['publishing'], slaMs: SLA_2_DAYS },
     ];
   },
 };
@@ -62,7 +67,8 @@ const SUPPORT_TICKET_PLAYBOOK: DecompositionPlaybook = {
       { assigneeRoleCode: 'triage_ic', title: `分诊工单：${subject}`, taskType: 'triage', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '工单分类、优先级、是否需升级已判定', requiredCapabilities: ['triage'] },
       { assigneeRoleCode: 'support_agent_ic', title: `处理工单：${subject}`, taskType: 'handle', riskLevel: 'medium', allowsToolExecution: false, acceptanceCriteria: '给出方案或转交，记录处理过程', requiredCapabilities: ['support'] },
       /* 升级准备涉及退款/账户/对外，未来由 D 真实执行（标 high+allowsTool）；D 接入前仍 stub。 */
-      { assigneeRoleCode: 'escalation_ic', title: `升级准备：${subject}`, taskType: 'escalation_prep', riskLevel: 'high', allowsToolExecution: true, acceptanceCriteria: '升级材料就绪，待人类/主管最终确认', requiredCapabilities: ['escalation', 'compliance'] },
+      /* 工单升级时间敏感（SLA 紧）：4h 截止（C 链时间感知，逾期需关注）。 */
+      { assigneeRoleCode: 'escalation_ic', title: `升级准备：${subject}`, taskType: 'escalation_prep', riskLevel: 'high', allowsToolExecution: true, acceptanceCriteria: '升级材料就绪，待人类/主管最终确认', requiredCapabilities: ['escalation', 'compliance'], slaMs: SLA_4_HOURS },
       { assigneeRoleCode: 'qa_ic', title: `质检工单：${subject}`, taskType: 'qa', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '抽检准确性/合规/体验，标注问题', requiredCapabilities: ['qa'] },
     ];
   },
@@ -85,7 +91,8 @@ const DATA_ANALYSIS_PLAYBOOK: DecompositionPlaybook = {
     return [
       { assigneeRoleCode: 'analyst_lead_ic', title: `澄清需求：${topic}`, taskType: 'clarify', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '分析问题、口径、交付形式已明确', requiredCapabilities: ['requirements'] },
       /* 取数涉及数据源访问，未来由 D 真实执行（标 medium+allowsTool）；D 接入前仍 stub。 */
-      { assigneeRoleCode: 'data_eng_ic', title: `取数：${topic}`, taskType: 'extract', riskLevel: 'medium', allowsToolExecution: true, acceptanceCriteria: '按口径取到可用数据集', requiredCapabilities: ['data_extraction'] },
+      /* 取数环节带 SLA（1 天截止，C 链时间感知）。 */
+      { assigneeRoleCode: 'data_eng_ic', title: `取数：${topic}`, taskType: 'extract', riskLevel: 'medium', allowsToolExecution: true, acceptanceCriteria: '按口径取到可用数据集', requiredCapabilities: ['data_extraction'], slaMs: SLA_1_DAY },
       { assigneeRoleCode: 'analyst_ic', title: `分析：${topic}`, taskType: 'analyze', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '产出结论与证据，标置信度/局限', requiredCapabilities: ['analysis'] },
       { assigneeRoleCode: 'reviewer_ic', title: `复核：${topic}`, taskType: 'review', riskLevel: 'medium', allowsToolExecution: false, acceptanceCriteria: '口径/计算/结论复核通过', requiredCapabilities: ['review'] },
       { assigneeRoleCode: 'reporter_ic', title: `报告：${topic}`, taskType: 'report', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '报告清晰、面向受众、含结论与建议', requiredCapabilities: ['reporting'] },
