@@ -13,6 +13,7 @@ import type {
   OrgConversationThread, OrgMessage, ThreadType, ThreadStatus, MessageType,
   OrgHandoff, HandoffStatus,
   OrgApproval, ApprovalSubjectType, ApprovalStatus, RiskLevel as ApprovalRiskLevel,
+  OrgEscalation, EscalationStatus,
 } from '../workforce/types.js';
 
 /** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → 0（这些列非空）。 */
@@ -122,6 +123,19 @@ export class OrgWorkforceStore {
        ORDER BY report_worker_id ASC`,
     ).all(this.tenantId, orgId, managerWorkerId);
     return rows.map((r) => r.report_worker_id);
+  }
+
+  /**
+   * 取某 worker 的**直接上级** worker id（沿 solid 汇报边向上）；null = 根（无上级）。
+   * 升级链用：阻塞者向其直接上级升级。确定性（同 report 只有一个 solid manager；多边取 id 最小兜底）。
+   */
+  getManagerOf(orgId: string, reportWorkerId: string): string | null {
+    const row = this.db.prepare<{ manager_worker_id: string | null }>(
+      `SELECT manager_worker_id FROM reporting_edges
+       WHERE tenant_id = ? AND org_id = ? AND report_worker_id = ? AND edge_type = 'solid' AND manager_worker_id IS NOT NULL
+       ORDER BY manager_worker_id ASC LIMIT 1`,
+    ).get(this.tenantId, orgId, reportWorkerId);
+    return row ? nullableStr(row.manager_worker_id) : null;
   }
 
   /* ── goals ── */
@@ -338,6 +352,55 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /* ── B 链 升级链 ── */
+
+  insertEscalation(e: Omit<OrgEscalation, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_escalations (id, tenant_id, org_id, task_id, from_worker_id, to_worker_id, parent_escalation_id, depth, status, reason, resolution, correlation_id, created_at, decided_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(e.id, this.tenantId, e.orgId, e.taskId, e.fromWorkerId, e.toWorkerId, e.parentEscalationId, e.depth, e.status, e.reason, e.resolution, e.correlationId, e.createdAt, e.decidedAt);
+  }
+
+  getEscalation(orgId: string, escalationId: string): OrgEscalation | undefined {
+    const row = this.db.prepare<RawEscalation>(
+      `SELECT id, org_id, task_id, from_worker_id, to_worker_id, parent_escalation_id, depth, status, reason, resolution, correlation_id, created_at, decided_at
+       FROM org_escalations WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).get(this.tenantId, orgId, escalationId);
+    return row ? this.toEscalation(row) : undefined;
+  }
+
+  /** 取某任务的升级链（确定性排序：depth 升序、created_at 升序、id 兜底）。 */
+  listEscalationsByTask(orgId: string, taskId: string): OrgEscalation[] {
+    const rows = this.db.prepare<RawEscalation>(
+      `SELECT id, org_id, task_id, from_worker_id, to_worker_id, parent_escalation_id, depth, status, reason, resolution, correlation_id, created_at, decided_at
+       FROM org_escalations WHERE tenant_id = ? AND org_id = ? AND task_id = ?
+       ORDER BY depth ASC, created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, taskId);
+    return rows.map((r) => this.toEscalation(r));
+  }
+
+  /** 取某 worker 收到的 pending 升级（「待我处置」；确定性排序）。 */
+  listPendingEscalationsTo(orgId: string, toWorkerId: string): OrgEscalation[] {
+    const rows = this.db.prepare<RawEscalation>(
+      `SELECT id, org_id, task_id, from_worker_id, to_worker_id, parent_escalation_id, depth, status, reason, resolution, correlation_id, created_at, decided_at
+       FROM org_escalations WHERE tenant_id = ? AND org_id = ? AND to_worker_id = ? AND status = 'pending'
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, toWorkerId);
+    return rows.map((r) => this.toEscalation(r));
+  }
+
+  /**
+   * 条件决定升级：仅当**当前仍 pending** 才转移为 resolved/reescalated/cancelled——原子防并发双处置。
+   * 返回是否真的改了（changes>0）。resolution 仅 resolve 时填。
+   */
+  transitionEscalationIfPending(orgId: string, escalationId: string, status: 'resolved' | 'reescalated' | 'cancelled', resolution: string | null, decidedAt: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_escalations SET status = ?, resolution = ?, decided_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'pending'`,
+    ).run(status, resolution, decidedAt, this.tenantId, orgId, escalationId);
+    return r.changes > 0;
+  }
+
   /* ── D2 执行审批 ── */
 
   insertApproval(a: Omit<OrgApproval, 'tenantId'>): void {
@@ -419,6 +482,17 @@ export class OrgWorkforceStore {
       fromWorkerId: r.from_worker_id, toWorkerId: r.to_worker_id, reason: r.reason,
       status: r.status as HandoffStatus, createdAt: num(r.created_at),
       respondedAt: r.responded_at === null || r.responded_at === undefined ? null : num(r.responded_at),
+    };
+  }
+
+  private toEscalation(r: RawEscalation): OrgEscalation {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id, taskId: r.task_id,
+      fromWorkerId: r.from_worker_id, toWorkerId: r.to_worker_id,
+      parentEscalationId: nullableStr(r.parent_escalation_id), depth: num(r.depth),
+      status: r.status as EscalationStatus, reason: r.reason, resolution: nullableStr(r.resolution),
+      correlationId: nullableStr(r.correlation_id), createdAt: num(r.created_at),
+      decidedAt: r.decided_at === null || r.decided_at === undefined ? null : num(r.decided_at),
     };
   }
 
@@ -506,4 +580,5 @@ interface RawReport { id: string; org_id: string; task_id: string; from_worker_i
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
 interface RawMessage { id: string; org_id: string; thread_id: string; from_worker_id: string; to_worker_id: unknown; message_type: string; content: string; correlation_id: unknown; created_at: unknown; }
 interface RawHandoff { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; reason: string; status: string; created_at: unknown; responded_at: unknown; }
+interface RawEscalation { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; parent_escalation_id: unknown; depth: unknown; status: string; reason: string; resolution: unknown; correlation_id: unknown; created_at: unknown; decided_at: unknown; }
 interface RawApproval { id: string; org_id: string; subject_type: string; subject_id: string; requester_worker_id: string; effective_risk: string; requires_human: unknown; approval_mode: string; status: string; approver_worker_id: unknown; approver_user_id: unknown; reason: string; correlation_id: unknown; created_at: unknown; expires_at: unknown; decided_at: unknown; }
