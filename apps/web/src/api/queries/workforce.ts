@@ -1,10 +1,10 @@
 /**
- * 数字员工组织只读查询（E2 治理控制台数据源）。
+ * 数字员工组织查询 + 动作（E2 只读 + E3 控制台动作数据源）。
  *
- * 对接后端 E1/C0/C2 只读端点（/api/v1/workforce/*）：组织图、目标、worker 运行信号、人格信号束。
- * 全部只读（不发起委派/执行）。
+ * 对接后端只读端点（E1/C0/C2：组织图/目标/信号）+ 动作端点（E3a：发起目标/审批/执行）。
+ * 动作端点需 admin 角色（后端 requireRole('admin')）。
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../client';
 
 export interface GoalTypeInfo {
@@ -145,5 +145,72 @@ export function useWorkerPersonaSignal(orgId: string, workerId: string) {
     queryKey: ['workforce', 'persona-signal', orgId, workerId],
     queryFn: ({ signal }) => apiFetch<WorkerPersonaSignal>(`/api/v1/workforce/orgs/${encodeURIComponent(orgId)}/workers/${encodeURIComponent(workerId)}/persona-signal`, { signal }),
     enabled: !!orgId && !!workerId,
+  });
+}
+
+/* ── E3 动作（发起目标 / 审批 / 执行；需 admin）── */
+
+export interface OrgApproval {
+  id: string;
+  tenantId: string;
+  orgId: string;
+  subjectType: string;
+  subjectId: string;
+  requesterWorkerId: string;
+  effectiveRisk: 'low' | 'medium' | 'high';
+  requiresHuman: boolean;
+  approvalMode: 'human_only' | 'org_or_human';
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  approverWorkerId: string | null;
+  approverUserId: string | null;
+  reason: string;
+  correlationId: string | null;
+  createdAt: number;
+  expiresAt: number | null;
+  decidedAt: number | null;
+}
+
+export interface RunGoalResult {
+  goalId: string;
+  taskCount: number;
+  reportCount: number;
+  executiveSummary: string;
+  accountableStages: number;
+  attributableSteps: number;
+  execution: 'deterministic_stub';
+}
+
+const orgKey = (orgId: string) => encodeURIComponent(orgId);
+
+/** 待审批列表（控制台「待我审批」）。 */
+export function usePendingApprovals(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'approvals-pending', orgId],
+    queryFn: ({ signal }) => apiFetch<OrgApproval[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/approvals/pending`, { signal }),
+    enabled: !!orgId,
+  });
+}
+
+/** 发起目标（manager 数字员工运行一个目标；确定性 stub 执行）。 */
+export function useRunGoal(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { managerWorkerId: string; title: string; description: string; goalType: string }) =>
+      apiFetch<RunGoalResult>(`/api/v1/workforce/orgs/${orgKey(orgId)}/goals`, {
+        method: 'POST', body: JSON.stringify(body),
+      }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'goals', orgId] }); },
+  });
+}
+
+/** 人类决定一个审批（approve/reject）。 */
+export function useDecideApproval(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ approvalId, decision, reason }: { approvalId: string; decision: 'approve' | 'reject'; reason?: string }) =>
+      apiFetch<OrgApproval>(`/api/v1/workforce/orgs/${orgKey(orgId)}/approvals/${encodeURIComponent(approvalId)}/decision`, {
+        method: 'POST', body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
+      }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'approvals-pending', orgId] }); },
   });
 }

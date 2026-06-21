@@ -17,10 +17,18 @@ vi.mock('react-i18next', () => ({
 const mockChart = vi.fn();
 const mockGoals = vi.fn();
 const mockSignal = vi.fn();
+const mockGoalTypes = vi.fn();
+const mockPending = vi.fn();
+const mockRunGoal = vi.fn();
+const mockDecide = vi.fn();
 vi.mock('../api/queries/workforce', () => ({
   useOrgChart: () => mockChart(),
   useOrgGoals: () => mockGoals(),
   useWorkerPersonaSignal: () => mockSignal(),
+  useGoalTypes: () => mockGoalTypes(),
+  usePendingApprovals: () => mockPending(),
+  useRunGoal: () => mockRunGoal(),
+  useDecideApproval: () => mockDecide(),
 }));
 
 function renderConsole() {
@@ -32,6 +40,10 @@ describe('WorkforceConsole（E2 只读控制台）', () => {
     mockChart.mockReturnValue({ data: undefined, isLoading: false, error: null });
     mockGoals.mockReturnValue({ data: undefined, isLoading: false, error: null });
     mockSignal.mockReturnValue({ data: undefined, isLoading: false, error: null });
+    mockGoalTypes.mockReturnValue({ data: [{ goalType: 'content_piece', qualityRubric: [] }], isLoading: false, error: null });
+    mockPending.mockReturnValue({ data: [], isLoading: false, error: null });
+    mockRunGoal.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, isSuccess: false, data: undefined, error: null });
+    mockDecide.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false });
   });
 
   it('未选组织 → 提示选择', () => {
@@ -96,5 +108,59 @@ describe('WorkforceConsole（E2 只读控制台）', () => {
     fireEvent.change(screen.getByPlaceholderText('workforce.orgIdPlaceholder'), { target: { value: 'org-1' } });
     fireEvent.click(screen.getByText('workforce.view'));
     expect(screen.getAllByText('boom').length).toBeGreaterThan(0);
+  });
+
+  /** 进操作 tab（先选组织、切到 actions）。 */
+  function openActions() {
+    renderConsole();
+    fireEvent.change(screen.getByPlaceholderText('workforce.orgIdPlaceholder'), { target: { value: 'org-1' } });
+    fireEvent.click(screen.getByText('workforce.view'));
+    fireEvent.click(screen.getByText('workforce.actionsTab'));
+  }
+
+  it('E3 操作 tab：发起目标表单 + 待审批区渲染', () => {
+    openActions();
+    expect(screen.getAllByText('workforce.initiateGoalSection').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('workforce.pendingApprovalsSection').length).toBeGreaterThan(0);
+    /* goal type 下拉含后端返回的类型。 */
+    expect(screen.getByText('content_piece')).toBeTruthy();
+  });
+
+  it('E3 发起目标：填完 manager+标题+类型 → 点按钮调 runGoal.mutate', () => {
+    const mutate = vi.fn();
+    mockRunGoal.mockReturnValue({ mutate, isPending: false, isError: false, isSuccess: false, data: undefined, error: null });
+    openActions();
+    fireEvent.change(screen.getByPlaceholderText('workforce.managerWorkerIdLabel'), { target: { value: 'w-mgr' } });
+    fireEvent.change(screen.getByPlaceholderText('workforce.goalTitleLabel'), { target: { value: '咖啡指南' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'content_piece' } });
+    fireEvent.click(screen.getByText('workforce.runGoal'));
+    expect(mutate).toHaveBeenCalledWith({ managerWorkerId: 'w-mgr', title: '咖啡指南', description: '', goalType: 'content_piece' });
+  });
+
+  it('E3 待审批：approve high 风险 → 确认后调 decide.mutate（approve）', () => {
+    const mutate = vi.fn();
+    vi.spyOn(window, 'confirm').mockReturnValue(true); /* 高风险 approve 二次确认 → 同意 */
+    mockPending.mockReturnValue({
+      data: [{ id: 'ap-1', tenantId: 't', orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: 'w1', effectiveRisk: 'high', requiresHuman: true, approvalMode: 'human_only', status: 'pending', approverWorkerId: null, approverUserId: null, reason: '高风险', correlationId: null, createdAt: 1, expiresAt: null, decidedAt: null }],
+      isLoading: false, error: null,
+    });
+    mockDecide.mockReturnValue({ mutate, isPending: false, isError: false });
+    openActions();
+    /* DataTable 桌面+移动各渲一份按钮 → 取第一个 approve。 */
+    fireEvent.click(screen.getAllByText('workforce.approve')[0]!);
+    expect(mutate).toHaveBeenCalledWith({ approvalId: 'ap-1', decision: 'approve' });
+  });
+
+  it('★防误点★：approve high 风险确认弹窗取消 → 不调 mutate', () => {
+    const mutate = vi.fn();
+    vi.spyOn(window, 'confirm').mockReturnValue(false); /* 取消 */
+    mockPending.mockReturnValue({
+      data: [{ id: 'ap-1', tenantId: 't', orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: 'w1', effectiveRisk: 'high', requiresHuman: true, approvalMode: 'human_only', status: 'pending', approverWorkerId: null, approverUserId: null, reason: '高风险', correlationId: null, createdAt: 1, expiresAt: null, decidedAt: null }],
+      isLoading: false, error: null,
+    });
+    mockDecide.mockReturnValue({ mutate, isPending: false, isError: false });
+    openActions();
+    fireEvent.click(screen.getAllByText('workforce.approve')[0]!);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });
