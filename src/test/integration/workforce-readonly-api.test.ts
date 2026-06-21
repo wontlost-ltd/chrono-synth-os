@@ -75,9 +75,11 @@ describe('数字员工组织只读 API（E1）', () => {
     const { headers } = tenantA;
     const res = await app.inject({ method: 'GET', url: '/api/v1/workforce/goal-types', headers });
     assert.equal(res.statusCode, 200, res.body);
-    const data = JSON.parse(res.body).data as Array<{ goalType: string; qualityRubric: unknown[] }>;
+    const data = JSON.parse(res.body).data as Array<{ goalType: string; qualityRubric: unknown[]; playbookVersion: number; provenance: string }>;
     assert.ok(data.some((t) => t.goalType === GOAL_TYPE_CONTENT_PIECE), '含内容运营 goal type');
     assert.ok(data.every((t) => Array.isArray(t.qualityRubric) && t.qualityRubric.length > 0), '每种带 rubric');
+    /* M2：暴露 playbook 版本 + 来源。 */
+    assert.ok(data.every((t) => t.playbookVersion >= 1 && (t.provenance === 'reference' || t.provenance === 'distilled')), '每种带版本+来源');
   });
 
   it('GET chart：返回组织图（岗位+员工+汇报关系）', async () => {

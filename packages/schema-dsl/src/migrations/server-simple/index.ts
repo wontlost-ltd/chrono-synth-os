@@ -93,6 +93,7 @@ export { v101_worker_collaboration_memory } from './v101.js';
 export { v102_org_approvals } from './v102.js';
 export { v103_org_escalations } from './v103.js';
 export { v104_org_tasks_due_at } from './v104.js';
+export { v105_org_goals_playbook_version } from './v105.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -190,6 +191,7 @@ import { v101_worker_collaboration_memory } from './v101.js';
 import { v102_org_approvals } from './v102.js';
 import { v103_org_escalations } from './v103.js';
 import { v104_org_tasks_due_at } from './v104.js';
+import { v105_org_goals_playbook_version } from './v105.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -287,4 +289,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v102_org_approvals,
   v103_org_escalations,
   v104_org_tasks_due_at,
+  v105_org_goals_playbook_version,
 ];

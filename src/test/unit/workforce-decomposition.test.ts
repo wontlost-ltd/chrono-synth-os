@@ -46,6 +46,14 @@ describe('decomposition playbook（确定性目标分解）', () => {
     assert.ok(pb.qualityRubric.some((d) => d.dimension === '合规'), '含合规维度');
   });
 
+  it('★M2★：内置 playbook 是 versioned rule pack（version 1 + reference 来源）', () => {
+    for (const gt of [GOAL_TYPE_CONTENT_PIECE, GOAL_TYPE_SUPPORT_TICKET, GOAL_TYPE_DATA_ANALYSIS]) {
+      const pb = getDecompositionPlaybook(gt)!;
+      assert.equal(pb.version, 1, `${gt} 参考版本 v1`);
+      assert.equal(pb.provenance, 'reference', `${gt} 来源 reference`);
+    }
+  });
+
   it('空标题 → 用占位主题（不崩、仍确定性）', () => {
     const pb = getDecompositionPlaybook(GOAL_TYPE_CONTENT_PIECE)!;
     const specs = pb.decompose({ title: '   ', description: '' });

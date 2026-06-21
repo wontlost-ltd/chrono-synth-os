@@ -44,6 +44,8 @@ export interface RunGoalResult {
   readonly pendingRealExecution: number;
   /** 目标整体状态：有任务待真实执行 → active（未完成）；全部 stub 完成 → completed。 */
   readonly goalStatus: 'active' | 'completed';
+  /** 产生该目标的 playbook 规则包版本（M2 审计）。 */
+  readonly playbookVersion: number;
 }
 
 /** 未知 goalType（无对应确定性 playbook）。 */
@@ -103,7 +105,9 @@ export class OrgPlanningService {
       const ts0 = this.now();
       this.store.insertGoal({
         id: goalId, orgId, ownerWorkerId: managerWorkerId, title: goal.title, description: goal.description,
-        goalType: goal.goalType, status: 'active', createdAt: ts0, updatedAt: ts0,
+        goalType: goal.goalType, status: 'active',
+        /* M2 审计：落库产生该目标的 playbook 版本（规则演进后仍可追溯）。 */
+        playbookVersion: playbook.version, createdAt: ts0, updatedAt: ts0,
       });
       steps++; /* goal 创建 */
 
@@ -196,6 +200,7 @@ export class OrgPlanningService {
       accountableStages: resolved.length,
       pendingRealExecution: executiveSummary.pendingRealExecution,
       goalStatus: executiveSummary.goalStatus,
+      playbookVersion: playbook.version,
     };
   }
 
