@@ -195,6 +195,16 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /** 取某 worker 当前被指派的任务（确定性排序）。用于算 worker 运行信号/负载。 */
+  listTasksByAssignee(orgId: string, workerId: string): OrgTask[] {
+    const rows = this.db.prepare<RawTask>(
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at
+       FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND assigned_to_worker_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, workerId);
+    return rows.map((r) => this.toTask(r));
+  }
+
   /** 取某目标的任务（确定性排序：created_at 升序、id 升序兜底）。 */
   listTasksByGoal(orgId: string, goalId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(

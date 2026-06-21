@@ -18,6 +18,7 @@ import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index.js';
 import { OrgWorkforceStore } from '../../storage/org-workforce-store.js';
 import { getDecompositionPlaybook, supportedGoalTypes } from '../../workforce/decomposition-playbook.js';
+import { WorkerSignalsService } from '../../workforce/worker-signals-service.js';
 
 /** 仅用户 JWT 可访问（拒 apikey 主体）——与 persona-core 同款门。 */
 function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
@@ -60,6 +61,15 @@ export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase): vo
   app.get<{ Params: { orgId: string } }>('/api/v1/workforce/orgs/:orgId/goals', async (request) => {
     requireJwtUser(request);
     return { data: storeFor(request).listGoals(request.params.orgId) };
+  });
+
+  /* worker 运行信号（C0 enterprise 类人化隔离：mood→agent health/负载，非「心情」，零-LLM）。 */
+  app.get<{ Params: { orgId: string; workerId: string } }>('/api/v1/workforce/orgs/:orgId/workers/:workerId/signal', async (request) => {
+    requireJwtUser(request);
+    const { orgId, workerId } = request.params;
+    const signal = new WorkerSignalsService(storeFor(request)).getOperatingSignal(orgId, workerId);
+    if (!signal) throw new NotFoundError(`数字员工 ${workerId} 不存在`, ErrorCode.NOT_FOUND_TASK);
+    return { data: signal };
   });
 
   /* 单目标详情：目标 + 任务（含 A0 契约字段）+ 汇报链（完整证据链，回答「这个目标谁干了啥」）。 */
