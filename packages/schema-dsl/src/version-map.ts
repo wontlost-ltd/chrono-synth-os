@@ -115,4 +115,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v103_org_escalations', aliases: { postgres: 'v105', 'sqlite-sql': 'v103' }, classification: 'schema-simple', notes: 'Digital workforce B-chain: multi-level escalation chain (blocked worker escalates up reporting line)' },
   { canonical: 'v104_org_tasks_due_at', aliases: { postgres: 'v106', 'sqlite-sql': 'v104' }, classification: 'schema-simple', notes: 'Digital workforce C-chain: org_tasks.due_at (task SLA deadline for temporal awareness)' },
   { canonical: 'v105_org_goals_playbook_version', aliases: { postgres: 'v107', 'sqlite-sql': 'v105' }, classification: 'schema-simple', notes: 'Digital workforce M2: org_goals.playbook_version (versioned rule-pack audit)' },
+  { canonical: 'v106_persona_id_core_isolation', aliases: { postgres: 'v108', 'sqlite-sql': 'v106' }, classification: 'schema-raw', notes: 'K1 ADR-0056: per-(tenant, persona) cognitive core isolation — add persona_id column only (default default) + composite index; no PK/unique change (PK + executor change deferred to K2)' },
 ];
