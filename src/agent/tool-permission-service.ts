@@ -12,7 +12,7 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { SyncWriteUnitOfWork, ToolPermission, ToolPermissionRow, ToolConstraints, ToolPermissionCheckInput, ToolPermissionCheckResult, ToolScope, ToolInvocationRow, ToolInvocation, ToolInvocationStatus } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork, ToolPermission, ToolPermissionRow, ToolConstraints, ToolPermissionCheckInput, ToolPermissionCheckResult, ToolScope, ToolInvocationRow, ToolInvocation, ToolInvocationStatus, InvokerType } from '@chrono/kernel';
 import {
   tpermQueryByPersonaTool, tpermQueryListByPersona, tpermQueryListByTenant,
   tpermQueryByRevocationKey, tpermQueryDailyUsage, tpermQueryDailyCost,
@@ -145,7 +145,7 @@ export class ToolPermissionService {
     tenantId: string;
     personaId: string;
     toolId: string;
-    invokerType: 'mcp' | 'internal' | 'admin';
+    invokerType: InvokerType;
     invokerId: string;
     invokerUserId?: string | null;
     status: ToolInvocationStatus;
@@ -275,7 +275,7 @@ function rowToInvocation(row: ToolInvocationRow): ToolInvocation {
     tenantId: row.tenant_id,
     personaId: row.persona_id,
     toolId: row.tool_id,
-    invokerType: row.invoker_type as 'mcp' | 'internal' | 'admin',
+    invokerType: row.invoker_type as InvokerType,
     invokerId: row.invoker_id,
     invokerUserId: row.invoker_user_id,
     status: row.status as ToolInvocationStatus,

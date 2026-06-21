@@ -20,7 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import type { SyncWriteUnitOfWork, InvokerType } from '@chrono/kernel';
 import type { ToolAdapter, ToolInvocationContext, ToolInvocationResult } from './tool-adapter.js';
 import type { ToolRegistry } from './tool-registry.js';
 import { ToolPermissionService } from './tool-permission-service.js';
@@ -63,7 +63,7 @@ export interface InvokeRequest {
   readonly tenantId: string;
   readonly personaId: string;
   readonly toolId: string;
-  readonly invokerType: 'mcp' | 'internal' | 'admin';
+  readonly invokerType: InvokerType;
   readonly invokerId: string;
   /** 触发调用的用户 ID（用于"待我确认"列表索引）；MCP/internal 无对应用户时可省略 */
   readonly invokerUserId?: string | null;

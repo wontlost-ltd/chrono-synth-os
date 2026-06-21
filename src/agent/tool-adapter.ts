@@ -5,7 +5,7 @@
  * ToolInvocationPipeline 通过此接口统一调度，不关心工具实际类型。
  */
 
-import type { McpToolSchema } from '@chrono/kernel';
+import type { McpToolSchema, InvokerType } from '@chrono/kernel';
 
 /**
  * 用户级 OAuth access token 解析器
@@ -19,7 +19,7 @@ export type UserOauthTokenResolver = (scope: string) => Promise<string | null>;
 export interface ToolInvocationContext {
   readonly tenantId: string;
   readonly personaId: string;
-  readonly invokerType: 'mcp' | 'internal' | 'admin';
+  readonly invokerType: InvokerType;
   readonly invokerId: string;
   /** 触发本次调用的用户 ID（用于按用户解析 OAuth token） */
   readonly invokerUserId?: string | null;

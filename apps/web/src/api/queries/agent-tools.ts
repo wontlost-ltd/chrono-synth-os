@@ -67,7 +67,7 @@ export interface ToolInvocation {
   tenantId: string;
   personaId: string;
   toolId: string;
-  invokerType: 'mcp' | 'internal' | 'admin';
+  invokerType: 'mcp' | 'internal' | 'admin' | 'org_worker';
   invokerId: string;
   invokerUserId: string | null;
   status: string;

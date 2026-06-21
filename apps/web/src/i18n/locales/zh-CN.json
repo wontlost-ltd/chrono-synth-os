@@ -1592,5 +1592,31 @@
     "resetDone": "已恢复默认策略",
     "unsaved": "有未保存的改动",
     "conflict": "该策略已被其他会话修改，请刷新后重试"
+  },
+  "workforce": {
+    "title": "数字员工组织",
+    "subtitle": "查看你的数字员工在干嘛：组织结构、运营信号、目标进展（只读）",
+    "orgIdLabel": "组织 ID",
+    "orgIdPlaceholder": "输入组织 ID",
+    "view": "查看",
+    "selectOrgTitle": "选择一个组织",
+    "selectOrgMessage": "输入组织 ID 查看其数字员工组织",
+    "workersSection": "数字员工",
+    "colWorker": "数字员工",
+    "colPosition": "岗位",
+    "colStatus": "状态",
+    "colSignal": "运营人格信号",
+    "noWorkersTitle": "无数字员工",
+    "noWorkersMessage": "该组织还没有数字员工",
+    "goalsSection": "目标",
+    "colGoal": "目标",
+    "colType": "类型",
+    "noGoalsTitle": "无目标",
+    "noGoalsMessage": "该组织还没有目标",
+    "loading": "加载中…",
+    "decisionConfidence": "决策置信度",
+    "load": "负载",
+    "collaboration": "协作",
+    "needsAttention": "需关注"
   }
 }

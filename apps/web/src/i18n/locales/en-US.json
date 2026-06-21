@@ -1592,5 +1592,31 @@
     "resetDone": "Reset to default",
     "unsaved": "Unsaved changes",
     "conflict": "This policy was changed by another session — refresh and retry"
+  },
+  "workforce": {
+    "title": "Digital Workforce",
+    "subtitle": "See what your digital workers are doing: org structure, operating signals, goal progress (read-only)",
+    "orgIdLabel": "Organization ID",
+    "orgIdPlaceholder": "Enter organization ID",
+    "view": "View",
+    "selectOrgTitle": "Select an organization",
+    "selectOrgMessage": "Enter an organization ID to view its digital workforce",
+    "workersSection": "Digital Workers",
+    "colWorker": "Digital Worker",
+    "colPosition": "Position",
+    "colStatus": "Status",
+    "colSignal": "Operating Persona Signal",
+    "noWorkersTitle": "No digital workers",
+    "noWorkersMessage": "This organization has no digital workers yet",
+    "goalsSection": "Goals",
+    "colGoal": "Goal",
+    "colType": "Type",
+    "noGoalsTitle": "No goals",
+    "noGoalsMessage": "This organization has no goals yet",
+    "loading": "Loading…",
+    "decisionConfidence": "Decision confidence",
+    "load": "Load",
+    "collaboration": "Collaboration",
+    "needsAttention": "Needs attention"
   }
 }

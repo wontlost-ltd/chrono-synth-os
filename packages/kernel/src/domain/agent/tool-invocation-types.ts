@@ -9,6 +9,16 @@
  * 该表是 audit_log 的补充：audit_log 是高层语义事件，tool_invocations 是低层物理调用。
  */
 
+/**
+ * 调用者类型（审计标签）：
+ *  - mcp：MCP 客户端
+ *  - internal：内部系统（如 earning service）
+ *  - admin：管理员
+ *  - org_worker：数字员工组织里的数字员工（ADR-0055 D1）——是**执行 actor 不是法律 principal**，
+ *    法律 principal 仍由 invokerUserId（人类）承载。pipeline 不据此分支，仅作审计归因。
+ */
+export type InvokerType = 'mcp' | 'internal' | 'admin' | 'org_worker';
+
 /** 调用结果状态 */
 export type ToolInvocationStatus =
   | 'success'
@@ -27,8 +37,8 @@ export interface ToolInvocation {
   readonly tenantId: string;
   readonly personaId: string;
   readonly toolId: string;
-  readonly invokerType: 'mcp' | 'internal' | 'admin';
-  /** 调用者标识（jwt sub / api key hash / mcp client id） */
+  readonly invokerType: InvokerType;
+  /** 调用者标识（jwt sub / api key hash / mcp client id / worker:<id>） */
   readonly invokerId: string;
   /** 触发调用的用户 ID（用于"待我确认"列表索引）；MCP/internal 无对应用户时为 null */
   readonly invokerUserId: string | null;
