@@ -70,6 +70,8 @@ const TENANT_TABLES = [
   'org_positions', 'digital_workers', 'reporting_edges', 'org_goals', 'org_tasks', 'task_reports',
   /* digital workforce B1：数字员工协作（线程/消息，业务派生），A 类标准导出+擦除 */
   'org_conversation_threads', 'org_messages',
+  /* digital workforce B2：任务 handoff（交接协商，业务派生），A 类标准导出+擦除 */
+  'org_handoffs',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',
