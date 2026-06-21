@@ -59,6 +59,8 @@ const TENANT_TABLES = new Set([
   'org_positions', 'digital_workers', 'reporting_edges', 'org_goals', 'org_tasks', 'task_reports',
   /* digital workforce B1：数字员工协作（线程/消息），须自动租户隔离 */
   'org_conversation_threads', 'org_messages',
+  /* digital workforce B2：任务 handoff（交接协商），须自动租户隔离 */
+  'org_handoffs',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

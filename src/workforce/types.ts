@@ -185,6 +185,25 @@ export interface OrgMessage {
   readonly createdAt: number;
 }
 
+/* ── B2 任务 handoff（交接协商）── */
+
+/** handoff 状态机。 */
+export type HandoffStatus = 'proposed' | 'accepted' | 'rejected' | 'cancelled';
+
+/** 一次任务 handoff（from worker 提议把 task 交给 to worker）。 */
+export interface OrgHandoff {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly taskId: string;
+  readonly fromWorkerId: string;
+  readonly toWorkerId: string;
+  readonly reason: string;
+  readonly status: HandoffStatus;
+  readonly createdAt: number;
+  readonly respondedAt: number | null;
+}
+
 /** 质量验收维度（playbook 级 rubric；E 展示 / 未来质检用）。 */
 export interface QualityRubricDimension {
   /** 维度名（如「准确性」「完整性」）。 */

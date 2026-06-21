@@ -11,6 +11,7 @@ import type {
   OrgPosition, DigitalWorker, ReportingEdge, OrgGoal, OrgTask, TaskReport,
   Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, ReportType, RiskLevel,
   OrgConversationThread, OrgMessage, ThreadType, ThreadStatus, MessageType,
+  OrgHandoff, HandoffStatus,
 } from '../workforce/types.js';
 
 /** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → 0（这些列非空）。 */
@@ -173,6 +174,27 @@ export class OrgWorkforceStore {
     ).run(status, resultSummary, now, this.tenantId, orgId, taskId);
   }
 
+  /** 取单个任务；无 → undefined。 */
+  getTask(orgId: string, taskId: string): OrgTask | undefined {
+    const row = this.db.prepare<RawTask>(
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, created_at, updated_at
+       FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).get(this.tenantId, orgId, taskId);
+    return row ? this.toTask(row) : undefined;
+  }
+
+  /**
+   * 条件改任务执行者（handoff accept 时用）：仅当任务**当前执行者仍是 expectedCurrent** 才改——
+   * 防陈旧 handoff 抢走已交接出去的任务。返回是否真的改了（changes>0）。
+   */
+  reassignTaskIfHeldBy(orgId: string, taskId: string, expectedCurrentWorkerId: string, newAssigneeWorkerId: string, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_tasks SET assigned_to_worker_id = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND assigned_to_worker_id = ?`,
+    ).run(newAssigneeWorkerId, now, this.tenantId, orgId, taskId, expectedCurrentWorkerId);
+    return r.changes > 0;
+  }
+
   /** 取某目标的任务（确定性排序：created_at 升序、id 升序兜底）。 */
   listTasksByGoal(orgId: string, goalId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(
@@ -252,7 +274,54 @@ export class OrgWorkforceStore {
     return rows.map((r) => this.toMessage(r));
   }
 
+  /* ── B2 handoff ── */
+
+  insertHandoff(h: Omit<OrgHandoff, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_handoffs (id, tenant_id, org_id, task_id, from_worker_id, to_worker_id, reason, status, created_at, responded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(h.id, this.tenantId, h.orgId, h.taskId, h.fromWorkerId, h.toWorkerId, h.reason, h.status, h.createdAt, h.respondedAt);
+  }
+
+  getHandoff(orgId: string, handoffId: string): OrgHandoff | undefined {
+    const row = this.db.prepare<RawHandoff>(
+      `SELECT id, org_id, task_id, from_worker_id, to_worker_id, reason, status, created_at, responded_at
+       FROM org_handoffs WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).get(this.tenantId, orgId, handoffId);
+    return row ? this.toHandoff(row) : undefined;
+  }
+
+  listHandoffsByTask(orgId: string, taskId: string): OrgHandoff[] {
+    const rows = this.db.prepare<RawHandoff>(
+      `SELECT id, org_id, task_id, from_worker_id, to_worker_id, reason, status, created_at, responded_at
+       FROM org_handoffs WHERE tenant_id = ? AND org_id = ? AND task_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, taskId);
+    return rows.map((r) => this.toHandoff(r));
+  }
+
+  /**
+   * 条件状态迁移：仅当 handoff **当前仍是 proposed** 才改为 status——原子防并发（两个响应不会都成功）。
+   * 返回是否真的改了（changes>0）。
+   */
+  transitionHandoffIfProposed(orgId: string, handoffId: string, status: HandoffStatus, respondedAt: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_handoffs SET status = ?, responded_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'proposed'`,
+    ).run(status, respondedAt, this.tenantId, orgId, handoffId);
+    return r.changes > 0;
+  }
+
   /* ── row → domain 映射 ── */
+
+  private toHandoff(r: RawHandoff): OrgHandoff {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id, taskId: r.task_id,
+      fromWorkerId: r.from_worker_id, toWorkerId: r.to_worker_id, reason: r.reason,
+      status: r.status as HandoffStatus, createdAt: num(r.created_at),
+      respondedAt: r.responded_at === null || r.responded_at === undefined ? null : num(r.responded_at),
+    };
+  }
 
   private toThread(r: RawThread): OrgConversationThread {
     return {
@@ -337,3 +406,4 @@ interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id:
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
 interface RawMessage { id: string; org_id: string; thread_id: string; from_worker_id: string; to_worker_id: unknown; message_type: string; content: string; correlation_id: unknown; created_at: unknown; }
+interface RawHandoff { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; reason: string; status: string; created_at: unknown; responded_at: unknown; }
