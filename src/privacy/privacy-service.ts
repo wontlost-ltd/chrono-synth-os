@@ -74,6 +74,8 @@ const TENANT_TABLES = [
   'org_handoffs',
   /* digital workforce C1：worker 协作记忆（per-counterpart，业务派生），A 类标准导出+擦除 */
   'worker_collaboration_memory',
+  /* digital workforce D2：执行审批（审批门，业务派生），A 类标准导出+擦除 */
+  'org_approvals',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

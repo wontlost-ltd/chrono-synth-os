@@ -111,4 +111,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v099_workforce_collaboration', aliases: { postgres: 'v101', 'sqlite-sql': 'v099' }, classification: 'schema-simple', notes: 'Digital workforce B1: structured agent-to-agent collaboration (threads + messages)' },
   { canonical: 'v100_workforce_handoff', aliases: { postgres: 'v102', 'sqlite-sql': 'v100' }, classification: 'schema-simple', notes: 'Digital workforce B2: task handoff negotiation (proposed/accepted/rejected/cancelled)' },
   { canonical: 'v101_worker_collaboration_memory', aliases: { postgres: 'v103', 'sqlite-sql': 'v101' }, classification: 'schema-simple', notes: 'Digital workforce C1: per-counterpart collaboration memory (fixes cross-contamination)' },
+  { canonical: 'v102_org_approvals', aliases: { postgres: 'v104', 'sqlite-sql': 'v102' }, classification: 'schema-simple', notes: 'Digital workforce D2: execution approval gate (ADR-0055 risk-tiered)' },
 ];

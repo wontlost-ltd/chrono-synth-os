@@ -12,6 +12,7 @@ import type {
   Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, ReportType, RiskLevel,
   OrgConversationThread, OrgMessage, ThreadType, ThreadStatus, MessageType,
   OrgHandoff, HandoffStatus,
+  OrgApproval, ApprovalSubjectType, ApprovalStatus, RiskLevel as ApprovalRiskLevel,
 } from '../workforce/types.js';
 
 /** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → 0（这些列非空）。 */
@@ -322,7 +323,70 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /* ── D2 执行审批 ── */
+
+  insertApproval(a: Omit<OrgApproval, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_approvals (id, tenant_id, org_id, subject_type, subject_id, requester_worker_id, effective_risk, requires_human, approval_mode, status, approver_worker_id, approver_user_id, reason, correlation_id, created_at, expires_at, decided_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(a.id, this.tenantId, a.orgId, a.subjectType, a.subjectId, a.requesterWorkerId, a.effectiveRisk, a.requiresHuman ? 1 : 0, a.approvalMode, a.status, a.approverWorkerId, a.approverUserId, a.reason, a.correlationId, a.createdAt, a.expiresAt, a.decidedAt);
+  }
+
+  getApproval(orgId: string, approvalId: string): OrgApproval | undefined {
+    const row = this.db.prepare<RawApproval>(
+      `SELECT id, org_id, subject_type, subject_id, requester_worker_id, effective_risk, requires_human, approval_mode, status, approver_worker_id, approver_user_id, reason, correlation_id, created_at, expires_at, decided_at
+       FROM org_approvals WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).get(this.tenantId, orgId, approvalId);
+    return row ? this.toApproval(row) : undefined;
+  }
+
+  listApprovalsBySubject(orgId: string, subjectType: ApprovalSubjectType, subjectId: string): OrgApproval[] {
+    const rows = this.db.prepare<RawApproval>(
+      `SELECT id, org_id, subject_type, subject_id, requester_worker_id, effective_risk, requires_human, approval_mode, status, approver_worker_id, approver_user_id, reason, correlation_id, created_at, expires_at, decided_at
+       FROM org_approvals WHERE tenant_id = ? AND org_id = ? AND subject_type = ? AND subject_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, subjectType, subjectId);
+    return rows.map((r) => this.toApproval(r));
+  }
+
+  /**
+   * 条件决定审批：仅当**当前仍是 pending 且未过期**才改为 approved/rejected——原子防并发 + 防过期后批。
+   * 返回是否真的改了（changes>0）。
+   */
+  decideApprovalIfPending(orgId: string, approvalId: string, status: 'approved' | 'rejected', approverWorkerId: string | null, approverUserId: string | null, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_approvals SET status = ?, approver_worker_id = ?, approver_user_id = ?, decided_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?)`,
+    ).run(status, approverWorkerId, approverUserId, now, this.tenantId, orgId, approvalId, now);
+    return r.changes > 0;
+  }
+
+  /** 把已过期的 pending 审批标记为 expired（changes 即过期数）。 */
+  expireStaleApprovals(orgId: string, now: number): number {
+    const r = this.db.prepare<void>(
+      `UPDATE org_approvals SET status = 'expired', decided_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND status = 'pending' AND expires_at IS NOT NULL AND expires_at <= ?`,
+    ).run(now, this.tenantId, orgId, now);
+    return r.changes;
+  }
+
   /* ── row → domain 映射 ── */
+
+  private toApproval(r: RawApproval): OrgApproval {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id,
+      subjectType: r.subject_type as ApprovalSubjectType, subjectId: r.subject_id,
+      requesterWorkerId: r.requester_worker_id, effectiveRisk: r.effective_risk as ApprovalRiskLevel,
+      requiresHuman: num(r.requires_human) === 1,
+      approvalMode: r.approval_mode === 'org_or_human' ? 'org_or_human' : 'human_only',
+      status: r.status as ApprovalStatus,
+      approverWorkerId: nullableStr(r.approver_worker_id), approverUserId: nullableStr(r.approver_user_id),
+      reason: r.reason, correlationId: nullableStr(r.correlation_id),
+      createdAt: num(r.created_at),
+      expiresAt: r.expires_at === null || r.expires_at === undefined ? null : num(r.expires_at),
+      decidedAt: r.decided_at === null || r.decided_at === undefined ? null : num(r.decided_at),
+    };
+  }
 
   private toHandoff(r: RawHandoff): OrgHandoff {
     return {
@@ -417,3 +481,4 @@ interface RawReport { id: string; org_id: string; task_id: string; from_worker_i
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
 interface RawMessage { id: string; org_id: string; thread_id: string; from_worker_id: string; to_worker_id: unknown; message_type: string; content: string; correlation_id: unknown; created_at: unknown; }
 interface RawHandoff { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; reason: string; status: string; created_at: unknown; responded_at: unknown; }
+interface RawApproval { id: string; org_id: string; subject_type: string; subject_id: string; requester_worker_id: string; effective_risk: string; requires_human: unknown; approval_mode: string; status: string; approver_worker_id: unknown; approver_user_id: unknown; reason: string; correlation_id: unknown; created_at: unknown; expires_at: unknown; decided_at: unknown; }
