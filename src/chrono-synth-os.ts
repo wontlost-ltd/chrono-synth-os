@@ -137,6 +137,11 @@ export class ChronoSynthOS {
   private readonly clock: Clock;
   private readonly logger: Logger;
   private readonly tenantId: string;
+  /* K3(ADR-0056) per-persona CoreRhythmLayer 工厂：按 personaId 缓存独立认知内核（缓存 persona-aware，
+   * 防 DB 隔离了内存却共享同一 core 实例而串脑，ADR 红线5）。 */
+  private readonly personaCores = new Map<string, CoreRhythmLayer>();
+  private cognitionConfig?: Partial<MemoryCognitionConfig>;
+  private encryption?: FieldEncryption;
   /** 性格出生设定（②原型 + ③随机化）；缺省不设。仅在 start() 用一次。 */
   private readonly personalitySeed?: { seed?: string; magnitude?: number; archetype?: PersonalityArchetype };
   private stopped = false;
@@ -172,12 +177,15 @@ export class ChronoSynthOS {
     const encryption = config.encryptionConfig?.enabled
       ? new FieldEncryption(config.encryptionConfig)
       : undefined;
+    /* K3(ADR-0056)：存构造依赖供 getCore() 按需建 per-persona core。 */
+    this.cognitionConfig = config.cognitionConfig;
+    this.encryption = encryption;
 
     /* 注册内核 SQL 执行器 */
     registerCoreSelfExecutors();
 
-    /* 初始化三层 */
-    this.core = new CoreRhythmLayer(this.db, this.bus, this.clock, this.logger, config.cognitionConfig, encryption, this.tenantId);
+    /* 初始化三层。core = default persona 的 CoreRhythmLayer（兼容 facade；新代码用 getCore(personaId)）。 */
+    this.core = this.getCore('default');
     this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator, this.tenantId);
     this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig, this.updateGate, this.tenantId);
 
@@ -300,6 +308,28 @@ export class ChronoSynthOS {
   /** 获取系统日志器 */
   getLogger(): Logger {
     return this.logger;
+  }
+
+  /**
+   * K3(ADR-0056)：取某 persona 的认知内核（CoreRhythmLayer）。同 personaId 返回**同一缓存实例**——
+   * 防 DB 按 (tenant, persona) 隔离了但内存共享一个 core 而串脑（ADR 红线5：缓存 persona-aware）。
+   *   - personaId 缺省 'default'：= 兼容 facade，等价于 this.core（legacy companion/manager 路径）。
+   *   - 不同 personaId：独立 CoreRhythmLayer，各自的 decision_style/cognitive_model/narrative（K2 已隔离）。
+   * 工厂只**寻址/加载**，不 seed persona 业务状态（ADR 红线9：persona 出生由 K4 显式 bootstrap）。
+   */
+  getCore(personaId = 'default'): CoreRhythmLayer {
+    const cached = this.personaCores.get(personaId);
+    if (cached) return cached;
+    const core = new CoreRhythmLayer(
+      this.db, this.bus, this.clock, this.logger, this.cognitionConfig, this.encryption, this.tenantId, personaId,
+    );
+    this.personaCores.set(personaId, core);
+    return core;
+  }
+
+  /** 已实例化(缓存)的 persona core 身份列表（可观测；不含未被 getCore 触达的 persona）。 */
+  listPersonaCores(): readonly string[] {
+    return [...this.personaCores.keys()].sort();
   }
 
   /** 获取租户 ID */
