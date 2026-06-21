@@ -11,7 +11,7 @@ interface PendingConfirmation {
   invocationId: string;
   toolId: string;
   personaId: string;
-  invokerType: 'mcp' | 'internal' | 'admin';
+  invokerType: 'mcp' | 'internal' | 'admin' | 'org_worker';
   confirmationTokenId: string | null;
   invokedAt: number;
   inputHash: string;

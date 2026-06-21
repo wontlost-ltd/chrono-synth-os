@@ -160,6 +160,21 @@ describe('ToolPermissionService', () => {
     } finally { db.close(); }
   });
 
+  it('ADR-0055 D1：org_worker invokerType 可记审计 + 保人类 principal（invokerUserId）', () => {
+    const { db, service } = makeService();
+    try {
+      const id = service.recordInvocation({
+        tenantId: 'default', personaId: 'p1', toolId: 'web_search',
+        invokerType: 'org_worker', invokerId: 'worker:w1', invokerUserId: 'human-principal-alice',
+        status: 'success', inputHash: 'h', outputSizeBytes: 0, errorMessage: null, costCents: 0, durationMs: 1, confirmationTokenId: null,
+      });
+      const inv = service.getInvocation('default', id);
+      assert.equal(inv?.invokerType, 'org_worker', '数字员工 actor 类型落审计');
+      assert.equal(inv?.invokerId, 'worker:w1', '归因到具体 worker');
+      assert.equal(inv?.invokerUserId, 'human-principal-alice', '人类法律 principal 保留在审计链');
+    } finally { db.close(); }
+  });
+
   it('dailyUsageCount 仅统计当天 success 调用', () => {
     const { db, service } = makeService();
     try {
