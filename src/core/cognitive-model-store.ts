@@ -10,17 +10,19 @@ import type { KernelClock, SyncWriteUnitOfWork, CognitiveModelRow } from '@chron
 
 export class CognitiveModelStore {
   private readonly tenantId: string;
+  private readonly personaId: string;
   private readonly kernelClock: KernelClock;
 
-  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, tenantId = 'default') {
+  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, tenantId = 'default', personaId = 'default') {
     registerCoreSelfExecutors();
     this.tenantId = tenantId;
+    this.personaId = personaId;
     this.kernelClock = { now: () => clock.now() };
   }
 
   /** 获取认知模型（未设置时返回默认值） */
   get(): CognitiveModel {
-    return getCognitiveModel(this.tx, this.tenantId);
+    return getCognitiveModel(this.tx, this.tenantId, this.personaId);
   }
 
   /**
@@ -29,12 +31,12 @@ export class CognitiveModelStore {
    * 用 updatedAt 会误判已写模型为未写）。与 DecisionStyleStore.exists() 同构。
    */
   exists(): boolean {
-    const row = this.tx.queryOne(cognitiveModelGet(this.tenantId)) as CognitiveModelRow | null;
+    const row = this.tx.queryOne(cognitiveModelGet(this.tenantId, this.personaId)) as CognitiveModelRow | null;
     return row !== null && !!row.modelJson;
   }
 
   /** 设置认知模型（合并更新） */
   set(patch: Partial<CognitiveModel>): CognitiveModel {
-    return setCognitiveModel(this.tx, this.kernelClock, this.tenantId, patch);
+    return setCognitiveModel(this.tx, this.kernelClock, this.tenantId, patch, this.personaId);
   }
 }

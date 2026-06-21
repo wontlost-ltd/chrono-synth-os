@@ -18,7 +18,7 @@ describe('server-raw coverage', () => {
     /* v108 = v106_persona_id_core_isolation（pg-aliased v108，K1 ADR-0056 per-(tenant,persona) 核心隔离；
      * 纯加性：7 张核心表 ADD COLUMN persona_id(default default) + 复合索引，不改主键/唯一约束——
      * 主键改 + executor 改 ON CONFLICT(tenant_id,persona_id) 延后到 K2 原子落，K1 完全向后兼容）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108']);
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109']);
   });
 
   it('covers disabled raw migrations', () => {

@@ -61,8 +61,8 @@ interface CognitiveModelPayload {
 
 /* ── 领域服务函数 ── */
 
-export function getCognitiveModel(tx: SyncReadUnitOfWork, tenantId: string): CognitiveModel {
-  const row = tx.queryOne(cognitiveModelGet(tenantId)) as CognitiveModelRow | null;
+export function getCognitiveModel(tx: SyncReadUnitOfWork, tenantId: string, personaId = 'default'): CognitiveModel {
+  const row = tx.queryOne(cognitiveModelGet(tenantId, personaId)) as CognitiveModelRow | null;
   if (!row || !row.modelJson) return buildDefault();
   const payload = JSON.parse(row.modelJson) as Partial<CognitiveModelPayload>;
   const defaults = buildDefault();
@@ -83,8 +83,9 @@ export function setCognitiveModel(
   clock: KernelClock,
   tenantId: string,
   patch: Partial<CognitiveModel>,
+  personaId = 'default',
 ): CognitiveModel {
-  const current = getCognitiveModel(tx, tenantId);
+  const current = getCognitiveModel(tx, tenantId, personaId);
   const now = clock.now();
   const next: CognitiveModel = {
     beliefs: patch.beliefs ?? current.beliefs,
@@ -104,6 +105,6 @@ export function setCognitiveModel(
     ambiguityTolerance: next.ambiguityTolerance,
     analyticalIntuitive: next.analyticalIntuitive,
   };
-  tx.execute(cognitiveModelSetCmd({ tenantId, modelJson: JSON.stringify(payload), updatedAt: now }));
+  tx.execute(cognitiveModelSetCmd({ tenantId, personaId, modelJson: JSON.stringify(payload), updatedAt: now }));
   return next;
 }

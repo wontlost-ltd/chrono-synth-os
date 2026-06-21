@@ -116,4 +116,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v104_org_tasks_due_at', aliases: { postgres: 'v106', 'sqlite-sql': 'v104' }, classification: 'schema-simple', notes: 'Digital workforce C-chain: org_tasks.due_at (task SLA deadline for temporal awareness)' },
   { canonical: 'v105_org_goals_playbook_version', aliases: { postgres: 'v107', 'sqlite-sql': 'v105' }, classification: 'schema-simple', notes: 'Digital workforce M2: org_goals.playbook_version (versioned rule-pack audit)' },
   { canonical: 'v106_persona_id_core_isolation', aliases: { postgres: 'v108', 'sqlite-sql': 'v106' }, classification: 'schema-raw', notes: 'K1 ADR-0056: per-(tenant, persona) cognitive core isolation — add persona_id column only (default default) + composite index; no PK/unique change (PK + executor change deferred to K2)' },
+  { canonical: 'v107_persona_character_pk', aliases: { postgres: 'v109', 'sqlite-sql': 'v107' }, classification: 'schema-raw', notes: 'K2 ADR-0056: composite (tenant_id, persona_id) PK on decision_style/cognitive_model/narrative (atomic with executor ON CONFLICT change)' },
 ];

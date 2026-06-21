@@ -22,8 +22,8 @@ interface StyleAllDbRow {
 export function registerDecisionStyleExecutors(): void {
   registerQuery<DecisionStyleRow | null, DecisionStyleGetParams>(DECISION_STYLE_QUERY_GET, (db: IDatabase, params) => {
     const row = db.prepare<StyleDbRow>(
-      'SELECT style_json, updated_at FROM decision_style WHERE tenant_id = ?',
-    ).get(params.tenantId);
+      'SELECT style_json, updated_at FROM decision_style WHERE tenant_id = ? AND persona_id = ?',
+    ).get(params.tenantId, params.personaId);
     if (!row) return null;
     return { styleJson: row.style_json, updatedAt: row.updated_at };
   });
@@ -38,9 +38,9 @@ export function registerDecisionStyleExecutors(): void {
 
   registerCommand<DecisionStyleSetParams>(DECISION_STYLE_CMD_SET, (db: IDatabase, p) => {
     db.prepare<void>(
-      `INSERT INTO decision_style (tenant_id, style_json, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(tenant_id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`,
-    ).run(p.tenantId, p.styleJson, p.updatedAt);
+      `INSERT INTO decision_style (tenant_id, persona_id, style_json, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(tenant_id, persona_id) DO UPDATE SET style_json = excluded.style_json, updated_at = excluded.updated_at`,
+    ).run(p.tenantId, p.personaId, p.styleJson, p.updatedAt);
     return { rowsAffected: 1 };
   });
 }
