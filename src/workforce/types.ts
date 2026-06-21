@@ -185,6 +185,39 @@ export interface OrgMessage {
   readonly createdAt: number;
 }
 
+/* ── D2 执行审批门（ADR-0055）── */
+
+/** 审批对象类型。 */
+export type ApprovalSubjectType = 'task_execution' | 'tool_invocation';
+/** 审批状态机。 */
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+/** 一次执行审批请求。 */
+export interface OrgApproval {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly subjectType: ApprovalSubjectType;
+  readonly subjectId: string;
+  readonly requesterWorkerId: string;
+  /** 有效风险（确定性计算，铁律1 只升不降）。 */
+  readonly effectiveRisk: RiskLevel;
+  /** 是否要求人类审批（high/敏感/对外/资金/不可逆 → true）。 */
+  readonly requiresHuman: boolean;
+  /** 审批模式（路由结果持久化，防绕过）：human_only 只能人类批；org_or_human 允许直接上级 worker 批。 */
+  readonly approvalMode: 'human_only' | 'org_or_human';
+  readonly status: ApprovalStatus;
+  /** 批准者（上级数字员工，仅 medium 且非 requiresHuman）。 */
+  readonly approverWorkerId: string | null;
+  /** 批准者（人类 user）。 */
+  readonly approverUserId: string | null;
+  readonly reason: string;
+  readonly correlationId: string | null;
+  readonly createdAt: number;
+  readonly expiresAt: number | null;
+  readonly decidedAt: number | null;
+}
+
 /* ── C1 协作记忆（per-counterpart，解串味）── */
 
 /** 对手方类型：同事 worker / 团队 / 外部干系人。 */
