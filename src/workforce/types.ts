@@ -255,6 +255,32 @@ export interface OrgHandoff {
   readonly respondedAt: number | null;
 }
 
+/* ── B 链：升级链（escalation chain）── */
+
+/** 升级状态机。 */
+export type EscalationStatus = 'pending' | 'resolved' | 'reescalated' | 'cancelled';
+
+/** 一次升级（from 阻塞者 → to 直接上级；parent 串成升级链）。 */
+export interface OrgEscalation {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly taskId: string;
+  readonly fromWorkerId: string;
+  readonly toWorkerId: string;
+  /** 父升级 id（被哪条升级 reescalate 上来的）；null = 链首。 */
+  readonly parentEscalationId: string | null;
+  /** 升级层级（链首=0，每 reescalate +1）。 */
+  readonly depth: number;
+  readonly status: EscalationStatus;
+  readonly reason: string;
+  /** 处置说明（resolve 时填）；null = 未处置。 */
+  readonly resolution: string | null;
+  readonly correlationId: string | null;
+  readonly createdAt: number;
+  readonly decidedAt: number | null;
+}
+
 /** 质量验收维度（playbook 级 rubric；E 展示 / 未来质检用）。 */
 export interface QualityRubricDimension {
   /** 维度名（如「准确性」「完整性」）。 */
