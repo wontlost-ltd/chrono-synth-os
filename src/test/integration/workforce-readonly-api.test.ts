@@ -112,6 +112,27 @@ describe('数字员工组织只读 API（E1）', () => {
     assert.equal(res.statusCode, 404, res.body);
   });
 
+  it('C0 worker 运行信号：GET signal 返回负载/健康（非心情）', async () => {
+    const { headers, orgId, tenantId } = tenantA;
+    /* 取一个 worker id（从 chart）。 */
+    const chart = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/chart`, headers });
+    const workers = JSON.parse(chart.body).data.workers as Array<{ id: string }>;
+    const workerId = workers[0]!.id;
+    const res = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/workers/${workerId}/signal`, headers });
+    assert.equal(res.statusCode, 200, res.body);
+    const signal = JSON.parse(res.body).data as { workerId: string; load: string; needsAttention: boolean };
+    assert.equal(signal.workerId, workerId);
+    assert.ok(['idle', 'normal', 'heavy'].includes(signal.load), '返回负载等级（非心情）');
+    assert.equal(typeof signal.needsAttention, 'boolean');
+    /* 不存在的 worker → 404。 */
+    const res404 = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/workers/ghost/signal`, headers });
+    assert.equal(res404.statusCode, 404);
+    /* 端点级跨租户隔离（Codex 复审）：tenantB 用 A 的 workerId 调 signal → 404（看不到 A 的 worker）。 */
+    assert.ok(tenantId.length > 0);
+    const crossTenant = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/workers/${workerId}/signal`, headers: tenantB.headers });
+    assert.equal(crossTenant.statusCode, 404, '别的 tenant 算不到这个 worker 的信号');
+  });
+
   it('租户隔离：别的 tenant 查不到这个 org 的数据', async () => {
     const a = tenantA;
     const b = tenantB;
