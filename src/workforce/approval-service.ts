@@ -12,8 +12,22 @@
 
 import { randomUUID } from 'node:crypto';
 import type { OrgWorkforceStore } from '../storage/org-workforce-store.js';
-import type { OrgApproval, ApprovalSubjectType } from './types.js';
+import type { OrgApproval, ApprovalSubjectType, RiskLevel } from './types.js';
 import { assessExecutionRisk, routeApproval, type ExecutionRiskSignals } from './execution-risk.js';
+
+/** 风险等级序（用于「批准风险不得低于本次执行有效风险」校验）。 */
+const RISK_ORDER: Record<RiskLevel, number> = { low: 0, medium: 1, high: 2 };
+
+/** 执行审批绑定校验的输入（D3 执行门用，确保审批确实是为「这次执行」批的）。 */
+export interface ExecutionApprovalCheck {
+  readonly orgId: string;
+  readonly approvalId: string;
+  readonly subjectType: ApprovalSubjectType;
+  readonly subjectId: string;
+  readonly requesterWorkerId: string;
+  /** 本次执行的有效风险——批准的风险**不得低于**它（防 medium 批准放行 high 执行）。 */
+  readonly effectiveRisk: RiskLevel;
+}
 
 /** 审批非法（subject 不存在/审批人无权/状态错/陈旧等）。 */
 export class InvalidApprovalError extends Error {
@@ -152,6 +166,27 @@ export class ApprovalService {
   isApprovalCleared(orgId: string, approvalId: string): boolean {
     this.store.expireStaleApprovals(orgId, this.now());
     return this.store.getApproval(orgId, approvalId)?.status === 'approved';
+  }
+  /* ⚠️ isApprovalCleared 只看 status，**不得**用于 D3 执行门——执行放行必须用下方 isExecutionApprovalCleared
+   * （绑定 subject/发起者/风险），否则同 org 任意 approved id 都能放行（跨任务/低风险越权）。 */
+
+  /**
+   * **执行门**用的绑定校验（D3，Codex 复审致命修复）：放行不仅看 status=approved，还必须**确认这个审批
+   * 确实是为「这次执行」批的**——否则同 org 任意 approved id 都能放行（medium 批准放行 high 执行/跨任务复用越权）。
+   * 校验（全部满足才放行）：
+   *   - approval 存在且 status=approved（先 expire 过期的）；
+   *   - subjectType / subjectId / requesterWorkerId 与本次执行一致（审批是为这个 task、这个发起者批的）；
+   *   - 批准时的 effectiveRisk **不低于**本次执行的有效风险（铁律1：不能用低风险批准放行高风险执行）。
+   */
+  isExecutionApprovalCleared(check: ExecutionApprovalCheck): boolean {
+    this.store.expireStaleApprovals(check.orgId, this.now());
+    const a = this.store.getApproval(check.orgId, check.approvalId);
+    if (!a || a.status !== 'approved') return false;
+    if (a.subjectType !== check.subjectType) return false;
+    if (a.subjectId !== check.subjectId) return false;
+    if (a.requesterWorkerId !== check.requesterWorkerId) return false;
+    /* 批准的风险不得低于本次执行有效风险（low 批准不能放行 medium/high）。 */
+    return RISK_ORDER[a.effectiveRisk] >= RISK_ORDER[check.effectiveRisk];
   }
 
   private requirePending(orgId: string, approvalId: string): OrgApproval {
