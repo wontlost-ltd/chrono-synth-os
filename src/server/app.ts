@@ -127,6 +127,7 @@ import { registerOrganizationRoutes } from './routes/organizations.js';
 import { registerAvatarAutorunRoutes } from './routes/avatar-autorun.js';
 import { registerKnowledgeSourceRoutes } from './routes/knowledge-sources.js';
 import { registerPersonaCoreRoutes } from './routes/persona-core.js';
+import { registerWorkforceRoutes } from './routes/workforce.js';
 import { registerSseRoutes } from './routes/sse.js';
 import { registerFeatureFlagRoutes } from './routes/feature-flags.js';
 import { registerScimRoutes } from './routes/scim.js';
@@ -656,6 +657,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     });
   };
   registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
+  /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。 */
+  registerWorkforceRoutes(app, db);
   registerHealthRoutes(app, {
     os: deps.os,
     db: deps.db,
