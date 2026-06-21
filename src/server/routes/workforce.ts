@@ -6,10 +6,12 @@
  * JWT 鉴权 + 租户隔离（request.tenantId）；org_id 来自路径参数，store 显式按 tenant+org 过滤。
  *
  * 路由（enterprise 侧，不碰 /companion）：
- *   GET /api/v1/workforce/goal-types                       — 支持的 goal type（含 rubric）
- *   GET /api/v1/workforce/orgs/:orgId/chart                — 组织图（岗位+员工+汇报关系）
- *   GET /api/v1/workforce/orgs/:orgId/goals                — 目标列表
- *   GET /api/v1/workforce/orgs/:orgId/goals/:goalId        — 单目标 + 其任务 + 汇报链
+ *   GET /api/v1/workforce/goal-types                               — 支持的 goal type（含 rubric）
+ *   GET /api/v1/workforce/orgs/:orgId/chart                        — 组织图（岗位+员工+汇报关系）
+ *   GET /api/v1/workforce/orgs/:orgId/goals                        — 目标列表
+ *   GET /api/v1/workforce/orgs/:orgId/goals/:goalId                — 单目标 + 其任务 + 汇报链
+ *   GET /api/v1/workforce/orgs/:orgId/workers/:workerId/signal     — worker 运行信号（C0：负载/健康）
+ *   GET /api/v1/workforce/orgs/:orgId/workers/:workerId/persona-signal — worker 人格信号束（C2：决策置信度/协作广度/汇报标记）
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -19,6 +21,8 @@ import { AuthorizationError, NotFoundError, ErrorCode } from '../../errors/index
 import { OrgWorkforceStore } from '../../storage/org-workforce-store.js';
 import { getDecompositionPlaybook, supportedGoalTypes } from '../../workforce/decomposition-playbook.js';
 import { WorkerSignalsService } from '../../workforce/worker-signals-service.js';
+import { WorkerPersonaSignalsService } from '../../workforce/worker-persona-signals-service.js';
+import { WorkerCollaborationMemoryStore } from '../../storage/worker-collaboration-memory-store.js';
 
 /** 仅用户 JWT 可访问（拒 apikey 主体）——与 persona-core 同款门。 */
 function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
@@ -68,6 +72,17 @@ export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase): vo
     requireJwtUser(request);
     const { orgId, workerId } = request.params;
     const signal = new WorkerSignalsService(storeFor(request)).getOperatingSignal(orgId, workerId);
+    if (!signal) throw new NotFoundError(`数字员工 ${workerId} 不存在`, ErrorCode.NOT_FOUND_TASK);
+    return { data: signal };
+  });
+
+  /* worker 人格信号束（C2：stance→决策置信度 / relationship→协作广度 / proactive→主动汇报标记，零-LLM）。 */
+  app.get<{ Params: { orgId: string; workerId: string } }>('/api/v1/workforce/orgs/:orgId/workers/:workerId/persona-signal', async (request) => {
+    requireJwtUser(request);
+    const { orgId, workerId } = request.params;
+    const store = storeFor(request);
+    const svc = new WorkerPersonaSignalsService(new WorkerSignalsService(store), new WorkerCollaborationMemoryStore(db, request.tenantId));
+    const signal = svc.getPersonaSignal(orgId, workerId);
     if (!signal) throw new NotFoundError(`数字员工 ${workerId} 不存在`, ErrorCode.NOT_FOUND_TASK);
     return { data: signal };
   });
