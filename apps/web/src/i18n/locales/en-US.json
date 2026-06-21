@@ -1649,6 +1649,7 @@
     "confirmApproveHigh": "Approve this high-risk execution? Approval releases real execution.\nSubject: {{subject}}\nRisk: {{risk}}\nReason: {{reason}}",
     "confirmReject": "Reject this pending approval?",
     "decisionConfidenceLabel": "Decision confidence: ",
-    "needsAttentionLabel": "Needs attention: "
+    "needsAttentionLabel": "Needs attention: ",
+    "goalStartedWithPending": "Goal started ({{count}} tasks, {{pending}} pending real execution/approval)"
   }
 }

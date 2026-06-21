@@ -103,8 +103,9 @@ export function registerWorkforceActionRoutes(
         workerIdByRole(store, orgId),
       );
       reply.code(201);
-      /* execution: 'deterministic_stub' 明确告诉前端这不是真实工具执行（避免 E3b 误导）。 */
-      return { data: { ...result, execution: 'deterministic_stub' } };
+      /* result 含 pendingRealExecution / goalStatus：纯推理环节 stub 完成，需真实工具的环节留 delegated
+       * 待治理执行门（A↔D 集成）。前端据此引导「还有 N 个环节待执行/审批」，不误导为已全部对外完成。 */
+      return { data: result };
     } catch (err) { as4xx(err); }
   });
 

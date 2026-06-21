@@ -186,7 +186,13 @@ function InitiateGoalSection({ orgId }: { orgId: string }) {
           {runGoal.isPending ? t('workforce.running') : t('workforce.runGoal')}
         </button>
         {runGoal.isError && <span className="text-sm text-red-600">{t('workforce.actionFailedWithMessage', { message: (runGoal.error as Error).message })}</span>}
-        {runGoal.isSuccess && <span className="text-sm text-green-600">{t('workforce.goalStartedWithCount', { count: runGoal.data.taskCount })}</span>}
+        {runGoal.isSuccess && (
+          <span className="text-sm text-green-600">
+            {runGoal.data.pendingRealExecution > 0
+              ? t('workforce.goalStartedWithPending', { count: runGoal.data.taskCount, pending: runGoal.data.pendingRealExecution })
+              : t('workforce.goalStartedWithCount', { count: runGoal.data.taskCount })}
+          </span>
+        )}
       </div>
     </section>
   );
