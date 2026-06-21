@@ -108,4 +108,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v096_companion_relationship', aliases: { postgres: 'v098', 'sqlite-sql': 'v096' }, classification: 'schema-simple', notes: 'ADR-0056 humanization: I-you relationship memory (user name + interaction count)' },
   { canonical: 'v097_digital_workforce', aliases: { postgres: 'v099', 'sqlite-sql': 'v097' }, classification: 'schema-simple', notes: 'Digital workforce M1: org chart + deterministic goal decomposition + delegation/report (zero-LLM)' },
   { canonical: 'v098_workforce_task_contract', aliases: { postgres: 'v100', 'sqlite-sql': 'v098' }, classification: 'schema-simple', notes: 'Digital workforce A0: org_tasks contract fields (risk/tool-eligible/acceptance/capabilities)' },
+  { canonical: 'v099_workforce_collaboration', aliases: { postgres: 'v101', 'sqlite-sql': 'v099' }, classification: 'schema-simple', notes: 'Digital workforce B1: structured agent-to-agent collaboration (threads + messages)' },
 ];

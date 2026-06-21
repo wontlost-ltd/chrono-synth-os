@@ -10,6 +10,7 @@ import type { IDatabase } from './database.js';
 import type {
   OrgPosition, DigitalWorker, ReportingEdge, OrgGoal, OrgTask, TaskReport,
   Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, ReportType, RiskLevel,
+  OrgConversationThread, OrgMessage, ThreadType, ThreadStatus, MessageType,
 } from '../workforce/types.js';
 
 /** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → 0（这些列非空）。 */
@@ -202,7 +203,73 @@ export class OrgWorkforceStore {
     return rows.map((row) => this.toReport(row));
   }
 
+  /* ── B1 协作：线程 + 消息 ── */
+
+  insertThread(t: Omit<OrgConversationThread, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_conversation_threads (id, tenant_id, org_id, thread_type, goal_id, task_id, created_by_worker_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(t.id, this.tenantId, t.orgId, t.threadType, t.goalId, t.taskId, t.createdByWorkerId, t.status, t.createdAt, t.updatedAt);
+  }
+
+  getThread(orgId: string, threadId: string): OrgConversationThread | undefined {
+    const row = this.db.prepare<RawThread>(
+      `SELECT id, org_id, thread_type, goal_id, task_id, created_by_worker_id, status, created_at, updated_at
+       FROM org_conversation_threads WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).get(this.tenantId, orgId, threadId);
+    return row ? this.toThread(row) : undefined;
+  }
+
+  listThreads(orgId: string): OrgConversationThread[] {
+    const rows = this.db.prepare<RawThread>(
+      `SELECT id, org_id, thread_type, goal_id, task_id, created_by_worker_id, status, created_at, updated_at
+       FROM org_conversation_threads WHERE tenant_id = ? AND org_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId);
+    return rows.map((r) => this.toThread(r));
+  }
+
+  setThreadStatus(orgId: string, threadId: string, status: ThreadStatus, now: number): void {
+    this.db.prepare<void>(
+      `UPDATE org_conversation_threads SET status = ?, updated_at = ? WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).run(status, now, this.tenantId, orgId, threadId);
+  }
+
+  insertMessage(m: Omit<OrgMessage, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_messages (id, tenant_id, org_id, thread_id, from_worker_id, to_worker_id, message_type, content, correlation_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(m.id, this.tenantId, m.orgId, m.threadId, m.fromWorkerId, m.toWorkerId, m.messageType, m.content, m.correlationId, m.createdAt);
+  }
+
+  /** 列出线程内消息（确定性排序：created_at 升序、id 升序兜底）。 */
+  listMessages(orgId: string, threadId: string): OrgMessage[] {
+    const rows = this.db.prepare<RawMessage>(
+      `SELECT id, org_id, thread_id, from_worker_id, to_worker_id, message_type, content, correlation_id, created_at
+       FROM org_messages WHERE tenant_id = ? AND org_id = ? AND thread_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, threadId);
+    return rows.map((r) => this.toMessage(r));
+  }
+
   /* ── row → domain 映射 ── */
+
+  private toThread(r: RawThread): OrgConversationThread {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id, threadType: r.thread_type as ThreadType,
+      goalId: nullableStr(r.goal_id), taskId: nullableStr(r.task_id), createdByWorkerId: r.created_by_worker_id,
+      status: r.status as ThreadStatus, createdAt: num(r.created_at), updatedAt: num(r.updated_at),
+    };
+  }
+
+  private toMessage(r: RawMessage): OrgMessage {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id, threadId: r.thread_id,
+      fromWorkerId: r.from_worker_id, toWorkerId: nullableStr(r.to_worker_id),
+      messageType: r.message_type as MessageType, content: r.content, correlationId: nullableStr(r.correlation_id),
+      createdAt: num(r.created_at),
+    };
+  }
 
   private toPosition(r: RawPosition): OrgPosition {
     return {
@@ -268,3 +335,5 @@ interface RawEdge { id: string; org_id: string; manager_worker_id: unknown; repo
 interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; created_at: unknown; updated_at: unknown; }
 interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; created_at: unknown; updated_at: unknown; }
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }
+interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
+interface RawMessage { id: string; org_id: string; thread_id: string; from_worker_id: string; to_worker_id: unknown; message_type: string; content: string; correlation_id: unknown; created_at: unknown; }

@@ -145,6 +145,46 @@ export interface TaskSpec {
   readonly requiredCapabilities: readonly string[];
 }
 
+/* ── B1 协作（结构化消息，不是自由聊天）── */
+
+/** 协作线程类型。 */
+export type ThreadType = 'delegation' | 'report' | 'handoff' | 'coordination';
+/** 线程状态。 */
+export type ThreadStatus = 'open' | 'closed';
+
+/** 一条协作线程（绑 org，可选绑 goal/task）。 */
+export interface OrgConversationThread {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly threadType: ThreadType;
+  readonly goalId: string | null;
+  readonly taskId: string | null;
+  readonly createdByWorkerId: string;
+  readonly status: ThreadStatus;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/** 结构化消息类型（不是自由文本意图——便于治理/审计）。 */
+export type MessageType = 'request' | 'response' | 'report' | 'note' | 'escalation';
+
+/** 一条线程内消息（from/to worker，结构化类型，可选 correlation）。 */
+export interface OrgMessage {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly threadId: string;
+  readonly fromWorkerId: string;
+  /** 去向 worker；null = 线程广播。 */
+  readonly toWorkerId: string | null;
+  readonly messageType: MessageType;
+  readonly content: string;
+  /** 关联任务/审批/委派 id（保审计链不断）。 */
+  readonly correlationId: string | null;
+  readonly createdAt: number;
+}
+
 /** 质量验收维度（playbook 级 rubric；E 展示 / 未来质检用）。 */
 export interface QualityRubricDimension {
   /** 维度名（如「准确性」「完整性」）。 */
