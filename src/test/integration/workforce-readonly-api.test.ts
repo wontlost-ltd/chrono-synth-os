@@ -133,6 +133,22 @@ describe('数字员工组织只读 API（E1）', () => {
     assert.equal(crossTenant.statusCode, 404, '别的 tenant 算不到这个 worker 的信号');
   });
 
+  it('C2 worker 人格信号：GET persona-signal 返回决策置信度/协作广度/汇报标记（非心情）', async () => {
+    const { headers, orgId } = tenantA;
+    const chart = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/chart`, headers });
+    const workerId = (JSON.parse(chart.body).data.workers as Array<{ id: string }>)[0]!.id;
+    const res = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/workers/${workerId}/persona-signal`, headers });
+    assert.equal(res.statusCode, 200, res.body);
+    const s = JSON.parse(res.body).data as { decisionConfidence: string; collaborationReach: number; shouldReport: boolean; confidenceRationale: string };
+    assert.ok(['high', 'medium', 'low'].includes(s.decisionConfidence), '决策置信度（非心情）');
+    assert.equal(typeof s.collaborationReach, 'number');
+    assert.equal(typeof s.shouldReport, 'boolean');
+    assert.ok(s.confidenceRationale.length > 0, '可解释依据');
+    /* 不存在 worker → 404；跨租户 → 404。 */
+    assert.equal((await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/workers/ghost/persona-signal`, headers })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/workers/${workerId}/persona-signal`, headers: tenantB.headers })).statusCode, 404);
+  });
+
   it('租户隔离：别的 tenant 查不到这个 org 的数据', async () => {
     const a = tenantA;
     const b = tenantB;
