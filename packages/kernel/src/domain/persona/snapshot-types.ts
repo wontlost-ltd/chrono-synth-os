@@ -15,6 +15,11 @@ export type SnapshotId = string;
 /** 系统完整状态快照 */
 export interface SystemSnapshot {
   readonly id: SnapshotId;
+  /**
+   * coreSelf 所属的 persona（ADR-0056 K5）。指定时 coreSelf 是该 persona 内核的状态，
+   * 回滚也恢复同一 persona（读写对称）。可选以向后兼容旧快照（缺失视为 'default'）。
+   */
+  readonly personaId?: string;
   readonly coreSelf: CoreSelfState;
   readonly personas: readonly PersonaVersion[];
   readonly activeConflicts: readonly Conflict[];
