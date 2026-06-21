@@ -52,11 +52,14 @@ export class WorkforcePersonaBootstrapService {
    * bootstrap 一个组织 + 给每 worker 出生独立人格内核（套原型）。确定性、幂等、**原子**。
    * 整个流程（组织结构 + 全部人格出生）包在单个 DB 事务里：结构非法/任一出生写入失败 → 整体回滚，
    * 不留半成品组织、不留半出生人格（D 原子性）。
+   *
+   * **可安全重跑**：组织已存在则复用既有结构（bootstrapIfAbsent，不重复建岗位触发唯一约束）；人格出生本就
+   * 幂等（已有人格痕迹 → skipped_existing）。故重复 seed = 干净 no-op。
    */
   bootstrap(orgId: string, specs: readonly WorkerPersonaSpec[]): WorkforceBootstrapResult {
     return this.os.getDatabase().transaction(() => {
-      /* ① 组织结构（orgChart 内部校验无环/单根/上级存在；非法抛错 → 事务回滚，不进人格出生）。 */
-      const chart = this.orgChart.bootstrap(orgId, specs);
+      /* ① 组织结构（幂等：已存在则复用；新建时 orgChart 内部校验无环/单根/上级存在，非法抛错 → 事务回滚）。 */
+      const chart = this.orgChart.bootstrapIfAbsent(orgId, specs);
 
       /* ② 逐 worker 出生独立人格内核（K3 工厂取独立 core；幂等不覆盖已成长状态）。 */
       const births: PersonaBirthOutcome[] = [];

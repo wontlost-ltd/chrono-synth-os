@@ -88,4 +88,26 @@ describe('OrgChartService（组织图不变量）', () => {
     const storeB = new OrgWorkforceStore(db, 'tenant-b');
     assert.equal(storeB.listWorkers('org-1').length, 0);
   });
+
+  /* ── 幂等 bootstrap（K6：供 seed 安全重跑）── */
+
+  it('getExistingChart：组织不存在返回 null，存在则重建 roleCode→workerId', () => {
+    assert.equal(svc.getExistingChart('org-1'), null, '不存在 → null');
+    const res = svc.bootstrap('org-1', threeLayerSpecs());
+    const existing = svc.getExistingChart('org-1');
+    assert.ok(existing, '存在 → 非 null');
+    /* 重建的映射与首次 bootstrap 一致（按 position.role_code join workers）。 */
+    assert.deepEqual([...existing!.workerIdByRole.entries()].sort(), [...res.workerIdByRole.entries()].sort());
+  });
+
+  it('bootstrapIfAbsent：首次建、再次复用既有结构不重复建（无唯一约束冲突）', () => {
+    const first = svc.bootstrapIfAbsent('org-1', threeLayerSpecs());
+    assert.equal(store.listWorkers('org-1').length, 3, '首次建 3 名');
+    /* 再次调用：复用既有，不重复 insert（否则 org_positions 唯一约束会抛）。 */
+    const second = svc.bootstrapIfAbsent('org-1', threeLayerSpecs());
+    assert.equal(store.listWorkers('org-1').length, 3, '复用后仍 3 名（未重复建）');
+    assert.equal(store.listPositions('org-1').length, 3, '岗位未翻倍');
+    /* 两次返回同一映射（同样的 workerId）。 */
+    assert.deepEqual([...second.workerIdByRole.entries()].sort(), [...first.workerIdByRole.entries()].sort());
+  });
 });

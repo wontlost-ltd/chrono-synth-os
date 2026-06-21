@@ -75,6 +75,32 @@ export class OrgChartService {
   }
 
   /**
+   * 读取已存在组织的 roleCode→workerId 映射；组织不存在（无 worker）返回 null。
+   * 由 listPositions（含 roleCode）+ listWorkers（含 positionId）join 重建。供幂等 bootstrap 复用。
+   */
+  getExistingChart(orgId: string): BootstrapResult | null {
+    const workers = this.store.listWorkers(orgId);
+    if (workers.length === 0) return null;
+    const roleByPosition = new Map(this.store.listPositions(orgId).map((p) => [p.id, p.roleCode]));
+    const workerIdByRole = new Map<string, string>();
+    for (const w of workers) {
+      const roleCode = roleByPosition.get(w.positionId);
+      if (roleCode !== undefined) workerIdByRole.set(roleCode, w.id);
+    }
+    return { orgId, workerIdByRole };
+  }
+
+  /**
+   * 幂等 bootstrap：组织已存在（已有 worker）则返回既有结构、**不重复建**（供 seed 安全重跑）；
+   * 否则正常 bootstrap。注意：仅按「组织是否已存在」整体判定，不做 worker 级差量同步（diff 留后续需要时再加）。
+   */
+  bootstrapIfAbsent(orgId: string, specs: readonly WorkerSpec[]): BootstrapResult {
+    const existing = this.getExistingChart(orgId);
+    if (existing) return existing;
+    return this.bootstrap(orgId, specs);
+  }
+
+  /**
    * 校验委派合法：fromWorker 委派给 toWorker，toWorker 必须是 fromWorker 的**直接下属**。
    * 不合法抛错（不能越级/向上/向旁/自委派）。
    */
