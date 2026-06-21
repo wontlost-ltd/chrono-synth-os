@@ -157,6 +157,24 @@ describe('ApprovalService（D2 执行审批门）', () => {
     assert.equal(svc.isApprovalCleared('org-1', r.approval.id), false);
   });
 
+  it('★isExecutionApprovalCleared 绑定★：subject/发起者/风险全匹配才放行（D3 执行门用）', () => {
+    const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'medium' }, allowWorkerApproval: true });
+    if (r.kind !== 'pending') throw new Error('expected pending');
+    svc.approveByWorker('org-1', r.approval.id, mgrId);
+    const base = { orgId: 'org-1', approvalId: r.approval.id, subjectType: 'task_execution' as const, subjectId: 't1', requesterWorkerId: icId, effectiveRisk: 'medium' as const };
+    assert.equal(svc.isExecutionApprovalCleared(base), true, '全匹配放行');
+    /* subjectId 不匹配。 */
+    assert.equal(svc.isExecutionApprovalCleared({ ...base, subjectId: 't2' }), false);
+    /* subjectType 不匹配。 */
+    assert.equal(svc.isExecutionApprovalCleared({ ...base, subjectType: 'tool_invocation' }), false);
+    /* 发起者不匹配。 */
+    assert.equal(svc.isExecutionApprovalCleared({ ...base, requesterWorkerId: mgrId }), false);
+    /* 执行风险高于批准风险（medium 批准放行 high 执行）→ 拒。 */
+    assert.equal(svc.isExecutionApprovalCleared({ ...base, effectiveRisk: 'high' }), false);
+    /* 执行风险低于批准风险（high 批准放行 low/medium 执行）→ 放行（不低于即可）。 */
+    assert.equal(svc.isExecutionApprovalCleared({ ...base, effectiveRisk: 'low' }), true);
+  });
+
   it('★状态机★：已决定的审批不能再决定', () => {
     const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'high' }, allowWorkerApproval: true });
     if (r.kind !== 'pending') throw new Error('expected pending');

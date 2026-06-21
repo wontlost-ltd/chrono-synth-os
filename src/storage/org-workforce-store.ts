@@ -175,6 +175,19 @@ export class OrgWorkforceStore {
     ).run(status, resultSummary, now, this.tenantId, orgId, taskId);
   }
 
+  /**
+   * 条件改任务执行状态（D3 真实执行用）：仅当任务**当前状态仍是 expectedStatus** 才转移——
+   * 防同一任务被并发重复执行（两个执行循环同时把 delegated 任务拉起执行）。返回是否真的改了（changes>0）。
+   * 只有抢到「delegated→in_progress」转移的那一个执行者真正调用工具，其余拿到 false 直接退出。
+   */
+  transitionTaskExecutionIfStatus(orgId: string, taskId: string, expectedStatus: TaskStatus, nextStatus: TaskStatus, resultSummary: string | null, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_tasks SET status = ?, result_summary = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = ?`,
+    ).run(nextStatus, resultSummary, now, this.tenantId, orgId, taskId, expectedStatus);
+    return r.changes > 0;
+  }
+
   /** 取单个任务；无 → undefined。 */
   getTask(orgId: string, taskId: string): OrgTask | undefined {
     const row = this.db.prepare<RawTask>(
