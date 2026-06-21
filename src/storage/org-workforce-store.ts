@@ -163,6 +163,19 @@ export class OrgWorkforceStore {
     return rows.map((r) => this.toGoal(r));
   }
 
+  /**
+   * 列出某 goalType 在某激活 playbook 版本下的目标（M3 蒸馏取经验样本用）。确定性排序。
+   * 只看**当前版本**产生的目标——蒸馏要评估「当前规则」的表现，不混入旧版本样本。
+   */
+  listGoalsByTypeAndVersion(orgId: string, goalType: string, playbookVersion: number): OrgGoal[] {
+    const rows = this.db.prepare<RawGoal>(
+      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at
+       FROM org_goals WHERE tenant_id = ? AND org_id = ? AND goal_type = ? AND playbook_version = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, orgId, goalType, playbookVersion);
+    return rows.map((r) => this.toGoal(r));
+  }
+
   /** 取单个目标；无 → undefined。 */
   getGoal(orgId: string, goalId: string): OrgGoal | undefined {
     const row = this.db.prepare<RawGoal>(
