@@ -574,6 +574,24 @@
     }
   ],
   "visualization.ts": [],
+  "workforce-actions.ts": [
+    {
+      "name": "WorkforceApprovalDecisionBodySchema",
+      "hash": "c33f74a549a4bc6fca924acedff0791a622a46829af1cd51f69b5ef9d58ed63e"
+    },
+    {
+      "name": "WorkforceExecuteTaskBodySchema",
+      "hash": "5e7acac70d9e0ecde19ced1a8f2149302a62f78412e8cc1b8d1d9bf238dc8bfb"
+    },
+    {
+      "name": "WorkforceRequestApprovalBodySchema",
+      "hash": "86c57b9b6edab47eca42dbd8766875fa2ef5397b03fe42c52413364e0b209cc8"
+    },
+    {
+      "name": "WorkforceRunGoalBodySchema",
+      "hash": "eb38b244e5f102f456545fbafff2a0df626c578c0e78ef08471f250549f63f20"
+    }
+  ],
   "workforce.ts": [],
   "plugins/jwt-auth.ts": [
     {
