@@ -15,7 +15,10 @@ describe('server-raw coverage', () => {
 
     /* v090 = v088_distilled_artifacts_perception_source（pg-aliased v090，SQLite CHECK rebuild / PG alter
      * constraint，PR #119 加入但当时漏更新本覆盖列表——此处补齐，与 RAW_MIGRATIONS 实际一致）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090']);
+    /* v108 = v106_persona_id_core_isolation（pg-aliased v108，K1 ADR-0056 per-(tenant,persona) 核心隔离；
+     * 纯加性：7 张核心表 ADD COLUMN persona_id(default default) + 复合索引，不改主键/唯一约束——
+     * 主键改 + executor 改 ON CONFLICT(tenant_id,persona_id) 延后到 K2 原子落，K1 完全向后兼容）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108']);
   });
 
   it('covers disabled raw migrations', () => {
@@ -46,6 +49,15 @@ describe('server-raw renderer behavior', () => {
     const migration = findRawByPostgresVersion('v071');
     assert.deepEqual(renderToSqlite(migration), []);
     assert.equal(new SqliteSqlRenderer().renderMigration(migration), null);
+  });
+
+  it('v106 (K1 persona_id core isolation) renders both dialects', () => {
+    /* pg alias v108 / sqlite alias v106 不同（与 v071_pg 同款单独测，不混进 BOTH_DIALECT_RAW 的同名假设）。 */
+    const byPg = findRawByPostgresVersion('v108');
+    const bySqlite = findRawBySqliteVersion('v106');
+    assert.equal(byPg, bySqlite, 'same migration via either alias');
+    assert.ok(renderToPostgres(byPg).length > 0, 'PG SQL non-empty');
+    assert.ok(renderToSqlite(bySqlite).length > 0, 'SQLite SQL non-empty');
   });
 
   it('v072_pg disabled is omitted by default', () => {
