@@ -114,4 +114,5 @@ export const VERSION_MAP: readonly VersionMapEntry[] = [
   { canonical: 'v102_org_approvals', aliases: { postgres: 'v104', 'sqlite-sql': 'v102' }, classification: 'schema-simple', notes: 'Digital workforce D2: execution approval gate (ADR-0055 risk-tiered)' },
   { canonical: 'v103_org_escalations', aliases: { postgres: 'v105', 'sqlite-sql': 'v103' }, classification: 'schema-simple', notes: 'Digital workforce B-chain: multi-level escalation chain (blocked worker escalates up reporting line)' },
   { canonical: 'v104_org_tasks_due_at', aliases: { postgres: 'v106', 'sqlite-sql': 'v104' }, classification: 'schema-simple', notes: 'Digital workforce C-chain: org_tasks.due_at (task SLA deadline for temporal awareness)' },
+  { canonical: 'v105_org_goals_playbook_version', aliases: { postgres: 'v107', 'sqlite-sql': 'v105' }, classification: 'schema-simple', notes: 'Digital workforce M2: org_goals.playbook_version (versioned rule-pack audit)' },
 ];

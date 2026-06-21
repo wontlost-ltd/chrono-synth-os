@@ -10,6 +10,9 @@ import { apiFetch } from '../client';
 export interface GoalTypeInfo {
   goalType: string;
   qualityRubric: Array<{ dimension: string; description: string }>;
+  /** M2：当前激活的 playbook 规则包版本 + 来源（reference/distilled）。 */
+  playbookVersion: number;
+  provenance: 'reference' | 'distilled';
 }
 
 export interface OrgPosition {

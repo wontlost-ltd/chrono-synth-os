@@ -9,6 +9,7 @@
  */
 
 import type { DecompositionPlaybook, TaskSpec } from './types.js';
+import { PlaybookRegistry } from './playbook-registry.js';
 
 /** 受限 goal type：内容运营「产出一篇内容」。 */
 export const GOAL_TYPE_CONTENT_PIECE = 'content_piece';
@@ -30,6 +31,8 @@ const SLA_4_HOURS = 4 * 60 * 60 * 1000;
  */
 const CONTENT_PIECE_PLAYBOOK: DecompositionPlaybook = {
   goalType: GOAL_TYPE_CONTENT_PIECE,
+  version: 1,
+  provenance: 'reference',
   qualityRubric: [
     { dimension: '准确性', description: '事实与引用无误，不臆造' },
     { dimension: '完整性', description: '覆盖主题要点，无明显遗漏' },
@@ -55,6 +58,8 @@ const CONTENT_PIECE_PLAYBOOK: DecompositionPlaybook = {
  */
 const SUPPORT_TICKET_PLAYBOOK: DecompositionPlaybook = {
   goalType: GOAL_TYPE_SUPPORT_TICKET,
+  version: 1,
+  provenance: 'reference',
   qualityRubric: [
     { dimension: '准确性', description: '问题定位正确，方案对症' },
     { dimension: '时效', description: '在 SLA 内响应与处理' },
@@ -80,6 +85,8 @@ const SUPPORT_TICKET_PLAYBOOK: DecompositionPlaybook = {
  */
 const DATA_ANALYSIS_PLAYBOOK: DecompositionPlaybook = {
   goalType: GOAL_TYPE_DATA_ANALYSIS,
+  version: 1,
+  provenance: 'reference',
   qualityRubric: [
     { dimension: '准确性', description: '取数口径正确，计算无误' },
     { dimension: '完整性', description: '覆盖需求问题，无遗漏维度' },
@@ -100,19 +107,26 @@ const DATA_ANALYSIS_PLAYBOOK: DecompositionPlaybook = {
   },
 };
 
-/** 所有已注册的确定性分解 playbook（按 goalType 索引）。 */
-const PLAYBOOKS: ReadonlyMap<string, DecompositionPlaybook> = new Map([
-  [CONTENT_PIECE_PLAYBOOK.goalType, CONTENT_PIECE_PLAYBOOK],
-  [SUPPORT_TICKET_PLAYBOOK.goalType, SUPPORT_TICKET_PLAYBOOK],
-  [DATA_ANALYSIS_PLAYBOOK.goalType, DATA_ANALYSIS_PLAYBOOK],
-]);
+/** 内置参考 playbook（reference，version 1）——M3 蒸馏前的人工规则基线。 */
+const REFERENCE_PLAYBOOKS: readonly DecompositionPlaybook[] = [
+  CONTENT_PIECE_PLAYBOOK,
+  SUPPORT_TICKET_PLAYBOOK,
+  DATA_ANALYSIS_PLAYBOOK,
+];
 
-/** 取某 goalType 的确定性分解 playbook；无 → undefined（调用方应拒绝未知 goalType，不臆造）。 */
+/**
+ * 默认 playbook 注册表（M2 versioned rule pack）——seed 内置参考版本。
+ * 进程级单例：运行时分解永远走这里的**当前激活版本**。M3 蒸馏产出的新版本 register 进来即生效。
+ */
+export const defaultPlaybookRegistry = new PlaybookRegistry();
+for (const pb of REFERENCE_PLAYBOOKS) defaultPlaybookRegistry.register(pb);
+
+/** 取某 goalType 的**当前激活版本** playbook；无 → undefined（调用方应拒绝未知 goalType，不臆造）。 */
 export function getDecompositionPlaybook(goalType: string): DecompositionPlaybook | undefined {
-  return PLAYBOOKS.get(goalType);
+  return defaultPlaybookRegistry.getActive(goalType);
 }
 
 /** 已支持的 goal type 列表（用于校验/文档）。 */
 export function supportedGoalTypes(): readonly string[] {
-  return [...PLAYBOOKS.keys()];
+  return defaultPlaybookRegistry.goalTypeList();
 }

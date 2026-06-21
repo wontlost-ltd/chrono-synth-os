@@ -142,9 +142,9 @@ export class OrgWorkforceStore {
 
   insertGoal(g: Omit<OrgGoal, 'tenantId'>): void {
     this.db.prepare<void>(
-      `INSERT INTO org_goals (id, tenant_id, org_id, owner_worker_id, title, description, goal_type, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(g.id, this.tenantId, g.orgId, g.ownerWorkerId, g.title, g.description, g.goalType, g.status, g.createdAt, g.updatedAt);
+      `INSERT INTO org_goals (id, tenant_id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(g.id, this.tenantId, g.orgId, g.ownerWorkerId, g.title, g.description, g.goalType, g.status, g.playbookVersion, g.createdAt, g.updatedAt);
   }
 
   updateGoalStatus(orgId: string, goalId: string, status: GoalStatus, now: number): void {
@@ -156,7 +156,7 @@ export class OrgWorkforceStore {
   /** 列出某组织的目标（确定性排序：created_at 升序、id 升序兜底）。 */
   listGoals(orgId: string): OrgGoal[] {
     const rows = this.db.prepare<RawGoal>(
-      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, created_at, updated_at
+      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at
        FROM org_goals WHERE tenant_id = ? AND org_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId);
@@ -166,7 +166,7 @@ export class OrgWorkforceStore {
   /** 取单个目标；无 → undefined。 */
   getGoal(orgId: string, goalId: string): OrgGoal | undefined {
     const row = this.db.prepare<RawGoal>(
-      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, created_at, updated_at
+      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at
        FROM org_goals WHERE tenant_id = ? AND org_id = ? AND id = ?`,
     ).get(this.tenantId, orgId, goalId);
     return row ? this.toGoal(row) : undefined;
@@ -532,7 +532,10 @@ export class OrgWorkforceStore {
     return {
       id: r.id, tenantId: this.tenantId, orgId: r.org_id, ownerWorkerId: r.owner_worker_id,
       title: r.title, description: r.description, goalType: r.goal_type,
-      status: r.status as GoalStatus, createdAt: num(r.created_at), updatedAt: num(r.updated_at),
+      status: r.status as GoalStatus,
+      /* playbook_version：integer，SQLite number / PG 可能 string → num()（默认列非空，脏值兜底 1）。 */
+      playbookVersion: num(r.playbook_version) || 1,
+      createdAt: num(r.created_at), updatedAt: num(r.updated_at),
     };
   }
 
@@ -576,7 +579,7 @@ export class OrgWorkforceStore {
 interface RawPosition { id: string; org_id: string; title: string; job_family: string; seniority: string; role_code: string; created_at: unknown; }
 interface RawWorker { id: string; org_id: string; persona_id: string; position_id: string; display_name: string; employment_status: string; created_at: unknown; updated_at: unknown; }
 interface RawEdge { id: string; org_id: string; manager_worker_id: unknown; report_worker_id: string; edge_type: string; created_at: unknown; }
-interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; created_at: unknown; updated_at: unknown; }
+interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; playbook_version: unknown; created_at: unknown; updated_at: unknown; }
 interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; due_at: unknown; created_at: unknown; updated_at: unknown; }
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }

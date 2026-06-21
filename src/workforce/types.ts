@@ -65,6 +65,8 @@ export interface OrgGoal {
   readonly description: string;
   readonly goalType: string;
   readonly status: GoalStatus;
+  /** 产生该目标的 playbook 规则包版本（M2 审计：规则演进后仍可追溯哪版规则拆的）。 */
+  readonly playbookVersion: number;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -296,13 +298,26 @@ export interface QualityRubricDimension {
   readonly description: string;
 }
 
+/** playbook 来源：reference=人工硬编码参考；distilled=蒸馏管线离线编译生成（M3）。 */
+export type PlaybookProvenance = 'reference' | 'distilled';
+
 /**
- * 确定性目标分解 playbook：把一个目标确定性地拆成一组任务规格。
+ * 确定性目标分解 playbook（M2：versioned rule pack）——把一个目标确定性地拆成一组任务规格。
  * 纯函数：相同 (goal) → 相同 TaskSpec[]（可复现，零-LLM）。
+ *
+ * M2：playbook 是**有版本的规则包**（非临时 prompt）。version + provenance 让规则可审计/可 diff/可回滚，
+ * 并作为 M3 蒸馏的目标（组织经验 → 蒸馏出更高 version 的候选 → 经蒸馏门 → 编译成新 playbook）。
  */
 export interface DecompositionPlaybook {
   /** 适用的 goalType。 */
   readonly goalType: string;
+  /**
+   * 规则包语义版本（单调递增整数）：同 goalType 的不同 version 是规则的演进。
+   * 运行时永远用注册表里该 goalType 的**当前激活版本**；历史版本保留供审计/回滚。
+   */
+  readonly version: number;
+  /** 规则包来源：reference（人工参考）/ distilled（蒸馏生成）。 */
+  readonly provenance: PlaybookProvenance;
   /** 该 goal type 的质量验收维度（rubric）——稳定契约，后续质检/展示复用。 */
   readonly qualityRubric: readonly QualityRubricDimension[];
   /** 分解函数：给定目标标题/描述，确定性产出任务规格序列。 */

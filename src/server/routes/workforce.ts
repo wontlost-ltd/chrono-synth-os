@@ -43,7 +43,8 @@ export function registerWorkforceRoutes(app: FastifyInstance, db: IDatabase, clo
     requireJwtUser(request);
     const types = supportedGoalTypes().map((goalType) => {
       const pb = getDecompositionPlaybook(goalType)!;
-      return { goalType, qualityRubric: pb.qualityRubric };
+      /* M2：暴露当前激活 playbook 版本 + 来源（reference/distilled），供前端/审计看用哪版规则。 */
+      return { goalType, qualityRubric: pb.qualityRubric, playbookVersion: pb.version, provenance: pb.provenance };
     });
     return { data: types };
   });
