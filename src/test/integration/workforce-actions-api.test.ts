@@ -89,12 +89,60 @@ describe('数字员工组织交互控制台 API（E3）', () => {
       payload: { managerWorkerId: mgrId, title: '咖啡指南', description: '', goalType: GOAL_TYPE_CONTENT_PIECE },
     });
     assert.equal(res.statusCode, 201, res.body);
-    const data = JSON.parse(res.body).data as { goalId: string; taskCount: number; accountableStages: number };
+    const data = JSON.parse(res.body).data as { goalId: string; taskCount: number; accountableStages: number; pendingRealExecution: number; goalStatus: string };
     assert.equal(data.taskCount, 4);
     assert.ok(data.accountableStages >= 1);
+    /* A↔D 集成：发布环节(allowsToolExecution) 留 delegated 待真实执行 → 目标 active。 */
+    assert.equal(data.pendingRealExecution, 1, '1 个环节待真实执行');
+    assert.equal(data.goalStatus, 'active');
     /* 目标真落库：GET 列表能看到。 */
     const list = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/goals`, headers });
     assert.ok((JSON.parse(list.body).data as unknown[]).length >= 1);
+  });
+
+  it('★A↔D 闭环★：发起目标→留 delegated 的发布环节→请求审批→人类批→真实执行（接管线）', async () => {
+    const { headers, orgId, mgrId } = tenantA;
+    /* 发起目标：发布环节(publish_prep, high+allowsTool) 留 delegated。 */
+    const goalRes = await app.inject({
+      method: 'POST', url: `/api/v1/workforce/orgs/${orgId}/goals`, headers,
+      payload: { managerWorkerId: mgrId, title: '咖啡指南A2D', description: '', goalType: GOAL_TYPE_CONTENT_PIECE },
+    });
+    const goalId = JSON.parse(goalRes.body).data.goalId as string;
+    /* 取那个 delegated 的发布环节任务（allowsToolExecution=true）。 */
+    const detail = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/goals/${goalId}`, headers });
+    const tasks = JSON.parse(detail.body).data.tasks as Array<{ id: string; status: string; allowsToolExecution: boolean; assignedToWorkerId: string }>;
+    const pub = tasks.find((t) => t.allowsToolExecution)!;
+    assert.equal(pub.status, 'delegated', '发布环节待真实执行');
+    /* 请求审批（high → pending）。 */
+    const apRes = await app.inject({
+      method: 'POST', url: `/api/v1/workforce/orgs/${orgId}/approvals`, headers,
+      payload: { taskId: pub.id, requesterWorkerId: pub.assignedToWorkerId },
+    });
+    const ap = JSON.parse(apRes.body).data;
+    assert.equal(ap.kind, 'pending', 'high 环节需审批');
+    /* 人类批准 → 断言确实 approved（不是没生效）。 */
+    const decRes = await app.inject({
+      method: 'POST', url: `/api/v1/workforce/orgs/${orgId}/approvals/${ap.approval.id}/decision`, headers,
+      payload: { decision: 'approve' },
+    });
+    assert.equal(decRes.statusCode, 200, decRes.body);
+    assert.equal(JSON.parse(decRes.body).data.status, 'approved', '审批已放行');
+    /* 真实执行（用注册的低风险工具 memory.search 走通管线；带审批 id）。 */
+    const exec = await app.inject({
+      method: 'POST', url: `/api/v1/workforce/orgs/${orgId}/tasks/${pub.id}/execute`, headers,
+      payload: { workerId: pub.assignedToWorkerId, toolId: 'memory.search', arguments: { query: 'x' }, approvalId: ap.approval.id },
+    });
+    /* 必须真正进了管线（审批已放行，绝不能是 needs_approval）：200 executed 或 409 管线失败类。 */
+    assert.ok(exec.statusCode === 200 || exec.statusCode === 409, exec.body);
+    const store = new OrgWorkforceStore(os.getDatabase(), tenantA.tenantId);
+    const after = store.getTask('org-1', pub.id)!;
+    if (exec.statusCode === 200) {
+      assert.equal(JSON.parse(exec.body).data.kind, 'executed', '审批放行后应真执行，不是 needs_approval');
+      assert.equal(after.status, 'submitted', '成功 → 写回 submitted');
+    } else {
+      assert.match(exec.body, /denied_|tool_not_found|failed|timeout|执行被拦截/, '409 必须是管线失败类');
+      assert.equal(after.status, 'blocked', '管线拦截 → 写回 blocked');
+    }
   });
 
   it('POST 发起目标：不存在的 manager → 404', async () => {

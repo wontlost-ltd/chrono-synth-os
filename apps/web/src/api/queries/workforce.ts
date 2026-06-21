@@ -177,7 +177,10 @@ export interface RunGoalResult {
   executiveSummary: string;
   accountableStages: number;
   attributableSteps: number;
-  execution: 'deterministic_stub';
+  /** 需真实执行的环节数（allowsToolExecution=true，留 delegated 等治理执行门）。 */
+  pendingRealExecution: number;
+  /** 目标整体状态：有待真实执行环节 → active；全部 stub 完成 → completed。 */
+  goalStatus: 'active' | 'completed';
 }
 
 const orgKey = (orgId: string) => encodeURIComponent(orgId);

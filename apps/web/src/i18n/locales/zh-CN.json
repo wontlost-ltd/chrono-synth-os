@@ -1649,6 +1649,7 @@
     "confirmApproveHigh": "确认批准这个高风险执行？批准即放行真实执行。\n对象：{{subject}}\n风险：{{risk}}\n理由：{{reason}}",
     "confirmReject": "确认拒绝这个待审批？",
     "decisionConfidenceLabel": "决策置信度：",
-    "needsAttentionLabel": "需关注："
+    "needsAttentionLabel": "需关注：",
+    "goalStartedWithPending": "目标已发起（{{count}} 个任务，其中 {{pending}} 个待真实执行/审批）"
   }
 }

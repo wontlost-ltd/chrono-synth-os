@@ -99,11 +99,12 @@ describe('数字员工组织只读 API（E1）', () => {
     const detail = await app.inject({ method: 'GET', url: `/api/v1/workforce/orgs/${orgId}/goals/${goalId}`, headers });
     assert.equal(detail.statusCode, 200, detail.body);
     const data = JSON.parse(detail.body).data as { goal: { status: string }; tasks: Array<{ riskLevel: string; requiredCapabilities: string[] }>; reports: unknown[] };
-    assert.equal(data.goal.status, 'completed');
+    /* A↔D 集成：content_piece 含 1 个需真实执行环节(发布)留 delegated → 目标 active（未完成）。 */
+    assert.equal(data.goal.status, 'active');
     assert.equal(data.tasks.length, 4, '4 个任务');
     assert.ok(data.tasks.every((t) => ['low', 'medium', 'high'].includes(t.riskLevel)), '任务带 A0 契约字段');
     assert.ok(data.tasks.every((t) => Array.isArray(t.requiredCapabilities)), 'capabilities 序列化为数组');
-    assert.equal(data.reports.length, 5, '4 下属汇报 + 1 主管聚合');
+    assert.equal(data.reports.length, 5, '3 final + 1 就绪 + 1 主管聚合');
   });
 
   it('不存在的目标 → 404', async () => {
