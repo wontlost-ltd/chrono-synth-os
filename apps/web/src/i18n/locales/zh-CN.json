@@ -1687,6 +1687,18 @@
     "blockedTasks": "挂起任务",
     "disp_gap": "缺口",
     "disp_degraded": "降级",
-    "disp_timeout": "超时"
+    "disp_timeout": "超时",
+    "manageSection": "管理（建组织 / 招数字员工）",
+    "createOrg": "建组织",
+    "createOrgBtn": "建组织",
+    "hireWorker": "招数字员工",
+    "hireBtn": "招人",
+    "hireNeedOrg": "先加载一个组织再往里招人",
+    "submitting": "提交中…",
+    "fOrgId": "组织 ID",
+    "fRoleCode": "岗位 roleCode",
+    "fTitle": "职位",
+    "fName": "显示名",
+    "fManagerId": "上级 worker ID"
   }
 }

@@ -1687,6 +1687,18 @@
     "blockedTasks": "Blocked",
     "disp_gap": "gap",
     "disp_degraded": "degraded",
-    "disp_timeout": "timeout"
+    "disp_timeout": "timeout",
+    "manageSection": "Manage (create org / hire worker)",
+    "createOrg": "Create Organization",
+    "createOrgBtn": "Create Org",
+    "hireWorker": "Hire Digital Worker",
+    "hireBtn": "Hire",
+    "hireNeedOrg": "Load an organization first to hire into it",
+    "submitting": "Submitting…",
+    "fOrgId": "Org ID",
+    "fRoleCode": "Role code",
+    "fTitle": "Title",
+    "fName": "Display name",
+    "fManagerId": "Manager worker ID"
   }
 }

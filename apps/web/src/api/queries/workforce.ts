@@ -294,6 +294,40 @@ export function useRunGoal(orgId: string) {
   });
 }
 
+/* ── 自助建组织 / 招数字员工（admin）── */
+
+export type Archetype = 'explorer' | 'guardian' | 'analyst' | 'doer';
+export type Seniority = 'exec' | 'lead' | 'senior' | 'ic';
+
+export interface CreateOrgResult { orgId: string; rootWorkerId: string; birth: { personaId: string; kind: string } }
+export interface HireWorkerResult { orgId: string; workerId: string; birth: { personaId: string; kind: string } }
+
+/** 建组织 + 根数字员工（无上级）。建完使该 org 的 chart/viz 失效。 */
+export function useCreateOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { orgId: string; roleCode: string; title: string; displayName: string; jobFamily?: string; seniority?: Seniority; archetype?: Archetype }) =>
+      apiFetch<CreateOrgResult>('/api/v1/workforce/orgs', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['workforce', 'chart', r.orgId] });
+      void qc.invalidateQueries({ queryKey: ['workforce', 'viz', r.orgId] });
+    },
+  });
+}
+
+/** 招一名数字员工到已有组织（挂在 managerWorkerId 下）。招完使该 org 的 chart/viz 失效。 */
+export function useHireWorker(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { managerWorkerId: string; roleCode: string; title: string; displayName: string; jobFamily?: string; seniority?: Seniority; archetype?: Archetype }) =>
+      apiFetch<HireWorkerResult>(`/api/v1/workforce/orgs/${orgKey(orgId)}/workers`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] });
+      void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] });
+    },
+  });
+}
+
 /** 人类决定一个审批（approve/reject）。 */
 export function useDecideApproval(orgId: string) {
   const qc = useQueryClient();

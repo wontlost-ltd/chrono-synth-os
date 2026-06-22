@@ -986,3 +986,36 @@ export const WorkforceRequestApprovalBodySchema = z.object({
     requireConfirmation: z.boolean().optional(),
   }).optional(),
 });
+
+/* ── 自助建组织 / 招数字员工（生产 self-service，admin 鉴权）── */
+
+const ARCHETYPE_ENUM = z.enum(['explorer', 'guardian', 'analyst', 'doer']);
+const SENIORITY_ENUM = z.enum(['exec', 'lead', 'senior', 'ic']);
+
+/**
+ * 建一个空组织 + 一名根数字员工（CEO/负责人，无上级）。组织由「有 worker」隐式存在，故建组织即建首个根 worker。
+ * personaId 由服务端按组织+roleCode 派生（前端不传，避免冲突/伪造）。
+ */
+export const WorkforceCreateOrgBodySchema = z.object({
+  orgId: z.string().min(1).max(128),
+  roleCode: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  displayName: z.string().min(1).max(120),
+  jobFamily: z.string().min(1).max(64).default('exec'),
+  seniority: SENIORITY_ENUM.default('exec'),
+  archetype: ARCHETYPE_ENUM.default('doer'),
+});
+
+/**
+ * 往**已存在**组织招一名数字员工：指定岗位 + 原型 + 直接上级（managerWorkerId）。personaId 服务端派生。
+ * 新员工必有上级（非根），出生独立人格内核。
+ */
+export const WorkforceHireWorkerBodySchema = z.object({
+  managerWorkerId: z.string().min(1).max(128),
+  roleCode: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  displayName: z.string().min(1).max(120),
+  jobFamily: z.string().min(1).max(64).default('ic'),
+  seniority: SENIORITY_ENUM.default('ic'),
+  archetype: ARCHETYPE_ENUM.default('doer'),
+});

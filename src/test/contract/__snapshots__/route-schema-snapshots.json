@@ -592,6 +592,16 @@
       "hash": "eb38b244e5f102f456545fbafff2a0df626c578c0e78ef08471f250549f63f20"
     }
   ],
+  "workforce-admin.ts": [
+    {
+      "name": "WorkforceCreateOrgBodySchema",
+      "hash": "7b02d8db273cc9cc4e936a506228ebf07ce97760b8436b5a342d94ef23be040c"
+    },
+    {
+      "name": "WorkforceHireWorkerBodySchema",
+      "hash": "38ebdc4d454e7353bb4924832bc648be3dd74fec1fa140ddcad17daf2ed6464b"
+    }
+  ],
   "workforce-viz.ts": [],
   "workforce.ts": [],
   "plugins/jwt-auth.ts": [

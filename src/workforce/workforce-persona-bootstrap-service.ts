@@ -62,28 +62,48 @@ export class WorkforcePersonaBootstrapService {
       const chart = this.orgChart.bootstrapIfAbsent(orgId, specs);
 
       /* ② 逐 worker 出生独立人格内核（K3 工厂取独立 core；幂等不覆盖已成长状态）。 */
-      const births: PersonaBirthOutcome[] = [];
-      for (const spec of specs) {
-        const core = this.os.getCore(spec.personaId);
-        const base = { personaId: spec.personaId, roleCode: spec.roleCode, archetype: spec.archetype } as const;
-        /* 幂等：该 persona 内核已有人格痕迹 → 不覆盖（保护已成长人格）。
-         * 只看 decisionStyle.exists() 不够：某 persona 可能已写 narrative/cognitiveModel 却无 decision_style row，
-         * 仍会被误判新生而覆盖叙事（与 PR #159 出生扰动同构的坑）。故检查本片已 persona 隔离的三张人格特征表
-         * (decisionStyle/cognitiveModel/narrative)。decisionStyle/cognitiveModel 判 row 存在；narrative 判**内容
-         * 非空**（空串叙事与未出生不可区分，按新生处理是正确语义）。**不**查 values/memories/survival——它们在
-         * CoreRhythmLayer 仍是 tenant 级、尚未 persona-aware，全核心检查会误伤同租户其他 persona 共享的状态。 */
-        if (core.decisionStyle.exists() || core.cognitiveModel.exists() || core.narrative.get().trim() !== '') {
-          births.push({ ...base, kind: 'skipped_existing' });
-          continue;
-        }
-        /* 出生：写原型决策风格 + 一句出生叙事（确定性）。 */
-        const now = this.now();
-        core.decisionStyle.set(archetypeDecisionStyle(spec.archetype, now));
-        core.narrative.set(this.birthNarrative(spec));
-        births.push({ ...base, kind: 'seeded' });
-      }
+      const births = specs.map((spec) => this.birthPersona(spec));
       return { chart, births };
     });
+  }
+
+  /**
+   * 增量招一名数字员工到**已存在**组织 + 给其出生独立人格内核。确定性、幂等、**原子**（单事务）。
+   * 复用 orgChart.hireWorker（增量校验：组织存在/上级存在/roleCode 唯一）+ birthPersona（同一出生逻辑，不漂移）。
+   * 招人写组织结构 + 人格出生包在单事务：结构非法/出生失败 → 整体回滚，不留半成品员工/半出生人格。
+   */
+  hireWorker(orgId: string, spec: WorkerPersonaSpec & { managerWorkerId: string }): { workerId: string; birth: PersonaBirthOutcome } {
+    return this.os.getDatabase().transaction(() => {
+      const workerId = this.orgChart.hireWorker(orgId, {
+        roleCode: spec.roleCode, title: spec.title, jobFamily: spec.jobFamily, seniority: spec.seniority,
+        displayName: spec.displayName, personaId: spec.personaId, managerWorkerId: spec.managerWorkerId,
+        ...(spec.edgeType ? { edgeType: spec.edgeType } : {}),
+      });
+      const birth = this.birthPersona(spec);
+      return { workerId, birth };
+    });
+  }
+
+  /**
+   * 给一个 worker 出生独立人格内核（K3 工厂取独立 core；幂等不覆盖已成长状态）。bootstrap 与 hireWorker 共用，
+   * 同一出生逻辑不漂移。
+   *   幂等：该 persona 内核已有人格痕迹 → 不覆盖（保护已成长人格）。只看 decisionStyle.exists() 不够：某 persona
+   *   可能已写 narrative/cognitiveModel 却无 decision_style row，会被误判新生而覆盖叙事（与 PR #159 出生扰动同构
+   *   的坑）。故检查本片已 persona 隔离的三张人格特征表 (decisionStyle/cognitiveModel/narrative)。decisionStyle/
+   *   cognitiveModel 判 row 存在；narrative 判**内容非空**（空串叙事与未出生不可区分，按新生处理是正确语义）。
+   *   **不**查 values/memories/survival——它们在 CoreRhythmLayer 仍 tenant 级、尚未 persona-aware，全核心检查会
+   *   误伤同租户其他 persona 共享的状态。
+   */
+  private birthPersona(spec: WorkerPersonaSpec): PersonaBirthOutcome {
+    const core = this.os.getCore(spec.personaId);
+    const base = { personaId: spec.personaId, roleCode: spec.roleCode, archetype: spec.archetype } as const;
+    if (core.decisionStyle.exists() || core.cognitiveModel.exists() || core.narrative.get().trim() !== '') {
+      return { ...base, kind: 'skipped_existing' };
+    }
+    /* 出生：写原型决策风格 + 一句出生叙事（确定性）。 */
+    core.decisionStyle.set(archetypeDecisionStyle(spec.archetype, this.now()));
+    core.narrative.set(this.birthNarrative(spec));
+    return { ...base, kind: 'seeded' };
   }
 
   /** 确定性出生叙事（不调 LLM，按原型 + 岗位生成稳定文案）。 */

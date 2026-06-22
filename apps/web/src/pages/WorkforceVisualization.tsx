@@ -16,9 +16,11 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
-  useWorkforceViz,
-  type OrgTreeNode, type OrgTreeEdge, type GoalFlowItem, type WorkerSignalItem, type LearningLoopItem,
+  useWorkforceViz, useCreateOrg, useHireWorker,
+  type OrgTreeNode, type OrgTreeEdge, type GoalFlowItem, type WorkerSignalItem, type LearningLoopItem, type Archetype,
 } from '../api/queries/workforce';
+
+const ARCHETYPES: Archetype[] = ['explorer', 'guardian', 'analyst', 'doer'];
 
 /* 负载 → 节点配色（确定性）。 */
 const LOAD_COLOR: Record<string, string> = { idle: '#9ca3af', normal: '#3b82f6', heavy: '#f97316' };
@@ -60,6 +62,9 @@ export default function WorkforceVisualization() {
         </button>
       </div>
 
+      {/* 管理：建组织 / 招数字员工（admin） */}
+      <ManagementForms orgId={committedOrgId} onCreated={(o) => { setOrgId(o); setCommittedOrgId(o); }} t={t} />
+
       {!committedOrgId ? (
         <EmptyState title={t('workforceViz.selectOrgTitle')} message={t('workforceViz.selectOrgMessage')} />
       ) : viz.error ? (
@@ -91,6 +96,95 @@ export default function WorkforceVisualization() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── 管理表单：建组织 / 招数字员工（admin）── */
+function ManagementForms({ orgId, onCreated, t }: { orgId: string; onCreated: (orgId: string) => void; t: (k: string) => string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <button onClick={() => setOpen((o) => !o)} className="text-sm font-medium text-primary">
+        {open ? '▾' : '▸'} {t('workforceViz.manageSection')}
+      </button>
+      {open && (
+        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <CreateOrgForm onCreated={onCreated} t={t} />
+          <HireWorkerForm orgId={orgId} t={t} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ArchetypeSelect({ value, onChange }: { value: Archetype; onChange: (a: Archetype) => void }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value as Archetype)} className="rounded border border-gray-300 px-2 py-1 text-sm">
+      {ARCHETYPES.map((a) => <option key={a} value={a}>{a}</option>)}
+    </select>
+  );
+}
+
+function CreateOrgForm({ onCreated, t }: { onCreated: (orgId: string) => void; t: (k: string) => string }) {
+  const createOrg = useCreateOrg();
+  const [orgId, setOrgId] = useState('');
+  const [roleCode, setRoleCode] = useState('ceo');
+  const [title, setTitle] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [archetype, setArchetype] = useState<Archetype>('doer');
+  const canSubmit = orgId.trim() && roleCode.trim() && title.trim() && displayName.trim() && !createOrg.isPending;
+  return (
+    <div className="rounded border border-gray-200 bg-white p-3">
+      <h3 className="mb-2 text-sm font-semibold">{t('workforceViz.createOrg')}</h3>
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder={t('workforceViz.fOrgId')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={roleCode} onChange={(e) => setRoleCode(e.target.value)} placeholder={t('workforceViz.fRoleCode')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('workforceViz.fTitle')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('workforceViz.fName')} className="rounded border border-gray-300 px-2 py-1" />
+        <ArchetypeSelect value={archetype} onChange={setArchetype} />
+      </div>
+      <button
+        disabled={!canSubmit}
+        onClick={() => createOrg.mutate({ orgId: orgId.trim(), roleCode: roleCode.trim(), title: title.trim(), displayName: displayName.trim(), archetype, seniority: 'exec' }, { onSuccess: (r) => onCreated(r.orgId) })}
+        className="mt-2 rounded bg-primary px-3 py-1 text-sm text-white disabled:opacity-50"
+      >
+        {createOrg.isPending ? t('workforceViz.submitting') : t('workforceViz.createOrgBtn')}
+      </button>
+      {createOrg.isError && <span className="ml-2 text-xs text-red-600">{(createOrg.error as Error).message}</span>}
+      {createOrg.isSuccess && <span className="ml-2 text-xs text-green-600">✓</span>}
+    </div>
+  );
+}
+
+function HireWorkerForm({ orgId, t }: { orgId: string; t: (k: string) => string }) {
+  const hire = useHireWorker(orgId);
+  const [managerWorkerId, setManagerWorkerId] = useState('');
+  const [roleCode, setRoleCode] = useState('');
+  const [title, setTitle] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [archetype, setArchetype] = useState<Archetype>('explorer');
+  const canSubmit = !!orgId && managerWorkerId.trim() && roleCode.trim() && title.trim() && displayName.trim() && !hire.isPending;
+  return (
+    <div className="rounded border border-gray-200 bg-white p-3">
+      <h3 className="mb-2 text-sm font-semibold">{t('workforceViz.hireWorker')}</h3>
+      {!orgId && <p className="mb-2 text-xs text-gray-400">{t('workforceViz.hireNeedOrg')}</p>}
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <input value={managerWorkerId} onChange={(e) => setManagerWorkerId(e.target.value)} placeholder={t('workforceViz.fManagerId')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={roleCode} onChange={(e) => setRoleCode(e.target.value)} placeholder={t('workforceViz.fRoleCode')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('workforceViz.fTitle')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('workforceViz.fName')} className="rounded border border-gray-300 px-2 py-1" />
+        <ArchetypeSelect value={archetype} onChange={setArchetype} />
+      </div>
+      <button
+        disabled={!canSubmit}
+        onClick={() => hire.mutate({ managerWorkerId: managerWorkerId.trim(), roleCode: roleCode.trim(), title: title.trim(), displayName: displayName.trim(), archetype, seniority: 'ic' })}
+        className="mt-2 rounded bg-primary px-3 py-1 text-sm text-white disabled:opacity-50"
+      >
+        {hire.isPending ? t('workforceViz.submitting') : t('workforceViz.hireBtn')}
+      </button>
+      {hire.isError && <span className="ml-2 text-xs text-red-600">{(hire.error as Error).message}</span>}
+      {hire.isSuccess && <span className="ml-2 text-xs text-green-600">✓</span>}
     </div>
   );
 }

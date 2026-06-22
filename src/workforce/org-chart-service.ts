@@ -101,6 +101,34 @@ export class OrgChartService {
   }
 
   /**
+   * 增量招一名数字员工到**已存在**组织（self-service hire）：建岗位 + worker + 汇报边到指定上级。
+   * 与整组织 bootstrap 区别：新员工必有上级（managerWorkerId 非空，加入已有组织非建根），故天然不破单根；
+   * 校验（确定性）：① 组织已存在（有 worker）② 上级 worker 存在于本组织 ③ roleCode 在本组织唯一。
+   * 不建根、不成环（新叶子挂在已有节点下，沿现有树上溯不可能回到自己）。返回新 workerId。
+   */
+  hireWorker(orgId: string, spec: { roleCode: string; title: string; jobFamily: string; seniority: Seniority; displayName: string; personaId: string; managerWorkerId: string; edgeType?: ReportingEdgeType }): string {
+    /* ① 组织必须已存在（招人是往已有组织加，不是建组织）。 */
+    if (this.store.listWorkers(orgId).length === 0) {
+      throw new InvalidOrgChartError(`组织 ${orgId} 不存在（先建组织再招人）`);
+    }
+    /* ② 上级 worker 必须存在于本组织。 */
+    if (!this.store.getWorker(orgId, spec.managerWorkerId)) {
+      throw new InvalidOrgChartError(`上级数字员工不存在：${spec.managerWorkerId}`);
+    }
+    /* ③ roleCode 在本组织唯一（不重复建岗位）。 */
+    if (this.store.listPositions(orgId).some((p) => p.roleCode === spec.roleCode)) {
+      throw new InvalidOrgChartError(`roleCode 已存在：${spec.roleCode}`);
+    }
+    const ts = this.now();
+    const positionId = this.idgen();
+    const workerId = this.idgen();
+    this.store.insertPosition({ id: positionId, orgId, title: spec.title, jobFamily: spec.jobFamily, seniority: spec.seniority, roleCode: spec.roleCode, createdAt: ts });
+    this.store.insertWorker({ id: workerId, orgId, personaId: spec.personaId, positionId, displayName: spec.displayName, employmentStatus: 'active', createdAt: ts, updatedAt: ts });
+    this.store.insertEdge({ id: this.idgen(), orgId, managerWorkerId: spec.managerWorkerId, reportWorkerId: workerId, edgeType: spec.edgeType ?? 'solid', createdAt: ts });
+    return workerId;
+  }
+
+  /**
    * 校验委派合法：fromWorker 委派给 toWorker，toWorker 必须是 fromWorker 的**直接下属**。
    * 不合法抛错（不能越级/向上/向旁/自委派）。
    */
