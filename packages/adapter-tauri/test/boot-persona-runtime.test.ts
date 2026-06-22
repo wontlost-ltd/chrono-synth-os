@@ -17,7 +17,7 @@ describe('adapter-tauri bootPersonaRuntime', () => {
     const runtime = await bootPersonaRuntime();
     assert.equal(runtime.tauriBridgeAvailable, false);
     runtime.tx.execute(upsertValueCmd({
-      id: 'patience', label: 'Patience',
+      id: 'patience', personaId: 'default', label: 'Patience',
       weight: 0.9, timeDiscount: 0.1, emotionAmplifier: 1.0,
       updatedAt: 1700000000000,
     }));

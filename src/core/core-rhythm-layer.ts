@@ -45,12 +45,12 @@ export class CoreRhythmLayer {
   ) {
     registerCoreSelfExecutors();
     const tx = db;
-    this.values = new ValueStore(tx, clock);
-    this.memories = new CognitiveMemoryGraph(tx, clock, cognitionConfig, encryption);
-    /* 人格特征三件套(叙事/决策风格/认知模型)按 (tenant, persona) 隔离——同租户不同 persona 各异。
-     * values/memories/survival 仍 tenant 键(persona_id 列已加但 executor 未扩，留后续子片)。 */
+    /* ADR-0056 K5b：values/memories/survival 按 persona 隔离（tenant_id 仍由 TenantDatabase 自动注入）。 */
+    this.values = new ValueStore(tx, clock, this.personaId);
+    this.memories = new CognitiveMemoryGraph(tx, clock, cognitionConfig, encryption, this.personaId);
+    /* 人格特征三件套(叙事/决策风格/认知模型) + values/memories/survival 已按 (tenant, persona) 隔离。 */
     this.narrative = new NarrativeStore(tx, clock, tenantId, this.personaId);
-    this.survival = new SurvivalAnchorStore(tx, clock);
+    this.survival = new SurvivalAnchorStore(tx, clock, this.personaId);
     this.decisionStyle = new DecisionStyleStore(tx, clock, tenantId, this.personaId);
     this.cognitiveModel = new CognitiveModelStore(tx, clock, tenantId, this.personaId);
   }

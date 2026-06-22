@@ -141,10 +141,9 @@ describe('K5 ADR-0056 自成长 per-persona（蒸馏编译落到各自内核）'
     assert.ok(after.some((p) => p.id === forked.id), '新增的实验体仍在');
   });
 
-  it('★边界诚实·value_shift 当前 tenant 共享（尚未 persona 隔离, K5b 后续）★', () => {
-    /* 锁住真实边界：ValueStore 在 CoreRhythmLayer 仍 tenant 键，故 value_shift 编译到非 default persona
-     * 时写入的是同租户共享价值——本片不声明其 per-persona 隔离。此用例防止该行为被误当隔离而悄悄回归。 */
-    const v = os.getCore('default').addValue('curiosity', 0.5);
+  it('★value_shift per-persona 隔离（K5b）★：alice 的价值编译只改 alice，default 看不到', () => {
+    /* K5b：ValueStore 已按 persona 隔离。在 alice 自己的 core 上建价值，value_shift 编译到 alice 只改 alice。 */
+    const v = os.getCore('p-alice').addValue('curiosity', 0.5);
     /* value_shift 小 delta 走 auto-compile（canAutoCompile 放行），ingest 即编译。 */
     const r = os.distillation.ingest('p-alice', {
       kind: 'value_shift', source: 'reflection',
@@ -153,9 +152,11 @@ describe('K5 ADR-0056 自成长 per-persona（蒸馏编译落到各自内核）'
       evidence: [{ type: 'pattern', id: 'e1', score: 0.9 }, { type: 'pattern', id: 'e2', score: 0.85 }],
     });
     assert.equal(r.status, 'compiled', 'value_shift 自动编译');
-    /* alice 的编译改的是**同租户共享**价值——default core 读同一价值也变（证明当前 tenant 共享，非 persona 隔离）。 */
-    assert.equal(os.getCore('default').values.getById(v.id)?.weight, 0.53, 'value 当前 tenant 共享(default 也见 alice 的改动)');
-    assert.equal(os.getCore('p-alice').values.getById(v.id)?.weight, 0.53, 'alice 见同一共享价值');
+    /* alice 的价值被改；default 看不到 alice 的价值（per-persona 隔离）。 */
+    assert.equal(os.getCore('p-alice').values.getById(v.id)?.weight, 0.53, 'alice 价值被编译更新');
+    assert.equal(os.getCore('default').values.getById(v.id), undefined, 'default 看不到 alice 的价值（K5b 隔离）');
+    /* bob 也看不到。 */
+    assert.equal(os.getCore('p-bob').values.getById(v.id), undefined, 'bob 看不到 alice 的价值');
   });
 
   it('★确定性可复现★：同序列成长 → 同终态内核', () => {

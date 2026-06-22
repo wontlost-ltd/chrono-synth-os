@@ -9,6 +9,11 @@ import type {
   MemInsertParams, MemUpdateAccessParams, MemUpdateSalienceParams,
   MemUpdateSalienceDeltaParams, MemPaginatedParams, MemPaginatedResult,
   MemConsolidationCandidatesParams, MemEdgeUpsertParams, MemWmInsertParams,
+  MemByIdParams, MemAllParams, MemBatchParams, MemCountParams,
+  MemConsolidatedFromParams, MemLowestSalienceParams,
+  MemEdgeAllParams, MemEdgeForNodeParams, MemEdgeForNodesParams,
+  MemEdgeDeleteForNodeParams, MemEdgeDeleteAllParams,
+  MemWmAllParams, MemWmByIdParams, MemWmUpdateScoreParams, MemWmDeleteParams, MemWmDeleteAllParams,
 } from '@chrono/kernel';
 import {
   MEM_QUERY_BY_ID, MEM_QUERY_ALL, MEM_QUERY_BATCH, MEM_QUERY_PAGINATED,
@@ -81,212 +86,238 @@ function toSlot(row: WorkingMemoryRow): WorkingMemorySlot {
 /* ── 注册 ── */
 
 export function registerMemoryExecutors(): void {
+  /* ADR-0056 K5b：memory_nodes / memory_edges 按 persona_id 显式隔离；tenant_id 仍由 TenantDatabase rewriter 注入。
+   * working_memory 在 v106 没有 persona_id 列，因此通过 memory_nodes 子查询/JOIN 限定所属 persona，避免直接引用不存在列。 */
   /* ── Memory Node Queries ── */
 
-  registerQuery<MemoryNode | null, { id: string }>(MEM_QUERY_BY_ID, (db, params) => {
-    const row = db.prepare<MemoryRow>('SELECT * FROM memory_nodes WHERE id = ?').get(params.id);
+  registerQuery<MemoryNode | null, MemByIdParams>(MEM_QUERY_BY_ID, (db, params) => {
+    const row = db.prepare<MemoryRow>('SELECT * FROM memory_nodes WHERE id = ? AND persona_id = ?').get(params.id, params.personaId);
     return row ? toNode(row) : null;
   });
 
-  registerQuery<MemoryNode[], void>(MEM_QUERY_ALL, (db: IDatabase) => {
-    return db.prepare<MemoryRow>('SELECT * FROM memory_nodes').all().map(toNode);
+  registerQuery<MemoryNode[], MemAllParams>(MEM_QUERY_ALL, (db: IDatabase, params) => {
+    return db.prepare<MemoryRow>('SELECT * FROM memory_nodes WHERE persona_id = ?').all(params.personaId).map(toNode);
   });
 
-  registerQuery<MemoryNode[], { ids: string[] }>(MEM_QUERY_BATCH, (db, params) => {
+  registerQuery<MemoryNode[], MemBatchParams>(MEM_QUERY_BATCH, (db, params) => {
     if (params.ids.length === 0) return [];
     const placeholders = params.ids.map(() => '?').join(',');
     return db.prepare<MemoryRow>(
-      `SELECT * FROM memory_nodes WHERE id IN (${placeholders})`,
-    ).all(...params.ids).map(toNode);
+      `SELECT * FROM memory_nodes WHERE id IN (${placeholders}) AND persona_id = ?`,
+    ).all(...params.ids, params.personaId).map(toNode);
   });
 
   registerQuery<MemPaginatedResult, MemPaginatedParams>(MEM_QUERY_PAGINATED, (db, params) => {
-    const total = db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes').get()?.count ?? 0;
+    const total = db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes WHERE persona_id = ?').get(params.personaId)?.count ?? 0;
     /* 稳定排序：created_at 之外加 id 作为 tie-breaker，避免同一毫秒多条记忆在 LIMIT/OFFSET
      * 跨页时顺序不定导致重复或漏项。id 是 memory_nodes 主键（唯一，UUID——非单调，故同毫秒内
      * 不保证「后创建排前」，但能确保**稳定全序**，这正是分页去重/不漏所需。 */
     const rows = db.prepare<MemoryRow>(
-      'SELECT * FROM memory_nodes ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
-    ).all(params.limit, params.offset);
+      'SELECT * FROM memory_nodes WHERE persona_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?',
+    ).all(params.personaId, params.limit, params.offset);
     return { nodes: rows.map(toNode), total };
   });
 
-  registerQuery<number, void>(MEM_QUERY_COUNT, (db: IDatabase) => {
-    return db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes').get()?.count ?? 0;
+  registerQuery<number, MemCountParams>(MEM_QUERY_COUNT, (db: IDatabase, params) => {
+    return db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes WHERE persona_id = ?').get(params.personaId)?.count ?? 0;
   });
 
   registerQuery<string[], MemConsolidationCandidatesParams>(MEM_QUERY_CONSOLIDATION_CANDIDATES, (db, params) => {
     const rows = db.prepare<{ id: string }>(
       `SELECT id FROM memory_nodes
        WHERE kind = 'episodic'
+         AND persona_id = ?
          AND access_count >= ?
          AND salience >= ?
          AND consolidated_from IS NULL
-         AND NOT EXISTS (SELECT 1 FROM memory_nodes AS m2 WHERE m2.consolidated_from = memory_nodes.id)`,
-    ).all(params.accessThreshold, params.minSalience);
+         AND NOT EXISTS (SELECT 1 FROM memory_nodes AS m2 WHERE m2.consolidated_from = memory_nodes.id AND m2.persona_id = ?)`,
+    ).all(params.personaId, params.accessThreshold, params.minSalience, params.personaId);
     return rows.map(r => r.id);
   });
 
-  registerQuery<string | null, { id: string }>(MEM_QUERY_CONSOLIDATED_FROM, (db, params) => {
+  registerQuery<string | null, MemConsolidatedFromParams>(MEM_QUERY_CONSOLIDATED_FROM, (db, params) => {
     const row = db.prepare<{ id: string }>(
-      'SELECT id FROM memory_nodes WHERE consolidated_from = ? LIMIT 1',
-    ).get(params.id);
+      'SELECT id FROM memory_nodes WHERE consolidated_from = ? AND persona_id = ? LIMIT 1',
+    ).get(params.id, params.personaId);
     return row ? row.id : null;
   });
 
-  registerQuery<Array<{ id: string; salience: number }>, { limit: number }>(MEM_QUERY_LOWEST_SALIENCE, (db, params) => {
+  registerQuery<Array<{ id: string; salience: number }>, MemLowestSalienceParams>(MEM_QUERY_LOWEST_SALIENCE, (db, params) => {
     return db.prepare<{ id: string; salience: number }>(
-      'SELECT id, salience FROM memory_nodes ORDER BY salience ASC, last_accessed_at ASC LIMIT ?',
-    ).all(params.limit);
+      'SELECT id, salience FROM memory_nodes WHERE persona_id = ? ORDER BY salience ASC, last_accessed_at ASC LIMIT ?',
+    ).all(params.personaId, params.limit);
   });
 
   /* ── Memory Node Commands ── */
 
   registerCommand<MemInsertParams>(MEM_CMD_INSERT, (db, p) => {
     db.prepare<void>(
-      `INSERT INTO memory_nodes (id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(p.id, p.kind, p.content, p.valence, p.salience, p.createdAt, p.lastAccessedAt, p.accessCount, p.decayLambda, p.lastDecayedAt, p.consolidatedFrom);
+      `INSERT INTO memory_nodes (id, persona_id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(p.id, p.personaId, p.kind, p.content, p.valence, p.salience, p.createdAt, p.lastAccessedAt, p.accessCount, p.decayLambda, p.lastDecayedAt, p.consolidatedFrom);
     return { rowsAffected: 1 };
   });
 
   registerCommand<MemInsertParams>(MEM_CMD_UPSERT, (db, p) => {
     db.prepare<void>(
-      `INSERT INTO memory_nodes (id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, content=excluded.content, valence=excluded.valence, salience=excluded.salience, created_at=excluded.created_at, last_accessed_at=excluded.last_accessed_at, access_count=excluded.access_count, decay_lambda=excluded.decay_lambda, last_decayed_at=excluded.last_decayed_at, consolidated_from=excluded.consolidated_from`,
-    ).run(p.id, p.kind, p.content, p.valence, p.salience, p.createdAt, p.lastAccessedAt, p.accessCount, p.decayLambda, p.lastDecayedAt, p.consolidatedFrom);
+      `INSERT INTO memory_nodes (id, persona_id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET persona_id=excluded.persona_id, kind=excluded.kind, content=excluded.content, valence=excluded.valence, salience=excluded.salience, created_at=excluded.created_at, last_accessed_at=excluded.last_accessed_at, access_count=excluded.access_count, decay_lambda=excluded.decay_lambda, last_decayed_at=excluded.last_decayed_at, consolidated_from=excluded.consolidated_from`,
+    ).run(p.id, p.personaId, p.kind, p.content, p.valence, p.salience, p.createdAt, p.lastAccessedAt, p.accessCount, p.decayLambda, p.lastDecayedAt, p.consolidatedFrom);
     return { rowsAffected: 1 };
   });
 
   registerCommand<MemUpdateAccessParams>(MEM_CMD_UPDATE_ACCESS, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE memory_nodes SET salience = ?, last_accessed_at = ?, access_count = ?, decay_lambda = ?, last_decayed_at = ? WHERE id = ?',
-    ).run(p.salience, p.lastAccessedAt, p.accessCount, p.decayLambda, p.lastDecayedAt, p.id);
+      'UPDATE memory_nodes SET salience = ?, last_accessed_at = ?, access_count = ?, decay_lambda = ?, last_decayed_at = ? WHERE id = ? AND persona_id = ?',
+    ).run(p.salience, p.lastAccessedAt, p.accessCount, p.decayLambda, p.lastDecayedAt, p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
   registerCommand<MemUpdateSalienceParams>(MEM_CMD_UPDATE_SALIENCE, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE memory_nodes SET salience = ?, last_decayed_at = ? WHERE id = ?',
-    ).run(p.salience, p.lastDecayedAt, p.id);
+      'UPDATE memory_nodes SET salience = ?, last_decayed_at = ? WHERE id = ? AND persona_id = ?',
+    ).run(p.salience, p.lastDecayedAt, p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
   registerCommand<MemUpdateSalienceDeltaParams>(MEM_CMD_UPDATE_SALIENCE_DELTA, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE memory_nodes SET salience = MIN(1.0, salience + ?) WHERE id = ?',
-    ).run(p.delta, p.id);
+      'UPDATE memory_nodes SET salience = MIN(1.0, salience + ?) WHERE id = ? AND persona_id = ?',
+    ).run(p.delta, p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<{ id: string }>(MEM_CMD_DELETE, (db, p) => {
-    const result = db.prepare<void>('DELETE FROM memory_nodes WHERE id = ?').run(p.id);
+  registerCommand<MemByIdParams>(MEM_CMD_DELETE, (db, p) => {
+    const result = db.prepare<void>('DELETE FROM memory_nodes WHERE id = ? AND persona_id = ?').run(p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<void>(MEM_CMD_DELETE_ALL, (db: IDatabase) => {
-    db.prepare<void>('DELETE FROM memory_nodes WHERE 1=1').run();
+  registerCommand<MemAllParams>(MEM_CMD_DELETE_ALL, (db: IDatabase, p) => {
+    db.prepare<void>('DELETE FROM memory_nodes WHERE persona_id = ?').run(p.personaId);
     return { rowsAffected: 0 };
   });
 
   /* ── Edge Queries ── */
 
-  registerQuery<MemoryEdge[], void>(MEM_EDGE_QUERY_ALL, (db: IDatabase) => {
-    return db.prepare<EdgeRow>('SELECT * FROM memory_edges').all().map(toEdge);
+  registerQuery<MemoryEdge[], MemEdgeAllParams>(MEM_EDGE_QUERY_ALL, (db: IDatabase, params) => {
+    return db.prepare<EdgeRow>('SELECT * FROM memory_edges WHERE persona_id = ?').all(params.personaId).map(toEdge);
   });
 
-  registerQuery<MemoryEdge[], { id: string }>(MEM_EDGE_QUERY_FOR_NODE, (db, params) => {
+  registerQuery<MemoryEdge[], MemEdgeForNodeParams>(MEM_EDGE_QUERY_FOR_NODE, (db, params) => {
     return db.prepare<EdgeRow>(
-      'SELECT * FROM memory_edges WHERE source = ? OR target = ?',
-    ).all(params.id, params.id).map(toEdge);
+      'SELECT * FROM memory_edges WHERE persona_id = ? AND (source = ? OR target = ?)',
+    ).all(params.personaId, params.id, params.id).map(toEdge);
   });
 
-  registerQuery<MemoryEdge[], { ids: string[] }>(MEM_EDGE_QUERY_FOR_NODES, (db, params) => {
+  registerQuery<MemoryEdge[], MemEdgeForNodesParams>(MEM_EDGE_QUERY_FOR_NODES, (db, params) => {
     if (params.ids.length === 0) return [];
     const placeholders = params.ids.map(() => '?').join(',');
     return db.prepare<EdgeRow>(
-      `SELECT * FROM memory_edges WHERE source IN (${placeholders}) OR target IN (${placeholders})`,
-    ).all(...params.ids, ...params.ids).map(toEdge);
+      `SELECT * FROM memory_edges WHERE persona_id = ? AND (source IN (${placeholders}) OR target IN (${placeholders}))`,
+    ).all(params.personaId, ...params.ids, ...params.ids).map(toEdge);
   });
 
   /* ── Edge Commands ── */
 
   registerCommand<MemEdgeUpsertParams>(MEM_EDGE_CMD_UPSERT, (db, p) => {
     db.prepare<void>(
-      `INSERT INTO memory_edges (source, target, strength, relation) VALUES (?, ?, ?, ?)
-       ON CONFLICT(source, target) DO UPDATE SET strength=excluded.strength, relation=excluded.relation`,
-    ).run(p.source, p.target, p.strength, p.relation);
+      `INSERT INTO memory_edges (source, target, persona_id, strength, relation) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(source, target) DO UPDATE SET persona_id=excluded.persona_id, strength=excluded.strength, relation=excluded.relation`,
+    ).run(p.source, p.target, p.personaId, p.strength, p.relation);
     return { rowsAffected: 1 };
   });
 
-  registerCommand<{ id: string }>(MEM_EDGE_CMD_DELETE_FOR_NODE, (db, p) => {
+  registerCommand<MemEdgeDeleteForNodeParams>(MEM_EDGE_CMD_DELETE_FOR_NODE, (db, p) => {
     const result = db.prepare<void>(
-      'DELETE FROM memory_edges WHERE source = ? OR target = ?',
-    ).run(p.id, p.id);
+      'DELETE FROM memory_edges WHERE persona_id = ? AND (source = ? OR target = ?)',
+    ).run(p.personaId, p.id, p.id);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<void>(MEM_EDGE_CMD_DELETE_ALL, (db: IDatabase) => {
-    db.prepare<void>('DELETE FROM memory_edges WHERE 1=1').run();
+  registerCommand<MemEdgeDeleteAllParams>(MEM_EDGE_CMD_DELETE_ALL, (db: IDatabase, p) => {
+    db.prepare<void>('DELETE FROM memory_edges WHERE persona_id = ?').run(p.personaId);
     return { rowsAffected: 0 };
   });
 
   /* ── Working Memory Queries ── */
 
-  registerQuery<WorkingMemorySlot[], void>(MEM_WM_QUERY_SLOTS, (db: IDatabase) => {
+  registerQuery<WorkingMemorySlot[], MemWmAllParams>(MEM_WM_QUERY_SLOTS, (db: IDatabase, params) => {
     return db.prepare<WorkingMemoryRow>(
-      'SELECT * FROM working_memory ORDER BY score DESC',
-    ).all().map(toSlot);
+      `SELECT * FROM working_memory
+       WHERE EXISTS (SELECT 1 FROM memory_nodes mn WHERE mn.id = working_memory.memory_id AND mn.persona_id = ?)
+       ORDER BY score DESC`,
+    ).all(params.personaId).map(toSlot);
   });
 
-  registerQuery<WorkingMemorySlot | null, { memoryId: string }>(MEM_WM_QUERY_BY_ID, (db, params) => {
+  registerQuery<WorkingMemorySlot | null, MemWmByIdParams>(MEM_WM_QUERY_BY_ID, (db, params) => {
     const row = db.prepare<WorkingMemoryRow>(
-      'SELECT * FROM working_memory WHERE memory_id = ?',
-    ).get(params.memoryId);
+      `SELECT * FROM working_memory
+       WHERE memory_id = ?
+         AND EXISTS (SELECT 1 FROM memory_nodes mn WHERE mn.id = working_memory.memory_id AND mn.persona_id = ?)`,
+    ).get(params.memoryId, params.personaId);
     return row ? toSlot(row) : null;
   });
 
-  registerQuery<number, void>(MEM_WM_QUERY_COUNT, (db: IDatabase) => {
-    return db.prepare<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM working_memory').get()!.cnt;
+  registerQuery<number, MemWmAllParams>(MEM_WM_QUERY_COUNT, (db: IDatabase, params) => {
+    return db.prepare<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM working_memory
+       WHERE EXISTS (SELECT 1 FROM memory_nodes mn WHERE mn.id = working_memory.memory_id AND mn.persona_id = ?)`,
+    ).get(params.personaId)!.cnt;
   });
 
-  registerQuery<WorkingMemorySlot | null, void>(MEM_WM_QUERY_LOWEST, (db: IDatabase) => {
+  registerQuery<WorkingMemorySlot | null, MemWmAllParams>(MEM_WM_QUERY_LOWEST, (db: IDatabase, params) => {
     const row = db.prepare<WorkingMemoryRow>(
-      'SELECT * FROM working_memory ORDER BY score ASC LIMIT 1',
-    ).get();
+      `SELECT * FROM working_memory
+       WHERE EXISTS (SELECT 1 FROM memory_nodes mn WHERE mn.id = working_memory.memory_id AND mn.persona_id = ?)
+       ORDER BY score ASC LIMIT 1`,
+    ).get(params.personaId);
     return row ? toSlot(row) : null;
   });
 
-  registerQuery<WorkingMemorySlot[], void>(MEM_WM_QUERY_ALL_RAW, (db: IDatabase) => {
-    return db.prepare<WorkingMemoryRow>('SELECT * FROM working_memory').all().map(toSlot);
+  registerQuery<WorkingMemorySlot[], MemWmAllParams>(MEM_WM_QUERY_ALL_RAW, (db: IDatabase, params) => {
+    return db.prepare<WorkingMemoryRow>(
+      `SELECT * FROM working_memory
+       WHERE EXISTS (SELECT 1 FROM memory_nodes mn WHERE mn.id = working_memory.memory_id AND mn.persona_id = ?)`,
+    ).all(params.personaId).map(toSlot);
   });
 
   /* ── Working Memory Commands ── */
 
   registerCommand<MemWmInsertParams>(MEM_WM_CMD_INSERT, (db, p) => {
+    const belongs = db.prepare<{ id: string }>(
+      'SELECT id FROM memory_nodes WHERE id = ? AND persona_id = ?',
+    ).get(p.memoryId, p.personaId);
+    if (!belongs) return { rowsAffected: 0 };
     db.prepare<void>(
       'INSERT INTO working_memory (memory_id, score, entered_at) VALUES (?, ?, ?)',
     ).run(p.memoryId, p.score, p.enteredAt);
     return { rowsAffected: 1 };
   });
 
-  registerCommand<{ memoryId: string; score: number }>(MEM_WM_CMD_UPDATE_SCORE, (db, p) => {
+  registerCommand<MemWmUpdateScoreParams>(MEM_WM_CMD_UPDATE_SCORE, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE working_memory SET score = ? WHERE memory_id = ?',
-    ).run(p.score, p.memoryId);
+      `UPDATE working_memory SET score = ?
+       WHERE memory_id = ?
+         AND EXISTS (SELECT 1 FROM memory_nodes WHERE id = working_memory.memory_id AND persona_id = ?)`,
+    ).run(p.score, p.memoryId, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<{ memoryId: string }>(MEM_WM_CMD_DELETE, (db, p) => {
+  registerCommand<MemWmDeleteParams>(MEM_WM_CMD_DELETE, (db, p) => {
     const result = db.prepare<void>(
-      'DELETE FROM working_memory WHERE memory_id = ?',
-    ).run(p.memoryId);
+      `DELETE FROM working_memory
+       WHERE memory_id = ?
+         AND EXISTS (SELECT 1 FROM memory_nodes WHERE id = working_memory.memory_id AND persona_id = ?)`,
+    ).run(p.memoryId, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<void>(MEM_WM_CMD_DELETE_ALL, (db: IDatabase) => {
-    db.prepare<void>('DELETE FROM working_memory WHERE 1=1').run();
+  registerCommand<MemWmDeleteAllParams>(MEM_WM_CMD_DELETE_ALL, (db: IDatabase, p) => {
+    db.prepare<void>(
+      `DELETE FROM working_memory
+       WHERE EXISTS (SELECT 1 FROM memory_nodes WHERE id = working_memory.memory_id AND persona_id = ?)`,
+    ).run(p.personaId);
     return { rowsAffected: 0 };
   });
 }
