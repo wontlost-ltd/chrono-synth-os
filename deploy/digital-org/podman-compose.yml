@@ -38,6 +38,10 @@ services:
       CHRONO_DB_DRIVER: sqlite
       CHRONO_DB_PATH: /app/data/chrono.db
       CHRONO_LOG_LEVEL: info
+      # 默认开 JWT，让部署完即可走全 HTTP 流程（注册 admin/自助建组织/可视化/重组）。
+      # secret 仅本地一键 demo，绝不复用到真实环境（生产请用密钥管理注入真实 secret）。
+      CHRONO_JWT_ENABLED: "true"
+      CHRONO_JWT_SECRET: "digital-org-local-jwt-secret-do-not-use-in-prod"
     volumes:
       - chrono-org-data:/app/data
     healthcheck:
@@ -85,7 +89,9 @@ services:
       CHRONO_QUEUE_ENABLED: "true"
       CHRONO_QUEUE_MAX_CONCURRENT: "4"
       CHRONO_LOG_LEVEL: info
-      # 生产启动最低要求；仅本地一键 demo，绝不复用到真实环境。
+      # 默认开 JWT（auth 路由组只在 jwt.enabled=true 时注册——光有 secret 不够）。
+      # secret 仅本地一键 demo，绝不复用到真实环境（生产请用密钥管理注入真实 secret）。
+      CHRONO_JWT_ENABLED: "true"
       CHRONO_JWT_SECRET: "digital-org-local-jwt-secret-do-not-use-in-prod"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz || exit 1"]
