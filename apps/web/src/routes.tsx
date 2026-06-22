@@ -50,6 +50,7 @@ const PersonaHealthPage = lazy(() =>
 );
 const GrowthPage = lazy(() => import('./pages/GrowthPage'));
 const WorkforceConsole = lazy(() => import('./pages/WorkforceConsole'));
+const WorkforceVisualization = lazy(() => import('./pages/WorkforceVisualization'));
 
 function LazyPage({ children }: { children: React.ReactNode }) {
   return (
@@ -89,6 +90,7 @@ export const routes: RouteObject[] = [
   { path: '/settings', element: <Protected><Settings /></Protected> },
   { path: '/enterprise', element: <Protected><AdminOnly><EnterpriseConsole /></AdminOnly></Protected> },
   { path: '/workforce', element: <Protected><AdminOnly><WorkforceConsole /></AdminOnly></Protected> },
+  { path: '/workforce/viz', element: <Protected><AdminOnly><WorkforceVisualization /></AdminOnly></Protected> },
   { path: '/admin/config', element: <Protected><AdminOnly><AdminConfig /></AdminOnly></Protected> },
   { path: '/admin/safety/drift', element: <Protected><AdminOnly><SafetyDriftReport /></AdminOnly></Protected> },
   { path: '/admin/tool-permissions', element: <Protected><AdminOnly><AdminToolPermissions /></AdminOnly></Protected> },

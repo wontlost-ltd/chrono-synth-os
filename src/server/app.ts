@@ -128,6 +128,7 @@ import { registerAvatarAutorunRoutes } from './routes/avatar-autorun.js';
 import { registerKnowledgeSourceRoutes } from './routes/knowledge-sources.js';
 import { registerPersonaCoreRoutes } from './routes/persona-core.js';
 import { registerWorkforceRoutes } from './routes/workforce.js';
+import { registerWorkforceVizRoutes } from './routes/workforce-viz.js';
 import { registerWorkforceActionRoutes } from './routes/workforce-actions.js';
 import { registerSseRoutes } from './routes/sse.js';
 import { registerFeatureFlagRoutes } from './routes/feature-flags.js';
@@ -663,6 +664,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。
    * clock 供 C 链 SLA 时间感知（worker 信号据 now 与任务 due_at 派生 overdue/due_soon）。 */
   registerWorkforceRoutes(app, db, deps.os.getClock());
+  /* 数字员工组织可视化聚合 API（只读）：组织树 + 目标任务流 + 信号仪表 + ADR-0057 学习闭环，一次聚合供前端画图。 */
+  registerWorkforceVizRoutes(app, db, deps.os.getClock());
   /* 数字员工组织交互控制台写/动作 API（E3）：发起目标/审批/真实执行（接 D2 审批门 + D3 ToolInvocationPipeline）。
    * toolRegistry 作 ToolRiskSource：服务端按 toolId 派生工具风险（body 风险信号只能上调不能省略绕审批门）。 */
   registerWorkforceActionRoutes(app, db, toolInvocationPipeline, deps.os.getClock(), toolRegistry);

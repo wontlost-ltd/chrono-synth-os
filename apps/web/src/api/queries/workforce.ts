@@ -123,6 +123,87 @@ export function useGoalTypes() {
   });
 }
 
+/* ── 可视化聚合（一次取齐组织树/目标流/信号/学习闭环，对接 GET /visualization）── */
+
+export type WorkerLoad = 'idle' | 'normal' | 'heavy';
+
+export interface OrgTreeNode {
+  workerId: string;
+  personaId: string;
+  displayName: string;
+  employmentStatus: string;
+  roleCode: string;
+  title: string;
+  jobFamily: string;
+  seniority: string;
+  load: WorkerLoad;
+  needsAttention: boolean;
+  activeTaskCount: number;
+}
+
+export interface OrgTreeEdge {
+  from: string;
+  to: string;
+  edgeType: 'solid' | 'dotted' | 'escalation';
+}
+
+export interface GoalFlowItem {
+  goalId: string;
+  title: string;
+  status: string;
+  ownerWorkerId: string;
+  taskCount: number;
+  tasksByStatus: Record<string, number>;
+  blockedCount: number;
+}
+
+export interface WorkerSignalItem {
+  workerId: string;
+  displayName: string;
+  operating: {
+    activeTaskCount: number;
+    deliveredTaskCount: number;
+    blockedTaskCount: number;
+    highRiskTaskCount: number;
+    overdueTaskCount: number;
+    dueSoonTaskCount: number;
+    load: WorkerLoad;
+    needsAttention: boolean;
+  } | null;
+  persona: {
+    decisionConfidence: 'high' | 'medium' | 'low';
+    collaborationReach: number;
+    shouldReport: boolean;
+  } | null;
+}
+
+export type BlockedDisposition = 'gap' | 'degraded' | 'timeout';
+
+export interface LearningLoopItem {
+  workerId: string;
+  personaId: string;
+  displayName: string;
+  learnedCapabilities: Array<{ capability: string; examScore: number; learnedAt: number }>;
+  activeLearning: Array<{ capability: string; status: string; priority: string }>;
+  blockedTasks: Array<{ taskId: string; title: string; disposition: BlockedDisposition; requiredCapabilities: string[]; resumeAttemptCount: number }>;
+}
+
+export interface WorkforceViz {
+  orgId: string;
+  orgTree: { nodes: OrgTreeNode[]; edges: OrgTreeEdge[] };
+  goalFlow: GoalFlowItem[];
+  signals: WorkerSignalItem[];
+  learningLoop: LearningLoopItem[];
+}
+
+export function useWorkforceViz(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'viz', orgId],
+    queryFn: ({ signal }) => apiFetch<WorkforceViz>(`/api/v1/workforce/orgs/${encodeURIComponent(orgId)}/visualization`, { signal }),
+    enabled: !!orgId,
+  });
+}
+
 export function useOrgChart(orgId: string) {
   return useQuery({
     queryKey: ['workforce', 'chart', orgId],

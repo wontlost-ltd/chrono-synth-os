@@ -592,6 +592,7 @@
       "hash": "eb38b244e5f102f456545fbafff2a0df626c578c0e78ef08471f250549f63f20"
     }
   ],
+  "workforce-viz.ts": [],
   "workforce.ts": [],
   "plugins/jwt-auth.ts": [
     {
