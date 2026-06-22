@@ -287,6 +287,19 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /**
+   * ADR-0057 L8b 委派 reassign：仅当任务**仍 delegated 且仍由 expectedCurrentWorkerId 持有**才改派——
+   * 比 reassignTaskIfHeldBy 多锁 status='delegated'（防委派决策与落地之间任务被并发拉起 in_progress/改走，
+   * 把执行中的任务误改派，Codex L8b 复审）。返回是否真的改了。
+   */
+  reassignDelegatedTaskIfHeldBy(orgId: string, taskId: string, expectedCurrentWorkerId: string, newAssigneeWorkerId: string, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_tasks SET assigned_to_worker_id = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND assigned_to_worker_id = ? AND status = 'delegated'`,
+    ).run(newAssigneeWorkerId, now, this.tenantId, orgId, taskId, expectedCurrentWorkerId);
+    return r.changes > 0;
+  }
+
   /** 取某 worker 当前被指派的任务（确定性排序）。用于算 worker 运行信号/负载。 */
   listTasksByAssignee(orgId: string, workerId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(

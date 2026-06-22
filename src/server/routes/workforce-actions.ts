@@ -33,6 +33,8 @@ import { MissingHumanPrincipalError } from '../../workforce/worker-execution-act
 import { LearningRequestService } from '../../workforce/learning-request-service.js';
 import { LearningRequestStore } from '../../storage/learning-request-store.js';
 import { CapabilityIndexStore } from '../../storage/capability-index-store.js';
+import { CapabilityAssignmentService } from '../../workforce/capability-assignment-service.js';
+import { TaskDispositionService } from '../../workforce/task-disposition-service.js';
 import { UnsupportedGoalTypeError, AssigneeNotFoundError } from '../../workforce/org-planning-service.js';
 import { deriveRiskSignals, type ToolRiskSource } from '../../workforce/tool-risk-deriver.js';
 import {
@@ -183,7 +185,12 @@ export function registerWorkforceActionRoutes(
       new LearningRequestStore(db, request.tenantId), now, randomUUID, request.tenantId,
       new CapabilityIndexStore(db, request.tenantId),
     );
-    const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId, learning);
+    /* ADR-0057 L8b：缺口处置——挂起前先尝试委派给有能力的同事（尽量不卡死）。降级默认关（保守，
+     * allowDegrade 缺省 false）——避免对「必须做全」的任务标 submitted 误读为完成；委派失败则落 L8a 挂起。 */
+    const disposition = new TaskDispositionService({
+      store, capabilities: new CapabilityAssignmentService(store, learning), now,
+    });
+    const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId, learning, disposition);
     /* 风险信号服务端派生（读 registry；body 只能上调，不能省略高风险工具来绕审批门）。 */
     const signals = deriveRiskSignals(toolRisk, body.toolId, body.arguments, body.riskSignals);
     let result;
