@@ -341,6 +341,22 @@ export class OrgWorkforceStore {
     return rows.map((r) => this.toTask(r));
   }
 
+  /**
+   * ADR-0057 L8c-wire：列出**本租户全部 org** 因学习缺口挂起的 blocked 任务（周期 reconciler worker 用——
+   * worker 不知道有哪些 org，故按 tenant 整体反扫）。与 listLearningBlockedTasks(orgId) 同纪律：仅限有关联
+   * learning_requests 的 blocked（非学习 blocked 绝不纳入）。确定性排序（org_id, created_at, id）。
+   */
+  listLearningBlockedTasksAllOrgs(): OrgTask[] {
+    const rows = this.db.prepare<RawTask>(
+      `SELECT DISTINCT t.id, t.org_id, t.goal_id, t.parent_task_id, t.assigned_to_worker_id, t.accountable_worker_id, t.title, t.task_type, t.status, t.risk_level, t.allows_tool_execution, t.acceptance_criteria, t.required_capabilities, t.result_summary, t.due_at, t.resume_attempt_count, t.last_wake_event_id, t.created_at, t.updated_at
+       FROM org_tasks t
+       JOIN learning_requests lr ON lr.tenant_id = t.tenant_id AND lr.org_id = t.org_id AND lr.triggered_by_task_id = t.id
+       WHERE t.tenant_id = ? AND t.status = 'blocked'
+       ORDER BY t.org_id ASC, t.created_at ASC, t.id ASC`,
+    ).all(this.tenantId);
+    return rows.map((r) => this.toTask(r));
+  }
+
   /** 取某目标的任务（确定性排序：created_at 升序、id 升序兜底）。 */
   listTasksByGoal(orgId: string, goalId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(

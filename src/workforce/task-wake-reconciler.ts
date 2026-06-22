@@ -11,8 +11,9 @@
  * 守红线 20（全程零-LLM 确定性）：反扫 + GapDetector 复检 + 超时比较全确定性。无新推理循环、无 LLM。
  * 失败隔离：单任务处理异常只记 error 继续下一个（一个坏任务不阻断整轮对账）。
  *
- * 触发：本片提供**按需** reconcileOnce(orgId, now)——可测（无需真实定时器）。生产周期触发（接入既有
- * sweep/定时器）是部署接线，不在本片（与 QuotaUsageRetentionWorker 等既有周期 worker 同接法，后续接入）。
+ * 触发：reconcileOnce(orgId)/reconcileTenant() 按需可测（无需定时器）；**生产周期触发由 L8c-wire 的
+ * TaskWakeReconcilerWorker（setInterval 调 reconcileTenant）接上**——每租户 OS 经 os.start() 启动，丢事件
+ * 兜底已自动化（不再只靠运维手动触发）。
  *
  * 幂等（关键）：reconciler 用**合成 wakeEventId**（绑该 persona 当前已学能力指纹）——同一已学状态下重复反扫
  * 生成同 id → wakeOneTask 经 lastWakeEventId 幂等跳过，**不重复推进尝试计数/不重复唤醒**；学习状态变了
@@ -22,6 +23,7 @@
 import type { OrgWorkforceStore } from '../storage/org-workforce-store.js';
 import type { LearningRequestService } from './learning-request-service.js';
 import type { TaskWakeHandler, TaskWakeOutcome } from './task-wake-handler.js';
+import type { OrgTask } from './types.js';
 import type { Logger } from '../utils/logger.js';
 
 const LAYER = 'TaskWakeReconciler';
@@ -62,20 +64,35 @@ export class TaskWakeReconciler {
   }
 
   /**
-   * 反扫某 org 全部 blocked 任务：复检已学能力补唤醒（防丢事件永久挂起）+ 学习超时兜底。
+   * 反扫某 org 全部学习 blocked 任务：复检已学能力补唤醒（防丢事件永久挂起）+ 学习超时兜底。
    * 确定性可复现（同库态 → 同结局）。按需调用（测试无需定时器）。
    */
   reconcileOnce(orgId: string, now = this.deps.now()): ReconcileStats {
     /* **只反扫因学习缺口挂起的任务**（有关联 learning_requests）——非学习 blocked（工具失败/权限/异常）
      * 绝不纳入，否则会被误唤醒/误标超时覆盖真实失败原因（Codex L8c 复审）。 */
-    const blocked = this.deps.store.listLearningBlockedTasks(orgId);
+    return this.reconcileTasks(this.deps.store.listLearningBlockedTasks(orgId), now);
+  }
+
+  /**
+   * ADR-0057 L8c-wire：反扫**本租户全部 org** 的学习 blocked 任务——周期 worker 用（worker 不知有哪些 org，
+   * 按 tenant 整体反扫）。逐任务用其自身 task.orgId（跨 org 也正确）。复用 reconcileOnce 同一核心，不漂移。
+   */
+  reconcileTenant(now = this.deps.now()): ReconcileStats {
+    return this.reconcileTasks(this.deps.store.listLearningBlockedTasksAllOrgs(), now);
+  }
+
+  /**
+   * 对账核心（共享）：逐任务复检已学能力补唤醒 / 仍缺 fail-closed / 超时兜底。每任务用其**自身 orgId**
+   * （reconcileOnce 单 org 与 reconcileTenant 多 org 共用，不漂移）。单任务异常隔离。
+   */
+  private reconcileTasks(blocked: readonly OrgTask[], now: number): ReconcileStats {
     let woke = 0; let stillBlocked = 0; let timedOut = 0;
     const outcomes: TaskWakeOutcome[] = [];
 
     for (const task of blocked) {
       try {
-        /* 该任务执行者人格（per-persona 已学来源）。无执行者（理论不应）→ 跳过。 */
-        const personaId = this.personaIdOfTask(orgId, task.assignedToWorkerId);
+        /* 该任务执行者人格（per-persona 已学来源）。无执行者（理论不应）→ 跳过。用 task 自身 orgId。 */
+        const personaId = this.personaIdOfTask(task.orgId, task.assignedToWorkerId);
         if (!personaId) continue;
 
         /* 合成幂等键：绑该 persona 当前已学能力指纹——已学状态不变则同 id（重复反扫幂等跳过，不烧预算）；
@@ -84,7 +101,7 @@ export class TaskWakeReconciler {
         const learned = this.deps.learning.listLearnedCapabilities(personaId);
         const wakeEventId = `reconcile:${personaId}:${JSON.stringify(learned)}`;
 
-        const outcome = this.deps.wakeHandler.wakeOneTask(orgId, task.id, personaId, wakeEventId);
+        const outcome = this.deps.wakeHandler.wakeOneTask(task.orgId, task.id, personaId, wakeEventId);
         outcomes.push(outcome);
         if (outcome.kind === 'woke') woke++;
         else stillBlocked++;
@@ -92,7 +109,7 @@ export class TaskWakeReconciler {
         /* 学习超时兜底：仍 blocked（未唤醒）且挂起过久 → 标 [learning_timeout]（仍 blocked 待人工/改委派）。
          * 用 updatedAt 作挂起基线（最后一次状态变更=进 blocked 时刻；唤醒尝试也会刷新它，故是「最近活动」起算）。 */
         if (outcome.kind !== 'woke' && now - task.updatedAt > this.learningTimeoutMs) {
-          if (this.deps.store.markBlockedTaskLearningTimeout(orgId, task.id, `[learning_timeout] 挂起超 ${Math.round(this.learningTimeoutMs / 86_400_000)} 天未学会，待人工/改委派`, now)) {
+          if (this.deps.store.markBlockedTaskLearningTimeout(task.orgId, task.id, `[learning_timeout] 挂起超 ${Math.round(this.learningTimeoutMs / 86_400_000)} 天未学会，待人工/改委派`, now)) {
             timedOut++;
             this.deps.logger.warn(LAYER, `任务 ${task.id} 学习超时，已标记待人工兜底`);
           }
@@ -104,7 +121,7 @@ export class TaskWakeReconciler {
     }
 
     if (woke > 0 || timedOut > 0) {
-      this.deps.logger.info(LAYER, `对账 org=${orgId}：扫 ${blocked.length}，唤醒 ${woke}，超时 ${timedOut}`);
+      this.deps.logger.info(LAYER, `对账：扫 ${blocked.length}，唤醒 ${woke}，超时 ${timedOut}`);
     }
     return { scanned: blocked.length, woke, stillBlocked, timedOut, outcomes };
   }

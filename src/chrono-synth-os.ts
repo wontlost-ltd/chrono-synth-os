@@ -44,6 +44,7 @@ import { DistillationService } from './intelligence/distillation-service.js';
 import { CapabilityIndexProjector } from './intelligence/capability-index-projector.js';
 import { TaskWakeHandler } from './workforce/task-wake-handler.js';
 import { TaskWakeReconciler, type ReconcileStats } from './workforce/task-wake-reconciler.js';
+import { TaskWakeReconcilerWorker } from './workforce/task-wake-reconciler-worker.js';
 import { OrgWorkforceStore } from './storage/org-workforce-store.js';
 import { LearningRequestService } from './workforce/learning-request-service.js';
 import { LearningRequestStore } from './storage/learning-request-store.js';
@@ -148,6 +149,9 @@ export class ChronoSynthOS {
 
   /** ADR-0057 L8c 任务唤醒对账器：反扫 blocked 任务补唤醒（防丢事件）+ 学习超时兜底（按需 reconcileOnce）。 */
   private readonly taskWakeReconciler: TaskWakeReconciler;
+
+  /** ADR-0057 L8c-wire 唤醒对账周期 worker：start() 时启动 setInterval 周期反扫（生产丢事件兜底自动化）。 */
+  private readonly taskWakeReconcilerWorker: TaskWakeReconcilerWorker;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -345,7 +349,7 @@ export class ChronoSynthOS {
     });
 
     /* ADR-0057 L8c：唤醒对账器——反扫 blocked 任务补唤醒（防 capability-learned 事件丢失永久挂起）+ 学习超时
-     * 兜底。复用 L8a wakeOneTask 同一唤醒核心。**按需** reconcileOnce（生产周期触发是部署接线，本片不接定时器）。 */
+     * 兜底。复用 L8a wakeOneTask 同一唤醒核心。 */
     this.taskWakeReconciler = new TaskWakeReconciler({
       store: wakeWorkforceStore,
       learning: wakeLearning,
@@ -353,11 +357,16 @@ export class ChronoSynthOS {
       logger: this.logger,
       now: () => this.clock.now(),
     });
+    /* ADR-0057 L8c-wire：周期 worker——start() 时启动 setInterval 周期反扫本租户学习 blocked 任务，
+     * 把「事件丢失永久挂起」兜底自动化（每租户 OS 各自一个，经 TenantOSFactory.os.start() 启动）。 */
+    this.taskWakeReconcilerWorker = new TaskWakeReconcilerWorker(
+      this.taskWakeReconciler, () => this.clock.now(), this.logger,
+    );
   }
 
   /**
    * ADR-0057 L8c：手动触发某 org 的唤醒对账（反扫补唤醒 + 学习超时兜底）。确定性，零-LLM。
-   * 生产周期触发接入既有 sweep/定时器是部署接线（后续）；此入口供按需/测试调用。
+   * 生产周期触发已由 L8c-wire TaskWakeReconcilerWorker（start() 时启动）自动化；此入口供运维按需/测试调用。
    */
   reconcileTaskWakes(orgId: string, now = this.clock.now()): ReconcileStats {
     return this.taskWakeReconciler.reconcileOnce(orgId, now);
@@ -424,6 +433,7 @@ export class ChronoSynthOS {
     this.proactiveEngine.start();
     this.capabilityIndexProjector.start();
     this.taskWakeHandler.start();
+    this.taskWakeReconcilerWorker.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -673,6 +683,7 @@ export class ChronoSynthOS {
       this.proactiveEngine.stop();
       this.capabilityIndexProjector.stop();
       this.taskWakeHandler.stop();
+      this.taskWakeReconcilerWorker.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');
