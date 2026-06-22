@@ -37,6 +37,9 @@ function createBigIntMetricsDb(): IDatabase {
     transaction<T>(fn: () => T): T {
       return fn();
     },
+    transactionRollback<T>(fn: () => T): T {
+      return fn();
+    },
     queryOne<TResult, TParams>(q: Query<TResult, TParams>): TResult | null {
       const exec = resolveQueryExecutor(q.kind);
       if (!exec) throw new Error(`未注册的查询: ${q.kind}`);

@@ -211,6 +211,9 @@ describe('TenantDatabase', () => {
       transaction<T>(fn: () => T): T {
         return fn();
       },
+      transactionRollback<T>(fn: () => T): T {
+        return fn();
+      },
       queryOne: () => null,
       queryMany: () => [],
       execute: () => ({ rowsAffected: 0 }),
@@ -254,6 +257,9 @@ describe('TenantDatabase', () => {
       exec() {},
       close() {},
       transaction<T>(fn: () => T): T {
+        return fn();
+      },
+      transactionRollback<T>(fn: () => T): T {
         return fn();
       },
       queryOne: () => null,

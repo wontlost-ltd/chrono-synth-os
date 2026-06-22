@@ -13,6 +13,7 @@
 import { Worker, isMainThread, parentPort, workerData, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import type { IDatabase, IPreparedStatement, SqlValue } from './database.js';
+import { runTransactionRollback } from './database.js';
 import type { Query, Command, ExecResult } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor } from './legacy-sync-bridge.js';
 
@@ -404,6 +405,10 @@ export class PostgresDatabase implements IDatabase {
     } finally {
       this.currentTxId = previousTxId;
     }
+  }
+
+  transactionRollback<T>(fn: () => T): T {
+    return runTransactionRollback(this, fn);
   }
 
   close(): void {

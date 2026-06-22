@@ -340,6 +340,18 @@ export class ChronoSynthOS {
     return [...this.personaCores.keys()].sort();
   }
 
+  /**
+   * 构造一个**影子认知内核**（ADR-0057 L4 D0.6）——同 db/clock/persona，但**独立的隔离 EventBus**
+   * （production listeners 不订阅它 → core:* 事件不外发，红线 18）。**不缓存**（不进 personaCores，与 os.core 隔离）。
+   * 配合验收器在 BEGIN/ROLLBACK 事务里用它：候选编译进影子核 → 作答 → 整事务回滚 → 主内核 + 所有持久表零污染。
+   */
+  createShadowCore(personaId: string): CoreRhythmLayer {
+    const silentBus = new EventBus();
+    return new CoreRhythmLayer(
+      this.db, silentBus, this.clock, this.logger, this.cognitionConfig, this.encryption, this.tenantId, personaId,
+    );
+  }
+
   /** 获取租户 ID */
   getTenantId(): string {
     return this.tenantId;

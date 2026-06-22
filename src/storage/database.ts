@@ -31,7 +31,40 @@ export interface IDatabase extends SyncWriteUnitOfWork {
   readonly dialect: 'sqlite' | 'postgres';
   exec(sql: string): void;
   prepare<T = unknown>(sql: string): IPreparedStatement<T>;
+  /**
+   * 在一个**总是回滚**的事务里运行 fn，返回其结果（ADR-0057 L4 影子内核验收）。fn 内的**所有写入随事务回滚、
+   * 零持久副作用**——这是跨后端的硬保证。复用 transaction() 的 client 绑定（SQLite 同连接 / PG 按 txId 绑定），
+   * 比 raw `exec('BEGIN')` 安全（Codex L4 复审：raw BEGIN 不绑定 PG client）。
+   *
+   * 嵌套语义（Codex L4 复审：跨后端诚实声明）：与 transaction() 同。SQLite 平坦 BEGIN 不可嵌套——外层事务内
+   * 调用会因内层 BEGIN 冲突抛错（调用方按失败处理）；PG 嵌套会开一个**独立的内层事务**（仍总是回滚，故
+   * fn 写入照样不持久）。两后端下「fn 写入永不落库」都成立；但**不要**依赖「外层未提交状态对 fn 可见」或
+   * 跨后端一致的嵌套报错——影子验收按设计在无外层事务的同步上下文调用。
+   */
+  transactionRollback<T>(fn: () => T): T;
   close(): void;
+}
+
+/** transactionRollback 的内部哨兵：fn 成功后抛它强制 ROLLBACK，外层捕获后返回原结果（不污染真错误）。 */
+class RollbackSignal<T> {
+  constructor(readonly value: T) {}
+}
+
+/**
+ * 用 transaction()（已有正确的 client 绑定 + 出错回滚）实现「总是回滚」：fn 成功 → 抛 RollbackSignal 触发
+ * transaction 的 catch→ROLLBACK；外层解包 signal 返回结果。fn 真抛错则照常回滚 + 抛出。供两后端复用。
+ */
+export function runTransactionRollback<T>(db: { transaction<R>(fn: () => R): R }, fn: () => T): T {
+  try {
+    db.transaction((): never => {
+      throw new RollbackSignal(fn());
+    });
+    /* transaction 必然因 RollbackSignal 抛出，不会走到这里。 */
+    throw new Error('transactionRollback: 未预期地正常提交');
+  } catch (err) {
+    if (err instanceof RollbackSignal) return err.value as T;
+    throw err; /* fn 的真错误（已回滚）。 */
+  }
 }
 
 export interface IPreparedStatement<T = unknown> {
@@ -89,6 +122,10 @@ export class SqliteDatabase implements IDatabase {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  transactionRollback<T>(fn: () => T): T {
+    return runTransactionRollback(this, fn);
   }
 
   prepare<T = unknown>(sql: string): IPreparedStatement<T> {

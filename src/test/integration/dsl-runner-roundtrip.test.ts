@@ -132,6 +132,15 @@ class BetterSqliteDatabaseAdapter implements IDatabase {
     return this.db.transaction(fn)();
   }
 
+  transactionRollback<T>(fn: () => T): T {
+    this.db.exec('BEGIN');
+    try {
+      return fn();
+    } finally {
+      this.db.exec('ROLLBACK');
+    }
+  }
+
   queryOne<TResult>(): TResult | null {
     throw new Error('queryOne is not used by migration runner tests');
   }
