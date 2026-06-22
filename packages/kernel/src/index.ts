@@ -45,6 +45,7 @@ export type { SyncReadUnitOfWork, SyncWriteUnitOfWork } from './ports/sync-unit-
 export * from './domain/identity/index.js';
 export * from './domain/persona/index.js';
 export * from './domain/core-self/index.js';
+export * from './domain/capability/index.js';
 export * from './events/index.js';
 export * from './domain/errors.js';
 export * from './domain/config-metadata.js';
