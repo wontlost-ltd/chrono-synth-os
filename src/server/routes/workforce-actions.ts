@@ -17,6 +17,7 @@
  *   - D2/D3 领域错误转稳定 4xx（不泄露 500），写路由加限流（防滥用）。
  */
 
+import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { Clock } from '../../utils/clock.js';
@@ -29,6 +30,8 @@ import { OrgPlanningService } from '../../workforce/org-planning-service.js';
 import { ApprovalService, InvalidApprovalError } from '../../workforce/approval-service.js';
 import { WorkerExecutionService, WorkerExecutionError, type ToolExecutor } from '../../workforce/worker-execution-service.js';
 import { MissingHumanPrincipalError } from '../../workforce/worker-execution-actor.js';
+import { LearningRequestService } from '../../workforce/learning-request-service.js';
+import { LearningRequestStore } from '../../storage/learning-request-store.js';
 import { UnsupportedGoalTypeError, AssigneeNotFoundError } from '../../workforce/org-planning-service.js';
 import { deriveRiskSignals, type ToolRiskSource } from '../../workforce/tool-risk-deriver.js';
 import {
@@ -173,7 +176,11 @@ export function registerWorkforceActionRoutes(
     const { orgId, taskId } = request.params;
     const store = storeFor(request);
     const approvals = new ApprovalService(store, now, undefined, request.tenantId);
-    const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId);
+    /* ADR-0057 L2：注入学习请求 service——执行前确定性能力缺口门（缺则 learning_required，不硬干）。 */
+    const learning = new LearningRequestService(
+      new LearningRequestStore(db, request.tenantId), now, randomUUID, request.tenantId,
+    );
+    const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId, learning);
     /* 风险信号服务端派生（读 registry；body 只能上调，不能省略高风险工具来绕审批门）。 */
     const signals = deriveRiskSignals(toolRisk, body.toolId, body.arguments, body.riskSignals);
     let result;
