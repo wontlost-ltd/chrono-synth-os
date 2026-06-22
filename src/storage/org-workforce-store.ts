@@ -266,6 +266,20 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /**
+   * ADR-0057 L8c：学习超时兜底——把长期挂起（学习迟迟不过）的 blocked 任务标记为学习超时（result_summary
+   * 写明，仍 blocked 待人工/改委派）。CAS 仅当仍 blocked 才标（防并发）。**幂等**：result_summary 已是同
+   * 超时标记则不重复标（返回 false，避免 reconciler 反复刷新）。返回是否真的标了。
+   */
+  markBlockedTaskLearningTimeout(orgId: string, taskId: string, reason: string, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_tasks SET result_summary = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'
+         AND (result_summary IS NULL OR result_summary NOT LIKE '[learning_timeout]%')`,
+    ).run(reason, now, this.tenantId, orgId, taskId);
+    return r.changes > 0;
+  }
+
   /** 取单个任务；无 → undefined。 */
   getTask(orgId: string, taskId: string): OrgTask | undefined {
     const row = this.db.prepare<RawTask>(
@@ -307,6 +321,23 @@ export class OrgWorkforceStore {
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND assigned_to_worker_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, workerId);
+    return rows.map((r) => this.toTask(r));
+  }
+
+  /**
+   * ADR-0057 L8c：列出某 org **因学习缺口而挂起**的 blocked 任务（reconciler 反扫用，不限 capability）。
+   * **仅限有关联 learning_requests.triggered_by_task_id 的 blocked 任务**——非学习原因 blocked（工具失败/
+   * 权限拒绝/执行异常）**绝不**纳入反扫（否则会被误唤醒或误标超时，覆盖真实失败原因，Codex L8c 复审）。
+   * 防 capability-learned 事件丢失永久挂起：reconciler 据此逐个复检已学能力 → 补唤醒。确定性排序+去重。
+   */
+  listLearningBlockedTasks(orgId: string): OrgTask[] {
+    const rows = this.db.prepare<RawTask>(
+      `SELECT DISTINCT t.id, t.org_id, t.goal_id, t.parent_task_id, t.assigned_to_worker_id, t.accountable_worker_id, t.title, t.task_type, t.status, t.risk_level, t.allows_tool_execution, t.acceptance_criteria, t.required_capabilities, t.result_summary, t.due_at, t.resume_attempt_count, t.last_wake_event_id, t.created_at, t.updated_at
+       FROM org_tasks t
+       JOIN learning_requests lr ON lr.tenant_id = t.tenant_id AND lr.org_id = t.org_id AND lr.triggered_by_task_id = t.id
+       WHERE t.tenant_id = ? AND t.org_id = ? AND t.status = 'blocked'
+       ORDER BY t.created_at ASC, t.id ASC`,
+    ).all(this.tenantId, orgId);
     return rows.map((r) => this.toTask(r));
   }
 

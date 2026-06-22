@@ -100,7 +100,7 @@ export class TaskWakeHandler {
       const blocked = this.deps.store.listBlockedTasksForLearnedCapability(personaId, capability);
       const outcomes: TaskWakeOutcome[] = [];
       for (const task of blocked) {
-        outcomes.push(this.wakeOne(task.orgId, task.id, personaId, learningRequestId));
+        outcomes.push(this.wakeOneTask(task.orgId, task.id, personaId, learningRequestId));
       }
       return outcomes;
     } catch (err) {
@@ -109,8 +109,12 @@ export class TaskWakeHandler {
     }
   }
 
-  /** 单任务：幂等检查 → 尝试上限 → GapDetector 复检 → 无缺口唤醒 / 仍缺 fail-closed。 */
-  private wakeOne(orgId: string, taskId: string, personaId: string, wakeEventId: string): TaskWakeOutcome {
+  /**
+   * 单任务唤醒核心（确定性，零-LLM）：幂等检查 → 尝试上限 → GapDetector 复检 → 无缺口唤醒 / 仍缺 fail-closed。
+   * **公开**供 L8c reconciler 复用同一套唤醒逻辑（事件驱动 L8a 与 sweep 驱动 L8c 共享，不漂移）——
+   * 唯一区别是 wakeEventId 来源：事件驱动用 learningRequestId，reconciler 用合成 id（幂等键）。
+   */
+  wakeOneTask(orgId: string, taskId: string, personaId: string, wakeEventId: string): TaskWakeOutcome {
     /* 重读最新任务（listBlocked 与处理间可能已变）。 */
     const task = this.deps.store.getTask(orgId, taskId);
     if (!task || task.status !== 'blocked') return { kind: 'lost_race', taskId };

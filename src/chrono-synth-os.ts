@@ -43,6 +43,7 @@ import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
 import { CapabilityIndexProjector } from './intelligence/capability-index-projector.js';
 import { TaskWakeHandler } from './workforce/task-wake-handler.js';
+import { TaskWakeReconciler, type ReconcileStats } from './workforce/task-wake-reconciler.js';
 import { OrgWorkforceStore } from './storage/org-workforce-store.js';
 import { LearningRequestService } from './workforce/learning-request-service.js';
 import { LearningRequestStore } from './storage/learning-request-store.js';
@@ -144,6 +145,9 @@ export class ChronoSynthOS {
 
   /** ADR-0057 L8a 任务唤醒处理器：订阅 capability-learned → 复检 GapDetector → 无缺口唤醒重跑（start() 时启动）。 */
   private readonly taskWakeHandler: TaskWakeHandler;
+
+  /** ADR-0057 L8c 任务唤醒对账器：反扫 blocked 任务补唤醒（防丢事件）+ 学习超时兜底（按需 reconcileOnce）。 */
+  private readonly taskWakeReconciler: TaskWakeReconciler;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -339,6 +343,24 @@ export class ChronoSynthOS {
       now: () => this.clock.now(),
       tenantId: this.tenantId,
     });
+
+    /* ADR-0057 L8c：唤醒对账器——反扫 blocked 任务补唤醒（防 capability-learned 事件丢失永久挂起）+ 学习超时
+     * 兜底。复用 L8a wakeOneTask 同一唤醒核心。**按需** reconcileOnce（生产周期触发是部署接线，本片不接定时器）。 */
+    this.taskWakeReconciler = new TaskWakeReconciler({
+      store: wakeWorkforceStore,
+      learning: wakeLearning,
+      wakeHandler: this.taskWakeHandler,
+      logger: this.logger,
+      now: () => this.clock.now(),
+    });
+  }
+
+  /**
+   * ADR-0057 L8c：手动触发某 org 的唤醒对账（反扫补唤醒 + 学习超时兜底）。确定性，零-LLM。
+   * 生产周期触发接入既有 sweep/定时器是部署接线（后续）；此入口供按需/测试调用。
+   */
+  reconcileTaskWakes(orgId: string, now = this.clock.now()): ReconcileStats {
+    return this.taskWakeReconciler.reconcileOnce(orgId, now);
   }
 
   /** 获取数据库实例 */
