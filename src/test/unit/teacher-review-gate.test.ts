@@ -146,3 +146,87 @@ describe('TeacherReviewGate（ADR-0057 L5 双老师互审编排）', () => {
     assert.match(r.decision.rejectReason!, /老师A否决.*A 拒/, '稳定先报 A');
   });
 });
+
+/**
+ * 两阶段桩老师（L5b）：按 system prompt 判断轮次——初审（TASK:TEACHER_REVIEW）返 verdict；
+ * 交叉审（TASK:TEACHER_CROSS_REVIEW）返 {endorse, reason}。记录调用计数。
+ */
+function twoRoundTeacher(
+  reviewVerdict: Partial<TeacherVerdict>, crossEndorse: boolean | 'invalid' | Error, identity: Partial<TeacherIdentity> = {},
+): Teacher & { reviewCalls: number; crossCalls: number } {
+  const counters = { reviewCalls: 0, crossCalls: 0 };
+  const llm: LLMProvider = {
+    async chat(messages) {
+      const sys = messages.map((m) => m.content).join('');
+      if (sys.includes('TASK:TEACHER_CROSS_REVIEW')) {
+        counters.crossCalls++;
+        if (crossEndorse instanceof Error) throw crossEndorse;
+        if (crossEndorse === 'invalid') return { content: '{"garbage":true}' };
+        return { content: JSON.stringify({ endorse: crossEndorse, reason: crossEndorse ? 'still ok' : '看了对方发现疑虑' }) };
+      }
+      counters.reviewCalls++;
+      return { content: JSON.stringify({ approve: true, reason: 'ok', productivityRelevance: 'high', conflictsWithExisting: false, ...reviewVerdict }) };
+    },
+    async embed() { return []; },
+  };
+  const teacher = { llm, identity: { providerId: 'p', modelId: 'm', baseUrl: 'u', apiKeyId: 'k', account: 'a', ...identity } };
+  /* counters 透出供断言（reviewCalls/crossCalls 实时读 counters）。 */
+  return Object.defineProperties(teacher, {
+    reviewCalls: { get: () => counters.reviewCalls },
+    crossCalls: { get: () => counters.crossCalls },
+  }) as Teacher & { reviewCalls: number; crossCalls: number };
+}
+
+describe('TeacherReviewGate L5b 交叉审第二轮（opt-in，只收紧不放松）', () => {
+  it('★初审放行 + 两交叉审 endorse → 最终放行★', async () => {
+    const a = twoRoundTeacher({}, true, { apiKeyId: 'kA', providerId: 'pA' });
+    const b = twoRoundTeacher({}, true, { apiKeyId: 'kB', providerId: 'pB' });
+    const r = await new TeacherReviewGate(a, b, undefined, true).review(input());
+    assert.equal(r.decision.approved, true);
+    assert.equal(a.crossCalls, 1, 'A 跑了交叉审');
+    assert.equal(b.crossCalls, 1, 'B 跑了交叉审');
+    assert.ok(r.crossA?.endorse && r.crossB?.endorse, '交叉审结果回传');
+  });
+
+  it('★初审放行 + 一交叉审不 endorse → 退回 cross_review（伪共识被抓）★', async () => {
+    const a = twoRoundTeacher({}, true, { apiKeyId: 'kA', providerId: 'pA' });
+    const b = twoRoundTeacher({}, false, { apiKeyId: 'kB', providerId: 'pB' });
+    const r = await new TeacherReviewGate(a, b, undefined, true).review(input());
+    assert.equal(r.decision.approved, false);
+    assert.equal(r.decision.stage, 'cross_review');
+  });
+
+  it('★初审退回 → 不跑交叉审（省 LLM，沿用初审）★', async () => {
+    const a = twoRoundTeacher({ approve: false, reason: '偏题' }, true, { apiKeyId: 'kA', providerId: 'pA' });
+    const b = twoRoundTeacher({}, true, { apiKeyId: 'kB', providerId: 'pB' });
+    const r = await new TeacherReviewGate(a, b, undefined, true).review(input());
+    assert.equal(r.decision.approved, false);
+    assert.equal(r.decision.stage, 'verdict', '沿用初审退回阶段');
+    assert.equal(a.crossCalls, 0, '初审退回 → 不跑交叉审');
+    assert.equal(b.crossCalls, 0);
+  });
+
+  it('★交叉审 fail-closed：调用失败 → 不 endorse → 退回★', async () => {
+    const a = twoRoundTeacher({}, true, { apiKeyId: 'kA', providerId: 'pA' });
+    const b = twoRoundTeacher({}, new Error('502'), { apiKeyId: 'kB', providerId: 'pB' });
+    const r = await new TeacherReviewGate(a, b, undefined, true).review(input());
+    assert.equal(r.decision.approved, false);
+    assert.equal(r.decision.stage, 'cross_review');
+  });
+
+  it('★交叉审 fail-closed：返回非法 endorse → 退回★', async () => {
+    const a = twoRoundTeacher({}, 'invalid', { apiKeyId: 'kA', providerId: 'pA' });
+    const b = twoRoundTeacher({}, true, { apiKeyId: 'kB', providerId: 'pB' });
+    const r = await new TeacherReviewGate(a, b, undefined, true).review(input());
+    assert.equal(r.decision.approved, false);
+    assert.equal(r.decision.stage, 'cross_review');
+  });
+
+  it('★未启用 crossReview（默认）→ 不跑第二轮（纯 L5 向后兼容）★', async () => {
+    const a = twoRoundTeacher({}, false, { apiKeyId: 'kA', providerId: 'pA' });
+    const b = twoRoundTeacher({}, false, { apiKeyId: 'kB', providerId: 'pB' });
+    const r = await new TeacherReviewGate(a, b).review(input());  /* crossReview 缺省 false */
+    assert.equal(r.decision.approved, true, '未启用 → 初审放行即放行（不被交叉审收紧）');
+    assert.equal(a.crossCalls, 0, '未启用 → 不跑交叉审');
+  });
+});

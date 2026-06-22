@@ -8,18 +8,20 @@
  * 独立性（红线 6）：两老师**初审 blind**——各自只看候选 + 职能上下文，**看不到对方草案**（防趋同/串通）；
  * identity tuple 不冲突（kernel 校验）。
  *
- * 范围（L5 本片 = blind 初审 + AND 合并；ADR D0.3「verdict 固化后交叉审对方草案」第二轮**留 L5b**）：
- * 本片实现了独立 blind 初审 + 两都 approve 才放行——已达成独立性 + 一致同意的核心保证。「交叉审对方草案」
- * （verdict 固化后让每位老师再审对方教学内容）是额外鲁棒层，留后续切片（不静默丢，登记在 ADR L5/L5b）。
+ * 两阶段（L5 + L5b）：① blind 初审（各只看候选 + 上下文，互不可见对方，红线 6）+ 确定性 AND 合并；
+ * ② **L5b 交叉审第二轮**（opt-in，crossReview=true 启用）——初审 verdict 固化后让每位老师看**对方草案**
+ * 再复核（catch 伪共识/理由相悖），kernel mergeCrossReview **只收紧不放松**（任一不 endorse → 退回；初审
+ * 已退回则不跑、不翻盘）。第二轮看对方是**设计本意**（非破坏第一轮 blind——blind 只约束初审）。
  *
  * 安全降级（fail-closed）：老师调用/解析失败 → 视为该老师 **reject**（无法确认「该学」就不学，红线侧重保守）。
  */
 
 import type { Logger } from '../utils/logger.js';
 import {
-  mergeTeacherReview, isJobFunctionRelevant, teacherIndependenceConflict, safeParseJson,
+  mergeTeacherReview, mergeCrossReview, isJobFunctionRelevant, teacherIndependenceConflict, safeParseJson,
   type LLMProvider, type DistilledArtifact,
   type TeacherVerdict, type TeacherIdentity, type JobFunctionContext, type TeacherReviewDecision,
+  type CrossReviewVerdict,
 } from '@chrono/kernel';
 
 /** 一个老师 = LLM provider + 可审计身份。 */
@@ -43,6 +45,9 @@ export interface TeacherReviewResult {
   readonly decision: TeacherReviewDecision;
   readonly verdictA: TeacherVerdict;
   readonly verdictB: TeacherVerdict;
+  /** L5b 交叉审第二轮结果（仅 crossReview 启用且初审放行时有；审计）。 */
+  readonly crossA?: CrossReviewVerdict;
+  readonly crossB?: CrossReviewVerdict;
 }
 
 /** 老师调用/解析失败时的保守 verdict（fail-closed：不批准 + 标因）。 */
@@ -50,11 +55,21 @@ function failedVerdict(reason: string): TeacherVerdict {
   return { approve: false, reason, productivityRelevance: 'unknown', conflictsWithExisting: false };
 }
 
+/** 交叉审失败时的保守复核（fail-closed：不 endorse + 标因）。 */
+function failedCrossReview(reason: string): CrossReviewVerdict {
+  return { endorse: false, reason };
+}
+
 export class TeacherReviewGate {
   constructor(
     private readonly teacherA: Teacher,
     private readonly teacherB: Teacher,
     private readonly logger?: Logger,
+    /**
+     * L5b：是否启用交叉审第二轮（opt-in，默认 false=纯 L5 行为向后兼容）。启用后初审放行的候选再让每位老师
+     * 看对方草案复核——**只收紧不放松**（catch 伪共识）。额外 LLM 成本，由调用方按鲁棒性需求开启。
+     */
+    private readonly crossReview = false,
   ) {}
 
   /**
@@ -84,13 +99,67 @@ export class TeacherReviewGate {
     ]);
 
     /* ③ 确定性合并门（kernel 纯函数：再跑前置筛 + 独立性 + AND，幂等）。 */
-    const decision = mergeTeacherReview(
+    const roundOne = mergeTeacherReview(
       input.capability, input.context,
       { verdict: verdictA, identity: this.teacherA.identity },
       { verdict: verdictB, identity: this.teacherB.identity },
     );
-    this.logger?.info('TeacherReviewGate', `互审 cap=${input.capability} approved=${decision.approved} stage=${decision.stage ?? 'pass'}`);
-    return { decision, verdictA, verdictB };
+
+    /* ④ L5b 交叉审第二轮（opt-in）：仅当初审放行才跑（退回则无需再审，省 LLM）。每位老师看**对方草案**复核，
+     *   kernel mergeCrossReview **只收紧不放松**（任一不 endorse → 退回 cross_review）。未启用 → 沿用初审。 */
+    if (this.crossReview && roundOne.approved) {
+      const [crossA, crossB] = await Promise.all([
+        this.askCrossReview(this.teacherA, input, verdictA, verdictB, 'A'),
+        this.askCrossReview(this.teacherB, input, verdictB, verdictA, 'B'),
+      ]);
+      const decision = mergeCrossReview(roundOne, crossA, crossB);
+      this.logger?.info('TeacherReviewGate', `互审+交叉审 cap=${input.capability} approved=${decision.approved} stage=${decision.stage ?? 'pass'}`);
+      return { decision, verdictA, verdictB, crossA, crossB };
+    }
+
+    this.logger?.info('TeacherReviewGate', `互审 cap=${input.capability} approved=${roundOne.approved} stage=${roundOne.stage ?? 'pass'}`);
+    return { decision: roundOne, verdictA, verdictB };
+  }
+
+  /**
+   * 单老师交叉审第二轮（L5b）：固化双方初审后，喂该老师**自己的初审 + 对方草案**，问看了对方后是否仍 endorse。
+   * 只收紧（发现分歧/疑虑 → endorse=false）。失败/非法 → 保守不 endorse（fail-closed）。
+   */
+  private async askCrossReview(
+    teacher: Teacher, input: TeacherReviewInput, ownVerdict: TeacherVerdict, peerVerdict: TeacherVerdict, label: string,
+  ): Promise<CrossReviewVerdict> {
+    const system = [
+      'TASK:TEACHER_CROSS_REVIEW',
+      '你已对「这个数字员工该不该学这块知识」给过初审意见。现在给你看**另一位独立导师**的初审草案。',
+      '请复核：看了对方的判断后，你是否仍坚持放行？若发现对方指出了你忽略的问题、或你们看似一致但理由相悖/',
+      '实为伪共识，则**不再 endorse**（宁可保守退回再议）。只输出 JSON：{"endorse":true|false,"reason":"..."}',
+    ].join('\n');
+    const user = [
+      `候选能力: ${input.capability}`,
+      `职能上下文: role=${input.context.roleCode}, family=${input.context.jobFamily}, required=[${input.context.requiredCapabilities.join(', ')}]`,
+      `候选知识工件: kind=${input.candidate.kind}, payload=${JSON.stringify(input.candidate.payload)}`,
+      `你的初审: approve=${ownVerdict.approve}, 理由=${ownVerdict.reason}, 相关性=${ownVerdict.productivityRelevance}, 冲突=${ownVerdict.conflictsWithExisting}`,
+      `对方导师初审草案: approve=${peerVerdict.approve}, 理由=${peerVerdict.reason}, 相关性=${peerVerdict.productivityRelevance}, 冲突=${peerVerdict.conflictsWithExisting}`,
+    ].join('\n');
+
+    try {
+      const res = await teacher.llm.chat(
+        [{ role: 'system', content: system }, { role: 'user', content: user }],
+        { responseFormat: 'json' },
+      );
+      const parsed = safeParseJson<Partial<CrossReviewVerdict>>(res.content);
+      /* fail-closed：endorse 非布尔 → 不 endorse（不能把「没说」当「认可」放行）。 */
+      if (!parsed || typeof parsed.endorse !== 'boolean') {
+        return failedCrossReview(`老师${label}交叉审返回非法（endorse 须为布尔）`);
+      }
+      return {
+        endorse: parsed.endorse,
+        reason: typeof parsed.reason === 'string' && parsed.reason.length > 0 ? parsed.reason : '（无理由）',
+      };
+    } catch (err) {
+      this.logger?.warn('TeacherReviewGate', `老师${label}交叉审调用失败（保守不 endorse）: ${err instanceof Error ? err.message : String(err)}`);
+      return failedCrossReview(`老师${label}交叉审调用失败`);
+    }
   }
 
   /** 单老师 blind 初审：喂候选 + 职能上下文（不含对方草案），返回 verdict。失败 → 保守 reject。 */

@@ -50,8 +50,41 @@ export interface TeacherReviewDecision {
   readonly approved: boolean;
   /** 退回原因（approved=false 时非空；可审计）。 */
   readonly rejectReason: string | null;
-  /** 退回阶段：relevance（前置筛）/ independence / verdict（老师否决）/ null（通过）。 */
-  readonly stage: 'relevance' | 'independence' | 'verdict' | null;
+  /** 退回阶段：relevance（前置筛）/ independence / verdict（老师否决）/ cross_review（交叉审分歧，L5b）/ null（通过）。 */
+  readonly stage: 'relevance' | 'independence' | 'verdict' | 'cross_review' | null;
+}
+
+/**
+ * 交叉审（L5b 第二轮）单老师复核结果：固化双方初审 verdict 后，让该老师看到**对方草案**再确认。
+ * 只有 endorse=true（仍认可，且看了对方没发现该退回的分歧）才算交叉审通过。
+ */
+export interface CrossReviewVerdict {
+  /** 看了对方草案后是否仍认可放行（false=发现应退回的分歧/疑虑）。 */
+  readonly endorse: boolean;
+  /** 理由（审计；非空）。 */
+  readonly reason: string;
+}
+
+/**
+ * 合并交叉审第二轮（确定性，L5b）——**只收紧不放松**：仅当初审已放行（roundOneApproved）**且**两位老师
+ * 交叉审都 endorse 才最终放行；任一不 endorse → 退回（stage=cross_review）。初审已退回则交叉审不改变结论
+ * （直接沿用初审退回，不可能因第二轮翻成放行）。fail-closed：endorse 非布尔视为不 endorse。
+ */
+export function mergeCrossReview(
+  roundOne: TeacherReviewDecision,
+  crossA: CrossReviewVerdict,
+  crossB: CrossReviewVerdict,
+): TeacherReviewDecision {
+  /* 初审已退回：交叉审是额外鲁棒层，**不可能**把退回翻成放行——直接沿用初审结论。 */
+  if (!roundOne.approved) return roundOne;
+
+  /* 初审放行：两位交叉审都 endorse 才最终放行（AND，只收紧）。 */
+  if (!crossA.endorse || !crossB.endorse) {
+    const who = !crossA.endorse ? 'A' : 'B';
+    const reason = !crossA.endorse ? crossA.reason : crossB.reason;
+    return { approved: false, rejectReason: `交叉审第二轮老师${who}发现分歧：${reason}`, stage: 'cross_review' };
+  }
+  return { approved: true, rejectReason: null, stage: null };
 }
 
 /**

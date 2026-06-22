@@ -8,8 +8,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mergeTeacherReview, isJobFunctionRelevant, teacherIndependenceConflict,
-  type TeacherVerdict, type TeacherIdentity, type JobFunctionContext,
+  mergeTeacherReview, mergeCrossReview, isJobFunctionRelevant, teacherIndependenceConflict,
+  type TeacherVerdict, type TeacherIdentity, type JobFunctionContext, type TeacherReviewDecision,
 } from '../src/domain/exam/index.js';
 
 const ctx: JobFunctionContext = { roleCode: 'researcher_ic', jobFamily: 'ic', requiredCapabilities: ['research', 'analysis'] };
@@ -95,6 +95,42 @@ describe('mergeTeacherReview（确定性合并门，红线 6/7）', () => {
   it('★确定性可复现★：同输入 → 同决策', () => {
     const a = mergeTeacherReview('research', ctx, teacherA(), teacherB());
     const b = mergeTeacherReview('research', ctx, teacherA(), teacherB());
+    assert.deepEqual(a, b);
+  });
+});
+
+describe('mergeCrossReview（ADR-0057 L5b 交叉审第二轮，只收紧不放松）', () => {
+  const approved: TeacherReviewDecision = { approved: true, rejectReason: null, stage: null };
+  const rejected: TeacherReviewDecision = { approved: false, rejectReason: '老师A否决：偏题', stage: 'verdict' };
+
+  it('★初审放行 + 两交叉审都 endorse → 最终放行★', () => {
+    const r = mergeCrossReview(approved, { endorse: true, reason: 'ok' }, { endorse: true, reason: 'ok' });
+    assert.equal(r.approved, true);
+    assert.equal(r.stage, null);
+  });
+
+  it('★初审放行 + 一交叉审不 endorse → 退回（stage=cross_review，只收紧）★', () => {
+    const r = mergeCrossReview(approved, { endorse: true, reason: 'ok' }, { endorse: false, reason: '看了对方发现伪共识' });
+    assert.equal(r.approved, false);
+    assert.equal(r.stage, 'cross_review');
+    assert.match(r.rejectReason!, /老师B.*伪共识/);
+  });
+
+  it('★初审已退回 → 交叉审不可能翻成放行（沿用初审）★', () => {
+    /* 即便两交叉审都 endorse，初审退回的结论不变（交叉审只收紧，不能放松）。 */
+    const r = mergeCrossReview(rejected, { endorse: true, reason: 'ok' }, { endorse: true, reason: 'ok' });
+    assert.deepEqual(r, rejected, '初审退回原样沿用');
+  });
+
+  it('★两交叉审都不 endorse → 退回（稳定先报 A）★', () => {
+    const r = mergeCrossReview(approved, { endorse: false, reason: 'A 疑虑' }, { endorse: false, reason: 'B 疑虑' });
+    assert.equal(r.approved, false);
+    assert.match(r.rejectReason!, /老师A.*A 疑虑/, '稳定先报 A');
+  });
+
+  it('★确定性可复现★：同输入 → 同决策', () => {
+    const a = mergeCrossReview(approved, { endorse: true, reason: 'x' }, { endorse: false, reason: 'y' });
+    const b = mergeCrossReview(approved, { endorse: true, reason: 'x' }, { endorse: false, reason: 'y' });
     assert.deepEqual(a, b);
   });
 });
