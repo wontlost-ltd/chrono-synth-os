@@ -42,13 +42,14 @@ export function createValue(
   weight: number,
   timeDiscount = 0.5,
   emotionAmplifier = 1.0,
+  personaId = 'default',
 ): CoreValue {
   assertWeight(weight);
   assertTimeDiscount(timeDiscount);
   assertEmotionAmplifier(emotionAmplifier);
   const id = random.uuid('val');
   const now = clock.now();
-  tx.execute(createValueCmd({ id, label, weight, timeDiscount, emotionAmplifier, updatedAt: now }));
+  tx.execute(createValueCmd({ id, personaId, label, weight, timeDiscount, emotionAmplifier, updatedAt: now }));
   return { id, label, weight, timeDiscount, emotionAmplifier, updatedAt: now };
 }
 
@@ -57,6 +58,7 @@ export function updateValue(
   clock: KernelClock,
   id: ValueId,
   patch: CoreValuePatch,
+  personaId = 'default',
 ): CoreValue | undefined {
   if (patch.weight !== undefined) assertWeight(patch.weight);
   if (patch.timeDiscount !== undefined) assertTimeDiscount(patch.timeDiscount);
@@ -65,38 +67,38 @@ export function updateValue(
   const hasPatch = patch.weight !== undefined
     || patch.timeDiscount !== undefined
     || patch.emotionAmplifier !== undefined;
-  if (!hasPatch) return getValueById(tx, id) ?? undefined;
+  if (!hasPatch) return getValueById(tx, id, personaId) ?? undefined;
 
   const now = clock.now();
-  const result = tx.execute(updateValueCmd({ id, patch, updatedAt: now }));
+  const result = tx.execute(updateValueCmd({ id, personaId, patch, updatedAt: now }));
   if (result.rowsAffected === 0) return undefined;
-  return getValueById(tx, id) ?? undefined;
+  return getValueById(tx, id, personaId) ?? undefined;
 }
 
-export function getValueById(tx: SyncReadUnitOfWork, id: ValueId): CoreValue | null {
-  return tx.queryOne(valueById(id));
+export function getValueById(tx: SyncReadUnitOfWork, id: ValueId, personaId = 'default'): CoreValue | null {
+  return tx.queryOne(valueById(id, personaId));
 }
 
-export function getAllValues(tx: SyncReadUnitOfWork): Map<ValueId, CoreValue> {
-  const values = tx.queryMany(allValues());
+export function getAllValues(tx: SyncReadUnitOfWork, personaId = 'default'): Map<ValueId, CoreValue> {
+  const values = tx.queryMany(allValues(personaId));
   const map = new Map<ValueId, CoreValue>();
   for (const v of values) map.set(v.id, v);
   return map;
 }
 
-export function deleteValue(tx: SyncWriteUnitOfWork, id: ValueId): boolean {
-  return tx.execute(deleteValueCmd(id)).rowsAffected > 0;
+export function deleteValue(tx: SyncWriteUnitOfWork, id: ValueId, personaId = 'default'): boolean {
+  return tx.execute(deleteValueCmd(id, personaId)).rowsAffected > 0;
 }
 
-export function deleteAllValues(tx: SyncWriteUnitOfWork): void {
-  tx.execute(deleteAllValuesCmd());
+export function deleteAllValues(tx: SyncWriteUnitOfWork, personaId = 'default'): void {
+  tx.execute(deleteAllValuesCmd(personaId));
 }
 
-export function upsertValue(tx: SyncWriteUnitOfWork, value: CoreValue): void {
+export function upsertValue(tx: SyncWriteUnitOfWork, value: CoreValue, personaId = 'default'): void {
   const td = Number.isFinite(value.timeDiscount) ? value.timeDiscount : 0.5;
   const ea = Number.isFinite(value.emotionAmplifier) ? value.emotionAmplifier : 1.0;
   tx.execute(upsertValueCmd({
-    id: value.id, label: value.label, weight: value.weight,
+    id: value.id, personaId, label: value.label, weight: value.weight,
     timeDiscount: td, emotionAmplifier: ea, updatedAt: value.updatedAt,
   }));
 }

@@ -38,13 +38,14 @@ export function createAnchor(
   kind: SurvivalAnchorKind,
   value: unknown,
   severity: number,
+  personaId = 'default',
 ): SurvivalAnchor {
   assertKind(kind);
   assertSeverity(severity);
   const id = random.uuid('anchor');
   const now = clock.now();
   tx.execute(createAnchorCmd({
-    id, label, kind,
+    id, personaId, label, kind,
     valueJson: JSON.stringify(value ?? null),
     severity, createdAt: now, updatedAt: now,
   }));
@@ -56,8 +57,9 @@ export function updateAnchor(
   clock: KernelClock,
   id: string,
   patch: SurvivalAnchorPatch,
+  personaId = 'default',
 ): SurvivalAnchor | undefined {
-  const current = getAnchorById(tx, id);
+  const current = getAnchorById(tx, id, personaId);
   if (!current) return undefined;
 
   const now = clock.now();
@@ -79,7 +81,7 @@ export function updateAnchor(
   };
 
   tx.execute(updateAnchorCmd({
-    id, label: next.label, kind: next.kind,
+    id, personaId, label: next.label, kind: next.kind,
     valueJson: JSON.stringify(next.value ?? null),
     severity: next.severity, updatedAt: now,
   }));
@@ -87,25 +89,25 @@ export function updateAnchor(
   return next;
 }
 
-export function getAnchorById(tx: SyncReadUnitOfWork, id: string): SurvivalAnchor | null {
-  return tx.queryOne(anchorById(id));
+export function getAnchorById(tx: SyncReadUnitOfWork, id: string, personaId = 'default'): SurvivalAnchor | null {
+  return tx.queryOne(anchorById(id, personaId));
 }
 
-export function getAllAnchors(tx: SyncReadUnitOfWork): SurvivalAnchor[] {
-  return [...tx.queryMany(allAnchors())];
+export function getAllAnchors(tx: SyncReadUnitOfWork, personaId = 'default'): SurvivalAnchor[] {
+  return [...tx.queryMany(allAnchors(personaId))];
 }
 
-export function deleteAnchor(tx: SyncWriteUnitOfWork, id: string): boolean {
-  return tx.execute(deleteAnchorCmd(id)).rowsAffected > 0;
+export function deleteAnchor(tx: SyncWriteUnitOfWork, id: string, personaId = 'default'): boolean {
+  return tx.execute(deleteAnchorCmd(id, personaId)).rowsAffected > 0;
 }
 
-export function deleteAllAnchors(tx: SyncWriteUnitOfWork): void {
-  tx.execute(deleteAllAnchorsCmd());
+export function deleteAllAnchors(tx: SyncWriteUnitOfWork, personaId = 'default'): void {
+  tx.execute(deleteAllAnchorsCmd(personaId));
 }
 
-export function upsertAnchor(tx: SyncWriteUnitOfWork, anchor: SurvivalAnchor): void {
+export function upsertAnchor(tx: SyncWriteUnitOfWork, anchor: SurvivalAnchor, personaId = 'default'): void {
   tx.execute(upsertAnchorCmd({
-    id: anchor.id, label: anchor.label, kind: anchor.kind,
+    id: anchor.id, personaId, label: anchor.label, kind: anchor.kind,
     valueJson: JSON.stringify(anchor.value ?? null),
     severity: anchor.severity,
     createdAt: anchor.createdAt, updatedAt: anchor.updatedAt,

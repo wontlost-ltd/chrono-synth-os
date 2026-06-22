@@ -53,10 +53,26 @@ export const MEM_WM_CMD_UPDATE_SCORE = 'memory.wm-update-score' as const;
 export const MEM_WM_CMD_DELETE = 'memory.wm-delete' as const;
 export const MEM_WM_CMD_DELETE_ALL = 'memory.wm-delete-all' as const;
 
-/* ── Param Types ── */
+/* ── Param Types（ADR-0056 K5b：memory 按 (tenant, persona) 隔离；tenant_id 由宿主 rewriter 注入，
+ * persona_id 必须显式线程到 executor。working_memory 表本身没有 persona_id，仍通过 personaId 限定所属节点范围。） ── */
+
+export interface MemByIdParams {
+  readonly id: string;
+  readonly personaId: string;
+}
+
+export interface MemAllParams {
+  readonly personaId: string;
+}
+
+export interface MemBatchParams {
+  readonly ids: string[];
+  readonly personaId: string;
+}
 
 export interface MemInsertParams {
   readonly id: string;
+  readonly personaId: string;
   readonly kind: string;
   readonly content: string;
   readonly valence: number;
@@ -71,6 +87,7 @@ export interface MemInsertParams {
 
 export interface MemUpdateAccessParams {
   readonly id: string;
+  readonly personaId: string;
   readonly salience: number;
   readonly lastAccessedAt: number;
   readonly accessCount: number;
@@ -80,23 +97,41 @@ export interface MemUpdateAccessParams {
 
 export interface MemUpdateSalienceParams {
   readonly id: string;
+  readonly personaId: string;
   readonly salience: number;
   readonly lastDecayedAt: number;
 }
 
 export interface MemUpdateSalienceDeltaParams {
   readonly id: string;
+  readonly personaId: string;
   readonly delta: number;
 }
 
 export interface MemPaginatedParams {
+  readonly personaId: string;
   readonly limit: number;
   readonly offset: number;
 }
 
+export interface MemCountParams {
+  readonly personaId: string;
+}
+
 export interface MemConsolidationCandidatesParams {
+  readonly personaId: string;
   readonly accessThreshold: number;
   readonly minSalience: number;
+}
+
+export interface MemConsolidatedFromParams {
+  readonly id: string;
+  readonly personaId: string;
+}
+
+export interface MemLowestSalienceParams {
+  readonly limit: number;
+  readonly personaId: string;
 }
 
 export interface MemPaginatedResult {
@@ -105,50 +140,99 @@ export interface MemPaginatedResult {
 }
 
 export interface MemEdgeUpsertParams {
+  readonly personaId: string;
   readonly source: string;
   readonly target: string;
   readonly strength: number;
   readonly relation: string;
 }
 
+export interface MemEdgeAllParams {
+  readonly personaId: string;
+}
+
+export interface MemEdgeForNodeParams {
+  readonly id: string;
+  readonly personaId: string;
+}
+
+export interface MemEdgeForNodesParams {
+  readonly ids: string[];
+  readonly personaId: string;
+}
+
+export interface MemEdgeDeleteForNodeParams {
+  readonly id: string;
+  readonly personaId: string;
+}
+
+export interface MemEdgeDeleteAllParams {
+  readonly personaId: string;
+}
+
 export interface MemWmInsertParams {
+  readonly personaId: string;
   readonly memoryId: string;
   readonly score: number;
   readonly enteredAt: number;
 }
 
+export interface MemWmByIdParams {
+  readonly memoryId: string;
+  readonly personaId: string;
+}
+
+export interface MemWmAllParams {
+  readonly personaId: string;
+}
+
+export interface MemWmUpdateScoreParams {
+  readonly memoryId: string;
+  readonly personaId: string;
+  readonly score: number;
+}
+
+export interface MemWmDeleteParams {
+  readonly memoryId: string;
+  readonly personaId: string;
+}
+
+export interface MemWmDeleteAllParams {
+  readonly personaId: string;
+}
+
 /* ── Factory Functions ── */
 
-export function memById(id: string): Query<MemoryNode | null, { id: string }> {
-  return { kind: MEM_QUERY_BY_ID, params: { id } };
+export function memById(id: string, personaId = 'default'): Query<MemoryNode | null, MemByIdParams> {
+  return { kind: MEM_QUERY_BY_ID, params: { id, personaId } };
 }
 
-export function memAll(): Query<MemoryNode, void> {
-  return { kind: MEM_QUERY_ALL, params: undefined };
+export function memAll(personaId = 'default'): Query<MemoryNode, MemAllParams> {
+  return { kind: MEM_QUERY_ALL, params: { personaId } };
 }
 
-export function memBatch(ids: string[]): Query<MemoryNode, { ids: string[] }> {
-  return { kind: MEM_QUERY_BATCH, params: { ids } };
+export function memBatch(ids: string[], personaId = 'default'): Query<MemoryNode, MemBatchParams> {
+  return { kind: MEM_QUERY_BATCH, params: { ids, personaId } };
 }
 
-export function memPaginated(limit: number, offset: number): Query<MemPaginatedResult, MemPaginatedParams> {
-  return { kind: MEM_QUERY_PAGINATED, params: { limit, offset } };
+export function memPaginated(limit: number, offset: number, personaId = 'default'): Query<MemPaginatedResult, MemPaginatedParams> {
+  return { kind: MEM_QUERY_PAGINATED, params: { limit, offset, personaId } };
 }
 
-export function memCount(): Query<number, void> {
-  return { kind: MEM_QUERY_COUNT, params: undefined };
+export function memCount(personaId = 'default'): Query<number, MemCountParams> {
+  return { kind: MEM_QUERY_COUNT, params: { personaId } };
 }
 
 export function memConsolidationCandidates(params: MemConsolidationCandidatesParams): Query<string, MemConsolidationCandidatesParams> {
   return { kind: MEM_QUERY_CONSOLIDATION_CANDIDATES, params };
 }
 
-export function memConsolidatedFrom(id: string): Query<string | null, { id: string }> {
-  return { kind: MEM_QUERY_CONSOLIDATED_FROM, params: { id } };
+export function memConsolidatedFrom(id: string, personaId = 'default'): Query<string | null, MemConsolidatedFromParams> {
+  return { kind: MEM_QUERY_CONSOLIDATED_FROM, params: { id, personaId } };
 }
 
-export function memLowestSalience(limit: number): Query<{ id: string; salience: number }, { limit: number }> {
-  return { kind: MEM_QUERY_LOWEST_SALIENCE, params: { limit } };
+export function memLowestSalience(limit: number, personaId = 'default'): Query<{ id: string; salience: number }, MemLowestSalienceParams> {
+  return { kind: MEM_QUERY_LOWEST_SALIENCE, params: { limit, personaId } };
 }
 
 export function memInsertCmd(params: MemInsertParams): Command<MemInsertParams> {
@@ -171,70 +255,70 @@ export function memUpdateSalienceDeltaCmd(params: MemUpdateSalienceDeltaParams):
   return { kind: MEM_CMD_UPDATE_SALIENCE_DELTA, params };
 }
 
-export function memDeleteCmd(id: string): Command<{ id: string }> {
-  return { kind: MEM_CMD_DELETE, params: { id } };
+export function memDeleteCmd(id: string, personaId = 'default'): Command<MemByIdParams> {
+  return { kind: MEM_CMD_DELETE, params: { id, personaId } };
 }
 
-export function memDeleteAllCmd(): Command<void> {
-  return { kind: MEM_CMD_DELETE_ALL, params: undefined };
+export function memDeleteAllCmd(personaId = 'default'): Command<MemAllParams> {
+  return { kind: MEM_CMD_DELETE_ALL, params: { personaId } };
 }
 
-export function memEdgeAll(): Query<MemoryEdge, void> {
-  return { kind: MEM_EDGE_QUERY_ALL, params: undefined };
+export function memEdgeAll(personaId = 'default'): Query<MemoryEdge, MemEdgeAllParams> {
+  return { kind: MEM_EDGE_QUERY_ALL, params: { personaId } };
 }
 
-export function memEdgesForNode(id: string): Query<MemoryEdge, { id: string }> {
-  return { kind: MEM_EDGE_QUERY_FOR_NODE, params: { id } };
+export function memEdgesForNode(id: string, personaId = 'default'): Query<MemoryEdge, MemEdgeForNodeParams> {
+  return { kind: MEM_EDGE_QUERY_FOR_NODE, params: { id, personaId } };
 }
 
-export function memEdgesForNodes(ids: string[]): Query<MemoryEdge, { ids: string[] }> {
-  return { kind: MEM_EDGE_QUERY_FOR_NODES, params: { ids } };
+export function memEdgesForNodes(ids: string[], personaId = 'default'): Query<MemoryEdge, MemEdgeForNodesParams> {
+  return { kind: MEM_EDGE_QUERY_FOR_NODES, params: { ids, personaId } };
 }
 
 export function memEdgeUpsertCmd(params: MemEdgeUpsertParams): Command<MemEdgeUpsertParams> {
   return { kind: MEM_EDGE_CMD_UPSERT, params };
 }
 
-export function memEdgeDeleteForNodeCmd(id: string): Command<{ id: string }> {
-  return { kind: MEM_EDGE_CMD_DELETE_FOR_NODE, params: { id } };
+export function memEdgeDeleteForNodeCmd(id: string, personaId = 'default'): Command<MemEdgeDeleteForNodeParams> {
+  return { kind: MEM_EDGE_CMD_DELETE_FOR_NODE, params: { id, personaId } };
 }
 
-export function memEdgeDeleteAllCmd(): Command<void> {
-  return { kind: MEM_EDGE_CMD_DELETE_ALL, params: undefined };
+export function memEdgeDeleteAllCmd(personaId = 'default'): Command<MemEdgeDeleteAllParams> {
+  return { kind: MEM_EDGE_CMD_DELETE_ALL, params: { personaId } };
 }
 
-export function memWmSlots(): Query<WorkingMemorySlot, void> {
-  return { kind: MEM_WM_QUERY_SLOTS, params: undefined };
+export function memWmSlots(personaId = 'default'): Query<WorkingMemorySlot, MemWmAllParams> {
+  return { kind: MEM_WM_QUERY_SLOTS, params: { personaId } };
 }
 
-export function memWmById(memoryId: string): Query<WorkingMemorySlot | null, { memoryId: string }> {
-  return { kind: MEM_WM_QUERY_BY_ID, params: { memoryId } };
+export function memWmById(memoryId: string, personaId = 'default'): Query<WorkingMemorySlot | null, MemWmByIdParams> {
+  return { kind: MEM_WM_QUERY_BY_ID, params: { memoryId, personaId } };
 }
 
-export function memWmCount(): Query<number, void> {
-  return { kind: MEM_WM_QUERY_COUNT, params: undefined };
+export function memWmCount(personaId = 'default'): Query<number, MemWmAllParams> {
+  return { kind: MEM_WM_QUERY_COUNT, params: { personaId } };
 }
 
-export function memWmLowest(): Query<WorkingMemorySlot | null, void> {
-  return { kind: MEM_WM_QUERY_LOWEST, params: undefined };
+export function memWmLowest(personaId = 'default'): Query<WorkingMemorySlot | null, MemWmAllParams> {
+  return { kind: MEM_WM_QUERY_LOWEST, params: { personaId } };
 }
 
-export function memWmAllRaw(): Query<WorkingMemorySlot, void> {
-  return { kind: MEM_WM_QUERY_ALL_RAW, params: undefined };
+export function memWmAllRaw(personaId = 'default'): Query<WorkingMemorySlot, MemWmAllParams> {
+  return { kind: MEM_WM_QUERY_ALL_RAW, params: { personaId } };
 }
 
 export function memWmInsertCmd(params: MemWmInsertParams): Command<MemWmInsertParams> {
   return { kind: MEM_WM_CMD_INSERT, params };
 }
 
-export function memWmUpdateScoreCmd(memoryId: string, score: number): Command<{ memoryId: string; score: number }> {
-  return { kind: MEM_WM_CMD_UPDATE_SCORE, params: { memoryId, score } };
+export function memWmUpdateScoreCmd(memoryId: string, score: number, personaId = 'default'): Command<MemWmUpdateScoreParams> {
+  return { kind: MEM_WM_CMD_UPDATE_SCORE, params: { memoryId, score, personaId } };
 }
 
-export function memWmDeleteCmd(memoryId: string): Command<{ memoryId: string }> {
-  return { kind: MEM_WM_CMD_DELETE, params: { memoryId } };
+export function memWmDeleteCmd(memoryId: string, personaId = 'default'): Command<MemWmDeleteParams> {
+  return { kind: MEM_WM_CMD_DELETE, params: { memoryId, personaId } };
 }
 
-export function memWmDeleteAllCmd(): Command<void> {
-  return { kind: MEM_WM_CMD_DELETE_ALL, params: undefined };
+export function memWmDeleteAllCmd(personaId = 'default'): Command<MemWmDeleteAllParams> {
+  return { kind: MEM_WM_CMD_DELETE_ALL, params: { personaId } };
 }

@@ -9,7 +9,10 @@ import {
   ANCHOR_CMD_CREATE, ANCHOR_CMD_UPDATE, ANCHOR_CMD_DELETE,
   ANCHOR_CMD_DELETE_ALL, ANCHOR_CMD_UPSERT,
 } from '@chrono/kernel';
-import type { SurvivalAnchor, CreateAnchorParams, UpdateAnchorParams } from '@chrono/kernel';
+import type {
+  SurvivalAnchor, CreateAnchorParams, UpdateAnchorParams,
+  AnchorByIdParams, AnchorAllParams, DeleteAnchorParams, DeleteAllAnchorsParams,
+} from '@chrono/kernel';
 
 interface AnchorRow {
   id: string;
@@ -34,49 +37,50 @@ function toAnchor(row: AnchorRow): SurvivalAnchor {
 }
 
 export function registerAnchorExecutors(): void {
-  registerQuery<SurvivalAnchor | null, { id: string }>(ANCHOR_QUERY_BY_ID, (db, params) => {
+  /* ADR-0056 K5b：survival_anchors 按 persona_id 显式隔离；tenant_id 由 TenantDatabase rewriter 自动注入。 */
+  registerQuery<SurvivalAnchor | null, AnchorByIdParams>(ANCHOR_QUERY_BY_ID, (db, params) => {
     const row = db.prepare<AnchorRow>(
-      'SELECT * FROM survival_anchors WHERE id = ?',
-    ).get(params.id);
+      'SELECT * FROM survival_anchors WHERE id = ? AND persona_id = ?',
+    ).get(params.id, params.personaId);
     return row ? toAnchor(row) : null;
   });
 
-  registerQuery<SurvivalAnchor[], void>(ANCHOR_QUERY_ALL, (db: IDatabase) => {
+  registerQuery<SurvivalAnchor[], AnchorAllParams>(ANCHOR_QUERY_ALL, (db: IDatabase, params) => {
     const rows = db.prepare<AnchorRow>(
-      'SELECT * FROM survival_anchors ORDER BY created_at',
-    ).all();
+      'SELECT * FROM survival_anchors WHERE persona_id = ? ORDER BY created_at',
+    ).all(params.personaId);
     return rows.map(toAnchor);
   });
 
   registerCommand<CreateAnchorParams>(ANCHOR_CMD_CREATE, (db, p) => {
     db.prepare<void>(
-      'INSERT INTO survival_anchors (id, label, kind, value_json, severity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(p.id, p.label, p.kind, p.valueJson, p.severity, p.createdAt, p.updatedAt);
+      'INSERT INTO survival_anchors (id, persona_id, label, kind, value_json, severity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(p.id, p.personaId, p.label, p.kind, p.valueJson, p.severity, p.createdAt, p.updatedAt);
     return { rowsAffected: 1 };
   });
 
   registerCommand<UpdateAnchorParams>(ANCHOR_CMD_UPDATE, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE survival_anchors SET label = ?, kind = ?, value_json = ?, severity = ?, updated_at = ? WHERE id = ?',
-    ).run(p.label, p.kind, p.valueJson, p.severity, p.updatedAt, p.id);
+      'UPDATE survival_anchors SET label = ?, kind = ?, value_json = ?, severity = ?, updated_at = ? WHERE id = ? AND persona_id = ?',
+    ).run(p.label, p.kind, p.valueJson, p.severity, p.updatedAt, p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<{ id: string }>(ANCHOR_CMD_DELETE, (db, p) => {
-    const result = db.prepare<void>('DELETE FROM survival_anchors WHERE id = ?').run(p.id);
+  registerCommand<DeleteAnchorParams>(ANCHOR_CMD_DELETE, (db, p) => {
+    const result = db.prepare<void>('DELETE FROM survival_anchors WHERE id = ? AND persona_id = ?').run(p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<void>(ANCHOR_CMD_DELETE_ALL, (db: IDatabase) => {
-    db.prepare<void>('DELETE FROM survival_anchors WHERE 1=1').run();
+  registerCommand<DeleteAllAnchorsParams>(ANCHOR_CMD_DELETE_ALL, (db: IDatabase, p) => {
+    db.prepare<void>('DELETE FROM survival_anchors WHERE persona_id = ?').run(p.personaId);
     return { rowsAffected: 0 };
   });
 
   registerCommand<CreateAnchorParams>(ANCHOR_CMD_UPSERT, (db, p) => {
     db.prepare<void>(
-      `INSERT INTO survival_anchors (id, label, kind, value_json, severity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET label=excluded.label, kind=excluded.kind, value_json=excluded.value_json, severity=excluded.severity, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-    ).run(p.id, p.label, p.kind, p.valueJson, p.severity, p.createdAt, p.updatedAt);
+      `INSERT INTO survival_anchors (id, persona_id, label, kind, value_json, severity, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET persona_id=excluded.persona_id, label=excluded.label, kind=excluded.kind, value_json=excluded.value_json, severity=excluded.severity, created_at=excluded.created_at, updated_at=excluded.updated_at`,
+    ).run(p.id, p.personaId, p.label, p.kind, p.valueJson, p.severity, p.createdAt, p.updatedAt);
     return { rowsAffected: 1 };
   });
 }

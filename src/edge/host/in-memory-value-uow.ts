@@ -182,8 +182,12 @@ function isInRange(v: unknown, lo: number, hi: number): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 }
 
-/** CreateValueParams → CoreValue 行（统一构造，避免 create/upsert 重复）。 */
-function toRow(p: CreateValueParams): CoreValue {
+/**
+ * → CoreValue 行（统一构造，避免 create/upsert/restore 重复）。
+ * 入参只取 CoreValue 这几个字段，故 CreateValueParams（含 personaId）与 CoreValue（无 personaId）都满足。
+ * Edge 是单 persona 的设备端运行时（一机一人格），不在行内持久化 persona_id——隔离由设备边界保证。
+ */
+function toRow(p: Omit<CoreValue, never>): CoreValue {
   return {
     id: p.id, label: p.label, weight: p.weight,
     timeDiscount: p.timeDiscount, emotionAmplifier: p.emotionAmplifier, updatedAt: p.updatedAt,

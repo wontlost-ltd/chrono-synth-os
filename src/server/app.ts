@@ -642,7 +642,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       tenantFactory && event.tenantId && event.tenantId !== 'default'
         ? tenantFactory.getTenantOS(event.tenantId)
         : deps.os;
-    const values = [...tenantOS.core.values.getAll().values()].map((v) => ({
+    /* ADR-0056 K5b：读**该 worker persona 自己的**价值（value 已按 persona 隔离），蒸馏强化也落它自己的核心，
+     * 而非共享 default 核心——否则会拿 default 的价值算 target、却 ingest 到 worker persona（value 不存在→不产工件）。 */
+    const values = [...tenantOS.getCore(event.personaId).values.getAll().values()].map((v) => ({
       id: v.id, label: v.label, weight: v.weight,
     }));
     const target = resolveTargetValueForCategory(event.category, values);
