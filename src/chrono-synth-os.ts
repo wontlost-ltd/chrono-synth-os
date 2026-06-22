@@ -42,6 +42,11 @@ import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
 import { CapabilityIndexProjector } from './intelligence/capability-index-projector.js';
+import { TaskWakeHandler } from './workforce/task-wake-handler.js';
+import { OrgWorkforceStore } from './storage/org-workforce-store.js';
+import { LearningRequestService } from './workforce/learning-request-service.js';
+import { LearningRequestStore } from './storage/learning-request-store.js';
+import { CapabilityIndexStore } from './storage/capability-index-store.js';
 import {
   DEFAULT_DISTILLATION_POLICY, type DistillationPolicy,
   perturbDecisionStyle, archetypeDecisionStyle, type PersonalityArchetype,
@@ -136,6 +141,9 @@ export class ChronoSynthOS {
 
   /** ADR-0057 L7 能力索引投影器：订阅 capability-learned → 投影 capability_index（start() 时启动）。 */
   private readonly capabilityIndexProjector: CapabilityIndexProjector;
+
+  /** ADR-0057 L8a 任务唤醒处理器：订阅 capability-learned → 复检 GapDetector → 无缺口唤醒重跑（start() 时启动）。 */
+  private readonly taskWakeHandler: TaskWakeHandler;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -314,6 +322,23 @@ export class ChronoSynthOS {
       logger: this.logger,
       now: () => this.clock.now(),
     });
+
+    /* ADR-0057 L8a：任务唤醒处理器——订阅 capability-learned → 找因该缺口挂起的任务 → 确定性 GapDetector
+     * 复检 → 无缺口唤醒重跑（blocked→delegated，零-LLM）/ 仍缺 fail-closed。复用 LearningRequestService
+     * （含 CapabilityIndexStore，已学能力 = 索引 ∪ L2 passed）。start() 时订阅。 */
+    const wakeWorkforceStore = new OrgWorkforceStore(this.db, this.tenantId);
+    const wakeLearning = new LearningRequestService(
+      new LearningRequestStore(this.db, this.tenantId), () => this.clock.now(), () => generatePrefixedId('lr'), this.tenantId,
+      new CapabilityIndexStore(this.db, this.tenantId),
+    );
+    this.taskWakeHandler = new TaskWakeHandler({
+      bus: this.bus,
+      store: wakeWorkforceStore,
+      learning: wakeLearning,
+      logger: this.logger,
+      now: () => this.clock.now(),
+      tenantId: this.tenantId,
+    });
   }
 
   /** 获取数据库实例 */
@@ -376,6 +401,7 @@ export class ChronoSynthOS {
     this.maybeSeedPersonality();
     this.proactiveEngine.start();
     this.capabilityIndexProjector.start();
+    this.taskWakeHandler.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -624,6 +650,7 @@ export class ChronoSynthOS {
     try {
       this.proactiveEngine.stop();
       this.capabilityIndexProjector.stop();
+      this.taskWakeHandler.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');

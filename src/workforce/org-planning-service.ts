@@ -144,7 +144,7 @@ export class OrgPlanningService {
             status: 'delegated',
             riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
             acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-            resultSummary: null, dueAt, createdAt: ts, updatedAt: ts,
+            resultSummary: null, dueAt, resumeAttemptCount: 0, lastWakeEventId: null, createdAt: ts, updatedAt: ts,
           });
           continue;
         }
@@ -168,7 +168,7 @@ export class OrgPlanningService {
           status: 'submitted',
           riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
           acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-          resultSummary: result, dueAt, createdAt: ts, updatedAt: tsExec,
+          resultSummary: result, dueAt, resumeAttemptCount: 0, lastWakeEventId: null, createdAt: ts, updatedAt: tsExec,
         });
       }
 

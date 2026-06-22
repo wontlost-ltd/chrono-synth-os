@@ -104,6 +104,10 @@ export interface OrgTask {
   readonly resultSummary: string | null;
   /** SLA 截止时间（毫秒时间戳）；null = 无截止（不计入 SLA 信号）。C 链时间感知用。 */
   readonly dueAt: number | null;
+  /** ADR-0057 L8a：学完唤醒重跑的尝试计数（防多能力误唤醒/死循环；超上限停在 blocked）。默认 0。 */
+  readonly resumeAttemptCount: number;
+  /** ADR-0057 L8a：上次处理的唤醒事件标识（learningRequestId），幂等去重防重复投递。null = 从未唤醒。 */
+  readonly lastWakeEventId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }

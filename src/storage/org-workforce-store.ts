@@ -187,7 +187,11 @@ export class OrgWorkforceStore {
 
   /* ── tasks ── */
 
-  insertTask(t: Omit<OrgTask, 'tenantId'>): void {
+  /**
+   * 插入任务。L8a 唤醒守卫字段（resume_attempt_count / last_wake_event_id）**不由插入方提供**——
+   * 新任务恒由 DB 默认起步（计数 0 / 事件 null），只有唤醒流程推进它们，故从插入入参 Omit 掉。
+   */
+  insertTask(t: Omit<OrgTask, 'tenantId' | 'resumeAttemptCount' | 'lastWakeEventId'>): void {
     this.db.prepare<void>(
       `INSERT INTO org_tasks (id, tenant_id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -217,10 +221,55 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /**
+   * ADR-0057 L8a：找因某 (persona, capability) 缺口而挂起（blocked）的任务——学完唤醒用。
+   * 经 learning_requests.triggered_by_task_id 连接：该 persona 该 capability 的学习请求触发了哪些任务，
+   * 其中仍 blocked 的就是待唤醒候选。per-persona（learning_requests.persona_id）+ tenant 隔离（红线 8/15）。
+   * 确定性排序（created_at 升序、id 升序兜底）。去重（多请求可能指同一任务）。
+   */
+  listBlockedTasksForLearnedCapability(personaId: string, capability: string): OrgTask[] {
+    const rows = this.db.prepare<RawTask>(
+      `SELECT DISTINCT t.id, t.org_id, t.goal_id, t.parent_task_id, t.assigned_to_worker_id, t.accountable_worker_id, t.title, t.task_type, t.status, t.risk_level, t.allows_tool_execution, t.acceptance_criteria, t.required_capabilities, t.result_summary, t.due_at, t.resume_attempt_count, t.last_wake_event_id, t.created_at, t.updated_at
+       FROM org_tasks t
+       JOIN learning_requests lr ON lr.tenant_id = t.tenant_id AND lr.triggered_by_task_id = t.id
+       WHERE t.tenant_id = ? AND lr.persona_id = ? AND lr.capability = ? AND t.status = 'blocked'
+       ORDER BY t.created_at ASC, t.id ASC`,
+    ).all(this.tenantId, personaId, capability);
+    return rows.map((r) => this.toTask(r));
+  }
+
+  /**
+   * ADR-0057 L8a：唤醒重跑——把挂起任务从 blocked 推回 delegated（重新可执行），并**原子**推进尝试计数 +
+   * 记录唤醒事件 id（幂等 + 防死循环）。仅当任务**仍是 blocked**才转移（CAS，防并发覆盖/重复唤醒）。
+   * 返回是否真的唤醒了（changes>0）。被并发改走（已非 blocked）→ false（不强行覆盖）。
+   */
+  wakeBlockedTaskToDelegated(orgId: string, taskId: string, resultSummary: string, wakeEventId: string, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_tasks
+       SET status = 'delegated', result_summary = ?, resume_attempt_count = resume_attempt_count + 1,
+           last_wake_event_id = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'`,
+    ).run(resultSummary, wakeEventId, now, this.tenantId, orgId, taskId);
+    return r.changes > 0;
+  }
+
+  /**
+   * ADR-0057 L8a：复检仍缺口 / 超尝试上限——只推进尝试计数 + 记事件 id，**不改状态**（保持 blocked，fail-closed）。
+   * 仅当仍 blocked 才推进（CAS）。返回是否推进。用于「唤醒了但复检仍缺/超限」的可审计记账（防死循环计数）。
+   */
+  recordWakeAttemptOnBlocked(orgId: string, taskId: string, resultSummary: string, wakeEventId: string, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_tasks
+       SET result_summary = ?, resume_attempt_count = resume_attempt_count + 1, last_wake_event_id = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'`,
+    ).run(resultSummary, wakeEventId, now, this.tenantId, orgId, taskId);
+    return r.changes > 0;
+  }
+
   /** 取单个任务；无 → undefined。 */
   getTask(orgId: string, taskId: string): OrgTask | undefined {
     const row = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, resume_attempt_count, last_wake_event_id, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND id = ?`,
     ).get(this.tenantId, orgId, taskId);
     return row ? this.toTask(row) : undefined;
@@ -241,7 +290,7 @@ export class OrgWorkforceStore {
   /** 取某 worker 当前被指派的任务（确定性排序）。用于算 worker 运行信号/负载。 */
   listTasksByAssignee(orgId: string, workerId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, resume_attempt_count, last_wake_event_id, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND assigned_to_worker_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, workerId);
@@ -251,7 +300,7 @@ export class OrgWorkforceStore {
   /** 取某目标的任务（确定性排序：created_at 升序、id 升序兜底）。 */
   listTasksByGoal(orgId: string, goalId: string): OrgTask[] {
     const rows = this.db.prepare<RawTask>(
-      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, created_at, updated_at
+      `SELECT id, org_id, goal_id, parent_task_id, assigned_to_worker_id, accountable_worker_id, title, task_type, status, risk_level, allows_tool_execution, acceptance_criteria, required_capabilities, result_summary, due_at, resume_attempt_count, last_wake_event_id, created_at, updated_at
        FROM org_tasks WHERE tenant_id = ? AND org_id = ? AND goal_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, goalId);
@@ -575,6 +624,9 @@ export class OrgWorkforceStore {
       resultSummary: nullableStr(r.result_summary),
       /* due_at 可空 bigint：null 保留 null；否则 Number() 强转（node-pg 返回 string）。 */
       dueAt: r.due_at === null || r.due_at === undefined ? null : num(r.due_at),
+      /* L8a：唤醒守卫字段。resume_attempt_count 默认 0（旧任务/无 row）；last_wake_event_id 可空。 */
+      resumeAttemptCount: num(r.resume_attempt_count),
+      lastWakeEventId: nullableStr(r.last_wake_event_id),
       createdAt: num(r.created_at), updatedAt: num(r.updated_at),
     };
   }
@@ -593,7 +645,7 @@ interface RawPosition { id: string; org_id: string; title: string; job_family: s
 interface RawWorker { id: string; org_id: string; persona_id: string; position_id: string; display_name: string; employment_status: string; created_at: unknown; updated_at: unknown; }
 interface RawEdge { id: string; org_id: string; manager_worker_id: unknown; report_worker_id: string; edge_type: string; created_at: unknown; }
 interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; playbook_version: unknown; created_at: unknown; updated_at: unknown; }
-interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; due_at: unknown; created_at: unknown; updated_at: unknown; }
+interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; due_at: unknown; resume_attempt_count: unknown; last_wake_event_id: unknown; created_at: unknown; updated_at: unknown; }
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
 interface RawMessage { id: string; org_id: string; thread_id: string; from_worker_id: string; to_worker_id: unknown; message_type: string; content: string; correlation_id: unknown; created_at: unknown; }

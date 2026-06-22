@@ -34,7 +34,7 @@ describe('PlaybookDistiller（M3 组织经验蒸馏闭环·确定性半）', () 
       goalType: GOAL_TYPE, status: 'completed', playbookVersion: 1, createdAt: 1000, updatedAt: 1000,
     });
     for (const spec of tasks) {
-      const t: Omit<OrgTask, 'tenantId'> = {
+      const t: Omit<OrgTask, 'tenantId' | 'resumeAttemptCount' | 'lastWakeEventId'> = {
         id: `task-${++counter}`, orgId: 'org-1', goalId, parentTaskId: null, assignedToWorkerId: 'ic',
         accountableWorkerId: 'mgr', title: spec.taskType, taskType: spec.taskType, status: spec.status,
         riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [],
