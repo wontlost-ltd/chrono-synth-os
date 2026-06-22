@@ -41,6 +41,7 @@ import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
+import { CapabilityIndexProjector } from './intelligence/capability-index-projector.js';
 import {
   DEFAULT_DISTILLATION_POLICY, type DistillationPolicy,
   perturbDecisionStyle, archetypeDecisionStyle, type PersonalityArchetype,
@@ -132,6 +133,9 @@ export class ChronoSynthOS {
 
   /** ADR-0054 主动性引擎：订阅内部信号 → 确定性门控 → 主动消息入队（start() 时启动）。 */
   private readonly proactiveEngine: ProactiveEngine;
+
+  /** ADR-0057 L7 能力索引投影器：订阅 capability-learned → 投影 capability_index（start() 时启动）。 */
+  private readonly capabilityIndexProjector: CapabilityIndexProjector;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -301,6 +305,15 @@ export class ChronoSynthOS {
         violates: (text) => proactiveResponder.violatesNeverDiscuss(text, COMPANION_BASELINE_BOUNDARIES),
       },
     });
+
+    /* ADR-0057 L7：能力索引投影器——订阅 capability-learned（L6 落核后发）→ 确定性投影 capability_index。
+     * 已学能力的正式来源（GapDetector 据此算缺口差集，替换 L2 status='passed' 扫描）。start() 时订阅。 */
+    this.capabilityIndexProjector = new CapabilityIndexProjector({
+      bus: this.bus,
+      db: this.db,
+      logger: this.logger,
+      now: () => this.clock.now(),
+    });
   }
 
   /** 获取数据库实例 */
@@ -362,6 +375,7 @@ export class ChronoSynthOS {
     this.auditChainAnchors?.start();
     this.maybeSeedPersonality();
     this.proactiveEngine.start();
+    this.capabilityIndexProjector.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -609,6 +623,7 @@ export class ChronoSynthOS {
     this.stopped = true;
     try {
       this.proactiveEngine.stop();
+      this.capabilityIndexProjector.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');

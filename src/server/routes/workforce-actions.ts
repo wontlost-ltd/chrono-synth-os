@@ -32,6 +32,7 @@ import { WorkerExecutionService, WorkerExecutionError, type ToolExecutor } from 
 import { MissingHumanPrincipalError } from '../../workforce/worker-execution-actor.js';
 import { LearningRequestService } from '../../workforce/learning-request-service.js';
 import { LearningRequestStore } from '../../storage/learning-request-store.js';
+import { CapabilityIndexStore } from '../../storage/capability-index-store.js';
 import { UnsupportedGoalTypeError, AssigneeNotFoundError } from '../../workforce/org-planning-service.js';
 import { deriveRiskSignals, type ToolRiskSource } from '../../workforce/tool-risk-deriver.js';
 import {
@@ -176,9 +177,11 @@ export function registerWorkforceActionRoutes(
     const { orgId, taskId } = request.params;
     const store = storeFor(request);
     const approvals = new ApprovalService(store, now, undefined, request.tenantId);
-    /* ADR-0057 L2：注入学习请求 service——执行前确定性能力缺口门（缺则 learning_required，不硬干）。 */
+    /* ADR-0057 L2+L7：注入学习请求 service——执行前确定性能力缺口门（缺则 learning_required，不硬干）。
+     * L7：注入 CapabilityIndexStore，已学能力优先读正式索引（∪ L2 passed 兜底）。 */
     const learning = new LearningRequestService(
       new LearningRequestStore(db, request.tenantId), now, randomUUID, request.tenantId,
+      new CapabilityIndexStore(db, request.tenantId),
     );
     const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId, learning);
     /* 风险信号服务端派生（读 registry；body 只能上调，不能省略高风险工具来绕审批门）。 */

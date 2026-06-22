@@ -80,6 +80,8 @@ const TENANT_TABLES = [
   'org_escalations',
   /* ADR-0057 L2：按职能进修学习请求账本（业务派生），A 类标准导出+擦除 */
   'learning_requests',
+  /* ADR-0057 L7：能力索引（已学能力正式来源，业务派生），A 类标准导出+擦除 */
+  'capability_index',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

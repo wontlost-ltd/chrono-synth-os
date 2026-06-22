@@ -69,6 +69,8 @@ const TENANT_TABLES = new Set([
   'org_escalations',
   /* ADR-0057 L2：按职能进修学习请求账本（缺口→学习请求），须自动租户隔离 + per-persona */
   'learning_requests',
+  /* ADR-0057 L7：能力索引（已学能力正式来源，capability-learned 事件投影），须自动租户隔离 + per-persona */
+  'capability_index',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

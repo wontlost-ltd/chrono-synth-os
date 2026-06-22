@@ -13,6 +13,7 @@
  */
 
 import type { LearningRequestStore } from '../storage/learning-request-store.js';
+import type { CapabilityIndexStore } from '../storage/capability-index-store.js';
 import type { LearningRequest } from './types.js';
 import { detectCapabilityGaps, isKnownCapability, type GapPriority } from '@chrono/kernel';
 
@@ -30,11 +31,27 @@ export class LearningRequestService {
     private readonly now: () => number,
     private readonly idgen: () => string,
     private readonly tenantId: string = 'default',
+    /**
+     * ADR-0057 L7：能力索引（已学能力正式来源）。注入则**优先**读索引；为向后兼容（L7 前已有
+     * passed 行但尚无索引行的现存租户），结果与 L2 passed 行**并集**——索引滞后不会让已学能力被误判未学。
+     * 未注入 → 回退纯 L2 passed 扫描（旧调用方/测试，向后兼容）。
+     */
+    private readonly capabilityIndex?: CapabilityIndexStore,
   ) {}
 
-  /** 该 persona 已学会（passed）的能力——供 GapDetector 算缺口（L2 时代来源；L7 换 CapabilityIndex）。persona-global。 */
+  /**
+   * 该 persona 已学会的能力——供 GapDetector 算缺口（persona-global）。
+   * L7：优先 CapabilityIndex（正式来源）∪ L2 passed（向后兼容兜底；索引为新表，存量 passed 行无对应索引行）。
+   * 并集**不引入假阳性**：两个来源都代表**真已通过学习**——索引由 L6 落核后的 capability-learned 事件写，
+   * L2 passed 由真实状态机 learning→passed 推进。故并集只是补全（存量 passed 没索引行时不漏算），不会把
+   * 「没学过」错算成「学过」。漏算的真实风险方向（投影滞后致索引缺该能力）由 L2 passed 兜底 + L2 active
+   * 幂等防洪（漏算只是重登记，不重复请教）化解。确定性去重排序。
+   */
   listLearnedCapabilities(personaId: string): string[] {
-    return this.store.listPassedCapabilities(personaId);
+    const fromLedger = this.store.listPassedCapabilities(personaId);
+    if (!this.capabilityIndex) return fromLedger;
+    const fromIndex = this.capabilityIndex.listLearnedCapabilities(personaId);
+    return [...new Set([...fromIndex, ...fromLedger])].sort();
   }
 
   /**

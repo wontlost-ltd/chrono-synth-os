@@ -6,14 +6,14 @@ describe('VERSION_MAP', () => {
   it('covers every postgres migration version', () => {
     assert.deepEqual(
       versionsFor('postgres'),
-      range('v', 1, 110),
+      range('v', 1, 111),
     );
   });
 
   it('covers every sqlite SQL migration version', () => {
     assert.deepEqual(
       versionsFor('sqlite-sql'),
-      range('v', 1, 108),
+      range('v', 1, 109),
     );
   });
 
