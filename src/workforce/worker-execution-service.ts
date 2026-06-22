@@ -19,6 +19,7 @@ import type { ExecutionRiskSignals } from './execution-risk.js';
 import { assessExecutionRisk } from './execution-risk.js';
 import { resolveWorkerExecutionActor } from './worker-execution-actor.js';
 import type { ApprovalService } from './approval-service.js';
+import type { LearningRequestService, RegisterGapOutcome } from './learning-request-service.js';
 
 /** 工具执行管线的窄接口（只需 invoke；与 ToolInvocationPipeline 形状一致，便于解耦+单测）。 */
 export interface ToolExecutor {
@@ -76,6 +77,12 @@ export type ExecuteTaskResult =
   | { readonly kind: 'executed'; readonly invocationId: string; readonly result: unknown }
   | { readonly kind: 'needs_approval'; readonly effectiveRisk: 'medium' | 'high'; readonly reason: string }
   | { readonly kind: 'needs_pipeline_confirmation'; readonly confirmationTokenId: string; readonly reason: string }
+  /**
+   * ADR-0057 L2/D0.8：执行前确定性缺口检测发现该数字员工缺所需能力 → **不执行**，登记学习请求并把任务挂起
+   * （blocked，原因=能力缺口）。**不当场调 LLM 硬答**（零-LLM 铁律）；学完唤醒重跑（L8）。
+   * 优先委派/降级是上层编排（OrgAutorun/planning）的事；本执行门只负责「缺能力不硬干，登记学习」。
+   */
+  | { readonly kind: 'learning_required'; readonly gaps: readonly RegisterGapOutcome[]; readonly reason: string }
   | { readonly kind: 'failed'; readonly status: string; readonly reason: string };
 
 /** 执行非法（任务状态/执行者/principal 等前置不满足）。 */
@@ -93,6 +100,11 @@ export class WorkerExecutionService {
     private readonly executor: ToolExecutor,
     private readonly now: () => number,
     private readonly tenantId: string,
+    /**
+     * ADR-0057 L2：可选学习请求 service。注入后，执行前先做确定性能力缺口检测——缺能力则登记学习请求 +
+     * 挂起任务（learning_required），不硬干。**可选**以向后兼容（未注入 = 旧行为，不做缺口检测）。
+     */
+    private readonly learning?: LearningRequestService,
   ) {}
 
   /**
@@ -101,6 +113,30 @@ export class WorkerExecutionService {
    */
   async execute(input: ExecuteTaskInput): Promise<ExecuteTaskResult> {
     const task = this.requireExecutableTask(input.orgId, input.taskId, input.workerId);
+
+    /* ⓪ 能力缺口门（ADR-0057 L2/D0.8）：执行前确定性检测——该数字员工缺任务所需能力则**不硬干**，
+     *    登记学习请求 + 挂起任务（零-LLM 铁律：遇缺口不当场调 LLM）。在风险/审批/CAS **之前**短路，
+     *    避免为一个学不会的任务白烧审批/并发状态。未注入 learning service = 跳过（向后兼容）。 */
+    if (this.learning && task.requiredCapabilities.length > 0) {
+      const personaId = this.personaIdOf(input.orgId, task);
+      const outcomes = this.learning.detectAndRegister({
+        orgId: input.orgId,
+        personaId,
+        requiredCapabilities: task.requiredCapabilities,
+        taskId: input.taskId,
+        priority: task.riskLevel === 'high' ? 'high' : task.riskLevel === 'medium' ? 'medium' : 'low',
+      });
+      if (outcomes.length > 0) {
+        const caps = outcomes.map((o) => o.capability).join(', ');
+        /* 挂起任务（delegated→blocked，原因=能力缺口）——**CAS** 而非无条件覆盖：本路径未抢 in_progress、不拥有
+         * 任务状态，若任务已被并发改走则不覆盖（Codex L2 复审）。学习请求已登记不回滚（缺口客观存在）；
+         * CAS 没抢到说明状态已变，按并发冲突抛错让调用方重试。学完唤醒重跑（L8）。 */
+        if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'blocked', `能力缺口待进修：${caps}`, this.now())) {
+          throw new WorkerExecutionError(`任务 ${input.taskId} 非 delegated 或已被并发改动，挂起失败（学习请求已登记，请重试）`);
+        }
+        return { kind: 'learning_required', gaps: outcomes, reason: `缺能力：${caps}（已登记学习请求，待进修后重跑）` };
+      }
+    }
 
     /* ① 风险门（铁律1 只升不降）：有效风险据任务 + 工具/动作信号。 */
     const assessment = assessExecutionRisk({ taskRisk: task.riskLevel, ...(input.riskSignals ?? {}) });

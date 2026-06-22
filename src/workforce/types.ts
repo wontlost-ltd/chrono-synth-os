@@ -323,3 +323,32 @@ export interface DecompositionPlaybook {
   /** 分解函数：给定目标标题/描述，确定性产出任务规格序列。 */
   decompose(goal: { readonly title: string; readonly description: string }): readonly TaskSpec[];
 }
+
+/* ── ADR-0057 L2：按职能进修学习请求 ── */
+
+/** 学习请求状态机：pending（待学）→ learning（学习中）→ passed（≥95 学会落核）/ failed（验收连续不过）/ cancelled。 */
+export type LearningRequestStatus = 'pending' | 'learning' | 'passed' | 'failed' | 'cancelled';
+
+/** active（占用幂等槽）的学习请求状态——同 (persona, capability) 只允许一条 active。 */
+export const ACTIVE_LEARNING_STATUSES: readonly LearningRequestStatus[] = Object.freeze(['pending', 'learning']);
+
+/** 一条学习请求（缺口 → 登记，L2 账本）。per-persona。 */
+export interface LearningRequest {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  /** 哪个数字员工要学（per-persona 隔离键）。 */
+  readonly personaId: string;
+  /** 缺的能力（已规范化）。 */
+  readonly capability: string;
+  /** 是否未知能力（不在 KNOWN_CAPABILITIES——可能 typo，供人工归并；GapDetector 不自动猜）。 */
+  readonly isUnknown: boolean;
+  /** 确定性证据（哪个任务暴露了缺口，非 LLM）。 */
+  readonly evidence: string;
+  readonly priority: 'low' | 'medium' | 'high';
+  /** 触发缺口的任务 id（审计链）；null = 非任务触发。 */
+  readonly triggeredByTaskId: string | null;
+  readonly status: LearningRequestStatus;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
