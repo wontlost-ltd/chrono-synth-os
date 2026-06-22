@@ -138,6 +138,61 @@ export class OrgWorkforceStore {
     return row ? nullableStr(row.manager_worker_id) : null;
   }
 
+  /* ── restructure / M&A 结构变更原语（确定性，守不变量由 service 层）── */
+
+  /**
+   * reparent：改某 worker 的直接上级（汇报边的 manager_worker_id）。reporting_edges 有唯一约束
+   * (tenant, org, report_worker_id)——每 worker 最多一条边，故 **UPDATE** 既有边而非插新边。
+   * 返回是否命中（该 worker 有汇报边）。同步刷 worker.updated_at。无环/不自挂等守卫在 service 层先校验。
+   */
+  reparentWorker(orgId: string, reportWorkerId: string, newManagerWorkerId: string | null, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE reporting_edges SET manager_worker_id = ?
+       WHERE tenant_id = ? AND org_id = ? AND report_worker_id = ?`,
+    ).run(newManagerWorkerId, this.tenantId, orgId, reportWorkerId);
+    this.db.prepare<void>(`UPDATE digital_workers SET updated_at = ? WHERE tenant_id = ? AND org_id = ? AND id = ?`)
+      .run(now, this.tenantId, orgId, reportWorkerId);
+    return r.changes > 0;
+  }
+
+  /** offboard/suspend：改 worker 雇佣状态（软删，保审计；offboarded 不硬删）。返回是否命中。 */
+  setWorkerEmploymentStatus(orgId: string, workerId: string, status: EmploymentStatus, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE digital_workers SET employment_status = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).run(status, now, this.tenantId, orgId, workerId);
+    return r.changes > 0;
+  }
+
+  /** 改某岗位 role_code（absorb 时解 roleCode 冲突用；唯一约束 (tenant,org,role_code) 由调用方保证不撞）。 */
+  renamePositionRoleCode(orgId: string, oldRoleCode: string, newRoleCode: string): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_positions SET role_code = ?
+       WHERE tenant_id = ? AND org_id = ? AND role_code = ?`,
+    ).run(newRoleCode, this.tenantId, orgId, oldRoleCode);
+    return r.changes > 0;
+  }
+
+  /**
+   * absorb：把 fromOrgId 的**全部结构 + 引用 worker 的派生数据**迁到 toOrgId（改 org_id）。
+   * 覆盖所有含 org_id 的 workforce 表（12 张）——结构（positions/workers/edges）+ 派生（goals/tasks/reports/
+   * threads/messages/handoffs/approvals/escalations/learning_requests）。**必须在事务内调**（service 保证原子）。
+   * roleCode 冲突须调用方先 renamePositionRoleCode 解（否则 org_positions org_id 改后撞 toOrg 唯一约束）。
+   * 返回迁移的 worker 数（审计）。
+   */
+  migrateOrgStructure(fromOrgId: string, toOrgId: string): number {
+    const movedWorkers = this.listWorkers(fromOrgId).length;
+    const tables = [
+      'digital_workers', 'org_positions', 'reporting_edges', 'org_goals', 'org_tasks', 'task_reports',
+      'org_conversation_threads', 'org_messages', 'org_handoffs', 'org_approvals', 'org_escalations', 'learning_requests',
+    ];
+    for (const table of tables) {
+      this.db.prepare<void>(`UPDATE ${table} SET org_id = ? WHERE tenant_id = ? AND org_id = ?`)
+        .run(toOrgId, this.tenantId, fromOrgId);
+    }
+    return movedWorkers;
+  }
+
   /* ── goals ── */
 
   insertGoal(g: Omit<OrgGoal, 'tenantId'>): void {

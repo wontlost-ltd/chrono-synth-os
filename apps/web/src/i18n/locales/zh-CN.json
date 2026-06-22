@@ -1699,6 +1699,21 @@
     "fRoleCode": "岗位 roleCode",
     "fTitle": "职位",
     "fName": "显示名",
-    "fManagerId": "上级 worker ID"
+    "fManagerId": "上级 worker ID",
+    "restructureSection": "重组与并购",
+    "absorb": "吸收组织",
+    "absorbBtn": "吸收",
+    "reparent": "改汇报线",
+    "reparentBtn": "改挂",
+    "offboard": "裁撤员工",
+    "offboardBtn": "裁撤",
+    "suggestions": "重组建议",
+    "noSuggestions": "暂无建议（员工都 active 且负载均衡）",
+    "fSourceOrg": "被吸收的源组织 ID",
+    "fMountUnder": "挂载到的 worker ID",
+    "fWorkerId": "worker ID",
+    "fNewMgr": "新上级 worker ID",
+    "fReparentReportsTo": "下属改挂给（如有下属）",
+    "fReassignTasksTo": "任务重分配给（如有在手）"
   }
 }

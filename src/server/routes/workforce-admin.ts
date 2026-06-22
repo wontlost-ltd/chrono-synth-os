@@ -23,7 +23,12 @@ import { requireRole } from '../plugins/rbac.js';
 import { OrgWorkforceStore } from '../../storage/org-workforce-store.js';
 import { OrgChartService, InvalidOrgChartError } from '../../workforce/org-chart-service.js';
 import { WorkforcePersonaBootstrapService } from '../../workforce/workforce-persona-bootstrap-service.js';
-import { WorkforceCreateOrgBodySchema, WorkforceHireWorkerBodySchema } from '../schemas/api-schemas.js';
+import { OrgRestructureService } from '../../workforce/org-restructure-service.js';
+import { RestructureSuggestionsService } from '../../workforce/restructure-suggestions-service.js';
+import {
+  WorkforceCreateOrgBodySchema, WorkforceHireWorkerBodySchema,
+  WorkforceAbsorbBodySchema, WorkforceReparentBodySchema, WorkforceOffboardBodySchema,
+} from '../schemas/api-schemas.js';
 
 /** 写路由限流（治理级，与 workforce-actions 同量级）。 */
 const WRITE_RATE = { rateLimit: { max: 30, timeWindow: '1 minute' } } as const;
@@ -47,6 +52,7 @@ function derivePersonaId(orgId: string, roleCode: string): string {
 
 export function registerWorkforceAdminRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
   const storeFor = (request: FastifyRequest): OrgWorkforceStore => new OrgWorkforceStore(db, request.tenantId);
+  const now = (): number => os.getClock().now();  /* 全租户共享时钟（重组是结构-only，宿主 db，不需 tenant-OS 时钟）。 */
   const guarded = { preHandler: requireRole('admin'), config: WRITE_RATE };
 
   /**
@@ -108,5 +114,56 @@ export function registerWorkforceAdminRoutes(app: FastifyInstance, db: IDatabase
       reply.code(201);
       return { data: { orgId, workerId, birth } };
     } catch (err) { as4xx(err); }
+  });
+
+  /* ── 重组/并购（确定性结构操作；决策由人类给，系统只执行+守不变量。结构-only 无人格写，用宿主 db store）── */
+
+  /* POST 吸收：源组织并入本组织（路径 orgId=目标），源根接到 mountUnderWorkerId 下。 */
+  app.post<{ Params: { orgId: string } }>('/api/v1/workforce/orgs/:orgId/absorb', guarded, async (request, reply) => {
+    currentUser(request);
+    const body = WorkforceAbsorbBodySchema.parse(request.body);
+    const { orgId } = request.params;
+    const svc = new OrgRestructureService(storeFor(request), now);
+    try {
+      const result = svc.absorb({ targetOrgId: orgId, sourceOrgId: body.sourceOrgId, mountUnderWorkerId: body.mountUnderWorkerId });
+      reply.code(200);
+      return { data: result };
+    } catch (err) { as4xx(err); }
+  });
+
+  /* POST reparent：改某 worker 的直接上级。 */
+  app.post<{ Params: { orgId: string } }>('/api/v1/workforce/orgs/:orgId/reparent', guarded, async (request) => {
+    currentUser(request);
+    const body = WorkforceReparentBodySchema.parse(request.body);
+    const { orgId } = request.params;
+    const svc = new OrgRestructureService(storeFor(request), now);
+    try {
+      svc.reparent({ orgId, workerId: body.workerId, newManagerWorkerId: body.newManagerWorkerId });
+      return { data: { orgId, workerId: body.workerId, newManagerWorkerId: body.newManagerWorkerId } };
+    } catch (err) { as4xx(err); }
+  });
+
+  /* POST offboard：裁撤一名 worker（有下属/在手任务须给安置/重分配对象）。 */
+  app.post<{ Params: { orgId: string } }>('/api/v1/workforce/orgs/:orgId/offboard', guarded, async (request) => {
+    currentUser(request);
+    const body = WorkforceOffboardBodySchema.parse(request.body);
+    const { orgId } = request.params;
+    const svc = new OrgRestructureService(storeFor(request), now);
+    try {
+      svc.offboard({
+        orgId, workerId: body.workerId,
+        ...(body.reparentReportsTo ? { reparentReportsTo: body.reparentReportsTo } : {}),
+        ...(body.reassignTasksTo ? { reassignTasksTo: body.reassignTasksTo } : {}),
+      });
+      return { data: { orgId, workerId: body.workerId, status: 'offboarded' } };
+    } catch (err) { as4xx(err); }
+  });
+
+  /* GET 重组建议（确定性信号 → 建议，不自动执行；只读，admin 看治理）。 */
+  app.get<{ Params: { orgId: string } }>('/api/v1/workforce/orgs/:orgId/restructure/suggestions', { preHandler: requireRole('admin') }, async (request) => {
+    currentUser(request);
+    const { orgId } = request.params;
+    const suggestions = new RestructureSuggestionsService(storeFor(request), now).suggest(orgId);
+    return { data: { orgId, suggestions } };
   });
 }

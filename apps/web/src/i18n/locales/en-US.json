@@ -1699,6 +1699,21 @@
     "fRoleCode": "Role code",
     "fTitle": "Title",
     "fName": "Display name",
-    "fManagerId": "Manager worker ID"
+    "fManagerId": "Manager worker ID",
+    "restructureSection": "Restructure & M&A",
+    "absorb": "Absorb org",
+    "absorbBtn": "Absorb",
+    "reparent": "Reparent worker",
+    "reparentBtn": "Reparent",
+    "offboard": "Offboard worker",
+    "offboardBtn": "Offboard",
+    "suggestions": "Restructure suggestions",
+    "noSuggestions": "No suggestions (all workers active and balanced)",
+    "fSourceOrg": "Source org ID (to absorb)",
+    "fMountUnder": "Mount under worker ID",
+    "fWorkerId": "Worker ID",
+    "fNewMgr": "New manager worker ID",
+    "fReparentReportsTo": "Reparent reports to (if any)",
+    "fReassignTasksTo": "Reassign tasks to (if any)"
   }
 }

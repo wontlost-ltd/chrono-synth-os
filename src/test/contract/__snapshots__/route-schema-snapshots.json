@@ -594,12 +594,24 @@
   ],
   "workforce-admin.ts": [
     {
+      "name": "WorkforceAbsorbBodySchema",
+      "hash": "680b9e45a6ab8857756c0d91f73cfcb645cafd8d9003f1c3156677723554ae0c"
+    },
+    {
       "name": "WorkforceCreateOrgBodySchema",
       "hash": "7b02d8db273cc9cc4e936a506228ebf07ce97760b8436b5a342d94ef23be040c"
     },
     {
       "name": "WorkforceHireWorkerBodySchema",
       "hash": "38ebdc4d454e7353bb4924832bc648be3dd74fec1fa140ddcad17daf2ed6464b"
+    },
+    {
+      "name": "WorkforceOffboardBodySchema",
+      "hash": "9bd464a9525d693ae71cbd9038200ebaaca163cb2bc2cc26ad8d22a1f718c21a"
+    },
+    {
+      "name": "WorkforceReparentBodySchema",
+      "hash": "1657eae007b08c9b0a8cd4cea6fb2a80f465c4ff8d43e045101666975c03366e"
     }
   ],
   "workforce-viz.ts": [],

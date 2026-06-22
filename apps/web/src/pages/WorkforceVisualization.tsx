@@ -17,6 +17,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   useWorkforceViz, useCreateOrg, useHireWorker,
+  useAbsorbOrg, useReparentWorker, useOffboardWorker, useRestructureSuggestions,
   type OrgTreeNode, type OrgTreeEdge, type GoalFlowItem, type WorkerSignalItem, type LearningLoopItem, type Archetype,
 } from '../api/queries/workforce';
 
@@ -109,9 +110,12 @@ function ManagementForms({ orgId, onCreated, t }: { orgId: string; onCreated: (o
         {open ? '▾' : '▸'} {t('workforceViz.manageSection')}
       </button>
       {open && (
-        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <CreateOrgForm onCreated={onCreated} t={t} />
-          <HireWorkerForm orgId={orgId} t={t} />
+        <div className="mt-3 space-y-4">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <CreateOrgForm onCreated={onCreated} t={t} />
+            <HireWorkerForm orgId={orgId} t={t} />
+          </div>
+          {orgId && <RestructureForms orgId={orgId} t={t} />}
         </div>
       )}
     </div>
@@ -185,6 +189,73 @@ function HireWorkerForm({ orgId, t }: { orgId: string; t: (k: string) => string 
       </button>
       {hire.isError && <span className="ml-2 text-xs text-red-600">{(hire.error as Error).message}</span>}
       {hire.isSuccess && <span className="ml-2 text-xs text-green-600">✓</span>}
+    </div>
+  );
+}
+
+/* ── 重组/并购：吸收 / reparent / offboard / 建议 ── */
+function RestructureForms({ orgId, t }: { orgId: string; t: (k: string) => string }) {
+  const absorb = useAbsorbOrg(orgId);
+  const reparent = useReparentWorker(orgId);
+  const offboard = useOffboardWorker(orgId);
+  const suggestions = useRestructureSuggestions(orgId);
+  const [sourceOrgId, setSourceOrgId] = useState('');
+  const [mountUnderWorkerId, setMountUnderWorkerId] = useState('');
+  const [reWorkerId, setReWorkerId] = useState('');
+  const [reNewMgr, setReNewMgr] = useState('');
+  const [offWorkerId, setOffWorkerId] = useState('');
+  const [offReparentTo, setOffReparentTo] = useState('');
+  const [offReassignTo, setOffReassignTo] = useState('');
+
+  const errOf = (m: { isError: boolean; error: unknown }) => (m.isError ? <span className="ml-2 text-xs text-red-600">{(m.error as Error).message}</span> : null);
+  const okOf = (m: { isSuccess: boolean }) => (m.isSuccess ? <span className="ml-2 text-xs text-green-600">✓</span> : null);
+
+  return (
+    <div className="rounded border border-gray-200 bg-white p-3">
+      <h3 className="mb-3 text-sm font-semibold">{t('workforceViz.restructureSection')}</h3>
+      <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
+        {/* 吸收 */}
+        <div>
+          <div className="mb-1 font-medium">{t('workforceViz.absorb')}</div>
+          <input value={sourceOrgId} onChange={(e) => setSourceOrgId(e.target.value)} placeholder={t('workforceViz.fSourceOrg')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={mountUnderWorkerId} onChange={(e) => setMountUnderWorkerId(e.target.value)} placeholder={t('workforceViz.fMountUnder')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <button disabled={!sourceOrgId.trim() || !mountUnderWorkerId.trim() || absorb.isPending} onClick={() => absorb.mutate({ sourceOrgId: sourceOrgId.trim(), mountUnderWorkerId: mountUnderWorkerId.trim() })} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50">{t('workforceViz.absorbBtn')}</button>
+          {errOf(absorb)}{okOf(absorb)}
+        </div>
+        {/* reparent */}
+        <div>
+          <div className="mb-1 font-medium">{t('workforceViz.reparent')}</div>
+          <input value={reWorkerId} onChange={(e) => setReWorkerId(e.target.value)} placeholder={t('workforceViz.fWorkerId')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={reNewMgr} onChange={(e) => setReNewMgr(e.target.value)} placeholder={t('workforceViz.fNewMgr')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <button disabled={!reWorkerId.trim() || !reNewMgr.trim() || reparent.isPending} onClick={() => reparent.mutate({ workerId: reWorkerId.trim(), newManagerWorkerId: reNewMgr.trim() })} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50">{t('workforceViz.reparentBtn')}</button>
+          {errOf(reparent)}{okOf(reparent)}
+        </div>
+        {/* offboard */}
+        <div>
+          <div className="mb-1 font-medium">{t('workforceViz.offboard')}</div>
+          <input value={offWorkerId} onChange={(e) => setOffWorkerId(e.target.value)} placeholder={t('workforceViz.fWorkerId')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={offReparentTo} onChange={(e) => setOffReparentTo(e.target.value)} placeholder={t('workforceViz.fReparentReportsTo')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={offReassignTo} onChange={(e) => setOffReassignTo(e.target.value)} placeholder={t('workforceViz.fReassignTasksTo')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <button disabled={!offWorkerId.trim() || offboard.isPending} onClick={() => offboard.mutate({ workerId: offWorkerId.trim(), ...(offReparentTo.trim() ? { reparentReportsTo: offReparentTo.trim() } : {}), ...(offReassignTo.trim() ? { reassignTasksTo: offReassignTo.trim() } : {}) })} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50">{t('workforceViz.offboardBtn')}</button>
+          {errOf(offboard)}{okOf(offboard)}
+        </div>
+      </div>
+      {/* 建议 */}
+      <div className="mt-3 border-t border-gray-100 pt-2">
+        <div className="mb-1 text-xs font-medium text-gray-500">{t('workforceViz.suggestions')}</div>
+        {suggestions.data && suggestions.data.suggestions.length > 0 ? (
+          <ul className="space-y-1 text-xs">
+            {suggestions.data.suggestions.map((s) => (
+              <li key={s.workerId}>
+                <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">{s.suggestedAction}</span>
+                <span className="ml-2 font-medium">{s.displayName}</span>
+                <span className="ml-2 text-gray-500">{s.reason}</span>
+                <span className="ml-1 text-gray-300">({s.workerId})</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-xs text-gray-400">{t('workforceViz.noSuggestions')}</p>}
+      </div>
     </div>
   );
 }

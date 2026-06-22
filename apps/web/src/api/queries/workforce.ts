@@ -328,6 +328,50 @@ export function useHireWorker(orgId: string) {
   });
 }
 
+/* ── 组织重组/并购（admin，确定性结构操作）── */
+
+export interface AbsorbResult { movedWorkers: number; renamedRoles: Array<{ from: string; to: string }>; sourceRootWorkerId: string }
+export interface RestructureSuggestion { kind: 'offboard_idle' | 'redistribute_overloaded'; workerId: string; displayName: string; reason: string; suggestedAction: 'offboard' | 'reparent' | 'hire' }
+
+/** 吸收：源组织并入本组织（orgId=目标），源根接到 mountUnderWorkerId 下。 */
+export function useAbsorbOrg(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { sourceOrgId: string; mountUnderWorkerId: string }) =>
+      apiFetch<AbsorbResult>(`/api/v1/workforce/orgs/${orgKey(orgId)}/absorb`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] }); void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] }); },
+  });
+}
+
+/** reparent：改某 worker 的直接上级。 */
+export function useReparentWorker(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { workerId: string; newManagerWorkerId: string }) =>
+      apiFetch<unknown>(`/api/v1/workforce/orgs/${orgKey(orgId)}/reparent`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] }); void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] }); },
+  });
+}
+
+/** offboard：裁撤一名 worker（有下属/在手任务须给安置/重分配对象）。 */
+export function useOffboardWorker(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { workerId: string; reparentReportsTo?: string; reassignTasksTo?: string }) =>
+      apiFetch<unknown>(`/api/v1/workforce/orgs/${orgKey(orgId)}/offboard`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] }); void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] }); },
+  });
+}
+
+/** 重组建议（确定性信号 → 建议，不自动执行）。 */
+export function useRestructureSuggestions(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'restructure-suggestions', orgId],
+    queryFn: ({ signal }) => apiFetch<{ orgId: string; suggestions: RestructureSuggestion[] }>(`/api/v1/workforce/orgs/${orgKey(orgId)}/restructure/suggestions`, { signal }),
+    enabled: !!orgId,
+  });
+}
+
 /** 人类决定一个审批（approve/reject）。 */
 export function useDecideApproval(orgId: string) {
   const qc = useQueryClient();

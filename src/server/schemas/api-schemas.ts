@@ -1019,3 +1019,24 @@ export const WorkforceHireWorkerBodySchema = z.object({
   seniority: SENIORITY_ENUM.default('ic'),
   archetype: ARCHETYPE_ENUM.default('doer'),
 });
+
+/* ── 组织重组/并购（restructure & M&A，admin 鉴权，确定性结构操作）── */
+
+/** 吸收：源组织 sourceOrgId 并入路径 orgId（目标），源根接到 mountUnderWorkerId 下。 */
+export const WorkforceAbsorbBodySchema = z.object({
+  sourceOrgId: z.string().min(1).max(128),
+  mountUnderWorkerId: z.string().min(1).max(128),
+});
+
+/** reparent：改某 worker 的直接上级。 */
+export const WorkforceReparentBodySchema = z.object({
+  workerId: z.string().min(1).max(128),
+  newManagerWorkerId: z.string().min(1).max(128),
+});
+
+/** offboard：裁撤一名 worker（有下属/在手任务须给安置/重分配对象）。 */
+export const WorkforceOffboardBodySchema = z.object({
+  workerId: z.string().min(1).max(128),
+  reparentReportsTo: z.string().min(1).max(128).optional(),
+  reassignTasksTo: z.string().min(1).max(128).optional(),
+});
