@@ -395,6 +395,10 @@ export class TenantDatabase implements IDatabase {
     return this.inner.transaction(fn);
   }
 
+  transactionRollback<T>(fn: () => T): T {
+    return this.inner.transactionRollback(fn);
+  }
+
   close(): void {
     /* 租户数据库不关闭底层连接——由宿主管理 */
   }
