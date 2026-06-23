@@ -34,22 +34,48 @@ import { ConsoleLogger } from '../src/utils/logger.js';
 import { realClock } from '../src/utils/clock.js';
 
 /**
- * 一家真实小公司的组织图——一个 CEO（doer）领三条线：研究（explorer）、质量（guardian）、数据（analyst），
- * 每条线再带一名 IC。覆盖全部 4 原型，证明「同组织多个不同认知人格」。personaId 与 roleCode 一一对应（实例身份）。
+ * 一家真实小公司的组织图——一个 CEO（doer）领两条职能线，**岗位名与内置分解 playbook 的委派契约对齐**，
+ * 故组织开箱即可承接全部三个 goalType（content_piece / data_analysis / support_ticket）。
+ *
+ *   ceo（doer）
+ *   ├─ 内容与数据负责人（analyst）   ← 接 content_piece + data_analysis
+ *   │    内容链 IC：researcher_ic / writer_ic / reviewer_ic / publisher_ic
+ *   │    数据链 IC：analyst_lead_ic / data_eng_ic / analyst_ic / reporter_ic（reviewer_ic 两链共用）
+ *   └─ 客服负责人（guardian）        ← 接 support_ticket
+ *        客服链 IC：triage_ic / support_agent_ic / escalation_ic / qa_ic
+ *
+ * 为何两条线而非三条：content_piece 与 data_analysis 都需要 `reviewer_ic`，而 roleCode 全组织唯一 +
+ * 委派只能给直接下属 + 一名 worker 只有一个上级——三者叠加使同名 reviewer_ic 不可能同时归两个不同 lead。
+ * 故把内容与数据合并到同一负责人下（真实公司「内容与洞察」部门常如此），让 reviewer_ic 唯一且两链共用。
+ *
+ * 每条线内混合原型，覆盖全部 4 原型（explorer/guardian/analyst/doer），证明「同组织多个不同认知人格」。
+ * personaId 与 roleCode 一一对应（实例身份）。岗位名（*_ic / *_lead_ic）即 playbook 的 assigneeRoleCode。
  */
 function digitalOrgPod(): readonly WorkerPersonaSpec[] {
   return [
     /* 根：行动型 CEO。 */
     { roleCode: 'ceo', title: '首席执行官', jobFamily: 'exec', seniority: 'exec', displayName: '齐总', personaId: 'persona-ceo', managerRoleCode: null, archetype: 'doer' },
-    /* 研究线：探索型负责人 + IC。 */
-    { roleCode: 'head-research', title: '研究负责人', jobFamily: 'manager', seniority: 'lead', displayName: '探研姐', personaId: 'persona-head-research', managerRoleCode: 'ceo', archetype: 'explorer' },
-    { roleCode: 'researcher', title: '研究员', jobFamily: 'ic', seniority: 'ic', displayName: '小探', personaId: 'persona-researcher', managerRoleCode: 'head-research', archetype: 'explorer' },
-    /* 质量线：守护型负责人 + IC。 */
-    { roleCode: 'head-quality', title: '质量负责人', jobFamily: 'manager', seniority: 'lead', displayName: '守质哥', personaId: 'persona-head-quality', managerRoleCode: 'ceo', archetype: 'guardian' },
-    { roleCode: 'reviewer', title: '审核员', jobFamily: 'ic', seniority: 'ic', displayName: '小守', personaId: 'persona-reviewer', managerRoleCode: 'head-quality', archetype: 'guardian' },
-    /* 数据线：分析型负责人 + IC。 */
-    { roleCode: 'head-data', title: '数据负责人', jobFamily: 'manager', seniority: 'lead', displayName: '析数姐', personaId: 'persona-head-data', managerRoleCode: 'ceo', archetype: 'analyst' },
-    { roleCode: 'analyst', title: '数据分析师', jobFamily: 'ic', seniority: 'ic', displayName: '小析', personaId: 'persona-analyst', managerRoleCode: 'head-data', archetype: 'analyst' },
+
+    /* ── 内容与数据线：分析型负责人（接 content_piece + data_analysis 两种目标）── */
+    { roleCode: 'knowledge_lead', title: '内容与数据负责人', jobFamily: 'manager', seniority: 'lead', displayName: '析数姐', personaId: 'persona-knowledge-lead', managerRoleCode: 'ceo', archetype: 'analyst' },
+    /* 内容链 IC（content_piece playbook 的 assigneeRoleCode）。 */
+    { roleCode: 'researcher_ic', title: '研究员', jobFamily: 'ic', seniority: 'ic', displayName: '小探', personaId: 'persona-researcher-ic', managerRoleCode: 'knowledge_lead', archetype: 'explorer' },
+    { roleCode: 'writer_ic', title: '撰稿人', jobFamily: 'ic', seniority: 'ic', displayName: '小文', personaId: 'persona-writer-ic', managerRoleCode: 'knowledge_lead', archetype: 'explorer' },
+    { roleCode: 'reviewer_ic', title: '审核员', jobFamily: 'ic', seniority: 'ic', displayName: '小守', personaId: 'persona-reviewer-ic', managerRoleCode: 'knowledge_lead', archetype: 'guardian' },
+    { roleCode: 'publisher_ic', title: '发布助理', jobFamily: 'ic', seniority: 'ic', displayName: '小发', personaId: 'persona-publisher-ic', managerRoleCode: 'knowledge_lead', archetype: 'doer' },
+    /* 数据链 IC（data_analysis playbook 的 assigneeRoleCode；reviewer_ic 与内容链共用）。 */
+    { roleCode: 'analyst_lead_ic', title: '需求分析师', jobFamily: 'ic', seniority: 'ic', displayName: '小需', personaId: 'persona-analyst-lead-ic', managerRoleCode: 'knowledge_lead', archetype: 'analyst' },
+    { roleCode: 'data_eng_ic', title: '数据工程师', jobFamily: 'ic', seniority: 'ic', displayName: '小数', personaId: 'persona-data-eng-ic', managerRoleCode: 'knowledge_lead', archetype: 'doer' },
+    { roleCode: 'analyst_ic', title: '数据分析师', jobFamily: 'ic', seniority: 'ic', displayName: '小析', personaId: 'persona-analyst-ic', managerRoleCode: 'knowledge_lead', archetype: 'analyst' },
+    { roleCode: 'reporter_ic', title: '报告撰写', jobFamily: 'ic', seniority: 'ic', displayName: '小报', personaId: 'persona-reporter-ic', managerRoleCode: 'knowledge_lead', archetype: 'explorer' },
+
+    /* ── 客服线：守护型负责人（接 support_ticket 目标）── */
+    { roleCode: 'support_lead', title: '客服负责人', jobFamily: 'manager', seniority: 'lead', displayName: '守质哥', personaId: 'persona-support-lead', managerRoleCode: 'ceo', archetype: 'guardian' },
+    /* 客服链 IC（support_ticket playbook 的 assigneeRoleCode）。 */
+    { roleCode: 'triage_ic', title: '分诊专员', jobFamily: 'ic', seniority: 'ic', displayName: '小诊', personaId: 'persona-triage-ic', managerRoleCode: 'support_lead', archetype: 'guardian' },
+    { roleCode: 'support_agent_ic', title: '客服专员', jobFamily: 'ic', seniority: 'ic', displayName: '小服', personaId: 'persona-support-agent-ic', managerRoleCode: 'support_lead', archetype: 'doer' },
+    { roleCode: 'escalation_ic', title: '升级专员', jobFamily: 'ic', seniority: 'ic', displayName: '小升', personaId: 'persona-escalation-ic', managerRoleCode: 'support_lead', archetype: 'guardian' },
+    { roleCode: 'qa_ic', title: '质检专员', jobFamily: 'ic', seniority: 'ic', displayName: '小检', personaId: 'persona-qa-ic', managerRoleCode: 'support_lead', archetype: 'analyst' },
   ];
 }
 

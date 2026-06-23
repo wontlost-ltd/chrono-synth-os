@@ -70,17 +70,22 @@ if [[ "${READY}" -ne 1 ]]; then
 fi
 
 # 在运行中的 backend 容器内 seed 组织（同一个库；幂等可重跑）。
-echo "▶ seed 数字员工组织（7 名 / 4 原型 / 各独立认知内核）…"
+echo "▶ seed 数字员工组织（15 名 / 4 原型 / 各独立认知内核）…"
 "${CC[@]}" -f "${COMPOSE}" "${PROFILE[@]}" exec -T "${SERVICE}" node dist/scripts/seed-org.js
 
 cat <<'EOF'
 
 ──────────────────────────────────────────────────────────────
 ✓ 数字员工组织已就绪。
-  · 一个 CEO（doer）领 研究(explorer)/质量(guardian)/数据(analyst) 三条线，各带一名 IC。
-  · 每名员工有独立认知内核（零-LLM 确定性出生 + per-persona 自成长）。
+  · 一个 CEO（doer）领两条职能线，岗位名与内置分解 playbook 对齐，开箱即可接任务：
+      内容与数据负责人(analyst) → 接 content_piece / data_analysis 目标
+      客服负责人(guardian)      → 接 support_ticket 目标
+  · 每名员工有独立认知内核（零-LLM 确定性出生 + per-persona 自成长），覆盖全部 4 原型。
   · backend API:   http://127.0.0.1:3000
     健康检查:      http://127.0.0.1:3000/healthz   /readyz
+  · 发任务（示例）：POST /api/v1/workforce/orgs/<org>/goals
+      body: { managerWorkerId, title, description, goalType }
+      （goalType ∈ content_piece / data_analysis / support_ticket；发给对应职能线负责人）
   · 重跑本脚本安全（幂等 no-op）。拆栈：bash deploy/digital-org/deploy.sh down
 ──────────────────────────────────────────────────────────────
 EOF
