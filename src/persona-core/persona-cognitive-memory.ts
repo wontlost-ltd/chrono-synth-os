@@ -15,6 +15,7 @@ import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { FieldEncryption } from '../storage/encryption.js';
 import type { MemoryCognitionConfig } from '../types/core-self.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { realClock, type Clock } from '../utils/clock.js';
 import type {
   PersonaCognitiveEdge,
   PersonaCognitiveMemory,
@@ -84,15 +85,22 @@ export interface ProjectPersonaCognitiveMemoryInput {
 export class PersonaCognitiveMemoryGraph {
   private readonly config: MemoryCognitionConfig;
   private readonly encryption?: FieldEncryption;
+  /**
+   * 时钟抽象（确定性铁律）：认知内核的投影/工作记忆/衰减都依赖时间戳，必须可注入
+   * 以保证同输入同输出、可被 TestClock 复现。默认 realClock 保持向后兼容。
+   */
+  private readonly clock: Clock;
 
   constructor(
     private readonly tx: SyncWriteUnitOfWork,
     config?: Partial<MemoryCognitionConfig>,
     encryption?: FieldEncryption,
+    clock: Clock = realClock,
   ) {
     registerCoreSelfExecutors();
     this.config = config ? mergeConfig(DEFAULT_COGNITION_CONFIG, config) : DEFAULT_COGNITION_CONFIG;
     this.encryption = encryption?.isEnabled ? encryption : undefined;
+    this.clock = clock;
   }
 
   private encryptContent(content: string): string {
@@ -114,7 +122,7 @@ export class PersonaCognitiveMemoryGraph {
       return existing;
     }
 
-    const now = Date.now();
+    const now = this.clock.now();
     const valence = clamp(input.valence ?? 0, -1, 1);
     const salience = clamp(input.salience ?? 0.5, 0, 1);
     const id = generatePrefixedId('pmnode');
@@ -296,7 +304,7 @@ export class PersonaCognitiveMemoryGraph {
     const count = this.tx.queryOne(pcmemQueryWmCount({ tenantId, personaId }))?.count ?? 0;
 
     if (count < capacity) {
-      this.tx.execute(pcmemCmdWmInsertSlot({ tenantId, personaId, memoryId, score, enteredAt: Date.now() }));
+      this.tx.execute(pcmemCmdWmInsertSlot({ tenantId, personaId, memoryId, score, enteredAt: this.clock.now() }));
       return;
     }
 
@@ -304,7 +312,7 @@ export class PersonaCognitiveMemoryGraph {
     if (!lowest || score <= Number(lowest.score)) return;
 
     this.tx.execute(pcmemCmdWmDeleteSlot({ tenantId, personaId, memoryId: lowest.memory_id }));
-    this.tx.execute(pcmemCmdWmInsertSlot({ tenantId, personaId, memoryId, score, enteredAt: Date.now() }));
+    this.tx.execute(pcmemCmdWmInsertSlot({ tenantId, personaId, memoryId, score, enteredAt: this.clock.now() }));
   }
 
   private countMemories(tenantId: string, personaId: string): number {
@@ -323,7 +331,7 @@ export class PersonaCognitiveMemoryGraph {
   }
 
   private computeWorkingMemoryScore(memory: PersonaCognitiveMemory): number {
-    const recencyFactor = Math.exp(-this.config.workingMemory.recencyDecay * (Date.now() - memory.lastAccessedAt));
+    const recencyFactor = Math.exp(-this.config.workingMemory.recencyDecay * (this.clock.now() - memory.lastAccessedAt));
     const accessFactor = 1 + Math.log(1 + memory.accessCount);
     return memory.salience * recencyFactor * accessFactor;
   }

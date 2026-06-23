@@ -77,12 +77,16 @@ export class ToolPermissionService {
     return result.rowsAffected > 0;
   }
 
-  /** 通过 revocation_key 带外撤销（紧急情况） */
-  revokeByKey(revocationKey: string, reason: string): boolean {
+  /**
+   * 通过 revocation_key 带外撤销（紧急情况）。租户隔离：须传 tenantId——「持有 key」的撤销
+   * 能力仅在本租户内生效，防跨租户按 key 越权撤销。
+   */
+  revokeByKey(tenantId: string, revocationKey: string, reason: string): boolean {
     if (!reason || reason.trim().length === 0) {
       throw new ValidationError('撤销原因必填', ErrorCode.VALIDATION_REQUIRED);
     }
     const result = this.tx.execute(tpermCmdRevokeByKey({
+      tenantId,
       revocationKey,
       reason: reason.trim(),
       now: Date.now(),
@@ -120,9 +124,9 @@ export class ToolPermissionService {
     return rows.map(rowToPermission);
   }
 
-  /** 通过 revocation_key 查找权限（用于校验 key 是否有效） */
-  findByRevocationKey(key: string): ToolPermission | null {
-    const row = this.tx.queryOne(tpermQueryByRevocationKey(key));
+  /** 通过 revocation_key 查找权限（用于校验 key 是否有效）。租户隔离：须传 tenantId 限定查询。 */
+  findByRevocationKey(tenantId: string, key: string): ToolPermission | null {
+    const row = this.tx.queryOne(tpermQueryByRevocationKey({ tenantId, revocationKey: key }));
     return row ? rowToPermission(row) : null;
   }
 

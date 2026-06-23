@@ -4,6 +4,7 @@ import { createMemoryDatabase } from '../../storage/database.js';
 import { runDslSqliteMigrations } from '../../storage/index.js';
 import { AUDIT_ROUTING_RULES, categorizeAuditEvent, DbAuditRouter } from '../../data-plane/audit-router.js';
 import type { IDatabase } from '../../storage/database.js';
+import { TestClock } from '../../utils/clock.js';
 
 describe('categorizeAuditEvent', () => {
   it("'persona.drift' → 'tenant_data'", () => {
@@ -100,5 +101,22 @@ describe('DbAuditRouter', () => {
     assert.equal(rows.length, 2);
     const tenants = rows.map(r => r.tenant_id).sort();
     assert.deepEqual(tenants, ['tenant-a', 'tenant-b']);
+  });
+
+  it('注入 Clock 时审计时间戳确定可复现（确定性 P1）', () => {
+    const fixed = 1_700_000_000_000;
+    const det = new DbAuditRouter(db, new TestClock(fixed));
+    det.routeTenantAudit('tenant-det', 'persona.updated', { x: 1 });
+    det.routePlatformOps('metrics.flush', { y: 2 });
+
+    const auditTs = db.prepare<{ timestamp: number }>(
+      "SELECT timestamp FROM audit_log WHERE action_type = 'persona.updated' AND tenant_id = 'tenant-det'",
+    ).get();
+    assert.equal(Number(auditTs?.timestamp), fixed, 'audit_log timestamp 须等于注入时钟');
+
+    const opsTs = db.prepare<{ occurred_at: number }>(
+      "SELECT occurred_at FROM platform_ops_log WHERE event_type = 'metrics.flush'",
+    ).get();
+    assert.equal(Number(opsTs?.occurred_at), fixed, 'platform_ops_log occurred_at 须等于注入时钟');
   });
 });

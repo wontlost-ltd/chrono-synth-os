@@ -5,6 +5,7 @@ import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/inde
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { FieldEncryption } from '../../storage/encryption.js';
+import { TestClock } from '../../utils/clock.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -326,6 +327,37 @@ describe('PersonaCoreService', () => {
     assert.equal(state?.cognitive.semanticKnowledge[0]?.kind, 'semantic');
     assert.equal(state?.cognitive.recentExperiences[0]?.kind, 'episodic');
     assert.equal(state?.cognitive.proceduralMemory[0]?.kind, 'procedural');
+  });
+
+  it('注入 Clock 经子服务（PersonaMemoryService）透传到认知内核：知识投影时间戳确定（确定性 P1）', () => {
+    /*
+     * 防回归：PersonaMemoryService.getCognitive 曾漏传 clock，导致 projectKnowledgeItem
+     * 走默认 realClock 旁路了 facade 注入。此测试经 createPersona(initialKnowledge) →
+     * memoryService.projectKnowledgeItem → 认知内核，断言投影节点 created_at == 注入时钟。
+     */
+    const fixed = 1_700_000_000_000;
+    const detDb = createMemoryDatabase();
+    runDslSqliteMigrations(detDb);
+    detDb.prepare<void>(
+      `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+       VALUES (?, ?, 'h', 'member', ?, ?, ?)`,
+    ).run('det-owner', 'det@example.com', 'tenant_test', fixed, fixed);
+    const detService = new PersonaCoreService(detDb, undefined, 60_000, undefined, new TestClock(fixed));
+
+    const persona = detService.createPersona({
+      tenantId: 'tenant_test',
+      ownerUserId: 'det-owner',
+      displayName: 'Det',
+      initialKnowledge: [{ title: 'K', content: 'deterministic knowledge', confidence: 0.9 }],
+    });
+
+    /* 投影出的认知记忆节点 created_at 必须等于注入时钟（证明 clock 透传到子服务认知内核） */
+    const node = detDb.prepare<{ created_at: number }>(
+      'SELECT created_at FROM persona_memory_nodes WHERE tenant_id = ? AND persona_id = ? ORDER BY created_at ASC LIMIT 1',
+    ).get('tenant_test', persona.id);
+    assert.ok(node, '应有认知记忆节点');
+    assert.equal(Number(node?.created_at), fixed, '认知节点 created_at 须等于注入时钟（子服务 clock 透传）');
+    detDb.close();
   });
 
   it('生命周期评估会先将长期无活动 persona 标记为 dormant', () => {

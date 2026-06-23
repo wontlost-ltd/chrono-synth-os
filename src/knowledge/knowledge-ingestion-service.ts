@@ -9,6 +9,7 @@ import type { Logger } from '../utils/logger.js';
 import type { EventBus } from '../events/event-bus.js';
 import type { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import type { KnowledgeSourceRegistry } from './knowledge-source-registry.js';
+import { realClock, type Clock } from '../utils/clock.js';
 
 export interface IngestionResult {
   readonly imported: number;
@@ -25,6 +26,8 @@ export class KnowledgeIngestionService {
     private readonly bus: EventBus,
     private readonly logger: Logger,
     private readonly maxItemsPerRun: number = 100,
+    /* 时钟抽象（确定性）：摄入时间戳须可注入以便 golden replay 复现。默认 realClock。 */
+    private readonly clock: Clock = realClock,
   ) {}
 
   /**
@@ -103,7 +106,7 @@ export class KnowledgeIngestionService {
           this.store.updateState(
             source.id,
             nextState ? JSON.stringify(nextState) : source.stateJson,
-            Date.now(),
+            this.clock.now(),
           );
         }
 

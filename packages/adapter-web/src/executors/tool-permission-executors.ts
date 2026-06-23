@@ -17,6 +17,7 @@ import {
   type ToolPermissionRow,
   type TpermByPersonaToolParams,
   type TpermListByPersonaParams,
+  type TpermByRevocationKeyParams,
   type TpermRevokeParams,
   type TpermRevokeByKeyParams,
 } from '@chrono/kernel';
@@ -55,11 +56,14 @@ export function registerToolPermissionExecutors(registry: ExecutorRegistry): voi
     },
   );
 
-  registry.registerQuery<ToolPermissionRow, string>(
+  registry.registerQuery<ToolPermissionRow, TpermByRevocationKeyParams>(
     TPERM_QUERY_BY_REVOCATION_KEY,
-    (tables, key) => {
+    (tables, p) => {
       if (!tables.hasTable(TABLE)) tables.defineTable(TABLE);
-      const found = tables.find(TABLE, (row) => row.revocation_key === key);
+      /* 租户隔离：与 SQLite 后端一致，按 key 查须同时限定 tenant_id */
+      const found = tables.find(TABLE, (row) =>
+        row.tenant_id === p.tenantId && row.revocation_key === p.revocationKey,
+      );
       return found ? rowToToolPermissionRow(found) : null;
     },
   );
@@ -102,8 +106,9 @@ export function registerToolPermissionExecutors(registry: ExecutorRegistry): voi
   registry.registerCommand<TpermRevokeByKeyParams>(
     TPERM_CMD_REVOKE_BY_REVOCATION_KEY,
     (tables, p) => {
+      /* 租户隔离：撤销须同时限定 tenant_id，与 SQLite 后端一致 */
       const existing = tables.find(TABLE, (row) =>
-        row.revocation_key === p.revocationKey && row.revoked_at === null,
+        row.tenant_id === p.tenantId && row.revocation_key === p.revocationKey && row.revoked_at === null,
       );
       if (!existing) return { rowsAffected: 0 };
       tables.upsert(TABLE, { ...existing, revoked_at: p.now, revocation_reason: p.reason });

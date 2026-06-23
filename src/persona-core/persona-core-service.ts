@@ -61,6 +61,7 @@ import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { ensureAuditLogColumns, recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { realClock, type Clock } from '../utils/clock.js';
 import { PersonaCognitiveMemoryGraph } from './persona-cognitive-memory.js';
 /* Shared utilities extracted in the Step 16 split. */
 import {
@@ -338,6 +339,15 @@ export class PersonaCoreService {
     encryption?: FieldEncryption,
     runtimeSessionTimeoutMs = 60_000,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
+    /*
+     * 时钟抽象（确定性）：当前注入到**认知内核**（PersonaCognitiveMemoryGraph）以保证记忆投影/
+     * 工作记忆/衰减可复现。认知内核内部口径自洽——last_accessed_at 与 computeWorkingMemoryScore
+     * 同用此 clock，不会因外部时间戳产生负 recencyFactor。
+     * ⚠️ 注意：本 facade 的其它写操作（createPersona/approveTransfer 等）仍用裸 Date.now()
+     * 写 created_at/updated_at（审计余项 P2-f，未纳入本次 P1 范围）；这些时间戳不参与认知内核
+     * 的确定性计算，故不影响 clock 的自洽性。默认 realClock 保持向后兼容。
+     */
+    private readonly clock: Clock = realClock,
   ) {
     registerCoreSelfExecutors();
     this.encryption = encryption?.isEnabled ? encryption : undefined;
@@ -359,6 +369,7 @@ export class PersonaCoreService {
       memoryContext,
       this.encryption,
       this.encryptionResolver,
+      this.clock,
     );
     /* Wallet sub-service context. The wallet service only needs the
      * persona-existence + owner check; it does not need detail or
@@ -422,7 +433,7 @@ export class PersonaCoreService {
   }
 
   private getCognitive(tenantId: string): PersonaCognitiveMemoryGraph {
-    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId));
+    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId), this.clock);
   }
 
   private recordBusinessAudit(input: {
@@ -1423,7 +1434,11 @@ export class PersonaCoreService {
     return this.marketplaceService.completeTask(input);
   }
 
-  private personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean {
+  /**
+   * 校验 persona 是否存在且归属于指定 owner（轻量布尔查询，单条 SELECT）。
+   * 路由层用于在用户直接发起的操作（如开治理案）前做所有权鉴权，防越权。
+   */
+  personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean {
     return Boolean(this.tx.queryOne(pcoreQueryPersonaExists({ tenantId, ownerUserId, personaId })));
   }
 

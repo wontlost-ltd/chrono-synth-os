@@ -1,5 +1,6 @@
 import type { IDatabase } from '../storage/database.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { realClock, type Clock } from '../utils/clock.js';
 
 export type AuditEventCategory = 'tenant_data' | 'platform_ops';
 
@@ -38,7 +39,8 @@ export interface AuditRouter {
 }
 
 export class DbAuditRouter implements AuditRouter {
-  constructor(private readonly db: IDatabase) {}
+  /* 时钟抽象（确定性）：审计时间戳须可注入，避免跨区域时钟偏移导致排序不一致、且测试可控。 */
+  constructor(private readonly db: IDatabase, private readonly clock: Clock = realClock) {}
 
   routeTenantAudit(
     tenantId: string,
@@ -54,7 +56,7 @@ export class DbAuditRouter implements AuditRouter {
       .run(
         generatePrefixedId('aud'),
         tenantId,
-        Date.now(),
+        this.clock.now(),
         eventType,
         JSON.stringify(payload),
       );
@@ -70,7 +72,7 @@ export class DbAuditRouter implements AuditRouter {
         generatePrefixedId('pop'),
         eventType,
         JSON.stringify(payload),
-        Date.now(),
+        this.clock.now(),
       );
   }
 }

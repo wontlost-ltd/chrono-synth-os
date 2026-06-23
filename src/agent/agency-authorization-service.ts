@@ -119,8 +119,9 @@ export class AgencyAuthorizationService {
     return rows.map(rowToAuth);
   }
 
-  findByRevocationKey(key: string): AgencyAuthorization | null {
-    const row = this.tx.queryOne(agauthQueryByRevocationKey(key));
+  /** 通过 revocation_key 查找代理授权书。租户隔离：须传 tenantId 限定查询。 */
+  findByRevocationKey(tenantId: string, key: string): AgencyAuthorization | null {
+    const row = this.tx.queryOne(agauthQueryByRevocationKey({ tenantId, revocationKey: key }));
     return row ? rowToAuth(row) : null;
   }
 }

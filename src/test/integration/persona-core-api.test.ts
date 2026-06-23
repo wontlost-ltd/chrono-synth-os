@@ -1206,4 +1206,46 @@ describe('Persona Core API 集成测试', () => {
     assert.equal(detail.targetType, 'governance_action');
     assert.equal(detail.payload.actionType, 'warning');
   });
+
+  it('非所有者不得对他人 persona 开治理案（越权防御 P1）', async () => {
+    /* 用户 A 创建一个 persona */
+    const ownerAuth = await registerUser('gov-owner@example.com');
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/persona-core',
+      headers: authHeaders(ownerAuth),
+      payload: { displayName: 'Owned Core', visibility: 'marketplace' },
+    });
+    assert.equal(createRes.statusCode, 201, createRes.body);
+    const persona = JSON.parse(createRes.body).data as { id: string };
+
+    /* 攻击者 B（不同账户/租户）尝试对 A 的 persona 开治理案 → 必须被拦（404，不泄露存在性） */
+    const attackerAuth = await registerUser('gov-attacker@example.com');
+    const attackRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/governance/cases',
+      headers: authHeaders(attackerAuth),
+      payload: {
+        personaId: persona.id,
+        triggerType: 'fraud_suspected',
+        severity: 'high',
+        details: { reason: 'malicious open' },
+      },
+    });
+    assert.equal(attackRes.statusCode, 404, '非所有者开案应被拒绝');
+
+    /* owner 本人仍可正常开案 */
+    const ownerRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/governance/cases',
+      headers: authHeaders(ownerAuth),
+      payload: {
+        personaId: persona.id,
+        triggerType: 'fraud_suspected',
+        severity: 'high',
+        details: { reason: 'legit owner review' },
+      },
+    });
+    assert.equal(ownerRes.statusCode, 201, ownerRes.body);
+  });
 });

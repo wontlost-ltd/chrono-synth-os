@@ -42,6 +42,7 @@ import {
 } from '@chrono/kernel';
 import { PersonaCognitiveMemoryGraph } from './persona-cognitive-memory.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { realClock, type Clock } from '../utils/clock.js';
 import type {
   AddPersonaMemoryInput,
   PersonaCognitiveMemoryKind,
@@ -95,6 +96,12 @@ export class PersonaMemoryService {
     private readonly ctx: PersonaMemoryContext,
     private readonly staticEncryption?: FieldEncryption,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
+    /*
+     * 时钟抽象（确定性）：必须与 facade 注入同源，否则本子服务创建的认知内核会用默认
+     * realClock，导致 projectKnowledgeItem/buildState 写入的时间戳与 facade 口径分裂、
+     * 破坏认知内核确定性自洽。默认 realClock 保持向后兼容。
+     */
+    private readonly clock: Clock = realClock,
   ) {}
 
   /* ── Public API ─────────────────────────────────────────────── */
@@ -338,7 +345,7 @@ export class PersonaMemoryService {
   }
 
   private getCognitive(tenantId: string): PersonaCognitiveMemoryGraph {
-    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId));
+    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId), this.clock);
   }
 
   private projectEventMemory(memory: PersonaMemory): void {

@@ -883,6 +883,14 @@ export function registerPersonaCoreRoutes(
   app.post('/api/v1/governance/cases', async (request, reply) => {
     const user = requireJwtUser(request);
     const body = OpenGovernanceCaseSchema.parse(request.body);
+    /*
+     * 越权防御（P1）：用户直接发起的开案必须验证 persona 归属——否则任意已认证
+     * 用户可对他人 persona 开治理案，触发 status/reputation 变更。内部系统自动开案
+     * （如 marketplace disputeTask 由发布者对接单 persona 开案）走 service 层，不经此路由。
+     */
+    if (!service.personaExists(request.tenantId, user.sub, body.personaId)) {
+      throw new NotFoundError(`Persona ${body.personaId} 不存在`, ErrorCode.NOT_FOUND_PERSONA);
+    }
     const governanceCase = service.openGovernanceCase({
       tenantId: request.tenantId,
       actorUserId: user.sub,
