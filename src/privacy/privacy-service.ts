@@ -38,6 +38,8 @@ const TENANT_TABLES = [
   'settlement_reconciliation_runs',
   'persona_memory_edges', 'persona_working_memory', 'persona_memory_nodes',
   'runtime_sessions', 'task_results', 'task_assignments', 'task_applications',
+  /* 双边工单市场 ADR-0058：org 平行申请/指派表（子表在前，引用 marketplace_tasks） */
+  'task_org_assignments', 'task_org_applications',
   'governance_actions', 'governance_cases',
   'wallet_transactions', 'wallet_payout_requests', 'wallet_settlements',
   'persona_transfers', 'reputation_history',
@@ -82,6 +84,8 @@ const TENANT_TABLES = [
   'learning_requests',
   /* ADR-0057 L7：能力索引（已学能力正式来源，业务派生），A 类标准导出+擦除 */
   'capability_index',
+  /* digital workforce 组织金库：org_wallets（余额账户）+ 结算账本（结算记录/流水，业务派生财务数据，无敏感凭证列），A 类标准导出+擦除 */
+  'org_wallets', 'org_wallet_settlements', 'org_wallet_transactions',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',

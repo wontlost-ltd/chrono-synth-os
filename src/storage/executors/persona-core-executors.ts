@@ -90,6 +90,7 @@ import {
   PCORE_CMD_APPLY_GOVERNANCE_ACTION_TO_PERSONA,
   PCORE_CMD_APPEAL_GOVERNANCE_CASE,
   PCORE_QUERY_MARKETPLACE_TASKS_BY_TENANT,
+  PCORE_QUERY_TASK_APPLICATIONS_BY_TASK,
   PCORE_QUERY_MARKETPLACE_TASK_BY_ID,
   PCORE_QUERY_PERSONA_EXISTS,
   PCORE_QUERY_FORK_EXISTS,
@@ -143,6 +144,8 @@ import type {
   PcoreWalletForOwnerRow,
   PcoreWalletTransactionRow,
   PcoreTaskApplicationRow,
+  PcoreTaskApplicantRow,
+  PcoreTaskApplicationsByTaskParams,
   PcoreRuntimeSessionRow,
   PcoreGovernanceCaseRow,
   PcoreTaskAssignmentRow,
@@ -695,6 +698,17 @@ export function registerPersonaCoreExecutors(): void {
        WHERE tenant_id = ? AND task_id = ? AND persona_id = ?
        LIMIT 1`,
     ).get(p.tenantId, p.taskId, p.personaId) ?? null;
+  });
+
+  /* 列某工单的全部 persona 申请者（含 persona display_name）——发布者看名字选委派给谁。确定性排序：分降序、创建升序。 */
+  registerQuery<readonly PcoreTaskApplicantRow[], PcoreTaskApplicationsByTaskParams>(PCORE_QUERY_TASK_APPLICATIONS_BY_TASK, (db, p) => {
+    return db.prepare<PcoreTaskApplicantRow>(
+      `SELECT ta.*, pc.display_name AS persona_name
+       FROM task_applications ta
+       LEFT JOIN persona_core pc ON pc.id = ta.persona_id
+       WHERE ta.tenant_id = ? AND ta.task_id = ?
+       ORDER BY ta.ranking_score DESC, ta.created_at ASC, ta.id ASC`,
+    ).all(p.tenantId, p.taskId);
   });
 
   registerQuery<PcoreRuntimeSessionRow | null, PcoreRuntimeSessionParams>(PCORE_QUERY_RUNTIME_SESSION, (db, p) => {

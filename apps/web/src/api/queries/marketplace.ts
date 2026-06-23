@@ -59,3 +59,44 @@ export function useCompleteMarketplaceTask(taskId: string) {
     onSuccess: () => invalidateMarketplaceQueries(qc),
   });
 }
+
+/* ── persona 双边流程（ADR-0058）：申请 / 列申请者 / 发布者委派给 persona ── */
+
+export interface TaskApplicant {
+  id: string;
+  taskId: string;
+  personaId: string;
+  personaName: string | null;
+  rankingScore: number;
+  status: string;
+  createdAt: number;
+}
+
+/** persona 申请一个 open 工单（persona owner）。 */
+export function useApplyToTask(taskId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { personaId: string }) =>
+      apiFetch(`/api/v1/tasks/${encodeURIComponent(taskId)}/apply`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { invalidateMarketplaceQueries(qc); qc.invalidateQueries({ queryKey: ['task-applicants', taskId] }); },
+  });
+}
+
+/** 发布者把工单委派给某 persona（发布者鉴权在后端：actor===publisher）。 */
+export function useAssignTask(taskId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { personaId: string }) =>
+      apiFetch(`/api/v1/tasks/${encodeURIComponent(taskId)}/assign`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { invalidateMarketplaceQueries(qc); qc.invalidateQueries({ queryKey: ['task-applicants', taskId] }); },
+  });
+}
+
+/** 列某工单的 persona 申请者（含 personaName）——发布者据此选委派给谁。 */
+export function useTaskApplicants(taskId: string) {
+  return useQuery({
+    queryKey: ['task-applicants', taskId],
+    enabled: taskId.length > 0,
+    queryFn: ({ signal }) => apiFetch<TaskApplicant[]>(`/api/v1/tasks/${encodeURIComponent(taskId)}/applicants`, { signal }),
+  });
+}

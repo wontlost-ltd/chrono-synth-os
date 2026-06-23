@@ -312,7 +312,7 @@ describe('数字员工组织全生命周期 E2E（M1→D→A/B/C→M2/M3/M5/M7�
     let c = 0;
     for (let i = 0; i < 6; i++) {
       const gid = `${ctx.tenantId}-dist-g-${++c}`;
-      store.insertGoal({ id: gid, orgId: 'org-1', ownerWorkerId: ctx.mgrId, title: gid, description: '', goalType: GOAL_TYPE_DATA_ANALYSIS, status: 'completed', playbookVersion: 1, createdAt: clock.now(), updatedAt: clock.now() });
+      store.insertGoal({ id: gid, orgId: 'org-1', ownerWorkerId: ctx.mgrId, title: gid, description: '', goalType: GOAL_TYPE_DATA_ANALYSIS, status: 'completed', playbookVersion: 1, sourceMarketplaceTaskId: null, createdAt: clock.now(), updatedAt: clock.now() });
       store.insertTask({ id: `${ctx.tenantId}-dist-t-${++c}`, orgId: 'org-1', goalId: gid, parentTaskId: null, assignedToWorkerId: ctx.writerId, accountableWorkerId: ctx.mgrId, title: 'extract', taskType: 'extract', status: i % 2 === 0 ? 'rejected' : 'approved', riskLevel: 'medium', allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: clock.now(), updatedAt: clock.now() });
     }
     const distiller = new PlaybookDistiller(store);

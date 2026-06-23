@@ -71,6 +71,10 @@ const TENANT_TABLES = new Set([
   'learning_requests',
   /* ADR-0057 L7：能力索引（已学能力正式来源，capability-learned 事件投影），须自动租户隔离 + per-persona */
   'capability_index',
+  /* digital workforce 组织金库：org_wallets（组织级账户）+ 结算账本（结算记录/流水），须自动租户隔离 */
+  'org_wallets', 'org_wallet_settlements', 'org_wallet_transactions',
+  /* 双边工单市场 ADR-0058：org 平行申请/指派表（org 竞标接单），须自动租户隔离 */
+  'task_org_applications', 'task_org_assignments',
   /* GDPR 覆盖补齐：以下均含 tenant_id，须自动租户隔离（与 privacy 清单同步） */
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',

@@ -97,6 +97,8 @@ export { v105_org_goals_playbook_version } from './v105.js';
 export { v108_learning_requests } from './v108.js';
 export { v109_capability_index } from './v109.js';
 export { v110_org_tasks_resume_guard } from './v110.js';
+export { v111_org_wallet } from './v111.js';
+export { v112_bidirectional_task_market } from './v112.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -198,6 +200,8 @@ import { v105_org_goals_playbook_version } from './v105.js';
 import { v108_learning_requests } from './v108.js';
 import { v109_capability_index } from './v109.js';
 import { v110_org_tasks_resume_guard } from './v110.js';
+import { v111_org_wallet } from './v111.js';
+import { v112_bidirectional_task_market } from './v112.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -299,4 +303,6 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v108_learning_requests,
   v109_capability_index,
   v110_org_tasks_resume_guard,
+  v111_org_wallet,
+  v112_bidirectional_task_market,
 ];

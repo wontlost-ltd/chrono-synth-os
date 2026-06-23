@@ -940,6 +940,67 @@ export const WorkforceRunGoalBodySchema = z.object({
   goalType: z.string().min(1).max(64),
 });
 
+/**
+ * 组织从任务市场接工单（S4）——admin 把一个外部市场工单接到组织名下，建目标并分解委派。
+ * sourceMarketplaceTaskId 是溯源+幂等标识（指向源工单）；goalType 由人类显式指定用哪个 playbook 分解。
+ */
+export const WorkforceAcceptMarketplaceTaskBodySchema = z.object({
+  /** 源市场工单 id（溯源 + 后续结算幂等键）。 */
+  sourceMarketplaceTaskId: z.string().min(1).max(128),
+  /** 接单的 manager 数字员工（admin 指定哪条职能线接）。 */
+  managerWorkerId: z.string().min(1).max(128),
+  /** 目标标题（即工单要做的事）。 */
+  title: z.string().min(1).max(200),
+  description: z.string().min(0).max(2000).default(''),
+  /** 用哪个分解 playbook（content_piece / data_analysis / support_ticket）——人类显式指定。 */
+  goalType: z.string().min(1).max(64),
+});
+
+/**
+ * 组织完工市场工单并结算报酬入金库（S4）——两方分账（平台抽成 + 组织净留存）。
+ * 幂等：同 sourceMarketplaceTaskId 只结算一次。报酬由 admin 在完工时给定（外部工单系统不存 reward）。
+ */
+export const WorkforceSettleMarketplaceTaskBodySchema = z.object({
+  /** 工单总报酬（minor 单位，分）。 */
+  totalAmountMinor: z.number().int().min(1),
+  currency: z.string().min(1).max(16).default('CRED'),
+  /** 平台抽成比例（%，0-100）；组织净留存 = total - platform。 */
+  platformPct: z.number().int().min(0).max(100).default(20),
+  /** 关联的组织目标 id（审计：报酬对应哪个被分解执行的目标；可空）。 */
+  goalId: z.string().min(1).max(128).optional(),
+});
+
+/* ── 双边工单市场 ADR-0058（org 竞标接单，发布者确认委派）── */
+
+/** org 领取一个 open 工单（登记接单意向，不触发执行）。orgId 在 path，body 仅需工单 id。 */
+export const WorkforceBidApplyBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+});
+
+/** 发布者确认把工单委派给某组织（发布者鉴权在 service 内校验 actor===publisher）。 */
+export const WorkforceBidConfirmAssignBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  orgId: z.string().min(1).max(128),
+});
+
+/** org 接单方启动执行：选 manager + goalType 触发 runGoal 分解。 */
+export const WorkforceBidStartBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  managerWorkerId: z.string().min(1).max(128),
+  goalType: z.string().min(1).max(64),
+});
+
+/** org 完工提交（发布者待验收）。body 仅工单 id。 */
+export const WorkforceBidSubmitBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+});
+
+/** 发布者验收 org 工单并结算入金库（平台抽成可选，缺省 20）。 */
+export const WorkforceBidAcceptBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  platformPct: z.number().int().min(0).max(100).default(20),
+});
+
 /* 人类决定一个待审批（approve/reject）。reason 拒绝时建议填，approve 可选。 */
 export const WorkforceApprovalDecisionBodySchema = z.object({
   decision: z.enum(['approve', 'reject']),

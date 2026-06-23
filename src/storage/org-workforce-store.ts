@@ -14,6 +14,9 @@ import type {
   OrgHandoff, HandoffStatus,
   OrgApproval, ApprovalSubjectType, ApprovalStatus, RiskLevel as ApprovalRiskLevel,
   OrgEscalation, EscalationStatus,
+  OrgWallet, OrgWalletSettlement, OrgWalletTransactionType,
+  OrgTaskApplication, OrgTaskApplicationStatus, OrgTaskAssignment, OrgTaskAssignmentStatus,
+  MarketplaceTaskBrief,
 } from '../workforce/types.js';
 
 /** bigint 时间戳跨驱动强转：SQLite number / Postgres string → number；null/非有限 → 0（这些列非空）。 */
@@ -197,9 +200,9 @@ export class OrgWorkforceStore {
 
   insertGoal(g: Omit<OrgGoal, 'tenantId'>): void {
     this.db.prepare<void>(
-      `INSERT INTO org_goals (id, tenant_id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(g.id, this.tenantId, g.orgId, g.ownerWorkerId, g.title, g.description, g.goalType, g.status, g.playbookVersion, g.createdAt, g.updatedAt);
+      `INSERT INTO org_goals (id, tenant_id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, source_marketplace_task_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(g.id, this.tenantId, g.orgId, g.ownerWorkerId, g.title, g.description, g.goalType, g.status, g.playbookVersion, g.sourceMarketplaceTaskId ?? null, g.createdAt, g.updatedAt);
   }
 
   updateGoalStatus(orgId: string, goalId: string, status: GoalStatus, now: number): void {
@@ -211,7 +214,7 @@ export class OrgWorkforceStore {
   /** 列出某组织的目标（确定性排序：created_at 升序、id 升序兜底）。 */
   listGoals(orgId: string): OrgGoal[] {
     const rows = this.db.prepare<RawGoal>(
-      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at
+      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, source_marketplace_task_id, created_at, updated_at
        FROM org_goals WHERE tenant_id = ? AND org_id = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId);
@@ -224,7 +227,7 @@ export class OrgWorkforceStore {
    */
   listGoalsByTypeAndVersion(orgId: string, goalType: string, playbookVersion: number): OrgGoal[] {
     const rows = this.db.prepare<RawGoal>(
-      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at
+      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, source_marketplace_task_id, created_at, updated_at
        FROM org_goals WHERE tenant_id = ? AND org_id = ? AND goal_type = ? AND playbook_version = ?
        ORDER BY created_at ASC, id ASC`,
     ).all(this.tenantId, orgId, goalType, playbookVersion);
@@ -234,7 +237,7 @@ export class OrgWorkforceStore {
   /** 取单个目标；无 → undefined。 */
   getGoal(orgId: string, goalId: string): OrgGoal | undefined {
     const row = this.db.prepare<RawGoal>(
-      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, created_at, updated_at
+      `SELECT id, org_id, owner_worker_id, title, description, goal_type, status, playbook_version, source_marketplace_task_id, created_at, updated_at
        FROM org_goals WHERE tenant_id = ? AND org_id = ? AND id = ?`,
     ).get(this.tenantId, orgId, goalId);
     return row ? this.toGoal(row) : undefined;
@@ -712,6 +715,7 @@ export class OrgWorkforceStore {
       status: r.status as GoalStatus,
       /* playbook_version：integer，SQLite number / PG 可能 string → num()（默认列非空，脏值兜底 1）。 */
       playbookVersion: num(r.playbook_version) || 1,
+      sourceMarketplaceTaskId: nullableStr(r.source_marketplace_task_id),
       createdAt: num(r.created_at), updatedAt: num(r.updated_at),
     };
   }
@@ -753,13 +757,292 @@ export class OrgWorkforceStore {
       reportType: r.report_type as ReportType, summary: r.summary, createdAt: num(r.created_at),
     };
   }
+
+  /* ── org wallet（组织金库，S1）── */
+
+  /** 取某组织的金库（无 → undefined）。(tenant, org) 唯一。 */
+  getOrgWallet(orgId: string): OrgWallet | undefined {
+    const row = this.db.prepare<RawOrgWallet>(
+      `SELECT id, org_id, balance, currency, status, last_settled_at, created_at, updated_at
+       FROM org_wallets WHERE tenant_id = ? AND org_id = ?`,
+    ).get(this.tenantId, orgId);
+    return row ? this.toOrgWallet(row) : undefined;
+  }
+
+  /**
+   * 取或建组织金库（幂等）。已存在 → 返回现有；不存在 → 以 0 余额建。
+   * DB 级 (tenant, org) 唯一约束兜底并发：万一两路同时建，唯一冲突后回查既有。
+   */
+  getOrCreateOrgWallet(orgId: string, id: string, now: number, currency = 'CRED'): OrgWallet {
+    const existing = this.getOrgWallet(orgId);
+    if (existing) return existing;
+    this.db.prepare<void>(
+      `INSERT INTO org_wallets (id, tenant_id, org_id, balance, currency, status, last_settled_at, created_at, updated_at)
+       VALUES (?, ?, ?, 0, ?, 'active', NULL, ?, ?)
+       ON CONFLICT (tenant_id, org_id) DO NOTHING`,
+    ).run(id, this.tenantId, orgId, currency, now, now);
+    /* 无论本次是否真插入，回查得到权威行（并发下另一路已建也能拿到）。 */
+    const wallet = this.getOrgWallet(orgId);
+    if (!wallet) throw new Error(`org_wallets getOrCreate 后仍查不到：org=${orgId}（数据异常）`);
+    return wallet;
+  }
+
+  /**
+   * 给组织金库入账 delta（minor 单位，可负）。原子读改写：CAS 守 status='active'（frozen 禁出账）。
+   * 返回更新后的余额；金库不存在或被冻结 → 返回 null（调用方据此判失败）。
+   */
+  creditOrgWallet(orgId: string, deltaMinor: number, now: number): number | null {
+    const wallet = this.getOrgWallet(orgId);
+    if (!wallet || wallet.status !== 'active') return null;
+    const next = wallet.balance + deltaMinor;
+    /* CAS：仅当余额仍等于读到的值且 active 时更新，防并发双花（出账场景）。 */
+    const changed = this.db.prepare<{ changes?: number }>(
+      `UPDATE org_wallets SET balance = ?, last_settled_at = ?, updated_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND status = 'active' AND balance = ?`,
+    ).run(next, now, now, this.tenantId, orgId, wallet.balance);
+    /* run 返回受影响行数（驱动差异：number 或 {changes}）。0 行 = CAS 失败（并发改走）。 */
+    const affected = typeof changed === 'number' ? changed : (changed?.changes ?? 0);
+    return affected > 0 ? next : null;
+  }
+
+  private toOrgWallet(r: RawOrgWallet): OrgWallet {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id,
+      balance: num(r.balance), currency: r.currency,
+      status: r.status === 'frozen' ? 'frozen' : 'active',
+      lastSettledAt: r.last_settled_at === null || r.last_settled_at === undefined ? null : num(r.last_settled_at),
+      createdAt: num(r.created_at), updatedAt: num(r.updated_at),
+    };
+  }
+
+  /* ── org wallet 结算账本（S3）── */
+
+  /** 幂等查：某工单是否已结算过（防重复结算）。无 → undefined。 */
+  getOrgWalletSettlementBySourceTask(sourceMarketplaceTaskId: string): OrgWalletSettlement | undefined {
+    const row = this.db.prepare<RawOrgSettlement>(
+      `SELECT id, org_id, wallet_id, source_marketplace_task_id, goal_id, total_amount_minor, currency,
+              platform_pct, platform_amount_minor, org_amount_minor, created_at
+       FROM org_wallet_settlements WHERE tenant_id = ? AND source_marketplace_task_id = ?`,
+    ).get(this.tenantId, sourceMarketplaceTaskId);
+    return row ? this.toOrgSettlement(row) : undefined;
+  }
+
+  /** 插入结算记录。调用方应在同一事务内 creditOrgWallet + insertOrgWalletTransaction（原子）。 */
+  insertOrgWalletSettlement(s: Omit<OrgWalletSettlement, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_wallet_settlements
+         (id, tenant_id, org_id, wallet_id, source_marketplace_task_id, goal_id, total_amount_minor, currency, platform_pct, platform_amount_minor, org_amount_minor, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      s.id, this.tenantId, s.orgId, s.walletId, s.sourceMarketplaceTaskId, s.goalId ?? null,
+      s.totalAmountMinor, s.currency, s.platformPct, s.platformAmountMinor, s.orgAmountMinor, s.createdAt,
+    );
+  }
+
+  /** 插入一笔流水（对账明细）。type 由 service 层白名单兜底（不在 DB 加 CHECK，避跨方言 rebuild 坑）。 */
+  insertOrgWalletTransaction(t: {
+    readonly id: string; readonly walletId: string; readonly transactionType: OrgWalletTransactionType;
+    readonly amountMinor: number; readonly currency: string;
+    readonly referenceType: string | null; readonly referenceId: string | null; readonly createdAt: number;
+  }): void {
+    this.db.prepare<void>(
+      `INSERT INTO org_wallet_transactions (id, tenant_id, wallet_id, transaction_type, amount_minor, currency, reference_type, reference_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(t.id, this.tenantId, t.walletId, t.transactionType, t.amountMinor, t.currency, t.referenceType, t.referenceId, t.createdAt);
+  }
+
+  /** 列某金库的流水（确定性排序：created_at 升序、id 兜底）。审计/对账用。 */
+  listOrgWalletTransactions(walletId: string): Array<{ id: string; transactionType: OrgWalletTransactionType; amountMinor: number; currency: string; createdAt: number }> {
+    const rows = this.db.prepare<{ id: string; transaction_type: string; amount_minor: unknown; currency: string; created_at: unknown }>(
+      `SELECT id, transaction_type, amount_minor, currency, created_at
+       FROM org_wallet_transactions WHERE tenant_id = ? AND wallet_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, walletId);
+    return rows.map((r) => ({
+      id: r.id, transactionType: r.transaction_type as OrgWalletTransactionType,
+      amountMinor: num(r.amount_minor), currency: r.currency, createdAt: num(r.created_at),
+    }));
+  }
+
+  private toOrgSettlement(r: RawOrgSettlement): OrgWalletSettlement {
+    return {
+      id: r.id, tenantId: this.tenantId, orgId: r.org_id, walletId: r.wallet_id,
+      sourceMarketplaceTaskId: r.source_marketplace_task_id,
+      goalId: nullableStr(r.goal_id),
+      totalAmountMinor: num(r.total_amount_minor), currency: r.currency,
+      platformPct: num(r.platform_pct), platformAmountMinor: num(r.platform_amount_minor),
+      orgAmountMinor: num(r.org_amount_minor), createdAt: num(r.created_at),
+    };
+  }
+
+  /* ── 双边市场：org 申请/指派（ADR-0058 M1）── */
+
+  /** 插入一条 org 工单申请（org 领取工单）。唯一 (tenant,task,org) 由 DB 约束兜底并发。 */
+  insertOrgTaskApplication(a: Omit<OrgTaskApplication, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO task_org_applications (id, tenant_id, task_id, org_id, ranking_score, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(a.id, this.tenantId, a.taskId, a.orgId, a.rankingScore, a.status, a.createdAt, a.updatedAt);
+  }
+
+  /** 取某 org 对某工单的申请（幂等查，防重复申请）。 */
+  getOrgTaskApplication(taskId: string, orgId: string): OrgTaskApplication | undefined {
+    const row = this.db.prepare<RawOrgTaskApp>(
+      `SELECT id, task_id, org_id, ranking_score, status, created_at, updated_at
+       FROM task_org_applications WHERE tenant_id = ? AND task_id = ? AND org_id = ?`,
+    ).get(this.tenantId, taskId, orgId);
+    return row ? this.toOrgTaskApp(row) : undefined;
+  }
+
+  /** 列某工单的所有 org 申请（发布者看「哪些组织申请了」）。确定性排序：分降序、创建升序。 */
+  listOrgTaskApplications(taskId: string): OrgTaskApplication[] {
+    const rows = this.db.prepare<RawOrgTaskApp>(
+      `SELECT id, task_id, org_id, ranking_score, status, created_at, updated_at
+       FROM task_org_applications WHERE tenant_id = ? AND task_id = ?
+       ORDER BY ranking_score DESC, created_at ASC, id ASC`,
+    ).all(this.tenantId, taskId);
+    return rows.map((r) => this.toOrgTaskApp(r));
+  }
+
+  /** 列某 org 自己的申请（org 视角「我申请了哪些工单」）。 */
+  listOrgApplicationsByOrg(orgId: string): OrgTaskApplication[] {
+    const rows = this.db.prepare<RawOrgTaskApp>(
+      `SELECT id, task_id, org_id, ranking_score, status, created_at, updated_at
+       FROM task_org_applications WHERE tenant_id = ? AND org_id = ?
+       ORDER BY created_at DESC, id ASC`,
+    ).all(this.tenantId, orgId);
+    return rows.map((r) => this.toOrgTaskApp(r));
+  }
+
+  /** 更新 org 申请状态（被指派→assigned / 落选→rejected / 撤回→withdrawn）。 */
+  setOrgTaskApplicationStatus(taskId: string, orgId: string, status: OrgTaskApplicationStatus, now: number): boolean {
+    const r = this.db.prepare<{ changes?: number }>(
+      `UPDATE task_org_applications SET status = ?, updated_at = ? WHERE tenant_id = ? AND task_id = ? AND org_id = ?`,
+    ).run(status, now, this.tenantId, taskId, orgId);
+    return (typeof r === 'number' ? r : (r?.changes ?? 0)) > 0;
+  }
+
+  /** 插入 org 指派（发布者确认委派给某组织后建）。 */
+  insertOrgTaskAssignment(a: Omit<OrgTaskAssignment, 'tenantId'>): void {
+    this.db.prepare<void>(
+      `INSERT INTO task_org_assignments (id, tenant_id, task_id, org_id, application_id, org_goal_id, status, assigned_at, submitted_at, completed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(a.id, this.tenantId, a.taskId, a.orgId, a.applicationId ?? null, a.orgGoalId ?? null, a.status, a.assignedAt, a.submittedAt ?? null, a.completedAt ?? null, a.createdAt, a.updatedAt);
+  }
+
+  /** 取某工单的最新 org 指派（一工单同时刻最多一个活跃 org 指派）。 */
+  getLatestOrgTaskAssignment(taskId: string): OrgTaskAssignment | undefined {
+    const row = this.db.prepare<RawOrgTaskAssign>(
+      `SELECT id, task_id, org_id, application_id, org_goal_id, status, assigned_at, submitted_at, completed_at, created_at, updated_at
+       FROM task_org_assignments WHERE tenant_id = ? AND task_id = ?
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    ).get(this.tenantId, taskId);
+    return row ? this.toOrgTaskAssign(row) : undefined;
+  }
+
+  /** 列某 org 的指派（org 视角「委派给我的工单」）。 */
+  listOrgAssignmentsByOrg(orgId: string): OrgTaskAssignment[] {
+    const rows = this.db.prepare<RawOrgTaskAssign>(
+      `SELECT id, task_id, org_id, application_id, org_goal_id, status, assigned_at, submitted_at, completed_at, created_at, updated_at
+       FROM task_org_assignments WHERE tenant_id = ? AND org_id = ?
+       ORDER BY created_at DESC, id ASC`,
+    ).all(this.tenantId, orgId);
+    return rows.map((r) => this.toOrgTaskAssign(r));
+  }
+
+  /** 更新 org 指派状态（+ 可选写 org_goal_id / 时间戳）。CAS by 当前 status 防并发。 */
+  updateOrgTaskAssignmentStatus(id: string, fromStatus: OrgTaskAssignmentStatus, toStatus: OrgTaskAssignmentStatus, now: number, orgGoalId?: string): boolean {
+    const r = this.db.prepare<{ changes?: number }>(
+      `UPDATE task_org_assignments
+       SET status = ?, updated_at = ?,
+           org_goal_id = COALESCE(?, org_goal_id),
+           submitted_at = CASE WHEN ? = 'submitted' THEN ? ELSE submitted_at END,
+           completed_at = CASE WHEN ? IN ('accepted','completed') THEN ? ELSE completed_at END
+       WHERE tenant_id = ? AND id = ? AND status = ?`,
+    ).run(toStatus, now, orgGoalId ?? null, toStatus, now, toStatus, now, this.tenantId, id, fromStatus);
+    return (typeof r === 'number' ? r : (r?.changes ?? 0)) > 0;
+  }
+
+  private toOrgTaskApp(r: RawOrgTaskApp): OrgTaskApplication {
+    return {
+      id: r.id, tenantId: this.tenantId, taskId: r.task_id, orgId: r.org_id,
+      rankingScore: num(r.ranking_score), status: r.status as OrgTaskApplicationStatus,
+      createdAt: num(r.created_at), updatedAt: num(r.updated_at),
+    };
+  }
+
+  private toOrgTaskAssign(r: RawOrgTaskAssign): OrgTaskAssignment {
+    return {
+      id: r.id, tenantId: this.tenantId, taskId: r.task_id, orgId: r.org_id,
+      applicationId: nullableStr(r.application_id), orgGoalId: nullableStr(r.org_goal_id),
+      status: r.status as OrgTaskAssignmentStatus,
+      assignedAt: num(r.assigned_at),
+      submittedAt: r.submitted_at === null || r.submitted_at === undefined ? null : num(r.submitted_at),
+      completedAt: r.completed_at === null || r.completed_at === undefined ? null : num(r.completed_at),
+      createdAt: num(r.created_at), updatedAt: num(r.updated_at),
+    };
+  }
+
+  /* ── 共享工单本体（marketplace_tasks）：workforce 域只读工单 + 标记委派给 org（不碰 persona 接单列）── */
+
+  /** 读工单概要（org 接单需要的字段：发布者/状态/报酬）。无 → undefined。 */
+  getMarketplaceTaskBrief(taskId: string): MarketplaceTaskBrief | undefined {
+    const row = this.db.prepare<RawMarketplaceBrief>(
+      `SELECT id, publisher_user_id, title, description, category, reward, currency, status, assignee_kind, assignee_org_id, publisher_verified
+       FROM marketplace_tasks WHERE tenant_id = ? AND id = ?`,
+    ).get(this.tenantId, taskId);
+    if (!row) return undefined;
+    return {
+      id: row.id, publisherUserId: row.publisher_user_id, title: row.title, description: row.description,
+      category: row.category, reward: num(row.reward), currency: row.currency, status: row.status,
+      assigneeKind: row.assignee_kind === 'org' ? 'org' : 'persona',
+      assigneeOrgId: nullableStr(row.assignee_org_id),
+      publisherVerified: num(row.publisher_verified) === 1,
+    };
+  }
+
+  /**
+   * 标记工单委派给某组织（发布者确认后）：status open→accepted + assignee_kind='org' + assignee_org_id。
+   * CAS by status='open'：仅当工单仍 open 才生效，防并发双 assign。返回是否成功。
+   */
+  markMarketplaceTaskAssignedToOrg(taskId: string, orgId: string, now: number): boolean {
+    const r = this.db.prepare<{ changes?: number }>(
+      `UPDATE marketplace_tasks
+       SET status = 'accepted', assignee_kind = 'org', assignee_org_id = ?, accepted_at = ?, updated_at = ?
+       WHERE tenant_id = ? AND id = ? AND status = 'open'`,
+    ).run(orgId, now, now, this.tenantId, taskId);
+    return (typeof r === 'number' ? r : (r?.changes ?? 0)) > 0;
+  }
+
+  /**
+   * 重建 roleCode→workerId 映射（runGoal 把分解的 assigneeRoleCode 映射到下属）。
+   * 确定性：listWorkers/listPositions 均 ORDER BY created_at,id；同 role 多 worker 取**最早创建**那个。
+   */
+  workerIdByRole(orgId: string): ReadonlyMap<string, string> {
+    const roleByPosition = new Map(this.listPositions(orgId).map((p) => [p.id, p.roleCode]));
+    const map = new Map<string, string>();
+    for (const w of this.listWorkers(orgId)) {
+      const role = roleByPosition.get(w.positionId);
+      if (role && !map.has(role)) map.set(role, w.id);
+    }
+    return map;
+  }
+
+  /** 标记工单完工（org 验收后）：status accepted→completed。CAS by status='accepted'。 */
+  markMarketplaceTaskCompleted(taskId: string, now: number): boolean {
+    const r = this.db.prepare<{ changes?: number }>(
+      `UPDATE marketplace_tasks SET status = 'completed', completed_at = ?, updated_at = ?
+       WHERE tenant_id = ? AND id = ? AND status = 'accepted'`,
+    ).run(now, now, this.tenantId, taskId);
+    return (typeof r === 'number' ? r : (r?.changes ?? 0)) > 0;
+  }
 }
 
 /* ── DB 行类型（snake_case，未强转） ── */
 interface RawPosition { id: string; org_id: string; title: string; job_family: string; seniority: string; role_code: string; created_at: unknown; }
 interface RawWorker { id: string; org_id: string; persona_id: string; position_id: string; display_name: string; employment_status: string; created_at: unknown; updated_at: unknown; }
 interface RawEdge { id: string; org_id: string; manager_worker_id: unknown; report_worker_id: string; edge_type: string; created_at: unknown; }
-interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; playbook_version: unknown; created_at: unknown; updated_at: unknown; }
+interface RawGoal { id: string; org_id: string; owner_worker_id: string; title: string; description: string; goal_type: string; status: string; playbook_version: unknown; source_marketplace_task_id: unknown; created_at: unknown; updated_at: unknown; }
 interface RawTask { id: string; org_id: string; goal_id: string; parent_task_id: unknown; assigned_to_worker_id: unknown; accountable_worker_id: string; title: string; task_type: string; status: string; risk_level: string | null; allows_tool_execution: unknown; acceptance_criteria: string | null; required_capabilities: unknown; result_summary: unknown; due_at: unknown; resume_attempt_count: unknown; last_wake_event_id: unknown; created_at: unknown; updated_at: unknown; }
 interface RawReport { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; report_type: string; summary: string; created_at: unknown; }
 interface RawThread { id: string; org_id: string; thread_type: string; goal_id: unknown; task_id: unknown; created_by_worker_id: string; status: string; created_at: unknown; updated_at: unknown; }
@@ -767,3 +1050,8 @@ interface RawMessage { id: string; org_id: string; thread_id: string; from_worke
 interface RawHandoff { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; reason: string; status: string; created_at: unknown; responded_at: unknown; }
 interface RawEscalation { id: string; org_id: string; task_id: string; from_worker_id: string; to_worker_id: string; parent_escalation_id: unknown; depth: unknown; status: string; reason: string; resolution: unknown; correlation_id: unknown; created_at: unknown; decided_at: unknown; }
 interface RawApproval { id: string; org_id: string; subject_type: string; subject_id: string; requester_worker_id: string; effective_risk: string; requires_human: unknown; approval_mode: string; status: string; approver_worker_id: unknown; approver_user_id: unknown; reason: string; correlation_id: unknown; created_at: unknown; expires_at: unknown; decided_at: unknown; }
+interface RawOrgWallet { id: string; org_id: string; balance: unknown; currency: string; status: string; last_settled_at: unknown; created_at: unknown; updated_at: unknown; }
+interface RawOrgSettlement { id: string; org_id: string; wallet_id: string; source_marketplace_task_id: string; goal_id: unknown; total_amount_minor: unknown; currency: string; platform_pct: unknown; platform_amount_minor: unknown; org_amount_minor: unknown; created_at: unknown; }
+interface RawOrgTaskApp { id: string; task_id: string; org_id: string; ranking_score: unknown; status: string; created_at: unknown; updated_at: unknown; }
+interface RawOrgTaskAssign { id: string; task_id: string; org_id: string; application_id: unknown; org_goal_id: unknown; status: string; assigned_at: unknown; submitted_at: unknown; completed_at: unknown; created_at: unknown; updated_at: unknown; }
+interface RawMarketplaceBrief { id: string; publisher_user_id: string; title: string; description: string; category: string; reward: unknown; currency: string; status: string; assignee_kind: string; assignee_org_id: unknown; publisher_verified: unknown; }

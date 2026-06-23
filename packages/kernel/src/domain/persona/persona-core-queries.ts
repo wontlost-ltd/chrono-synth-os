@@ -39,6 +39,8 @@ export const PCORE_QUERY_WALLET_BY_PERSONA = 'pcore.walletByPersona' as const;
 export const PCORE_QUERY_WALLET_BY_ID_FOR_OWNER = 'pcore.walletByIdForOwner' as const;
 export const PCORE_QUERY_WALLET_TRANSACTIONS = 'pcore.walletTransactions' as const;
 export const PCORE_QUERY_TASK_APPLICATION = 'pcore.taskApplication' as const;
+/** 列某工单的全部 persona 申请者（含 persona display_name，发布者据此选委派给谁）。 */
+export const PCORE_QUERY_TASK_APPLICATIONS_BY_TASK = 'pcore.taskApplicationsByTask' as const;
 export const PCORE_QUERY_RUNTIME_SESSION = 'pcore.runtimeSession' as const;
 export const PCORE_QUERY_TIMED_OUT_RUNTIME_SESSIONS = 'pcore.timedOutRuntimeSessions' as const;
 export const PCORE_QUERY_GOVERNANCE_CASES_BY_PERSONA = 'pcore.governanceCasesByPersona' as const;
@@ -374,6 +376,11 @@ export interface PcoreTaskApplicationRow {
   readonly status: string;
   readonly created_at: number;
   readonly updated_at: number;
+}
+
+/** 申请者行 + persona display_name（列工单申请者用，发布者看名字选委派）。 */
+export interface PcoreTaskApplicantRow extends PcoreTaskApplicationRow {
+  readonly persona_name: string | null;
 }
 
 export interface PcoreRuntimeSessionRow {
@@ -719,6 +726,11 @@ export interface PcoreTaskApplicationParams {
   tenantId: string;
   taskId: string;
   personaId: string;
+}
+
+export interface PcoreTaskApplicationsByTaskParams {
+  tenantId: string;
+  taskId: string;
 }
 
 export interface PcoreCreateTaskApplicationParams extends PcoreTaskApplicationParams {
@@ -1236,6 +1248,10 @@ export function pcoreQueryWalletTransactions(params: PcoreWalletByIdParams): Que
 
 export function pcoreQueryTaskApplication(params: PcoreTaskApplicationParams): Query<PcoreTaskApplicationRow | null, PcoreTaskApplicationParams> {
   return { kind: PCORE_QUERY_TASK_APPLICATION, params };
+}
+
+export function pcoreQueryTaskApplicationsByTask(params: PcoreTaskApplicationsByTaskParams): Query<PcoreTaskApplicantRow, PcoreTaskApplicationsByTaskParams> {
+  return { kind: PCORE_QUERY_TASK_APPLICATIONS_BY_TASK, params };
 }
 
 export function pcoreQueryRuntimeSession(params: PcoreRuntimeSessionParams): Query<PcoreRuntimeSessionRow | null, PcoreRuntimeSessionParams> {

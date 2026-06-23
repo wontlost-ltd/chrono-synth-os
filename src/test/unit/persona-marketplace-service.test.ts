@@ -171,6 +171,27 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     assert.equal(assignment?.personaId, fx.personaId);
   });
 
+  it('listTaskApplicants 列工单的 persona 申请者（含 personaName，ADR-0058）', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId,
+      publisherUserId: fx.ownerUserId,
+      title: 'task with applicants',
+      description: 'desc',
+      category: 'general',
+      reward: 50,
+    });
+    /* 申请前：无申请者。 */
+    assert.equal(fx.service.listTaskApplicants(fx.tenantId, task.id).length, 0);
+    /* persona 申请。 */
+    fx.service.applyToTask({ tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, personaId: fx.personaId, taskId: task.id });
+    const applicants = fx.service.listTaskApplicants(fx.tenantId, task.id);
+    assert.equal(applicants.length, 1, '1 个 persona 申请者');
+    assert.equal(applicants[0]!.personaId, fx.personaId);
+    assert.equal(applicants[0]!.status, 'submitted');
+    /* personaName 来自 persona_core.display_name（join），发布者据此选委派。 */
+    assert.ok(applicants[0]!.personaName, '带 persona display_name');
+  });
+
   it('submitTaskResult + acceptSubmittedTask round-trips through the facade', () => {
     const task = fx.service.publishTask({
       tenantId: fx.tenantId,

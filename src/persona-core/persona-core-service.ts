@@ -79,6 +79,7 @@ import {
   PersonaMarketplaceService,
   taskFromRow,
   type PersonaMarketplaceContext,
+  type TaskApplicant,
 } from './persona-marketplace-service.js';
 /* Runtime state machine helpers moved to PersonaMarketplaceService. */
 import type {
@@ -1338,6 +1339,11 @@ export class PersonaCoreService {
 
   findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
     return this.marketplaceService.findTaskApplication(tenantId, taskId, personaId);
+  }
+
+  /** 列某工单的 persona 申请者（含 display_name）——发布者据此选委派给哪个数字人格（ADR-0058）。 */
+  listTaskApplicants(tenantId: string, taskId: string): TaskApplicant[] {
+    return this.marketplaceService.listTaskApplicants(tenantId, taskId);
   }
 
   applyToTask(input: ApplyTaskInput): TaskApplication | null {

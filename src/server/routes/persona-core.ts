@@ -1017,6 +1017,13 @@ export function registerPersonaCoreRoutes(
     return reply.status(202).send({ data: serializeTaskApplication(application) });
   });
 
+  /* GET 列某工单的 persona 申请者（含 display_name）——发布者据此选委派给哪个数字人格（ADR-0058）。 */
+  app.get<{ Params: { id: string } }>('/api/v1/tasks/:id/applicants', async (request) => {
+    requireJwtUser(request);
+    const applicants = service.listTaskApplicants(request.tenantId, request.params.id);
+    return { data: applicants };
+  });
+
   app.post<{ Params: { id: string } }>('/api/v1/tasks/:id/assign', async (request) => {
     const user = requireJwtUser(request);
     const body = AssignTaskSchema.parse(request.body);

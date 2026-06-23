@@ -576,8 +576,32 @@
   "visualization.ts": [],
   "workforce-actions.ts": [
     {
+      "name": "WorkforceAcceptMarketplaceTaskBodySchema",
+      "hash": "af3b4f93eaaf179dfc0e035b76d05b9da99b28fffb1151e9539dbc71f44540fd"
+    },
+    {
       "name": "WorkforceApprovalDecisionBodySchema",
       "hash": "c33f74a549a4bc6fca924acedff0791a622a46829af1cd51f69b5ef9d58ed63e"
+    },
+    {
+      "name": "WorkforceBidAcceptBodySchema",
+      "hash": "114cf330c78556a4430f279501dfbd2b9fb3a6a7247633a4b459165b5c842b81"
+    },
+    {
+      "name": "WorkforceBidApplyBodySchema",
+      "hash": "3005696fb3e99eedb34c0f949eda731c73795b7747d7d3b73eedbee756b9f3df"
+    },
+    {
+      "name": "WorkforceBidConfirmAssignBodySchema",
+      "hash": "0185c39a9a658b5e2d49370ebac5d10012d93e78f403d0ed45ccb9fa56057496"
+    },
+    {
+      "name": "WorkforceBidStartBodySchema",
+      "hash": "6206d3df2c1f609305d007309eb869fa570e0b9e7e5ef82cfb04b09b69e6de1d"
+    },
+    {
+      "name": "WorkforceBidSubmitBodySchema",
+      "hash": "3005696fb3e99eedb34c0f949eda731c73795b7747d7d3b73eedbee756b9f3df"
     },
     {
       "name": "WorkforceExecuteTaskBodySchema",
@@ -590,6 +614,10 @@
     {
       "name": "WorkforceRunGoalBodySchema",
       "hash": "eb38b244e5f102f456545fbafff2a0df626c578c0e78ef08471f250549f63f20"
+    },
+    {
+      "name": "WorkforceSettleMarketplaceTaskBodySchema",
+      "hash": "533fb019e20811788114646b1f59b60b85b68a19286e4cb3dbce76e3f9ccf046"
     }
   ],
   "workforce-admin.ts": [

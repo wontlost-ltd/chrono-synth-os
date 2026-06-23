@@ -383,3 +383,90 @@ export function useDecideApproval(orgId: string) {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'approvals-pending', orgId] }); },
   });
 }
+
+/* ── 双边工单市场（ADR-0058）：org 竞标接单 + 发布者确认委派 ── */
+
+export interface OrgTaskApplication { id: string; taskId: string; orgId: string; rankingScore: number; status: string; createdAt: number; updatedAt: number }
+export interface OrgTaskAssignment { id: string; taskId: string; orgId: string; applicationId: string | null; orgGoalId: string | null; status: string; assignedAt: number; submittedAt: number | null; completedAt: number | null }
+
+/** org 视角：该组织的申请（我领取了哪些工单）。 */
+export function useOrgBidApplications(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'bids', 'applications', orgId],
+    enabled: orgId.length > 0,
+    queryFn: ({ signal }) => apiFetch<OrgTaskApplication[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/applications`, { signal }),
+  });
+}
+
+/** org 视角：委派给该组织的工单（指派）。 */
+export function useOrgBidAssignments(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'bids', 'assignments', orgId],
+    enabled: orgId.length > 0,
+    queryFn: ({ signal }) => apiFetch<OrgTaskAssignment[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/assignments`, { signal }),
+  });
+}
+
+/** 发布者视角：某工单的 org 申请者列表（据此选委派给谁）。 */
+export function useOrgBidApplicants(orgId: string, taskId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'bids', 'applicants', orgId, taskId],
+    enabled: orgId.length > 0 && taskId.length > 0,
+    queryFn: ({ signal }) => apiFetch<OrgTaskApplication[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/tasks/${encodeURIComponent(taskId)}/applicants`, { signal }),
+  });
+}
+
+function invalidateBids(qc: ReturnType<typeof useQueryClient>, orgId: string) {
+  void qc.invalidateQueries({ queryKey: ['workforce', 'bids'] });
+  void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] });
+}
+
+/** org 领取一个 open 工单（登记接单意向，不触发执行）。 */
+export function useOrgBidApply(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string }) =>
+      apiFetch<OrgTaskApplication>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/apply`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** 发布者确认把工单委派给某组织。 */
+export function useOrgBidConfirmAssign(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string; orgId: string }) =>
+      apiFetch<OrgTaskAssignment>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/confirm-assign`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** org 启动执行（选 manager + goalType 触发 runGoal 分解）。 */
+export function useOrgBidStart(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string; managerWorkerId: string; goalType: string }) =>
+      apiFetch<{ assignment: OrgTaskAssignment; goal: { goalId: string; taskCount: number } }>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/start`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** org 完工提交（发布者待验收）。 */
+export function useOrgBidSubmit(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string }) =>
+      apiFetch<OrgTaskAssignment>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/submit`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** 发布者验收 org 工单并结算入金库。 */
+export function useOrgBidAccept(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string; platformPct?: number }) =>
+      apiFetch<{ assignment: OrgTaskAssignment; settlement: { orgAmountMinor: number } | null; walletBalance: number }>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/accept`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
