@@ -7,6 +7,8 @@
   --c-text: #e8ecf4;
   --c-muted: #8a94ab;
   --c-brand: #5b8def;
+  /* 加深品牌蓝：用作白字按钮背景，确保对比度 ≥4.5:1（WCAG AA）。--c-brand 本色对白字仅 3.23。 */
+  --c-brand-strong: #3a6fd0;
   --c-pos: #4fc08d;
   --c-neg: #e7796b;
   --c-radius: 14px;
@@ -43,7 +45,9 @@ body {
 .login__field input:focus { outline: 2px solid var(--c-brand); outline-offset: 1px; }
 .login__error { color: var(--c-neg); font-size: 14px; margin: 0; }
 .login__submit {
-  padding: 12px; border: none; border-radius: 999px; background: var(--c-brand);
+  /* 用加深的品牌蓝（非 --c-brand 本色）：白字对比度 4.81:1 过 WCAG AA（4.5:1）；
+   * 不改 --c-brand 以保持 theme-color/icon/manifest 视觉一致。 */
+  padding: 12px; border: none; border-radius: 999px; background: var(--c-brand-strong);
   color: #fff; font-size: 15px; cursor: pointer;
 }
 .login__submit:disabled { opacity: 0.6; cursor: default; }
