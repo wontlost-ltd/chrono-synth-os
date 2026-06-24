@@ -156,9 +156,13 @@ export const colorTokensDark: SemanticColors = {
     focus: '#93C5FD',
   },
   brand: {
-    primary: '#3B82F6',
+    /* a11y：web + desktop 共享此 colorTokensDark，白字按钮（bg-primary text-white，web 全站 75 处）
+     * 需对比度≥4.5。#3B82F6 仅 3.68 不达标，加深到 #2563EB（5.17:1 过 WCAG AA）；
+     * active 再深一档 #1D4ED8（6.70:1 AAA，保留按压区分）。desktop --color-chrono-primary 同源同步受益。
+     * （此前该 a11y 值只手改在 themes.css 生成区，未回写源——codegen 会还原，故在此源头落实。） */
+    primary: '#2563EB',
     primaryHover: '#60A5FA',
-    primaryActive: '#2563EB',
+    primaryActive: '#1D4ED8',
     secondary: '#14B8A6',
     secondaryHover: '#2DD4BF',
     accent: '#FBBF24',
@@ -247,6 +251,76 @@ export const colorTokensHighContrast: SemanticColors = {
     1: '#F3F4F6',
     2: '#6B7280',
     3: '#4B5563',
+  },
+};
+
+/**
+ * ChronoCompanion（C 端数字人）暖调主题。
+ *
+ * 落地 ADR-0046 D3「复用同一 design system」——把 companion-web 原本手写的 29 个
+ * `--c-*` token 收编进共享 SemanticColors 契约，使两个产品共用一套 token 单一事实源。
+ *
+ * P0 阶段：取值**1:1 镜像** companion-web 现有 --c-* 值（零视觉漂移，仅换底座）。
+ * 品牌主色仍为现有冷蓝 #5b8def——「暖色拟人化」属 P1b 产品审美调整，届时只改此处 brand.*
+ * 与少量点缀，不影响底座结构。companion 是单一暗色主题（无 light/hc 变体）。
+ *
+ * 映射依据（--c-* → SemanticColors）：
+ *   --c-bg #0f1420 → surface.canvas    --c-surface #1a2030 → surface.elevated
+ *   --c-surface-2 #232a3d → border/neutral   --c-text #e8ecf4 → text.primary
+ *   --c-muted #8a94ab → text.secondary/tertiary   --c-brand #5b8def → brand.primary
+ *   --c-brand-strong #3a6fd0 → brand.primaryActive（白字按钮 AA）
+ *   --c-pos #4fc08d → status.success/positive   --c-neg #e7796b → status.danger/negative
+ */
+export const colorTokensCompanion: SemanticColors = {
+  surface: {
+    canvas: '#0f1420',     // --c-bg
+    elevated: '#1a2030',   // --c-surface
+    overlay: 'rgba(0, 0, 0, 0.6)',
+    inverse: '#e8ecf4',
+  },
+  text: {
+    primary: '#e8ecf4',    // --c-text
+    secondary: '#8a94ab',  // --c-muted
+    tertiary: '#8a94ab',   // companion 仅一档 muted；tertiary 暂同 secondary
+    inverse: '#0f1420',
+    link: '#5b8def',
+  },
+  border: {
+    subtle: '#232a3d',     // --c-surface-2（companion 用 surface-2 作描边/分隔）
+    default: '#232a3d',
+    strong: '#3a4870',
+    focus: '#5b8def',
+  },
+  brand: {
+    primary: '#5b8def',        // --c-brand（P1b 转暖色）
+    primaryHover: '#3a6fd0',
+    primaryActive: '#3a6fd0',  // --c-brand-strong（白字 AA 4.81:1）
+    secondary: '#4fc08d',
+    secondaryHover: '#4fc08d',
+    accent: '#4fc08d',
+    accentHover: '#4fc08d',
+  },
+  status: {
+    success: '#4fc08d',    // --c-pos
+    warning: '#e7796b',    // companion 无独立 warning，复用 neg 暖红（P1b 可分化）
+    danger: '#e7796b',     // --c-neg
+    info: '#5b8def',
+    active: '#4fc08d',
+    paused: '#e7796b',
+    syncing: '#5b8def',
+    offline: '#8a94ab',
+    completed: '#4fc08d',
+  },
+  chart: {
+    series: ['#5b8def', '#4fc08d', '#e7796b', '#8a94ab', '#3a6fd0', '#232a3d'],
+    grid: '#232a3d',
+    positive: '#4fc08d',
+    negative: '#e7796b',
+  },
+  neutral: {
+    1: '#1a2030',
+    2: '#232a3d',
+    3: '#8a94ab',
   },
 };
 

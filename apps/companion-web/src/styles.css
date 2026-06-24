@@ -1,17 +1,11 @@
-/* ChronoCompanion 最小样式（alpha）。品牌色独立于企业版（roadmap：companion 主色发散）。
- * 扩展期改为消费 @chrono/design-tokens 的 tokens.companion.* 命名空间（见 roadmap 风险表）。 */
-:root {
-  --c-bg: #0f1420;
-  --c-surface: #1a2030;
-  --c-surface-2: #232a3d;
-  --c-text: #e8ecf4;
-  --c-muted: #8a94ab;
-  --c-brand: #5b8def;
-  /* 加深品牌蓝：用作白字按钮背景，确保对比度 ≥4.5:1（WCAG AA）。--c-brand 本色对白字仅 3.23。 */
-  --c-brand-strong: #3a6fd0;
-  --c-pos: #4fc08d;
-  --c-neg: #e7796b;
+/* ChronoCompanion 样式。
+ * 颜色 token（--c-bg/surface/surface-2/text/muted/brand/brand-strong/pos/neg）已收编进共享
+ * @chrono/design-tokens（colorTokensCompanion），由 codegen 生成到 ./styles/tokens.css，
+ * 在此前 import——落地 ADR-0046 D3「同一 design system 两个 shell」。改色值改 design-tokens 包后跑
+ * `npm run codegen:design-tokens`，勿在此手写颜色 token。非颜色刻度（间距/圆角/字号/行高）仍在下方手写。 */
+@import './styles/tokens.css';
 
+:root {
   /* ── 设计系统刻度（Phase ②：收编硬编码值，建立统一刻度）──
    * 原仅有 --c-gap/--c-radius 两个尺度 token，间距/半径/字号散落十余种字面值。
    * 下列刻度的取值刻意等于既有最常用字面值，替换时计算值不变（零视觉漂移），

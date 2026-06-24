@@ -20,8 +20,6 @@
   --color-border-default: #475569;
   --color-border-strong: #64748B;
   --color-border-focus: #93C5FD;
-  /* a11y：白字按钮（bg-primary text-white，全站 75 处）需对比度≥4.5。#3B82F6 仅 3.68 不达标，
-   * 加深到 #2563EB（5.17:1 过 WCAG AA）；active 相应再深一档以保留按压区分。 */
   --color-primary: #2563EB;
   --color-primary-light: #60A5FA;
   --color-primary-active: #1D4ED8;
@@ -114,9 +112,9 @@
     --color-border-default: #475569;
     --color-border-strong: #64748B;
     --color-border-focus: #93C5FD;
-    --color-primary: #3B82F6;
+    --color-primary: #2563EB;
     --color-primary-light: #60A5FA;
-    --color-primary-active: #2563EB;
+    --color-primary-active: #1D4ED8;
     --color-secondary: #14B8A6;
     --color-secondary-light: #2DD4BF;
     --color-accent: #FBBF24;
