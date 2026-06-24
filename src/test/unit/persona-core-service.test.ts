@@ -360,6 +360,19 @@ describe('PersonaCoreService', () => {
     detDb.close();
   });
 
+  it('materializeDailyAnalytics 默认日期取注入时钟而非裸 new Date()（确定性 P2-f）', () => {
+    /* 防回归：currentMetricDate 曾用 new Date() 默认参数旁路注入时钟。 */
+    const fixed = Date.parse('2023-11-15T08:30:00.000Z'); // 固定一天
+    const detDb = createMemoryDatabase();
+    runDslSqliteMigrations(detDb);
+    const detService = new PersonaCoreService(detDb, undefined, 60_000, undefined, new TestClock(fixed));
+
+    /* 不传 metricDate → 走 currentMetricDate() 默认参数；必须等于注入时钟对应的 UTC 日期 */
+    const result = detService.materializeDailyAnalytics('tenant_test');
+    assert.equal(result.metricDate, '2023-11-15', 'metricDate 须由注入时钟派生，不依赖墙钟');
+    detDb.close();
+  });
+
   it('生命周期评估会先将长期无活动 persona 标记为 dormant', () => {
     const persona = service.createPersona({
       tenantId: 'tenant_test',

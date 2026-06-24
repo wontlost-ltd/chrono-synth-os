@@ -88,8 +88,10 @@ export function registerLifeSimulationRoutes(
     if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
       const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
       if (stripeCustomerId) {
-        billingMetrics.meterEventsEnqueued++;
-        billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1);
+        /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
+        if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1)) {
+          billingMetrics.meterEventsEnqueued++;
+        }
       }
     }
 
@@ -198,8 +200,10 @@ export function registerLifeSimulationRoutes(
       if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
         const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
         if (stripeCustomerId) {
-          billingMetrics.meterEventsEnqueued++;
-          billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1);
+          /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
+          if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1)) {
+            billingMetrics.meterEventsEnqueued++;
+          }
         }
       }
 

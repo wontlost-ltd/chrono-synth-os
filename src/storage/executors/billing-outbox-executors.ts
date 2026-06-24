@@ -38,9 +38,15 @@ export function registerBillingOutboxExecutors(): void {
   /* ── Commands ── */
 
   registerCommand<BoutboxEnqueueParams>(BOUTBOX_CMD_ENQUEUE, (db, p) => {
+    /*
+     * 幂等入队（防重复计费）：idempotency_key 现可由业务事件确定性派生（tenant:event:sourceId），
+     * 同一逻辑计量事件重复入队会撞 UNIQUE(idempotency_key)。改用 ON CONFLICT DO NOTHING——
+     * 重复事件被静默去重（Stripe 计量只记一次），而非抛 UNIQUE 错误中断调用方。
+     */
     const result = db.prepare<void>(
       `INSERT INTO billing_outbox (tenant_id, customer_id, event_name, quantity, idempotency_key, status, attempts, created_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)
+       ON CONFLICT(idempotency_key) DO NOTHING`,
     ).run(p.tenantId, p.customerId, p.eventName, p.quantity, p.idempotencyKey, p.now);
     return { rowsAffected: result.changes };
   });

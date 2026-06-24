@@ -264,7 +264,7 @@ export class PersonaMemoryService {
     importance: number;
     skipCognitiveProjection?: boolean;
   }): PersonaMemory {
-    const now = Date.now();
+    const now = this.clock.now();
     const memoryId = generatePrefixedId('pmem');
     const sensitivity = normalizeMemorySensitivity(input.sensitivity);
     const ownerRestricted = sensitivity === 'owner-restricted';

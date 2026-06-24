@@ -340,12 +340,11 @@ export class PersonaCoreService {
     runtimeSessionTimeoutMs = 60_000,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
     /*
-     * 时钟抽象（确定性）：当前注入到**认知内核**（PersonaCognitiveMemoryGraph）以保证记忆投影/
-     * 工作记忆/衰减可复现。认知内核内部口径自洽——last_accessed_at 与 computeWorkingMemoryScore
-     * 同用此 clock，不会因外部时间戳产生负 recencyFactor。
-     * ⚠️ 注意：本 facade 的其它写操作（createPersona/approveTransfer 等）仍用裸 Date.now()
-     * 写 created_at/updated_at（审计余项 P2-f，未纳入本次 P1 范围）；这些时间戳不参与认知内核
-     * 的确定性计算，故不影响 clock 的自洽性。默认 realClock 保持向后兼容。
+     * 时钟抽象（确定性）：注入到**认知内核**（PersonaCognitiveMemoryGraph，含子服务
+     * PersonaMemoryService）以及本 facade 的全部写操作（createPersona/approveTransfer 等的
+     * created_at/updated_at + 生命周期 inactivity 判定）。全链路统一时钟口径，禁用裸墙钟调用，
+     * 保证测试可注入 TestClock 复现。认知内核内部 last_accessed_at 与 computeWorkingMemoryScore
+     * 同源不产生负 recencyFactor。默认 realClock 保持向后兼容。
      */
     private readonly clock: Clock = realClock,
   ) {
@@ -462,7 +461,7 @@ export class PersonaCoreService {
   }
 
   createPersona(input: CreatePersonaCoreInput): PersonaCoreDetail {
-    const now = Date.now();
+    const now = this.clock.now();
     const personaId = generatePrefixedId('pcore');
     const walletId = generatePrefixedId('pwal');
     const walletAddress = `local://persona/${personaId}`;
@@ -630,7 +629,7 @@ export class PersonaCoreService {
     if (!persona || persona.status === 'deceased' || persona.status === 'transferred') return null;
     if (persona.status === 'active') return persona;
 
-    const now = Date.now();
+    const now = this.clock.now();
     this.tx.transaction(() => {
       this.tx.execute(pcoreCmdActivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
@@ -652,7 +651,7 @@ export class PersonaCoreService {
     if (!persona || persona.status === 'deceased' || persona.status === 'transferred') return null;
     if (persona.status === 'dormant') return persona;
 
-    const now = Date.now();
+    const now = this.clock.now();
     this.tx.transaction(() => {
       this.tx.execute(pcoreCmdDeactivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
@@ -681,7 +680,7 @@ export class PersonaCoreService {
     }));
     if (pending) return transferFromRow(pending);
 
-    const now = Date.now();
+    const now = this.clock.now();
     const transferId = generatePrefixedId('ptransfer');
     this.tx.transaction(() => {
       this.tx.execute(pcoreCmdCreateTransfer({
@@ -737,7 +736,7 @@ export class PersonaCoreService {
       return null;
     }
 
-    const now = Date.now();
+    const now = this.clock.now();
     this.tx.transaction(() => {
       this.tx.execute(pcoreCmdApproveTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
@@ -970,7 +969,7 @@ export class PersonaCoreService {
     const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
     if (!persona || this.isTerminalStatus(persona.status)) return null;
 
-    const now = Date.now();
+    const now = this.clock.now();
     const forkId = generatePrefixedId('pfork');
     this.tx.execute(pcoreCmdCreateFork({
       id: forkId,
@@ -1049,7 +1048,7 @@ export class PersonaCoreService {
     const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
     if (!persona || this.isTerminalStatus(persona.status)) return null;
 
-    const now = Date.now();
+    const now = this.clock.now();
     const knowledgeId = generatePrefixedId('pknow');
     const confidence = clamp(input.confidence ?? 0.75, 0, 1);
     const growthDelta = round(0.3 + confidence * 0.8);
@@ -1123,7 +1122,7 @@ export class PersonaCoreService {
     const persona = this.getPersonaDetail(input.tenantId, input.ownerUserId, input.personaId);
     if (!persona) return null;
 
-    const now = Date.now();
+    const now = this.clock.now();
     const severity = Math.round(clamp(input.severity, 1, 5));
     let nextStatus: PersonaCore['status'] | null = null;
     let reputationDelta = 0;
@@ -1246,8 +1245,10 @@ export class PersonaCoreService {
     }
 
     const thresholdMs = inactivityDays * 24 * 60 * 60 * 1000;
+    /* 单次评估固定一个 now，避免分支间多次取时钟引入口径漂移 */
+    const nowMs = this.clock.now();
     if (persona.status === 'dormant') {
-      if (Date.now() - persona.updatedAt < thresholdMs) {
+      if (nowMs - persona.updatedAt < thresholdMs) {
         return {
           persona,
           transition: 'none',
@@ -1271,7 +1272,7 @@ export class PersonaCoreService {
       };
     }
 
-    if (Date.now() - lastActiveAt < thresholdMs) {
+    if (nowMs - lastActiveAt < thresholdMs) {
       return {
         persona,
         transition: 'none',
@@ -1515,7 +1516,7 @@ export class PersonaCoreService {
       oldScore: round(clamp(oldScore, 0, 100), 4),
       newScore: round(clamp(newScore, 0, 100), 4),
       reason,
-      now: Date.now(),
+      now: this.clock.now(),
     }));
   }
 
@@ -1554,14 +1555,15 @@ export class PersonaCoreService {
   /* computeSettlementSplit moved to PersonaMarketplaceService (used
    * by settleTaskPayment, which is now in the sub-service). */
 
-  private currentMetricDate(now = new Date()): string {
-    return now.toISOString().slice(0, 10);
+  private currentMetricDate(nowMs = this.clock.now()): string {
+    /* 确定性：默认取注入时钟而非裸 new Date()，使 daily analytics 物化日期可注入复现 */
+    return new Date(nowMs).toISOString().slice(0, 10);
   }
 
   private metricDateRange(metricDate: string): { startMs: number; endMs: number } {
     const startMs = Date.parse(`${metricDate}T00:00:00.000Z`);
     if (!Number.isFinite(startMs)) {
-      const fallback = Date.now();
+      const fallback = this.clock.now();
       return {
         startMs: fallback - 24 * 60 * 60 * 1000,
         endMs: fallback,
@@ -1614,7 +1616,7 @@ export class PersonaCoreService {
     trainingDelta: number;
     payload: Record<string, unknown>;
   }): void {
-    const now = Date.now();
+    const now = this.clock.now();
     this.tx.execute(pcoreCmdInsertGrowthEvent({
       id: generatePrefixedId('pgrow'),
       tenantId: input.tenantId,
