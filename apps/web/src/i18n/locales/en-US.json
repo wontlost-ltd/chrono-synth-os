@@ -1767,5 +1767,35 @@
     "fNewMgr": "New manager worker ID",
     "fReparentReportsTo": "Reparent reports to (if any)",
     "fReassignTasksTo": "Reassign tasks to (if any)"
+  },
+  "overview": {
+    "title": "Overview",
+    "subtitle": "Your digital workforce, personas, and governance at a glance.",
+    "cards": {
+      "workforce": {
+        "title": "Digital Workforce",
+        "desc": "Build and run organizations of digital workers."
+      },
+      "persona": {
+        "title": "Persona Core",
+        "desc": "Manage canonical personas, forks, and growth."
+      },
+      "governance": {
+        "title": "Governance & Audit",
+        "desc": "Who authorized what — authorizations, tool permissions, drift."
+      },
+      "knowledge": {
+        "title": "Knowledge Sources",
+        "desc": "Manage and sync knowledge feeding your agents."
+      },
+      "marketplace": {
+        "title": "Marketplace",
+        "desc": "Publish tasks and settle rewards into persona wallets."
+      },
+      "simulations": {
+        "title": "Life Simulations",
+        "desc": "Explore multi-path life simulations (deterministic engine)."
+      }
+    }
   }
 }

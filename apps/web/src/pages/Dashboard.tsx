@@ -12,12 +12,23 @@ import { useSimulationList, type SimulationListItem } from '../api/queries/simul
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
+/** 落地总览卡片——指向产品核心能力。人生模拟列为入口之一（降位），不再是首屏唯一叙事。 */
+const OVERVIEW_CARDS = [
+  { to: '/workforce', titleKey: 'overview.cards.workforce.title', descKey: 'overview.cards.workforce.desc' },
+  { to: '/persona-core', titleKey: 'overview.cards.persona.title', descKey: 'overview.cards.persona.desc' },
+  { to: '/admin/agency-authorizations', titleKey: 'overview.cards.governance.title', descKey: 'overview.cards.governance.desc' },
+  { to: '/knowledge-sources', titleKey: 'overview.cards.knowledge.title', descKey: 'overview.cards.knowledge.desc' },
+  { to: '/marketplace', titleKey: 'overview.cards.marketplace.title', descKey: 'overview.cards.marketplace.desc' },
+  { to: '/simulations', titleKey: 'overview.cards.simulations.title', descKey: 'overview.cards.simulations.desc' },
+] as const;
+
 export function Dashboard() {
   const { t } = useTranslation();
-  useDocumentTitle(t('dashboard.title'));
   const [simId, setSimId] = useState(() => {
     try { return localStorage.getItem('last-sim-id') ?? ''; } catch { return ''; }
   });
+  /* 标题随内容：无选中模拟=总览（避免「人生模拟仪表盘」霸占首屏标题），选中后=模拟仪表盘。 */
+  useDocumentTitle(simId ? t('dashboard.title') : t('overview.title'));
 
   /* 无已选模拟时，自动选取最近完成的模拟 */
   const { data: listData } = useSimulationList(1, 20);
@@ -41,22 +52,23 @@ export function Dashboard() {
   const ws = useWebSocket({ autoConnect: !!simId });
 
   if (!simId) {
+    /* 默认落地（无选中模拟）：呈现产品真正的核心（数字员工/治理/人格/知识），而非把用户推向
+     * 「建人生模拟」。人生模拟降为众入口之一（ADR-0047 论点载体仍在，但不再霸占首屏叙事）。 */
     return (
       <>
-        <PageHeader title={t('dashboard.title')} />
-        <EmptyState
-          message={t('dashboard.emptyState')}
-          action={
-            <div className="flex gap-3">
-              <Link to="/simulations" className="rounded-lg border border-border px-4 py-2 text-sm">
-                {t('dashboard.viewAll')}
-              </Link>
-              <Link to="/simulations/new" className="rounded-lg bg-primary px-4 py-2 text-sm text-white">
-                {t('dashboard.createNew')}
-              </Link>
-            </div>
-          }
-        />
+        <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')} />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {OVERVIEW_CARDS.map((c) => (
+            <Link
+              key={c.to}
+              to={c.to}
+              className="group rounded-xl border border-border bg-surface-elevated p-5 transition-colors hover:border-primary"
+            >
+              <h3 className="text-base font-semibold text-text-primary group-hover:text-primary">{t(c.titleKey)}</h3>
+              <p className="mt-1 text-sm text-text-secondary">{t(c.descKey)}</p>
+            </Link>
+          ))}
+        </div>
       </>
     );
   }

@@ -260,15 +260,17 @@ export const colorTokensHighContrast: SemanticColors = {
  * 落地 ADR-0046 D3「复用同一 design system」——把 companion-web 原本手写的 29 个
  * `--c-*` token 收编进共享 SemanticColors 契约，使两个产品共用一套 token 单一事实源。
  *
- * P0 阶段：取值**1:1 镜像** companion-web 现有 --c-* 值（零视觉漂移，仅换底座）。
- * 品牌主色仍为现有冷蓝 #5b8def——「暖色拟人化」属 P1b 产品审美调整，届时只改此处 brand.*
- * 与少量点缀，不影响底座结构。companion 是单一暗色主题（无 light/hc 变体）。
+ * P1b（暖色拟人化）：品牌主色由 P0 的冷蓝 #5b8def 转**暖琥珀**——强化「温暖伙伴」气质，
+ * 与企业版冷静蓝灰拉开识别度。brand 决定 active-tab/进度条/用户气泡/按钮等的暖调。
+ * 对比度：--c-brand #c2691e 白字 3.94（>原 3.23，加粗活态文本可读）；--c-brand-strong #a85518
+ * 白字 5.28 过 WCAG AA（>原 4.81，用于登录按钮等白字背景）。其余 surface/text/status 暖中性不变。
+ * companion 是单一暗色主题（无 light/hc 变体）。
  *
  * 映射依据（--c-* → SemanticColors）：
  *   --c-bg #0f1420 → surface.canvas    --c-surface #1a2030 → surface.elevated
  *   --c-surface-2 #232a3d → border/neutral   --c-text #e8ecf4 → text.primary
- *   --c-muted #8a94ab → text.secondary/tertiary   --c-brand #5b8def → brand.primary
- *   --c-brand-strong #3a6fd0 → brand.primaryActive（白字按钮 AA）
+ *   --c-muted #8a94ab → text.secondary/tertiary   --c-brand 暖琥珀 → brand.primary
+ *   --c-brand-strong 深琥珀 → brand.primaryActive（白字按钮 AA）
  *   --c-pos #4fc08d → status.success/positive   --c-neg #e7796b → status.danger/negative
  */
 export const colorTokensCompanion: SemanticColors = {
@@ -283,18 +285,18 @@ export const colorTokensCompanion: SemanticColors = {
     secondary: '#8a94ab',  // --c-muted
     tertiary: '#8a94ab',   // companion 仅一档 muted；tertiary 暂同 secondary
     inverse: '#0f1420',
-    link: '#5b8def',
+    link: '#e8924a',       // 暖琥珀亮调（链接需在暗底可读，用亮于 brand 的一档）
   },
   border: {
     subtle: '#232a3d',     // --c-surface-2（companion 用 surface-2 作描边/分隔）
     default: '#232a3d',
     strong: '#3a4870',
-    focus: '#5b8def',
+    focus: '#c2691e',      // 暖琥珀焦点环（与 brand 一致）
   },
   brand: {
-    primary: '#5b8def',        // --c-brand（P1b 转暖色）
-    primaryHover: '#3a6fd0',
-    primaryActive: '#3a6fd0',  // --c-brand-strong（白字 AA 4.81:1）
+    primary: '#c2691e',        // --c-brand 暖琥珀（active-tab/进度/气泡/bar；白字 3.94）
+    primaryHover: '#a85518',
+    primaryActive: '#a85518',  // --c-brand-strong 深琥珀（白字按钮 5.28 过 AA）
     secondary: '#4fc08d',
     secondaryHover: '#4fc08d',
     accent: '#4fc08d',

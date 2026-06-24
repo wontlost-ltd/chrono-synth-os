@@ -55,7 +55,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 移动优先 640px 上限；宽屏（≥720px）放宽到 760px，减少桌面端两侧大片留白（原 640 在桌面显廉价）。 */
 .app { max-width: 640px; margin: 0 auto; padding: var(--c-space-5) var(--c-space-4) var(--c-space-8); }
+@media (min-width: 720px) { .app { max-width: 760px; } }
+
+/* ── 拟人化首屏（hero）：渐变光球头像 + 「学到 N 件事」进度，强化「这是我的数字伙伴」── */
+.card--hero { display: flex; gap: var(--c-space-4); align-items: flex-start; }
+.avatar {
+  flex: none; width: 64px; height: 64px; border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 -4px 10px rgba(0, 0, 0, 0.25);
+}
+.hero__body { flex: 1; min-width: 0; }
+.hero__progress { margin: var(--c-space-3) 0 0; font-size: var(--c-text-base); color: var(--c-text); }
+/* 进度数字用更亮的暖琥珀（#c2691e 在卡片底仅 4.12，亮调对比 7.57 更清晰）；与品牌同色系。 */
+.hero__progress strong { color: #e8924a; font-variant-numeric: tabular-nums; }
 .app__header { position: relative; text-align: center; margin-bottom: 20px; } /* 头部锚点间距保留 20px（不吸附到 24，+4px 在移动端可感知）*/
 .app__brand { margin: 0; font-size: var(--c-text-xl); letter-spacing: 0.02em; }
 .app__tagline { margin: var(--c-space-1) 0 0; color: var(--c-muted); font-size: var(--c-text-base); }
@@ -98,7 +111,8 @@ body {
 }
 /* 键盘可达：dark 底上 tab 无可见焦点环，对齐 .login__field input:focus 规范。 */
 .tabs__btn:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 2px; }
-.tabs__btn--active { background: var(--c-brand); color: #fff; }
+/* 白字 on 品牌底用 --c-brand-strong（深琥珀 5.28 过 AA）；--c-brand 本色白字仅 3.94 不达标。 */
+.tabs__btn--active { background: var(--c-brand-strong); color: #fff; }
 
 /* 宽屏（≥500px，6 tab 总宽必然装得下）恢复等分铺满，消除窄屏方案在桌面端留下的右侧
  * 散尾留白。min-width:max-content 兜底：等分槽永不窄于内容宽，杜绝「我的数字人」复折行。 */
@@ -192,7 +206,7 @@ body {
   padding: 9px 18px;
   border: none;
   border-radius: var(--c-radius-pill);
-  background: var(--c-brand);
+  background: var(--c-brand-strong); /* 白字 AA */
   color: #fff;
   font-size: var(--c-text-base);
   cursor: pointer;
@@ -248,7 +262,7 @@ body {
   font-size: var(--c-text-base); line-height: var(--c-leading-normal); word-break: break-word;
 }
 .chat__bubble--user {
-  align-self: flex-end; background: var(--c-brand); color: #fff;
+  align-self: flex-end; background: var(--c-brand-strong); color: #fff; /* 白字 AA */
   border-bottom-right-radius: var(--c-space-1);
 }
 .chat__bubble--persona {
