@@ -23,7 +23,8 @@ export function HomeView(): JSX.Element {
         <span
           className="avatar"
           aria-hidden="true"
-          style={{ background: `radial-gradient(circle at 32% 28%, hsl(${hue} 70% 62%), hsl(${(hue + 38) % 360} 64% 40%))` }}
+          /* 两个停靠点都留在暖区间：第二点向红偏 8°（更暖，不向黄绿漂）+ 更深，呈暖琥珀立体球。 */
+          style={{ background: `radial-gradient(circle at 32% 28%, hsl(${hue} 72% 60%), hsl(${hue - 8} 66% 38%))` }}
         />
         <div className="hero__body">
           <h2 className="card__title">此刻的我</h2>
@@ -87,5 +88,5 @@ function avatarHue(seed: string): number {
     h ^= seed.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return 12 + (Math.abs(h) % 41); // 12-52°：暖琥珀↔珊瑚区间
+  return 14 + (Math.abs(h) % 27); // 14-40°：琥珀↔珊瑚暖核（窄带，渐变两端都不近黄绿）
 }
