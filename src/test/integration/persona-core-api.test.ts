@@ -572,12 +572,12 @@ describe('Persona Core API 集成测试', () => {
 
     const metricDate = recompute.materialization.metricDate;
     const db = os.getDatabase();
-    assert.equal(
-      db.prepare<{ count: number }>(
-        'SELECT COUNT(*) as count FROM persona_daily_metrics WHERE tenant_id = ? AND persona_id = ? AND metric_date = ?',
-      ).get(auth.tenantId, persona.id, metricDate)?.count ?? 0,
-      1,
-    );
+    /* 批量分组正确性（P2-b）：daily metric 行存在，且 tasks_completed 正确归属到本 persona */
+    const dailyMetric = db.prepare<{ count: number; tasks_completed: number }>(
+      'SELECT COUNT(*) as count, MAX(tasks_completed) AS tasks_completed FROM persona_daily_metrics WHERE tenant_id = ? AND persona_id = ? AND metric_date = ?',
+    ).get(auth.tenantId, persona.id, metricDate);
+    assert.equal(dailyMetric?.count ?? 0, 1);
+    assert.ok((dailyMetric?.tasks_completed ?? 0) >= 1, '批量分组应把已完成任务正确计入本 persona');
     assert.equal(
       db.prepare<{ count: number }>(
         'SELECT COUNT(*) as count FROM marketplace_daily_metrics WHERE tenant_id = ? AND metric_date = ?',

@@ -5,7 +5,7 @@
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
   ORG_QUERY_LIST_BY_USER, ORG_QUERY_BY_SLUG, ORG_QUERY_BY_ID,
-  ORG_QUERY_MEMBERS, ORG_QUERY_ROLE_BINDINGS,
+  ORG_QUERY_MEMBERS, ORG_QUERY_ROLE_BINDINGS, ORG_QUERY_ROLE_BINDINGS_BY_ORG,
   ORG_QUERY_USER_BY_ID, ORG_QUERY_USER_BY_EMAIL,
   ORG_QUERY_WORKSPACE_BY_ID, ORG_QUERY_MEMBERSHIP,
   ORG_QUERY_ROLE_BINDING_EXISTS, ORG_QUERY_ROLE_BINDING_EXISTS_WS,
@@ -17,7 +17,7 @@ import {
 } from '@chrono/kernel';
 import type {
   OrgListByUserRow, OrgIdRow, OrgRow, OrgWorkspaceRow,
-  OrgMemberRow, OrgRoleBindingRow, OrgUserRow,
+  OrgMemberRow, OrgRoleBindingRow, OrgRoleBindingByOrgRow, OrgUserRow,
   OrgActiveMembershipRow, OrgMembershipRoleRow, OrgTenantUserEmailRow,
   OrgTenantUserParams, OrgTenantSlugParams, OrgTenantIdParams,
   OrgMembersParams, OrgRoleBindingsParams, OrgWorkspaceByIdParams,
@@ -82,6 +82,17 @@ export function registerOrganizationExecutors(): void {
        WHERE rb.tenant_id = ? AND rb.organization_id = ? AND rb.membership_id = ?
        ORDER BY rb.role ASC`,
     ).all(p.tenantId, p.organizationId, p.membershipId);
+  });
+
+  /* 批量：一次取整组织全部成员的角色绑定（消 listMembers 的 N+1），带 membership_id 供内存分组 */
+  registerQuery<readonly OrgRoleBindingByOrgRow[], OrgMembersParams>(ORG_QUERY_ROLE_BINDINGS_BY_ORG, (db, p) => {
+    return db.prepare<OrgRoleBindingByOrgRow>(
+      `SELECT rb.membership_id, rb.role, rb.workspace_id, w.name AS workspace_name
+       FROM organization_role_bindings rb
+       LEFT JOIN workspaces w ON w.id = rb.workspace_id
+       WHERE rb.tenant_id = ? AND rb.organization_id = ?
+       ORDER BY rb.membership_id ASC, rb.role ASC`,
+    ).all(p.tenantId, p.organizationId);
   });
 
   registerQuery<OrgUserRow | null, OrgTenantIdParams>(ORG_QUERY_USER_BY_ID, (db, p) => {

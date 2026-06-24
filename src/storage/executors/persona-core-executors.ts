@@ -26,6 +26,8 @@ import {
   PCORE_QUERY_DAILY_PERSONAS,
   PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT,
   PCORE_QUERY_DAILY_PERSONA_REVENUE,
+  PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA,
+  PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA,
   PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS,
   PCORE_QUERY_ECONOMY_ANALYTICS,
   PCORE_QUERY_PERSONA_MEMORIES,
@@ -171,6 +173,9 @@ import type {
   PcoreTransferPersonaOwnerParams,
   PcoreTaskCountByDateParams,
   PcoreRevenueByDateParams,
+  PcoreDateRangeParams,
+  PcorePersonaCountRow,
+  PcorePersonaTotalRow,
   PcoreDailyMarketplaceAnalyticsParams,
   PcoreUpsertPersonaDailyMetricParams,
   PcoreUpsertMarketplaceDailyMetricParams,
@@ -520,6 +525,28 @@ export function registerPersonaCoreExecutors(): void {
        INNER JOIN persona_wallets pw ON pw.id = ws.wallet_id
        WHERE ws.tenant_id = ? AND pw.persona_id = ? AND ws.completed_at >= ? AND ws.completed_at < ?`,
     ).get(p.tenantId, p.personaId, p.startMs, p.endMs));
+  });
+
+  /* 批量（消 materializeDailyAnalytics 的 N+1）：整租户当日完成数按 persona 分组 */
+  registerQuery<readonly PcorePersonaCountRow[], PcoreDateRangeParams>(PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA, (db, p) => {
+    return db.prepare<PcorePersonaCountRow>(
+      `SELECT assignee_persona_id AS persona_id, COUNT(*) AS count
+       FROM marketplace_tasks
+       WHERE tenant_id = ? AND status = 'completed' AND completed_at >= ? AND completed_at < ?
+         AND assignee_persona_id IS NOT NULL
+       GROUP BY assignee_persona_id`,
+    ).all(p.tenantId, p.startMs, p.endMs);
+  });
+
+  /* 批量：整租户当日收益按 persona 分组 */
+  registerQuery<readonly PcorePersonaTotalRow[], PcoreDateRangeParams>(PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA, (db, p) => {
+    return db.prepare<PcorePersonaTotalRow>(
+      `SELECT pw.persona_id AS persona_id, SUM(ws.owner_amount_minor) AS total
+       FROM wallet_settlements ws
+       INNER JOIN persona_wallets pw ON pw.id = ws.wallet_id
+       WHERE ws.tenant_id = ? AND ws.completed_at >= ? AND ws.completed_at < ?
+       GROUP BY pw.persona_id`,
+    ).all(p.tenantId, p.startMs, p.endMs);
   });
 
   registerQuery<PcoreDailyMarketplaceAnalyticsRow | null, PcoreDailyMarketplaceAnalyticsParams>(PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS, (db, p) => {

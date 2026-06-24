@@ -17,9 +17,9 @@ import {
   pcoreCmdUpsertPersonaDailyMetric,
   pcoreQueryActivePersonasForRanking,
   pcoreQueryCompletedTaskCount,
-  pcoreQueryDailyCompletedTaskCount,
+  pcoreQueryDailyCompletedTaskCountByPersona,
   pcoreQueryDailyMarketplaceAnalytics,
-  pcoreQueryDailyPersonaRevenue,
+  pcoreQueryDailyPersonaRevenueByPersona,
   pcoreQueryDailyPersonas,
   pcoreQueryEconomyAnalytics,
   pcoreQueryForksByPersona,
@@ -890,21 +890,23 @@ export class PersonaCoreService {
     const { startMs, endMs } = this.metricDateRange(metricDate);
     const personas = this.tx.queryMany(pcoreQueryDailyPersonas(tenantId));
 
+    /*
+     * 消 N+1（P2-b）：原先每 persona 2 次 SQL（1+2N）。改为整租户 2 次批量查询（按 persona 分组），
+     * 内存建索引后逐个查表。租户 1000 个活跃 persona 时从 ~2001 次往返降为 3 次。
+     */
+    const completedByPersona = new Map<string, number>();
+    for (const r of this.tx.queryMany(pcoreQueryDailyCompletedTaskCountByPersona({ tenantId, startMs, endMs }))) {
+      completedByPersona.set(r.persona_id, Number(r.count));
+    }
+    const revenueByPersona = new Map<string, number>();
+    for (const r of this.tx.queryMany(pcoreQueryDailyPersonaRevenueByPersona({ tenantId, startMs, endMs }))) {
+      revenueByPersona.set(r.persona_id, Number(r.total ?? 0));
+    }
+
     this.tx.transaction(() => {
       for (const persona of personas) {
-        const completedTasks = this.tx.queryOne(pcoreQueryDailyCompletedTaskCount({
-          tenantId,
-          personaId: persona.id,
-          startMs,
-          endMs,
-        }))?.count ?? 0;
-
-        const revenue = this.tx.queryOne(pcoreQueryDailyPersonaRevenue({
-          tenantId,
-          personaId: persona.id,
-          startMs,
-          endMs,
-        }))?.total ?? 0;
+        const completedTasks = completedByPersona.get(persona.id) ?? 0;
+        const revenue = revenueByPersona.get(persona.id) ?? 0;
 
         this.tx.execute(pcoreCmdUpsertPersonaDailyMetric({
           tenantId,

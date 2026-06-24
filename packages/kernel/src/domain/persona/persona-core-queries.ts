@@ -28,6 +28,9 @@ export const PCORE_QUERY_MARKETPLACE_ANALYTICS = 'pcore.marketplaceAnalytics' as
 export const PCORE_QUERY_DAILY_PERSONAS = 'pcore.dailyPersonas' as const;
 export const PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT = 'pcore.dailyCompletedTaskCount' as const;
 export const PCORE_QUERY_DAILY_PERSONA_REVENUE = 'pcore.dailyPersonaRevenue' as const;
+/** 批量（消 materializeDailyAnalytics 的 N+1）：整租户按 persona 分组的当日完成数 / 收益 */
+export const PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA = 'pcore.dailyCompletedTaskCountByPersona' as const;
+export const PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA = 'pcore.dailyPersonaRevenueByPersona' as const;
 export const PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS = 'pcore.dailyMarketplaceAnalytics' as const;
 export const PCORE_QUERY_ECONOMY_ANALYTICS = 'pcore.economyAnalytics' as const;
 export const PCORE_QUERY_PERSONA_MEMORIES = 'pcore.personaMemories' as const;
@@ -613,6 +616,25 @@ export interface PcoreTaskCountByDateParams extends PcoreTenantPersonaParams {
 export interface PcoreRevenueByDateParams extends PcoreTenantPersonaParams {
   startMs: number;
   endMs: number;
+}
+
+/** 批量按日期范围（无 personaId）：整租户一次取，按 persona 分组 */
+export interface PcoreDateRangeParams {
+  tenantId: string;
+  startMs: number;
+  endMs: number;
+}
+
+/** persona → 当日完成任务数 分组行 */
+export interface PcorePersonaCountRow {
+  persona_id: string;
+  count: number | bigint;
+}
+
+/** persona → 当日收益（minor）分组行 */
+export interface PcorePersonaTotalRow {
+  persona_id: string;
+  total: number | bigint | null;
 }
 
 export interface PcoreDailyMarketplaceAnalyticsParams {
@@ -1204,6 +1226,16 @@ export function pcoreQueryDailyCompletedTaskCount(params: PcoreTaskCountByDatePa
 
 export function pcoreQueryDailyPersonaRevenue(params: PcoreRevenueByDateParams): Query<PcoreTotalRow | null, PcoreRevenueByDateParams> {
   return { kind: PCORE_QUERY_DAILY_PERSONA_REVENUE, params };
+}
+
+/** 批量：整租户当日完成数按 persona 分组（消 N+1） */
+export function pcoreQueryDailyCompletedTaskCountByPersona(params: PcoreDateRangeParams): Query<PcorePersonaCountRow, PcoreDateRangeParams> {
+  return { kind: PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA, params };
+}
+
+/** 批量：整租户当日收益按 persona 分组（消 N+1） */
+export function pcoreQueryDailyPersonaRevenueByPersona(params: PcoreDateRangeParams): Query<PcorePersonaTotalRow, PcoreDateRangeParams> {
+  return { kind: PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA, params };
 }
 
 export function pcoreQueryDailyMarketplaceAnalytics(params: PcoreDailyMarketplaceAnalyticsParams): Query<PcoreDailyMarketplaceAnalyticsRow | null, PcoreDailyMarketplaceAnalyticsParams> {

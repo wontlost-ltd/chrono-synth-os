@@ -186,6 +186,11 @@ describe('Organization API 集成测试', () => {
     assert.ok(invitedMember);
     assert.deepEqual(invitedMember?.roles, ['auditor', 'viewer']);
     assert.deepEqual(invitedMember?.bindings.map((binding) => binding.role), ['auditor', 'viewer']);
+
+    /* N+1→批量分组正确性（P2-e）：owner 应只有 org_admin，不得串到 invited 的 viewer/auditor */
+    const ownerMember = members.find((item) => item.userId === owner.userId);
+    assert.ok(ownerMember);
+    assert.deepEqual(ownerMember?.roles, ['org_admin'], '批量分组不得把他人角色串到 owner');
   });
 
   it('可将 SCIM 创建的成员加入 organization 并授予 organization roles', async () => {

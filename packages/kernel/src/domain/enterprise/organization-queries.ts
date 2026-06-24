@@ -11,6 +11,8 @@ export const ORG_QUERY_BY_SLUG = 'org.bySlug' as const;
 export const ORG_QUERY_BY_ID = 'org.byId' as const;
 export const ORG_QUERY_MEMBERS = 'org.members' as const;
 export const ORG_QUERY_ROLE_BINDINGS = 'org.roleBindings' as const;
+/** 批量取整组织全部成员的角色绑定（消 listMembers 的 N+1），行带 membership_id 供内存分组 */
+export const ORG_QUERY_ROLE_BINDINGS_BY_ORG = 'org.roleBindingsByOrg' as const;
 export const ORG_QUERY_USER_BY_ID = 'org.userById' as const;
 export const ORG_QUERY_USER_BY_EMAIL = 'org.userByEmail' as const;
 export const ORG_QUERY_WORKSPACE_BY_ID = 'org.workspaceById' as const;
@@ -83,6 +85,14 @@ export interface OrgMemberRow {
 }
 
 export interface OrgRoleBindingRow {
+  readonly role: string;
+  readonly workspace_id: string | null;
+  readonly workspace_name: string | null;
+}
+
+/** 批量绑定行：比 OrgRoleBindingRow 多带 membership_id，供按成员内存分组 */
+export interface OrgRoleBindingByOrgRow {
+  readonly membership_id: string;
   readonly role: string;
   readonly workspace_id: string | null;
   readonly workspace_name: string | null;
@@ -225,6 +235,11 @@ export function orgQueryMembers(params: OrgMembersParams): Query<OrgMemberRow, O
 
 export function orgQueryRoleBindings(params: OrgRoleBindingsParams): Query<OrgRoleBindingRow, OrgRoleBindingsParams> {
   return { kind: ORG_QUERY_ROLE_BINDINGS, params };
+}
+
+/** 批量：一次取整组织全部成员的角色绑定（消 N+1），按 membership_id 内存分组 */
+export function orgQueryRoleBindingsByOrg(params: OrgMembersParams): Query<OrgRoleBindingByOrgRow, OrgMembersParams> {
+  return { kind: ORG_QUERY_ROLE_BINDINGS_BY_ORG, params };
 }
 
 export function orgQueryUserById(params: OrgTenantIdParams): Query<OrgUserRow | null, OrgTenantIdParams> {
