@@ -148,6 +148,29 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return res;
 }
 
+/**
+ * 从「分页信封」里取出列表数组。
+ *
+ * 后端分页列表端点（用 paginate() 的：/conflicts /values /personas /snapshots）返回
+ * `{data: T[], pagination}`——含 pagination 非唯一字段，apiFetch **不会**自动解包（解包会
+ * 丢掉 pagination，破坏读 .pagination 的 enterprise/simulations 调用方），故原样返回整个信封。
+ *
+ * 消费方若只要列表却把响应当裸数组用（`apiFetch<T[]>(...)` 后 `.length`/`.map`），会拿到
+ * 信封对象：`.length` 为 undefined→列表恒判空（即便 total>0 也静默不显示），或 `.map` 抛错。
+ * 这是已确认的真 bug（/conflicts 因有 Zod 严格校验直接炸 error boundary；/values /personas
+ * 无校验则静默显示「空」）。统一用此 helper 在消费侧解包，而非改全局 apiFetch（会误伤分页调用方）。
+ *
+ * 兼容三种输入：裸数组（原样）、`{data:[...]}` 信封（取 data）、其他形状（返回空数组兜底，
+ * 不让 `.map` 在生产炸栈；调用方有 Zod 的可在 parse 阶段拒绝）。
+ */
+export function unwrapList<T>(raw: unknown): T[] {
+  if (Array.isArray(raw)) return raw as T[];
+  if (raw !== null && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data)) {
+    return (raw as { data: T[] }).data;
+  }
+  return [];
+}
+
 async function doFetch<T>(path: string, init?: RequestInit, isRetry = false): Promise<T> {
   const session = getSession();
   /* 记录发请求时的 token，用于 401 时判定是否为「陈旧 401」（期间会话已被并发 login/logout 换掉）。 */

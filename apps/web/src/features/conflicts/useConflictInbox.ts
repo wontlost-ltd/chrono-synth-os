@@ -5,7 +5,7 @@ import {
   type ConflictResolveRequestV1,
   type ConflictResolveResultV1,
 } from '@chrono/contracts';
-import { apiFetch, ApiError } from '@/api/client';
+import { apiFetch, ApiError, unwrapList } from '@/api/client';
 import { useSyncEngine } from '@/sync/use-sync-engine';
 
 /**
@@ -64,7 +64,19 @@ export function useConflictInbox(): {
     setError(null);
     try {
       const raw = await apiFetch<unknown>('/api/v1/conflicts');
-      const parsed = ConflictInboxResponseSchema.safeParse(raw);
+      /* 后端返回分页信封 {data,pagination}（apiFetch 不自动解包，保留 pagination），用共享
+       * unwrapList 取出数组再做 Zod 严格校验——直接 safeParse(信封) 必失败→收件箱对所有用户
+       * 永远报 error boundary（哪怕 0 冲突）。unwrapList 对非数组/非信封形状返回 []，故畸形响应
+       * 退化为空列表而非崩溃；item 级 schema 漂移仍由下面的 safeParse 拒绝。 */
+      /* 可观测性：冲突是用户安全面（漏一条冲突 > 报错）。畸形响应被静默退化为空时留一条 warn，
+       * 否则真实后端故障会伪装成「0 冲突」让用户误判——其他列表（values/personas）非安全面不需此告警。 */
+      const isExpectedShape =
+        Array.isArray(raw) ||
+        (raw !== null && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data));
+      if (!isExpectedShape) {
+        console.warn('[conflicts] 响应既非数组也非 {data,pagination} 信封，已退化为空收件箱——可能掩盖真实冲突', { raw });
+      }
+      const parsed = ConflictInboxResponseSchema.safeParse(unwrapList(raw));
       if (!parsed.success) {
         /* schema 漂移 → 把 zod 错误压成一条 ConflictError，UI 走 load 失败兜底。
          * 不把 raw payload 留在 state 中，避免 ResolutionPanel 拿到不完整字段。 */

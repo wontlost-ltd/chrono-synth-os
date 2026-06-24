@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ApiError, apiFetch } from './client';
+import { ApiError, apiFetch, unwrapList } from './client';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -389,5 +389,27 @@ describe('401 handling — 不因瞬时失败登出全局', () => {
     /* 不应调用 /auth/refresh（陈旧 401 直接用当前会话重试） */
     const refreshCalled = mockFetch.mock.calls.some(c => String(c[0]).includes('/auth/refresh'));
     expect(refreshCalled).toBe(false);
+  });
+});
+
+/* unwrapList：分页信封 → 列表数组（修 /conflicts /values /personas 把 {data,pagination}
+ * 当裸数组用导致 .length 恒 undefined→静默判空 / .map 抛错 的系统性 bug）。 */
+describe('unwrapList — 分页信封解包', () => {
+  it('裸数组原样返回', () => {
+    expect(unwrapList([1, 2, 3])).toEqual([1, 2, 3]);
+  });
+  it('{data:[...]} 信封 → 取出 data（这是后端 paginate() 的真实形状）', () => {
+    expect(unwrapList({ data: ['a', 'b'], pagination: { page: 1, total: 2 } })).toEqual(['a', 'b']);
+  });
+  it('空信封 {data:[]} → []', () => {
+    expect(unwrapList({ data: [], pagination: { page: 1, total: 0 } })).toEqual([]);
+  });
+  it('非数组非信封形状（畸形响应）→ [] 兜底，不让 .map 炸栈', () => {
+    expect(unwrapList({ unexpected: 'object' })).toEqual([]);
+    expect(unwrapList(null)).toEqual([]);
+    expect(unwrapList(undefined)).toEqual([]);
+    expect(unwrapList('string')).toEqual([]);
+    /* data 不是数组（如 {data:{}}）也兜底为 [] */
+    expect(unwrapList({ data: { not: 'array' } })).toEqual([]);
   });
 });

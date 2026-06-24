@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../client';
+import { apiFetch, unwrapList } from '../client';
 
 export interface Persona {
   id: string;
@@ -12,7 +12,9 @@ export interface Persona {
 export function usePersonas() {
   return useQuery({
     queryKey: ['personas'],
-    queryFn: ({ signal }) => apiFetch<Persona[]>('/api/v1/personas', { signal }),
+    /* /api/v1/personas 返回分页信封 {data,pagination}，apiFetch 不自动解包。用 unwrapList 取数组，
+     * 否则消费方 personas.length 恒 undefined→租户有人格也静默显示「No personas yet」。 */
+    queryFn: ({ signal }) => apiFetch<unknown>('/api/v1/personas', { signal }).then(unwrapList<Persona>),
   });
 }
 
