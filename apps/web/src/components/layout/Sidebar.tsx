@@ -7,7 +7,8 @@ import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 
 type IconKey =
   | 'dashboard' | 'list' | 'plus' | 'avatar' | 'brain' | 'gem' | 'book'
-  | 'cart' | 'gauge' | 'card' | 'building' | 'wrench' | 'sliders' | 'logout';
+  | 'cart' | 'gauge' | 'card' | 'building' | 'wrench' | 'sliders' | 'logout'
+  | 'growth' | 'conflict' | 'workforce' | 'network';
 
 interface NavItem {
   to: string;
@@ -29,6 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/dashboard', labelKey: 'sidebar.dashboard', icon: 'dashboard' },
       { to: '/simulations', labelKey: 'sidebar.simulations', icon: 'list' },
       { to: '/simulations/new', labelKey: 'sidebar.newSimulation', icon: 'plus' },
+      { to: '/growth', labelKey: 'sidebar.growth', icon: 'growth' },
     ],
   },
   {
@@ -43,10 +45,20 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: 'workforce',
+    labelKey: 'sidebar.groups.workforce',
+    items: [
+      { to: '/workforce', labelKey: 'sidebar.workforce', icon: 'workforce', adminOnly: true },
+      { to: '/workforce/marketplace', labelKey: 'sidebar.workforceMarketplace', icon: 'cart', adminOnly: true },
+      { to: '/workforce/viz', labelKey: 'sidebar.workforceViz', icon: 'network', adminOnly: true },
+    ],
+  },
+  {
     id: 'ops',
     labelKey: 'sidebar.groups.ops',
     items: [
       { to: '/system', labelKey: 'sidebar.systemStatus', icon: 'gauge' },
+      { to: '/conflicts', labelKey: 'sidebar.conflicts', icon: 'conflict' },
       { to: '/billing', labelKey: 'sidebar.billing', icon: 'card' },
       { to: '/enterprise', labelKey: 'sidebar.enterprise', icon: 'building', adminOnly: true },
       { to: '/settings', labelKey: 'sidebar.settings', icon: 'sliders' },
@@ -83,6 +95,10 @@ function Icon({ name, className = '' }: { name: IconKey; className?: string }) {
     case 'wrench':    return <svg {...common}><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-2.5z"/></svg>;
     case 'sliders':   return <svg {...common}><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>;
     case 'logout':    return <svg {...common}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>;
+    case 'growth':    return <svg {...common}><path d="M3 17l6-6 4 4 7-7"/><path d="M14 7h7v7"/></svg>;
+    case 'conflict':  return <svg {...common}><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6.5l7 4M8.5 17.5l7-4"/></svg>;
+    case 'workforce': return <svg {...common}><circle cx="9" cy="7" r="3"/><path d="M3 21c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="18" cy="9" r="2"/><path d="M16 21c0-2.5 0.9-4 2-4.5"/></svg>;
+    case 'network':   return <svg {...common}><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4M11 13l-4.5 4M13 13l4.5 4"/></svg>;
   }
 }
 
@@ -165,9 +181,8 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
         </div>
       </div>
 
-      {/* leading-tight 锁定两行（Tenant 标签 + 邮箱）的紧凑行距：text-xs 隐式带 line-height:1rem，
-          显式 pin 行距使其不随字阶 util 默认值漂移，保持双行 chip 的既有紧凑观感。 */}
       {!collapsed && user && (
+        // 租户 chip：leading-tight 锁定两行紧凑行距（text-xs 隐式 line-height:1rem，显式 pin 避免随字阶漂移）
         <div className="mx-3 mt-3 mb-1 rounded-lg border border-border px-3 py-2 text-xs leading-tight" style={{ background: 'var(--gradient-brand-soft)' }}>
           <div className="text-text-tertiary uppercase tracking-wider">Tenant</div>
           <div className="font-mono text-text-primary truncate" title={user.email}>{user.email}</div>

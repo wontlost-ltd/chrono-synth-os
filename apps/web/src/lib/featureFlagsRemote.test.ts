@@ -19,7 +19,7 @@ import {
   getFlagSource,
   getRemoteStatus,
 } from './featureFlags';
-import { bootstrapFeatureFlagsRemote } from './featureFlagsRemote';
+import { bootstrapFeatureFlagsRemote, reconnectFeatureFlagsIfNotLive } from './featureFlagsRemote';
 
 /* ── Mock EventSource ───────────────────────────────────────────── */
 
@@ -104,6 +104,35 @@ describe('featureFlagsRemote — bootstrap', () => {
     await new Promise(r => setTimeout(r, 0));
     /* Default still wins; nothing remote was applied. */
     expect(getFlagSource('experimental.values_health_dashboard')).toBe('static');
+  });
+});
+
+/* 认证后重连：修「启动时 pre-auth 401 后 flags 整会话停在默认值」。 */
+describe('featureFlagsRemote — reconnectFeatureFlagsIfNotLive', () => {
+  it('状态非 live 时重连（开新 EventSource），让带 auth 的请求生效', async () => {
+    /* 模拟启动 pre-auth 401：bootstrap + 一条 stream（未 open→非 live）。 */
+    mockFetchOnce({}, 401);
+    bootstrapFeatureFlagsRemote();
+    await new Promise(r => setTimeout(r, 0));
+    const beforeCount = MockEventSource.instances.length;
+    expect(getRemoteStatus()).not.toBe('live');
+
+    /* 认证后重连 → 应再开一条 stream。 */
+    mockFetchOnce({ flags: [] });
+    reconnectFeatureFlagsIfNotLive();
+    expect(MockEventSource.instances.length).toBe(beforeCount + 1);
+  });
+
+  it('状态已 live 时不重连（幂等，避免重复连）', () => {
+    mockFetchOnce({ flags: [] });
+    bootstrapFeatureFlagsRemote();
+    const es = MockEventSource.instances[0]!;
+    es._fire('open'); // 触发 'live'
+    expect(getRemoteStatus()).toBe('live');
+    const liveCount = MockEventSource.instances.length;
+
+    reconnectFeatureFlagsIfNotLive(); // 已 live → no-op
+    expect(MockEventSource.instances.length).toBe(liveCount);
   });
 });
 

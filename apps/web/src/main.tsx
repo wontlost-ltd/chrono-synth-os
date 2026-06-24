@@ -10,8 +10,12 @@ initAnalytics();
 import { bootstrapTheme } from './lib/theme';
 bootstrapTheme();
 
-import { bootstrapFeatureFlagsRemote } from './lib/featureFlagsRemote';
+import { bootstrapFeatureFlagsRemote, reconnectFeatureFlagsIfNotLive } from './lib/featureFlagsRemote';
+import { onAuthEstablished } from './store/session';
 bootstrapFeatureFlagsRemote();
+/* 启动时 pre-auth bootstrap+SSE 必 401（cookie 未就绪），401 的 SSE 不会自愈 → flags 停在默认值。
+ * auth 建立（/auth/refresh 写入 accessToken=cookie 已新鲜）后重连一次，让后端 flag 生效。 */
+onAuthEstablished(() => reconnectFeatureFlagsIfNotLive());
 
 import './i18n';
 

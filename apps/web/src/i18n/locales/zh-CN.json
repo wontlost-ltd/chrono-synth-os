@@ -414,8 +414,14 @@
     "logout": "退出登录",
     "groups": {
       "agents": "智能体与知识",
-      "ops": "运行与治理"
-    }
+      "ops": "运行与治理",
+      "workforce": "数字员工"
+    },
+    "growth": "我的成长",
+    "conflicts": "冲突收件箱",
+    "workforce": "数字员工",
+    "workforceMarketplace": "组织任务市场",
+    "workforceViz": "组织可视化"
   },
   "appShell": {
     "skipToMain": "跳转到主要内容",

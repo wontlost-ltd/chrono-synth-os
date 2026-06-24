@@ -74,7 +74,8 @@ export function useConflictInbox(): {
         Array.isArray(raw) ||
         (raw !== null && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data));
       if (!isExpectedShape) {
-        console.warn('[conflicts] 响应既非数组也非 {data,pagination} 信封，已退化为空收件箱——可能掩盖真实冲突', { raw });
+        /* dev log 用英文（i18n 检查器不扫 t()-外英文，且 console 非用户面）。中文说明见上方注释。 */
+        console.warn('[conflicts] response is neither array nor {data,pagination} envelope; degraded to empty inbox — may mask real conflicts', { raw });
       }
       const parsed = ConflictInboxResponseSchema.safeParse(unwrapList(raw));
       if (!parsed.success) {

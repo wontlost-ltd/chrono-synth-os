@@ -414,8 +414,14 @@
     "logout": "Logout",
     "groups": {
       "agents": "Agents & Knowledge",
-      "ops": "Operations"
-    }
+      "ops": "Operations",
+      "workforce": "Digital Workforce"
+    },
+    "growth": "Your Growth",
+    "conflicts": "Conflict Inbox",
+    "workforce": "Digital Workforce",
+    "workforceMarketplace": "Org Task Marketplace",
+    "workforceViz": "Workforce Visualization"
   },
   "appShell": {
     "skipToMain": "Skip to main content",
