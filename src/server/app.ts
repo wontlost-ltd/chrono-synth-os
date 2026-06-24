@@ -674,6 +674,23 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   };
   /* ③ 人格与成长 */
   registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
+  registerConversationRoutes(app, {
+    conversation: conversationService,
+    personaCore: bulkImportPersonaCoreService,
+    subscriptionGate,
+    db,
+  });
+  /* ADR-0047：蒸馏治理端点（审查/审批/拒绝自我修改工件） */
+  registerDistillationRoutes(app, {
+    distillation: deps.os.distillation,
+    personaCore: bulkImportPersonaCoreService,
+  });
+  /* ADR-0048：自主挣钱治理端点（触发周期 / work feed / 钱包视图） */
+  registerEarningRoutes(app, {
+    earning: personaEarningService,
+    personaCore: bulkImportPersonaCoreService,
+    db,
+  });
   /* ④ 数字员工 */
   /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。
    * clock 供 C 链 SLA 时间感知（worker 信号据 now 与任务 due_at 派生 overdue/due_soon）。 */
@@ -734,23 +751,6 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerBulkKnowledgeImportRoutes(app, {
     bulkImport: bulkImportService,
     personaCore: bulkImportPersonaCoreService,
-  });
-  registerConversationRoutes(app, {
-    conversation: conversationService,
-    personaCore: bulkImportPersonaCoreService,
-    subscriptionGate,
-    db,
-  });
-  /* ADR-0047：蒸馏治理端点（审查/审批/拒绝自我修改工件） */
-  registerDistillationRoutes(app, {
-    distillation: deps.os.distillation,
-    personaCore: bulkImportPersonaCoreService,
-  });
-  /* ADR-0048：自主挣钱治理端点（触发周期 / work feed / 钱包视图） */
-  registerEarningRoutes(app, {
-    earning: personaEarningService,
-    personaCore: bulkImportPersonaCoreService,
-    db,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);
