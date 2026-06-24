@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 /**
@@ -9,6 +10,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   plugins: [
     react(),
+    /* Tailwind v4（@tailwindcss/vite，与 apps/web 同款 4.3）。P3：接入工具链使 companion 能用 utility +
+     * 消费共享 token（@theme 桥接 --c-*）——为渐进迁移与未来 @chrono/ui 铺路。现有手写 CSS class 共存不动。 */
+    tailwindcss(),
     /* PWA：injectManifest 策略（自写 src/sw.ts）；manifest:false 因已有 public/manifest.webmanifest。
      * autoUpdate：新版本可用时自动更新 SW。 */
     VitePWA({

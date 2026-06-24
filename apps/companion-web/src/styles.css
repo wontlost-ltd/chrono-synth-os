@@ -2,8 +2,26 @@
  * 颜色 token（--c-bg/surface/surface-2/text/muted/brand/brand-strong/pos/neg）已收编进共享
  * @chrono/design-tokens（colorTokensCompanion），由 codegen 生成到 ./styles/tokens.css，
  * 在此前 import——落地 ADR-0046 D3「同一 design system 两个 shell」。改色值改 design-tokens 包后跑
- * `npm run codegen:design-tokens`，勿在此手写颜色 token。非颜色刻度（间距/圆角/字号/行高）仍在下方手写。 */
+ * `npm run codegen:design-tokens`，勿在此手写颜色 token。非颜色刻度（间距/圆角/字号/行高）仍在下方手写。
+ *
+ * P3：接入 Tailwind v4（@tailwindcss/vite，与 apps/web 同 4.3）为 @chrono/ui 渐进迁移铺路。
+ * 迁移范式 = Tailwind **标准 utility**（flex/gap/text-center…）+ **arbitrary value 引 token**
+ * （bg-[var(--c-surface-2)] / text-[var(--c-pos)] / rounded-[var(--c-radius-sm)]）；
+ * **保留**全部手写 .card/.tabs/.chat class 共存（零视觉回归，渐进迁移不强制一次重写）。
+ * 试点：EdgeRuntimeBadge 已迁（实测计算值与原 .edge-badge 1:1 等价）。 */
+@import 'tailwindcss';
 @import './styles/tokens.css';
+/* 显式声明扫描源——确保 Tailwind v4 抓到 companion 的 .tsx（自动探测在本构建链下未覆盖到，
+ * 试点 utility 一度未生成；@source 显式锚定 src 修复）。 */
+@source '../src/**/*.{tsx,ts}';
+
+/* P3 token 消费方式：companion 的 token 仍是 :root 的 --c-*（来自共享 design-tokens，单一事实源）。
+ * 迁移时**直接用 arbitrary value 引 token**：`bg-[var(--c-surface-2)]` / `text-[var(--c-pos)]` /
+ * `rounded-[var(--c-radius-sm)]`——零值复制、单一事实源、工具链已验证可用（试点 EdgeRuntimeBadge）。
+ * 标准 utility（text-center / flex / gap-* 等）正常可用。
+ * TODO（后续优化，非阻塞）：曾试 `@theme inline { --color-c-*: var(--c-*) }` 桥接出短 utility（bg-c-* 等）
+ * 但本构建链未生成（疑 @theme 与 @import tokens.css 顺序/var 间接引用所致，未深究）；arbitrary value
+ * 已足够渐进迁移，待全量迁移前可重排查 @theme 以获更短类名。 */
 
 :root {
   /* ── 设计系统刻度（Phase ②：收编硬编码值，建立统一刻度）──
@@ -239,16 +257,7 @@ body {
 .perceive__memories { margin: var(--c-space-2) 0 0; padding-left: 18px; }
 .perceive__memory { margin: var(--c-space-1) 0; color: var(--c-text); }
 
-/* 端侧内核徽章（ADR-0052 Local Persona Autonomy） */
-.edge-badge {
-  margin: 0 0 var(--c-space-1);
-  padding: var(--c-space-2) var(--c-space-3);
-  border-radius: var(--c-radius-sm);
-  background: var(--c-surface-2);
-  color: var(--c-pos);
-  font-size: var(--c-text-sm);
-  text-align: center;
-}
+/* 端侧内核徽章（ADR-0052）：已迁 Tailwind utility（见 EdgeRuntimeBadge.tsx，P3 试点）；class 删除。 */
 
 /* ── 对话 ChatView ── */
 .chat__log {
