@@ -128,8 +128,9 @@ export function ChangelogDrawer() {
         type="button"
         onClick={openDrawer}
         className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-border bg-surface-elevated px-3 py-2 text-xs shadow-lg hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        aria-label={t('changelog.openLabel')}
       >
+        {/* a11y（WCAG 2.5.3）：去掉 aria-label="打开更新日志"——它不含可见文本"更新"会触发
+            label-content-name-mismatch。可见文本 + 按钮角色已是充分的可及名称；图标 aria-hidden。 */}
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M12 8v4l3 3M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18z" />
         </svg>

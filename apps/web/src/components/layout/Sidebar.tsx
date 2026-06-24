@@ -184,7 +184,9 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
               {group.labelKey && !collapsed && (
                 <button
                   onClick={() => toggleGroup(group.id)}
-                  className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-tertiary hover:text-text-primary"
+                  /* a11y：section 标题用 text-secondary（#CBD5E1）而非 tertiary（#64748B 仅 3.07，
+                   * 10px 灰字对比度不足）；secondary 对 surface 达 ~9:1 过 WCAG AA。 */
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-secondary hover:text-text-primary"
                 >
                   <span>{t(group.labelKey)}</span>
                   <span aria-hidden="true" className="text-[10px]">{isCollapsedGroup ? '▸' : '▾'}</span>
