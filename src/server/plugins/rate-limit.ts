@@ -27,9 +27,14 @@ export async function registerRateLimit(app: FastifyInstance, config: AppConfig)
       const tenantId = (request as { tenantId?: string }).tenantId;
       if (!tenantId || tenantId === 'default') return defaultMax;
 
-      /* 查询缓存 */
+      /* 查询缓存。命中且未过期时，delete+set 把条目移到 Map 末尾（真 LRU：访问刷新位置），
+       * 使下方淘汰按「最近最少**访问**」而非纯插入顺序（FIFO）移除，避免高频租户被先淘汰。 */
       const cached = planRateLimitCache.get(tenantId);
-      if (cached && Date.now() - cached.cachedAt < PLAN_CACHE_TTL_MS) return cached.max;
+      if (cached && Date.now() - cached.cachedAt < PLAN_CACHE_TTL_MS) {
+        planRateLimitCache.delete(tenantId);
+        planRateLimitCache.set(tenantId, cached);
+        return cached.max;
+      }
 
       /* 从请求上下文获取计划信息（JWT payload 中的 planId） */
       const user = request.user;

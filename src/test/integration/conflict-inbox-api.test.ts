@@ -282,6 +282,27 @@ describe('冲突收件箱 API 集成测试', () => {
       assert.equal(body.data.length, 0);
     });
 
+    it('二次解决已解决的冲突返回 409 而非误导性 404（P2-l）', async () => {
+      /* 首次解决成功 */
+      const first = await app.inject({
+        method: 'POST',
+        url: `/api/v1/conflicts/${CONFLICT_ITEM.conflictId}/resolve`,
+        headers: { authorization: `Bearer ${userToken}`, 'x-tenant-id': tenantId },
+        payload: { conflictId: CONFLICT_ITEM.conflictId, ifMatch: CONFLICT_ITEM.conflictVersion, action: 'keep_local' },
+      });
+      assert.equal(first.statusCode, 200);
+
+      /* 再次解决（版本未变、仍存在）→ resolveConflict 因 resolved_at 非空返 false
+       * 这是「并发已解决」语义，应 409 而非 404（冲突确实存在，只是已被处理） */
+      const second = await app.inject({
+        method: 'POST',
+        url: `/api/v1/conflicts/${CONFLICT_ITEM.conflictId}/resolve`,
+        headers: { authorization: `Bearer ${userToken}`, 'x-tenant-id': tenantId },
+        payload: { conflictId: CONFLICT_ITEM.conflictId, ifMatch: CONFLICT_ITEM.conflictVersion, action: 'keep_local' },
+      });
+      assert.equal(second.statusCode, 409, '已解决的冲突二次解决应 409，不应误报 404');
+    });
+
     it('returns 409 on version mismatch (optimistic lock)', async () => {
       const res = await app.inject({
         method: 'POST',
