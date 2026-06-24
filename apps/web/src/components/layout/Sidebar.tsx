@@ -8,7 +8,7 @@ import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 type IconKey =
   | 'dashboard' | 'list' | 'plus' | 'avatar' | 'brain' | 'gem' | 'book'
   | 'cart' | 'gauge' | 'card' | 'building' | 'wrench' | 'sliders' | 'logout'
-  | 'growth' | 'conflict' | 'workforce' | 'network';
+  | 'growth' | 'conflict' | 'workforce' | 'network' | 'shield';
 
 interface NavItem {
   to: string;
@@ -51,6 +51,18 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/workforce', labelKey: 'sidebar.workforce', icon: 'workforce', adminOnly: true },
       { to: '/workforce/marketplace', labelKey: 'sidebar.workforceMarketplace', icon: 'cart', adminOnly: true },
       { to: '/workforce/viz', labelKey: 'sidebar.workforceViz', icon: 'network', adminOnly: true },
+    ],
+  },
+  {
+    /* 治理/审计组：原来这 4 页只能 Cmd+K 命令面板可达（不在侧栏），CISO 查「谁授权了什么/
+     * 上周 drift」要凭记忆敲命令。聚成一个一眼可达的分组（均 admin）。 */
+    id: 'governance',
+    labelKey: 'sidebar.groups.governance',
+    items: [
+      { to: '/admin/agency-authorizations', labelKey: 'sidebar.agencyAuthorizations', icon: 'shield', adminOnly: true },
+      { to: '/admin/tool-permissions', labelKey: 'sidebar.toolPermissions', icon: 'shield', adminOnly: true },
+      { to: '/admin/tool-invocations', labelKey: 'sidebar.toolInvocations', icon: 'list', adminOnly: true },
+      { to: '/admin/safety/drift', labelKey: 'sidebar.safetyDrift', icon: 'gauge', adminOnly: true },
     ],
   },
   {
@@ -99,6 +111,7 @@ function Icon({ name, className = '' }: { name: IconKey; className?: string }) {
     case 'conflict':  return <svg {...common}><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6.5l7 4M8.5 17.5l7-4"/></svg>;
     case 'workforce': return <svg {...common}><circle cx="9" cy="7" r="3"/><path d="M3 21c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="18" cy="9" r="2"/><path d="M16 21c0-2.5 0.9-4 2-4.5"/></svg>;
     case 'network':   return <svg {...common}><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4M11 13l-4.5 4M13 13l4.5 4"/></svg>;
+    case 'shield':    return <svg {...common}><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>;
   }
 }
 

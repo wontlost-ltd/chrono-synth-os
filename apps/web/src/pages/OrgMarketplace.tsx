@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '../components/layout/PageHeader';
 import { EmptyState } from '../components/ui/EmptyState';
+import { Button } from '../components/ui/Button';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useMarketplaceTasks, useApplyToTask, useAssignTask, useTaskApplicants } from '../api/queries/marketplace';
 import { usePersonaCoreList } from '../api/queries/personaCore';
@@ -41,9 +42,9 @@ export default function OrgMarketplace() {
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
           />
         </label>
-        <button onClick={() => setCommittedOrgId(orgId.trim())} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+        <Button onClick={() => setCommittedOrgId(orgId.trim())}>
           {t('orgMarket.load')}
-        </button>
+        </Button>
       </div>
 
       {!committedOrgId ? (
@@ -110,13 +111,9 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
         <PublisherVerifiedBadge verified={task.publisherVerified} t={t} />
       </div>
       {/* 组织领取 */}
-      <button
-        onClick={() => orgApply.mutate({ taskId: task.id })}
-        disabled={orgApply.isPending}
-        className="mt-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-light disabled:opacity-50"
-      >
+      <Button size="sm" className="mt-2" onClick={() => orgApply.mutate({ taskId: task.id })} disabled={orgApply.isPending}>
         {t('orgMarket.claimAsOrg')}
-      </button>
+      </Button>
       {orgApply.isError && <p className="mt-1 text-xs text-red-500">{orgApply.error.message}</p>}
       {/* 数字人格申请 */}
       <div className="mt-2 flex items-center gap-2">
@@ -124,13 +121,13 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
           <option value="">{t('orgMarket.selectPersona')}</option>
           {(personas.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
         </select>
-        <button
+        <Button
+          size="sm"
           onClick={() => personaApply.mutate({ personaId })}
           disabled={!personaId || personaApply.isPending}
-          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
         >
           {t('orgMarket.claimAsPersona')}
-        </button>
+        </Button>
       </div>
       {personaApply.isError && <p className="mt-1 text-xs text-red-500">{personaApply.error.message}</p>}
     </div>
@@ -194,19 +191,15 @@ function MyAssignments({ orgId, t }: { orgId: string; t: T }) {
                 <option value="">{t('orgMarket.selectGoalType')}</option>
                 {(goalTypes.data ?? []).map((g) => <option key={g.goalType} value={g.goalType}>{g.goalType}</option>)}
               </select>
-              <button
-                onClick={() => start.mutate({ taskId: a.taskId, managerWorkerId: managerId, goalType })}
-                disabled={!managerId || !goalType || start.isPending}
-                className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary-light disabled:opacity-50"
-              >
+              <Button size="sm" onClick={() => start.mutate({ taskId: a.taskId, managerWorkerId: managerId, goalType })} disabled={!managerId || !goalType || start.isPending}>
                 {t('orgMarket.start')}
-              </button>
+              </Button>
             </div>
           )}
           {a.status === 'in_progress' && (
-            <button onClick={() => submit.mutate({ taskId: a.taskId })} disabled={submit.isPending} className="mt-2 rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-500 disabled:opacity-50">
+            <Button variant="success" size="sm" onClick={() => submit.mutate({ taskId: a.taskId })} disabled={submit.isPending} className="mt-2">
               {t('orgMarket.submit')}
-            </button>
+            </Button>
           )}
           {start.isError && <p className="mt-1 text-xs text-red-500">{start.error.message}</p>}
           {submit.isError && <p className="mt-1 text-xs text-red-500">{submit.error.message}</p>}
@@ -233,12 +226,12 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
           <span className="mb-1 text-gray-600">{t('orgMarket.taskIdLabel')}</span>
           <input value={taskId} onChange={(e) => setTaskId(e.target.value)} placeholder="mkt_…" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
         </label>
-        <button onClick={() => setCommittedTaskId(taskId.trim())} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-light">
+        <Button onClick={() => setCommittedTaskId(taskId.trim())}>
           {t('orgMarket.viewApplicants')}
-        </button>
-        <button onClick={() => accept.mutate({ taskId: committedTaskId })} disabled={!committedTaskId || accept.isPending} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-500 disabled:opacity-50">
+        </Button>
+        <Button variant="success" onClick={() => accept.mutate({ taskId: committedTaskId })} disabled={!committedTaskId || accept.isPending}>
           {t('orgMarket.acceptSettle')}
-        </button>
+        </Button>
       </div>
       {accept.isSuccess && accept.data.settlement && (
         <p className="text-xs text-green-600">{t('orgMarket.settled')}: {accept.data.settlement.orgAmountMinor} ({t('orgMarket.walletBalance')}: {accept.data.walletBalance})</p>
@@ -259,9 +252,9 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
                     <div className="flex items-center gap-2">
                       <span style={badge(STATUS_COLOR[a.status] ?? '#9ca3af')}>{a.status}</span>
                       {a.status === 'submitted' && (
-                        <button onClick={() => confirmAssignOrg.mutate({ taskId: committedTaskId, orgId: a.orgId })} disabled={confirmAssignOrg.isPending} className="rounded bg-primary px-3 py-1 text-xs font-medium text-white hover:bg-primary-light disabled:opacity-50">
+                        <Button size="sm" onClick={() => confirmAssignOrg.mutate({ taskId: committedTaskId, orgId: a.orgId })} disabled={confirmAssignOrg.isPending}>
                           {t('orgMarket.assignToOrg')}
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -283,9 +276,9 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
                     <div className="flex items-center gap-2">
                       <span style={badge(STATUS_COLOR[a.status] ?? '#9ca3af')}>{a.status}</span>
                       {a.status === 'submitted' && (
-                        <button onClick={() => assignPersona.mutate({ personaId: a.personaId })} disabled={assignPersona.isPending} className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+                        <Button size="sm" onClick={() => assignPersona.mutate({ personaId: a.personaId })} disabled={assignPersona.isPending}>
                           {t('orgMarket.assignToPersona')}
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>

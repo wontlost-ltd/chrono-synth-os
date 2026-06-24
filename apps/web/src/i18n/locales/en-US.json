@@ -415,13 +415,18 @@
     "groups": {
       "agents": "Agents & Knowledge",
       "ops": "Operations",
-      "workforce": "Digital Workforce"
+      "workforce": "Digital Workforce",
+      "governance": "Governance"
     },
     "growth": "Your Growth",
     "conflicts": "Conflict Inbox",
     "workforce": "Digital Workforce",
     "workforceMarketplace": "Org Task Marketplace",
-    "workforceViz": "Workforce Visualization"
+    "workforceViz": "Workforce Visualization",
+    "agencyAuthorizations": "Agency Authorizations",
+    "toolPermissions": "Tool Permissions",
+    "toolInvocations": "Tool Invocations",
+    "safetyDrift": "Drift Monitor"
   },
   "appShell": {
     "skipToMain": "Skip to main content",
