@@ -86,7 +86,7 @@ body {
   padding: var(--c-space-3); border: none; border-radius: var(--c-radius-pill); background: var(--c-brand-strong);
   color: #fff; font-size: var(--c-text-base); cursor: pointer;
 }
-.login__submit:disabled { opacity: 0.6; cursor: default; }
+.login__submit:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态=0.6 + not-allowed（原 default 光标误导，0.6 比 0.5 更易读）*/
 
 .tabs {
   /* 6 个 tab 在窄屏（≤360px）总宽超出列宽。原 flex:1 等分会让「我的数字人」(5字+选中加粗)
@@ -142,7 +142,7 @@ body {
   margin-top: var(--c-space-3); width: 100%; padding: 10px; border: none; border-radius: var(--c-radius-pill);
   background: var(--c-surface-2); color: var(--c-text); font-size: var(--c-text-base); cursor: pointer;
 } /* margin-top 14px→12，并入刻度 */
-.loadmore:disabled { opacity: 0.6; cursor: default; }
+.loadmore:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 
 .intensity { margin: 0; font-size: var(--c-text-base); } /* 16px→15(base)，差 1px 不可见 */
 .intensity strong { color: var(--c-brand); }
@@ -165,6 +165,12 @@ body {
 .state { padding: var(--c-space-6) var(--c-space-4); text-align: center; color: var(--c-muted); }
 .state--error { color: var(--c-neg); }
 .state--auth p { margin: var(--c-space-1) 0; }
+/* 加载态：原仅静态「加载中…」文本，读起来像「卡住」。加柔和呼吸脉冲，提示「正在进行」。
+ * 不做逐视图形状骨架——C 端数据加载很快，整页 shape-skeleton 投入产出比低；脉冲是通用轻量升级。 */
+.state--loading { animation: state-pulse 1.4s ease-in-out infinite; }
+/* 谷值 0.6 与既有 .perceive__mic--on 的 perceive-pulse 一致（0.45 在 dark 底太暗影响可读）。 */
+@keyframes state-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .state--loading { animation: none; } } /* 尊重减少动效偏好 */
 
 /* 「让 TA 听一段」感知视图 */
 .perceive__input {
@@ -197,7 +203,7 @@ body {
   font-size: var(--c-text-base);
   cursor: pointer;
 }
-.perceive__submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.perceive__submit:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 .perceive__buttons { display: flex; align-items: center; gap: var(--c-space-2); }
 .perceive__mic {
   padding: 9px 14px;
@@ -208,7 +214,7 @@ body {
   font-size: var(--c-text-base);
   cursor: pointer;
 }
-.perceive__mic:disabled { opacity: 0.5; cursor: not-allowed; }
+.perceive__mic:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 /* 听写中：实心红，脉冲提示「正在录」。 */
 .perceive__mic--on {
   background: var(--c-neg);
