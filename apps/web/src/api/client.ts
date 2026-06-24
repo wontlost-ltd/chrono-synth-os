@@ -1,5 +1,5 @@
 import { API_BASE_URL } from '../config';
-import { getSession, setSession, clearSession } from '../store/session';
+import { getSession, setSession, clearSession, getSessionEpoch } from '../store/session';
 import { addApiBreadcrumb } from '../lib/sentry';
 import { getCsrfToken, resetCsrfToken } from '../lib/csrf';
 
@@ -80,8 +80,6 @@ function parseErrorBody(status: number, raw: string): {
   };
 }
 
-let refreshPromise: Promise<boolean> | null = null;
-
 /** 尝试通过 HttpOnly cookie 刷新 accessToken。
  *
  * /auth/refresh 走 cookie auth + 受 CSRF 保护（双 cookie 模式），所以
@@ -89,10 +87,21 @@ let refreshPromise: Promise<boolean> | null = null;
  * 服务端的 csrf 插件返回 403 CSRF_TOKEN_MISMATCH，前端把它当成「refresh
  * 失败」清掉 session，用户被强制重登。这是个长期存在的"自动登出"bug。
  */
-async function tryRefresh(): Promise<boolean> {
+/*
+ * refresh 三态（移植 companion-web 模型，消除「单端点 401 误登出」隐患）：
+ *   - 'refreshed'：拿到新 accessToken，会话已续期。
+ *   - 'failed'   ：refresh **真实**被拒（cookie 过期/无效，res 非 ok）→ 会话确已死，clearSession。
+ *   - 'superseded'：①期间发生 login/logout（epoch 变）②或网络/CSRF 等**瞬时**异常 → 本次结果作废，
+ *                   **绝不** clearSession（避免一个非关键端点的瞬时 refresh 失败把有效会话全局清掉）。
+ */
+type RefreshOutcome = 'refreshed' | 'failed' | 'superseded';
+let refreshPromise: Promise<RefreshOutcome> | null = null;
+
+async function tryRefresh(): Promise<RefreshOutcome> {
   if (refreshPromise) return refreshPromise;
 
-  refreshPromise = (async () => {
+  const startedEpoch = getSessionEpoch();
+  refreshPromise = (async (): Promise<RefreshOutcome> => {
     try {
       const csrf = getCsrfToken();
       const headers: Record<string, string> = {
@@ -107,19 +116,20 @@ async function tryRefresh(): Promise<boolean> {
         credentials: 'include',
         body: '{}',
       });
-      if (!res.ok) {
-        clearSession();
-        return false;
-      }
+      /* 期间发生了 login/logout（epoch 变）→ 本次 refresh 结果已陈旧，丢弃不写回也不清会话。 */
+      if (getSessionEpoch() !== startedEpoch) return 'superseded';
+      if (!res.ok) { clearSession(); return 'failed'; }
       const json = await res.json() as { data: { accessToken: string } };
+      if (getSessionEpoch() !== startedEpoch) return 'superseded';
+      if (!json.data?.accessToken) { clearSession(); return 'failed'; }
       setSession({ accessToken: json.data.accessToken });
-      /* refresh 成功 → 后端在 Set-Cookie 里下发新的 csrf_token；
-       * 强制重读，避免下一次 POST 仍带旧令牌触发 403。 */
+      /* refresh 成功 → 后端在 Set-Cookie 里下发新的 csrf_token；强制重读避免下次 POST 带旧令牌 403。 */
       resetCsrfToken();
-      return true;
+      return 'refreshed';
     } catch {
-      clearSession();
-      return false;
+      /* 瞬时异常（网络/中断/CSRF 抖动）：一律**不清会话**——避免一个非关键端点的瞬时 refresh 失败
+       * 把有效会话全局登出。视作 superseded，调用方拿到原始 401/错误自行处理（不强制重登）。 */
+      return 'superseded';
     } finally {
       refreshPromise = null;
     }
@@ -128,9 +138,9 @@ async function tryRefresh(): Promise<boolean> {
   return refreshPromise;
 }
 
-/** 公开刷新接口，供 AuthGuard 启动时尝试恢复会话 */
+/** 公开刷新接口，供 AuthGuard 启动时尝试恢复会话。返回是否拿到有效会话。 */
 export async function refreshAccessToken(): Promise<boolean> {
-  return tryRefresh();
+  return (await tryRefresh()) === 'refreshed';
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -140,6 +150,8 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
 async function doFetch<T>(path: string, init?: RequestInit, isRetry = false): Promise<T> {
   const session = getSession();
+  /* 记录发请求时的 token，用于 401 时判定是否为「陈旧 401」（期间会话已被并发 login/logout 换掉）。 */
+  const sentToken = session.accessToken;
   const headers: Record<string, string> = {};
 
   /* 优先使用 Bearer token，回退到 API Key */
@@ -166,10 +178,19 @@ async function doFetch<T>(path: string, init?: RequestInit, isRetry = false): Pr
     credentials: 'include',
   });
 
-  /* 401 + 非重试 → 尝试通过 cookie 刷新后重试一次 */
+  /*
+   * 401 + 非重试：按会话身份决策（移植 companion-web 模型，消除「单端点 401 误登出」）。
+   *   - 陈旧 401（当前 token 已与发请求时不同，即期间发生了 login/logout）→ 用当前会话重试一次，
+   *     绝不 refresh/清会话（否则一个在途的旧请求 401 会清掉刚换的新会话）。
+   *   - 否则同一会话 → 尝试 refresh；'refreshed'/'superseded' 都重试一次（superseded 表示期间会话
+   *     变化或瞬时失败，会话未被清，值得用当前态重试）；仅 'failed'（refresh 真实被拒）不重试，
+   *     此时 clearSession 已在 tryRefresh 内做，最终按 401 抛给调用方。 */
   if (res.status === 401 && !isRetry) {
-    const refreshed = await tryRefresh();
-    if (refreshed) return doFetch<T>(path, init, true);
+    if (getSession().accessToken !== sentToken) {
+      return doFetch<T>(path, init, true);
+    }
+    const outcome = await tryRefresh();
+    if (outcome === 'refreshed' || outcome === 'superseded') return doFetch<T>(path, init, true);
   }
 
   addApiBreadcrumb(method, path, res.status);
