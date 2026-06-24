@@ -632,7 +632,18 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   toolInvocationsRetentionWorker.start();
   app.addHook('onClose', async () => { await toolInvocationsRetentionWorker.stop(); });
 
-  /* 路由 */
+  /* ── 路由注册 ────────────────────────────────────────────────────────────
+   * 按产品分层组织（P2：route 可读性分层；只加分组注释，不移动文件——移 50 文件改 import 路径
+   * churn 大且触运行中注册，价值在「读得懂分层」而非「物理目录」）。分层：
+   *   ① 通用/平台   auth、user、org、billing、health、metrics、audit、sso、scim、api-keys、feature-flags、v2、docs
+   *   ② C 端 Companion  companion 系列 + value、memory、narrative（C 端叙事消费内核同一份数据）
+   *   ③ 人格与成长  persona-core、persona、snapshot、decision、earning、distillation、conversation
+   *   ④ 数字员工    workforce、workforce-viz、workforce-admin、workforce-actions
+   *   ⑤ 治理与审计  conflicts、agent 系列、mcp、admin 系列、privacy
+   *   ⑥ 人生模拟    life-simulations、life-sim-viz（ADR-0047 论点载体；非首屏）
+   * 实际调用顺序保持不变（避免注册顺序副作用），下方分组注释仅作导航。 */
+
+  /* ① 通用/平台 */
   registerAuthRoutes(app, db, config);
   registerUserRoutes(app, services);
   registerOrganizationRoutes(app, services);
@@ -661,7 +672,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       targetValue: target ?? undefined,
     });
   };
+  /* ③ 人格与成长 */
   registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
+  /* ④ 数字员工 */
   /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。
    * clock 供 C 链 SLA 时间感知（worker 信号据 now 与任务 due_at 派生 overdue/due_soon）。 */
   registerWorkforceRoutes(app, db, deps.os.getClock());
@@ -684,6 +697,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     conversationService,
     conversationRetentionWorker,
   });
+  /* ② C 端 Companion（含 value/memory/narrative：C 端叙事消费的内核数据） */
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
@@ -695,6 +709,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);
+  /* ⑤ 治理与审计 */
   registerConflictRoutes(app, db, config);
   registerMetricsRoutes(app, deps.os, config);
   registerAuditRoutes(app, db);
@@ -706,6 +721,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOnboardingV2Routes(app, config, db, services.organization);
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory, config);
+  /* ⑥ 人生模拟（ADR-0047 确定性离线决策引擎载体；前端已降位，非首屏） */
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
