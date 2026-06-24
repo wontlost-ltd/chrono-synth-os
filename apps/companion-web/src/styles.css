@@ -52,12 +52,30 @@ body {
 }
 .login__submit:disabled { opacity: 0.6; cursor: default; }
 
-.tabs { display: flex; gap: 8px; margin-bottom: var(--c-gap); }
+.tabs {
+  /* 6 个 tab 在窄屏（≤360px）总宽超出列宽。原 flex:1 等分会让「我的数字人」(5字+选中加粗)
+   * 折行很丑；改 nowrap 后又会横向溢出裁切。窄屏正解：tab 不换行不等分（内容宽），
+   * 容器装不下时横向滚动——可滑动够到全部 tab，永不折行/裁切。 */
+  display: flex; gap: 8px; margin-bottom: var(--c-gap);
+  overflow-x: auto; scrollbar-width: none; /* Firefox 隐藏滚动条（仍可滑动/键盘滚入） */
+}
+.tabs::-webkit-scrollbar { display: none; } /* WebKit 隐藏滚动条，保留可滑动 */
 .tabs__btn {
-  flex: 1; padding: 10px 12px; border: none; border-radius: 999px;
+  /* 内容宽不收缩（flex-shrink:0），不换行；配合容器 overflow-x:auto 实现窄屏横滑。 */
+  flex: 0 0 auto; white-space: nowrap;
+  padding: 10px 12px; border: none; border-radius: 999px;
   background: var(--c-surface); color: var(--c-muted); font-size: 15px; cursor: pointer;
 }
+/* 键盘可达：dark 底上 tab 无可见焦点环，对齐 .login__field input:focus 规范。 */
+.tabs__btn:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 2px; }
 .tabs__btn--active { background: var(--c-brand); color: #fff; }
+
+/* 宽屏（≥500px，6 tab 总宽必然装得下）恢复等分铺满，消除窄屏方案在桌面端留下的右侧
+ * 散尾留白。min-width:max-content 兜底：等分槽永不窄于内容宽，杜绝「我的数字人」复折行。 */
+@media (min-width: 500px) {
+  .tabs { overflow-x: visible; }
+  .tabs__btn { flex: 1 1 0; min-width: max-content; }
+}
 
 .view { display: flex; flex-direction: column; gap: var(--c-gap); }
 .card { background: var(--c-surface); border-radius: var(--c-radius); padding: 18px; }
