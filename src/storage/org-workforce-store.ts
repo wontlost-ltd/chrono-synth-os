@@ -185,6 +185,11 @@ export class OrgWorkforceStore {
    */
   migrateOrgStructure(fromOrgId: string, toOrgId: string): number {
     const movedWorkers = this.listWorkers(fromOrgId).length;
+    /*
+     * SQL 注入安全（P3-1）：表名来自下面这个**方法内硬编码的白名单数组**，永不来自外部输入，
+     * 故 `UPDATE ${table}` 的字符串插值无注入风险；org_id/tenant_id 均参数化。新增迁移表只能改
+     * 此数组（受代码审查）。若将来表名来源变为动态，必须改为标识符转义或显式映射。
+     */
     const tables = [
       'digital_workers', 'org_positions', 'reporting_edges', 'org_goals', 'org_tasks', 'task_reports',
       'org_conversation_threads', 'org_messages', 'org_handoffs', 'org_approvals', 'org_escalations', 'learning_requests',
