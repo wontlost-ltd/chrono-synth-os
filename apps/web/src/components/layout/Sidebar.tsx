@@ -142,7 +142,7 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: 'var(--gradient-brand)', boxShadow: '0 0 16px rgba(99, 102, 241, 0.5)' }} aria-hidden="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3h14v3l-8 8 8 8v3H5v-3l8-8L5 6z"/></svg>
             </span>
-            <span className="text-[15px] font-bold tracking-tight text-gradient-brand">ChronoSynth</span>
+            <span className="text-base font-bold tracking-tight text-gradient-brand">ChronoSynth</span>
           </div>
         )}
         <div className="flex gap-1">
@@ -165,8 +165,10 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
         </div>
       </div>
 
+      {/* leading-tight 锁定两行（Tenant 标签 + 邮箱）的紧凑行距：text-xs 隐式带 line-height:1rem，
+          显式 pin 行距使其不随字阶 util 默认值漂移，保持双行 chip 的既有紧凑观感。 */}
       {!collapsed && user && (
-        <div className="mx-3 mt-3 mb-1 rounded-lg border border-border px-3 py-2 text-[11px]" style={{ background: 'var(--gradient-brand-soft)' }}>
+        <div className="mx-3 mt-3 mb-1 rounded-lg border border-border px-3 py-2 text-xs leading-tight" style={{ background: 'var(--gradient-brand-soft)' }}>
           <div className="text-text-tertiary uppercase tracking-wider">Tenant</div>
           <div className="font-mono text-text-primary truncate" title={user.email}>{user.email}</div>
         </div>
@@ -185,7 +187,11 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
                 <button
                   onClick={() => toggleGroup(group.id)}
                   /* a11y：section 标题用 text-secondary（#CBD5E1）而非 tertiary（#64748B 仅 3.07，
-                   * 10px 灰字对比度不足）；secondary 对 surface 达 ~9:1 过 WCAG AA。 */
+                   * 10px 灰字对比度不足）；secondary 对 surface 达 ~9:1 过 WCAG AA。
+                   * 取舍原则：11/13/15px 是一次性的随手值（次要文本/徽标，并入标准字阶 +1px 不可见）；
+                   * 10px 是「导航分组小标题」成体系的微号子档（uppercase+0.12em 字距的常见导航惯例，且与
+                   * 下方 chevron 成对），Tailwind 无 text-2xs 对应，升到 12px 是 +20% 改紧凑导航观感——
+                   * 故保留字面量。区别在「一次性随手值 vs 系统化子档」，非随意。 */
                   className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-secondary hover:text-text-primary"
                 >
                   <span>{t(group.labelKey)}</span>

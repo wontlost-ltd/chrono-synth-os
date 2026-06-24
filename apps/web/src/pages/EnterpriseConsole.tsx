@@ -119,12 +119,12 @@ function MetricTile({
         style={{ background: `linear-gradient(180deg, ${accentColor.from}, ${accentColor.to})` }}
       />
       <div className="pl-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-text-secondary">{label}</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.1em] text-text-secondary">{label}</p>
         <div className="mt-2 flex items-baseline gap-2">
           <p className="text-2xl font-bold text-text-primary tabular-nums">{value}</p>
           {typeof trend === 'number' && (
             <span
-              className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums"
+              className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums"
               style={{
                 background: trend >= 0 ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
                 color: trend >= 0 ? '#22C55E' : '#F87171',
@@ -1303,7 +1303,7 @@ function AuditPanel({
           rowActions={(row) => (
             <details className="max-w-[24rem] text-left">
               <summary className="cursor-pointer text-xs text-primary">Payload</summary>
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 text-[11px] text-text-secondary">
+              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 text-xs text-text-secondary">
                 {formatJson(row.payload ?? {})}
               </pre>
             </details>

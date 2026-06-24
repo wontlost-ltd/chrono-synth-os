@@ -56,7 +56,7 @@ function ScopeBadge({ scope }: { scope: ToolScope }) {
   const s = SCOPE_STYLE[scope];
   return (
     <span
-      className="inline-block rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider"
+      className="inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wider"
       style={{ backgroundColor: s.bg, color: s.fg, border: `1px solid ${s.border}` }}
     >
       {scope}
@@ -174,7 +174,7 @@ export function AdminToolPermissions() {
                       {p.personaId.length > 18 ? `${p.personaId.slice(0, 14)}…${p.personaId.slice(-3)}` : p.personaId}
                     </span>
                   </td>
-                  <td className="p-3 font-mono text-[13px] text-text-primary">{p.toolId}</td>
+                  <td className="p-3 font-mono text-sm text-text-primary">{p.toolId}</td>
                   <td className="p-3">
                     <ScopeBadge scope={p.scope} />
                   </td>
