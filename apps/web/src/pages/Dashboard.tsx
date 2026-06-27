@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -8,57 +8,47 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { LiveIndicator } from '../components/ui/LiveIndicator';
 import { LiveMetricStream } from '../components/charts/LiveMetricStream';
 import { useOverview } from '../api/queries/visualization';
-import { useSimulationList, type SimulationListItem } from '../api/queries/simulations';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useAuth } from '../hooks/useAuth';
 
-/** 落地总览卡片——指向产品核心能力。人生模拟列为入口之一（降位），不再是首屏唯一叙事。 */
+/** 落地总览卡片——指向产品核心能力。人生模拟列为入口之一（降位），不再是首屏唯一叙事。
+ * adminOnly 的卡片其目标路由包了 <AdminOnly>（非 admin 会被静默重定向回 /dashboard，
+ * 表现为「死链」）；故对非 admin 用户隐藏，避免点击后弹回原页（Codex 交叉审查发现）。 */
 const OVERVIEW_CARDS = [
-  { to: '/workforce', titleKey: 'overview.cards.workforce.title', descKey: 'overview.cards.workforce.desc' },
-  { to: '/persona-core', titleKey: 'overview.cards.persona.title', descKey: 'overview.cards.persona.desc' },
-  { to: '/admin/agency-authorizations', titleKey: 'overview.cards.governance.title', descKey: 'overview.cards.governance.desc' },
-  { to: '/knowledge-sources', titleKey: 'overview.cards.knowledge.title', descKey: 'overview.cards.knowledge.desc' },
-  { to: '/marketplace', titleKey: 'overview.cards.marketplace.title', descKey: 'overview.cards.marketplace.desc' },
-  { to: '/simulations', titleKey: 'overview.cards.simulations.title', descKey: 'overview.cards.simulations.desc' },
+  { to: '/workforce', titleKey: 'overview.cards.workforce.title', descKey: 'overview.cards.workforce.desc', adminOnly: true },
+  { to: '/persona-core', titleKey: 'overview.cards.persona.title', descKey: 'overview.cards.persona.desc', adminOnly: false },
+  { to: '/admin/agency-authorizations', titleKey: 'overview.cards.governance.title', descKey: 'overview.cards.governance.desc', adminOnly: true },
+  { to: '/knowledge-sources', titleKey: 'overview.cards.knowledge.title', descKey: 'overview.cards.knowledge.desc', adminOnly: false },
+  { to: '/marketplace', titleKey: 'overview.cards.marketplace.title', descKey: 'overview.cards.marketplace.desc', adminOnly: false },
+  { to: '/simulations', titleKey: 'overview.cards.simulations.title', descKey: 'overview.cards.simulations.desc', adminOnly: false },
 ] as const;
 
 export function Dashboard() {
   const { t } = useTranslation();
+  const { role } = useAuth();
   const [simId, setSimId] = useState(() => {
     try { return localStorage.getItem('last-sim-id') ?? ''; } catch { return ''; }
   });
   /* 标题随内容：无选中模拟=总览（避免「人生模拟仪表盘」霸占首屏标题），选中后=模拟仪表盘。 */
   useDocumentTitle(simId ? t('dashboard.title') : t('overview.title'));
 
-  /* 无已选模拟时，自动选取最近完成的模拟 */
-  const { data: listData } = useSimulationList(1, 20);
-  useEffect(() => {
-    if (!simId && listData?.data?.length) {
-      const completed = listData.data.reduce<SimulationListItem | undefined>((latest, sim) => {
-        if (sim.status !== 'completed') return latest;
-        const simTs = sim.completedAt ?? sim.createdAt ?? 0;
-        if (!latest) return sim;
-        const latestTs = latest.completedAt ?? latest.createdAt ?? 0;
-        return simTs > latestTs ? sim : latest;
-      }, undefined);
-      if (completed) {
-        setSimId(completed.simulationId);
-        try { localStorage.setItem('last-sim-id', completed.simulationId); } catch { /* ignored */ }
-      }
-    }
-  }, [simId, listData]);
-
+  /* 不在挂载时自动选最近完成的模拟：那会让有历史模拟的用户被静默切回模拟仪表盘，
+   * 绕开「默认落地总览、人生模拟降为一卡」的信息架构目标（Codex 交叉审查发现）。
+   * 「继续上次模拟」由上面 localStorage('last-sim-id') 初始态承载（用户上次显式看的那个），
+   * 以及总览中显式的模拟卡入口承载——均为用户动作，不再隐式改写 simId。 */
   const { data, isLoading, error } = useOverview(simId);
   const ws = useWebSocket({ autoConnect: !!simId });
 
   if (!simId) {
     /* 默认落地（无选中模拟）：呈现产品真正的核心（数字员工/治理/人格/知识），而非把用户推向
      * 「建人生模拟」。人生模拟降为众入口之一（ADR-0047 论点载体仍在，但不再霸占首屏叙事）。 */
+    const cards = OVERVIEW_CARDS.filter((c) => !c.adminOnly || role === 'admin');
     return (
       <>
         <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')} />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {OVERVIEW_CARDS.map((c) => (
+          {cards.map((c) => (
             <Link
               key={c.to}
               to={c.to}

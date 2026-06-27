@@ -9,7 +9,7 @@
  */
 
 import type { SyncEnvelopeV1 } from '@chrono/contracts';
-import { apiFetch } from '@/api/client';
+import { apiFetch, ApiError } from '@/api/client';
 import {
   enqueueOutbox,
   dequeueOutbox,
@@ -172,7 +172,12 @@ export async function flushOutbox(tenantId: string): Promise<{ pushed: number; f
       } else {
         await incrementOutboxAttempts(entry.commandId);
       }
-    } catch {
+    } catch (err) {
+      /* 协议级不可用（404 = 此后端无 /sync/push 端点）必须**上抛**，让 useSyncEngine 的 404 catch
+       * 触发降级（停轮询 + sync.disabled）——否则 push 404 被这里吞掉，pull 可用时 sync 会一直
+       * 「假成功」推送一个不存在的端点（Codex 交叉审查发现：commit 声称已覆盖 push 404 实未覆盖）。
+       * 其余 per-entry 可重试错误（网络抖动/5xx 等）仍按原逻辑累加 attempts，不中断整批。 */
+      if (err instanceof ApiError && err.status === 404) throw err;
       await incrementOutboxAttempts(entry.commandId);
     }
   }

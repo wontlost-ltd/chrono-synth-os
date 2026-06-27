@@ -95,14 +95,23 @@ describe('useConflictInbox runtime parse', () => {
     expect(result.current.error?.message).toMatch(/conflict inbox schema mismatch/);
   });
 
-  /* 畸形响应（既非数组也非 {data:[]} 信封）→ unwrapList 退化为 []，收件箱显示空列表而非崩溃。
-   * 这比原来「报 load error」更稳健：一个被代理改写/字段缺失的响应不该让整页炸成错误卡片。
-   * item 级 schema 漂移（数组里有坏元素）仍由上一条用例覆盖的 safeParse 拒绝。 */
-  it('degrades to an empty list when the response is neither array nor {data} envelope', async () => {
+  /* 安全面强边界（Codex 交叉审查修正）：冲突是用户安全面，畸形顶层响应**绝不能**伪装成「0 冲突」。
+   * 既非裸数组也非 {data:数组} 的形状 → 走 load error（红色兜底卡用户可感知），而非静默空成功态。
+   * （对比 values/personas 非安全面，unwrapList 兜底 [] 可接受；这里收件箱显式拒绝。） */
+  it('surfaces a load error when the response is neither array nor {data: array} (safety surface)', async () => {
     apiFetchMock.mockResolvedValueOnce({ unexpected: 'object' });
     const { result } = renderHook(() => useConflictInbox());
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.conflicts).toEqual([]);
-    expect(result.current.error).toBeNull();
+    expect(result.current.error?.scope).toBe('load');
+    expect(result.current.error?.message).toMatch(/envelope mismatch/);
+  });
+
+  /* {data: 非数组}（错误信封/schema 包装变化）同样必须报错，不能当空冲突。 */
+  it('surfaces a load error when data is present but not an array', async () => {
+    apiFetchMock.mockResolvedValueOnce({ data: { items: [] }, pagination: { total: 5 } });
+    const { result } = renderHook(() => useConflictInbox());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error?.scope).toBe('load');
   });
 });

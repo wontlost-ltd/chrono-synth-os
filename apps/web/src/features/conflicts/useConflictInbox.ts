@@ -66,16 +66,16 @@ export function useConflictInbox(): {
       const raw = await apiFetch<unknown>('/api/v1/conflicts');
       /* 后端返回分页信封 {data,pagination}（apiFetch 不自动解包，保留 pagination），用共享
        * unwrapList 取出数组再做 Zod 严格校验——直接 safeParse(信封) 必失败→收件箱对所有用户
-       * 永远报 error boundary（哪怕 0 冲突）。unwrapList 对非数组/非信封形状返回 []，故畸形响应
-       * 退化为空列表而非崩溃；item 级 schema 漂移仍由下面的 safeParse 拒绝。 */
-      /* 可观测性：冲突是用户安全面（漏一条冲突 > 报错）。畸形响应被静默退化为空时留一条 warn，
-       * 否则真实后端故障会伪装成「0 冲突」让用户误判——其他列表（values/personas）非安全面不需此告警。 */
+       * 永远报 error boundary（哪怕 0 冲突）。 */
+      /* 安全面强边界（Codex 交叉审查）：冲突是用户安全面，「无法确认冲突列表」**绝不能**伪装成
+       * 「0 冲突」。unwrapList 通用 helper 对畸形形状兜底为 []（对 values/personas 是可接受降级），
+       * 但这里**显式拒绝**畸形顶层响应→走 load error（红色兜底卡，用户可感知），而非静默空成功态。
+       * 接受形状仅：裸数组 / {data: 数组}。其余（{data:非数组}、错误信封、null、schema 包装变化）报错。 */
       const isExpectedShape =
         Array.isArray(raw) ||
         (raw !== null && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data));
       if (!isExpectedShape) {
-        /* dev log 用英文（i18n 检查器不扫 t()-外英文，且 console 非用户面）。中文说明见上方注释。 */
-        console.warn('[conflicts] response is neither array nor {data,pagination} envelope; degraded to empty inbox — may mask real conflicts', { raw });
+        throw new Error('conflict inbox envelope mismatch: response is neither array nor {data: array}');
       }
       const parsed = ConflictInboxResponseSchema.safeParse(unwrapList(raw));
       if (!parsed.success) {

@@ -52,4 +52,33 @@ describe('useSyncEngine — 增量同步端点 404 降级', () => {
     await waitFor(() => expect(result.current.snapshot.state).toBe('error'));
     expect(result.current.snapshot.lastErrorCode).toBe('SYNC_ERROR');
   });
+
+  /* Codex 交叉审查发现①：pull 成功但 push（flushOutbox）抛 404 时，也必须降级 disabled
+   * （此前 flushOutbox 吞掉 404 不上抛，push 404 到不了引擎 → sync 假成功）。 */
+  it('pull 成功但 push 404 → 同样降级 disabled，停止后续轮询', async () => {
+    pullMock.mockResolvedValue(0);
+    countMock.mockResolvedValue(1); // 有待推送
+    flushMock.mockRejectedValue(new ApiError(404, 'Not Found')); // push 端点不存在
+    const { result } = renderHook(() => useSyncEngine({ enabled: true, pollIntervalMs: 10 }));
+    await waitFor(() => expect(result.current.snapshot.state).toBe('disabled'));
+    expect(result.current.snapshot.lastErrorCode).toBeNull();
+    const calls = pullMock.mock.calls.length;
+    await act(async () => { await new Promise(r => setTimeout(r, 60)); });
+    expect(pullMock.mock.calls.length).toBe(calls); // 短路后不再轮询
+  });
+
+  /* Codex 交叉审查发现②：404 disabled 后，enabled prop 切走再切回 true，状态必须保持 disabled
+   * （ref 永久短路了实际同步，UI 不能显示「已启用」而行为已禁用）。 */
+  it('404 disabled 后 enabled toggle 回 true 仍保持 disabled（状态与行为一致）', async () => {
+    pullMock.mockRejectedValue(new ApiError(404, 'Not Found'));
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useSyncEngine({ enabled, pollIntervalMs: 10 }),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(result.current.snapshot.state).toBe('disabled'));
+    rerender({ enabled: false });
+    rerender({ enabled: true }); // 重新启用
+    await act(async () => { await new Promise(r => setTimeout(r, 30)); });
+    expect(result.current.snapshot.state).toBe('disabled'); // 仍 disabled，不被配置回 enabled
+  });
 });

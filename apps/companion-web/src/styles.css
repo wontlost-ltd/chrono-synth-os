@@ -85,8 +85,8 @@ body {
 }
 .hero__body { flex: 1; min-width: 0; }
 .hero__progress { margin: var(--c-space-3) 0 0; font-size: var(--c-text-base); color: var(--c-text); }
-/* 进度数字用更亮的暖琥珀（#c2691e 在卡片底仅 4.12，亮调对比 7.57 更清晰）；与品牌同色系。 */
-.hero__progress strong { color: #e8924a; font-variant-numeric: tabular-nums; }
+/* 进度数字用品牌文本色（亮琥珀 --c-brand-text，卡片底 7.57 清晰）；与上述拆分的文本 token 一致。 */
+.hero__progress strong { color: var(--c-brand-text); font-variant-numeric: tabular-nums; }
 .app__header { position: relative; text-align: center; margin-bottom: 20px; } /* 头部锚点间距保留 20px（不吸附到 24，+4px 在移动端可感知）*/
 .app__brand { margin: 0; font-size: var(--c-text-xl); letter-spacing: 0.02em; }
 .app__tagline { margin: var(--c-space-1) 0 0; color: var(--c-muted); font-size: var(--c-text-base); }
@@ -171,7 +171,7 @@ body {
 .loadmore:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 
 .intensity { margin: 0; font-size: var(--c-text-base); } /* 16px→15(base)，差 1px 不可见 */
-.intensity strong { color: var(--c-brand); }
+.intensity strong { color: var(--c-brand-text); } /* 文本用亮琥珀（--c-brand 在 surface 上仅 4.12 不达 AA）*/
 .direction { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; }
 .direction__label { font-size: var(--c-text-base); }
 .direction__desc { color: var(--c-muted); font-size: var(--c-text-sm); }
@@ -182,11 +182,11 @@ body {
 .nudge { padding: var(--c-space-3); background: var(--c-surface); border-radius: var(--c-radius-md); border: 1px solid var(--c-surface-2); } /* 内距 14px→12，并入刻度 */
 .nudge--unread { border-color: var(--c-brand); }
 .nudge__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.nudge__kind { font-size: var(--c-text-xs); font-weight: 600; color: var(--c-brand); }
+.nudge__kind { font-size: var(--c-text-xs); font-weight: 600; color: var(--c-brand-text); } /* 文本用亮琥珀（AA）*/
 .nudge__time { font-size: var(--c-text-xs); color: var(--c-muted); }
 .nudge__body { margin: 0; font-size: var(--c-text-base); line-height: var(--c-leading-normal); }
 .nudge__read-btn { margin-top: 10px; padding: 6px var(--c-space-3); font-size: var(--c-text-sm); border: 1px solid var(--c-surface-2); border-radius: var(--c-radius-pill); background: transparent; color: var(--c-muted); cursor: pointer; }
-.nudge__read-btn:hover { border-color: var(--c-brand); color: var(--c-brand); }
+.nudge__read-btn:hover { border-color: var(--c-brand); color: var(--c-brand-text); } /* 边框装饰用 brand，文本用亮琥珀(AA) */
 
 .state { padding: var(--c-space-6) var(--c-space-4); text-align: center; color: var(--c-muted); }
 .state--error { color: var(--c-neg); }
@@ -236,7 +236,7 @@ body {
   border: 1px solid var(--c-brand);
   border-radius: var(--c-radius-pill);
   background: transparent;
-  color: var(--c-brand);
+  color: var(--c-brand-text); /* 文本亮琥珀(AA)；边框装饰仍用 --c-brand */
   font-size: var(--c-text-base);
   cursor: pointer;
 }

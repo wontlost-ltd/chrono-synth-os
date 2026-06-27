@@ -33,8 +33,10 @@
   --color-accent: #B45309;
   --color-accent-light: #F59E0B;
   --color-success: #166534;
+  --color-success-fill: #166534;
   --color-warning: #92400E;
   --color-error: #991B1B;
+  --color-error-fill: #991B1B;
   --color-info: #1D4ED8;
   --color-active: #166534;
   --color-paused: #92400E;

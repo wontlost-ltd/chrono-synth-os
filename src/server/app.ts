@@ -641,7 +641,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    *   ④ 数字员工    workforce、workforce-viz、workforce-admin、workforce-actions
    *   ⑤ 治理与审计  conflicts、agent 系列、mcp、admin 系列、privacy
    *   ⑥ 人生模拟    life-simulations、life-sim-viz（ADR-0047 论点载体；非首屏）
-   * 实际调用顺序保持不变（避免注册顺序副作用），下方分组注释仅作导航。 */
+   * 除 conversation/distillation/earning 为分组自洽归入③外，其余注册顺序保持原样；
+   * 三者均为独立具体路径（/api/v1/persona-core/:personaId/…），无注册顺序依赖，物理归位不改运行时语义。
+   * 下方分组注释仅作导航。 */
 
   /* ① 通用/平台 */
   registerAuthRoutes(app, db, config);

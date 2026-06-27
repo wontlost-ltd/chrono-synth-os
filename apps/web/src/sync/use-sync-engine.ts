@@ -98,6 +98,13 @@ export function useSyncEngine({
 
   // Sync enabled/disabled changes
   useEffect(() => {
+    /* 若本会话已探测到后端无增量同步端点（404→syncUnavailableRef），即使 enabled prop 切回 true 也
+     * 保持 disabled——否则状态机会显示「已启用/idle」而 runSync 仍被 ref 永久短路，UI 与实际行为不一致
+     * （Codex 交叉审查发现）。404 是「此后端不支持」的能力探测结论，仅页面重载（新 ref）才重新探测。 */
+    if (enabled && syncUnavailableRef.current) {
+      dispatch({ type: 'sync.disabled', occurredAt: Date.now() });
+      return;
+    }
     dispatch({ type: 'sync.configured', enabled, occurredAt: Date.now() });
   }, [enabled]);
 

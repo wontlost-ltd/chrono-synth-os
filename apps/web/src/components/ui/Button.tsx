@@ -22,14 +22,16 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 /* variant → 语义色（全部走 token，零硬编码 hex）。
  * success/danger 用状态色 token；secondary 描边；ghost 无背景仅 hover。
- * hover 策略：primary 有 --color-primary-light token 可换色加亮；success/danger 无对应的
- * -dark/-light token，故用 opacity-90 轻暗作 hover（安全通用，不为两个 variant 引入新 token——
- * 那属设计 token 包的扩展，留待统一 @chrono/ui 阶段再定）。 */
+ * success/danger 用实色按钮专用 fill token（与 badge 文本色 success/danger 解耦，dark 主题需更深以承载白字）。
+ * hover 策略：白字按钮 hover 必须**变深**保持白字对比≥AA——primary hover 用 --color-primary-active
+ * （白字 6.7:1 过 AA）而非 --color-primary-light（更亮的蓝，白字 light 3.68/dark 2.54 不达标——
+ * Codex 交叉审查发现：默认态改 AA 但 hover 态反而退回不合格）。success/danger 无 -dark token，
+ * 用 opacity-90 轻暗（在已 AA 的实色上轻暗仍安全）。 */
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: 'bg-primary text-white hover:bg-primary-light',
+  primary: 'bg-primary text-white hover:bg-primary-active',
   secondary: 'border border-border text-text-primary hover:bg-surface',
-  danger: 'bg-error text-white hover:opacity-90',
-  success: 'bg-success text-white hover:opacity-90',
+  danger: 'bg-error-fill text-white hover:opacity-90',
+  success: 'bg-success-fill text-white hover:opacity-90',
   ghost: 'text-text-secondary hover:bg-surface hover:text-text-primary',
 };
 

@@ -73,6 +73,8 @@ const { size: sizeTokens } = await import(spacingModulePath);
  *    brand.primary        → --color-primary
  *    brand.primaryHover   → --color-primary-hover
  *    status.success       → --color-success
+ *    status.successFill   → --color-success-fill
+ *    status.dangerFill    → --color-error-fill
  *    chart[0]             → --color-chart-1
  *
  *  This map is chosen to match the *existing* CSS variable names in
@@ -112,8 +114,10 @@ function flattenColors(theme) {
   out['--color-accent-light'] = theme.brand.accentHover;
   /* status */
   out['--color-success'] = theme.status.success;
+  out['--color-success-fill'] = theme.status.successFill;
   out['--color-warning'] = theme.status.warning;
   out['--color-error'] = theme.status.danger;
+  out['--color-error-fill'] = theme.status.dangerFill;
   out['--color-info'] = theme.status.info;
   out['--color-active'] = theme.status.active;
   out['--color-paused'] = theme.status.paused;
@@ -303,8 +307,12 @@ function renderCompanionTheme() {
     '--c-text': c.text.primary,
     '--c-muted': c.text.secondary,
     '--c-brand': c.brand.primary,
-    /* 加深品牌蓝：白字按钮背景，确保对比度 ≥4.5:1（WCAG AA）。 */
+    /* 加深品牌（白字按钮/active-tab 背景，对比度 ≥4.5:1 WCAG AA）。 */
     '--c-brand-strong': c.brand.primaryActive,
+    /* 品牌**文本**色（亮琥珀 text.link #e8924a）：--c-brand #c2691e 作正文在 card surface 上仅
+     * 4.12/3.63 不达 AA（Codex 交叉审查发现）；文本强调用此亮调（暗底/卡面均 ≥AA），--c-brand 只作
+     * 进度条/边框/装饰填充。语义拆分：填充 vs 文本。 */
+    '--c-brand-text': c.text.link,
     '--c-pos': c.status.success,
     '--c-neg': c.status.danger,
   };

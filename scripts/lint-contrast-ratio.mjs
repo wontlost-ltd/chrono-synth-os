@@ -91,8 +91,14 @@ function compositeOver(fg, bg, alpha) {
 /* ── Pair declarations ────────────────────────────────────────────── */
 
 /**
- * Each entry: { fg, bg, label, minAA, minAAA?, bgAlpha?, skipForTheme? }
+ * Each entry: { fg, bg, label, minAA, minAAA?, bgAlpha?, fgLiteral?, skipForTheme? }
  *   fg / bg     dotted paths into the theme object
+ *   fgLiteral   if present, use this literal hex as the foreground instead
+ *               of resolving `fg` per theme. Models components that hardcode
+ *               a colour (e.g. solid-fill buttons render `text-white` across
+ *               ALL themes — they do NOT swap to the theme's `text.inverse`,
+ *               which flips to near-black in dark mode). `fg` is still given
+ *               for the failure message / documentation of intent.
  *   label       human-readable; appears in failure output
  *   minAA       contrast ratio required by AA (default 4.5)
  *   minAAA      additional ratio enforced for the high-contrast
@@ -121,11 +127,13 @@ const PAIRS = [
   { fg: 'text.link', bg: 'surface.canvas', label: 'link on page', minAA: 4.5, minAAA: 7.0 },
   /* Inverse text on inverse surface — for toasts, popovers in dark. */
   { fg: 'text.inverse', bg: 'surface.inverse', label: 'inverse text on inverse surface', minAA: 4.5, minAAA: 7.0 },
-  /* Brand primary as button background needs contrast with white text. */
-  { fg: 'text.inverse', bg: 'brand.primary', label: 'inverse text on brand-primary button', minAA: 4.5, minAAA: 7.0 },
-  /* Status colours used as button backgrounds (inverse text on solid fill). */
-  { fg: 'text.inverse', bg: 'status.success', label: 'inverse text on success button', minAA: 3.0, minAAA: 4.5 },
-  { fg: 'text.inverse', bg: 'status.danger', label: 'inverse text on danger button', minAA: 3.0, minAAA: 4.5 },
+  /* Solid-fill buttons (Button.tsx primary/danger/success) render literal `text-white`
+   * across ALL themes — they do NOT use the theme's `text.inverse` (which is near-black
+   * in dark mode). So the gate must measure white-on-fill, not inverse-on-fill, or it
+   * would flag the dark primary button (#FFFFFF on #2563EB = 5.17 AA) as a false 3.45 fail. */
+  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'brand.primary', label: 'white text on brand-primary button', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.successFill', label: 'white text on success-fill button', minAA: 3.0, minAAA: 4.5 },
+  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.dangerFill', label: 'white text on danger-fill button', minAA: 3.0, minAAA: 4.5 },
   /* Status colours as USED IN StatusBadge: status-coloured text on a
    * 10% tint of the SAME status colour over canvas. The tint moves the
    * effective background TOWARD the text colour, so the contrast is
@@ -166,7 +174,8 @@ for (const [themeName, themeMeta] of Object.entries(themes)) {
   console.log(`\n=== theme: ${themeName} ===`);
   for (const pair of PAIRS) {
     if (pair.skipForTheme?.includes(themeName)) continue;
-    const fg = lookup(themeMeta.tokens, pair.fg);
+    /* fgLiteral overrides the per-theme token: models components that hardcode a colour. */
+    const fg = pair.fgLiteral ?? lookup(themeMeta.tokens, pair.fg);
     const bg = lookup(themeMeta.tokens, pair.bg);
     if (fg == null || bg == null) {
       console.error(`  ✖ ${pair.label}: missing token (fg=${pair.fg} → ${fg}, bg=${pair.bg} → ${bg})`);
