@@ -111,12 +111,11 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
     }
   });
 
-  it('register on existing device path also clears any prior invalidation', () => {
-    /* When a user re-registers (deviceUid match → updateOnRegister branch),
-     * the new token similarly should clear any previous invalidation. The
-     * current updateOnRegister command does not clear it because the path
-     * here is on user re-install with a fresh push_token; document the
-     * gap so we don't lose track. */
+  it('register on existing device path clears prior invalidation when a fresh token is provided', () => {
+    /* 移动端（usePushSync）现把 POST /api/v1/devices 注册作为 push token 注册路径——失效后重装/
+     * 重注册带新 token，必须清 is_invalid_at，否则 dispatcher 永久跳过该设备、push 不可恢复
+     * （Codex 交叉审查 High）。updateOnRegister 现在在 pushToken 非空时清失效标记（与 updatePushToken
+     * 同语义：新 token 推定有效）。 */
     const { db, svc } = makeService();
     try {
       const reg = svc.register('tenant_1', 'user_1', {
@@ -125,20 +124,29 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
         pushToken: 'TOKEN_X',
       });
       svc.markTokenInvalid(reg.id);
-      /* Re-register same deviceUid with a new token (simulates re-install). */
+      assert.ok(svc.findById(reg.id)!.is_invalid_at !== null, '先确认已标失效');
+      /* 重注册同 deviceUid 带新 token（模拟重装）→ 走 updateOnRegister 分支。 */
       svc.register('tenant_1', 'user_1', {
         deviceUid: 'uid-5',
         platform: 'ios',
         pushToken: 'TOKEN_Y',
       });
       const row = svc.findById(reg.id)!;
-      /* updateOnRegister currently does NOT clear is_invalid_at; the
-       * canonical clear path is updatePushToken. We accept that — the
-       * caller of register() should call updatePushToken in this flow,
-       * matching how the mobile-device-facade routes /register vs the
-       * push-token endpoint. The assertion below pins the current
-       * behavior so a future refactor that changes this gets caught. */
-      assert.notEqual(row.is_invalid_at, null, 'register-path keeps marker; clear via updatePushToken');
+      assert.equal(row.is_invalid_at, null, '带新 token 的重注册清除失效标记（push 可恢复）');
+      assert.equal(row.push_token, 'TOKEN_Y');
+    } finally {
+      db.close();
+    }
+  });
+
+  it('register on existing device WITHOUT a token (metadata-only) keeps the invalidation marker', () => {
+    /* 纯元数据重注册（pushToken 缺省 → null）不应误清失效标记——只有携带新 token 才推定有效。 */
+    const { db, svc } = makeService();
+    try {
+      const reg = svc.register('tenant_1', 'user_1', { deviceUid: 'uid-6', platform: 'ios', pushToken: 'TOKEN_Z' });
+      svc.markTokenInvalid(reg.id);
+      svc.register('tenant_1', 'user_1', { deviceUid: 'uid-6', platform: 'android' }); // 无 pushToken
+      assert.notEqual(svc.findById(reg.id)!.is_invalid_at, null, '无新 token 的元数据重注册保留失效标记');
     } finally {
       db.close();
     }

@@ -9,7 +9,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { MediaRefStore, type ObjectStorageEraser } from '../../perception/media/media-ref-store.js';
-import { MediaRetentionWorker, LoggingNoopObjectStorageEraser } from '../../perception/media/media-retention-worker.js';
+import { MediaRetentionWorker, FailClosedObjectStorageEraser } from '../../perception/media/media-retention-worker.js';
 import { SilentLogger } from '../../utils/index.js';
 import type { IDatabase } from '../../storage/index.js';
 
@@ -44,15 +44,16 @@ describe('MediaRetentionWorker（媒体 retention 周期接线）', () => {
     assert.equal(store.getObjectKey('permanent'), 'k-perm', '永久引用保留');
   });
 
-  it('no-op 擦除器下仍完成「删引用行」闭环（GDPR 关键：对象侧 no-op，行仍回收）', async () => {
+  it('fail-closed 默认擦除器：抛错 → 计 failed，引用行**保留**（绝不删定位造孤儿）', async () => {
     const store = new MediaRefStore(db, TENANT);
-    store.register({ id: 'gone', objectKey: 'k', sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1, deleteAfter: 1 }, 1000);
+    store.register({ id: 'pending', objectKey: 'k-locator', sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1, deleteAfter: 1 }, 1000);
 
-    const worker = new MediaRetentionWorker(db, new LoggingNoopObjectStorageEraser(new SilentLogger()), new SilentLogger(), () => 10000);
+    const worker = new MediaRetentionWorker(db, new FailClosedObjectStorageEraser(new SilentLogger()), new SilentLogger(), () => 10000);
     const result = await worker.flushOnce();
 
-    assert.equal(result.erased, 1);
-    assert.equal(store.getObjectKey('gone'), undefined, 'no-op 擦除器下引用行仍被删（闭环成立）');
+    assert.equal(result.erased, 0, 'fail-closed 不删');
+    assert.equal(result.failed, 1, '计入 failed（下周期重试）');
+    assert.equal(store.getObjectKey('pending'), 'k-locator', '引用行+object_key 定位保留（无孤儿）');
   });
 
   it('start/stop 生命周期：start 后 healthy，stop 后不再 healthy；重复 start 幂等', async () => {

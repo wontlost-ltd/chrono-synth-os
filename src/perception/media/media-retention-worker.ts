@@ -29,17 +29,21 @@ const DEFAULT_OPTIONS: MediaRetentionOptions = {
 };
 
 /**
- * 默认对象存储擦除器：记日志的 no-op。
+ * 默认对象存储擦除器：**fail-closed**（未配置真实对象存储删除能力时抛错）。
  *
- * 真实 S3/R2/minio driver 在部署期注入（ObjectStorageEraser）。未配置对象存储的环境用本默认——
- * **删引用行的闭环仍成立**（runMediaRetention 在 erase resolve 后删行），只是对象删除是 no-op 日志。
- * 这样即使未接真实对象存储，GDPR 标记行的回收 + 引用堆积清理也能正常进行（对象存储侧由真实
- * driver 接入后补齐）。erase 幂等：对象不存在视为成功（符合接口契约）。
+ * ⚠️ 绝不能用「成功的 no-op」做默认（Codex Critical）：runMediaRetention 在 `erase()` resolve 后
+ * **立即删引用行**——若 erase 是假成功的 no-op，则 DB 行（含 object_key 定位）被删而真实对象仍在，
+ * 原始媒体变成**不可追踪的孤儿，永远无法补删**（比不跑 worker 更糟：不跑至少保留定位）。
+ *
+ * 故默认 erase **抛错** → runMediaRetention 计入 failed、**保留引用行**（含 object_key）→ 下周期重试。
+ * 真实 S3/R2/minio 删除能力在部署期注入（替换本默认）。这样：未配对象存储删除 = 行保留可重试（无孤儿、
+ * GDPR-pending 可见可补做）；接了真实 driver = 正常删对象 + 删行闭环。
  */
-export class LoggingNoopObjectStorageEraser implements ObjectStorageEraser {
+export class FailClosedObjectStorageEraser implements ObjectStorageEraser {
   constructor(private readonly logger: Logger) {}
   async erase(objectKey: string): Promise<void> {
-    this.logger.debug(LAYER, `对象存储擦除（no-op 默认；真实 driver 部署期注入）: ${objectKey}`);
+    this.logger.warn(LAYER, `对象存储删除能力未配置，跳过删除并保留引用行待重试（绝不删定位造孤儿）: ${objectKey}`);
+    throw new Error('object storage eraser not configured: keeping media ref for retry (fail-closed)');
   }
 }
 

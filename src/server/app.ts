@@ -155,7 +155,7 @@ import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
 import { LlmKnowledgeSource } from '../knowledge/sources/llm-source.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import { QuotaUsageRetentionWorker } from '../multi-tenant/quota-usage-retention-worker.js';
-import { MediaRetentionWorker, LoggingNoopObjectStorageEraser } from '../perception/media/media-retention-worker.js';
+import { MediaRetentionWorker, FailClosedObjectStorageEraser } from '../perception/media/media-retention-worker.js';
 import { ModelRouter } from '../intelligence/model-router.js';
 import { DecisionEngine } from '../intelligence/decision-engine.js';
 import { RuleEngine } from '../intelligence/rule-engine.js';
@@ -530,10 +530,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 感知媒体引用 retention：runMediaRetention 早已实现但缺周期触发器——GDPR Art.17 擦除依赖它
    * 才真正删对象+删行（privacy eraseData 只标记 delete_after=0），过期引用也靠它回收。用 root tx
-   * 全局扫描；未配置真实对象存储时默认 no-op 擦除器（仍删引用行闭环，对象侧由部署期 driver 补齐）。 */
+   * 全局扫描。默认擦除器 **fail-closed**：未配置真实对象存储删除能力时抛错 → 引用行保留待重试，
+   * **绝不删定位造孤儿**（真实 S3/R2 删除 driver 部署期注入替换；见 FailClosedObjectStorageEraser）。 */
   const mediaRetentionWorker = new MediaRetentionWorker(
     tx,
-    new LoggingNoopObjectStorageEraser(deps.os.getLogger()),
+    new FailClosedObjectStorageEraser(deps.os.getLogger()),
     deps.os.getLogger(),
   );
   mediaRetentionWorker.start();

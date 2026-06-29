@@ -56,9 +56,16 @@ export function registerMobileDeviceExecutors(): void {
   });
 
   registerCommand<MdevUpdateOnRegisterParams>(MDEV_CMD_UPDATE_ON_REGISTER, (db, p) => {
+    /* 携带新 push_token 的重注册清除失效标记——新 token 在下次 provider 失败前推定有效
+     * （与 MDEV_CMD_UPDATE_PUSH_TOKEN 同语义）。移动端现把 /api/v1/devices 注册作为 push token
+     * 注册路径（usePushSync），若此处不清 is_invalid_at，token 失效后重注册新 token 仍被 dispatcher
+     * 当失效跳过 → push 永久不可用。仅当本次带非空 pushToken 时清；纯元数据重注册（pushToken=null）
+     * 不动失效标记。 */
     const result = db.prepare<void>(
-      'UPDATE devices SET platform = ?, push_token = ?, app_version = ?, last_seen_at = ? WHERE id = ?',
-    ).run(p.platform, p.pushToken, p.appVersion, p.now, p.deviceId);
+      `UPDATE devices SET platform = ?, push_token = ?, app_version = ?, last_seen_at = ?,
+         is_invalid_at = CASE WHEN ? IS NOT NULL THEN NULL ELSE is_invalid_at END
+       WHERE id = ?`,
+    ).run(p.platform, p.pushToken, p.appVersion, p.now, p.pushToken, p.deviceId);
     return { rowsAffected: result.changes };
   });
 
