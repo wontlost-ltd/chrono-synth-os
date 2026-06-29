@@ -62,24 +62,36 @@ export async function createIsolatedPgSchema(
    *   非原子的 check-then-insert 会撞 `pg_extension_name_index` unique。故在此用**会话级咨询锁**
    *   （pg_advisory_lock，固定 key）串行化扩展创建，建完即解锁；迁移里那条 IF NOT EXISTS 随后变 no-op。 */
   const admin = new PostgresDatabase(testUrl, { max: 1, idleTimeoutMs: 5_000 });
-  admin.exec(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-  admin.exec(`CREATE SCHEMA ${schema}`);
-  /* 任意固定 key；同 key 的并发会话串行。建在 public（扩展全库可见，schema 无关）。 */
-  admin.exec('SELECT pg_advisory_lock(727274)');
   try {
-    admin.exec('CREATE EXTENSION IF NOT EXISTS vector');
+    admin.exec(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    admin.exec(`CREATE SCHEMA ${schema}`);
+    /* 任意固定 key；同 key 的并发会话串行（advisory lock 会话级，连接关闭即释放）。
+     * 建在 public（扩展全库可见，schema 无关）。 */
+    admin.exec('SELECT pg_advisory_lock(727274)');
+    try {
+      admin.exec('CREATE EXTENSION IF NOT EXISTS vector');
+    } finally {
+      admin.exec('SELECT pg_advisory_unlock(727274)');
+    }
   } finally {
-    admin.exec('SELECT pg_advisory_unlock(727274)');
+    /* 无论 schema 重建/扩展创建是否抛错，都关闭 admin 池，避免连接泄漏。 */
+    admin.close();
   }
-  admin.close();
 
-  /* 第二步：用带 search_path 的连接跑迁移——所有 CREATE TABLE/TYPE/扩展都落进专属 schema。
-   * 注：pgvector 扩展是数据库级对象，CREATE EXTENSION IF NOT EXISTS 幂等，多文件共享无碍。 */
+  /* 第二步：用带 search_path 的连接跑迁移——所有 CREATE TABLE/TYPE 都落进专属 schema。
+   * 迁移失败时清理掉已建的 db 池与 schema 再 rethrow，避免半初始化状态泄漏。 */
   const db = new PostgresDatabase(withSearchPath(testUrl, schema), {
     max: opts?.max ?? 5,
     idleTimeoutMs: opts?.idleTimeoutMs ?? 10_000,
   });
-  runDslPostgresMigrations(db);
+  try {
+    runDslPostgresMigrations(db);
+  } catch (err) {
+    db.close();
+    const dropper = new PostgresDatabase(testUrl, { max: 1, idleTimeoutMs: 5_000 });
+    try { dropper.exec(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); } finally { dropper.close(); }
+    throw err;
+  }
 
   const cleanup = async (): Promise<void> => {
     db.close();
