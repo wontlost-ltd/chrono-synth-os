@@ -93,20 +93,20 @@ async function setupSqlite(): Promise<JourneyCtx> {
 }
 
 async function setupPostgres(url: string): Promise<JourneyCtx> {
-  /* 延迟 import：PG 模块仅在跑 PG 路径时加载（与仓库现有 PG 测试规范一致）。 */
-  const { PostgresDatabase } = await import('../../storage/postgres-database.js');
-  const { runDslPostgresMigrations } = await import('../../storage/index.js');
-  const db = new PostgresDatabase(url, { max: 5, idleTimeoutMs: 10_000 });
-  /* 迁移由宿主 DB 统一管理；os 用 skipMigrations:true 不再自迁（constructor 只会跑 SQLite runner）。 */
-  runDslPostgresMigrations(db);
+  /* 每文件独立 schema 隔离（同其它 PG 集成测试）：CI 并行子进程共享同一 PG 库时，本文件若直接对
+   * public 跑迁移会与并行 PG 测试撞 pg_extension/pg_type catalog + 残留表 already-exists。
+   * helper 给本文件专属 schema + advisory-lock 串行化扩展创建；迁移落该 schema。 */
+  const { createIsolatedPgSchema } = await import('./fixtures/pg-test-schema.js');
+  const { db, cleanup } = await createIsolatedPgSchema('companion_journey', url);
   const clock = new TestClock(1000);
+  /* 迁移由 helper 统一管理；os 用 skipMigrations:true 不再自迁（constructor 只会跑 SQLite runner）。 */
   const os = new ChronoSynthOS({ db, skipMigrations: true, clock, logger: new SilentLogger() });
   os.start();
   const app = await createApp({ os, db, config: testConfig() });
   return {
     app, os, clock, db, label: 'postgres',
     seedTenantSemantic: makeSeeder(db, clock),
-    close: async () => { await app.close(); os.close(); db.close(); },
+    close: async () => { await app.close(); os.close(); await cleanup(); },
   };
 }
 

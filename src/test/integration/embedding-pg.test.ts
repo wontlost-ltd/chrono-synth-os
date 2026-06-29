@@ -9,14 +9,15 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { TestClock } from '../../utils/clock.js';
+import { createIsolatedPgSchema } from './fixtures/pg-test-schema.js';
 
 const TEST_URL = process.env.TEST_POSTGRES_URL;
 
 describe('PgvectorEmbeddingIndex integration', { skip: !TEST_URL }, () => {
   let PostgresDatabase: typeof import('../../storage/postgres-database.js').PostgresDatabase;
-  let runDslPostgresMigrations: typeof import('../../storage/index.js').runDslPostgresMigrations;
   let PgvectorEmbeddingIndex: typeof import('../../intelligence/embedding-index-pgvector.js').PgvectorEmbeddingIndex;
   let db: InstanceType<typeof PostgresDatabase>;
+  let cleanup: () => Promise<void>;
 
   /** A deterministic mock LLM that returns a fixed-dim vector seeded by text. */
   const stubLlm = {
@@ -34,27 +35,19 @@ describe('PgvectorEmbeddingIndex integration', { skip: !TEST_URL }, () => {
 
   before(async () => {
     const pgMod = await import('../../storage/postgres-database.js');
-    const migMod = await import('../../storage/index.js');
     const pgIdxMod = await import('../../intelligence/embedding-index-pgvector.js');
     PostgresDatabase = pgMod.PostgresDatabase;
-    runDslPostgresMigrations = migMod.runDslPostgresMigrations;
     PgvectorEmbeddingIndex = pgIdxMod.PgvectorEmbeddingIndex;
 
-    db = new PostgresDatabase(TEST_URL!, { max: 5, idleTimeoutMs: 10_000 });
-
-    /* Clean slate: drop public schema and recreate. The pgvector extension
-     * gets dropped along with everything else and v071 recreates it.
-     * The connecting role becomes the default owner of the new schema,
-     * so no explicit GRANT is needed (matches both CI's `test` user and
-     * podman's `chrono` user). */
-    db.exec('DROP SCHEMA public CASCADE');
-    db.exec('CREATE SCHEMA public');
-
-    runDslPostgresMigrations(db);
+    /* 每文件独立 schema 隔离（同 postgres.test.ts）：避免与并行 PG 测试文件共享 public schema 而竞态。
+     * pgvector 扩展是数据库级对象（v071 用 CREATE EXTENSION IF NOT EXISTS 幂等），多 schema 共享无碍。 */
+    const iso = await createIsolatedPgSchema('embedding', TEST_URL!);
+    db = iso.db;
+    cleanup = iso.cleanup;
   });
 
-  after(() => {
-    if (db) db.close();
+  after(async () => {
+    if (cleanup) await cleanup();
   });
 
   it('upsert + search round-trip via PgvectorEmbeddingIndex', async () => {

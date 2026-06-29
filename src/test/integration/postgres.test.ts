@@ -7,38 +7,27 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { TenantDatabase } from '../../multi-tenant/tenant-database.js';
+import { createIsolatedPgSchema } from './fixtures/pg-test-schema.js';
 
 const TEST_URL = process.env.TEST_POSTGRES_URL;
 
 describe('PostgreSQL 集成测试', { skip: !TEST_URL }, () => {
   /* 延迟导入，避免在没有 pg 依赖时报错 */
   let PostgresDatabase: typeof import('../../storage/postgres-database.js').PostgresDatabase;
-  let runDslPostgresMigrations: typeof import('../../storage/index.js').runDslPostgresMigrations;
   let db: InstanceType<typeof PostgresDatabase>;
+  let cleanup: () => Promise<void>;
 
   before(async () => {
-    const pgMod = await import('../../storage/postgres-database.js');
-    const migMod = await import('../../storage/index.js');
-    PostgresDatabase = pgMod.PostgresDatabase;
-    runDslPostgresMigrations = migMod.runDslPostgresMigrations;
-
-    db = new PostgresDatabase(TEST_URL!, { max: 5, idleTimeoutMs: 10_000 });
-
-    /* 清理已有表（测试隔离） */
-    const tables = [
-      'evolution_records', 'snapshots', 'conflicts', 'persona_versions',
-      'audit_log', 'narrative', 'memory_edges', 'memory_nodes',
-      'core_values', 'schema_migrations',
-    ];
-    for (const t of tables) {
-      try { db.exec(`DROP TABLE IF EXISTS ${t} CASCADE`); } catch { /* 忽略 */ }
-    }
-
-    runDslPostgresMigrations(db);
+    /* 每文件独立 schema 隔离（修 pre-existing flaky）：CI 把集成测试并行子进程跑且共享同一 PG 库，
+     * 多文件同时重置 public schema 会撞（pg_type duplicate / 残留表 ADD COLUMN already-exists）。
+     * helper 给本文件专属 schema，迁移/读写经 search_path 全落其中，与并行文件互不可见。 */
+    const iso = await createIsolatedPgSchema('postgres', TEST_URL!);
+    db = iso.db;
+    cleanup = iso.cleanup;
   });
 
-  after(() => {
-    if (db) db.close();
+  after(async () => {
+    if (cleanup) await cleanup();
   });
 
   it('迁移成功创建所有表', () => {
