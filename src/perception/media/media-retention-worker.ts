@@ -15,9 +15,24 @@
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { Logger } from '../../utils/logger.js';
+import type { ObjectStorageClient } from '../../privacy/object-storage-client.js';
 import { runMediaRetention, type ObjectStorageEraser } from './media-ref-store.js';
 
 const LAYER = 'MediaRetentionWorker';
+
+/**
+ * 把 ObjectStorageClient 适配成 ObjectStorageEraser——GDPR Art.17 物理删除真实闭环。
+ *
+ * ObjectStorageClient.delete 各后端（local/S3/GCS/Azure）已实现且幂等（对象不存在视为成功），
+ * 正符合 ObjectStorageEraser 契约。真实 IO 错误（网络/权限/SDK 未装）由 delete 抛出 → runMediaRetention
+ * 计 failed、保留引用行下周期重试（fail-closed，不造孤儿）。
+ */
+export class ObjectStorageClientEraser implements ObjectStorageEraser {
+  constructor(private readonly client: ObjectStorageClient) {}
+  async erase(objectKey: string): Promise<void> {
+    await this.client.delete(objectKey);
+  }
+}
 
 export interface MediaRetentionOptions {
   intervalMs: number;

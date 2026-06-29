@@ -155,7 +155,8 @@ import { FileKnowledgeSource } from '../knowledge/sources/file-source.js';
 import { LlmKnowledgeSource } from '../knowledge/sources/llm-source.js';
 import { QuotaManager } from '../multi-tenant/quota-manager.js';
 import { QuotaUsageRetentionWorker } from '../multi-tenant/quota-usage-retention-worker.js';
-import { MediaRetentionWorker, FailClosedObjectStorageEraser } from '../perception/media/media-retention-worker.js';
+import { MediaRetentionWorker, FailClosedObjectStorageEraser, ObjectStorageClientEraser } from '../perception/media/media-retention-worker.js';
+import { createObjectStorageClient } from '../privacy/object-storage-client.js';
 import { ModelRouter } from '../intelligence/model-router.js';
 import { DecisionEngine } from '../intelligence/decision-engine.js';
 import { RuleEngine } from '../intelligence/rule-engine.js';
@@ -530,13 +531,17 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 感知媒体引用 retention：runMediaRetention 早已实现但缺周期触发器——GDPR Art.17 擦除依赖它
    * 才真正删对象+删行（privacy eraseData 只标记 delete_after=0），过期引用也靠它回收。用 root tx
-   * 全局扫描。默认擦除器 **fail-closed**：未配置真实对象存储删除能力时抛错 → 引用行保留待重试，
-   * **绝不删定位造孤儿**（真实 S3/R2 删除 driver 部署期注入替换；见 FailClosedObjectStorageEraser）。 */
-  const mediaRetentionWorker = new MediaRetentionWorker(
-    tx,
-    new FailClosedObjectStorageEraser(deps.os.getLogger()),
-    deps.os.getLogger(),
-  );
+   * 全局扫描。擦除器用真实对象存储 driver（createObjectStorageClient 按 config.provider 选
+   * local/S3/GCS/Azure，各后端 delete 幂等）→ 物理删对象 + 删引用行的端到端闭环。构造失败兜底
+   * fail-closed（抛错→保留引用行下周期重试，绝不删定位造孤儿）。 */
+  let mediaEraser;
+  try {
+    mediaEraser = new ObjectStorageClientEraser(createObjectStorageClient(config));
+  } catch (err) {
+    deps.os.getLogger().warn('createApp', `对象存储 driver 构造失败，媒体 retention 降级 fail-closed（引用行保留可重试）`, err);
+    mediaEraser = new FailClosedObjectStorageEraser(deps.os.getLogger());
+  }
+  const mediaRetentionWorker = new MediaRetentionWorker(tx, mediaEraser, deps.os.getLogger());
   mediaRetentionWorker.start();
   app.addHook('onClose', async () => { await mediaRetentionWorker.stop(); });
 

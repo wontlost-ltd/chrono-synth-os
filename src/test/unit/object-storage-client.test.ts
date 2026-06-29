@@ -70,6 +70,25 @@ describe('LocalObjectStorageClient', () => {
       '深层嵌套路径不应抛出错误',
     );
   });
+
+  it('delete() 物理删除已上传对象（GDPR Art.17 闭环）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    const key = 'media/tenant1/clip.bin';
+    await client.upload(key, Buffer.from('raw-media'), 'application/octet-stream');
+    /* 删前存在。 */
+    await assert.doesNotReject(readFile(join(tmpDir, key)));
+    await client.delete(key);
+    /* 删后文件不存在。 */
+    await assert.rejects(readFile(join(tmpDir, key)), '删除后原始对象应不存在');
+  });
+
+  it('delete() 对不存在的 key 幂等（不抛 not-found）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    await assert.doesNotReject(
+      client.delete('media/never/existed.bin'),
+      '删除不存在对象应视为成功（幂等契约，retention 重试不应反复失败）',
+    );
+  });
 });
 
 describe('createObjectStorageClient', () => {

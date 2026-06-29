@@ -4,7 +4,7 @@
  * 云 SDK 均通过动态导入加载，未安装时给出明确错误提示
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AppConfig } from '../config/schema.js';
 
@@ -14,6 +14,12 @@ export interface ObjectStorageClient {
   upload(key: string, data: Buffer, contentType: string): Promise<string>;
   /** 生成预签名/限时下载 URL */
   presignUrl(key: string, ttlSeconds: number): Promise<string>;
+  /**
+   * 删除指定 key 的对象（GDPR Art.17 物理删除用）。**必须幂等**：对象不存在（已删/从未存在）
+   * **视为成功 resolve**，不抛 not-found——否则 retention 重试会因孤儿调用反复失败。
+   * 仅真实 IO 错误（网络/权限/配置）才抛（让上层 fail-closed 保留引用行下周期重试）。
+   */
+  delete(key: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +42,11 @@ export class LocalObjectStorageClient implements ObjectStorageClient {
 
   async presignUrl(key: string, _ttlSeconds: number): Promise<string> {
     return `file://${join(this.localPath, key)}`;
+  }
+
+  async delete(key: string): Promise<void> {
+    /* rm({ force: true }) 对不存在路径不抛——满足幂等契约。 */
+    await rm(join(this.localPath, key), { force: true });
   }
 }
 
@@ -109,6 +120,14 @@ export class S3ObjectStorageClient implements ObjectStorageClient {
     const command = new mod.GetObjectCommand({ Bucket: this.bucket, Key: key });
     return presignerMod.getSignedUrl(client, command, { expiresIn: ttlSeconds });
   }
+
+  async delete(key: string): Promise<void> {
+    /* S3 DeleteObject 对不存在的 key 返回成功（幂等）——满足契约，无需特判 not-found。 */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getS3();
+    const client = this.buildClient(mod);
+    await client.send(new mod.DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +178,12 @@ export class GcsObjectStorageClient implements ObjectStorageClient {
     }) as [string];
     return url;
   }
+
+  async delete(key: string): Promise<void> {
+    /* ignoreNotFound:true → 对象不存在不抛（幂等契约）。 */
+    const bucket = await this.buildBucket();
+    await bucket.file(key).delete({ ignoreNotFound: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +231,15 @@ export class AzureBlobObjectStorageClient implements ObjectStorageClient {
       expiresOn,
     });
     return sasUrl;
+  }
+
+  async delete(key: string): Promise<void> {
+    /* deleteIfExists 对不存在的 blob 不抛（幂等契约）。 */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await this.getBlobMod();
+    const serviceClient = mod.BlobServiceClient.fromConnectionString(this.connectionString);
+    const containerClient = serviceClient.getContainerClient(this.container);
+    await containerClient.getBlockBlobClient(key).deleteIfExists();
   }
 }
 
