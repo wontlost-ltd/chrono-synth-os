@@ -123,6 +123,87 @@ export function useGoalTypes() {
   });
 }
 
+/* ── 可视化聚合（一次取齐组织树/目标流/信号/学习闭环，对接 GET /visualization）── */
+
+export type WorkerLoad = 'idle' | 'normal' | 'heavy';
+
+export interface OrgTreeNode {
+  workerId: string;
+  personaId: string;
+  displayName: string;
+  employmentStatus: string;
+  roleCode: string;
+  title: string;
+  jobFamily: string;
+  seniority: string;
+  load: WorkerLoad;
+  needsAttention: boolean;
+  activeTaskCount: number;
+}
+
+export interface OrgTreeEdge {
+  from: string;
+  to: string;
+  edgeType: 'solid' | 'dotted' | 'escalation';
+}
+
+export interface GoalFlowItem {
+  goalId: string;
+  title: string;
+  status: string;
+  ownerWorkerId: string;
+  taskCount: number;
+  tasksByStatus: Record<string, number>;
+  blockedCount: number;
+}
+
+export interface WorkerSignalItem {
+  workerId: string;
+  displayName: string;
+  operating: {
+    activeTaskCount: number;
+    deliveredTaskCount: number;
+    blockedTaskCount: number;
+    highRiskTaskCount: number;
+    overdueTaskCount: number;
+    dueSoonTaskCount: number;
+    load: WorkerLoad;
+    needsAttention: boolean;
+  } | null;
+  persona: {
+    decisionConfidence: 'high' | 'medium' | 'low';
+    collaborationReach: number;
+    shouldReport: boolean;
+  } | null;
+}
+
+export type BlockedDisposition = 'gap' | 'degraded' | 'timeout';
+
+export interface LearningLoopItem {
+  workerId: string;
+  personaId: string;
+  displayName: string;
+  learnedCapabilities: Array<{ capability: string; examScore: number; learnedAt: number }>;
+  activeLearning: Array<{ capability: string; status: string; priority: string }>;
+  blockedTasks: Array<{ taskId: string; title: string; disposition: BlockedDisposition; requiredCapabilities: string[]; resumeAttemptCount: number }>;
+}
+
+export interface WorkforceViz {
+  orgId: string;
+  orgTree: { nodes: OrgTreeNode[]; edges: OrgTreeEdge[] };
+  goalFlow: GoalFlowItem[];
+  signals: WorkerSignalItem[];
+  learningLoop: LearningLoopItem[];
+}
+
+export function useWorkforceViz(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'viz', orgId],
+    queryFn: ({ signal }) => apiFetch<WorkforceViz>(`/api/v1/workforce/orgs/${encodeURIComponent(orgId)}/visualization`, { signal }),
+    enabled: !!orgId,
+  });
+}
+
 export function useOrgChart(orgId: string) {
   return useQuery({
     queryKey: ['workforce', 'chart', orgId],
@@ -213,6 +294,84 @@ export function useRunGoal(orgId: string) {
   });
 }
 
+/* ── 自助建组织 / 招数字员工（admin）── */
+
+export type Archetype = 'explorer' | 'guardian' | 'analyst' | 'doer';
+export type Seniority = 'exec' | 'lead' | 'senior' | 'ic';
+
+export interface CreateOrgResult { orgId: string; rootWorkerId: string; birth: { personaId: string; kind: string } }
+export interface HireWorkerResult { orgId: string; workerId: string; birth: { personaId: string; kind: string } }
+
+/** 建组织 + 根数字员工（无上级）。建完使该 org 的 chart/viz 失效。 */
+export function useCreateOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { orgId: string; roleCode: string; title: string; displayName: string; jobFamily?: string; seniority?: Seniority; archetype?: Archetype }) =>
+      apiFetch<CreateOrgResult>('/api/v1/workforce/orgs', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['workforce', 'chart', r.orgId] });
+      void qc.invalidateQueries({ queryKey: ['workforce', 'viz', r.orgId] });
+    },
+  });
+}
+
+/** 招一名数字员工到已有组织（挂在 managerWorkerId 下）。招完使该 org 的 chart/viz 失效。 */
+export function useHireWorker(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { managerWorkerId: string; roleCode: string; title: string; displayName: string; jobFamily?: string; seniority?: Seniority; archetype?: Archetype }) =>
+      apiFetch<HireWorkerResult>(`/api/v1/workforce/orgs/${orgKey(orgId)}/workers`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] });
+      void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] });
+    },
+  });
+}
+
+/* ── 组织重组/并购（admin，确定性结构操作）── */
+
+export interface AbsorbResult { movedWorkers: number; renamedRoles: Array<{ from: string; to: string }>; sourceRootWorkerId: string }
+export interface RestructureSuggestion { kind: 'offboard_idle' | 'redistribute_overloaded'; workerId: string; displayName: string; reason: string; suggestedAction: 'offboard' | 'reparent' | 'hire' }
+
+/** 吸收：源组织并入本组织（orgId=目标），源根接到 mountUnderWorkerId 下。 */
+export function useAbsorbOrg(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { sourceOrgId: string; mountUnderWorkerId: string }) =>
+      apiFetch<AbsorbResult>(`/api/v1/workforce/orgs/${orgKey(orgId)}/absorb`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] }); void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] }); },
+  });
+}
+
+/** reparent：改某 worker 的直接上级。 */
+export function useReparentWorker(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { workerId: string; newManagerWorkerId: string }) =>
+      apiFetch<unknown>(`/api/v1/workforce/orgs/${orgKey(orgId)}/reparent`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] }); void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] }); },
+  });
+}
+
+/** offboard：裁撤一名 worker（有下属/在手任务须给安置/重分配对象）。 */
+export function useOffboardWorker(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { workerId: string; reparentReportsTo?: string; reassignTasksTo?: string }) =>
+      apiFetch<unknown>(`/api/v1/workforce/orgs/${orgKey(orgId)}/offboard`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'chart', orgId] }); void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] }); },
+  });
+}
+
+/** 重组建议（确定性信号 → 建议，不自动执行）。 */
+export function useRestructureSuggestions(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'restructure-suggestions', orgId],
+    queryFn: ({ signal }) => apiFetch<{ orgId: string; suggestions: RestructureSuggestion[] }>(`/api/v1/workforce/orgs/${orgKey(orgId)}/restructure/suggestions`, { signal }),
+    enabled: !!orgId,
+  });
+}
+
 /** 人类决定一个审批（approve/reject）。 */
 export function useDecideApproval(orgId: string) {
   const qc = useQueryClient();
@@ -222,5 +381,92 @@ export function useDecideApproval(orgId: string) {
         method: 'POST', body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
       }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['workforce', 'approvals-pending', orgId] }); },
+  });
+}
+
+/* ── 双边工单市场（ADR-0058）：org 竞标接单 + 发布者确认委派 ── */
+
+export interface OrgTaskApplication { id: string; taskId: string; orgId: string; rankingScore: number; status: string; createdAt: number; updatedAt: number }
+export interface OrgTaskAssignment { id: string; taskId: string; orgId: string; applicationId: string | null; orgGoalId: string | null; status: string; assignedAt: number; submittedAt: number | null; completedAt: number | null }
+
+/** org 视角：该组织的申请（我领取了哪些工单）。 */
+export function useOrgBidApplications(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'bids', 'applications', orgId],
+    enabled: orgId.length > 0,
+    queryFn: ({ signal }) => apiFetch<OrgTaskApplication[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/applications`, { signal }),
+  });
+}
+
+/** org 视角：委派给该组织的工单（指派）。 */
+export function useOrgBidAssignments(orgId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'bids', 'assignments', orgId],
+    enabled: orgId.length > 0,
+    queryFn: ({ signal }) => apiFetch<OrgTaskAssignment[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/assignments`, { signal }),
+  });
+}
+
+/** 发布者视角：某工单的 org 申请者列表（据此选委派给谁）。 */
+export function useOrgBidApplicants(orgId: string, taskId: string) {
+  return useQuery({
+    queryKey: ['workforce', 'bids', 'applicants', orgId, taskId],
+    enabled: orgId.length > 0 && taskId.length > 0,
+    queryFn: ({ signal }) => apiFetch<OrgTaskApplication[]>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/tasks/${encodeURIComponent(taskId)}/applicants`, { signal }),
+  });
+}
+
+function invalidateBids(qc: ReturnType<typeof useQueryClient>, orgId: string) {
+  void qc.invalidateQueries({ queryKey: ['workforce', 'bids'] });
+  void qc.invalidateQueries({ queryKey: ['workforce', 'viz', orgId] });
+}
+
+/** org 领取一个 open 工单（登记接单意向，不触发执行）。 */
+export function useOrgBidApply(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string }) =>
+      apiFetch<OrgTaskApplication>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/apply`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** 发布者确认把工单委派给某组织。 */
+export function useOrgBidConfirmAssign(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string; orgId: string }) =>
+      apiFetch<OrgTaskAssignment>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/confirm-assign`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** org 启动执行（选 manager + goalType 触发 runGoal 分解）。 */
+export function useOrgBidStart(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string; managerWorkerId: string; goalType: string }) =>
+      apiFetch<{ assignment: OrgTaskAssignment; goal: { goalId: string; taskCount: number } }>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/start`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** org 完工提交（发布者待验收）。 */
+export function useOrgBidSubmit(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string }) =>
+      apiFetch<OrgTaskAssignment>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/submit`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
+  });
+}
+
+/** 发布者验收 org 工单并结算入金库。 */
+export function useOrgBidAccept(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { taskId: string; platformPct?: number }) =>
+      apiFetch<{ assignment: OrgTaskAssignment; settlement: { orgAmountMinor: number } | null; walletBalance: number }>(`/api/v1/workforce/orgs/${orgKey(orgId)}/bids/accept`, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => invalidateBids(qc, orgId),
   });
 }

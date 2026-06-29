@@ -20,13 +20,24 @@ const WORKING_WEIGHT = 1.2;
 const ACTIVATION_WEIGHT = 0.8;
 const EMBEDDING_WEIGHT = 1.0;
 
+/**
+ * 混合检索 service。
+ *
+ * ⚠️ 隔离契约（P2-t）：本实例**绑定到单一 persona/tenant**——`memories`（CognitiveMemoryGraph）
+ * 构造时已绑定 personaId，其所有读操作自动按 persona 过滤；`embeddingIndex` 必须是 persona/tenant
+ * 隔离的实现。生产用 PgvectorEmbeddingIndex（带 tenant_id 过滤）。**禁止**跨 persona/tenant 复用同一
+ * RetrievalService 实例——每个 persona 须创建独立实例，否则会越 persona 检索记忆。
+ */
 export class RetrievalService {
   constructor(
     private readonly memories: CognitiveMemoryGraph,
     private readonly embeddingIndex: EmbeddingIndex,
   ) {}
 
-  /** 混合检索上下文记忆 */
+  /**
+   * 混合检索上下文记忆。隔离由构造时绑定的 persona-local memories/embeddingIndex 保证
+   * （见类注释）——本方法不再额外做 tenant/persona 过滤。
+   */
   getContext(_query: string, queryEmbedding: readonly number[], topK: number): ContextMemory[] {
     const accumulator = new Map<string, { score: number; sources: Set<string> }>();
 

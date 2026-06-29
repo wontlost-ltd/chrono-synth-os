@@ -81,6 +81,7 @@ import {
   pcoreQueryRankingTaskStatsUncategorized,
   pcoreQueryRuntimeSession,
   pcoreQueryTaskApplication,
+  pcoreQueryTaskApplicationsByTask,
   pcoreQueryTaskAssignmentById,
   pcoreQueryTimedOutRuntimeSessions,
   type PcoreMarketplaceTaskRow,
@@ -168,6 +169,17 @@ export function taskApplicationFromRow(row: PcoreTaskApplicationRow): TaskApplic
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
+}
+
+/** 工单的 persona 申请者（含 display_name）——发布者视角列表项（ADR-0058）。 */
+export interface TaskApplicant {
+  readonly id: string;
+  readonly taskId: string;
+  readonly personaId: string;
+  readonly personaName: string | null;
+  readonly rankingScore: number;
+  readonly status: string;
+  readonly createdAt: number;
 }
 
 export function taskAssignmentFromRow(row: PcoreTaskAssignmentRow): TaskAssignment {
@@ -436,6 +448,17 @@ export class PersonaMarketplaceService {
   findTaskApplication(tenantId: string, taskId: string, personaId: string): TaskApplication | null {
     const row = this.tx.queryOne(pcoreQueryTaskApplication({ tenantId, taskId, personaId }));
     return row ? taskApplicationFromRow(row) : null;
+  }
+
+  /**
+   * 列某工单的全部 persona 申请者（含 persona display_name）——发布者据此选委派给哪个数字人格（ADR-0058）。
+   * 确定性排序（分降序、创建升序）。
+   */
+  listTaskApplicants(tenantId: string, taskId: string): TaskApplicant[] {
+    return this.tx.queryMany(pcoreQueryTaskApplicationsByTask({ tenantId, taskId })).map((r) => ({
+      id: r.id, taskId: r.task_id, personaId: r.persona_id, personaName: r.persona_name,
+      rankingScore: r.ranking_score, status: r.status, createdAt: r.created_at,
+    }));
   }
 
   applyToTask(input: ApplyTaskInput): TaskApplication | null {

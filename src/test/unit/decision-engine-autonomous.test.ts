@@ -147,4 +147,19 @@ describe('DecisionEngine autonomous 模式 (ADR-0047)', () => {
     const result = await engine.evaluate({ id: 'g_no_llm', title: 'x', description: 'y', alternatives: ['a', 'b'] });
     assert.equal(result.rankedOptions.length, 2);
   });
+
+  it('growth 模式 + 无 LLM + 无 ruleEngine + 已给 alternatives → 优雅降级出结果（P2-v 零-LLM 韧性）', async () => {
+    /*
+     * 零-LLM 韧性核证：growth 缺 LLM 时，requireLlm().embed() 的错误被内部 try-catch 吞掉退化为
+     * 图检索；alternatives 已提供故 getAlternatives 不触 LLM；评分路径在无 LLM 下仍以确定性内核
+     * 收敛——即便没有 ruleEngine fallback，也不崩溃、产出结果。证明数字人离线可决策（红线 1）。
+     */
+    core.addValue('诚实', 0.8);
+    const router = new ModelRouter({ provider: 'mock', model: 'test', embeddingModel: 'mock-embed' });
+    const embeddingIndex = new InMemoryEmbeddingIndex(db, clock, router, 'mock-embed');
+    const retrieval = new RetrievalService(core.memories, embeddingIndex);
+    const engine = new DecisionEngine(core, retrieval, undefined, clock, new SilentLogger(), simConfig, undefined);
+    const result = await engine.evaluate({ id: 'g_hard', title: 'x', description: 'y', alternatives: ['a', 'b'] });
+    assert.equal(result.rankedOptions.length, 2, 'growth 无 LLM 仍以确定性路径产出全部选项');
+  });
 });

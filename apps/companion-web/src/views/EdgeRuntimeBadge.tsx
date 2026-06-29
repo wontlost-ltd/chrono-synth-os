@@ -30,8 +30,13 @@ export function EdgeRuntimeBadge(): JSX.Element | null {
   }, []);
 
   if (status === 'unsupported') return null;
+  /* P3 试点：从手写 .edge-badge class 迁到 Tailwind utility。颜色/圆角/间距/字号均用 arbitrary value
+   * 直接引 companion token（var(--c-*)）——单一事实源不复制值，工具链验证 OK。 */
   return (
-    <p className="edge-badge" aria-live="polite">
+    <p
+      className="mb-[var(--c-space-1)] rounded-[var(--c-radius-sm)] bg-[var(--c-surface-2)] px-[var(--c-space-3)] py-[var(--c-space-2)] text-center text-[length:var(--c-text-sm)] text-[var(--c-pos)]"
+      aria-live="polite"
+    >
       {status === 'checking' ? '正在做端侧内核自检…' : '✓ 本设备支持端侧人格内核运行（确定性核，可离线）'}
     </p>
   );

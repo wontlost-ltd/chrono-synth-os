@@ -31,10 +31,10 @@ describe('PlaybookDistiller（M3 组织经验蒸馏闭环·确定性半）', () 
     const goalId = `goal-${++counter}`;
     store.insertGoal({
       id: goalId, orgId: 'org-1', ownerWorkerId: 'mgr', title: goalId, description: '',
-      goalType: GOAL_TYPE, status: 'completed', playbookVersion: 1, createdAt: 1000, updatedAt: 1000,
+      goalType: GOAL_TYPE, status: 'completed', playbookVersion: 1, sourceMarketplaceTaskId: null, createdAt: 1000, updatedAt: 1000,
     });
     for (const spec of tasks) {
-      const t: Omit<OrgTask, 'tenantId'> = {
+      const t: Omit<OrgTask, 'tenantId' | 'resumeAttemptCount' | 'lastWakeEventId'> = {
         id: `task-${++counter}`, orgId: 'org-1', goalId, parentTaskId: null, assignedToWorkerId: 'ic',
         accountableWorkerId: 'mgr', title: spec.taskType, taskType: spec.taskType, status: spec.status,
         riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [],
@@ -112,7 +112,7 @@ describe('PlaybookDistiller（M3 组织经验蒸馏闭环·确定性半）', () 
     /* 造 6 个 v1 干净目标 + 几个 v2 的（playbookVersion=2）有返工——只算 v1 的 → no_weakness。 */
     for (let i = 0; i < 6; i++) seedGoal([{ taskType: 'writing', status: 'approved' }]);
     /* 直接插一个 v2 目标（不同版本，不该影响 v1 蒸馏，因激活版本是 1）。 */
-    store.insertGoal({ id: 'v2-goal', orgId: 'org-1', ownerWorkerId: 'mgr', title: 'v2', description: '', goalType: GOAL_TYPE, status: 'completed', playbookVersion: 2, createdAt: 1000, updatedAt: 1000 });
+    store.insertGoal({ id: 'v2-goal', orgId: 'org-1', ownerWorkerId: 'mgr', title: 'v2', description: '', goalType: GOAL_TYPE, status: 'completed', playbookVersion: 2, sourceMarketplaceTaskId: null, createdAt: 1000, updatedAt: 1000 });
     store.insertTask({ id: 'v2-task', orgId: 'org-1', goalId: 'v2-goal', parentTaskId: null, assignedToWorkerId: 'ic', accountableWorkerId: 'mgr', title: 'w', taskType: 'writing', status: 'rejected', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000 });
     const r = distiller.distill('org-1', GOAL_TYPE);
     assert.equal(r.kind, 'no_weakness', 'v2 的返工不混入 v1 蒸馏');
@@ -191,7 +191,7 @@ describe('PlaybookDistiller（M3 组织经验蒸馏闭环·确定性半）', () 
     /* v1 样本：返工高 → 蒸馏出候选。 */
     for (let i = 0; i < 6; i++) {
       const gid = `e2e-v1-${++counter}`;
-      store.insertGoal({ id: gid, orgId: 'org-1', ownerWorkerId: 'mgr', title: gid, description: '', goalType: GT, status: 'completed', playbookVersion: 1, createdAt: 1000, updatedAt: 1000 });
+      store.insertGoal({ id: gid, orgId: 'org-1', ownerWorkerId: 'mgr', title: gid, description: '', goalType: GT, status: 'completed', playbookVersion: 1, sourceMarketplaceTaskId: null, createdAt: 1000, updatedAt: 1000 });
       store.insertTask({ id: `e2e-t-${++counter}`, orgId: 'org-1', goalId: gid, parentTaskId: null, assignedToWorkerId: 'ic', accountableWorkerId: 'mgr', title: 'step', taskType: 'step', status: i % 2 === 0 ? 'rejected' : 'approved', riskLevel: 'low', allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [], resultSummary: null, dueAt: null, createdAt: 1000, updatedAt: 1000 });
     }
     const r1 = distiller.distill('org-1', GT);

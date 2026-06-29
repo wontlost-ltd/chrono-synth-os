@@ -11,7 +11,7 @@ export * from './typography.js';
 export * from './spacing.js';
 export * from './motion.js';
 
-import { colorTokensLight, colorTokensDark, colorTokensHighContrast } from './colors.js';
+import { colorTokensLight, colorTokensDark, colorTokensHighContrast, colorTokensCompanion } from './colors.js';
 import { duration, easing, spring } from './motion.js';
 import { space, radius, shadow, baseUnit, size } from './spacing.js';
 import { display, heading, body, mono, fontFamilies } from './typography.js';
@@ -27,6 +27,8 @@ export const tokensV2 = {
     light: { color: colorTokensLight },
     dark: { color: colorTokensDark },
     'high-contrast': { color: colorTokensHighContrast },
+    /* ChronoCompanion C 端暖调主题（ADR-0046 D3 统一底座；单暗色主题）。 */
+    companion: { color: colorTokensCompanion },
   },
   typography: {
     families: fontFamilies,

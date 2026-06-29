@@ -49,8 +49,12 @@ interface SemanticColors {
   /** Status — semantic intent, not raw colour names. */
   status: {
     success: string;
+    /** 实色按钮填充专用：需保证白字对比度 ≥3.0；与作为文本/徽章的 success 解耦。 */
+    successFill: string;
     warning: string;
     danger: string;
+    /** 实色按钮填充专用：需保证白字对比度 ≥3.0；与作为文本/徽章的 danger 解耦。 */
+    dangerFill: string;
     info: string;
     /** Sync / lifecycle states; used by web + desktop status badges. */
     active: string;
@@ -113,8 +117,10 @@ export const colorTokensLight: SemanticColors = {
      * suggest. Values below clear 4.5:1 against the COMPOSITED bg —
      * see scripts/lint-contrast-ratio.mjs. */
     success: '#166534',
+    successFill: '#166534',
     warning: '#92400E',
     danger: '#991B1B',
+    dangerFill: '#991B1B',
     info: '#1D4ED8',
     active: '#166534',
     paused: '#92400E',
@@ -156,20 +162,28 @@ export const colorTokensDark: SemanticColors = {
     focus: '#93C5FD',
   },
   brand: {
-    primary: '#3B82F6',
+    /* a11y：web + desktop 共享此 colorTokensDark，白字按钮（bg-primary text-white，web 全站 75 处）
+     * 需对比度≥4.5。#3B82F6 仅 3.68 不达标，加深到 #2563EB（5.17:1 过 WCAG AA）；
+     * active 再深一档 #1D4ED8（6.70:1 AAA，保留按压区分）。desktop --color-chrono-primary 同源同步受益。
+     * （此前该 a11y 值只手改在 themes.css 生成区，未回写源——codegen 会还原，故在此源头落实。） */
+    primary: '#2563EB',
     primaryHover: '#60A5FA',
-    primaryActive: '#2563EB',
+    primaryActive: '#1D4ED8',
     secondary: '#14B8A6',
     secondaryHover: '#2DD4BF',
     accent: '#FBBF24',
     accentHover: '#FCD34D',
   },
   status: {
+    /* dark 的 success/danger 故意保持亮色给 StatusBadge 文本（落在自身 10% tint 上仍需 ≥4.5）；
+     * 实色按钮填充另用更深的 *Fill token 承载白字（≥3.0），避免一个 token 承担对立语义。 */
     success: '#22C55E',
+    successFill: '#16A34A',
     warning: '#FBBF24',
     /* red-400; red-500 (#EF4444) was 4.36:1 against the bg-danger\/10
      * tinted background. red-400 is 5.69:1. */
     danger: '#F87171',
+    dangerFill: '#DC2626',
     info: '#38BDF8',
     active: '#22C55E',
     paused: '#FBBF24',
@@ -228,8 +242,10 @@ export const colorTokensHighContrast: SemanticColors = {
   },
   status: {
     success: '#14532D',
+    successFill: '#14532D',
     warning: '#7F1D1D',
     danger: '#7F1D1D',
+    dangerFill: '#7F1D1D',
     info: '#1E3A8A',
     active: '#14532D',
     paused: '#7F1D1D',
@@ -247,6 +263,80 @@ export const colorTokensHighContrast: SemanticColors = {
     1: '#F3F4F6',
     2: '#6B7280',
     3: '#4B5563',
+  },
+};
+
+/**
+ * ChronoCompanion（C 端数字人）暖调主题。
+ *
+ * 落地 ADR-0046 D3「复用同一 design system」——把 companion-web 原本手写的 29 个
+ * `--c-*` token 收编进共享 SemanticColors 契约，使两个产品共用一套 token 单一事实源。
+ *
+ * P1b（暖色拟人化）：品牌主色由 P0 的冷蓝 #5b8def 转**暖琥珀**——强化「温暖伙伴」气质，
+ * 与企业版冷静蓝灰拉开识别度。brand 决定 active-tab/进度条/用户气泡/按钮等的暖调。
+ * 对比度：--c-brand #c2691e 白字 3.94（>原 3.23，加粗活态文本可读）；--c-brand-strong #a85518
+ * 白字 5.28 过 WCAG AA（>原 4.81，用于登录按钮等白字背景）。其余 surface/text/status 暖中性不变。
+ * companion 是单一暗色主题（无 light/hc 变体）。
+ *
+ * 映射依据（--c-* → SemanticColors）：
+ *   --c-bg #0f1420 → surface.canvas    --c-surface #1a2030 → surface.elevated
+ *   --c-surface-2 #232a3d → border/neutral   --c-text #e8ecf4 → text.primary
+ *   --c-muted #8a94ab → text.secondary/tertiary   --c-brand 暖琥珀 → brand.primary
+ *   --c-brand-strong 深琥珀 → brand.primaryActive（白字按钮 AA）
+ *   --c-pos #4fc08d → status.success/positive   --c-neg #e7796b → status.danger/negative
+ */
+export const colorTokensCompanion: SemanticColors = {
+  surface: {
+    canvas: '#0f1420',     // --c-bg
+    elevated: '#1a2030',   // --c-surface
+    overlay: 'rgba(0, 0, 0, 0.6)',
+    inverse: '#e8ecf4',
+  },
+  text: {
+    primary: '#e8ecf4',    // --c-text
+    secondary: '#8a94ab',  // --c-muted
+    tertiary: '#8a94ab',   // companion 仅一档 muted；tertiary 暂同 secondary
+    inverse: '#0f1420',
+    link: '#e8924a',       // 暖琥珀亮调（链接需在暗底可读，用亮于 brand 的一档）
+  },
+  border: {
+    subtle: '#232a3d',     // --c-surface-2（companion 用 surface-2 作描边/分隔）
+    default: '#232a3d',
+    strong: '#3a4870',
+    focus: '#c2691e',      // 暖琥珀焦点环（与 brand 一致）
+  },
+  brand: {
+    primary: '#c2691e',        // --c-brand 暖琥珀（active-tab/进度/气泡/bar；白字 3.94）
+    primaryHover: '#a85518',
+    primaryActive: '#a85518',  // --c-brand-strong 深琥珀（白字按钮 5.28 过 AA）
+    secondary: '#4fc08d',
+    secondaryHover: '#4fc08d',
+    accent: '#4fc08d',
+    accentHover: '#4fc08d',
+  },
+  status: {
+    success: '#4fc08d',    // --c-pos
+    successFill: '#4fc08d',
+    warning: '#e7796b',    // companion 无独立 warning，复用 neg 暖红（P1b 可分化）
+    danger: '#e7796b',     // --c-neg
+    dangerFill: '#e7796b',
+    info: '#5b8def',
+    active: '#4fc08d',
+    paused: '#e7796b',
+    syncing: '#5b8def',
+    offline: '#8a94ab',
+    completed: '#4fc08d',
+  },
+  chart: {
+    series: ['#5b8def', '#4fc08d', '#e7796b', '#8a94ab', '#3a6fd0', '#232a3d'],
+    grid: '#232a3d',
+    positive: '#4fc08d',
+    negative: '#e7796b',
+  },
+  neutral: {
+    1: '#1a2030',
+    2: '#232a3d',
+    3: '#8a94ab',
   },
 };
 

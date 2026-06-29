@@ -95,6 +95,20 @@ export interface SystemEventMap {
    * GET /companion/me/nudges 取，消息内容绝不过 SSE/WS 广播面。
    */
   'companion:nudge-created': TenantTagged<{ nudgeId: string; kind: string }>;
+  /**
+   * ADR-0057 L6：某 persona 通过双老师互审 + 影子验收 ≥95 + 蒸馏门正式落核，**学会**了一项能力。
+   * 仅作「能力已习得」**标记**（红线 20：事件只标 resolved 不直接执行）——L8 唤醒挂起任务的订阅方
+   * 据此重跑 GapDetector 复检，无缺口才零-LLM 重跑，仍缺 fail-closed。**不载知识正文**，只载可审计标识。
+   */
+  'capability-learned': TenantTagged<{
+    personaId: string;
+    capability: string;
+    /** 学习请求 id（L2 账本条目，即本次习得的可审计记录）。 */
+    learningRequestId: string;
+    /** 影子验收得分（coverage，≥0.95）。 */
+    examScore: number;
+    learnedAt: number;
+  }>;
 }
 
 /** 事件名称联合类型 */

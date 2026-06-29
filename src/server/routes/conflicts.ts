@@ -118,7 +118,11 @@ export function registerConflictRoutes(
       const resolvedAt = new Date().toISOString();
       const resolved = resolveConflict(db, body.conflictId, body.action, resolvedAt);
       if (!resolved) {
-        return reply.code(404).send({ error: 'Conflict not found' });
+        /*
+         * 冲突在 110 行已确认存在且 114 行版本匹配；此处 resolveConflict 返 false 只可能是
+         * 并发已被解决（UPDATE 的 WHERE resolved_at IS NULL 不再匹配）→ 409 而非误导性的 404。
+         */
+        return reply.code(409).send({ error: 'Conflict already resolved' });
       }
 
       const remainingBlockingCount = countBlockingConflicts(db, request.tenantId);

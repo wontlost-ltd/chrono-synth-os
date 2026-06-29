@@ -8,7 +8,7 @@ import type { SyncWriteUnitOfWork, OrgListByUserRow } from '@chrono/kernel';
 import type { OrganizationRole } from './organization-roles.js';
 import {
   orgQueryListByUser, orgQueryBySlug, orgQueryById,
-  orgQueryMembers, orgQueryRoleBindings,
+  orgQueryMembers, orgQueryRoleBindingsByOrg,
   orgQueryUserById, orgQueryUserByEmail,
   orgQueryWorkspaceById, orgQueryMembership,
   orgQueryRoleBindingExists, orgQueryRoleBindingExistsWs,
@@ -119,8 +119,20 @@ export class OrganizationService {
   listMembers(tenantId: string, organizationId: string) {
     const members = this.tx.queryMany(orgQueryMembers({ tenantId, organizationId }));
 
+    /*
+     * 消 N+1（P2-a/P2-e）：一次批量取整组织全部成员的角色绑定，按 membership_id 内存分组，
+     * 替代「每成员一次 orgQueryRoleBindings」。大组织（500+ 成员）从 1+N 次查询降为 2 次。
+     */
+    const allBindings = this.tx.queryMany(orgQueryRoleBindingsByOrg({ tenantId, organizationId }));
+    const bindingsByMembership = new Map<string, Array<typeof allBindings[number]>>();
+    for (const b of allBindings) {
+      const list = bindingsByMembership.get(b.membership_id);
+      if (list) list.push(b);
+      else bindingsByMembership.set(b.membership_id, [b]);
+    }
+
     return members.map((member) => {
-      const bindings = this.tx.queryMany(orgQueryRoleBindings({ tenantId, organizationId, membershipId: member.membership_id }));
+      const bindings = bindingsByMembership.get(member.membership_id) ?? [];
 
       return {
         membershipId: member.membership_id,

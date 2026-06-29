@@ -5,7 +5,7 @@ import {
   type ConflictResolveRequestV1,
   type ConflictResolveResultV1,
 } from '@chrono/contracts';
-import { apiFetch, ApiError } from '@/api/client';
+import { apiFetch, ApiError, unwrapList } from '@/api/client';
 import { useSyncEngine } from '@/sync/use-sync-engine';
 
 /**
@@ -64,7 +64,20 @@ export function useConflictInbox(): {
     setError(null);
     try {
       const raw = await apiFetch<unknown>('/api/v1/conflicts');
-      const parsed = ConflictInboxResponseSchema.safeParse(raw);
+      /* 后端返回分页信封 {data,pagination}（apiFetch 不自动解包，保留 pagination），用共享
+       * unwrapList 取出数组再做 Zod 严格校验——直接 safeParse(信封) 必失败→收件箱对所有用户
+       * 永远报 error boundary（哪怕 0 冲突）。 */
+      /* 安全面强边界（Codex 交叉审查）：冲突是用户安全面，「无法确认冲突列表」**绝不能**伪装成
+       * 「0 冲突」。unwrapList 通用 helper 对畸形形状兜底为 []（对 values/personas 是可接受降级），
+       * 但这里**显式拒绝**畸形顶层响应→走 load error（红色兜底卡，用户可感知），而非静默空成功态。
+       * 接受形状仅：裸数组 / {data: 数组}。其余（{data:非数组}、错误信封、null、schema 包装变化）报错。 */
+      const isExpectedShape =
+        Array.isArray(raw) ||
+        (raw !== null && typeof raw === 'object' && Array.isArray((raw as { data?: unknown }).data));
+      if (!isExpectedShape) {
+        throw new Error('conflict inbox envelope mismatch: response is neither array nor {data: array}');
+      }
+      const parsed = ConflictInboxResponseSchema.safeParse(unwrapList(raw));
       if (!parsed.success) {
         /* schema 漂移 → 把 zod 错误压成一条 ConflictError，UI 走 load 失败兜底。
          * 不把 raw payload 留在 state 中，避免 ResolutionPanel 拿到不完整字段。 */

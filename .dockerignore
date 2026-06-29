@@ -1,9 +1,41 @@
+# Docker 构建上下文裁剪——backend 镜像（Dockerfile）只需根 src/、scripts/、packages/*/src、
+# package.json、tsconfig*；builder 阶段自己 npm ci + tsc 构建 dist。排除一切构建不需要的大目录，
+# 把构建上下文从 ~2GB+（其中 apps/desktop 占 7.5GB）压到几十 MB。
+#
+# 保留（绝不排）：src/、scripts/、packages/*/src、packages/*/index.ts、*.json、tsconfig*——
+# 这些是 Dockerfile builder 真正 COPY + tsc 编译的输入；测试文件(.test.ts)**不排**，因 tsconfig
+# 的 include 可能覆盖它们，排掉会让镜像内 tsc 构建与 golden 不一致（风险>收益，且体积可忽略）。
+
+# ── 前端/桌面/移动应用（backend 镜像完全不引用；apps/desktop 含 Tauri Rust target 数 GB，主因）──
+apps/
+
+# ── 依赖（builder 自己 npm ci 装）──
 node_modules
+**/node_modules
+
+# ── 构建产物（builder 自己 tsc 生成；预构建产物无需进上下文）──
 dist
+**/dist
+**/dist-test
+coverage
+.tsbuildinfo
+**/*.tsbuildinfo
+
+# ── 版本控制 / IDE / 工具元数据 ──
 .git
+.gitignore
 .idea
+.vscode
 .claude
-.env
-*.db
-.DS_Store
+.ccg
 .ace-tool
+
+# ── 本地数据 / 密钥 / 临时（绝不进镜像）──
+data/
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+*.log
+.DS_Store

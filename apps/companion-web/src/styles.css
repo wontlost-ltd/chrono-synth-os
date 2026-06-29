@@ -1,16 +1,66 @@
-/* ChronoCompanion 最小样式（alpha）。品牌色独立于企业版（roadmap：companion 主色发散）。
- * 扩展期改为消费 @chrono/design-tokens 的 tokens.companion.* 命名空间（见 roadmap 风险表）。 */
+/* ChronoCompanion 样式。
+ * 颜色 token（--c-bg/surface/surface-2/text/muted/brand/brand-strong/pos/neg）已收编进共享
+ * @chrono/design-tokens（colorTokensCompanion），由 codegen 生成到 ./styles/tokens.css，
+ * 在此前 import——落地 ADR-0046 D3「同一 design system 两个 shell」。改色值改 design-tokens 包后跑
+ * `npm run codegen:design-tokens`，勿在此手写颜色 token。非颜色刻度（间距/圆角/字号/行高）仍在下方手写。
+ *
+ * P3：接入 Tailwind v4（@tailwindcss/vite，与 apps/web 同 4.3）为 @chrono/ui 渐进迁移铺路。
+ * 迁移范式 = Tailwind **标准 utility**（flex/gap/text-center…）+ **arbitrary value 引 token**
+ * （bg-[var(--c-surface-2)] / text-[var(--c-pos)] / rounded-[var(--c-radius-sm)]）；
+ * **保留**全部手写 .card/.tabs/.chat class 共存（零视觉回归，渐进迁移不强制一次重写）。
+ * 试点：EdgeRuntimeBadge 已迁（实测计算值与原 .edge-badge 1:1 等价）。 */
+@import 'tailwindcss';
+@import './styles/tokens.css';
+/* 显式声明扫描源——确保 Tailwind v4 抓到 companion 的 .tsx（自动探测在本构建链下未覆盖到，
+ * 试点 utility 一度未生成；@source 显式锚定 src 修复）。 */
+@source '../src/**/*.{tsx,ts}';
+
+/* P3 token 消费方式：companion 的 token 仍是 :root 的 --c-*（来自共享 design-tokens，单一事实源）。
+ * 迁移时**直接用 arbitrary value 引 token**：`bg-[var(--c-surface-2)]` / `text-[var(--c-pos)]` /
+ * `rounded-[var(--c-radius-sm)]`——零值复制、单一事实源、工具链已验证可用（试点 EdgeRuntimeBadge）。
+ * 标准 utility（text-center / flex / gap-* 等）正常可用。
+ * TODO（后续优化，非阻塞）：曾试 `@theme inline { --color-c-*: var(--c-*) }` 桥接出短 utility（bg-c-* 等）
+ * 但本构建链未生成（疑 @theme 与 @import tokens.css 顺序/var 间接引用所致，未深究）；arbitrary value
+ * 已足够渐进迁移，待全量迁移前可重排查 @theme 以获更短类名。 */
+
 :root {
-  --c-bg: #0f1420;
-  --c-surface: #1a2030;
-  --c-surface-2: #232a3d;
-  --c-text: #e8ecf4;
-  --c-muted: #8a94ab;
-  --c-brand: #5b8def;
-  --c-pos: #4fc08d;
-  --c-neg: #e7796b;
+  /* ── 设计系统刻度（Phase ②：收编硬编码值，建立统一刻度）──
+   * 原仅有 --c-gap/--c-radius 两个尺度 token，间距/半径/字号散落十余种字面值。
+   * 下列刻度的取值刻意等于既有最常用字面值，替换时计算值不变（零视觉漂移），
+   * 仅个别罕见异常值就近吸附（≤1px，详见替换处注释）。 */
+
+  /* 间距：4px 基准刻度。少数控件级微调值（6/9/10/14/18px）刻意保留字面量不入刻度——
+   * 它们是紧凑控件的内部微距（按钮竖向 padding、bar 高、气泡内距），强行吸附会改控件尺寸；
+   * 保留字面量比塞进刻度更诚实，也避免引入 6/9px 半步污染刻度。 */
+  --c-space-1: 4px;
+  --c-space-2: 8px;
+  --c-space-3: 12px;
+  --c-space-4: 16px;
+  --c-space-5: 24px;
+  --c-space-6: 32px;
+  --c-space-8: 64px;
+
+  /* 圆角：4 档 1:1 覆盖既有 4 种取值（10/12/14/999），零漂移。 */
+  --c-radius-sm: 10px;
+  --c-radius-md: 12px;
   --c-radius: 14px;
-  --c-gap: 16px;
+  --c-radius-pill: 999px;
+
+  /* 字号：5 档（单调递增，base 为正文基准）。
+   * 原 14px/16px 与 base(15) 仅差 1px=设计噪声非信号，统一吸附到 base，消除「14<base」歧义命名。 */
+  --c-text-xs: 12px;
+  --c-text-sm: 13px;
+  --c-text-base: 15px;
+  --c-text-lg: 17px;
+  --c-text-xl: 22px;
+
+  /* 行高：补齐报告指出的「字号缺 line-height」。 */
+  --c-leading-tight: 1.3;
+  --c-leading-normal: 1.5;
+  --c-leading-relaxed: 1.6;
+
+  /* --c-gap 保留为别名（向后兼容既有引用），并入刻度=16px。 */
+  --c-gap: var(--c-space-4);
 }
 
 * { box-sizing: border-box; }
@@ -23,102 +73,142 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-.app { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
-.app__header { position: relative; text-align: center; margin-bottom: 20px; }
-.app__brand { margin: 0; font-size: 22px; letter-spacing: 0.02em; }
-.app__tagline { margin: 4px 0 0; color: var(--c-muted); font-size: 14px; }
+/* 移动优先 640px 上限；宽屏（≥720px）放宽到 760px，减少桌面端两侧大片留白（原 640 在桌面显廉价）。 */
+.app { max-width: 640px; margin: 0 auto; padding: var(--c-space-5) var(--c-space-4) var(--c-space-8); }
+@media (min-width: 720px) { .app { max-width: 760px; } }
+
+/* ── 拟人化首屏（hero）：渐变光球头像 + 「学到 N 件事」进度，强化「这是我的数字伙伴」── */
+.card--hero { display: flex; gap: var(--c-space-4); align-items: flex-start; }
+.avatar {
+  flex: none; width: 64px; height: 64px; border-radius: 50%;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 -4px 10px rgba(0, 0, 0, 0.25);
+}
+.hero__body { flex: 1; min-width: 0; }
+.hero__progress { margin: var(--c-space-3) 0 0; font-size: var(--c-text-base); color: var(--c-text); }
+/* 进度数字用品牌文本色（亮琥珀 --c-brand-text，卡片底 7.57 清晰）；与上述拆分的文本 token 一致。 */
+.hero__progress strong { color: var(--c-brand-text); font-variant-numeric: tabular-nums; }
+.app__header { position: relative; text-align: center; margin-bottom: 20px; } /* 头部锚点间距保留 20px（不吸附到 24，+4px 在移动端可感知）*/
+.app__brand { margin: 0; font-size: var(--c-text-xl); letter-spacing: 0.02em; }
+.app__tagline { margin: var(--c-space-1) 0 0; color: var(--c-muted); font-size: var(--c-text-base); }
 .app__logout {
-  position: absolute; top: 0; right: 0; padding: 6px 12px; border: none;
-  border-radius: 999px; background: var(--c-surface); color: var(--c-muted);
-  font-size: 13px; cursor: pointer;
+  position: absolute; top: 0; right: 0; padding: 6px var(--c-space-3); border: none;
+  border-radius: var(--c-radius-pill); background: var(--c-surface); color: var(--c-muted);
+  font-size: var(--c-text-sm); cursor: pointer;
 }
 
-.view--login { max-width: 360px; margin: 24px auto 0; }
-.login { display: flex; flex-direction: column; gap: 14px; margin: 4px 0 12px; }
-.login__field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--c-muted); }
+.view--login { max-width: 360px; margin: var(--c-space-5) auto 0; }
+.login { display: flex; flex-direction: column; gap: var(--c-space-3); margin: var(--c-space-1) 0 var(--c-space-3); } /* gap 14px→12 */
+.login__field { display: flex; flex-direction: column; gap: var(--c-space-2); font-size: var(--c-text-base); color: var(--c-muted); } /* label 间距 6px→8，更松不挤 */
 .login__field input {
-  padding: 11px 12px; border: 1px solid var(--c-surface-2); border-radius: 10px;
-  background: var(--c-surface-2); color: var(--c-text); font-size: 15px;
-}
+  padding: var(--c-space-3) var(--c-space-3); border: 1px solid var(--c-surface-2); border-radius: var(--c-radius-sm);
+  background: var(--c-surface-2); color: var(--c-text); font-size: var(--c-text-base);
+} /* 竖向 padding 11px→12，就近吸附 */
 .login__field input:focus { outline: 2px solid var(--c-brand); outline-offset: 1px; }
-.login__error { color: var(--c-neg); font-size: 14px; margin: 0; }
+.login__error { color: var(--c-neg); font-size: var(--c-text-base); margin: 0; }
 .login__submit {
-  padding: 12px; border: none; border-radius: 999px; background: var(--c-brand);
-  color: #fff; font-size: 15px; cursor: pointer;
+  /* 用加深的品牌蓝（非 --c-brand 本色）：白字对比度 4.81:1 过 WCAG AA（4.5:1）；
+   * 不改 --c-brand 以保持 theme-color/icon/manifest 视觉一致。 */
+  padding: var(--c-space-3); border: none; border-radius: var(--c-radius-pill); background: var(--c-brand-strong);
+  color: #fff; font-size: var(--c-text-base); cursor: pointer;
 }
-.login__submit:disabled { opacity: 0.6; cursor: default; }
+.login__submit:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态=0.6 + not-allowed（原 default 光标误导，0.6 比 0.5 更易读）*/
 
-.tabs { display: flex; gap: 8px; margin-bottom: var(--c-gap); }
-.tabs__btn {
-  flex: 1; padding: 10px 12px; border: none; border-radius: 999px;
-  background: var(--c-surface); color: var(--c-muted); font-size: 15px; cursor: pointer;
+.tabs {
+  /* 6 个 tab 在窄屏（≤360px）总宽超出列宽。原 flex:1 等分会让「我的数字人」(5字+选中加粗)
+   * 折行很丑；改 nowrap 后又会横向溢出裁切。窄屏正解：tab 不换行不等分（内容宽），
+   * 容器装不下时横向滚动——可滑动够到全部 tab，永不折行/裁切。 */
+  display: flex; gap: var(--c-space-2); margin-bottom: var(--c-gap);
+  overflow-x: auto; scrollbar-width: none; /* Firefox 隐藏滚动条（仍可滑动/键盘滚入） */
 }
-.tabs__btn--active { background: var(--c-brand); color: #fff; }
+.tabs::-webkit-scrollbar { display: none; } /* WebKit 隐藏滚动条，保留可滑动 */
+.tabs__btn {
+  /* 内容宽不收缩（flex-shrink:0），不换行；配合容器 overflow-x:auto 实现窄屏横滑。 */
+  flex: 0 0 auto; white-space: nowrap;
+  padding: 10px var(--c-space-3); border: none; border-radius: var(--c-radius-pill);
+  background: var(--c-surface); color: var(--c-muted); font-size: var(--c-text-base); cursor: pointer;
+}
+/* 键盘可达：dark 底上 tab 无可见焦点环，对齐 .login__field input:focus 规范。 */
+.tabs__btn:focus-visible { outline: 2px solid var(--c-brand); outline-offset: 2px; }
+/* 白字 on 品牌底用 --c-brand-strong（深琥珀 5.28 过 AA）；--c-brand 本色白字仅 3.94 不达标。 */
+.tabs__btn--active { background: var(--c-brand-strong); color: #fff; }
+
+/* 宽屏（≥500px，6 tab 总宽必然装得下）恢复等分铺满，消除窄屏方案在桌面端留下的右侧
+ * 散尾留白。min-width:max-content 兜底：等分槽永不窄于内容宽，杜绝「我的数字人」复折行。 */
+@media (min-width: 500px) {
+  .tabs { overflow-x: visible; }
+  .tabs__btn { flex: 1 1 0; min-width: max-content; }
+}
 
 .view { display: flex; flex-direction: column; gap: var(--c-gap); }
-.card { background: var(--c-surface); border-radius: var(--c-radius); padding: 18px; }
+.card { background: var(--c-surface); border-radius: var(--c-radius); padding: var(--c-space-4); } /* 卡片内距 18px→16，并入刻度 */
 .card--empty { text-align: center; }
-.card__title { margin: 0 0 12px; font-size: 15px; color: var(--c-muted); font-weight: 600; }
+.card__title { margin: 0 0 var(--c-space-3); font-size: var(--c-text-base); color: var(--c-muted); font-weight: 600; }
 
-.narrative { margin: 0; font-size: 17px; line-height: 1.6; }
-.overview { margin: 12px 0 0; display: flex; gap: 8px; color: var(--c-muted); font-size: 13px; }
+.narrative { margin: 0; font-size: var(--c-text-lg); line-height: var(--c-leading-relaxed); }
+.overview { margin: var(--c-space-3) 0 0; display: flex; gap: var(--c-space-2); color: var(--c-muted); font-size: var(--c-text-sm); }
 .muted { color: var(--c-muted); margin: 0; }
 
-.values, .memories, .directions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.values, .memories, .directions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--c-space-3); }
 
 .value { display: grid; grid-template-columns: 5em 1fr 2.5em; align-items: center; gap: 10px; }
-.value__label { font-size: 15px; }
-.value__bar, .direction__bar { height: 8px; background: var(--c-surface-2); border-radius: 999px; overflow: hidden; }
+.value__label { font-size: var(--c-text-base); }
+.value__bar, .direction__bar { height: var(--c-space-2); background: var(--c-surface-2); border-radius: var(--c-radius-pill); overflow: hidden; }
 .value__fill, .direction__fill { display: block; height: 100%; background: var(--c-brand); }
 .value__weight { text-align: right; color: var(--c-muted); font-variant-numeric: tabular-nums; }
 
 .memory { display: flex; align-items: center; gap: 10px; }
 .memory--row { gap: 10px; }
-.memory__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.memory__dot { width: var(--c-space-2); height: var(--c-space-2); border-radius: 50%; flex: none; }
 .memory__dot--pos { background: var(--c-pos); }
 .memory__dot--neg { background: var(--c-neg); }
-.memory__content { font-size: 15px; flex: 1; }
-.memory__kind { font-size: 12px; color: var(--c-muted); flex: none; }
+.memory__content { font-size: var(--c-text-base); flex: 1; }
+.memory__kind { font-size: var(--c-text-xs); color: var(--c-muted); flex: none; }
 
 .loadmore {
-  margin-top: 14px; width: 100%; padding: 10px; border: none; border-radius: 999px;
-  background: var(--c-surface-2); color: var(--c-text); font-size: 14px; cursor: pointer;
-}
-.loadmore:disabled { opacity: 0.6; cursor: default; }
+  margin-top: var(--c-space-3); width: 100%; padding: 10px; border: none; border-radius: var(--c-radius-pill);
+  background: var(--c-surface-2); color: var(--c-text); font-size: var(--c-text-base); cursor: pointer;
+} /* margin-top 14px→12，并入刻度 */
+.loadmore:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 
-.intensity { margin: 0; font-size: 16px; }
-.intensity strong { color: var(--c-brand); }
+.intensity { margin: 0; font-size: var(--c-text-base); } /* 16px→15(base)，差 1px 不可见 */
+.intensity strong { color: var(--c-brand-text); } /* 文本用亮琥珀（--c-brand 在 surface 上仅 4.12 不达 AA）*/
 .direction { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; }
-.direction__label { font-size: 15px; }
-.direction__desc { color: var(--c-muted); font-size: 13px; }
+.direction__label { font-size: var(--c-text-base); }
+.direction__desc { color: var(--c-muted); font-size: var(--c-text-sm); }
 .direction__bar { grid-column: 1 / -1; }
 
 /* ADR-0054 主动消息（nudges）：「TA 主动跟我说的」列表。 */
-.nudges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.nudge { padding: 14px; background: var(--c-surface); border-radius: 12px; border: 1px solid var(--c-surface-2); }
+.nudges { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--c-space-3); }
+.nudge { padding: var(--c-space-3); background: var(--c-surface); border-radius: var(--c-radius-md); border: 1px solid var(--c-surface-2); } /* 内距 14px→12，并入刻度 */
 .nudge--unread { border-color: var(--c-brand); }
 .nudge__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.nudge__kind { font-size: 12px; font-weight: 600; color: var(--c-brand); }
-.nudge__time { font-size: 12px; color: var(--c-muted); }
-.nudge__body { margin: 0; font-size: 15px; line-height: 1.5; }
-.nudge__read-btn { margin-top: 10px; padding: 6px 12px; font-size: 13px; border: 1px solid var(--c-surface-2); border-radius: 999px; background: transparent; color: var(--c-muted); cursor: pointer; }
-.nudge__read-btn:hover { border-color: var(--c-brand); color: var(--c-brand); }
+.nudge__kind { font-size: var(--c-text-xs); font-weight: 600; color: var(--c-brand-text); } /* 文本用亮琥珀（AA）*/
+.nudge__time { font-size: var(--c-text-xs); color: var(--c-muted); }
+.nudge__body { margin: 0; font-size: var(--c-text-base); line-height: var(--c-leading-normal); }
+.nudge__read-btn { margin-top: 10px; padding: 6px var(--c-space-3); font-size: var(--c-text-sm); border: 1px solid var(--c-surface-2); border-radius: var(--c-radius-pill); background: transparent; color: var(--c-muted); cursor: pointer; }
+.nudge__read-btn:hover { border-color: var(--c-brand); color: var(--c-brand-text); } /* 边框装饰用 brand，文本用亮琥珀(AA) */
 
-.state { padding: 32px 16px; text-align: center; color: var(--c-muted); }
+.state { padding: var(--c-space-6) var(--c-space-4); text-align: center; color: var(--c-muted); }
 .state--error { color: var(--c-neg); }
-.state--auth p { margin: 4px 0; }
+.state--auth p { margin: var(--c-space-1) 0; }
+/* 加载态：原仅静态「加载中…」文本，读起来像「卡住」。加柔和呼吸脉冲，提示「正在进行」。
+ * 不做逐视图形状骨架——C 端数据加载很快，整页 shape-skeleton 投入产出比低；脉冲是通用轻量升级。 */
+.state--loading { animation: state-pulse 1.4s ease-in-out infinite; }
+/* 谷值 0.6 与既有 .perceive__mic--on 的 perceive-pulse 一致（0.45 在 dark 底太暗影响可读）。 */
+@keyframes state-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .state--loading { animation: none; } } /* 尊重减少动效偏好 */
 
 /* 「让 TA 听一段」感知视图 */
 .perceive__input {
   width: 100%;
   box-sizing: border-box;
-  margin-top: 8px;
-  padding: 11px 12px;
+  margin-top: var(--c-space-2);
+  padding: var(--c-space-3) var(--c-space-3); /* 11px→12，并入刻度 */
   border: 1px solid var(--c-surface-2);
-  border-radius: 10px;
+  border-radius: var(--c-radius-sm);
   background: var(--c-surface-2);
   color: var(--c-text);
-  font-size: 15px;
+  font-size: var(--c-text-base);
   font-family: inherit;
   resize: vertical;
 }
@@ -133,24 +223,24 @@ body {
 .perceive__submit {
   padding: 9px 18px;
   border: none;
-  border-radius: 999px;
-  background: var(--c-brand);
+  border-radius: var(--c-radius-pill);
+  background: var(--c-brand-strong); /* 白字 AA */
   color: #fff;
-  font-size: 15px;
+  font-size: var(--c-text-base);
   cursor: pointer;
 }
-.perceive__submit:disabled { opacity: 0.5; cursor: not-allowed; }
-.perceive__buttons { display: flex; align-items: center; gap: 8px; }
+.perceive__submit:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
+.perceive__buttons { display: flex; align-items: center; gap: var(--c-space-2); }
 .perceive__mic {
   padding: 9px 14px;
   border: 1px solid var(--c-brand);
-  border-radius: 999px;
+  border-radius: var(--c-radius-pill);
   background: transparent;
-  color: var(--c-brand);
-  font-size: 15px;
+  color: var(--c-brand-text); /* 文本亮琥珀(AA)；边框装饰仍用 --c-brand */
+  font-size: var(--c-text-base);
   cursor: pointer;
 }
-.perceive__mic:disabled { opacity: 0.5; cursor: not-allowed; }
+.perceive__mic:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 /* 听写中：实心红，脉冲提示「正在录」。 */
 .perceive__mic--on {
   background: var(--c-neg);
@@ -162,41 +252,32 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
 }
-.perceive__hint { margin: 8px 0 0; font-size: 14px; }
+.perceive__hint { margin: var(--c-space-2) 0 0; font-size: var(--c-text-base); }
 .perceive__hint--error { color: var(--c-neg); }
-.perceive__memories { margin: 8px 0 0; padding-left: 18px; }
-.perceive__memory { margin: 4px 0; color: var(--c-text); }
+.perceive__memories { margin: var(--c-space-2) 0 0; padding-left: 18px; }
+.perceive__memory { margin: var(--c-space-1) 0; color: var(--c-text); }
 
-/* 端侧内核徽章（ADR-0052 Local Persona Autonomy） */
-.edge-badge {
-  margin: 0 0 4px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--c-surface-2);
-  color: var(--c-pos);
-  font-size: 13px;
-  text-align: center;
-}
+/* 端侧内核徽章（ADR-0052）：已迁 Tailwind utility（见 EdgeRuntimeBadge.tsx，P3 试点）；class 删除。 */
 
 /* ── 对话 ChatView ── */
 .chat__log {
   display: flex; flex-direction: column; gap: 10px;
-  padding: 4px 0; margin: 12px 0;
+  padding: var(--c-space-1) 0; margin: var(--c-space-3) 0;
   max-height: 52vh; overflow-y: auto;
 }
-.chat__empty { text-align: center; padding: 24px 0; }
+.chat__empty { text-align: center; padding: var(--c-space-5) 0; }
 .chat__bubble {
-  max-width: 82%; padding: 10px 14px; border-radius: 14px;
-  font-size: 15px; line-height: 1.5; word-break: break-word;
+  max-width: 82%; padding: 10px 14px; border-radius: var(--c-radius);
+  font-size: var(--c-text-base); line-height: var(--c-leading-normal); word-break: break-word;
 }
 .chat__bubble--user {
-  align-self: flex-end; background: var(--c-brand); color: #fff;
-  border-bottom-right-radius: 4px;
+  align-self: flex-end; background: var(--c-brand-strong); color: #fff; /* 白字 AA */
+  border-bottom-right-radius: var(--c-space-1);
 }
 .chat__bubble--persona {
   align-self: flex-start; background: var(--c-surface-2); color: var(--c-text);
-  border-bottom-left-radius: 4px;
+  border-bottom-left-radius: var(--c-space-1);
 }
 .chat__text { margin: 0; white-space: pre-wrap; }
-.chat__meta { display: block; margin-top: 6px; font-size: 12px; color: var(--c-muted); }
+.chat__meta { display: block; margin-top: 6px; font-size: var(--c-text-xs); color: var(--c-muted); }
 .chat__composer { margin-top: 0; }

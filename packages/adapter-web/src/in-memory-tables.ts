@@ -52,9 +52,16 @@ export class InMemoryTables {
   upsert(name: string, row: Row): void {
     const schema = this.schemaOf(name);
     const t = this.requireTable(name);
-    const key = String(row[schema.primaryKey]);
-    if (!key) throw new Error(`row missing primary key ${schema.primaryKey} for table ${name}`);
-    t.set(key, structuredClone(row));
+    /*
+     * 校验**原始**主键值是否存在，而非 String(...) 后的结果——String(undefined)==='undefined'
+     * 是非空字符串会绕过 !key 检查，使缺主键的行被静默存到 'undefined' 键下互相覆盖。
+     * 显式拒绝 null/undefined；数字 0 / false 等合法主键值保留。
+     */
+    const rawKey = row[schema.primaryKey];
+    if (rawKey === null || rawKey === undefined) {
+      throw new Error(`row missing primary key ${schema.primaryKey} for table ${name}`);
+    }
+    t.set(String(rawKey), structuredClone(row));
   }
 
   delete(name: string, key: string): boolean {
@@ -99,8 +106,15 @@ export class InMemoryTables {
       this.defineTable(name, { primaryKey: t.primaryKey });
       const map = this.tables.get(name)!;
       for (const row of t.rows) {
-        const key = String(row[t.primaryKey]);
-        map.set(key, structuredClone(row));
+        /*
+         * 读取路径须与 upsert 写入校验对称（P2-r）：旧快照可能含缺主键的污染行
+         * （fix 前 String(undefined)==='undefined' 漏网）。校验**原始**主键值——
+         * 写入侧严格抛错拒绝，恢复侧容错**跳过**非法行（best-effort，避免单个污染行
+         * 炸掉整个 hydrate/回滚），不把脏数据以 'undefined' 键复活。
+         */
+        const rawKey = row[t.primaryKey];
+        if (rawKey === null || rawKey === undefined) continue;
+        map.set(String(rawKey), structuredClone(row));
       }
     }
   }

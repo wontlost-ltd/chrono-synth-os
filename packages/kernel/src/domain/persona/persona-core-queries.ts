@@ -28,6 +28,9 @@ export const PCORE_QUERY_MARKETPLACE_ANALYTICS = 'pcore.marketplaceAnalytics' as
 export const PCORE_QUERY_DAILY_PERSONAS = 'pcore.dailyPersonas' as const;
 export const PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT = 'pcore.dailyCompletedTaskCount' as const;
 export const PCORE_QUERY_DAILY_PERSONA_REVENUE = 'pcore.dailyPersonaRevenue' as const;
+/** 批量（消 materializeDailyAnalytics 的 N+1）：整租户按 persona 分组的当日完成数 / 收益 */
+export const PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA = 'pcore.dailyCompletedTaskCountByPersona' as const;
+export const PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA = 'pcore.dailyPersonaRevenueByPersona' as const;
 export const PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS = 'pcore.dailyMarketplaceAnalytics' as const;
 export const PCORE_QUERY_ECONOMY_ANALYTICS = 'pcore.economyAnalytics' as const;
 export const PCORE_QUERY_PERSONA_MEMORIES = 'pcore.personaMemories' as const;
@@ -39,6 +42,8 @@ export const PCORE_QUERY_WALLET_BY_PERSONA = 'pcore.walletByPersona' as const;
 export const PCORE_QUERY_WALLET_BY_ID_FOR_OWNER = 'pcore.walletByIdForOwner' as const;
 export const PCORE_QUERY_WALLET_TRANSACTIONS = 'pcore.walletTransactions' as const;
 export const PCORE_QUERY_TASK_APPLICATION = 'pcore.taskApplication' as const;
+/** 列某工单的全部 persona 申请者（含 persona display_name，发布者据此选委派给谁）。 */
+export const PCORE_QUERY_TASK_APPLICATIONS_BY_TASK = 'pcore.taskApplicationsByTask' as const;
 export const PCORE_QUERY_RUNTIME_SESSION = 'pcore.runtimeSession' as const;
 export const PCORE_QUERY_TIMED_OUT_RUNTIME_SESSIONS = 'pcore.timedOutRuntimeSessions' as const;
 export const PCORE_QUERY_GOVERNANCE_CASES_BY_PERSONA = 'pcore.governanceCasesByPersona' as const;
@@ -376,6 +381,11 @@ export interface PcoreTaskApplicationRow {
   readonly updated_at: number;
 }
 
+/** 申请者行 + persona display_name（列工单申请者用，发布者看名字选委派）。 */
+export interface PcoreTaskApplicantRow extends PcoreTaskApplicationRow {
+  readonly persona_name: string | null;
+}
+
 export interface PcoreRuntimeSessionRow {
   readonly id: string;
   readonly tenant_id: string;
@@ -608,6 +618,25 @@ export interface PcoreRevenueByDateParams extends PcoreTenantPersonaParams {
   endMs: number;
 }
 
+/** 批量按日期范围（无 personaId）：整租户一次取，按 persona 分组 */
+export interface PcoreDateRangeParams {
+  tenantId: string;
+  startMs: number;
+  endMs: number;
+}
+
+/** persona → 当日完成任务数 分组行 */
+export interface PcorePersonaCountRow {
+  persona_id: string;
+  count: number | bigint;
+}
+
+/** persona → 当日收益（minor）分组行 */
+export interface PcorePersonaTotalRow {
+  persona_id: string;
+  total: number | bigint | null;
+}
+
 export interface PcoreDailyMarketplaceAnalyticsParams {
   tenantId: string;
   startMs: number;
@@ -719,6 +748,11 @@ export interface PcoreTaskApplicationParams {
   tenantId: string;
   taskId: string;
   personaId: string;
+}
+
+export interface PcoreTaskApplicationsByTaskParams {
+  tenantId: string;
+  taskId: string;
 }
 
 export interface PcoreCreateTaskApplicationParams extends PcoreTaskApplicationParams {
@@ -1194,6 +1228,16 @@ export function pcoreQueryDailyPersonaRevenue(params: PcoreRevenueByDateParams):
   return { kind: PCORE_QUERY_DAILY_PERSONA_REVENUE, params };
 }
 
+/** 批量：整租户当日完成数按 persona 分组（消 N+1） */
+export function pcoreQueryDailyCompletedTaskCountByPersona(params: PcoreDateRangeParams): Query<PcorePersonaCountRow, PcoreDateRangeParams> {
+  return { kind: PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA, params };
+}
+
+/** 批量：整租户当日收益按 persona 分组（消 N+1） */
+export function pcoreQueryDailyPersonaRevenueByPersona(params: PcoreDateRangeParams): Query<PcorePersonaTotalRow, PcoreDateRangeParams> {
+  return { kind: PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA, params };
+}
+
 export function pcoreQueryDailyMarketplaceAnalytics(params: PcoreDailyMarketplaceAnalyticsParams): Query<PcoreDailyMarketplaceAnalyticsRow | null, PcoreDailyMarketplaceAnalyticsParams> {
   return { kind: PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS, params };
 }
@@ -1236,6 +1280,10 @@ export function pcoreQueryWalletTransactions(params: PcoreWalletByIdParams): Que
 
 export function pcoreQueryTaskApplication(params: PcoreTaskApplicationParams): Query<PcoreTaskApplicationRow | null, PcoreTaskApplicationParams> {
   return { kind: PCORE_QUERY_TASK_APPLICATION, params };
+}
+
+export function pcoreQueryTaskApplicationsByTask(params: PcoreTaskApplicationsByTaskParams): Query<PcoreTaskApplicantRow, PcoreTaskApplicationsByTaskParams> {
+  return { kind: PCORE_QUERY_TASK_APPLICATIONS_BY_TASK, params };
 }
 
 export function pcoreQueryRuntimeSession(params: PcoreRuntimeSessionParams): Query<PcoreRuntimeSessionRow | null, PcoreRuntimeSessionParams> {

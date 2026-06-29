@@ -27,7 +27,7 @@ describe('WorkerPersonaSignalsService（C2 worker 人格信号）', () => {
   }
 
   function seedTask(id: string, status: TaskStatus, risk: RiskLevel): void {
-    const t: Omit<OrgTask, 'tenantId'> = {
+    const t: Omit<OrgTask, 'tenantId' | 'resumeAttemptCount' | 'lastWakeEventId'> = {
       id, orgId: 'org-1', goalId: 'g', parentTaskId: null, assignedToWorkerId: workerId,
       accountableWorkerId: 'mgr', title: id, taskType: 'x', status,
       riskLevel: risk, allowsToolExecution: false, acceptanceCriteria: '', requiredCapabilities: [],

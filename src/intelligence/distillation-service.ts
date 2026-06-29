@@ -56,9 +56,13 @@ export type ReviewResult =
 
 /** ChronoSynthOS 注入的快照/回滚钩子（解耦，便于测试） */
 export interface SnapshotGuard {
-  /** 编译前创建快照，返回快照 id */
-  snapshot(): string;
-  /** 失败时回滚到快照；返回是否成功 */
+  /**
+   * 编译前创建快照，返回快照 id。
+   * personaId（ADR-0056 K5）：快照该 persona 自己的内核——读写对称，编译写哪个 persona core，
+   * 回滚就恢复哪个。省略回落 default（向后兼容）。
+   */
+  snapshot(personaId?: string): string;
+  /** 失败时回滚到快照（快照已记录其 persona，恢复时自动恢复同一 persona）；返回是否成功 */
   rollback(snapshotId: string): boolean;
 }
 
@@ -80,8 +84,11 @@ export interface DistillationServiceDeps {
   /**
    * 租户级全局 compile mutex（ADR-0047 多实例 gating item）。可选：未注入时为
    * 单进程同步语义（向后兼容）；注入后用 GLOBAL_LEASE_PERSONA_ID 串行化整个租户的
-   * 编译（**非 per-persona**——restoreFromSnapshot 回滚的是 system-global 快照，
-   * 不同 persona 的并发编译也会互相覆盖，故必须全局互斥）。
+   * 编译。**仍是租户级全局而非 per-persona**：ADR-0056 K5 后 coreSelf 快照/回滚已按 persona
+   * 隔离，且 rollback 用 coreSelfOnly（不再恢复租户级状态）。保持租户级全局的原因转为：
+   * value_shift/memory_edge 底层 ValueStore/CognitiveMemoryGraph 仍 tenant 共享（K5b 前），不同
+   * persona 的并发编译会在这些**共享价值/记忆**上互相覆盖；待 K5b 宽表 persona-aware 后可重新评估
+   * 是否降为 per-persona 锁。
    */
   leaseStore?: PersonaLeaseStore;
 }
@@ -240,10 +247,10 @@ export class DistillationService {
   /**
    * approved → compiled，受 **租户级全局 compile mutex** 保护（ADR-0047 多实例 gating）。
    *
-   * 锁粒度是全局而非 per-persona：编译走 system-global 的 createSnapshot/
-   * restoreFromSnapshot（快照覆盖 coreSelf + 全部 personas + 全部 conflicts），
-   * 所以不同 persona 的并发编译也必须互斥——否则两个 persona 各持一把 per-persona
-   * 锁仍会互相覆盖全局快照。用 GLOBAL_LEASE_PERSONA_ID 让全租户编译竞争同一把锁。
+   * 锁粒度是全局而非 per-persona：ADR-0056 K5 后 coreSelf 快照/回滚已按 persona 隔离，且 rollback 用
+   * coreSelfOnly（不再恢复租户级状态）。保持全局的原因转为 value_shift/memory_edge 底层 ValueStore/
+   * CognitiveMemoryGraph 仍 tenant 共享（K5b 前），不同 persona 的并发编译会在这些**共享价值/记忆**上互相
+   * 覆盖，故仍必须互斥。用 GLOBAL_LEASE_PERSONA_ID 让全租户编译竞争同一把锁。
    * 锁覆盖快照→编译→状态推进→补偿全程。未注入 leaseStore = 单进程同步语义。
    * 拿不到锁说明另一实例/另一 persona 正在编译，返回 'lease_busy'（工件留 approved 待重试）。
    */
@@ -267,7 +274,8 @@ export class DistillationService {
 
   /** 编译主体：持有 compile 锁（如启用）期间执行。via 标记编译路径（auto/approved），随状态推进落库。 */
   private compileApprovedLocked(personaId: string, artifact: DistilledArtifact, via: CompiledVia): DistilledArtifact | undefined {
-    const snapshotId = this.deps.snapshotGuard.snapshot();
+    /* 快照该 persona 自己的内核（ADR-0056 K5）：编译落 getCore(personaId)，回滚也恢复同一 persona。 */
+    const snapshotId = this.deps.snapshotGuard.snapshot(personaId);
     const outcome = this.deps.compiler.compile(personaId, artifact);
 
     if (!outcome.ok) {

@@ -1,0 +1,102 @@
+# 数字员工组织·一键 podman 部署（ADR-0056 K6）
+#
+# 一条命令起一个**完整的多原型数字员工组织**：backend（自迁移 + 健康检查），prod 模式再加 postgres，
+# 起来后由 deploy.sh 在容器内跑 seed-org，落 7 名覆盖 4 原型（explorer/guardian/analyst/doer）的
+# 数字员工，各有独立认知内核（自适应/自成长，零-LLM）。
+# 不含 redis：队列是 DB-backed（CHRONO_REDIS_ENABLED 默认 false），本自包含部署无需 redis。
+#
+# 用法（仓库根目录）：
+#   bash deploy/digital-org/deploy.sh            # 默认 dev（SQLite，最快）
+#   bash deploy/digital-org/deploy.sh prod       # prod（PostgreSQL + 队列 worker）
+#
+# 直接用 compose：
+#   podman compose -f deploy/digital-org/podman-compose.yml up -d --build
+#   podman compose -f deploy/digital-org/podman-compose.yml --profile prod up -d --build
+#   podman compose -f deploy/digital-org/podman-compose.yml down -v
+#
+# 说明：env 变量名用真实 config schema 名（CHRONO_SERVER_HOST/PORT，非旧 compose 里写错的
+# CHRONO_HOST/PORT）。本 compose 自包含，不依赖任何外部前端仓库（纯 backend 组织）。
+
+name: chrono-digital-org
+
+volumes:
+  chrono-org-data:
+  chrono-org-pg:
+
+services:
+  # ── dev 模式（默认 profile，SQLite，最快起）────────────────────────────────
+  org:
+    image: chrono-synth-os:org
+    container_name: chrono-digital-org
+    profiles: ["dev"]
+    build:
+      context: ../..
+    environment:
+      NODE_ENV: development
+      CHRONO_SERVER_HOST: 0.0.0.0
+      CHRONO_SERVER_PORT: "3000"
+      CHRONO_DB_DRIVER: sqlite
+      CHRONO_DB_PATH: /app/data/chrono.db
+      CHRONO_LOG_LEVEL: info
+      # 默认开 JWT，让部署完即可走全 HTTP 流程（注册 admin/自助建组织/可视化/重组）。
+      # secret 仅本地一键 demo，绝不复用到真实环境（生产请用密钥管理注入真实 secret）。
+      CHRONO_JWT_ENABLED: "true"
+      CHRONO_JWT_SECRET: "digital-org-local-jwt-secret-do-not-use-in-prod"
+    volumes:
+      - chrono-org-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "3000:3000"
+
+  # ── prod 模式（PostgreSQL 17 + pgvector + 队列 worker 同进程）──────────────
+  postgres:
+    image: docker.io/pgvector/pgvector:pg17
+    container_name: chrono-org-postgres
+    profiles: ["prod"]
+    environment:
+      POSTGRES_USER: chrono
+      POSTGRES_PASSWORD: chrono
+      POSTGRES_DB: chrono
+    volumes:
+      - chrono-org-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chrono -d chrono"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "5434:5432"
+
+  org-prod:
+    image: chrono-synth-os:org
+    container_name: chrono-digital-org-prod
+    profiles: ["prod"]
+    build:
+      context: ../..
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      CHRONO_SERVER_HOST: 0.0.0.0
+      CHRONO_SERVER_PORT: "3000"
+      CHRONO_DB_DRIVER: postgres
+      CHRONO_DB_CONNECTION_STRING: postgres://chrono:chrono@chrono-org-postgres:5432/chrono
+      CHRONO_QUEUE_ENABLED: "true"
+      CHRONO_QUEUE_MAX_CONCURRENT: "4"
+      CHRONO_LOG_LEVEL: info
+      # 默认开 JWT（auth 路由组只在 jwt.enabled=true 时注册——光有 secret 不够）。
+      # secret 仅本地一键 demo，绝不复用到真实环境（生产请用密钥管理注入真实 secret）。
+      CHRONO_JWT_ENABLED: "true"
+      CHRONO_JWT_SECRET: "digital-org-local-jwt-secret-do-not-use-in-prod"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+    ports:
+      - "3000:3000"

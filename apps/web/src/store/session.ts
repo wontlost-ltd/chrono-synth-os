@@ -41,6 +41,27 @@ function load(): Session {
 let current = load();
 const listeners = new Set<() => void>();
 
+/*
+ * 会话 epoch：每次「身份级」会话变更（登录写 token、登出清会话）自增。在途 refresh 捕获当时
+ * 的 epoch，应用结果前校验 epoch 未变——否则该 refresh 已被后续 login/logout 作废，丢弃不清会话。
+ * 用于消除「单个端点的陈旧 401 清掉刚换的新会话 / 瞬时失败误登出」隐患。
+ */
+let epoch = 0;
+export function getSessionEpoch(): number {
+  return epoch;
+}
+
+/*
+ * 「auth 已建立」回调：accessToken 从无到有时触发一次。这是「会话 cookie 经 /auth/refresh
+ * 兑换后确已新鲜」的精确信号——feature-flags 等用 cookie auth 的子系统据此在认证后重连
+ * （启动时 pre-auth 401 后不会自愈，见 featureFlagsRemote）。与 epoch 解耦、单一用途。
+ */
+const authEstablishedListeners = new Set<() => void>();
+export function onAuthEstablished(cb: () => void): () => void {
+  authEstablishedListeners.add(cb);
+  return () => authEstablishedListeners.delete(cb);
+}
+
 function emitChange(): void {
   for (const fn of listeners) fn();
 }
@@ -50,6 +71,16 @@ export function getSession(): Readonly<Session> {
 }
 
 export function setSession(patch: Partial<Session>): void {
+  /* 身份级变更（apiKey/user 切换，或 accessToken 从无到有=登录）→ 自增 epoch，作废在途 refresh。
+   * 纯 token 续期（已有 token 换新 token，apiKey/user 不变）不算身份变更，不自增。 */
+  const identityChanged =
+    (patch.apiKey !== undefined && patch.apiKey !== current.apiKey) ||
+    (patch.user !== undefined && patch.user !== current.user) ||
+    (patch.accessToken !== undefined && !current.accessToken && !!patch.accessToken && !current.apiKey);
+  /* accessToken 从无到有 = auth 刚建立（含 apiKey-fast-path 下 refresh 首次写 token）。
+   * 这是 cookie 已新鲜的精确时刻，比 epoch（不含 apiKey 续期场景）更适合触发 cookie-auth 子系统重连。 */
+  const authJustEstablished = !current.accessToken && !!patch.accessToken;
+  if (identityChanged) epoch += 1;
   current = { ...current, ...patch };
   /* 仅持久化非敏感字段，accessToken 保留在内存 */
   const persisted: PersistedSession = {
@@ -60,9 +91,13 @@ export function setSession(patch: Partial<Session>): void {
   };
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted)); } catch { /* storage unavailable */ }
   emitChange();
+  if (authJustEstablished) {
+    for (const fn of authEstablishedListeners) fn();
+  }
 }
 
 export function clearSession(): void {
+  epoch += 1;
   current = { apiKey: '', tenantId: 'default', mode: 'demo', accessToken: '', user: null };
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
   emitChange();

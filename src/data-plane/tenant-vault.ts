@@ -7,6 +7,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import type { IDatabase } from '../storage/database.js';
+import { realClock, type Clock } from '../utils/clock.js';
 
 export type KmsProvider = 'platform' | 'aws_kms' | 'gcp_kms' | 'azure_key_vault' | 'external';
 
@@ -28,12 +29,13 @@ const AES_GCM_TAG_LENGTH = 16;
 const HMAC_ALGORITHM = 'HMAC-SHA256';
 const PLATFORM_KEY = loadPlatformKey();
 
-export function createPlatformTenantVault(db: IDatabase): TenantVault {
-  return new PlatformTenantVault(db);
+export function createPlatformTenantVault(db: IDatabase, clock: Clock = realClock): TenantVault {
+  return new PlatformTenantVault(db, clock);
 }
 
 class PlatformTenantVault implements TenantVault {
-  constructor(private readonly db: IDatabase) {}
+  /* 时钟抽象（确定性）：密钥版本创建/审计时间戳须可注入以便测试控制与 SLA 验证。 */
+  constructor(private readonly db: IDatabase, private readonly clock: Clock = realClock) {}
 
   async wrapDataKey(input: { tenantId: string; keyRef: string; plaintextDataKey: Uint8Array }): Promise<{ wrappedDataKey: Uint8Array; keyVersion: number }> {
     return this.withAudit('wrapDataKey', input.tenantId, input.keyRef, async () => {
@@ -95,7 +97,7 @@ class PlatformTenantVault implements TenantVault {
         `INSERT OR IGNORE INTO tenant_key_versions(id, tenant_id, key_ref, provider, version, status, created_at)
          VALUES(?, ?, ?, ?, 1, 'active', ?)`,
       )
-      .run(randomUUID(), tenantId, keyRef, PLATFORM_PROVIDER, Date.now());
+      .run(randomUUID(), tenantId, keyRef, PLATFORM_PROVIDER, this.clock.now());
     return this.getLatestUsableKeyVersion(tenantId, keyRef);
   }
 
@@ -164,7 +166,7 @@ class PlatformTenantVault implements TenantVault {
         `INSERT INTO tenant_vault_audit(id, tenant_id, operation, key_ref, key_version, outcome, error_message, performed_at)
          VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(randomUUID(), tenantId, operation, keyRef, keyVersion, outcome, errorMessage ?? null, Date.now());
+      .run(randomUUID(), tenantId, operation, keyRef, keyVersion, outcome, errorMessage ?? null, this.clock.now());
   }
 }
 

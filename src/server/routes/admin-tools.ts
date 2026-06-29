@@ -83,9 +83,12 @@ export function registerAdminToolsRoutes(app: FastifyInstance, db: IDatabase): v
   );
 
   app.post('/api/v1/admin/tool-permissions/revoke-by-key', async (request) => {
-    /* 注意：此端点不要求 admin role，持有 revocation_key 即可撤销（紧急情况下） */
+    /*
+     * 注意：此端点不要求 admin role，持有 revocation_key 即可撤销（紧急情况下）。
+     * 但仍限定 request.tenantId——「持有 key」的能力仅在本租户内生效，防跨租户越权撤销。
+     */
     const body = RevokeToolPermissionByKeySchema.parse(request.body);
-    const ok = permService.revokeByKey(body.revocationKey, body.reason);
+    const ok = permService.revokeByKey(request.tenantId, body.revocationKey, body.reason);
     if (!ok) {
       throw new NotFoundError('revocation_key 无效或权限已撤销', ErrorCode.NOT_FOUND_VALUE);
     }

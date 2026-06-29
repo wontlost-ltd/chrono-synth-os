@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createPlatformTenantVault } from '../../data-plane/tenant-vault.js';
 import { createStorageProviderResolver } from '../../data-plane/storage-provider-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations, type IDatabase } from '../../storage/index.js';
+import { TestClock } from '../../utils/clock.js';
 
 async function withDb(fn: (db: IDatabase) => Promise<void> | void): Promise<void> {
   const db = createMemoryDatabase();
@@ -92,6 +93,28 @@ describe('TenantVault', () => {
       .get(TENANT);
 
     assert.equal(row?.count, 4);
+  }));
+
+  it('注入 Clock 时时间戳确定可复现（确定性 P1）', async () => withDb(async (db) => {
+    const fixed = 1_700_000_000_000;
+    const vault = createPlatformTenantVault(db, new TestClock(fixed));
+    await vault.sign({ tenantId: TENANT, keyRef: KEY_REF, payload: Buffer.from('det') });
+
+    /* 密钥版本创建时间戳 == 注入时钟 */
+    const keyRow = db
+      .prepare<{ created_at: number }>(
+        'SELECT created_at FROM tenant_key_versions WHERE tenant_id = ? AND key_ref = ?',
+      )
+      .get(TENANT, KEY_REF);
+    assert.equal(Number(keyRow?.created_at), fixed, '密钥版本 created_at 须等于注入时钟');
+
+    /* 审计 performed_at == 注入时钟 */
+    const auditRow = db
+      .prepare<{ performed_at: number }>(
+        'SELECT performed_at FROM tenant_vault_audit WHERE tenant_id = ? ORDER BY performed_at DESC LIMIT 1',
+      )
+      .get(TENANT);
+    assert.equal(Number(auditRow?.performed_at), fixed, '审计 performed_at 须等于注入时钟');
   }));
 });
 

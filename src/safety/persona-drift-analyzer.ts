@@ -26,6 +26,17 @@ export interface ValueDrift {
 const _computedValueDriftSatisfiesValueDrift: ValueDrift = {} as ComputedValueDrift;
 void _computedValueDriftSatisfiesValueDrift;
 
+/**
+ * 人格漂移报告 —— **两个产品 frame 的单一数据源**（ADR-0046 同内核两壳）。
+ * 同一份 DriftReport 被两个产品按各自语义 frame 消费，无需为每产品重算或加 frame 字段：
+ *   - **治理 frame（enterprise）**：原样消费为「policy violation / alert」
+ *     —— apps/web SafetyDriftReport 页直接读 alertLevel/valueDrifts.delta。
+ *   - **成长 frame（companion）**：经共享纯函数 `driftReportToGrowth`
+ *     （@chrono/contracts/companion/drift-to-growth）映射为「你最近探索的方向」
+ *     —— src/server/routes/companion/me.ts 与 desktop 本地共用同一 mapper，零分叉。
+ * 设计取舍：frame 派生用**共享 mapper 函数**（懒求值，growth frame 按需算），而非在此塞
+ * `frames: {governance?, growth?}` 胖字段（会强制双产品 frame 同时 eager 计算 + 契约膨胀）。
+ */
 export interface DriftReport {
   reportId: string;
   tenantId: string;

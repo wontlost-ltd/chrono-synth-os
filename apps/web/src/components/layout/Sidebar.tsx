@@ -7,7 +7,8 @@ import { LanguageSwitcher } from '../ui/LanguageSwitcher';
 
 type IconKey =
   | 'dashboard' | 'list' | 'plus' | 'avatar' | 'brain' | 'gem' | 'book'
-  | 'cart' | 'gauge' | 'card' | 'building' | 'wrench' | 'sliders' | 'logout';
+  | 'cart' | 'gauge' | 'card' | 'building' | 'wrench' | 'sliders' | 'logout'
+  | 'growth' | 'conflict' | 'workforce' | 'network' | 'shield';
 
 interface NavItem {
   to: string;
@@ -29,6 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/dashboard', labelKey: 'sidebar.dashboard', icon: 'dashboard' },
       { to: '/simulations', labelKey: 'sidebar.simulations', icon: 'list' },
       { to: '/simulations/new', labelKey: 'sidebar.newSimulation', icon: 'plus' },
+      { to: '/growth', labelKey: 'sidebar.growth', icon: 'growth' },
     ],
   },
   {
@@ -43,10 +45,32 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: 'workforce',
+    labelKey: 'sidebar.groups.workforce',
+    items: [
+      { to: '/workforce', labelKey: 'sidebar.workforce', icon: 'workforce', adminOnly: true },
+      { to: '/workforce/marketplace', labelKey: 'sidebar.workforceMarketplace', icon: 'cart', adminOnly: true },
+      { to: '/workforce/viz', labelKey: 'sidebar.workforceViz', icon: 'network', adminOnly: true },
+    ],
+  },
+  {
+    /* 治理/审计组：原来这 4 页只能 Cmd+K 命令面板可达（不在侧栏），CISO 查「谁授权了什么/
+     * 上周 drift」要凭记忆敲命令。聚成一个一眼可达的分组（均 admin）。 */
+    id: 'governance',
+    labelKey: 'sidebar.groups.governance',
+    items: [
+      { to: '/admin/agency-authorizations', labelKey: 'sidebar.agencyAuthorizations', icon: 'shield', adminOnly: true },
+      { to: '/admin/tool-permissions', labelKey: 'sidebar.toolPermissions', icon: 'shield', adminOnly: true },
+      { to: '/admin/tool-invocations', labelKey: 'sidebar.toolInvocations', icon: 'list', adminOnly: true },
+      { to: '/admin/safety/drift', labelKey: 'sidebar.safetyDrift', icon: 'gauge', adminOnly: true },
+    ],
+  },
+  {
     id: 'ops',
     labelKey: 'sidebar.groups.ops',
     items: [
       { to: '/system', labelKey: 'sidebar.systemStatus', icon: 'gauge' },
+      { to: '/conflicts', labelKey: 'sidebar.conflicts', icon: 'conflict' },
       { to: '/billing', labelKey: 'sidebar.billing', icon: 'card' },
       { to: '/enterprise', labelKey: 'sidebar.enterprise', icon: 'building', adminOnly: true },
       { to: '/settings', labelKey: 'sidebar.settings', icon: 'sliders' },
@@ -83,6 +107,11 @@ function Icon({ name, className = '' }: { name: IconKey; className?: string }) {
     case 'wrench':    return <svg {...common}><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-2.5z"/></svg>;
     case 'sliders':   return <svg {...common}><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="18" cy="18" r="1.5"/></svg>;
     case 'logout':    return <svg {...common}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>;
+    case 'growth':    return <svg {...common}><path d="M3 17l6-6 4 4 7-7"/><path d="M14 7h7v7"/></svg>;
+    case 'conflict':  return <svg {...common}><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6.5l7 4M8.5 17.5l7-4"/></svg>;
+    case 'workforce': return <svg {...common}><circle cx="9" cy="7" r="3"/><path d="M3 21c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="18" cy="9" r="2"/><path d="M16 21c0-2.5 0.9-4 2-4.5"/></svg>;
+    case 'network':   return <svg {...common}><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v4M11 13l-4.5 4M13 13l4.5 4"/></svg>;
+    case 'shield':    return <svg {...common}><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>;
   }
 }
 
@@ -142,7 +171,7 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: 'var(--gradient-brand)', boxShadow: '0 0 16px rgba(99, 102, 241, 0.5)' }} aria-hidden="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3h14v3l-8 8 8 8v3H5v-3l8-8L5 6z"/></svg>
             </span>
-            <span className="text-[15px] font-bold tracking-tight text-gradient-brand">ChronoSynth</span>
+            <span className="text-base font-bold tracking-tight text-gradient-brand">ChronoSynth</span>
           </div>
         )}
         <div className="flex gap-1">
@@ -166,7 +195,8 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
       </div>
 
       {!collapsed && user && (
-        <div className="mx-3 mt-3 mb-1 rounded-lg border border-border px-3 py-2 text-[11px]" style={{ background: 'var(--gradient-brand-soft)' }}>
+        // 租户 chip：leading-tight 锁定两行紧凑行距（text-xs 隐式 line-height:1rem，显式 pin 避免随字阶漂移）
+        <div className="mx-3 mt-3 mb-1 rounded-lg border border-border px-3 py-2 text-xs leading-tight" style={{ background: 'var(--gradient-brand-soft)' }}>
           <div className="text-text-tertiary uppercase tracking-wider">Tenant</div>
           <div className="font-mono text-text-primary truncate" title={user.email}>{user.email}</div>
         </div>
@@ -184,7 +214,13 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
               {group.labelKey && !collapsed && (
                 <button
                   onClick={() => toggleGroup(group.id)}
-                  className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-tertiary hover:text-text-primary"
+                  /* a11y：section 标题用 text-secondary（#CBD5E1）而非 tertiary（#64748B 仅 3.07，
+                   * 10px 灰字对比度不足）；secondary 对 surface 达 ~9:1 过 WCAG AA。
+                   * 取舍原则：11/13/15px 是一次性的随手值（次要文本/徽标，并入标准字阶 +1px 不可见）；
+                   * 10px 是「导航分组小标题」成体系的微号子档（uppercase+0.12em 字距的常见导航惯例，且与
+                   * 下方 chevron 成对），Tailwind 无 text-2xs 对应，升到 12px 是 +20% 改紧凑导航观感——
+                   * 故保留字面量。区别在「一次性随手值 vs 系统化子档」，非随意。 */
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-text-secondary hover:text-text-primary"
                 >
                   <span>{t(group.labelKey)}</span>
                   <span aria-hidden="true" className="text-[10px]">{isCollapsedGroup ? '▸' : '▾'}</span>

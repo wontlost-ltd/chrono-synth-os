@@ -1,16 +1,11 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PageHeader } from '../components/layout/PageHeader';
-import { Breadcrumbs } from '../components/ui/Breadcrumbs';
 import { TimeSeriesChart } from '../components/charts/TimeSeriesChart';
-import { MetricSelector } from '../components/ui/MetricSelector';
-import { ResolutionToggle } from '../components/ui/ResolutionToggle';
-import { RadioGroup } from '../components/ui/RadioGroup';
-import { StatsTable } from '../components/ui/StatsTable';
-import { Skeleton } from '../components/ui/Skeleton';
+/* 经 ui barrel 统一导入（P2-3：验证 components/ui/index.ts 收敛点）。 */
+import { Breadcrumbs, MetricSelector, ResolutionToggle, RadioGroup, StatsTable, Skeleton, EmptyState } from '../components/ui';
 import { usePaths } from '../api/queries/visualization';
 import { useSimulationId } from '../hooks/useSimulationId';
-import { EmptyState } from '../components/ui/EmptyState';
 import type { MetricKey, Resolution } from '../types';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 

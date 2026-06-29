@@ -32,6 +32,10 @@ export function registerIdentityRoutes(app: FastifyInstance, services: AppServic
       throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     }
     const updated = identityService.update(identity.id, body);
+    /* API 契约：update 在并发删除等场景可能返回 null，须抛 404 而非返回 {data:null}+200 */
+    if (!updated) {
+      throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
+    }
     return { data: updated };
   });
 }

@@ -307,4 +307,153 @@ describe('Portability Pack GA roundtrip', () => {
     assert.equal(after?.label, 'Precision-NEW', 'newer pack row must overwrite older local row');
     assert.equal(after?.updated_at, 1_800_000_000_000);
   });
+
+  it('commitImport 强制重写 tenant_id：伪造他租户的行不得污染他租户数据（P0）', async () => {
+    db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-tenant-'));
+
+    os = new ChronoSynthOS({
+      db,
+      skipMigrations: true,
+      clock: new TestClock(1_700_000_000_000),
+      logger: new SilentLogger(),
+    });
+    os.start();
+    const config = loadConfig({
+      websocket: { enabled: false },
+      objectStorage: { provider: 'local', localPath: tmpDir, presignTtlSeconds: 60 },
+    });
+    const service = new PrivacyService(os, undefined, config, new LocalObjectStorageClient(tmpDir));
+    const tenantId = 'default';
+    const victimTenant = 'victim-tenant';
+
+    /* 受害租户预置一行：导入完成后它必须保持不变（不被污染） */
+    db.prepare<void>(
+      `INSERT INTO core_values (id, label, weight, updated_at, tenant_id, time_discount, emotion_amplifier)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('victim-value', 'Victim-Original', 0.9, 1_700_000_000_000, victimTenant, 0.5, 1.0);
+
+    /* 导入租户准备一行用于导出 */
+    db.prepare<void>(
+      `INSERT INTO core_values (id, label, weight, updated_at, tenant_id, time_discount, emotion_amplifier)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('own-value', 'Own-Value', 0.6, 1_700_000_000_000, tenantId, 0.5, 1.0);
+
+    const started = service.startExportJob(tenantId);
+    const deadline = Date.now() + 3_000;
+    let status = service.getExportJobStatus(tenantId, started.exportId);
+    while (status?.state !== 'completed' && Date.now() < deadline) {
+      await sleep(100);
+      status = service.getExportJobStatus(tenantId, started.exportId);
+    }
+    assert.equal(status?.state, 'completed');
+    const row = getExportJob(db, started.exportId);
+    assert.ok(row?.pack_json);
+
+    /* 恶意篡改：在 pack 的 core_values payload 注入一行，tenant_id 指向受害租户、
+     * 并试图覆盖受害租户的 victim-value。若隔离失效，该行会污染 victim-tenant。 */
+    const bundled = JSON.parse(row.pack_json) as { manifest: unknown; payloads: Record<string, unknown[]> };
+    const coreValues = (bundled.payloads.core_values ??= []) as Array<Record<string, unknown>>;
+    coreValues.push({
+      id: 'victim-value',
+      label: 'PWNED',
+      weight: 0.1,
+      updated_at: 1_900_000_000_000,
+      tenant_id: victimTenant,
+      time_discount: 0.5,
+      emotion_amplifier: 1.0,
+    });
+    const tamperedPackJson = JSON.stringify(bundled);
+
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, tamperedPackJson));
+    assert.ok(dryRun.canCommit && dryRun.commitToken);
+    ImportCommitResultV1Schema.parse(service.commitImport(tenantId, tamperedPackJson, dryRun.commitToken));
+
+    /* 断言 1：受害租户的行原封不动（未被污染） */
+    const victim = db.prepare<{ label: string; tenant_id: string }>(
+      `SELECT label, tenant_id FROM core_values WHERE id = ? AND tenant_id = ?`,
+    ).get('victim-value', victimTenant);
+    assert.equal(victim?.label, 'Victim-Original', '受害租户的行不得被跨租户导入污染');
+
+    /* 断言 2：恶意行被强制重写到导入租户名下（tenant_id=default），不存在 victim 名下的 PWNED */
+    const pwnedUnderVictim = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM core_values WHERE label = 'PWNED' AND tenant_id = ?`,
+    ).get(victimTenant)?.n ?? 0;
+    assert.equal(pwnedUnderVictim, 0, '恶意行不得落到受害租户名下');
+  });
+
+  it('commitImport 复合 PK 无 tenant_id 列（persona_memory_edges）也不被跨租户劫持（P0）', async () => {
+    db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-edge-'));
+    os = new ChronoSynthOS({
+      db, skipMigrations: true, clock: new TestClock(1_700_000_000_000), logger: new SilentLogger(),
+    });
+    os.start();
+    const config = loadConfig({
+      websocket: { enabled: false },
+      objectStorage: { provider: 'local', localPath: tmpDir, presignTtlSeconds: 60 },
+    });
+    const service = new PrivacyService(os, undefined, config, new LocalObjectStorageClient(tmpDir));
+    const database = db;
+    const tenantId = 'default';
+    const victimTenant = 'victim-tenant';
+    const ts = 1_700_000_000_000;
+
+    /* 建 FK 链：users → persona_core → persona_memory_nodes（source/target），再建受害边 */
+    const seedNode = (id: string, tenant: string, persona: string) => {
+      database.prepare<void>(
+        `INSERT INTO persona_memory_nodes
+           (id, tenant_id, persona_id, kind, content, valence, salience, access_count,
+            decay_lambda, last_accessed_at, last_decayed_at, created_at)
+         VALUES (?, ?, ?, 'episodic', 'c', 0, 0.5, 0, 0, ?, ?, ?)`,
+      ).run(id, tenant, persona, ts, ts, ts);
+    };
+    database.prepare<void>(
+      `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+       VALUES (?, ?, 'x', 'member', ?, ?, ?)`,
+    ).run('victim-owner', 'v@example.com', victimTenant, ts, ts);
+    database.prepare<void>(
+      `INSERT INTO persona_core (id, tenant_id, owner_user_id, display_name, profile_json, status,
+         visibility, growth_index, reputation, training_investment, created_at, updated_at, lifecycle_status)
+       VALUES (?, ?, ?, 'V', '{}', 'active', 'private', 0, 0, 0, ?, ?, 'active')`,
+    ).run('victim-persona', victimTenant, 'victim-owner', ts, ts);
+    seedNode('node-src', victimTenant, 'victim-persona');
+    seedNode('node-tgt', victimTenant, 'victim-persona');
+    /* 受害租户的边：PK=(source,target)=(node-src,node-tgt) */
+    database.prepare<void>(
+      `INSERT INTO persona_memory_edges (tenant_id, persona_id, source, target, strength, relation)
+       VALUES (?, ?, 'node-src', 'node-tgt', 0.9, 'associative')`,
+    ).run(victimTenant, 'victim-persona');
+
+    /* 导出 default（空边集），再篡改注入一条 PK 撞受害边的恶意边 */
+    const started = service.startExportJob(tenantId);
+    const deadline = Date.now() + 3_000;
+    let status = service.getExportJobStatus(tenantId, started.exportId);
+    while (status?.state !== 'completed' && Date.now() < deadline) {
+      await sleep(100);
+      status = service.getExportJobStatus(tenantId, started.exportId);
+    }
+    const row = getExportJob(database, started.exportId);
+    assert.ok(row?.pack_json);
+    const bundled = JSON.parse(row.pack_json) as { manifest: unknown; payloads: Record<string, unknown[]> };
+    const edges = (bundled.payloads.persona_memory_edges ??= []) as Array<Record<string, unknown>>;
+    edges.push({
+      tenant_id: victimTenant, persona_id: 'victim-persona',
+      source: 'node-src', target: 'node-tgt', strength: 0.1, relation: 'PWNED',
+    });
+    const tampered = JSON.stringify(bundled);
+
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, tampered));
+    assert.ok(dryRun.canCommit && dryRun.commitToken);
+    ImportCommitResultV1Schema.parse(service.commitImport(tenantId, tampered, dryRun.commitToken));
+
+    /* 受害边不得被改写：relation 仍是 associative、tenant_id 仍是 victim */
+    const edge = database.prepare<{ relation: string; tenant_id: string }>(
+      `SELECT relation, tenant_id FROM persona_memory_edges WHERE source = 'node-src' AND target = 'node-tgt'`,
+    ).get();
+    assert.equal(edge?.relation, 'associative', '复合 PK 边不得被跨租户导入劫持');
+    assert.equal(edge?.tenant_id, victimTenant, '边的 tenant_id 不得被改写');
+  });
 });

@@ -34,9 +34,11 @@
 import {
   setFlagValue,
   _setRemoteStatus,
+  getRemoteStatus,
   type FeatureFlagId,
 } from './featureFlags';
 import { API_BASE_URL } from '../config';
+import { getSession } from '../store/session';
 
 type FlagValue = boolean | string | number;
 
@@ -65,15 +67,29 @@ function applyEntry(entry: { flag: string; value: FlagValue }): void {
 let activeStream: EventSource | null = null;
 
 async function fetchBootstrap(signal: AbortSignal): Promise<void> {
+  /* SPA 用 Bearer JWT 认证（accessToken 在内存），后端 feature-flags 据 request.user(JWT) 鉴权。
+   * 必须带 Bearer header——只靠 credentials:include 的 cookie 不含 access token（cookie 仅是
+   * refresh-token），会 401。这是「认证后 bootstrap 仍 401、flags 停在默认值」的真正根因。
+   * 不走 apiFetch（保持 flag 注册表为零依赖 module-singleton），手动拼 header。 */
+  const session = getSession();
+  const headers: Record<string, string> = {};
+  if (session.accessToken) headers['Authorization'] = `Bearer ${session.accessToken}`;
+  else if (session.apiKey) headers['X-API-Key'] = session.apiKey;
+  if (session.tenantId) headers['X-Tenant-Id'] = session.tenantId;
+
   const res = await fetch(`${API_BASE_URL}/api/v1/feature-flags/bootstrap`, {
     credentials: 'include',
+    headers,
     signal,
   });
   if (!res.ok) {
-    /* Don't throw — log and let the SSE link be the source of truth
-     * once it comes up. A 401 here usually means the user hasn't
-     * logged in yet; flags will start working after auth. */
-    console.warn(`[feature-flags] bootstrap failed: HTTP ${res.status}`);
+    /* Don't throw — let the SSE link be the source of truth once it comes up.
+     * 401 是**预期**情形：启动时（登录前）必然 401，认证后由 AuthGuard 触发
+     * reconnectFeatureFlagsIfNotLive() 重连——这是正常生命周期，不该 warn 制造噪音；
+     * 仅非 401（真实后端故障）才 warn。 */
+    if (res.status !== 401) {
+      console.warn(`[feature-flags] bootstrap failed: HTTP ${res.status}`);
+    }
     return;
   }
   const body = (await res.json()) as { flags: BootstrapEntry[] };
@@ -86,7 +102,12 @@ async function fetchBootstrap(signal: AbortSignal): Promise<void> {
 function openStream(): EventSource {
   /* EventSource is the standardised browser SSE client. It handles
    * exponential backoff reconnects natively — we just need to update
-   * status on connect / error to let the UI know. */
+   * status on connect / error to let the UI know.
+   *
+   * ⚠️ 已知限制：EventSource 无法设置 Authorization header，而后端用 Bearer JWT 鉴权
+   * （cookie 仅是 refresh-token 非 access cookie）→ 此 SSE 流在本 SPA 下始终 401/stale，
+   * 拿不到 live 增量推送。flag **取值**由 fetchBootstrap（带 Bearer，认证后重连得 200）兜底，
+   * 仅「运行时 flag 变更的实时推送」缺失（需后端支持 ?token= 查询参数鉴权或 access cookie 才能修）。 */
   const es = new EventSource(`${API_BASE_URL}/api/v1/feature-flags/stream`, {
     withCredentials: true,
   });
@@ -172,4 +193,18 @@ export function bootstrapFeatureFlagsRemote(): () => void {
       _setRemoteStatus('idle');
     }
   };
+}
+
+/**
+ * 认证建立后重连一次——仅当当前 remote 状态不是 'live'（避免与已连成功的流重复）。
+ *
+ * 启动时 main.tsx 在登录前调 bootstrapFeatureFlagsRemote()，bootstrap + SSE 都 401；
+ * 401 是确定性 HTTP 响应，EventSource 不自行重连 → flags 整会话停在静态默认值。
+ * AuthGuard 在 isAuthenticated 变真时调用此函数，用带 auth cookie 的请求重连，
+ * 让后端配置的 flag 真正生效。已 live 则不动（幂等，便宜）。
+ */
+export function reconnectFeatureFlagsIfNotLive(): void {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') return;
+  if (getRemoteStatus() === 'live') return;
+  bootstrapFeatureFlagsRemote();
 }

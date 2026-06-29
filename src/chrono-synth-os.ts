@@ -41,6 +41,14 @@ import type { EvaluatorFn } from './accelerated/simulation-runner.js';
 import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
+import { CapabilityIndexProjector } from './intelligence/capability-index-projector.js';
+import { TaskWakeHandler } from './workforce/task-wake-handler.js';
+import { TaskWakeReconciler, type ReconcileStats } from './workforce/task-wake-reconciler.js';
+import { TaskWakeReconcilerWorker } from './workforce/task-wake-reconciler-worker.js';
+import { OrgWorkforceStore } from './storage/org-workforce-store.js';
+import { LearningRequestService } from './workforce/learning-request-service.js';
+import { LearningRequestStore } from './storage/learning-request-store.js';
+import { CapabilityIndexStore } from './storage/capability-index-store.js';
 import {
   DEFAULT_DISTILLATION_POLICY, type DistillationPolicy,
   perturbDecisionStyle, archetypeDecisionStyle, type PersonalityArchetype,
@@ -133,6 +141,18 @@ export class ChronoSynthOS {
   /** ADR-0054 主动性引擎：订阅内部信号 → 确定性门控 → 主动消息入队（start() 时启动）。 */
   private readonly proactiveEngine: ProactiveEngine;
 
+  /** ADR-0057 L7 能力索引投影器：订阅 capability-learned → 投影 capability_index（start() 时启动）。 */
+  private readonly capabilityIndexProjector: CapabilityIndexProjector;
+
+  /** ADR-0057 L8a 任务唤醒处理器：订阅 capability-learned → 复检 GapDetector → 无缺口唤醒重跑（start() 时启动）。 */
+  private readonly taskWakeHandler: TaskWakeHandler;
+
+  /** ADR-0057 L8c 任务唤醒对账器：反扫 blocked 任务补唤醒（防丢事件）+ 学习超时兜底（按需 reconcileOnce）。 */
+  private readonly taskWakeReconciler: TaskWakeReconciler;
+
+  /** ADR-0057 L8c-wire 唤醒对账周期 worker：start() 时启动 setInterval 周期反扫（生产丢事件兜底自动化）。 */
+  private readonly taskWakeReconcilerWorker: TaskWakeReconcilerWorker;
+
   private readonly db: IDatabase;
   private readonly clock: Clock;
   private readonly logger: Logger;
@@ -209,7 +229,11 @@ export class ChronoSynthOS {
     this.responseTemplates = new ResponseTemplateStore(this.db, this.tenantId);
     /* ADR-0047：rule 编译进专用规则表，作为 RuleEngine 的确定性排序调整输入。 */
     this.rules = new RuleStore(this.db, this.tenantId);
-    const artifactCompiler = new ArtifactCompiler(this.core, this.logger, this.responseTemplates, this.clock, this.rules);
+    /* ADR-0056 K5：编译经 resolver 按 personaId 寻址到该 persona 的内核，而非共享 default core。
+     * 人格特征三件套(narrative/decision_style/cognitive_model)+ response_template/rule 真正 per-persona 隔离；
+     * value_shift/memory_edge 底层 store 仍 tenant 键(K5b 后续)。每个数字员工的自成长(earning/perception/
+     * reflection 蒸馏物)经此塑造它自己的认知人格（三件套维度）。 */
+    const artifactCompiler = new ArtifactCompiler((pid) => this.getCore(pid), this.logger, this.responseTemplates, this.clock, this.rules);
     /* ADR-0047/0048 多实例 gating：并发锁，供租户级全局 compile mutex 与 per-persona
      * earning lease 共用（同一个 store，不同 scope）。 */
     this.personaLeases = new PersonaLeaseStore(this.db, this.tenantId);
@@ -222,8 +246,12 @@ export class ChronoSynthOS {
       compiler: artifactCompiler,
       policy: distillationPolicy,
       snapshotGuard: {
-        snapshot: () => this.createSnapshot('manual').id,
-        rollback: (snapshotId: string) => this.restoreFromSnapshot(snapshotId),
+        /* ADR-0056 K5：按 persona 快照/回滚——读写对称（编译写哪个 persona core，回滚就恢复哪个）。
+         * rollback 用 coreSelfOnly：只恢复该 persona 自己的内核，**不**触碰租户级 personas/conflicts/
+         * allocations。compile mutex 只串行化编译、不阻止并发演化/治理路由改租户级状态，故把"窗口内租户级
+         * 未变"从假设移进机制——即便并发改了，coreSelfOnly 也绝不过度回滚（Codex K5 复审建议）。 */
+        snapshot: (personaId = 'default') => this.createSnapshot('manual', personaId).id,
+        rollback: (snapshotId: string) => this.restoreFromSnapshot(snapshotId, { coreSelfOnly: true }),
       },
       bus: this.bus,
       clock: this.clock,
@@ -293,6 +321,55 @@ export class ChronoSynthOS {
         violates: (text) => proactiveResponder.violatesNeverDiscuss(text, COMPANION_BASELINE_BOUNDARIES),
       },
     });
+
+    /* ADR-0057 L7：能力索引投影器——订阅 capability-learned（L6 落核后发）→ 确定性投影 capability_index。
+     * 已学能力的正式来源（GapDetector 据此算缺口差集，替换 L2 status='passed' 扫描）。start() 时订阅。 */
+    this.capabilityIndexProjector = new CapabilityIndexProjector({
+      bus: this.bus,
+      db: this.db,
+      logger: this.logger,
+      now: () => this.clock.now(),
+    });
+
+    /* ADR-0057 L8a：任务唤醒处理器——订阅 capability-learned → 找因该缺口挂起的任务 → 确定性 GapDetector
+     * 复检 → 无缺口唤醒重跑（blocked→delegated，零-LLM）/ 仍缺 fail-closed。复用 LearningRequestService
+     * （含 CapabilityIndexStore，已学能力 = 索引 ∪ L2 passed）。start() 时订阅。 */
+    const wakeWorkforceStore = new OrgWorkforceStore(this.db, this.tenantId);
+    const wakeLearning = new LearningRequestService(
+      new LearningRequestStore(this.db, this.tenantId), () => this.clock.now(), () => generatePrefixedId('lr'), this.tenantId,
+      new CapabilityIndexStore(this.db, this.tenantId),
+    );
+    this.taskWakeHandler = new TaskWakeHandler({
+      bus: this.bus,
+      store: wakeWorkforceStore,
+      learning: wakeLearning,
+      logger: this.logger,
+      now: () => this.clock.now(),
+      tenantId: this.tenantId,
+    });
+
+    /* ADR-0057 L8c：唤醒对账器——反扫 blocked 任务补唤醒（防 capability-learned 事件丢失永久挂起）+ 学习超时
+     * 兜底。复用 L8a wakeOneTask 同一唤醒核心。 */
+    this.taskWakeReconciler = new TaskWakeReconciler({
+      store: wakeWorkforceStore,
+      learning: wakeLearning,
+      wakeHandler: this.taskWakeHandler,
+      logger: this.logger,
+      now: () => this.clock.now(),
+    });
+    /* ADR-0057 L8c-wire：周期 worker——start() 时启动 setInterval 周期反扫本租户学习 blocked 任务，
+     * 把「事件丢失永久挂起」兜底自动化（每租户 OS 各自一个，经 TenantOSFactory.os.start() 启动）。 */
+    this.taskWakeReconcilerWorker = new TaskWakeReconcilerWorker(
+      this.taskWakeReconciler, () => this.clock.now(), this.logger,
+    );
+  }
+
+  /**
+   * ADR-0057 L8c：手动触发某 org 的唤醒对账（反扫补唤醒 + 学习超时兜底）。确定性，零-LLM。
+   * 生产周期触发已由 L8c-wire TaskWakeReconcilerWorker（start() 时启动）自动化；此入口供运维按需/测试调用。
+   */
+  reconcileTaskWakes(orgId: string, now = this.clock.now()): ReconcileStats {
+    return this.taskWakeReconciler.reconcileOnce(orgId, now);
   }
 
   /** 获取数据库实例 */
@@ -332,6 +409,18 @@ export class ChronoSynthOS {
     return [...this.personaCores.keys()].sort();
   }
 
+  /**
+   * 构造一个**影子认知内核**（ADR-0057 L4 D0.6）——同 db/clock/persona，但**独立的隔离 EventBus**
+   * （production listeners 不订阅它 → core:* 事件不外发，红线 18）。**不缓存**（不进 personaCores，与 os.core 隔离）。
+   * 配合验收器在 BEGIN/ROLLBACK 事务里用它：候选编译进影子核 → 作答 → 整事务回滚 → 主内核 + 所有持久表零污染。
+   */
+  createShadowCore(personaId: string): CoreRhythmLayer {
+    const silentBus = new EventBus();
+    return new CoreRhythmLayer(
+      this.db, silentBus, this.clock, this.logger, this.cognitionConfig, this.encryption, this.tenantId, personaId,
+    );
+  }
+
   /** 获取租户 ID */
   getTenantId(): string {
     return this.tenantId;
@@ -342,6 +431,9 @@ export class ChronoSynthOS {
     this.auditChainAnchors?.start();
     this.maybeSeedPersonality();
     this.proactiveEngine.start();
+    this.capabilityIndexProjector.start();
+    this.taskWakeHandler.start();
+    this.taskWakeReconcilerWorker.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -387,12 +479,19 @@ export class ChronoSynthOS {
     this.logger.info('System', `性格出生设定：archetype=${cfg.archetype ?? '—'} seed=${cfg.seed ?? '—'} magnitude=${cfg.magnitude ?? 0}`);
   }
 
-  /** 创建系统快照（事务读取确保一致性） */
-  createSnapshot(reason: SystemSnapshot['reason'] = 'manual'): SystemSnapshot {
+  /**
+   * 创建系统快照（事务读取确保一致性）。
+   *
+   * personaId（ADR-0056 K5）：指定时 coreSelf 取**该 persona 内核**的状态（用于 per-persona 蒸馏编译的
+   * 回滚边界——读写对称：编译写哪个 persona core，回滚就恢复哪个）。省略时取 default core（系统级，向后兼容）。
+   * personas/activeConflicts/allocations 是租户级（加速实验/冲突/分配），与 persona core 无关，始终全量快照。
+   */
+  createSnapshot(reason: SystemSnapshot['reason'] = 'manual', personaId = 'default'): SystemSnapshot {
     const snapshot = this.db.transaction(() => {
       const snap: SystemSnapshot = {
         id: generatePrefixedId('snap'),
-        coreSelf: this.core.getState(),
+        personaId,
+        coreSelf: this.getCore(personaId).getState(),
         personas: this.accelerated.getAllPersonas(),
         activeConflicts: this.meta.conflicts.getUnresolved(),
         allocations: this.lastAllocations,
@@ -410,8 +509,16 @@ export class ChronoSynthOS {
   /** 最近一次资源分配结果 */
   private lastAllocations: readonly ResourceAllocation[] = [];
 
-  /** 从快照恢复系统状态（完整恢复，事务保护） */
-  restoreFromSnapshot(snapshotId: string): boolean {
+  /**
+   * 从快照恢复系统状态（事务保护）。
+   *
+   * coreSelfOnly（ADR-0056 K5）：仅恢复快照所属 persona 的 coreSelf（七维人格状态），**不**触碰租户级的
+   * personas（加速实验）/conflicts/allocations。用于 per-persona 蒸馏编译失败的精确补偿——把"编译窗口内租户级
+   * 状态未变"这个假设从注释**移进机制**：即便另一实例/请求在窗口内并发改了租户级状态，coreSelfOnly 回滚也只
+   * 动该 persona 自己的内核，绝不过度回滚租户级状态（Codex K5 复审 8.0 建议）。
+   * 省略（默认 full）= 完整恢复（含租户级），供手工回滚/演化回滚/恢复演练，行为与既往一致（向后兼容）。
+   */
+  restoreFromSnapshot(snapshotId: string, opts?: { coreSelfOnly?: boolean }): boolean {
     let snapshot: SystemSnapshot | undefined;
     try {
       snapshot = this.snapshots.load(snapshotId);
@@ -423,39 +530,46 @@ export class ChronoSynthOS {
       this.logger.error('System', `快照不存在: ${snapshotId}`);
       return false;
     }
+    const coreSelfOnly = opts?.coreSelfOnly === true;
 
     try {
       this.db.transaction(() => {
+        /* coreSelf 恢复到**快照记录的那个 persona 内核**（ADR-0056 K5：读写对称——快照存哪个 persona，
+         * 就恢复哪个；老快照无 personaId 字段时回落 default，向后兼容）。 */
+        const core = this.getCore(snapshot.personaId ?? 'default');
+
         /* 清空并恢复核心价值 */
-        this.core.restoreValues(snapshot.coreSelf.values);
+        core.restoreValues(snapshot.coreSelf.values);
 
         /* 恢复记忆和边 */
-        this.core.restoreMemories(snapshot.coreSelf.memories, snapshot.coreSelf.edges);
+        core.restoreMemories(snapshot.coreSelf.memories, snapshot.coreSelf.edges);
 
         /* 恢复叙事（直接写入，不触发事件） */
-        this.core.narrative.set(snapshot.coreSelf.narrative);
+        core.narrative.set(snapshot.coreSelf.narrative);
 
         /* 恢复 P-OS 层 */
-        this.core.restoreSurvivalAnchors(snapshot.coreSelf.survivalAnchors);
-        this.core.restoreDecisionStyle(snapshot.coreSelf.decisionStyle);
-        this.core.restoreCognitiveModel(snapshot.coreSelf.cognitiveModel);
+        core.restoreSurvivalAnchors(snapshot.coreSelf.survivalAnchors);
+        core.restoreDecisionStyle(snapshot.coreSelf.decisionStyle);
+        core.restoreCognitiveModel(snapshot.coreSelf.cognitiveModel);
 
-        /* 恢复人格版本 */
-        this.accelerated.restorePersonas(snapshot.personas);
-
-        /* 恢复冲突 */
-        this.meta.conflicts.restoreConflicts(snapshot.activeConflicts);
+        /* 租户级状态（加速实验人格/冲突）——coreSelfOnly 时跳过，避免过度回滚（per-persona 编译补偿用）。 */
+        if (!coreSelfOnly) {
+          this.accelerated.restorePersonas(snapshot.personas);
+          this.meta.conflicts.restoreConflicts(snapshot.activeConflicts);
+        }
       });
     } catch (err) {
       this.logger.error('System', `快照恢复失败: ${snapshotId}`, err);
       return false;
     }
 
-    /* 恢复资源分配状态（内存，无需事务） */
-    this.lastAllocations = snapshot.allocations;
+    /* 资源分配状态（内存，租户级）——coreSelfOnly 时同样跳过。 */
+    if (!coreSelfOnly) {
+      this.lastAllocations = snapshot.allocations;
+    }
 
     this.bus.emit('system:snapshot-restored', { snapshotId, tenantId: this.tenantId });
-    this.logger.info('System', `系统已从快照恢复: ${snapshotId}`);
+    this.logger.info('System', `系统已从快照恢复: ${snapshotId}${coreSelfOnly ? '（仅 coreSelf）' : ''}`);
     return true;
   }
 
@@ -567,6 +681,9 @@ export class ChronoSynthOS {
     this.stopped = true;
     try {
       this.proactiveEngine.stop();
+      this.capabilityIndexProjector.stop();
+      this.taskWakeHandler.stop();
+      this.taskWakeReconcilerWorker.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');

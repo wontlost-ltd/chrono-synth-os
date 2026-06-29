@@ -19,3 +19,6 @@ data/
 backups/
 **/.DS_Store
 packages/*/*.tgz
+# Python 字节码（check-i18n.py 等脚本被 import/运行时生成）
+__pycache__/
+*.pyc

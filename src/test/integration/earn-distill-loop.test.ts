@@ -57,9 +57,6 @@ describe('earn→distill 闭环（WP-0）', () => {
   }
 
   it('完成高质量任务 → core value 经蒸馏门被强化（不绕过门）', async () => {
-    /* 0. 给 tenant core-self 播一个价值（新建 OS 默认无 values；resolver 兜底强化它）。 */
-    const seeded = os.core.addValue('research', 0.5);
-
     /* 1. worker 建 persona。 */
     const pRes = await app.inject({
       method: 'POST', url: '/api/v1/persona-core', headers: workerHeaders(),
@@ -68,9 +65,12 @@ describe('earn→distill 闭环（WP-0）', () => {
     assert.equal(pRes.statusCode, 201, pRes.body);
     const personaId = JSON.parse(pRes.body).data.id as string;
 
-    /* 2. 记下 core 蒸馏前的状态。 */
-    const before = [...os.core.values.getAll().values()];
-    assert.ok(before.some((v) => v.id === seeded.id), 'seeded value 应在 core');
+    /* 0. 给**该 persona 自己的**内核播一个价值（K5b：value 按 persona 隔离，成长落该 persona 的 core）。 */
+    const seeded = os.getCore(personaId).addValue('research', 0.5);
+
+    /* 2. 记下该 persona core 蒸馏前的状态。 */
+    const before = [...os.getCore(personaId).values.getAll().values()];
+    assert.ok(before.some((v) => v.id === seeded.id), 'seeded value 应在该 persona 的 core');
     const candidatesBefore = os.distillation.listCandidates(personaId).length;
 
     /* 3. publisher 发任务 → worker 接 → 完成（高质量 0.95 → 强信号，应自动编译进核心）。 */
@@ -100,7 +100,7 @@ describe('earn→distill 闭环（WP-0）', () => {
     assert.equal(vs!.source, 'reflection', 'earning 蒸馏来源应为 reflection（internal 反思）');
     assert.equal((vs!.payload as { valueId: string }).valueId, seeded.id, 'value_shift 应指向 research 价值');
     assert.equal(vs!.status, 'compiled', '强信号(0.95)应自动编译进核心');
-    const afterWeight = os.core.values.getById(seeded.id)?.weight ?? 0;
+    const afterWeight = os.getCore(personaId).values.getById(seeded.id)?.weight ?? 0;
     assert.ok(afterWeight > 0.5, `core value 权重应从 0.5 上升，实际 ${afterWeight}`);
     void before; void candidatesBefore;
   });

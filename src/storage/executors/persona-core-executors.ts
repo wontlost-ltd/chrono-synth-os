@@ -26,6 +26,8 @@ import {
   PCORE_QUERY_DAILY_PERSONAS,
   PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT,
   PCORE_QUERY_DAILY_PERSONA_REVENUE,
+  PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA,
+  PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA,
   PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS,
   PCORE_QUERY_ECONOMY_ANALYTICS,
   PCORE_QUERY_PERSONA_MEMORIES,
@@ -90,6 +92,7 @@ import {
   PCORE_CMD_APPLY_GOVERNANCE_ACTION_TO_PERSONA,
   PCORE_CMD_APPEAL_GOVERNANCE_CASE,
   PCORE_QUERY_MARKETPLACE_TASKS_BY_TENANT,
+  PCORE_QUERY_TASK_APPLICATIONS_BY_TASK,
   PCORE_QUERY_MARKETPLACE_TASK_BY_ID,
   PCORE_QUERY_PERSONA_EXISTS,
   PCORE_QUERY_FORK_EXISTS,
@@ -143,6 +146,8 @@ import type {
   PcoreWalletForOwnerRow,
   PcoreWalletTransactionRow,
   PcoreTaskApplicationRow,
+  PcoreTaskApplicantRow,
+  PcoreTaskApplicationsByTaskParams,
   PcoreRuntimeSessionRow,
   PcoreGovernanceCaseRow,
   PcoreTaskAssignmentRow,
@@ -168,6 +173,9 @@ import type {
   PcoreTransferPersonaOwnerParams,
   PcoreTaskCountByDateParams,
   PcoreRevenueByDateParams,
+  PcoreDateRangeParams,
+  PcorePersonaCountRow,
+  PcorePersonaTotalRow,
   PcoreDailyMarketplaceAnalyticsParams,
   PcoreUpsertPersonaDailyMetricParams,
   PcoreUpsertMarketplaceDailyMetricParams,
@@ -519,6 +527,28 @@ export function registerPersonaCoreExecutors(): void {
     ).get(p.tenantId, p.personaId, p.startMs, p.endMs));
   });
 
+  /* 批量（消 materializeDailyAnalytics 的 N+1）：整租户当日完成数按 persona 分组 */
+  registerQuery<readonly PcorePersonaCountRow[], PcoreDateRangeParams>(PCORE_QUERY_DAILY_COMPLETED_TASK_COUNT_BY_PERSONA, (db, p) => {
+    return db.prepare<PcorePersonaCountRow>(
+      `SELECT assignee_persona_id AS persona_id, COUNT(*) AS count
+       FROM marketplace_tasks
+       WHERE tenant_id = ? AND status = 'completed' AND completed_at >= ? AND completed_at < ?
+         AND assignee_persona_id IS NOT NULL
+       GROUP BY assignee_persona_id`,
+    ).all(p.tenantId, p.startMs, p.endMs);
+  });
+
+  /* 批量：整租户当日收益按 persona 分组 */
+  registerQuery<readonly PcorePersonaTotalRow[], PcoreDateRangeParams>(PCORE_QUERY_DAILY_PERSONA_REVENUE_BY_PERSONA, (db, p) => {
+    return db.prepare<PcorePersonaTotalRow>(
+      `SELECT pw.persona_id AS persona_id, SUM(ws.owner_amount_minor) AS total
+       FROM wallet_settlements ws
+       INNER JOIN persona_wallets pw ON pw.id = ws.wallet_id
+       WHERE ws.tenant_id = ? AND ws.completed_at >= ? AND ws.completed_at < ?
+       GROUP BY pw.persona_id`,
+    ).all(p.tenantId, p.startMs, p.endMs);
+  });
+
   registerQuery<PcoreDailyMarketplaceAnalyticsRow | null, PcoreDailyMarketplaceAnalyticsParams>(PCORE_QUERY_DAILY_MARKETPLACE_ANALYTICS, (db, p) => {
     const openTasks = countRow(db.prepare<{ count: number | bigint }>(
       `SELECT COUNT(*) AS count
@@ -695,6 +725,17 @@ export function registerPersonaCoreExecutors(): void {
        WHERE tenant_id = ? AND task_id = ? AND persona_id = ?
        LIMIT 1`,
     ).get(p.tenantId, p.taskId, p.personaId) ?? null;
+  });
+
+  /* 列某工单的全部 persona 申请者（含 persona display_name）——发布者看名字选委派给谁。确定性排序：分降序、创建升序。 */
+  registerQuery<readonly PcoreTaskApplicantRow[], PcoreTaskApplicationsByTaskParams>(PCORE_QUERY_TASK_APPLICATIONS_BY_TASK, (db, p) => {
+    return db.prepare<PcoreTaskApplicantRow>(
+      `SELECT ta.*, pc.display_name AS persona_name
+       FROM task_applications ta
+       LEFT JOIN persona_core pc ON pc.id = ta.persona_id
+       WHERE ta.tenant_id = ? AND ta.task_id = ?
+       ORDER BY ta.ranking_score DESC, ta.created_at ASC, ta.id ASC`,
+    ).all(p.tenantId, p.taskId);
   });
 
   registerQuery<PcoreRuntimeSessionRow | null, PcoreRuntimeSessionParams>(PCORE_QUERY_RUNTIME_SESSION, (db, p) => {

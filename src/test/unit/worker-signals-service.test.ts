@@ -27,7 +27,7 @@ describe('WorkerSignalsService（C0 worker 运行信号）', () => {
 
   /** 直接造一个任务（绕过 playbook，精确控制 status/risk）。 */
   function seedTask(id: string, assignee: string, status: TaskStatus, risk: RiskLevel): void {
-    const t: Omit<OrgTask, 'tenantId'> = {
+    const t: Omit<OrgTask, 'tenantId' | 'resumeAttemptCount' | 'lastWakeEventId'> = {
       id, orgId: 'org-1', goalId: 'g-1', parentTaskId: null, assignedToWorkerId: assignee,
       accountableWorkerId: 'mgr', title: id, taskType: 'x', status,
       riskLevel: risk, allowsToolExecution: false, acceptanceCriteria: 'ok', requiredCapabilities: [],

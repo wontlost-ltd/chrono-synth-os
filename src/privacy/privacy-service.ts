@@ -38,6 +38,8 @@ const TENANT_TABLES = [
   'settlement_reconciliation_runs',
   'persona_memory_edges', 'persona_working_memory', 'persona_memory_nodes',
   'runtime_sessions', 'task_results', 'task_assignments', 'task_applications',
+  /* 双边工单市场 ADR-0058：org 平行申请/指派表（子表在前，引用 marketplace_tasks） */
+  'task_org_assignments', 'task_org_applications',
   'governance_actions', 'governance_cases',
   'wallet_transactions', 'wallet_payout_requests', 'wallet_settlements',
   'persona_transfers', 'reputation_history',
@@ -78,6 +80,12 @@ const TENANT_TABLES = [
   'org_approvals',
   /* digital workforce B 链：升级链（escalation，业务派生），A 类标准导出+擦除 */
   'org_escalations',
+  /* ADR-0057 L2：按职能进修学习请求账本（业务派生），A 类标准导出+擦除 */
+  'learning_requests',
+  /* ADR-0057 L7：能力索引（已学能力正式来源，业务派生），A 类标准导出+擦除 */
+  'capability_index',
+  /* digital workforce 组织金库：org_wallets（余额账户）+ 结算账本（结算记录/流水，业务派生财务数据，无敏感凭证列），A 类标准导出+擦除 */
+  'org_wallets', 'org_wallet_settlements', 'org_wallet_transactions',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',
   'observability_outbox', 'observability_rollups', 'observability_processed_events',
   'event_ledger', 'persona_core_ledger_outbox', 'projection_store', 'conflict_inbox',
@@ -788,20 +796,31 @@ export class PrivacyService {
     interface TableSchema {
       pkColumns: string[];
       hasUpdatedAt: boolean;
+      hasTenantId: boolean;
+      /** 表实际拥有的列集合，用于过滤恶意 manifest 注入的非法列名 */
+      columns: ReadonlySet<string>;
     }
+    /**
+     * SQLite 标识符转义：双引号包裹并转义内部双引号，杜绝列名/表名注入。
+     * （列名虽经表 schema 白名单过滤，仍统一转义作为纵深防御。）
+     */
+    const quoteIdent = (ident: string): string => `"${ident.replace(/"/g, '""')}"`;
     const schemaCache = new Map<string, TableSchema>();
     const introspectTable = (table: string): TableSchema => {
       const cached = schemaCache.get(table);
       if (cached) return cached;
+      /* 表名来自 TENANT_TABLE_SET 白名单（上游已校验），此处仍转义作纵深防御 */
       const rows = db.prepare<{ name: string; pk: number }>(
-        `PRAGMA table_info(${table})`,
+        `PRAGMA table_info(${quoteIdent(table)})`,
       ).all();
       const pkColumns = rows
         .filter((r) => r.pk > 0)
         .sort((a, b) => a.pk - b.pk)
         .map((r) => r.name);
-      const hasUpdatedAt = rows.some((r) => r.name === 'updated_at');
-      const schema: TableSchema = { pkColumns, hasUpdatedAt };
+      const columns = new Set(rows.map((r) => r.name));
+      const hasUpdatedAt = columns.has('updated_at');
+      const hasTenantId = columns.has('tenant_id');
+      const schema: TableSchema = { pkColumns, hasUpdatedAt, hasTenantId, columns };
       schemaCache.set(table, schema);
       return schema;
     };
@@ -820,17 +839,34 @@ export class PrivacyService {
           continue;
         }
 
-        const schema = introspectTable(payload.logicalName);
+        const table = payload.logicalName;
+        const schema = introspectTable(table);
         const versionAware = schema.hasUpdatedAt && schema.pkColumns.length === 1;
+        const tableIdent = quoteIdent(table);
 
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
           if (row === null || typeof row !== 'object') continue;
-          const record = row as Record<string, unknown>;
-          const cols = Object.keys(record);
+          const record = { ...(row as Record<string, unknown>) };
+
+          /*
+           * 租户隔离铁律（P0）：所有写入 TENANT_TABLES 的行必须绑定到当前 tenantId。
+           * 恶意 manifest 可能把 tenant_id 设为他租户 ID 以污染其数据 → 此处强制覆盖。
+           * 若该表无 tenant_id 列（理论上不应出现在 TENANT_TABLES），仍按原样写入。
+           */
+          if (schema.hasTenantId) {
+            record['tenant_id'] = tenantId;
+          }
+
+          /*
+           * SQL 注入防御（P1）：列名必须是表真实拥有的列，过滤掉 manifest 注入的
+           * 非法/恶意列名；保留的列名再统一标识符转义。未知列直接丢弃（不让其进 SQL）。
+           */
+          const cols = Object.keys(record).filter((c) => schema.columns.has(c));
           if (cols.length === 0) continue;
 
           const placeholders = cols.map(() => '?').join(', ');
+          const colList = cols.map(quoteIdent).join(', ');
           const values = cols.map((c) => {
             const v = record[c];
             if (v === null || v === undefined) return null;
@@ -838,36 +874,66 @@ export class PrivacyService {
             return JSON.stringify(v);
           }) as SqlValue[];
 
+          /*
+           * 跨租户行劫持防御（P0）：PK 既可能是全局 UUID（单列 id），也可能是复合 PK——其中
+           * memory_edges/persona_memory_edges 的复合 PK 是 (source,target) 不含 tenant_id。
+           * 恶意 manifest 可伪造一行，其 PK 撞上他租户已有行，借 ON CONFLICT/REPLACE 改写其
+           * tenant_id 到自己名下，或把自己数据落到他租户。
+           *
+           * 统一策略：**所有**带 PK 的表都走「INSERT ... ON CONFLICT(<全部PK列>) DO UPDATE
+           * ... WHERE <既有行属于本租户>」——绝不用 INSERT OR REPLACE（PK 冲突时 DELETE+INSERT
+           * 会无条件劫持他租户行）。租户守卫要求既有行 tenant_id = excluded.tenant_id（excluded
+           * 已被强制为当前 tenantId）；撞到他租户 PK 时 0 行受影响 → staleSkipped，绝不改写他租户。
+           * 版本感知表额外叠加 updated_at 严格递增条件。
+           */
+          const pkSet = new Set(schema.pkColumns);
+          const conflictTarget = schema.pkColumns.map(quoteIdent).join(', ');
+          const updateAssignments = cols
+            .filter((c) => !pkSet.has(c))
+            .map((c) => `${quoteIdent(c)} = excluded.${quoteIdent(c)}`)
+            .join(', ');
+          const tenantGuard = schema.hasTenantId
+            ? `${tableIdent}.tenant_id = excluded.tenant_id`
+            : '';
+          const versionGuard = (versionAware && record['updated_at'] !== undefined && record['updated_at'] !== null)
+            ? `excluded.updated_at > ${tableIdent}.updated_at`
+            : '';
+          const guards = [versionGuard, tenantGuard].filter((g) => g.length > 0);
+          const whereClause = guards.length > 0 ? ` WHERE ${guards.join(' AND ')}` : '';
+
           try {
-            if (versionAware && record['updated_at'] !== undefined && record['updated_at'] !== null) {
-              const pk = schema.pkColumns[0]!;
-              /* 仅当 excluded.updated_at 严格大于本地版本才覆盖；否则保留本地行（视作 staleSkipped） */
-              const updateAssignments = cols
-                .filter((c) => c !== pk)
-                .map((c) => `${c} = excluded.${c}`)
-                .join(', ');
+            let result;
+            if (schema.pkColumns.length > 0) {
+              /* 有 PK：统一走租户守卫的 ON CONFLICT。无可更新非 PK 列时 DO NOTHING（仅插入新行）。 */
               const sql = updateAssignments.length > 0
-                ? `INSERT INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})
-                     ON CONFLICT(${pk}) DO UPDATE SET ${updateAssignments}
-                     WHERE excluded.updated_at > ${payload.logicalName}.updated_at`
-                : `INSERT OR IGNORE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`;
-              const result = db.prepare<void>(sql).run(...values);
-              if (result.changes === 0) staleSkippedCount += 1;
+                ? `INSERT INTO ${tableIdent} (${colList}) VALUES (${placeholders})
+                     ON CONFLICT(${conflictTarget}) DO UPDATE SET ${updateAssignments}${whereClause}`
+                : `INSERT INTO ${tableIdent} (${colList}) VALUES (${placeholders})
+                     ON CONFLICT(${conflictTarget}) DO NOTHING`;
+              result = db.prepare<void>(sql).run(...values);
             } else {
-              db.prepare<void>(
-                `INSERT OR REPLACE INTO ${payload.logicalName} (${cols.join(', ')}) VALUES (${placeholders})`,
+              /* 无 PK 表（极少见）：直接 INSERT，无冲突概念 */
+              result = db.prepare<void>(
+                `INSERT INTO ${tableIdent} (${colList}) VALUES (${placeholders})`,
               ).run(...values);
+            }
+            /*
+             * P2-n + 计数一致性：统一按 result.changes 判定。changes>0=成功写入（imported），
+             * changes===0=冲突被守卫拦下/无变化（staleSkipped）。绝不无条件计入 imported。
+             */
+            if (result.changes > 0) {
+              importedCount += 1;
+            } else {
+              staleSkippedCount += 1;
             }
           } catch (err) {
             failedCount += 1;
             if (failures.length < MAX_FAILURE_DETAILS) {
               const reason = err instanceof Error ? err.message : String(err);
-              failures.push({ logicalName: payload.logicalName, rowIndex: i, reason });
+              failures.push({ logicalName: table, rowIndex: i, reason });
             }
           }
         }
-
-        importedCount += 1;
       }
 
       db.prepare<void>(

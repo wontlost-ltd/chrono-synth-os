@@ -33,8 +33,10 @@
   --color-accent: #B45309;
   --color-accent-light: #F59E0B;
   --color-success: #166534;
+  --color-success-fill: #166534;
   --color-warning: #92400E;
   --color-error: #991B1B;
+  --color-error-fill: #991B1B;
   --color-info: #1D4ED8;
   --color-active: #166534;
   --color-paused: #92400E;
@@ -77,6 +79,17 @@ body {
   outline: 2px solid var(--color-primary-light);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* 全局 disabled 反馈：全站 159 个 <button> 中 72 个用 disabled:opacity-50 变暗，
+ * 却只 2 个带 disabled:cursor-not-allowed——禁用态仍显 pointer 光标，误导「可点」。
+ * 一条全局规则给所有禁用按钮补 not-allowed 光标（消除特殊情况而非逐个 70+ 处打补丁）。
+ * native disabled 已挡住 click/JS，无需 pointer-events:none，只补缺失的光标反馈即可。
+ * 仅作用于「真禁用」：native button:disabled，以及 role=button 部件的 aria-disabled——
+ * 不含 <button aria-disabled>（原生按钮加 aria-disabled 不合规且仍可点，给它 not-allowed 会误导）。 */
+button:disabled,
+[role='button'][aria-disabled='true'] {
+  cursor: not-allowed;
 }
 
 /* Skip-to-content */

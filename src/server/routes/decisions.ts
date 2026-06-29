@@ -237,8 +237,10 @@ export function registerDecisionRoutes(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId);
         if (sub?.stripe_customer_id) {
-          billingMetrics.meterEventsEnqueued++;
-          billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1);
+          /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
+          if (billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1)) {
+            billingMetrics.meterEventsEnqueued++;
+          }
         }
       }
 

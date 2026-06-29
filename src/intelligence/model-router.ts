@@ -253,10 +253,13 @@ export class ModelRouter implements LLMProvider {
 
     /* Stripe 计量上报 */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && totalTokens > 0) {
-      billingMetrics.meterEventsEnqueued++;
       if (this.billingOutbox) {
-        this.billingOutbox.enqueue(this.tenantId, this.stripeCustomerId, 'llm_tokens', totalTokens);
+        /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
+        if (this.billingOutbox.enqueue(this.tenantId, this.stripeCustomerId, 'llm_tokens', totalTokens)) {
+          billingMetrics.meterEventsEnqueued++;
+        }
       } else {
+        billingMetrics.meterEventsEnqueued++;
         reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', totalTokens).then(() => {
           billingMetrics.meterEventsProcessed++;
         }).catch((e) => {
@@ -313,10 +316,13 @@ export class ModelRouter implements LLMProvider {
 
     /* Stripe 计量上报 */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && estimatedTokens > 0) {
-      billingMetrics.meterEventsEnqueued++;
       if (this.billingOutbox) {
-        this.billingOutbox.enqueue(this.tenantId, this.stripeCustomerId, 'llm_tokens', estimatedTokens);
+        /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
+        if (this.billingOutbox.enqueue(this.tenantId, this.stripeCustomerId, 'llm_tokens', estimatedTokens)) {
+          billingMetrics.meterEventsEnqueued++;
+        }
       } else {
+        billingMetrics.meterEventsEnqueued++;
         reportStripeUsage(this.stripeConfig, this.stripeCustomerId, 'llm_tokens', estimatedTokens).then(() => {
           billingMetrics.meterEventsProcessed++;
         }).catch((e) => {

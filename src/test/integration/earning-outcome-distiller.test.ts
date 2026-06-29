@@ -18,7 +18,8 @@ describe('EarningOutcomeDistiller (ADR-0048 D5)', () => {
   afterEach(() => os.close());
 
   it('高质量任务（强信号）→ value_shift 自动编译，核心权重上升', () => {
-    const v = os.core.addValue('diligence', 0.5);
+    /* K5b：value 按 persona 隔离——价值建在 p1 自己的 core，蒸馏强化也落 p1 的 core。 */
+    const v = os.getCore('p1').addValue('diligence', 0.5);
     const r = os.earningDistiller.distill({
       tenantId: 'default', personaId: 'p1', taskId: 'mkt_1', category: 'research',
       qualityScore: 0.9, payout: 40,
@@ -27,11 +28,11 @@ describe('EarningOutcomeDistiller (ADR-0048 D5)', () => {
     assert.equal(r.candidatesIngested, 1);
     assert.equal(r.results[0].status, 'compiled');
     /* 强信号 delta = 0.05*0.9 = 0.045 ≤ 0.05 且 patternAgrees → 自动编译 */
-    assert.ok((os.core.values.getById(v.id)?.weight ?? 0) > 0.5);
+    assert.ok((os.getCore('p1').values.getById(v.id)?.weight ?? 0) > 0.5);
   });
 
   it('中等质量（弱信号）→ value_shift 待人工审批，核心不变', () => {
-    const v = os.core.addValue('diligence', 0.5);
+    const v = os.getCore('p1').addValue('diligence', 0.5);
     const r = os.earningDistiller.distill({
       tenantId: 'default', personaId: 'p1', taskId: 'mkt_2', category: 'research',
       qualityScore: 0.6, payout: 20,
@@ -39,7 +40,7 @@ describe('EarningOutcomeDistiller (ADR-0048 D5)', () => {
     });
     assert.equal(r.candidatesIngested, 1);
     assert.equal(r.results[0].status, 'pending'); /* conf 0.7 < 0.8 → 不自动编译 */
-    assert.equal(os.core.values.getById(v.id)?.weight, 0.5, '待审批不改核心');
+    assert.equal(os.getCore('p1').values.getById(v.id)?.weight, 0.5, '待审批不改核心');
   });
 
   it('低质量（<0.5）→ 不产成长候选（不奖励烂活）', () => {

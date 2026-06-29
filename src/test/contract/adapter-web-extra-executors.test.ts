@@ -114,7 +114,7 @@ describe('adapter-web decision-style executors', () => {
 describe('adapter-web memory executors', () => {
   function makeNode(id: string, salience = 0.5): MemInsertParams {
     return {
-      id, kind: 'episodic', content: `node ${id}`,
+      id, personaId: 'default', kind: 'episodic', content: `node ${id}`,
       valence: 0, salience,
       createdAt: 1700000000000, lastAccessedAt: 1700000000000,
       accessCount: 0, decayLambda: 0.1, lastDecayedAt: 1700000000000,
@@ -125,7 +125,7 @@ describe('adapter-web memory executors', () => {
   it('insert + queryById round-trip', () => {
     const { tx } = setupAll();
     tx.execute({ kind: MEM_CMD_INSERT, params: makeNode('m1') });
-    const node = tx.queryOne({ kind: MEM_QUERY_BY_ID, params: { id: 'm1' } });
+    const node = tx.queryOne({ kind: MEM_QUERY_BY_ID, params: { id: 'm1', personaId: 'default' } });
     assert.ok(node);
     assert.equal((node as { id: string }).id, 'm1');
   });
@@ -142,7 +142,7 @@ describe('adapter-web memory executors', () => {
     const { tx } = setupAll();
     tx.execute({ kind: MEM_CMD_UPSERT, params: makeNode('m1', 0.4) });
     tx.execute({ kind: MEM_CMD_UPSERT, params: makeNode('m1', 0.9) });
-    const node = tx.queryOne({ kind: MEM_QUERY_BY_ID, params: { id: 'm1' } });
+    const node = tx.queryOne({ kind: MEM_QUERY_BY_ID, params: { id: 'm1', personaId: 'default' } });
     assert.equal((node as { salience: number }).salience, 0.9);
   });
 
@@ -153,17 +153,17 @@ describe('adapter-web memory executors', () => {
         tx.execute({ kind: MEM_CMD_INSERT, params: makeNode(id) });
       }
     });
-    const all = tx.queryMany({ kind: MEM_QUERY_ALL, params: undefined });
+    const all = tx.queryMany({ kind: MEM_QUERY_ALL, params: { personaId: 'default' } });
     assert.equal(all.length, 3);
-    const count = tx.queryOne({ kind: MEM_QUERY_COUNT, params: undefined });
-    assert.equal((count as { count: number }).count, 3);
+    const count = tx.queryOne({ kind: MEM_QUERY_COUNT, params: { personaId: 'default' } });
+    assert.equal(count, 3);
   });
 
   it('delete removes one row', () => {
     const { tx } = setupAll();
     tx.execute({ kind: MEM_CMD_INSERT, params: makeNode('m1') });
-    const result = tx.execute({ kind: MEM_CMD_DELETE, params: { id: 'm1' } });
+    const result = tx.execute({ kind: MEM_CMD_DELETE, params: { id: 'm1', personaId: 'default' } });
     assert.equal(result.rowsAffected, 1);
-    assert.equal(tx.queryOne({ kind: MEM_QUERY_BY_ID, params: { id: 'm1' } }), null);
+    assert.equal(tx.queryOne({ kind: MEM_QUERY_BY_ID, params: { id: 'm1', personaId: 'default' } }), null);
   });
 });

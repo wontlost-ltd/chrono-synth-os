@@ -1,0 +1,4 @@
+# ChronoCompanion 落地页（登录屏）无敏感内容，可被索引；真正的私有数据在认证之后、
+# 由 SPA 在客户端拉取，不出现在可爬取的 HTML 中，故无需 Disallow。
+User-agent: *
+Allow: /

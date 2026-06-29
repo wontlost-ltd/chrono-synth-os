@@ -940,6 +940,67 @@ export const WorkforceRunGoalBodySchema = z.object({
   goalType: z.string().min(1).max(64),
 });
 
+/**
+ * 组织从任务市场接工单（S4）——admin 把一个外部市场工单接到组织名下，建目标并分解委派。
+ * sourceMarketplaceTaskId 是溯源+幂等标识（指向源工单）；goalType 由人类显式指定用哪个 playbook 分解。
+ */
+export const WorkforceAcceptMarketplaceTaskBodySchema = z.object({
+  /** 源市场工单 id（溯源 + 后续结算幂等键）。 */
+  sourceMarketplaceTaskId: z.string().min(1).max(128),
+  /** 接单的 manager 数字员工（admin 指定哪条职能线接）。 */
+  managerWorkerId: z.string().min(1).max(128),
+  /** 目标标题（即工单要做的事）。 */
+  title: z.string().min(1).max(200),
+  description: z.string().min(0).max(2000).default(''),
+  /** 用哪个分解 playbook（content_piece / data_analysis / support_ticket）——人类显式指定。 */
+  goalType: z.string().min(1).max(64),
+});
+
+/**
+ * 组织完工市场工单并结算报酬入金库（S4）——两方分账（平台抽成 + 组织净留存）。
+ * 幂等：同 sourceMarketplaceTaskId 只结算一次。报酬由 admin 在完工时给定（外部工单系统不存 reward）。
+ */
+export const WorkforceSettleMarketplaceTaskBodySchema = z.object({
+  /** 工单总报酬（minor 单位，分）。 */
+  totalAmountMinor: z.number().int().min(1),
+  currency: z.string().min(1).max(16).default('CRED'),
+  /** 平台抽成比例（%，0-100）；组织净留存 = total - platform。 */
+  platformPct: z.number().int().min(0).max(100).default(20),
+  /** 关联的组织目标 id（审计：报酬对应哪个被分解执行的目标；可空）。 */
+  goalId: z.string().min(1).max(128).optional(),
+});
+
+/* ── 双边工单市场 ADR-0058（org 竞标接单，发布者确认委派）── */
+
+/** org 领取一个 open 工单（登记接单意向，不触发执行）。orgId 在 path，body 仅需工单 id。 */
+export const WorkforceBidApplyBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+});
+
+/** 发布者确认把工单委派给某组织（发布者鉴权在 service 内校验 actor===publisher）。 */
+export const WorkforceBidConfirmAssignBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  orgId: z.string().min(1).max(128),
+});
+
+/** org 接单方启动执行：选 manager + goalType 触发 runGoal 分解。 */
+export const WorkforceBidStartBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  managerWorkerId: z.string().min(1).max(128),
+  goalType: z.string().min(1).max(64),
+});
+
+/** org 完工提交（发布者待验收）。body 仅工单 id。 */
+export const WorkforceBidSubmitBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+});
+
+/** 发布者验收 org 工单并结算入金库（平台抽成可选，缺省 20）。 */
+export const WorkforceBidAcceptBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  platformPct: z.number().int().min(0).max(100).default(20),
+});
+
 /* 人类决定一个待审批（approve/reject）。reason 拒绝时建议填，approve 可选。 */
 export const WorkforceApprovalDecisionBodySchema = z.object({
   decision: z.enum(['approve', 'reject']),
@@ -985,4 +1046,58 @@ export const WorkforceRequestApprovalBodySchema = z.object({
     irreversible: z.boolean().optional(),
     requireConfirmation: z.boolean().optional(),
   }).optional(),
+});
+
+/* ── 自助建组织 / 招数字员工（生产 self-service，admin 鉴权）── */
+
+const ARCHETYPE_ENUM = z.enum(['explorer', 'guardian', 'analyst', 'doer']);
+const SENIORITY_ENUM = z.enum(['exec', 'lead', 'senior', 'ic']);
+
+/**
+ * 建一个空组织 + 一名根数字员工（CEO/负责人，无上级）。组织由「有 worker」隐式存在，故建组织即建首个根 worker。
+ * personaId 由服务端按组织+roleCode 派生（前端不传，避免冲突/伪造）。
+ */
+export const WorkforceCreateOrgBodySchema = z.object({
+  orgId: z.string().min(1).max(128),
+  roleCode: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  displayName: z.string().min(1).max(120),
+  jobFamily: z.string().min(1).max(64).default('exec'),
+  seniority: SENIORITY_ENUM.default('exec'),
+  archetype: ARCHETYPE_ENUM.default('doer'),
+});
+
+/**
+ * 往**已存在**组织招一名数字员工：指定岗位 + 原型 + 直接上级（managerWorkerId）。personaId 服务端派生。
+ * 新员工必有上级（非根），出生独立人格内核。
+ */
+export const WorkforceHireWorkerBodySchema = z.object({
+  managerWorkerId: z.string().min(1).max(128),
+  roleCode: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  displayName: z.string().min(1).max(120),
+  jobFamily: z.string().min(1).max(64).default('ic'),
+  seniority: SENIORITY_ENUM.default('ic'),
+  archetype: ARCHETYPE_ENUM.default('doer'),
+});
+
+/* ── 组织重组/并购（restructure & M&A，admin 鉴权，确定性结构操作）── */
+
+/** 吸收：源组织 sourceOrgId 并入路径 orgId（目标），源根接到 mountUnderWorkerId 下。 */
+export const WorkforceAbsorbBodySchema = z.object({
+  sourceOrgId: z.string().min(1).max(128),
+  mountUnderWorkerId: z.string().min(1).max(128),
+});
+
+/** reparent：改某 worker 的直接上级。 */
+export const WorkforceReparentBodySchema = z.object({
+  workerId: z.string().min(1).max(128),
+  newManagerWorkerId: z.string().min(1).max(128),
+});
+
+/** offboard：裁撤一名 worker（有下属/在手任务须给安置/重分配对象）。 */
+export const WorkforceOffboardBodySchema = z.object({
+  workerId: z.string().min(1).max(128),
+  reparentReportsTo: z.string().min(1).max(128).optional(),
+  reassignTasksTo: z.string().min(1).max(128).optional(),
 });

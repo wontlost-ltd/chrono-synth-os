@@ -27,6 +27,7 @@
  *   - Not a transaction tracer. APM-style perf data goes through OTel.
  */
 
+import { randomBytes } from 'node:crypto';
 import { redactPii } from '../conversation/pii-redactor.js';
 
 export interface ErrorEvent {
@@ -182,10 +183,11 @@ function scrubEvent(event: ErrorEvent): ErrorEvent {
 }
 
 function randomId(): string {
-  /* 32 hex chars matches Sentry event_id format. */
-  let s = '';
-  for (let i = 0; i < 32; i += 1) s += Math.floor(Math.random() * 16).toString(16);
-  return s;
+  /*
+   * 32 hex chars matches Sentry event_id format. 改用 crypto.randomBytes 而非 Math.random：
+   * 密码学随机（Math.random 非加密级且违反「禁裸 Math.random」确定性铁律），16 字节 → 32 hex。
+   */
+  return randomBytes(16).toString('hex');
 }
 
 function parseFrames(stack: string): Array<{ function: string; filename: string; lineno: number }> {

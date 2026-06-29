@@ -9,7 +9,10 @@ import {
   VALUE_CMD_CREATE, VALUE_CMD_UPDATE, VALUE_CMD_DELETE,
   VALUE_CMD_DELETE_ALL, VALUE_CMD_UPSERT,
 } from '@chrono/kernel';
-import type { CoreValue, ValueId, CreateValueParams, UpdateValueParams } from '@chrono/kernel';
+import type {
+  CoreValue, CreateValueParams, UpdateValueParams,
+  ValueByIdParams, ValueAllParams, DeleteValueParams, DeleteAllValuesParams,
+} from '@chrono/kernel';
 
 interface ValueRow {
   id: string;
@@ -32,24 +35,27 @@ function toValue(row: ValueRow): CoreValue {
 }
 
 export function registerValueExecutors(): void {
-  registerQuery<CoreValue | null, { id: ValueId }>(VALUE_QUERY_BY_ID, (db, params) => {
+  /* ADR-0056 K5b：value 按 (tenant, persona) 隔离。tenant_id 由 TenantDatabase rewriter 自动注入
+   * （INSERT 加列 + SELECT/UPDATE/DELETE 加 WHERE）；persona_id 这里**显式**线程（rewriter 只认 tenant）。
+   * 主键仍 id（UUID 全局唯一），故 ON CONFLICT(id) 不变；persona 隔离靠**写 persona_id + 读按 persona 过滤**。 */
+  registerQuery<CoreValue | null, ValueByIdParams>(VALUE_QUERY_BY_ID, (db, params) => {
     const row = db.prepare<ValueRow>(
-      'SELECT id, label, weight, time_discount, emotion_amplifier, updated_at FROM core_values WHERE id = ?',
-    ).get(params.id);
+      'SELECT id, label, weight, time_discount, emotion_amplifier, updated_at FROM core_values WHERE id = ? AND persona_id = ?',
+    ).get(params.id, params.personaId);
     return row ? toValue(row) : null;
   });
 
-  registerQuery<CoreValue[], void>(VALUE_QUERY_ALL, (db: IDatabase) => {
+  registerQuery<CoreValue[], ValueAllParams>(VALUE_QUERY_ALL, (db: IDatabase, params) => {
     const rows = db.prepare<ValueRow>(
-      'SELECT id, label, weight, time_discount, emotion_amplifier, updated_at FROM core_values',
-    ).all();
+      'SELECT id, label, weight, time_discount, emotion_amplifier, updated_at FROM core_values WHERE persona_id = ?',
+    ).all(params.personaId);
     return rows.map(toValue);
   });
 
   registerCommand<CreateValueParams>(VALUE_CMD_CREATE, (db, p) => {
     db.prepare<void>(
-      'INSERT INTO core_values (id, label, weight, time_discount, emotion_amplifier, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(p.id, p.label, p.weight, p.timeDiscount, p.emotionAmplifier, p.updatedAt);
+      'INSERT INTO core_values (id, persona_id, label, weight, time_discount, emotion_amplifier, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(p.id, p.personaId, p.label, p.weight, p.timeDiscount, p.emotionAmplifier, p.updatedAt);
     return { rowsAffected: 1 };
   });
 
@@ -62,26 +68,27 @@ export function registerValueExecutors(): void {
     sets.push('updated_at = ?');
     vals.push(p.updatedAt);
     const result = db.prepare<void>(
-      `UPDATE core_values SET ${sets.join(', ')} WHERE id = ?`,
-    ).run(...vals, p.id);
+      `UPDATE core_values SET ${sets.join(', ')} WHERE id = ? AND persona_id = ?`,
+    ).run(...vals, p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<{ id: ValueId }>(VALUE_CMD_DELETE, (db, p) => {
-    const result = db.prepare<void>('DELETE FROM core_values WHERE id = ?').run(p.id);
+  registerCommand<DeleteValueParams>(VALUE_CMD_DELETE, (db, p) => {
+    const result = db.prepare<void>('DELETE FROM core_values WHERE id = ? AND persona_id = ?').run(p.id, p.personaId);
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<void>(VALUE_CMD_DELETE_ALL, (db: IDatabase) => {
-    db.prepare<void>('DELETE FROM core_values WHERE 1=1').run();
+  registerCommand<DeleteAllValuesParams>(VALUE_CMD_DELETE_ALL, (db: IDatabase, p) => {
+    /* persona 范围清空（WHERE persona_id；rewriter 再加 AND tenant_id）。 */
+    db.prepare<void>('DELETE FROM core_values WHERE persona_id = ?').run(p.personaId);
     return { rowsAffected: 0 };
   });
 
   registerCommand<CreateValueParams>(VALUE_CMD_UPSERT, (db, p) => {
     db.prepare<void>(
-      `INSERT INTO core_values (id, label, weight, time_discount, emotion_amplifier, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET label=excluded.label, weight=excluded.weight, time_discount=excluded.time_discount, emotion_amplifier=excluded.emotion_amplifier, updated_at=excluded.updated_at`,
-    ).run(p.id, p.label, p.weight, p.timeDiscount, p.emotionAmplifier, p.updatedAt);
+      `INSERT INTO core_values (id, persona_id, label, weight, time_discount, emotion_amplifier, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET persona_id=excluded.persona_id, label=excluded.label, weight=excluded.weight, time_discount=excluded.time_discount, emotion_amplifier=excluded.emotion_amplifier, updated_at=excluded.updated_at`,
+    ).run(p.id, p.personaId, p.label, p.weight, p.timeDiscount, p.emotionAmplifier, p.updatedAt);
     return { rowsAffected: 1 };
   });
 }

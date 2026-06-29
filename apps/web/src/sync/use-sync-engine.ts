@@ -12,6 +12,7 @@ import type { RuntimeSyncEvent, SyncStatusSnapshotV1 } from '@chrono/contracts';
 import { deriveRuntimeSyncState } from '@chrono/sync-engine';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { getSession } from '@/store/session';
+import { ApiError } from '@/api/client';
 import { pullIncremental, flushOutbox, countOutbox } from './sync-client';
 
 // ── State machine ─────────────────────────────────────────────────────────────
@@ -80,6 +81,11 @@ export function useSyncEngine({
   const syncingRef = useRef(false);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  /* 增量同步端点（/api/v1/sync/pull|push）在当前后端**不存在**（后端只实现了形态不同的
+   * v2 flush-and-report，无 v1 cursor-based 增量协议）。一旦命中 404 即视为「此后端不提供
+   * 增量同步」，置位此 ref：停止轮询、不再把 404 当可重试错误反复刷——否则 setInterval 每 30s
+   * 永久 404 洪水 + sync 状态恒 error。待后端真正实现 v1 sync 协议时移除此短路。 */
+  const syncUnavailableRef = useRef(false);
 
   // Network state changes
   useEffect(() => {
@@ -92,12 +98,20 @@ export function useSyncEngine({
 
   // Sync enabled/disabled changes
   useEffect(() => {
+    /* 若本会话已探测到后端无增量同步端点（404→syncUnavailableRef），即使 enabled prop 切回 true 也
+     * 保持 disabled——否则状态机会显示「已启用/idle」而 runSync 仍被 ref 永久短路，UI 与实际行为不一致
+     * （Codex 交叉审查发现）。404 是「此后端不支持」的能力探测结论，仅页面重载（新 ref）才重新探测。 */
+    if (enabled && syncUnavailableRef.current) {
+      dispatch({ type: 'sync.disabled', occurredAt: Date.now() });
+      return;
+    }
     dispatch({ type: 'sync.configured', enabled, occurredAt: Date.now() });
   }, [enabled]);
 
   const runSync = useCallback(async () => {
     const current = snapshotRef.current;
     if (syncingRef.current) return;
+    if (syncUnavailableRef.current) return; // 后端无增量同步端点 → 不再尝试
     if (!current.syncEnabled || !current.networkOnline) return;
     if (current.state !== 'idle' && current.state !== 'error') return;
 
@@ -120,13 +134,21 @@ export function useSyncEngine({
       await flushOutbox(tenantId);
       dispatch({ type: 'sync.push.completed', occurredAt: Date.now() });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      dispatch({
-        type: 'sync.failed',
-        errorCode: 'SYNC_ERROR',
-        errorMessage: message,
-        occurredAt: Date.now(),
-      });
+      /* 404 = 后端没有这个增量同步端点（特性未实现）。这不是「同步失败可重试」，而是
+       * 「此后端不支持增量同步」——置位短路 + 收敛到 disabled（干净态，非 error），避免每轮
+       * 重试 404 洪水与永久 error 状态。其余错误仍按可重试的 sync.failed 处理。 */
+      if (err instanceof ApiError && err.status === 404) {
+        syncUnavailableRef.current = true;
+        dispatch({ type: 'sync.disabled', occurredAt: Date.now() });
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        dispatch({
+          type: 'sync.failed',
+          errorCode: 'SYNC_ERROR',
+          errorMessage: message,
+          occurredAt: Date.now(),
+        });
+      }
     } finally {
       syncingRef.current = false;
     }

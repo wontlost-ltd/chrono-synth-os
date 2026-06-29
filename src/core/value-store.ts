@@ -24,16 +24,19 @@ function toKernelRandom(): KernelRandom {
 export class ValueStore {
   private readonly kernelClock: KernelClock;
   private readonly kernelRandom: KernelRandom;
+  private readonly personaId: string;
 
-  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock) {
+  /** ADR-0056 K5b：personaId 决定价值落哪个 persona（缺省 'default' = legacy 单人格，向后兼容）。 */
+  constructor(private readonly tx: SyncWriteUnitOfWork, clock: Clock, personaId = 'default') {
     registerCoreSelfExecutors();
     this.kernelClock = toKernelClock(clock);
     this.kernelRandom = toKernelRandom();
+    this.personaId = personaId;
   }
 
   /** 创建新价值维度 */
   create(label: string, weight: number, timeDiscount = 0.5, emotionAmplifier = 1.0): CoreValue {
-    return createValue(this.tx, this.kernelClock, this.kernelRandom, label, weight, timeDiscount, emotionAmplifier);
+    return createValue(this.tx, this.kernelClock, this.kernelRandom, label, weight, timeDiscount, emotionAmplifier, this.personaId);
   }
 
   /** 更新价值权重（向后兼容） */
@@ -46,31 +49,31 @@ export class ValueStore {
     id: ValueId,
     patch: { weight?: number; timeDiscount?: number; emotionAmplifier?: number },
   ): CoreValue | undefined {
-    return updateValue(this.tx, this.kernelClock, id, patch) ?? undefined;
+    return updateValue(this.tx, this.kernelClock, id, patch, this.personaId) ?? undefined;
   }
 
   /** 按 ID 获取 */
   getById(id: ValueId): CoreValue | undefined {
-    return getValueById(this.tx, id) ?? undefined;
+    return getValueById(this.tx, id, this.personaId) ?? undefined;
   }
 
   /** 获取全部价值 */
   getAll(): Map<ValueId, CoreValue> {
-    return getAllValues(this.tx);
+    return getAllValues(this.tx, this.personaId);
   }
 
   /** 删除价值 */
   delete(id: ValueId): boolean {
-    return deleteValue(this.tx, id);
+    return deleteValue(this.tx, id, this.personaId);
   }
 
   /** 删除全部价值 */
   deleteAll(): void {
-    deleteAllValues(this.tx);
+    deleteAllValues(this.tx, this.personaId);
   }
 
   /** 按原始数据插入（恢复用，保留原 ID） */
   insert(value: CoreValue): void {
-    upsertValue(this.tx, value);
+    upsertValue(this.tx, value, this.personaId);
   }
 }

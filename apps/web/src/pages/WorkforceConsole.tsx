@@ -4,6 +4,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { DataTable, type Column } from '../components/ui/DataTable';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
+import { Button } from '../components/ui/Button';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   useOrgChart, useOrgGoals, useWorkerPersonaSignal,
@@ -225,16 +226,8 @@ function PendingApprovalsSection({ orgId }: { orgId: string }) {
     {
       id: 'actions', header: t('workforce.colActions'), cell: r => (
         <div className="flex gap-2">
-          <button
-            disabled={decide.isPending}
-            onClick={() => onApprove(r)}
-            className="rounded bg-green-600 px-2 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
-          >{t('workforce.approve')}</button>
-          <button
-            disabled={decide.isPending}
-            onClick={() => onReject(r)}
-            className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-          >{t('workforce.reject')}</button>
+          <Button variant="success" size="sm" disabled={decide.isPending} onClick={() => onApprove(r)}>{t('workforce.approve')}</Button>
+          <Button variant="danger" size="sm" disabled={decide.isPending} onClick={() => onReject(r)}>{t('workforce.reject')}</Button>
         </div>
       ),
     },

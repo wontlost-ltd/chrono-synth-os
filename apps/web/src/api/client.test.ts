@@ -1,18 +1,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ApiError, apiFetch } from './client';
+import { ApiError, apiFetch, unwrapList } from './client';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
+/* 有状态会话 mock：可控 token/epoch，便于测 401 三态模型。默认值保持原行为（apiKey 驱动、空 token）。 */
+const sessionState = { apiKey: 'test-key', tenantId: 'test-tenant', mode: 'demo' as const, accessToken: '', user: null as null };
+let epochValue = 0;
+const clearSessionMock = vi.fn(() => { epochValue += 1; sessionState.accessToken = ''; sessionState.apiKey = ''; });
+const setSessionMock = vi.fn((patch: Partial<typeof sessionState>) => { Object.assign(sessionState, patch); });
+
 vi.mock('../config', () => ({ API_BASE_URL: 'http://test-api' }));
 vi.mock('../store/session', () => ({
-  getSession: () => ({ apiKey: 'test-key', tenantId: 'test-tenant', mode: 'demo', accessToken: '', user: null }),
-  setSession: vi.fn(),
-  clearSession: vi.fn(),
+  getSession: () => sessionState,
+  setSession: (p: Partial<typeof sessionState>) => setSessionMock(p),
+  clearSession: () => clearSessionMock(),
+  getSessionEpoch: () => epochValue,
 }));
 
 beforeEach(() => {
   mockFetch.mockReset();
+  clearSessionMock.mockClear();
+  setSessionMock.mockClear();
+  /* 还原默认会话态 */
+  sessionState.apiKey = 'test-key'; sessionState.accessToken = ''; sessionState.tenantId = 'test-tenant';
+  epochValue = 0;
 });
 
 function jsonResponse(data: unknown, status = 200, headers: Record<string, string> = {}) {
@@ -320,5 +332,84 @@ describe('apiFetch — extended error contract', () => {
       expect(err.code).toBe('VALIDATION_FAILED');
       expect(err.fields).toEqual({ email: 'must be valid', password: 'too short' });
     }
+  });
+});
+
+/* 401 三态模型回归（消除「单端点 401 误登出」隐患）。 */
+describe('401 handling — 不因瞬时失败登出全局', () => {
+  const raw = (status: number, body = '') => ({
+    ok: status >= 200 && status < 300, status,
+    headers: { get: (n: string) => (n === 'content-type' ? 'application/json' : null) },
+    text: () => Promise.resolve(body),
+    json: () => Promise.resolve(body ? JSON.parse(body) : {}),
+  });
+
+  it('refresh 真实被拒（非 ok）→ clearSession（会话确已死）', async () => {
+    sessionState.accessToken = 'stale-token';
+    mockFetch
+      .mockResolvedValueOnce(raw(401))                                   // 业务请求 401
+      .mockResolvedValueOnce(raw(401))                                   // /auth/refresh 被拒
+      .mockResolvedValueOnce(raw(401));                                  // 重试（不会发生，因 failed）
+    await expect(apiFetch('/api/v1/personas')).rejects.toBeInstanceOf(ApiError);
+    expect(clearSessionMock).toHaveBeenCalled();
+  });
+
+  it('refresh 瞬时网络异常（fetch throw）→ 不 clearSession（保住有效会话）', async () => {
+    sessionState.accessToken = 'valid-token';
+    mockFetch
+      .mockResolvedValueOnce(raw(401))                                   // 业务请求 401
+      .mockRejectedValueOnce(new Error('network blip'))                  // /auth/refresh 抛网络错
+      .mockResolvedValueOnce(raw(200, JSON.stringify({ data: { ok: true } }))); // superseded → 重试成功
+    const r = await apiFetch<{ ok: boolean }>('/api/v1/personas');
+    expect(r).toEqual({ ok: true });
+    expect(clearSessionMock).not.toHaveBeenCalled();
+  });
+
+  it('refresh 成功 → 重试成功，不 clearSession', async () => {
+    sessionState.accessToken = 'expired';
+    mockFetch
+      .mockResolvedValueOnce(raw(401))                                                  // 业务 401
+      .mockResolvedValueOnce(raw(200, JSON.stringify({ data: { accessToken: 'fresh' } }))) // refresh ok
+      .mockResolvedValueOnce(raw(200, JSON.stringify({ data: { id: 1 } })));             // 重试 ok
+    const r = await apiFetch<{ id: number }>('/api/v1/personas');
+    expect(r).toEqual({ id: 1 });
+    expect(clearSessionMock).not.toHaveBeenCalled();
+  });
+
+  it('陈旧 401（期间 token 已换）→ 用当前会话重试，不 refresh/clearSession', async () => {
+    sessionState.accessToken = 'old-token';
+    mockFetch.mockImplementationOnce(() => {
+      /* 模拟并发 login：发请求后 token 被换掉 */
+      sessionState.accessToken = 'new-token-from-concurrent-login';
+      return Promise.resolve(raw(401));
+    }).mockResolvedValueOnce(raw(200, JSON.stringify({ data: { id: 2 } }))); // 用新会话重试成功
+    const r = await apiFetch<{ id: number }>('/api/v1/personas');
+    expect(r).toEqual({ id: 2 });
+    expect(clearSessionMock).not.toHaveBeenCalled();
+    /* 不应调用 /auth/refresh（陈旧 401 直接用当前会话重试） */
+    const refreshCalled = mockFetch.mock.calls.some(c => String(c[0]).includes('/auth/refresh'));
+    expect(refreshCalled).toBe(false);
+  });
+});
+
+/* unwrapList：分页信封 → 列表数组（修 /conflicts /values /personas 把 {data,pagination}
+ * 当裸数组用导致 .length 恒 undefined→静默判空 / .map 抛错 的系统性 bug）。 */
+describe('unwrapList — 分页信封解包', () => {
+  it('裸数组原样返回', () => {
+    expect(unwrapList([1, 2, 3])).toEqual([1, 2, 3]);
+  });
+  it('{data:[...]} 信封 → 取出 data（这是后端 paginate() 的真实形状）', () => {
+    expect(unwrapList({ data: ['a', 'b'], pagination: { page: 1, total: 2 } })).toEqual(['a', 'b']);
+  });
+  it('空信封 {data:[]} → []', () => {
+    expect(unwrapList({ data: [], pagination: { page: 1, total: 0 } })).toEqual([]);
+  });
+  it('非数组非信封形状（畸形响应）→ [] 兜底，不让 .map 炸栈', () => {
+    expect(unwrapList({ unexpected: 'object' })).toEqual([]);
+    expect(unwrapList(null)).toEqual([]);
+    expect(unwrapList(undefined)).toEqual([]);
+    expect(unwrapList('string')).toEqual([]);
+    /* data 不是数组（如 {data:{}}）也兜底为 [] */
+    expect(unwrapList({ data: { not: 'array' } })).toEqual([]);
   });
 });

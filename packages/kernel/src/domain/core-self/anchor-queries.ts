@@ -17,20 +17,33 @@ export const ANCHOR_CMD_DELETE = 'survival-anchor.delete' as const;
 export const ANCHOR_CMD_DELETE_ALL = 'survival-anchor.delete-all' as const;
 export const ANCHOR_CMD_UPSERT = 'survival-anchor.upsert' as const;
 
-/* ── Query 工厂 ── */
+/* ── Query 参数类型（ADR-0056 K5b：survival_anchors 按 (tenant, persona) 隔离；tenant_id 由宿主注入，
+ * persona_id 经 executor 显式线程。） ── */
 
-export function anchorById(id: string): Query<SurvivalAnchor | null, { id: string }> {
-  return { kind: ANCHOR_QUERY_BY_ID, params: { id } };
+export interface AnchorByIdParams {
+  readonly id: string;
+  readonly personaId: string;
 }
 
-export function allAnchors(): Query<SurvivalAnchor, void> {
-  return { kind: ANCHOR_QUERY_ALL, params: undefined as void };
+export interface AnchorAllParams {
+  readonly personaId: string;
+}
+
+/* ── Query 工厂 ── */
+
+export function anchorById(id: string, personaId = 'default'): Query<SurvivalAnchor | null, AnchorByIdParams> {
+  return { kind: ANCHOR_QUERY_BY_ID, params: { id, personaId } };
+}
+
+export function allAnchors(personaId = 'default'): Query<SurvivalAnchor, AnchorAllParams> {
+  return { kind: ANCHOR_QUERY_ALL, params: { personaId } };
 }
 
 /* ── Command 参数类型 ── */
 
 export interface CreateAnchorParams {
   readonly id: string;
+  readonly personaId: string;
   readonly label: string;
   readonly kind: SurvivalAnchorKind;
   readonly valueJson: string;
@@ -41,11 +54,21 @@ export interface CreateAnchorParams {
 
 export interface UpdateAnchorParams {
   readonly id: string;
+  readonly personaId: string;
   readonly label: string;
   readonly kind: SurvivalAnchorKind;
   readonly valueJson: string;
   readonly severity: number;
   readonly updatedAt: number;
+}
+
+export interface DeleteAnchorParams {
+  readonly id: string;
+  readonly personaId: string;
+}
+
+export interface DeleteAllAnchorsParams {
+  readonly personaId: string;
 }
 
 /* ── Command 工厂 ── */
@@ -58,12 +81,12 @@ export function updateAnchorCmd(params: UpdateAnchorParams): Command<UpdateAncho
   return { kind: ANCHOR_CMD_UPDATE, params };
 }
 
-export function deleteAnchorCmd(id: string): Command<{ id: string }> {
-  return { kind: ANCHOR_CMD_DELETE, params: { id } };
+export function deleteAnchorCmd(id: string, personaId = 'default'): Command<DeleteAnchorParams> {
+  return { kind: ANCHOR_CMD_DELETE, params: { id, personaId } };
 }
 
-export function deleteAllAnchorsCmd(): Command<void> {
-  return { kind: ANCHOR_CMD_DELETE_ALL, params: undefined as void };
+export function deleteAllAnchorsCmd(personaId = 'default'): Command<DeleteAllAnchorsParams> {
+  return { kind: ANCHOR_CMD_DELETE_ALL, params: { personaId } };
 }
 
 export function upsertAnchorCmd(params: CreateAnchorParams): Command<CreateAnchorParams> {

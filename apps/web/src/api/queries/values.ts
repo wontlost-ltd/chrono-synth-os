@@ -1,11 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../client';
+import { apiFetch, unwrapList } from '../client';
 import type { CoreValue } from '../../types';
 
 export function useValues() {
   return useQuery({
     queryKey: ['values'],
-    queryFn: ({ signal }) => apiFetch<CoreValue[]>('/api/v1/values', { signal }),
+    /* /api/v1/values 返回分页信封 {data,pagination}，apiFetch 不自动解包（保留 pagination）。
+     * 用 unwrapList 取出数组，否则消费方 values.length 恒 undefined→有数据也静默显示「空」。 */
+    queryFn: ({ signal }) => apiFetch<unknown>('/api/v1/values', { signal }).then(unwrapList<CoreValue>),
   });
 }
 

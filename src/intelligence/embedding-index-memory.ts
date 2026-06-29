@@ -50,12 +50,24 @@ function cosineSimilarityFast(a: readonly number[] | Float64Array, aNorm: number
   return dot / (aNorm * bNorm);
 }
 
+/**
+ * 确定性挑选 k 个互异种子索引（K-means 初始质心）。
+ * 确定性铁律：禁用 Math.random()——改用等距跨步在 [0,total) 上均匀取样，同输入同输出、
+ * 可复现。等距分布也是合理的 K-means 初始化（覆盖整个索引区间），避免随机聚集。
+ */
 function sampleIndices(total: number, k: number): number[] {
-  const indices = new Set<number>();
-  while (indices.size < k) {
-    indices.add(Math.floor(Math.random() * total));
+  const count = Math.min(k, total);
+  if (count <= 0) return [];
+  const indices: number[] = [];
+  const seen = new Set<number>();
+  for (let j = 0; j < count; j++) {
+    /* 第 j 个种子落在第 j 段的段首；撞重复时线性探测下一个空位（边界安全） */
+    let idx = Math.floor((j * total) / count);
+    while (seen.has(idx)) idx = (idx + 1) % total;
+    seen.add(idx);
+    indices.push(idx);
   }
-  return [...indices];
+  return indices;
 }
 
 function vectorAdd(a: Float64Array, b: Float64Array): void {

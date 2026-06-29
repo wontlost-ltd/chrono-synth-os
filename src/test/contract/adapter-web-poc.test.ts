@@ -132,4 +132,41 @@ describe('@chrono/adapter-web PoC', () => {
     assert.equal(row?.revoked_at, 1700000900000);
     assert.equal(row?.revocation_reason, 'no longer needed');
   });
+
+  it('InMemoryTables.upsert 拒绝缺主键的行（P2-r：String(undefined) 不应绕过校验）', () => {
+    const tables = new InMemoryTables();
+    tables.defineTable('t');
+
+    /* 缺主键（id=undefined）必须抛错，而非静默存到 'undefined' 键下互相覆盖 */
+    assert.throws(
+      () => tables.upsert('t', { name: 'no-id' }),
+      /missing primary key/,
+      '缺主键的行应被拒绝',
+    );
+
+    /* 合法主键值（含数字 0）应被接受并可回读 */
+    tables.upsert('t', { id: 0, name: 'zero' });
+    tables.upsert('t', { id: 'a', name: 'alpha' });
+    assert.equal(tables.rows('t').length, 2, '两个不同主键应各自落库（含 id=0）');
+    assert.ok(tables.find('t', (r) => r.id === 0), 'id=0 的行应可查到');
+  });
+
+  it('InMemoryTables.hydrate 跳过缺主键的污染行（P2-r 读写对称）', () => {
+    const tables = new InMemoryTables();
+    /* 模拟旧快照：含一个合法行 + 一个缺主键的污染行（fix 前会被存到 "undefined" 键） */
+    tables.hydrate({
+      tables: {
+        t: {
+          primaryKey: 'id',
+          rows: [
+            { id: 'good', name: 'valid' },
+            { name: 'orphan-no-id' }, // 缺主键 → 必须被跳过
+          ],
+        },
+      },
+    });
+    assert.equal(tables.rows('t').length, 1, '污染行应被跳过，仅合法行恢复');
+    assert.ok(tables.find('t', (r) => r.id === 'good'), '合法行应正常恢复');
+    assert.ok(!tables.find('t', (r) => r.name === 'orphan-no-id'), '缺主键行不应以 undefined 键复活');
+  });
 });

@@ -3,6 +3,9 @@
  * rule 经审批编译进版本化规则库。锁住「老师产出能完整蒸馏进确定性内核」。
  *
  * 这两类 kind 不在 auto-compile 范围（只 value_shift/memory_edge 自动编），故走 ingest→approve→compile。
+ *
+ * ADR-0056 K5：编译落到**该 persona 自己的内核**。这些用例为 personaId='p1' 注入/审批，故断言读
+ * os.getCore('p1')（K5 前编译统一落 default core，断言读 os.core 也能过——那是 brain-mixing 旧行为）。
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -26,7 +29,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
   afterEach(() => os.close());
 
   it('decision_style_patch → 审批编译 → L2 决策风格字段改变', () => {
-    const before = os.core.decisionStyle.get();
+    const before = os.getCore('p1').decisionStyle.get();
     const ing = os.distillation.ingest('p1', {
       kind: 'decision_style_patch', source: 'reflection',
       payload: { riskAppetite: 0.8, explorationBias: 0.7 },
@@ -39,7 +42,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     assert.ok(ap.ok, `审批应成功: ${ap.ok ? '' : ap.reason}`);
     assert.equal(ap.artifact.status, 'compiled', `审批后应编译，实际 ${ap.artifact.status}`);
 
-    const after = os.core.decisionStyle.get();
+    const after = os.getCore('p1').decisionStyle.get();
     assert.equal(after.riskAppetite, 0.8, 'riskAppetite 应被校准');
     assert.equal(after.explorationBias, 0.7, 'explorationBias 应被校准');
     /* 未提供的字段不变。 */
@@ -59,7 +62,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     assert.ok(ap.ok, `审批应成功: ${ap.ok ? '' : ap.reason}`);
     assert.equal(ap.artifact.status, 'compiled', `审批后应编译，实际 ${ap.artifact.status}`);
 
-    const after = os.core.cognitiveModel.get();
+    const after = os.getCore('p1').cognitiveModel.get();
     assert.equal(after.growthMindset, 0.9, 'growthMindset 应被校准');
     assert.equal(after.beliefs.get('world-is-learnable'), 0.85, 'beliefs map 应被合并');
   });
@@ -67,7 +70,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
   it('cognitive_model_patch → ④ L3 扩展维度（模糊容忍 / 直觉↔分析）经成长管线学习落地', () => {
     /* Codex 退回核心：新维度若不接入 patch payload + 编译器，就是只能内部手写的半死字段。
      * 此处证明蒸馏成长管线（ingest→审批→编译）能真正学习并落地这两个维度。 */
-    const before = os.core.cognitiveModel.get();
+    const before = os.getCore('p1').cognitiveModel.get();
     assert.equal(before.ambiguityTolerance, 0.5, '初始模糊容忍应为中性 0.5');
     assert.equal(before.analyticalIntuitive, 0.5, '初始直觉↔分析应为中性 0.5');
 
@@ -83,7 +86,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     assert.ok(ap.ok, `审批应成功: ${ap.ok ? '' : ap.reason}`);
     assert.equal(ap.artifact.status, 'compiled', `审批后应编译，实际 ${ap.artifact.status}`);
 
-    const after = os.core.cognitiveModel.get();
+    const after = os.getCore('p1').cognitiveModel.get();
     assert.equal(after.ambiguityTolerance, 0.85, '模糊容忍应被成长管线校准');
     assert.equal(after.analyticalIntuitive, 0.2, '直觉↔分析应被成长管线校准');
     /* 未提供的旧字段不变（部分更新语义）。 */
@@ -109,7 +112,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     if (ing.status !== 'pending') return;
     const ap = os.distillation.approve('p1', ing.artifact.id);
     assert.ok(ap.ok, `应编译成功（领域合法值）: ${ap.ok ? '' : ap.reason}`);
-    const after = os.core.decisionStyle.get();
+    const after = os.getCore('p1').decisionStyle.get();
     assert.equal(after.lossAversion, 2.5);
     assert.equal(after.deliberationDepth, 4);
   });
@@ -134,7 +137,7 @@ describe('artifact 编译器补全 decision_style / cognitive_model（WP-1）', 
     if (ing1.status === 'pending') os.distillation.approve('p1', ing1.artifact.id);
     const ing2 = os.distillation.ingest('p1', { kind: 'cognitive_model_patch', source: 'reflection', payload: { beliefs: { 'belief-B': 0.8 } }, confidence: 0.9, evidence: EV });
     if (ing2.status === 'pending') os.distillation.approve('p1', ing2.artifact.id);
-    const m = os.core.cognitiveModel.get();
+    const m = os.getCore('p1').cognitiveModel.get();
     assert.equal(m.beliefs.get('belief-A'), 0.7, 'belief-A 应被保留（merge 非替换）');
     assert.equal(m.beliefs.get('belief-B'), 0.8, 'belief-B 应被新增');
   });

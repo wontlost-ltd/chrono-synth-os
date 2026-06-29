@@ -18,6 +18,7 @@ import type {
   ToolPermissionRow, ToolPermissionGrantParams,
   TpermByPersonaToolParams, TpermListByPersonaParams,
   TpermDailyUsageParams, TpermRevokeParams, TpermRevokeByKeyParams,
+  TpermByRevocationKeyParams, AgauthByRevocationKeyParams,
   AgencyAuthorizationRow, AgencyAuthorizationCreateParams,
   AgauthByIdParams, AgauthListByPersonaParams, AgauthListByPrincipalParams,
   AgauthRevokeParams, AgauthSuspendParams,
@@ -65,10 +66,11 @@ export function registerToolPermissionExecutors(): void {
     ).all(tenantId);
   });
 
-  registerQuery<ToolPermissionRow | null, string>(TPERM_QUERY_BY_REVOCATION_KEY, (db, key) => {
+  registerQuery<ToolPermissionRow | null, TpermByRevocationKeyParams>(TPERM_QUERY_BY_REVOCATION_KEY, (db, p) => {
+    /* 租户隔离：revocation_key 是密钥，但查询仍须限定 tenant_id，防跨租户按 key 越权查 */
     return db.prepare<ToolPermissionRow>(
-      `${TPERM_SELECT} WHERE revocation_key = ? LIMIT 1`,
-    ).get(key) ?? null;
+      `${TPERM_SELECT} WHERE tenant_id = ? AND revocation_key = ? LIMIT 1`,
+    ).get(p.tenantId, p.revocationKey) ?? null;
   });
 
   registerQuery<{ count: number } | null, TpermDailyUsageParams>(TPERM_QUERY_DAILY_USAGE, (db, p) => {
@@ -124,11 +126,12 @@ export function registerToolPermissionExecutors(): void {
   });
 
   registerCommand<TpermRevokeByKeyParams>(TPERM_CMD_REVOKE_BY_REVOCATION_KEY, (db, p) => {
+    /* 租户隔离：撤销同样须限定 tenant_id，防跨租户按 key 越权撤销 */
     const result = db.prepare<void>(
       `UPDATE tool_permissions
           SET revoked_at = ?, revocation_reason = ?
-        WHERE revocation_key = ? AND revoked_at IS NULL`,
-    ).run(p.now, p.reason, p.revocationKey);
+        WHERE tenant_id = ? AND revocation_key = ? AND revoked_at IS NULL`,
+    ).run(p.now, p.reason, p.tenantId, p.revocationKey);
     return { rowsAffected: result.changes };
   });
 
@@ -152,10 +155,11 @@ export function registerToolPermissionExecutors(): void {
     ).all(p.tenantId, p.principalUserId);
   });
 
-  registerQuery<AgencyAuthorizationRow | null, string>(AGAUTH_QUERY_BY_REVOCATION_KEY, (db, key) => {
+  registerQuery<AgencyAuthorizationRow | null, AgauthByRevocationKeyParams>(AGAUTH_QUERY_BY_REVOCATION_KEY, (db, p) => {
+    /* 租户隔离：同 tperm，按 key 查代理授权书须限定 tenant_id */
     return db.prepare<AgencyAuthorizationRow>(
-      `${AGAUTH_SELECT} WHERE revocation_key = ? LIMIT 1`,
-    ).get(key) ?? null;
+      `${AGAUTH_SELECT} WHERE tenant_id = ? AND revocation_key = ? LIMIT 1`,
+    ).get(p.tenantId, p.revocationKey) ?? null;
   });
 
   /* ── AgencyAuthorization Commands ──────────────────────────────── */

@@ -128,6 +128,8 @@ import { registerAvatarAutorunRoutes } from './routes/avatar-autorun.js';
 import { registerKnowledgeSourceRoutes } from './routes/knowledge-sources.js';
 import { registerPersonaCoreRoutes } from './routes/persona-core.js';
 import { registerWorkforceRoutes } from './routes/workforce.js';
+import { registerWorkforceVizRoutes } from './routes/workforce-viz.js';
+import { registerWorkforceAdminRoutes } from './routes/workforce-admin.js';
 import { registerWorkforceActionRoutes } from './routes/workforce-actions.js';
 import { registerSseRoutes } from './routes/sse.js';
 import { registerFeatureFlagRoutes } from './routes/feature-flags.js';
@@ -630,7 +632,20 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   toolInvocationsRetentionWorker.start();
   app.addHook('onClose', async () => { await toolInvocationsRetentionWorker.stop(); });
 
-  /* 路由 */
+  /* ── 路由注册 ────────────────────────────────────────────────────────────
+   * 按产品分层组织（P2：route 可读性分层；只加分组注释，不移动文件——移 50 文件改 import 路径
+   * churn 大且触运行中注册，价值在「读得懂分层」而非「物理目录」）。分层：
+   *   ① 通用/平台   auth、user、org、billing、health、metrics、audit、sso、scim、api-keys、feature-flags、v2、docs
+   *   ② C 端 Companion  companion 系列 + value、memory、narrative（C 端叙事消费内核同一份数据）
+   *   ③ 人格与成长  persona-core、persona、snapshot、decision、earning、distillation、conversation
+   *   ④ 数字员工    workforce、workforce-viz、workforce-admin、workforce-actions
+   *   ⑤ 治理与审计  conflicts、agent 系列、mcp、admin 系列、privacy
+   *   ⑥ 人生模拟    life-simulations、life-sim-viz（ADR-0047 论点载体；非首屏）
+   * 除 conversation/distillation/earning 为分组自洽归入③外，其余注册顺序保持原样；
+   * 三者均为独立具体路径（/api/v1/persona-core/:personaId/…），无注册顺序依赖，物理归位不改运行时语义。
+   * 下方分组注释仅作导航。 */
+
+  /* ① 通用/平台 */
   registerAuthRoutes(app, db, config);
   registerUserRoutes(app, services);
   registerOrganizationRoutes(app, services);
@@ -642,7 +657,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       tenantFactory && event.tenantId && event.tenantId !== 'default'
         ? tenantFactory.getTenantOS(event.tenantId)
         : deps.os;
-    const values = [...tenantOS.core.values.getAll().values()].map((v) => ({
+    /* ADR-0056 K5b：读**该 worker persona 自己的**价值（value 已按 persona 隔离），蒸馏强化也落它自己的核心，
+     * 而非共享 default 核心——否则会拿 default 的价值算 target、却 ingest 到 worker persona（value 不存在→不产工件）。 */
+    const values = [...tenantOS.getCore(event.personaId).values.getAll().values()].map((v) => ({
       id: v.id, label: v.label, weight: v.weight,
     }));
     const target = resolveTargetValueForCategory(event.category, values);
@@ -657,59 +674,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       targetValue: target ?? undefined,
     });
   };
+  /* ③ 人格与成长 */
   registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
-  /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。
-   * clock 供 C 链 SLA 时间感知（worker 信号据 now 与任务 due_at 派生 overdue/due_soon）。 */
-  registerWorkforceRoutes(app, db, deps.os.getClock());
-  /* 数字员工组织交互控制台写/动作 API（E3）：发起目标/审批/真实执行（接 D2 审批门 + D3 ToolInvocationPipeline）。
-   * toolRegistry 作 ToolRiskSource：服务端按 toolId 派生工具风险（body 风险信号只能上调不能省略绕审批门）。 */
-  registerWorkforceActionRoutes(app, db, toolInvocationPipeline, deps.os.getClock(), toolRegistry);
-  registerHealthRoutes(app, {
-    os: deps.os,
-    db: deps.db,
-    circuitBreaker: deps.circuitBreaker,
-    worker,
-    observabilityWorker,
-    runtimeRecoveryWorker,
-    settlementReconciliationWorker,
-    conversationService,
-    conversationRetentionWorker,
-  });
-  registerValueRoutes(app, deps.os, tenantFactory);
-  registerMemoryRoutes(app, deps.os, tenantFactory, config);
-  registerNarrativeRoutes(app, deps.os, tenantFactory);
-  registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveStreamRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
-  registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
-  registerPersonaRoutes(app, deps.os, tenantFactory);
-  registerSnapshotRoutes(app, deps.os, tenantFactory);
-  registerOperationRoutes(app, deps.os, tenantFactory, config);
-  registerConflictRoutes(app, db, config);
-  registerMetricsRoutes(app, deps.os, config);
-  registerAuditRoutes(app, db);
-  registerAnalyticsRoutes(app, db);
-  registerDashboardRoutes(app, db);
-  registerPosRoutes(app, deps.os, tenantFactory);
-  registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
-  registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
-  registerOnboardingV2Routes(app, config, db, services.organization);
-  registerVisualizationRoutes(app, deps.os, tenantFactory);
-  registerPrivacyRoutes(app, deps.os, tenantFactory, config);
-  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
-  registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
-  registerSsoRoutes(app, db, config);
-  registerOidcRoutes(app, db, config);
-  registerScimRoutes(app, services);
-  registerCollaborationRoutes(app, services);
-  registerApiKeyRoutes(app, services);
-  registerAdminConfigRoutes(app, db, config);
-  registerAdminTemplateRoutes(app, deps.os);
-  registerBulkKnowledgeImportRoutes(app, {
-    bulkImport: bulkImportService,
-    personaCore: bulkImportPersonaCoreService,
-  });
   registerConversationRoutes(app, {
     conversation: conversationService,
     personaCore: bulkImportPersonaCoreService,
@@ -726,6 +692,67 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     earning: personaEarningService,
     personaCore: bulkImportPersonaCoreService,
     db,
+  });
+  /* ④ 数字员工 */
+  /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。
+   * clock 供 C 链 SLA 时间感知（worker 信号据 now 与任务 due_at 派生 overdue/due_soon）。 */
+  registerWorkforceRoutes(app, db, deps.os.getClock());
+  /* 数字员工组织可视化聚合 API（只读）：组织树 + 目标任务流 + 信号仪表 + ADR-0057 学习闭环，一次聚合供前端画图。 */
+  registerWorkforceVizRoutes(app, db, deps.os.getClock());
+  /* 数字员工组织管理 API（生产 self-service，admin 鉴权）：建组织 + 招数字员工（出生独立人格内核）。
+   * 传 tenantFactory：人格出生落**请求租户**的内核（非-default 租户经 getTenantOS，与 companion/value 路由同款）。 */
+  registerWorkforceAdminRoutes(app, db, deps.os, tenantFactory);
+  /* 数字员工组织交互控制台写/动作 API（E3）：发起目标/审批/真实执行（接 D2 审批门 + D3 ToolInvocationPipeline）。
+   * toolRegistry 作 ToolRiskSource：服务端按 toolId 派生工具风险（body 风险信号只能上调不能省略绕审批门）。 */
+  registerWorkforceActionRoutes(app, db, toolInvocationPipeline, deps.os.getClock(), toolRegistry);
+  registerHealthRoutes(app, {
+    os: deps.os,
+    db: deps.db,
+    circuitBreaker: deps.circuitBreaker,
+    worker,
+    observabilityWorker,
+    runtimeRecoveryWorker,
+    settlementReconciliationWorker,
+    conversationService,
+    conversationRetentionWorker,
+  });
+  /* ② C 端 Companion（含 value/memory/narrative：C 端叙事消费的内核数据） */
+  registerValueRoutes(app, deps.os, tenantFactory);
+  registerMemoryRoutes(app, deps.os, tenantFactory, config);
+  registerNarrativeRoutes(app, deps.os, tenantFactory);
+  registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionPerceiveStreamRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
+  registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
+  registerPersonaRoutes(app, deps.os, tenantFactory);
+  registerSnapshotRoutes(app, deps.os, tenantFactory);
+  registerOperationRoutes(app, deps.os, tenantFactory, config);
+  /* ⑤ 治理与审计 */
+  registerConflictRoutes(app, db, config);
+  registerMetricsRoutes(app, deps.os, config);
+  registerAuditRoutes(app, db);
+  registerAnalyticsRoutes(app, db);
+  registerDashboardRoutes(app, db);
+  registerPosRoutes(app, deps.os, tenantFactory);
+  registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
+  registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
+  registerOnboardingV2Routes(app, config, db, services.organization);
+  registerVisualizationRoutes(app, deps.os, tenantFactory);
+  registerPrivacyRoutes(app, deps.os, tenantFactory, config);
+  /* ⑥ 人生模拟（ADR-0047 确定性离线决策引擎载体；前端已降位，非首屏） */
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
+  registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
+  registerSsoRoutes(app, db, config);
+  registerOidcRoutes(app, db, config);
+  registerScimRoutes(app, services);
+  registerCollaborationRoutes(app, services);
+  registerApiKeyRoutes(app, services);
+  registerAdminConfigRoutes(app, db, config);
+  registerAdminTemplateRoutes(app, deps.os);
+  registerBulkKnowledgeImportRoutes(app, {
+    bulkImport: bulkImportService,
+    personaCore: bulkImportPersonaCoreService,
   });
   registerAdminDeploymentRoutes(app, db, config);
   registerAdminControlPlaneRoutes(app, services);

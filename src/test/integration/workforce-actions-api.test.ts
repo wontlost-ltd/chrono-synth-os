@@ -15,6 +15,7 @@ import { loadConfig } from '../../config/schema.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { OrgWorkforceStore } from '../../storage/org-workforce-store.js';
+import { LearningRequestStore } from '../../storage/learning-request-store.js';
 import { OrgChartService, type WorkerSpec } from '../../workforce/org-chart-service.js';
 import { GOAL_TYPE_CONTENT_PIECE } from '../../workforce/decomposition-playbook.js';
 
@@ -127,6 +128,13 @@ describe('数字员工组织交互控制台 API（E3）', () => {
     });
     assert.equal(decRes.statusCode, 200, decRes.body);
     assert.equal(JSON.parse(decRes.body).data.status, 'approved', '审批已放行');
+    /* ADR-0057 L2：发布岗 persona 先学会 'publishing'（发布任务所需能力），否则缺口门挡执行（learning_required）。
+     * 本测聚焦 D2/D3 执行+审批路径，缺口门本身在 L2 专测覆盖。 */
+    new LearningRequestStore(os.getDatabase(), tenantA.tenantId).insert({
+      id: 'seed-pp-publishing', orgId: 'org-1', personaId: 'p-p', capability: 'publishing',
+      isUnknown: false, evidence: 'API E2E seed', priority: 'low', triggeredByTaskId: null,
+      status: 'passed', createdAt: 1000, updatedAt: 1000,
+    });
     /* 真实执行（用注册的低风险工具 memory.search 走通管线；带审批 id）。 */
     const exec = await app.inject({
       method: 'POST', url: `/api/v1/workforce/orgs/${orgId}/tasks/${pub.id}/execute`, headers,

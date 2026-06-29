@@ -16,12 +16,21 @@ import {
   MEM_CMD_DELETE,
   MEM_CMD_DELETE_ALL,
   type MemInsertParams,
+  type MemByIdParams,
+  type MemAllParams,
+  type MemCountParams,
   type MemoryNode,
 } from '@chrono/kernel';
 import type { ExecutorRegistry } from '../web-unit-of-work.js';
 import type { Row } from '../in-memory-tables.js';
 
 const TABLE = 'memory_nodes';
+
+/* ADR-0056 K5b：adapter-web 为单租户本地库，无 tenant rewriter；memory_nodes 只按 persona_id 隔离。
+ * 新写入路径都会落 persona_id，因此读取直接严格比对，不兼容无 persona_id 的旧快照。 */
+function personaOf(row: Row): string {
+  return row['persona_id'] as string;
+}
 
 function rowToNode(row: Row): MemoryNode {
   return {
@@ -44,6 +53,7 @@ function rowToNode(row: Row): MemoryNode {
 function paramsToRow(p: MemInsertParams): Row {
   return {
     id: p.id,
+    persona_id: p.personaId,
     kind: p.kind,
     content: p.content,
     valence: p.valence,
@@ -58,22 +68,22 @@ function paramsToRow(p: MemInsertParams): Row {
 }
 
 export function registerMemoryExecutors(registry: ExecutorRegistry): void {
-  registry.registerQuery<MemoryNode, { id: string }>(MEM_QUERY_BY_ID, (tables, p) => {
+  registry.registerQuery<MemoryNode, MemByIdParams>(MEM_QUERY_BY_ID, (tables, p) => {
     if (!tables.hasTable(TABLE)) tables.defineTable(TABLE);
-    const row = tables.find(TABLE, (r) => r['id'] === p.id);
+    const row = tables.find(TABLE, (r) => r['id'] === p.id && personaOf(r) === p.personaId);
     return row ? rowToNode(row) : null;
   });
 
-  registry.registerQuery<MemoryNode, void>(MEM_QUERY_ALL, (tables) => {
+  registry.registerQuery<MemoryNode, MemAllParams>(MEM_QUERY_ALL, (tables, p) => {
     if (!tables.hasTable(TABLE)) tables.defineTable(TABLE);
-    const rows = tables.filter(TABLE, () => true);
+    const rows = tables.filter(TABLE, (r) => personaOf(r) === p.personaId);
     rows.sort((a, b) => Number(b['created_at']) - Number(a['created_at']));
     return rows.map(rowToNode);
   });
 
-  registry.registerQuery<{ count: number }, void>(MEM_QUERY_COUNT, (tables) => {
+  registry.registerQuery<number, MemCountParams>(MEM_QUERY_COUNT, (tables, p) => {
     if (!tables.hasTable(TABLE)) tables.defineTable(TABLE);
-    return { count: tables.filter(TABLE, () => true).length };
+    return tables.filter(TABLE, (r) => personaOf(r) === p.personaId).length;
   });
 
   registry.registerCommand<MemInsertParams>(MEM_CMD_INSERT, (tables, p) => {
@@ -91,15 +101,17 @@ export function registerMemoryExecutors(registry: ExecutorRegistry): void {
     return { rowsAffected: 1 };
   });
 
-  registry.registerCommand<{ id: string }>(MEM_CMD_DELETE, (tables, p) => {
+  registry.registerCommand<MemByIdParams>(MEM_CMD_DELETE, (tables, p) => {
     if (!tables.hasTable(TABLE)) return { rowsAffected: 0 };
+    const row = tables.find(TABLE, (r) => r['id'] === p.id && personaOf(r) === p.personaId);
+    if (!row) return { rowsAffected: 0 };
     return { rowsAffected: tables.delete(TABLE, p.id) ? 1 : 0 };
   });
 
-  registry.registerCommand<void>(MEM_CMD_DELETE_ALL, (tables) => {
+  registry.registerCommand<MemAllParams>(MEM_CMD_DELETE_ALL, (tables, p) => {
     if (!tables.hasTable(TABLE)) return { rowsAffected: 0 };
-    const all = tables.filter(TABLE, () => true);
-    for (const r of all) tables.delete(TABLE, String(r['id']));
-    return { rowsAffected: all.length };
+    const mine = tables.filter(TABLE, (r) => personaOf(r) === p.personaId);
+    for (const r of mine) tables.delete(TABLE, String(r['id']));
+    return { rowsAffected: mine.length };
   });
 }

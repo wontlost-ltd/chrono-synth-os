@@ -52,6 +52,111 @@ export interface ReportingEdge {
   readonly createdAt: number;
 }
 
+/** 组织金库状态。frozen 时禁出账（结算/提现守卫用）。 */
+export type OrgWalletStatus = 'active' | 'frozen';
+
+/**
+ * 组织级金库（org wallet）——数字员工组织作为独立经济主体的账户。
+ * (tenant, org) 唯一：同租户多个组织各有独立金库。余额以 minor 单位（分）计，与 persona_wallets 同语义。
+ * 报酬来源：组织从任务市场接的工单结算入此账户（见 OrgWalletService）。
+ */
+export interface OrgWallet {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly balance: number;
+  readonly currency: string;
+  readonly status: OrgWalletStatus;
+  readonly lastSettledAt: number | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/** 组织金库流水类型。task_payment=工单报酬入账(+)；platform_fee=平台抽成(-)；refund=退款(备)。 */
+export type OrgWalletTransactionType = 'task_payment' | 'platform_fee' | 'refund';
+
+/**
+ * 组织金库结算记录——组织从一个市场工单赚的钱的结算明细。
+ * 两方分账：平台抽成 platformAmount + 组织净留存 orgAmount(=total-platform)。
+ * (tenant, sourceMarketplaceTaskId) 唯一：同一工单只结算一次（幂等）。
+ */
+export interface OrgWalletSettlement {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  readonly walletId: string;
+  readonly sourceMarketplaceTaskId: string;
+  readonly goalId: string | null;
+  readonly totalAmountMinor: number;
+  readonly currency: string;
+  readonly platformPct: number;
+  readonly platformAmountMinor: number;
+  readonly orgAmountMinor: number;
+  readonly createdAt: number;
+}
+
+/** 接单方类型（双边市场 ADR-0058）：persona 或 org 二选一。 */
+export type AssigneeKind = 'persona' | 'org';
+
+/**
+ * 工单概要（workforce 域只读共享工单本体 marketplace_tasks 的子集）——org 接单/委派需要的字段。
+ * reward 是浮点（与 persona 市场同），结算时转 minor。
+ */
+export interface MarketplaceTaskBrief {
+  readonly id: string;
+  readonly publisherUserId: string;
+  readonly title: string;
+  readonly description: string;
+  readonly category: string;
+  readonly reward: number;
+  readonly currency: string;
+  readonly status: string;
+  readonly assigneeKind: AssigneeKind;
+  readonly assigneeOrgId: string | null;
+  readonly publisherVerified: boolean;
+}
+
+/** org 对工单的申请状态（平行于 persona task_applications）。 */
+export type OrgTaskApplicationStatus = 'submitted' | 'assigned' | 'rejected' | 'withdrawn';
+
+/**
+ * 组织对一个市场工单的申请记录（ADR-0058 平行表）——org admin 「领取」工单时登记接单意向。
+ * 不污染 persona 的 task_applications（那张表 persona_id NOT NULL + FK，改 nullable 要重建）。
+ */
+export interface OrgTaskApplication {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly taskId: string;
+  readonly orgId: string;
+  /** 排序辅助分（确定性默认，非门槛）；发布者自行判断委派给谁。 */
+  readonly rankingScore: number;
+  readonly status: OrgTaskApplicationStatus;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+/** org 对工单的指派状态（发布者确认委派后的生命周期）。 */
+export type OrgTaskAssignmentStatus = 'assigned' | 'in_progress' | 'submitted' | 'accepted' | 'rejected' | 'completed';
+
+/**
+ * 组织被发布者确认委派一个工单的指派记录（ADR-0058）——发布者 assign 给 org 后建。
+ * orgGoalId：org 用 runGoal 把工单分解成的目标 id（溯源执行）。
+ */
+export interface OrgTaskAssignment {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly taskId: string;
+  readonly orgId: string;
+  readonly applicationId: string | null;
+  readonly orgGoalId: string | null;
+  readonly status: OrgTaskAssignmentStatus;
+  readonly assignedAt: number;
+  readonly submittedAt: number | null;
+  readonly completedAt: number | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 /** 目标状态。 */
 export type GoalStatus = 'proposed' | 'active' | 'completed' | 'cancelled';
 
@@ -67,6 +172,11 @@ export interface OrgGoal {
   readonly status: GoalStatus;
   /** 产生该目标的 playbook 规则包版本（M2 审计：规则演进后仍可追溯哪版规则拆的）。 */
   readonly playbookVersion: number;
+  /**
+   * 溯源：若该目标由组织从任务市场接的工单转来，记其 MarketplaceTask id（否则 null=内部直接下发）。
+   * 让「市场工单→组织目标→分解委派→结算」全链可审计回溯到源工单。
+   */
+  readonly sourceMarketplaceTaskId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -104,6 +214,10 @@ export interface OrgTask {
   readonly resultSummary: string | null;
   /** SLA 截止时间（毫秒时间戳）；null = 无截止（不计入 SLA 信号）。C 链时间感知用。 */
   readonly dueAt: number | null;
+  /** ADR-0057 L8a：学完唤醒重跑的尝试计数（防多能力误唤醒/死循环；超上限停在 blocked）。默认 0。 */
+  readonly resumeAttemptCount: number;
+  /** ADR-0057 L8a：上次处理的唤醒事件标识（learningRequestId），幂等去重防重复投递。null = 从未唤醒。 */
+  readonly lastWakeEventId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -322,4 +436,33 @@ export interface DecompositionPlaybook {
   readonly qualityRubric: readonly QualityRubricDimension[];
   /** 分解函数：给定目标标题/描述，确定性产出任务规格序列。 */
   decompose(goal: { readonly title: string; readonly description: string }): readonly TaskSpec[];
+}
+
+/* ── ADR-0057 L2：按职能进修学习请求 ── */
+
+/** 学习请求状态机：pending（待学）→ learning（学习中）→ passed（≥95 学会落核）/ failed（验收连续不过）/ cancelled。 */
+export type LearningRequestStatus = 'pending' | 'learning' | 'passed' | 'failed' | 'cancelled';
+
+/** active（占用幂等槽）的学习请求状态——同 (persona, capability) 只允许一条 active。 */
+export const ACTIVE_LEARNING_STATUSES: readonly LearningRequestStatus[] = Object.freeze(['pending', 'learning']);
+
+/** 一条学习请求（缺口 → 登记，L2 账本）。per-persona。 */
+export interface LearningRequest {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly orgId: string;
+  /** 哪个数字员工要学（per-persona 隔离键）。 */
+  readonly personaId: string;
+  /** 缺的能力（已规范化）。 */
+  readonly capability: string;
+  /** 是否未知能力（不在 KNOWN_CAPABILITIES——可能 typo，供人工归并；GapDetector 不自动猜）。 */
+  readonly isUnknown: boolean;
+  /** 确定性证据（哪个任务暴露了缺口，非 LLM）。 */
+  readonly evidence: string;
+  readonly priority: 'low' | 'medium' | 'high';
+  /** 触发缺口的任务 id（审计链）；null = 非任务触发。 */
+  readonly triggeredByTaskId: string | null;
+  readonly status: LearningRequestStatus;
+  readonly createdAt: number;
+  readonly updatedAt: number;
 }

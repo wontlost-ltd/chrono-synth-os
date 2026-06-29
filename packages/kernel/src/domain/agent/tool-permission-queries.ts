@@ -77,10 +77,27 @@ export interface TpermRevokeParams {
   readonly now: number;
 }
 
+/**
+ * 按 revocation_key 查询/撤销的参数。
+ * 租户隔离（铁律）：revocation_key 是密码学随机密钥（持有即凭证），但查询/撤销必须
+ * **同时**限定 tenantId——否则跨租户场景下知道他租户 key 即可越租户查到/撤销其权限。
+ * tenantId + key 双条件确保「持有 key」的能力仅在本租户内生效，web/SQLite 两端一致。
+ */
+export interface TpermByRevocationKeyParams {
+  readonly tenantId: string;
+  readonly revocationKey: string;
+}
+
 export interface TpermRevokeByKeyParams {
+  readonly tenantId: string;
   readonly revocationKey: string;
   readonly reason: string;
   readonly now: number;
+}
+
+export interface AgauthByRevocationKeyParams {
+  readonly tenantId: string;
+  readonly revocationKey: string;
 }
 
 export interface AgauthByIdParams {
@@ -172,8 +189,8 @@ export function tpermQueryListByTenant(tenantId: string): Query<ToolPermissionRo
   return { kind: TPERM_QUERY_LIST_BY_TENANT, params: tenantId };
 }
 
-export function tpermQueryByRevocationKey(key: string): Query<ToolPermissionRow | null, string> {
-  return { kind: TPERM_QUERY_BY_REVOCATION_KEY, params: key };
+export function tpermQueryByRevocationKey(params: TpermByRevocationKeyParams): Query<ToolPermissionRow | null, TpermByRevocationKeyParams> {
+  return { kind: TPERM_QUERY_BY_REVOCATION_KEY, params };
 }
 
 export function tpermQueryDailyUsage(p: TpermDailyUsageParams): Query<{ count: number } | null, TpermDailyUsageParams> {
@@ -197,8 +214,8 @@ export function agauthQueryListByPrincipal(p: AgauthListByPrincipalParams): Quer
   return { kind: AGAUTH_QUERY_LIST_BY_PRINCIPAL, params: p };
 }
 
-export function agauthQueryByRevocationKey(key: string): Query<AgencyAuthorizationRow | null, string> {
-  return { kind: AGAUTH_QUERY_BY_REVOCATION_KEY, params: key };
+export function agauthQueryByRevocationKey(params: AgauthByRevocationKeyParams): Query<AgencyAuthorizationRow | null, AgauthByRevocationKeyParams> {
+  return { kind: AGAUTH_QUERY_BY_REVOCATION_KEY, params };
 }
 
 export function tinvQueryById(p: TinvByIdParams): Query<ToolInvocationRow | null, TinvByIdParams> {

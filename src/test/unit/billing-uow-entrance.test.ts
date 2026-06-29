@@ -43,6 +43,41 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     } finally { db.close(); }
   });
 
+  it('BillingOutbox 幂等入队：同 sourceId 重复入队去重，防重复计费（P2-o）', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const config = loadConfig({});
+    try {
+      const outbox = new BillingOutbox(db, config);
+
+      /* 同一逻辑计量事件（同 sourceId）重复入队 → 仅一条落库（ON CONFLICT DO NOTHING） */
+      assert.equal(outbox.enqueue('t1', 'cus_1', 'llm_tokens', 100, 'msg-abc'), true, '首次入队返回 true（已落库）');
+      assert.equal(outbox.enqueue('t1', 'cus_1', 'llm_tokens', 100, 'msg-abc'), false, '重复入队返回 false（去重），供调用方精确计量');
+      assert.equal(outbox.pendingCount(), 1, '同 sourceId 重复入队必须去重');
+
+      /* 不同 sourceId 各自落库 */
+      outbox.enqueue('t1', 'cus_1', 'llm_tokens', 50, 'msg-def');
+      assert.equal(outbox.pendingCount(), 2, '不同 sourceId 应分别入队');
+
+      /* 跨租户同 sourceId 互不冲突（key 含 tenant 前缀） */
+      outbox.enqueue('t2', 'cus_2', 'llm_tokens', 100, 'msg-abc');
+      assert.equal(outbox.pendingCount(), 3, '不同租户同 sourceId 不应被去重');
+    } finally { db.close(); }
+  });
+
+  it('BillingOutbox 无 sourceId 回退键不含随机数但保证唯一（确定性 P2-o）', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const config = loadConfig({});
+    try {
+      const outbox = new BillingOutbox(db, config);
+      /* 无 sourceId：回退键用 clock+seq，单实例内多次入队互不冲突且全部落库 */
+      outbox.enqueue('t1', 'cus_1', 'simulation', 1);
+      outbox.enqueue('t1', 'cus_1', 'simulation', 1);
+      assert.equal(outbox.pendingCount(), 2, '无 sourceId 多次入队各自唯一落库');
+    } finally { db.close(); }
+  });
+
   it('A 类：listAddOns / syncPlanToQuota / QuotaManager 函数与类双入口', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);

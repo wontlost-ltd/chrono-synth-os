@@ -27,7 +27,7 @@ describe('Distillation pipeline (ADR-0047)', () => {
 
   it('合格 value_shift 自动编译进核心', () => {
     const v = os.core.addValue('curiosity', 0.5);
-    const r = os.distillation.ingest('p1', {
+    const r = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
       confidence: 0.85, evidence: EV,
@@ -38,19 +38,19 @@ describe('Distillation pipeline (ADR-0047)', () => {
 
   it('delta 超阈值 → 待审批，核心不变', () => {
     const v = os.core.addValue('curiosity', 0.5);
-    const r = os.distillation.ingest('p1', {
+    const r = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.7, delta: 0.2, patternAgrees: true },
       confidence: 0.95, evidence: EV,
     });
     assert.equal(r.status, 'pending');
     assert.equal(os.core.values.getById(v.id)?.weight, 0.5, '待审批不应改核心');
-    assert.equal(os.distillation.listCandidates('p1').length, 1);
+    assert.equal(os.distillation.listCandidates('default').length, 1);
   });
 
   it('patternAgrees=false → 待审批（交叉验证失败不自动编译）', () => {
     const v = os.core.addValue('curiosity', 0.5);
-    const r = os.distillation.ingest('p1', {
+    const r = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.52, delta: 0.02, patternAgrees: false },
       confidence: 0.95, evidence: EV,
@@ -60,58 +60,58 @@ describe('Distillation pipeline (ADR-0047)', () => {
 
   it('人工审批待审工件 → 编译进核心', () => {
     const v = os.core.addValue('focus', 0.4);
-    const ing = os.distillation.ingest('p1', {
+    const ing = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.4, suggestedWeight: 0.8, delta: 0.4, patternAgrees: true },
       confidence: 0.95, evidence: EV,
     });
     assert.equal(ing.status, 'pending');
-    const ap = os.distillation.approve('p1', ing.artifact.id);
+    const ap = os.distillation.approve('default', ing.artifact.id);
     assert.equal(ap.ok, true);
     assert.equal(os.core.values.getById(v.id)?.weight, 0.8);
-    assert.equal(os.distillation.listCandidates('p1').length, 0);
+    assert.equal(os.distillation.listCandidates('default').length, 0);
   });
 
   it('拒绝待审工件 → 核心不变，状态 rejected', () => {
     const v = os.core.addValue('focus', 0.4);
-    const ing = os.distillation.ingest('p1', {
+    const ing = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.4, suggestedWeight: 0.9, delta: 0.5, patternAgrees: true },
       confidence: 0.95, evidence: EV,
     });
     assert.equal(ing.status, 'pending');
     if (ing.status !== 'pending') return;
-    const rj = os.distillation.reject('p1', ing.artifact.id, 'too aggressive');
+    const rj = os.distillation.reject('default', ing.artifact.id, 'too aggressive');
     assert.equal(rj.ok, true);
     assert.equal(os.core.values.getById(v.id)?.weight, 0.4);
-    assert.equal(os.distillation.listCandidates('p1').length, 0);
+    assert.equal(os.distillation.listCandidates('default').length, 0);
   });
 
   it('编译失败（目标缺失）→ 回滚 + 标记 rejected，候选清空', () => {
-    const r = os.distillation.ingest('p1', {
+    const r = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: 'nonexistent', currentWeight: 0.1, suggestedWeight: 0.12, delta: 0.02, patternAgrees: true },
       confidence: 0.85, evidence: EV,
     });
     assert.equal(r.status, 'rejected');
-    assert.equal(os.distillation.listCandidates('p1').length, 0);
+    assert.equal(os.distillation.listCandidates('default').length, 0);
   });
 
   it('畸形候选（delta 不一致）→ 校验拒绝，不入库', () => {
     const v = os.core.addValue('curiosity', 0.5);
-    const r = os.distillation.ingest('p1', {
+    const r = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.99, patternAgrees: true },
       confidence: 0.85, evidence: EV,
     });
     assert.equal(r.status, 'rejected');
-    assert.equal(os.distillation.listByPersona('p1').length, 0, '畸形候选不应入库');
+    assert.equal(os.distillation.listByPersona('default').length, 0, '畸形候选不应入库');
   });
 
   it('memory_edge 自动编译为记忆图边', () => {
     const m1 = os.core.addMemory('episodic', 'A', 0.5, 0.8);
     const m2 = os.core.addMemory('semantic', 'B', 0.3, 0.6);
-    const r = os.distillation.ingest('p1', {
+    const r = os.distillation.ingest('default', {
       /* conversation=semi 信任层：memory_edge 门槛 0.75×1.1=0.825，故 confidence 取 0.85 过门
        * （信任分级后 conversation 来源比 reflection 略严，这是 ① 的预期行为）。 */
       kind: 'memory_edge', source: 'conversation',
@@ -126,7 +126,7 @@ describe('Distillation pipeline (ADR-0047)', () => {
     const v = os.core.addValue('curiosity', 0.5);
     let emitted: { kind: string } | undefined;
     os.bus.on('system:artifact-compiled', (e) => { emitted = e; });
-    os.distillation.ingest('p1', {
+    os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
       confidence: 0.85, evidence: EV,
@@ -169,12 +169,12 @@ describe('Distillation pipeline (ADR-0047)', () => {
 
   it('工件持久化跨实例可查（审计历史）', () => {
     const v = os.core.addValue('curiosity', 0.5);
-    os.distillation.ingest('p1', {
+    os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v.id, currentWeight: 0.5, suggestedWeight: 0.53, delta: 0.03, patternAgrees: true },
       confidence: 0.85, evidence: EV,
     });
-    const all = os.distillation.listByPersona('p1');
+    const all = os.distillation.listByPersona('default');
     assert.equal(all.length, 1);
     assert.equal(all[0].status, 'compiled');
     assert.ok(all[0].compiledAt && all[0].compiledAt > 0);
@@ -199,7 +199,7 @@ describe('Distillation 不确定性预算（ADR-0047 成长治理）', () => {
   afterEach(() => os.close());
 
   function ingestValueShift(valueId: string, w: number) {
-    return os.distillation.ingest('p1', {
+    return os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId, currentWeight: w, suggestedWeight: w + 0.03, delta: 0.03, patternAgrees: true },
       confidence: 0.85, evidence: EV,
@@ -229,7 +229,7 @@ describe('Distillation 不确定性预算（ADR-0047 成长治理）', () => {
     assert.equal(third.status, 'pending');
     if (third.status !== 'pending') return;
     /* 人工 approve → 仍能编译进核心（预算只挡自动，不挡人工）。 */
-    const approved = os.distillation.approve('p1', third.artifact.id);
+    const approved = os.distillation.approve('default', third.artifact.id);
     assert.equal(approved.ok, true, '人工审批可越过预算降级');
     assert.equal(os.core.values.getById(v3.id)?.weight, 0.53, '审批后权重上升');
   });
@@ -242,13 +242,13 @@ describe('Distillation 不确定性预算（ADR-0047 成长治理）', () => {
     /* 第 1 条自动编译（compiledVia=auto，进预算）。 */
     assert.equal(ingestValueShift(v1.id, 0.5).status, 'compiled');
     /* 第 2 条故意 delta 超阈值 → pending，人工 approve（compiledVia=approved，不进预算）。 */
-    const manual = os.distillation.ingest('p1', {
+    const manual = os.distillation.ingest('default', {
       kind: 'value_shift', source: 'reflection',
       payload: { valueId: v2.id, currentWeight: 0.5, suggestedWeight: 0.8, delta: 0.3, patternAgrees: true },
       confidence: 0.85, evidence: EV,
     });
     assert.equal(manual.status, 'pending', 'delta 超阈值 → 待审批');
-    if (manual.status === 'pending') os.distillation.approve('p1', manual.artifact.id);
+    if (manual.status === 'pending') os.distillation.approve('default', manual.artifact.id);
     /* 此刻窗口有 2 条 compiled，但只有 1 条 compiledVia=auto → 预算(2)未满。 */
     /* 第 3 条自动 → 仍可编译（auto 计数=1 < 2）。 */
     assert.equal(ingestValueShift(v3.id, 0.5).status, 'compiled', 'auto 计数 1<2，人工审批的不占预算');
@@ -278,11 +278,11 @@ describe('Distillation per-persona 预算覆盖（governance 配置）', () => {
   }
 
   it('p1 配 per-persona 预算=1 → 第 2 条降级；p2 无覆盖 → 不限', () => {
-    /* p1 经 governance store 配预算 1。 */
+    /* p1 经 governance store 配预算 1。K5b：value 按 persona 隔离，故价值建在各自 persona 的 core 上。 */
     new PersonaGovernanceStore(os.getDatabase(), 'default').upsert('p1', { unverifiedGrowthBudgetPerWindow: 1 }, 'owner', 1000);
-    const a = os.core.addValue('a', 0.5);
-    const b = os.core.addValue('b', 0.5);
-    const c = os.core.addValue('c', 0.5);
+    const a = os.getCore('p1').addValue('a', 0.5);
+    const b = os.getCore('p1').addValue('b', 0.5);
+    const c = os.getCore('p2').addValue('c', 0.5);
     /* p1 第 1 条 auto-compile（计数 0<1）→ compiled；第 2 条（计数 1≥1）→ 降级 pending。 */
     assert.equal(ingest('p1', a.id).status, 'compiled', 'p1 第 1 条预算内');
     assert.equal(ingest('p1', b.id).status, 'pending', 'p1 第 2 条达 per-persona 预算 1 → 降级');
@@ -292,7 +292,7 @@ describe('Distillation per-persona 预算覆盖（governance 配置）', () => {
 
   it('per-persona 预算=0 → 完全禁止自动吸收（第 1 条即降级）', () => {
     new PersonaGovernanceStore(os.getDatabase(), 'default').upsert('p1', { unverifiedGrowthBudgetPerWindow: 0 }, 'owner', 1000);
-    const a = os.core.addValue('a', 0.5);
+    const a = os.getCore('p1').addValue('a', 0.5);
     assert.equal(ingest('p1', a.id).status, 'pending', '预算 0 → 第 1 条即转人工');
   });
 });

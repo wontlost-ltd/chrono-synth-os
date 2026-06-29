@@ -80,7 +80,13 @@ export class OrgPlanningService {
   runGoal(
     orgId: string,
     managerWorkerId: string,
-    goal: { readonly title: string; readonly description: string; readonly goalType: string },
+    goal: {
+      readonly title: string;
+      readonly description: string;
+      readonly goalType: string;
+      /** 溯源：该目标若由市场工单接来，传源工单 id（落库审计）；内部下发缺省 null。 */
+      readonly sourceMarketplaceTaskId?: string | null;
+    },
     workerIdByRole: ReadonlyMap<string, string>,
   ): RunGoalResult {
     const playbook = getDecompositionPlaybook(goal.goalType);
@@ -107,7 +113,10 @@ export class OrgPlanningService {
         id: goalId, orgId, ownerWorkerId: managerWorkerId, title: goal.title, description: goal.description,
         goalType: goal.goalType, status: 'active',
         /* M2 审计：落库产生该目标的 playbook 版本（规则演进后仍可追溯）。 */
-        playbookVersion: playbook.version, createdAt: ts0, updatedAt: ts0,
+        playbookVersion: playbook.version,
+        /* 溯源（S2）：市场工单接来的目标记源工单 id；内部下发为 null。 */
+        sourceMarketplaceTaskId: goal.sourceMarketplaceTaskId ?? null,
+        createdAt: ts0, updatedAt: ts0,
       });
       steps++; /* goal 创建 */
 
@@ -144,7 +153,7 @@ export class OrgPlanningService {
             status: 'delegated',
             riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
             acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-            resultSummary: null, dueAt, createdAt: ts, updatedAt: ts,
+            resultSummary: null, dueAt, resumeAttemptCount: 0, lastWakeEventId: null, createdAt: ts, updatedAt: ts,
           });
           continue;
         }
@@ -168,7 +177,7 @@ export class OrgPlanningService {
           status: 'submitted',
           riskLevel: spec.riskLevel, allowsToolExecution: spec.allowsToolExecution,
           acceptanceCriteria: spec.acceptanceCriteria, requiredCapabilities: spec.requiredCapabilities,
-          resultSummary: result, dueAt, createdAt: ts, updatedAt: tsExec,
+          resultSummary: result, dueAt, resumeAttemptCount: 0, lastWakeEventId: null, createdAt: ts, updatedAt: tsExec,
         });
       }
 

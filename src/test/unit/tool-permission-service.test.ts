@@ -85,13 +85,31 @@ describe('ToolPermissionService', () => {
         scope: 'execute', constraints: {}, grantedBy: 'admin',
       });
 
-      const ok = service.revokeByKey(revocationKey, 'urgent: leaked credentials');
+      const ok = service.revokeByKey('default', revocationKey, 'urgent: leaked credentials');
       assert.equal(ok, true);
 
       const check = service.check({
         tenantId: 'default', personaId: 'p1', toolId: 'email', now: Date.now(),
       });
       assert.equal(check.allowed, false);
+    } finally { db.close(); }
+  });
+
+  it('revokeByKey/findByRevocationKey 跨租户隔离：他租户 key 无法查/撤销（P1-7）', () => {
+    const { db, service } = makeService();
+    try {
+      const { revocationKey } = service.grant({
+        tenantId: 'tenant-a', personaId: 'p1', toolId: 'email',
+        scope: 'execute', constraints: {}, grantedBy: 'admin',
+      });
+
+      /* 攻击者在 tenant-b 上下文用 tenant-a 的 key：查不到、撤不掉 */
+      assert.equal(service.findByRevocationKey('tenant-b', revocationKey), null, '他租户 key 不应查到');
+      assert.equal(service.revokeByKey('tenant-b', revocationKey, 'cross-tenant attempt'), false, '他租户 key 不应撤销成功');
+
+      /* 本租户 key 仍可查到、可撤销 */
+      assert.ok(service.findByRevocationKey('tenant-a', revocationKey), '本租户 key 应查到');
+      assert.equal(service.revokeByKey('tenant-a', revocationKey, 'legit'), true, '本租户 key 应撤销成功');
     } finally { db.close(); }
   });
 
