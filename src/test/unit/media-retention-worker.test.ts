@@ -5,11 +5,15 @@
  * 对象存储 erase、删引用行）；start/stop 生命周期；no-op 擦除器下仍完成「删引用行」闭环（GDPR 关键）。
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { MediaRefStore, type ObjectStorageEraser } from '../../perception/media/media-ref-store.js';
-import { MediaRetentionWorker, FailClosedObjectStorageEraser } from '../../perception/media/media-retention-worker.js';
+import { MediaRetentionWorker, FailClosedObjectStorageEraser, ObjectStorageClientEraser } from '../../perception/media/media-retention-worker.js';
+import { LocalObjectStorageClient } from '../../privacy/object-storage-client.js';
 import { SilentLogger } from '../../utils/index.js';
 import type { IDatabase } from '../../storage/index.js';
 
@@ -65,5 +69,36 @@ describe('MediaRetentionWorker（媒体 retention 周期接线）', () => {
     assert.equal(worker.isHealthy(), true);
     await worker.stop();
     assert.equal(worker.isHealthy(), false, 'stop 后不 healthy');
+  });
+});
+
+describe('GDPR Art.17 物理删除端到端闭环（真实 LocalObjectStorageClient）', () => {
+  let db: IDatabase;
+  let tmpDir: string;
+  beforeEach(() => { db = createMemoryDatabase(); runDslSqliteMigrations(db); });
+  before(async () => { tmpDir = await mkdtemp(join(tmpdir(), 'chrono-media-gdpr-')); });
+  after(async () => { await rm(tmpDir, { recursive: true, force: true }); });
+
+  it('过期引用经 ObjectStorageClientEraser → 真实对象被物理删 + 引用行删（闭环成立）', async () => {
+    /* 上传真实对象到 local 存储，登记带 object_key + 已过期 delete_after 的引用。 */
+    const client = new LocalObjectStorageClient(tmpDir);
+    const objectKey = 'media/tenant_a/clip.bin';
+    await client.upload(objectKey, Buffer.from('raw-media-bytes'), 'application/octet-stream');
+    const store = new MediaRefStore(db, TENANT);
+    store.register({ id: 'gdpr1', objectKey, sha256: 'h', mime: 'audio/wav', sizeBytes: 9, durationMs: 1, deleteAfter: 1 }, 1000);
+
+    /* 删前：对象在、引用行在。 */
+    await assert.doesNotReject(readFile(join(tmpDir, objectKey)), '清理前对象应存在');
+    assert.equal(store.getObjectKey('gdpr1'), objectKey);
+
+    /* worker 用真实 client 适配的 eraser 跑一次。 */
+    const worker = new MediaRetentionWorker(db, new ObjectStorageClientEraser(client), new SilentLogger(), () => 10000);
+    const result = await worker.flushOnce();
+
+    assert.equal(result.erased, 1, '过期引用被清');
+    assert.equal(result.failed, 0);
+    /* 删后：真实对象物理消失 + 引用行删 = GDPR 物理删除闭环。 */
+    await assert.rejects(readFile(join(tmpDir, objectKey)), '清理后真实对象应被物理删除');
+    assert.equal(store.getObjectKey('gdpr1'), undefined, '引用行已删');
   });
 });

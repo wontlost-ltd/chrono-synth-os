@@ -5,9 +5,9 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   LocalObjectStorageClient,
   createObjectStorageClient,
@@ -69,6 +69,67 @@ describe('LocalObjectStorageClient', () => {
       client.upload(key, data, 'application/json'),
       '深层嵌套路径不应抛出错误',
     );
+  });
+
+  it('delete() 物理删除已上传对象（GDPR Art.17 闭环）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    const key = 'media/tenant1/clip.bin';
+    await client.upload(key, Buffer.from('raw-media'), 'application/octet-stream');
+    /* 删前存在。 */
+    await assert.doesNotReject(readFile(join(tmpDir, key)));
+    await client.delete(key);
+    /* 删后文件不存在。 */
+    await assert.rejects(readFile(join(tmpDir, key)), '删除后原始对象应不存在');
+  });
+
+  it('delete() 对不存在的 key 幂等（不抛 not-found）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    await assert.doesNotReject(
+      client.delete('media/never/existed.bin'),
+      '删除不存在对象应视为成功（幂等契约，retention 重试不应反复失败）',
+    );
+  });
+
+  it('路径穿越防护：`../` key 在 upload/delete 都抛错，不触及 root 外文件（Codex High）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    /* 在 root 外预置一个文件，确认它绝不会被穿越的 delete 删掉。 */
+    const outsideDir = await mkdtemp(join(tmpdir(), 'chrono-ocs-outside-'));
+    const outside = join(outsideDir, 'victim.txt');
+    await writeFile(outside, Buffer.from('must-survive'));
+    try {
+      /* 构造一个能逃逸到 outside 的相对 key（root 与 outsideDir 都在 tmpdir 下）。 */
+      const escapeKey = join('..', outsideDir.split(sep).pop()!, 'victim.txt');
+      await assert.rejects(client.delete(escapeKey), /escapes storage root/, 'delete 越界应抛错');
+      await assert.rejects(client.upload(escapeKey, Buffer.from('x'), 'text/plain'), /escapes storage root/, 'upload 越界应抛错');
+      /* root 外文件未被删/覆盖。 */
+      assert.deepEqual(await readFile(outside), Buffer.from('must-survive'), 'root 外文件必须存活');
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('symlink 防护：root 内符号链接指向外部，经它的 key 抛错且不删外部文件（Codex Medium）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    const outsideDir = await mkdtemp(join(tmpdir(), 'chrono-ocs-sym-'));
+    const outside = join(outsideDir, 'victim.txt');
+    await writeFile(outside, Buffer.from('symlink-must-survive'));
+    /* root 内放一个指向外部目录的符号链接。 */
+    const linkPath = join(tmpDir, 'evil-link');
+    try {
+      await symlink(outsideDir, linkPath, 'dir');
+    } catch {
+      await rm(outsideDir, { recursive: true, force: true }); /* 清理临时目录后再跳过 */
+      return; /* 某些环境不支持创建 symlink（如无权限）——跳过该用例，不误判失败。 */
+    }
+    try {
+      /* key = 'evil-link/victim.txt' 字符串 containment 通过，但父组件是 symlink → 必须抛。 */
+      await assert.rejects(client.delete('evil-link/victim.txt'), /symlink/, 'delete 经 symlink 父应抛');
+      await assert.rejects(client.upload('evil-link/x.txt', Buffer.from('x'), 'text/plain'), /symlink/, 'upload 经 symlink 父应抛');
+      assert.deepEqual(await readFile(outside), Buffer.from('symlink-must-survive'), 'symlink 外部文件必须存活');
+    } finally {
+      await rm(linkPath, { force: true });
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 
