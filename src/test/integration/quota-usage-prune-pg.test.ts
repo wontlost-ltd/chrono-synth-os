@@ -8,6 +8,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createIsolatedPgSchema } from './fixtures/pg-test-schema.js';
 
 const TEST_URL = process.env.TEST_POSTGRES_URL;
 const DAY = 24 * 60 * 60 * 1000;
@@ -16,21 +17,19 @@ describe('quota_usage prune on Postgres', { skip: !TEST_URL }, () => {
   let db: import('../../storage/postgres-database.js').PostgresDatabase;
   let QuotaManager: typeof import('../../multi-tenant/quota-manager.js').QuotaManager;
   let qm: import('../../multi-tenant/quota-manager.js').QuotaManager;
+  let cleanup: () => Promise<void>;
 
   before(async () => {
-    const pgMod = await import('../../storage/postgres-database.js');
-    const migMod = await import('../../storage/index.js');
     const qmMod = await import('../../multi-tenant/quota-manager.js');
     QuotaManager = qmMod.QuotaManager;
-    db = new pgMod.PostgresDatabase(TEST_URL!, { max: 3, idleTimeoutMs: 10_000 });
-    db.exec('DROP TABLE IF EXISTS quota_usage CASCADE');
-    db.exec('DROP TABLE IF EXISTS quota_limits CASCADE');
-    db.exec('DROP TABLE IF EXISTS schema_migrations CASCADE');
-    migMod.runDslPostgresMigrations(db);
+    /* 每文件独立 schema 隔离（同 postgres.test.ts）：避免与并行 PG 测试文件共享 public schema 而竞态。 */
+    const iso = await createIsolatedPgSchema('quota', TEST_URL!, { max: 3 });
+    db = iso.db;
+    cleanup = iso.cleanup;
     qm = new QuotaManager(db);
   });
 
-  after(() => { if (db) db.close(); });
+  after(async () => { if (cleanup) await cleanup(); });
 
   it('行值 IN + JOIN + 取模 prune 在 PG 上跑通：删旧窗口、保留近窗口', () => {
     const now = 100 * DAY;
