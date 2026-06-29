@@ -5,9 +5,9 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   LocalObjectStorageClient,
   createObjectStorageClient,
@@ -88,6 +88,24 @@ describe('LocalObjectStorageClient', () => {
       client.delete('media/never/existed.bin'),
       '删除不存在对象应视为成功（幂等契约，retention 重试不应反复失败）',
     );
+  });
+
+  it('路径穿越防护：`../` key 在 upload/delete 都抛错，不触及 root 外文件（Codex High）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    /* 在 root 外预置一个文件，确认它绝不会被穿越的 delete 删掉。 */
+    const outsideDir = await mkdtemp(join(tmpdir(), 'chrono-ocs-outside-'));
+    const outside = join(outsideDir, 'victim.txt');
+    await writeFile(outside, Buffer.from('must-survive'));
+    try {
+      /* 构造一个能逃逸到 outside 的相对 key（root 与 outsideDir 都在 tmpdir 下）。 */
+      const escapeKey = join('..', outsideDir.split(sep).pop()!, 'victim.txt');
+      await assert.rejects(client.delete(escapeKey), /escapes storage root/, 'delete 越界应抛错');
+      await assert.rejects(client.upload(escapeKey, Buffer.from('x'), 'text/plain'), /escapes storage root/, 'upload 越界应抛错');
+      /* root 外文件未被删/覆盖。 */
+      assert.deepEqual(await readFile(outside), Buffer.from('must-survive'), 'root 外文件必须存活');
+    } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
   });
 });
 

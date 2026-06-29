@@ -5,7 +5,7 @@
  */
 
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, resolve, sep } from 'node:path';
 import type { AppConfig } from '../config/schema.js';
 
 /** 对象存储客户端接口 */
@@ -28,25 +28,39 @@ export interface ObjectStorageClient {
 
 /** 本地磁盘存储（开发/测试用途） */
 export class LocalObjectStorageClient implements ObjectStorageClient {
-  constructor(private readonly localPath: string) {}
+  private readonly root: string;
+  constructor(localPath: string) {
+    this.root = resolve(localPath);
+  }
+
+  /**
+   * 把 key 解析为 root 内的绝对路径，并强制**不得逃逸 root**（path containment）。
+   * path.join/resolve 会归一化 `..`，恶意/损坏的 object_key（如 `../../victim`）否则会让 upload 覆盖、
+   * 尤其 delete **rm 掉 storage root 外任意可写路径**（Codex 交叉审查 High——delete 比 upload/presign
+   * 破坏性更大）。三个方法都走此 helper；逃逸即抛（retention 侧计 failed 保留行，fail-closed）。
+   */
+  private resolveSafePath(key: string): string {
+    const target = resolve(this.root, key);
+    if (target !== this.root && !target.startsWith(this.root + sep)) {
+      throw new Error(`object storage key escapes storage root（疑似路径穿越）: ${key}`);
+    }
+    return target;
+  }
 
   async upload(key: string, data: Buffer, _contentType: string): Promise<string> {
-    const filePath = join(this.localPath, key);
-    const dir = filePath.substring(0, filePath.lastIndexOf('/'));
-    if (dir) {
-      await mkdir(dir, { recursive: true });
-    }
+    const filePath = this.resolveSafePath(key);
+    await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, data);
     return key;
   }
 
   async presignUrl(key: string, _ttlSeconds: number): Promise<string> {
-    return `file://${join(this.localPath, key)}`;
+    return `file://${this.resolveSafePath(key)}`;
   }
 
   async delete(key: string): Promise<void> {
-    /* rm({ force: true }) 对不存在路径不抛——满足幂等契约。 */
-    await rm(join(this.localPath, key), { force: true });
+    /* rm({ force: true }) 对不存在路径不抛——满足幂等契约；resolveSafePath 防 `..` 越界删除。 */
+    await rm(this.resolveSafePath(key), { force: true });
   }
 }
 
