@@ -26,7 +26,7 @@ export default function App() {
   const { state, conflictCount, triggerSync } = useMobileSyncState();
   const { isAuthenticated, user, logout } = useAuth();
 
-  usePushSync(triggerSync);
+  usePushSync(triggerSync, isAuthenticated);
 
   /* 账号身份键：能区分「换账号/换 tenant」（不只是 false/true 登录态）。用它作 plan 重探测的依赖，
    * 也用它做缓存隔离的触发——身份一变就清 companion 缓存，避免 staleTime 窗口内回显上一账号数据。 */
