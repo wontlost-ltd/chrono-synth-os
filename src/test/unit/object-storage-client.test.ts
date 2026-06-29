@@ -5,7 +5,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import {
@@ -104,6 +104,30 @@ describe('LocalObjectStorageClient', () => {
       /* root 外文件未被删/覆盖。 */
       assert.deepEqual(await readFile(outside), Buffer.from('must-survive'), 'root 外文件必须存活');
     } finally {
+      await rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('symlink 防护：root 内符号链接指向外部，经它的 key 抛错且不删外部文件（Codex Medium）', async () => {
+    const client = new LocalObjectStorageClient(tmpDir);
+    const outsideDir = await mkdtemp(join(tmpdir(), 'chrono-ocs-sym-'));
+    const outside = join(outsideDir, 'victim.txt');
+    await writeFile(outside, Buffer.from('symlink-must-survive'));
+    /* root 内放一个指向外部目录的符号链接。 */
+    const linkPath = join(tmpDir, 'evil-link');
+    try {
+      await symlink(outsideDir, linkPath, 'dir');
+    } catch {
+      await rm(outsideDir, { recursive: true, force: true }); /* 清理临时目录后再跳过 */
+      return; /* 某些环境不支持创建 symlink（如无权限）——跳过该用例，不误判失败。 */
+    }
+    try {
+      /* key = 'evil-link/victim.txt' 字符串 containment 通过，但父组件是 symlink → 必须抛。 */
+      await assert.rejects(client.delete('evil-link/victim.txt'), /symlink/, 'delete 经 symlink 父应抛');
+      await assert.rejects(client.upload('evil-link/x.txt', Buffer.from('x'), 'text/plain'), /symlink/, 'upload 经 symlink 父应抛');
+      assert.deepEqual(await readFile(outside), Buffer.from('symlink-must-survive'), 'symlink 外部文件必须存活');
+    } finally {
+      await rm(linkPath, { force: true });
       await rm(outsideDir, { recursive: true, force: true });
     }
   });

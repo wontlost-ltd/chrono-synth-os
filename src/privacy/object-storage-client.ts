@@ -4,8 +4,8 @@
  * 云 SDK 均通过动态导入加载，未安装时给出明确错误提示
  */
 
-import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { dirname, resolve, sep } from 'node:path';
+import { mkdir, writeFile, rm, lstat } from 'node:fs/promises';
+import { dirname, resolve, relative, sep } from 'node:path';
 import type { AppConfig } from '../config/schema.js';
 
 /** 对象存储客户端接口 */
@@ -34,33 +34,54 @@ export class LocalObjectStorageClient implements ObjectStorageClient {
   }
 
   /**
-   * 把 key 解析为 root 内的绝对路径，并强制**不得逃逸 root**（path containment）。
-   * path.join/resolve 会归一化 `..`，恶意/损坏的 object_key（如 `../../victim`）否则会让 upload 覆盖、
-   * 尤其 delete **rm 掉 storage root 外任意可写路径**（Codex 交叉审查 High——delete 比 upload/presign
-   * 破坏性更大）。三个方法都走此 helper；逃逸即抛（retention 侧计 failed 保留行，fail-closed）。
+   * 把 key 解析为 root 内的绝对路径，并强制**不得逃逸 root**——两层防护：
+   *   ① 字符串 containment：resolve(root,key) 归一化 `..` 后必须落在 root 内（挡 `../`、绝对路径、前缀碰撞）。
+   *   ② symlink 防护：从 root 向下逐组件 lstat，任一已存在父组件是 symlink 即抛——否则 root 内一条
+   *      `link -> /outside` 符号链接会让 `key=link/x` 字符串通过却经 symlink 写/删到 root 外（Codex 复审 Medium）。
+   * 任一逃逸即抛（retention 侧 per-row catch 计 failed 保留行，fail-closed，不误删）。
+   * delete 比 upload/presign 破坏性更大，故防护对三方法统一施加。
    */
-  private resolveSafePath(key: string): string {
+  private async resolveSafePath(key: string): Promise<string> {
     const target = resolve(this.root, key);
     if (target !== this.root && !target.startsWith(this.root + sep)) {
       throw new Error(`object storage key escapes storage root（疑似路径穿越）: ${key}`);
+    }
+    /* 逐组件 lstat 已存在的父路径，遇 symlink 抛（不跟随）。target 本身是文件（可为 symlink→也拒）。 */
+    const rel = relative(this.root, target);
+    if (rel.length > 0) {
+      const parts = rel.split(sep);
+      let cur = this.root;
+      for (const part of parts) {
+        cur = resolve(cur, part);
+        try {
+          const st = await lstat(cur);
+          if (st.isSymbolicLink()) {
+            throw new Error(`object storage key traverses a symlink（拒绝跟随符号链接逃逸 root）: ${key}`);
+          }
+        } catch (err) {
+          /* 组件不存在（ENOENT）= 尚未创建，安全；其它错误（权限等）上抛 fail-closed。 */
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+          break; /* 后续组件必然也不存在，无需继续 stat。 */
+        }
+      }
     }
     return target;
   }
 
   async upload(key: string, data: Buffer, _contentType: string): Promise<string> {
-    const filePath = this.resolveSafePath(key);
+    const filePath = await this.resolveSafePath(key);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, data);
     return key;
   }
 
   async presignUrl(key: string, _ttlSeconds: number): Promise<string> {
-    return `file://${this.resolveSafePath(key)}`;
+    return `file://${await this.resolveSafePath(key)}`;
   }
 
   async delete(key: string): Promise<void> {
-    /* rm({ force: true }) 对不存在路径不抛——满足幂等契约；resolveSafePath 防 `..` 越界删除。 */
-    await rm(this.resolveSafePath(key), { force: true });
+    /* rm({ force: true }) 对不存在路径不抛——满足幂等契约；resolveSafePath 防 `..`/symlink 越界删除。 */
+    await rm(await this.resolveSafePath(key), { force: true });
   }
 }
 
