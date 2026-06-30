@@ -1,0 +1,60 @@
+# rc 验证 override：用 ghcr 发布的 rc 镜像（非本地 build）起 staging 栈，验证**发布产物本身**。
+#
+# 与 podman-compose.yml 的区别：org-prod 服务用 `image: ghcr.io/...:2.0.0-rc.1` 且**移除 build**，
+# 确保跑的是 release.yml 推上去的那个签名镜像，而非本地源码重建。其余（pgvector/JWT/env）同 prod profile。
+#
+# 用法（仓库根目录，本机 arm64 跑 amd64 镜像需 qemu 模拟）：
+#   podman compose -f deploy/digital-org/staging-rc.yml up -d
+#   ... 烟雾验证 ...
+#   podman compose -f deploy/digital-org/staging-rc.yml down -v
+
+name: chrono-rc-staging
+
+volumes:
+  chrono-rc-pg:
+
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg17
+    container_name: chrono-rc-postgres
+    environment:
+      POSTGRES_USER: chrono
+      POSTGRES_PASSWORD: chrono
+      POSTGRES_DB: chrono
+    volumes:
+      - chrono-rc-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chrono -d chrono"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "5435:5432"
+
+  org-rc:
+    # 关键：拉发布的 rc 镜像，不 build——验证的是发布产物。
+    image: ghcr.io/wontlost-ltd/chrono-synth-os:2.0.0-rc.1
+    container_name: chrono-rc-org
+    platform: linux/amd64
+    pull_policy: missing
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      CHRONO_SERVER_HOST: 0.0.0.0
+      CHRONO_SERVER_PORT: "3000"
+      CHRONO_DB_DRIVER: postgres
+      CHRONO_DB_CONNECTION_STRING: postgres://chrono:chrono@chrono-rc-postgres:5432/chrono
+      CHRONO_QUEUE_ENABLED: "true"
+      CHRONO_QUEUE_MAX_CONCURRENT: "4"
+      CHRONO_LOG_LEVEL: info
+      CHRONO_JWT_ENABLED: "true"
+      CHRONO_JWT_SECRET: "rc-staging-local-jwt-secret-do-not-use-in-prod"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    ports:
+      - "3100:3000"
