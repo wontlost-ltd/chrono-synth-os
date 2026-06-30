@@ -46,19 +46,16 @@ describe('schema-dsl Atlas PG diff', () => {
     assert.match(newInspect.trim(), /table "memory_nodes"/);
 
     const diff = await runAtlas(['schema', 'diff', '--from', databases.oldUrl, '--to', databases.newUrl]);
-    // The community-edition image prepends a "Notice: ..." block to stdout before any
-    // real output. Filter to the substantive trailing line and assert the synced marker.
-    const meaningfulLines = diff
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0 && !line.startsWith('Notice:') && !line.startsWith('\t') && !line.startsWith('To ') && !line.startsWith('Or,') && !line.startsWith('curl ') && !line.startsWith('https://'));
-    const lastMeaningful = meaningfulLines[meaningfulLines.length - 1] ?? '';
-    // Atlas prints "Schemas are synced, no changes to be made." when there is no drift.
-    // Any other content means real schema divergence — fail loudly with the full output.
-    assert.equal(
-      lastMeaningful,
-      'Schemas are synced, no changes to be made.',
-      `Atlas diff produced unexpected output:\n${diff}`,
+    // Atlas 在「无差异」时打印 "Schemas are synced, no changes to be made."。社区版镜像还会输出一段
+    // 多行 "Notice: ..." 版权/升级提示——且该提示可能出现在 synced 标记**之后**，其续行（如
+    // "triggers, and stored procedures are not supported. ..."）不以 Notice:/tab/To/Or,/curl/https 开头，
+    // 会逃过行过滤。故**不能**用「最后一条有意义行 === synced」判定（会误取 Notice 续行）；改为断言
+    // synced 标记**存在于输出中**——它只在零 schema drift 时打印，真有差异则不会出现（diff 会列出 DDL）。
+    const SYNCED = 'Schemas are synced, no changes to be made.';
+    const lines = diff.split('\n').map(line => line.trim());
+    assert.ok(
+      lines.includes(SYNCED),
+      `Atlas diff 未报告 schema 同步（疑有真实结构差异）:\n${diff}`,
     );
   });
 
