@@ -77,8 +77,11 @@ jobs:
         run: npm ci
 
       - name: Build packages
+        # schema-dsl 必须在列：src/storage/dsl-migrations-runner.ts import @wontlost-ltd/schema-dsl，
+        # 缺它 `tsc -b tsconfig.src.json` 报 TS2307 找不到模块 → perf job 一直 build 失败（与 ci.yml 的
+        # build-and-test 列表保持一致；此前 perf.yml 漏了 schema-dsl/tsconfig.json）。
         run: |
-          npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+          npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
           npx tsc -b tsconfig.src.json
           npm run build
 
