@@ -45,7 +45,10 @@ services:
       CHRONO_SERVER_HOST: 0.0.0.0
       CHRONO_SERVER_PORT: "3000"
       CHRONO_DB_DRIVER: postgres
-      CHRONO_DB_CONNECTION_STRING: postgres://chrono:chrono@chrono-rc-postgres:5432/chrono
+      # 本地 staging 容器内的 demo 凭据（chrono:chrono，同 podman-compose.yml prod profile）——
+      # 仅本机验证用、绝不复用真实环境。trufflehog 把 postgres://user:pass@ 当 unknown secret 误报，
+      # 此处显式忽略（标注的本地 demo 凭据非真实泄露）。
+      CHRONO_DB_CONNECTION_STRING: postgres://chrono:chrono@chrono-rc-postgres:5432/chrono # trufflehog:ignore
       CHRONO_QUEUE_ENABLED: "true"
       CHRONO_QUEUE_MAX_CONCURRENT: "4"
       CHRONO_LOG_LEVEL: info
