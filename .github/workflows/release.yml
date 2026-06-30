@@ -9,7 +9,9 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60min：多架构下 arm64 层在 amd64 runner 上经 QEMU 模拟构建（npm ci + 全包 tsc），冷缓存时
+    # 比单 amd64 慢得多，30min 偏紧（Codex 交叉审查的发布稳定性建议）。
+    timeout-minutes: 60
     permissions:
       # contents: read   — checkout the source
       # packages: write  — push to ghcr.io
@@ -44,6 +46,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
 
+      # 多架构构建：amd64（生产/CI 原生）+ arm64（Apple Silicon 开发机 / AWS Graviton 等 ARM 云）。
+      # amd64 runner 交叉构建 arm64 层需 QEMU 模拟器（setup-qemu 注册 binfmt handler）。
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v4
@@ -73,6 +78,10 @@ jobs:
         with:
           context: .
           push: true
+          # 多架构 manifest list（amd64 + arm64）。digest 输出是 **index（manifest list）digest**，
+          # 下游 cosign sign / SBOM / SLSA attest 都按此 index digest 进行——签名/证明覆盖整个多架构镜像，
+          # Kyverno require-image-signature 验的也是该 index digest，无需逐架构签。
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -87,8 +96,24 @@ jobs:
       #   - Pre-release tag (v2.0.0-beta.X): block on CRITICAL only — beta is
       #     for finding issues; HIGH findings get reviewed during dogfooding
       #     rather than block the build outright.
-      - name: Trivy image scan
+      # 多架构镜像须**逐架构扫描**：两架构含**架构相关 native 二进制**（如 @node-rs/argon2 的
+      # -linux-arm64-musl vs -linux-x64-musl），漏洞面**不一致**——只扫 amd64 会让 arm64-specific
+      # artifact 漏过发布 gate（Codex 交叉审查）。故 amd64 与 arm64 各扫一遍，同样 blocking。
+      # TRIVY_PLATFORM 在 manifest list tag 上钉具体平台（trivy-action 把 TRIVY_* env 透传给 trivy 本体）。
+      - name: Trivy image scan (amd64)
         uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ghcr.io/wontlost-ltd/chrono-synth-os:${{ steps.meta.outputs.version }}
+          format: table
+          exit-code: '1'
+          severity: ${{ contains(github.ref_name, '-') && 'CRITICAL' || 'CRITICAL,HIGH' }}
+
+      - name: Trivy image scan (arm64)
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
         with:
           image-ref: ghcr.io/wontlost-ltd/chrono-synth-os:${{ steps.meta.outputs.version }}
           format: table
