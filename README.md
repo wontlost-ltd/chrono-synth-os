@@ -96,17 +96,21 @@ Portable Persona Format v1 spec.
 
 ## 快速开始
 
+> 👉 想最快跑起一整套（后端 + Postgres + 已 seed 的数字员工组织）并发第一个请求，见 **[QUICKSTART.md](QUICKSTART.md)**（一条命令起栈 + curl 示例）。
+
+从源码构建并跑全量质量门：
+
 ```bash
 # 环境要求：Node.js >= 24.0.0
 node -v  # 确认版本
 
-# 安装依赖
-npm install
+# 安装依赖（用 npm ci，勿用 npm install——见 CONTRIBUTING 的 macOS lockfile 陷阱说明）
+npm ci
 
 # 编译
 npm run build
 
-# 运行全部测试（类型检查 + 编译 + 单元测试 + 集成测试）
+# 运行全部质量门（类型检查 + 编译 + 单元 + 集成 + 契约 + 包 + ops + ga:check + 许可）
 npm run test:golden
 ```
 
@@ -349,6 +353,15 @@ chrono-synth-os/               # monorepo 根
 - **数据库**：SQLite（本地/测试） + PostgreSQL（生产/多副本）
 - **测试**：`node:test`（Node.js 内置）
 - **运行时依赖**：Fastify / PostgreSQL / Redis / Kafka / Stripe / OpenTelemetry
+
+## 贡献与社区
+
+- **快速上手** — [QUICKSTART.md](QUICKSTART.md)
+- **贡献指南** — [CONTRIBUTING.md](CONTRIBUTING.md)（开发环境、质量门、ADR 决策流程）
+- **安全披露** — [SECURITY.md](SECURITY.md)（漏洞请私下报告，勿开公开 issue）
+- **行为准则** — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **变更记录** — [CHANGELOG.md](CHANGELOG.md)
+- **架构决策** — [docs/adr/README.md](docs/adr/README.md)
 
 ## 许可证
 
