@@ -67,7 +67,7 @@ jobs:
       PERF_BEARER_TOKEN: ${{ secrets.PERF_BEARER_TOKEN || '' }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
