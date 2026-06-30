@@ -52,7 +52,7 @@
   ],
   "license": "AGPL-3.0-or-later",
   "devDependencies": {
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.0.1",
     "@types/pg": "^8.16.0",
     "fake-indexeddb": "^6.2.5",
     "typescript": "^6.0.3"
