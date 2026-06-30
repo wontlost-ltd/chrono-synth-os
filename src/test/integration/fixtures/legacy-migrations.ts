@@ -1014,6 +1014,211 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS notification_preferences (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    user_id TEXT NOT NULL,\n    nudge_push_enabled INTEGER NOT NULL DEFAULT 0,\n    quiet_start_minute INTEGER,\n    quiet_end_minute INTEGER,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, user_id)\n  )"
     ]
+  },
+  {
+    "version": "v093",
+    "description": "ADR-0055 self-awareness: per-persona first-person identity (name)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS companion_identity (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    name TEXT,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v094",
+    "description": "ADR-0055 content multilingual: per-language memory content variants",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS memory_translations (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    memory_id TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,\n    language TEXT NOT NULL,\n    text TEXT NOT NULL,\n    source TEXT NOT NULL DEFAULT 'teacher',\n    created_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, memory_id, language)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_memory_translations_tenant_lang ON memory_translations(tenant_id, language)"
+    ]
+  },
+  {
+    "version": "v095",
+    "description": "ADR-0056 humanization: per-persona current mood (valence/arousal)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS companion_mood (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    valence REAL NOT NULL DEFAULT 0,\n    arousal REAL NOT NULL DEFAULT 0.3,\n    updated_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v096",
+    "description": "ADR-0056 humanization: I-you relationship memory (user name + interaction count + timestamps)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS companion_relationship (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    user_name TEXT,\n    interaction_count INTEGER NOT NULL DEFAULT 0,\n    first_met_at INTEGER,\n    last_seen_at INTEGER,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v097",
+    "description": "Digital workforce M1: org chart + deterministic goal decomposition + delegation/report (zero-LLM)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_positions (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    title TEXT NOT NULL,\n    job_family TEXT NOT NULL,\n    seniority TEXT NOT NULL,\n    role_code TEXT NOT NULL,\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS digital_workers (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    position_id TEXT NOT NULL,\n    display_name TEXT NOT NULL,\n    employment_status TEXT NOT NULL DEFAULT 'active',\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS reporting_edges (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    manager_worker_id TEXT,\n    report_worker_id TEXT NOT NULL,\n    edge_type TEXT NOT NULL DEFAULT 'solid',\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS org_goals (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    owner_worker_id TEXT NOT NULL,\n    title TEXT NOT NULL,\n    description TEXT NOT NULL DEFAULT '',\n    goal_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'proposed',\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS org_tasks (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    goal_id TEXT NOT NULL,\n    parent_task_id TEXT,\n    assigned_to_worker_id TEXT,\n    accountable_worker_id TEXT NOT NULL,\n    title TEXT NOT NULL,\n    task_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    result_summary TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS task_reports (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    summary TEXT NOT NULL,\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_positions_role ON org_positions(tenant_id, org_id, role_code)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_edges_report_worker ON reporting_edges(tenant_id, org_id, report_worker_id)",
+      "CREATE INDEX IF NOT EXISTS idx_workers_org ON digital_workers(tenant_id, org_id)",
+      "CREATE INDEX IF NOT EXISTS idx_edges_manager ON reporting_edges(tenant_id, org_id, manager_worker_id)",
+      "CREATE INDEX IF NOT EXISTS idx_tasks_goal ON org_tasks(tenant_id, goal_id)",
+      "CREATE INDEX IF NOT EXISTS idx_reports_task ON task_reports(tenant_id, task_id)"
+    ]
+  },
+  {
+    "version": "v098",
+    "description": "Digital workforce A0: org_tasks contract fields (risk/tool-eligible/acceptance/capabilities)",
+    "sql": [
+      "/* safe:add-column:org_tasks:risk_level */ ALTER TABLE org_tasks ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'low'",
+      "/* safe:add-column:org_tasks:allows_tool_execution */ ALTER TABLE org_tasks ADD COLUMN allows_tool_execution INTEGER NOT NULL DEFAULT 0",
+      "/* safe:add-column:org_tasks:acceptance_criteria */ ALTER TABLE org_tasks ADD COLUMN acceptance_criteria TEXT NOT NULL DEFAULT ''",
+      "/* safe:add-column:org_tasks:required_capabilities */ ALTER TABLE org_tasks ADD COLUMN required_capabilities TEXT NOT NULL DEFAULT '[]'"
+    ]
+  },
+  {
+    "version": "v099",
+    "description": "Digital workforce B1: structured agent-to-agent collaboration (threads + messages)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_conversation_threads (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    thread_type TEXT NOT NULL,\n    goal_id TEXT,\n    task_id TEXT,\n    created_by_worker_id TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'open',\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS org_messages (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    thread_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT,\n    message_type TEXT NOT NULL,\n    content TEXT NOT NULL,\n    correlation_id TEXT,\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_threads_org ON org_conversation_threads(tenant_id, org_id)",
+      "CREATE INDEX IF NOT EXISTS idx_messages_thread ON org_messages(tenant_id, thread_id)"
+    ]
+  },
+  {
+    "version": "v100",
+    "description": "Digital workforce B2: task handoff negotiation (proposed/accepted/rejected/cancelled)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_handoffs (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT NOT NULL,\n    reason TEXT NOT NULL DEFAULT '',\n    status TEXT NOT NULL DEFAULT 'proposed',\n    created_at INTEGER NOT NULL,\n    responded_at INTEGER\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_handoffs_task ON org_handoffs(tenant_id, org_id, task_id)"
+    ]
+  },
+  {
+    "version": "v101",
+    "description": "Digital workforce C1: per-counterpart collaboration memory (fixes cross-contamination)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS worker_collaboration_memory (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    worker_id TEXT NOT NULL,\n    counterpart_type TEXT NOT NULL,\n    counterpart_id TEXT NOT NULL,\n    interaction_count INTEGER NOT NULL DEFAULT 0,\n    first_collaborated_at INTEGER,\n    last_collaborated_at INTEGER,\n    note TEXT,\n    PRIMARY KEY (tenant_id, org_id, worker_id, counterpart_type, counterpart_id)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_collab_worker ON worker_collaboration_memory(tenant_id, org_id, worker_id)"
+    ]
+  },
+  {
+    "version": "v102",
+    "description": "Digital workforce D2: execution approval gate (ADR-0055 risk-tiered, human-required for high)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_approvals (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    subject_type TEXT NOT NULL,\n    subject_id TEXT NOT NULL,\n    requester_worker_id TEXT NOT NULL,\n    effective_risk TEXT NOT NULL,\n    requires_human INTEGER NOT NULL DEFAULT 0,\n    approval_mode TEXT NOT NULL DEFAULT 'human_only',\n    status TEXT NOT NULL DEFAULT 'pending',\n    approver_worker_id TEXT,\n    approver_user_id TEXT,\n    reason TEXT NOT NULL DEFAULT '',\n    correlation_id TEXT,\n    created_at INTEGER NOT NULL,\n    expires_at INTEGER,\n    decided_at INTEGER\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_approvals_subject ON org_approvals(tenant_id, org_id, subject_type, subject_id)"
+    ]
+  },
+  {
+    "version": "v103",
+    "description": "Digital workforce B-chain: multi-level escalation chain (blocked worker escalates up reporting line)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_escalations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT NOT NULL,\n    parent_escalation_id TEXT,\n    depth INTEGER NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'pending',\n    reason TEXT NOT NULL DEFAULT '',\n    resolution TEXT,\n    correlation_id TEXT,\n    created_at INTEGER NOT NULL,\n    decided_at INTEGER\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_escalations_task ON org_escalations(tenant_id, org_id, task_id)",
+      "CREATE INDEX IF NOT EXISTS idx_escalations_to ON org_escalations(tenant_id, org_id, to_worker_id, status)"
+    ]
+  },
+  {
+    "version": "v104",
+    "description": "Digital workforce C-chain: org_tasks.due_at (task SLA deadline for temporal awareness signal)",
+    "sql": [
+      "/* safe:add-column:org_tasks:due_at */ ALTER TABLE org_tasks ADD COLUMN due_at INTEGER"
+    ]
+  },
+  {
+    "version": "v105",
+    "description": "Digital workforce M2: org_goals.playbook_version (audit which rule-pack version produced the goal)",
+    "sql": [
+      "/* safe:add-column:org_goals:playbook_version */ ALTER TABLE org_goals ADD COLUMN playbook_version INTEGER NOT NULL DEFAULT 1"
+    ]
+  },
+  {
+    "version": "v106",
+    "description": "K1 ADR-0056: per-(tenant, persona) cognitive core isolation — add persona_id to core state tables",
+    "sql": [
+      "/* safe:add-column:decision_style:persona_id */ ALTER TABLE decision_style ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:add-column:cognitive_model:persona_id */ ALTER TABLE cognitive_model ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:add-column:narrative:persona_id */ ALTER TABLE narrative ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:add-column:core_values:persona_id */ ALTER TABLE core_values ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:add-column:survival_anchors:persona_id */ ALTER TABLE survival_anchors ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:add-column:memory_nodes:persona_id */ ALTER TABLE memory_nodes ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:add-column:memory_edges:persona_id */ ALTER TABLE memory_edges ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'default'",
+      "/* safe:if-table-exists:core_values */ CREATE INDEX IF NOT EXISTS idx_core_values_tenant_persona ON core_values(tenant_id, persona_id)",
+      "/* safe:if-table-exists:survival_anchors */ CREATE INDEX IF NOT EXISTS idx_survival_anchors_tenant_persona ON survival_anchors(tenant_id, persona_id)",
+      "/* safe:if-table-exists:memory_nodes */ CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant_persona ON memory_nodes(tenant_id, persona_id)",
+      "/* safe:if-table-exists:memory_edges */ CREATE INDEX IF NOT EXISTS idx_memory_edges_tenant_persona ON memory_edges(tenant_id, persona_id)"
+    ]
+  },
+  {
+    "version": "v107",
+    "description": "K2 ADR-0056: composite (tenant_id, persona_id) PK on decision_style/cognitive_model/narrative",
+    "sql": [
+      "/* safe:if-table-exists:decision_style */ ALTER TABLE decision_style RENAME TO decision_style_old",
+      "/* safe:if-table-exists:decision_style_old */ CREATE TABLE IF NOT EXISTS decision_style (\n      tenant_id TEXT NOT NULL DEFAULT 'default',\n      persona_id TEXT NOT NULL DEFAULT 'default',\n      style_json TEXT NOT NULL,\n      updated_at INTEGER NOT NULL,\n      PRIMARY KEY (tenant_id, persona_id)\n    )",
+      "/* safe:if-table-exists:decision_style_old */ INSERT OR IGNORE INTO decision_style (tenant_id, persona_id, style_json, updated_at)\n     SELECT tenant_id, persona_id, style_json, updated_at FROM decision_style_old",
+      "/* safe:if-table-exists:decision_style_old */ DROP TABLE IF EXISTS decision_style_old",
+      "/* safe:if-table-exists:cognitive_model */ ALTER TABLE cognitive_model RENAME TO cognitive_model_old",
+      "/* safe:if-table-exists:cognitive_model_old */ CREATE TABLE IF NOT EXISTS cognitive_model (\n      tenant_id TEXT NOT NULL DEFAULT 'default',\n      persona_id TEXT NOT NULL DEFAULT 'default',\n      model_json TEXT NOT NULL,\n      updated_at INTEGER NOT NULL,\n      PRIMARY KEY (tenant_id, persona_id)\n    )",
+      "/* safe:if-table-exists:cognitive_model_old */ INSERT OR IGNORE INTO cognitive_model (tenant_id, persona_id, model_json, updated_at)\n     SELECT tenant_id, persona_id, model_json, updated_at FROM cognitive_model_old",
+      "/* safe:if-table-exists:cognitive_model_old */ DROP TABLE IF EXISTS cognitive_model_old",
+      "/* safe:if-table-exists:narrative */ ALTER TABLE narrative RENAME TO narrative_old",
+      "/* safe:if-table-exists:narrative_old */ CREATE TABLE IF NOT EXISTS narrative (\n      tenant_id TEXT NOT NULL DEFAULT 'default',\n      persona_id TEXT NOT NULL DEFAULT 'default',\n      content TEXT NOT NULL,\n      updated_at INTEGER NOT NULL,\n      PRIMARY KEY (tenant_id, persona_id)\n    )",
+      "/* safe:if-table-exists:narrative_old */ INSERT OR IGNORE INTO narrative (tenant_id, persona_id, content, updated_at)\n     SELECT tenant_id, persona_id, content, updated_at FROM narrative_old",
+      "/* safe:if-table-exists:narrative_old */ DROP TABLE IF EXISTS narrative_old"
+    ]
+  },
+  {
+    "version": "v108",
+    "description": "Job-function learning L2 (ADR-0057): learning_requests ledger (gap → request, idempotent per (persona,capability))",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS learning_requests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    is_unknown INTEGER NOT NULL DEFAULT 0,\n    evidence TEXT NOT NULL DEFAULT '',\n    priority TEXT NOT NULL DEFAULT 'medium',\n    triggered_by_task_id TEXT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_learning_req_active_persona_cap ON learning_requests(tenant_id, persona_id, capability) WHERE status IN ('pending', 'learning')",
+      "CREATE INDEX IF NOT EXISTS idx_learning_req_persona_status ON learning_requests(tenant_id, persona_id, status)",
+      "CREATE INDEX IF NOT EXISTS idx_learning_req_org ON learning_requests(tenant_id, org_id, status)"
+    ]
+  },
+  {
+    "version": "v109",
+    "description": "Job-function learning L7 (ADR-0057): capability_index — formal learned-capabilities source (replaces L2 listPassedCapabilities scan)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS capability_index (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    exam_score REAL NOT NULL,\n    learning_request_id TEXT NOT NULL DEFAULT '',\n    capability_version INTEGER NOT NULL DEFAULT 1,\n    learned_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_capability_index_persona_cap ON capability_index(tenant_id, persona_id, capability)",
+      "CREATE INDEX IF NOT EXISTS idx_capability_index_persona_learned ON capability_index(tenant_id, persona_id, learned_at)"
+    ]
+  },
+  {
+    "version": "v110",
+    "description": "Job-function learning L8a (ADR-0057 D0.8): org_tasks resume_attempt_count + last_wake_event_id (wake idempotency + anti-loop guard)",
+    "sql": [
+      "/* safe:add-column:org_tasks:resume_attempt_count */ ALTER TABLE org_tasks ADD COLUMN resume_attempt_count INTEGER NOT NULL DEFAULT 0",
+      "/* safe:add-column:org_tasks:last_wake_event_id */ ALTER TABLE org_tasks ADD COLUMN last_wake_event_id TEXT"
+    ]
+  },
+  {
+    "version": "v111",
+    "description": "Digital workforce: org_wallets (organization-level treasury so an org can earn from the task marketplace)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_wallets (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    balance REAL NOT NULL DEFAULT 0,\n    currency TEXT NOT NULL DEFAULT 'CRED',\n    status TEXT NOT NULL DEFAULT 'active',\n    last_settled_at INTEGER,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_wallets_org ON org_wallets(tenant_id, org_id)",
+      "/* safe:add-column:org_goals:source_marketplace_task_id */ ALTER TABLE org_goals ADD COLUMN source_marketplace_task_id TEXT",
+      "CREATE TABLE IF NOT EXISTS org_wallet_settlements (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    wallet_id TEXT NOT NULL,\n    source_marketplace_task_id TEXT NOT NULL,\n    goal_id TEXT,\n    total_amount_minor INTEGER NOT NULL,\n    currency TEXT NOT NULL,\n    platform_pct INTEGER NOT NULL,\n    platform_amount_minor INTEGER NOT NULL,\n    org_amount_minor INTEGER NOT NULL,\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_wallet_settlements_source ON org_wallet_settlements(tenant_id, source_marketplace_task_id)",
+      "CREATE TABLE IF NOT EXISTS org_wallet_transactions (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    wallet_id TEXT NOT NULL,\n    transaction_type TEXT NOT NULL,\n    amount_minor INTEGER NOT NULL,\n    currency TEXT NOT NULL,\n    reference_type TEXT,\n    reference_id TEXT,\n    created_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_org_wallet_tx_wallet ON org_wallet_transactions(tenant_id, wallet_id, created_at)"
+    ]
+  },
+  {
+    "version": "v112",
+    "description": "Bidirectional task market (ADR-0058): org can bid on marketplace tasks alongside personas; publisher confirms assignment",
+    "sql": [
+      "/* safe:add-column:marketplace_tasks:assignee_kind */ ALTER TABLE marketplace_tasks ADD COLUMN assignee_kind TEXT NOT NULL DEFAULT 'persona'",
+      "/* safe:add-column:marketplace_tasks:assignee_org_id */ ALTER TABLE marketplace_tasks ADD COLUMN assignee_org_id TEXT",
+      "/* safe:add-column:marketplace_tasks:publisher_verified */ ALTER TABLE marketplace_tasks ADD COLUMN publisher_verified INTEGER NOT NULL DEFAULT 0",
+      "CREATE TABLE IF NOT EXISTS task_org_applications (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    task_id TEXT NOT NULL,\n    org_id TEXT NOT NULL,\n    ranking_score REAL NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'submitted',\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_org_applications ON task_org_applications(tenant_id, task_id, org_id)",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_applications_task ON task_org_applications(tenant_id, task_id)",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_applications_org ON task_org_applications(tenant_id, org_id, status)",
+      "CREATE TABLE IF NOT EXISTS task_org_assignments (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    task_id TEXT NOT NULL,\n    org_id TEXT NOT NULL,\n    application_id TEXT,\n    org_goal_id TEXT,\n    status TEXT NOT NULL DEFAULT 'assigned',\n    assigned_at INTEGER NOT NULL,\n    submitted_at INTEGER,\n    completed_at INTEGER,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_task ON task_org_assignments(tenant_id, task_id, created_at)",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_org ON task_org_assignments(tenant_id, org_id, status)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2004,6 +2209,205 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "ADR-0054 red-line 9: per-user notification preferences (push opt-in + quiet hours)",
     "sql": [
       "CREATE TABLE IF NOT EXISTS notification_preferences (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    user_id TEXT NOT NULL,\n    nudge_push_enabled BOOLEAN NOT NULL DEFAULT FALSE,\n    quiet_start_minute INTEGER,\n    quiet_end_minute INTEGER,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, user_id)\n  )"
+    ]
+  },
+  {
+    "version": "v095",
+    "description": "ADR-0055 self-awareness: per-persona first-person identity (name)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS companion_identity (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    name TEXT,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v096",
+    "description": "ADR-0055 content multilingual: per-language memory content variants",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS memory_translations (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    memory_id TEXT NOT NULL REFERENCES memory_nodes(id) ON DELETE CASCADE,\n    language TEXT NOT NULL,\n    text TEXT NOT NULL,\n    source TEXT NOT NULL DEFAULT 'teacher',\n    created_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, memory_id, language)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_memory_translations_tenant_lang ON memory_translations (tenant_id, language)"
+    ]
+  },
+  {
+    "version": "v097",
+    "description": "ADR-0056 humanization: per-persona current mood (valence/arousal)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS companion_mood (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    valence DOUBLE PRECISION NOT NULL DEFAULT 0,\n    arousal DOUBLE PRECISION NOT NULL DEFAULT 0.3,\n    updated_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v098",
+    "description": "ADR-0056 humanization: I-you relationship memory (user name + interaction count + timestamps)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS companion_relationship (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL DEFAULT 'default',\n    user_name TEXT,\n    interaction_count INTEGER NOT NULL DEFAULT 0,\n    first_met_at BIGINT,\n    last_seen_at BIGINT,\n    PRIMARY KEY (tenant_id, persona_id)\n  )"
+    ]
+  },
+  {
+    "version": "v099",
+    "description": "Digital workforce M1: org chart + deterministic goal decomposition + delegation/report (zero-LLM)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_positions (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    title TEXT NOT NULL,\n    job_family TEXT NOT NULL,\n    seniority TEXT NOT NULL,\n    role_code TEXT NOT NULL,\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS digital_workers (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    position_id TEXT NOT NULL,\n    display_name TEXT NOT NULL,\n    employment_status TEXT NOT NULL DEFAULT 'active',\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS reporting_edges (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    manager_worker_id TEXT,\n    report_worker_id TEXT NOT NULL,\n    edge_type TEXT NOT NULL DEFAULT 'solid',\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS org_goals (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    owner_worker_id TEXT NOT NULL,\n    title TEXT NOT NULL,\n    description TEXT NOT NULL DEFAULT '',\n    goal_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'proposed',\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS org_tasks (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    goal_id TEXT NOT NULL,\n    parent_task_id TEXT,\n    assigned_to_worker_id TEXT,\n    accountable_worker_id TEXT NOT NULL,\n    title TEXT NOT NULL,\n    task_type TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'draft',\n    result_summary TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS task_reports (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT NOT NULL,\n    report_type TEXT NOT NULL,\n    summary TEXT NOT NULL,\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_positions_role ON org_positions (tenant_id, org_id, role_code)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_edges_report_worker ON reporting_edges (tenant_id, org_id, report_worker_id)",
+      "CREATE INDEX IF NOT EXISTS idx_workers_org ON digital_workers (tenant_id, org_id)",
+      "CREATE INDEX IF NOT EXISTS idx_edges_manager ON reporting_edges (tenant_id, org_id, manager_worker_id)",
+      "CREATE INDEX IF NOT EXISTS idx_tasks_goal ON org_tasks (tenant_id, goal_id)",
+      "CREATE INDEX IF NOT EXISTS idx_reports_task ON task_reports (tenant_id, task_id)"
+    ]
+  },
+  {
+    "version": "v100",
+    "description": "Digital workforce A0: org_tasks contract fields (risk/tool-eligible/acceptance/capabilities)",
+    "sql": [
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS risk_level TEXT NOT NULL DEFAULT 'low'",
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS allows_tool_execution INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS acceptance_criteria TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS required_capabilities TEXT NOT NULL DEFAULT '[]'"
+    ]
+  },
+  {
+    "version": "v101",
+    "description": "Digital workforce B1: structured agent-to-agent collaboration (threads + messages)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_conversation_threads (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    thread_type TEXT NOT NULL,\n    goal_id TEXT,\n    task_id TEXT,\n    created_by_worker_id TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'open',\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS org_messages (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    thread_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT,\n    message_type TEXT NOT NULL,\n    content TEXT NOT NULL,\n    correlation_id TEXT,\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_threads_org ON org_conversation_threads (tenant_id, org_id)",
+      "CREATE INDEX IF NOT EXISTS idx_messages_thread ON org_messages (tenant_id, thread_id)"
+    ]
+  },
+  {
+    "version": "v102",
+    "description": "Digital workforce B2: task handoff negotiation (proposed/accepted/rejected/cancelled)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_handoffs (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT NOT NULL,\n    reason TEXT NOT NULL DEFAULT '',\n    status TEXT NOT NULL DEFAULT 'proposed',\n    created_at BIGINT NOT NULL,\n    responded_at BIGINT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_handoffs_task ON org_handoffs (tenant_id, org_id, task_id)"
+    ]
+  },
+  {
+    "version": "v103",
+    "description": "Digital workforce C1: per-counterpart collaboration memory (fixes cross-contamination)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS worker_collaboration_memory (\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    worker_id TEXT NOT NULL,\n    counterpart_type TEXT NOT NULL,\n    counterpart_id TEXT NOT NULL,\n    interaction_count INTEGER NOT NULL DEFAULT 0,\n    first_collaborated_at BIGINT,\n    last_collaborated_at BIGINT,\n    note TEXT,\n    PRIMARY KEY (tenant_id, org_id, worker_id, counterpart_type, counterpart_id)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_collab_worker ON worker_collaboration_memory (tenant_id, org_id, worker_id)"
+    ]
+  },
+  {
+    "version": "v104",
+    "description": "Digital workforce D2: execution approval gate (ADR-0055 risk-tiered, human-required for high)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_approvals (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    subject_type TEXT NOT NULL,\n    subject_id TEXT NOT NULL,\n    requester_worker_id TEXT NOT NULL,\n    effective_risk TEXT NOT NULL,\n    requires_human INTEGER NOT NULL DEFAULT 0,\n    approval_mode TEXT NOT NULL DEFAULT 'human_only',\n    status TEXT NOT NULL DEFAULT 'pending',\n    approver_worker_id TEXT,\n    approver_user_id TEXT,\n    reason TEXT NOT NULL DEFAULT '',\n    correlation_id TEXT,\n    created_at BIGINT NOT NULL,\n    expires_at BIGINT,\n    decided_at BIGINT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_approvals_subject ON org_approvals (tenant_id, org_id, subject_type, subject_id)"
+    ]
+  },
+  {
+    "version": "v105",
+    "description": "Digital workforce B-chain: multi-level escalation chain (blocked worker escalates up reporting line)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_escalations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    task_id TEXT NOT NULL,\n    from_worker_id TEXT NOT NULL,\n    to_worker_id TEXT NOT NULL,\n    parent_escalation_id TEXT,\n    depth INTEGER NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'pending',\n    reason TEXT NOT NULL DEFAULT '',\n    resolution TEXT,\n    correlation_id TEXT,\n    created_at BIGINT NOT NULL,\n    decided_at BIGINT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_escalations_task ON org_escalations (tenant_id, org_id, task_id)",
+      "CREATE INDEX IF NOT EXISTS idx_escalations_to ON org_escalations (tenant_id, org_id, to_worker_id, status)"
+    ]
+  },
+  {
+    "version": "v106",
+    "description": "Digital workforce C-chain: org_tasks.due_at (task SLA deadline for temporal awareness signal)",
+    "sql": [
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS due_at BIGINT"
+    ]
+  },
+  {
+    "version": "v107",
+    "description": "Digital workforce M2: org_goals.playbook_version (audit which rule-pack version produced the goal)",
+    "sql": [
+      "ALTER TABLE org_goals ADD COLUMN IF NOT EXISTS playbook_version INTEGER NOT NULL DEFAULT 1"
+    ]
+  },
+  {
+    "version": "v108",
+    "description": "K1 ADR-0056: per-(tenant, persona) cognitive core isolation — add persona_id to core state tables",
+    "sql": [
+      "ALTER TABLE decision_style ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE cognitive_model ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE narrative ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE core_values ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE survival_anchors ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE memory_nodes ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE memory_edges ADD COLUMN IF NOT EXISTS persona_id TEXT NOT NULL DEFAULT 'default'",
+      "CREATE INDEX IF NOT EXISTS idx_core_values_tenant_persona ON core_values(tenant_id, persona_id)",
+      "CREATE INDEX IF NOT EXISTS idx_survival_anchors_tenant_persona ON survival_anchors(tenant_id, persona_id)",
+      "CREATE INDEX IF NOT EXISTS idx_memory_nodes_tenant_persona ON memory_nodes(tenant_id, persona_id)",
+      "CREATE INDEX IF NOT EXISTS idx_memory_edges_tenant_persona ON memory_edges(tenant_id, persona_id)"
+    ]
+  },
+  {
+    "version": "v109",
+    "description": "K2 ADR-0056: composite (tenant_id, persona_id) PK on decision_style/cognitive_model/narrative",
+    "sql": [
+      "ALTER TABLE decision_style DROP CONSTRAINT IF EXISTS decision_style_pkey",
+      "ALTER TABLE decision_style ADD PRIMARY KEY (tenant_id, persona_id)",
+      "ALTER TABLE cognitive_model DROP CONSTRAINT IF EXISTS cognitive_model_pkey",
+      "ALTER TABLE cognitive_model ADD PRIMARY KEY (tenant_id, persona_id)",
+      "ALTER TABLE narrative DROP CONSTRAINT IF EXISTS narrative_pkey",
+      "ALTER TABLE narrative ADD PRIMARY KEY (tenant_id, persona_id)"
+    ]
+  },
+  {
+    "version": "v110",
+    "description": "Job-function learning L2 (ADR-0057): learning_requests ledger (gap → request, idempotent per (persona,capability))",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS learning_requests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    is_unknown INTEGER NOT NULL DEFAULT 0,\n    evidence TEXT NOT NULL DEFAULT '',\n    priority TEXT NOT NULL DEFAULT 'medium',\n    triggered_by_task_id TEXT,\n    status TEXT NOT NULL DEFAULT 'pending',\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_learning_req_active_persona_cap ON learning_requests (tenant_id, persona_id, capability) WHERE status IN ('pending', 'learning')",
+      "CREATE INDEX IF NOT EXISTS idx_learning_req_persona_status ON learning_requests (tenant_id, persona_id, status)",
+      "CREATE INDEX IF NOT EXISTS idx_learning_req_org ON learning_requests (tenant_id, org_id, status)"
+    ]
+  },
+  {
+    "version": "v111",
+    "description": "Job-function learning L7 (ADR-0057): capability_index — formal learned-capabilities source (replaces L2 listPassedCapabilities scan)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS capability_index (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    exam_score DOUBLE PRECISION NOT NULL,\n    learning_request_id TEXT NOT NULL DEFAULT '',\n    capability_version INTEGER NOT NULL DEFAULT 1,\n    learned_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_capability_index_persona_cap ON capability_index (tenant_id, persona_id, capability)",
+      "CREATE INDEX IF NOT EXISTS idx_capability_index_persona_learned ON capability_index (tenant_id, persona_id, learned_at)"
+    ]
+  },
+  {
+    "version": "v112",
+    "description": "Job-function learning L8a (ADR-0057 D0.8): org_tasks resume_attempt_count + last_wake_event_id (wake idempotency + anti-loop guard)",
+    "sql": [
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS resume_attempt_count INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS last_wake_event_id TEXT"
+    ]
+  },
+  {
+    "version": "v113",
+    "description": "Digital workforce: org_wallets (organization-level treasury so an org can earn from the task marketplace)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS org_wallets (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    balance DOUBLE PRECISION NOT NULL DEFAULT 0,\n    currency TEXT NOT NULL DEFAULT 'CRED',\n    status TEXT NOT NULL DEFAULT 'active',\n    last_settled_at BIGINT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_wallets_org ON org_wallets (tenant_id, org_id)",
+      "ALTER TABLE org_goals ADD COLUMN IF NOT EXISTS source_marketplace_task_id TEXT",
+      "CREATE TABLE IF NOT EXISTS org_wallet_settlements (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    org_id TEXT NOT NULL,\n    wallet_id TEXT NOT NULL,\n    source_marketplace_task_id TEXT NOT NULL,\n    goal_id TEXT,\n    total_amount_minor BIGINT NOT NULL,\n    currency TEXT NOT NULL,\n    platform_pct INTEGER NOT NULL,\n    platform_amount_minor BIGINT NOT NULL,\n    org_amount_minor BIGINT NOT NULL,\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_org_wallet_settlements_source ON org_wallet_settlements (tenant_id, source_marketplace_task_id)",
+      "CREATE TABLE IF NOT EXISTS org_wallet_transactions (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    wallet_id TEXT NOT NULL,\n    transaction_type TEXT NOT NULL,\n    amount_minor BIGINT NOT NULL,\n    currency TEXT NOT NULL,\n    reference_type TEXT,\n    reference_id TEXT,\n    created_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_org_wallet_tx_wallet ON org_wallet_transactions (tenant_id, wallet_id, created_at)"
+    ]
+  },
+  {
+    "version": "v114",
+    "description": "Bidirectional task market (ADR-0058): org can bid on marketplace tasks alongside personas; publisher confirms assignment",
+    "sql": [
+      "ALTER TABLE marketplace_tasks ADD COLUMN IF NOT EXISTS assignee_kind TEXT NOT NULL DEFAULT 'persona'",
+      "ALTER TABLE marketplace_tasks ADD COLUMN IF NOT EXISTS assignee_org_id TEXT",
+      "ALTER TABLE marketplace_tasks ADD COLUMN IF NOT EXISTS publisher_verified INTEGER NOT NULL DEFAULT 0",
+      "CREATE TABLE IF NOT EXISTS task_org_applications (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    task_id TEXT NOT NULL,\n    org_id TEXT NOT NULL,\n    ranking_score DOUBLE PRECISION NOT NULL DEFAULT 0,\n    status TEXT NOT NULL DEFAULT 'submitted',\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_org_applications ON task_org_applications (tenant_id, task_id, org_id)",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_applications_task ON task_org_applications (tenant_id, task_id)",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_applications_org ON task_org_applications (tenant_id, org_id, status)",
+      "CREATE TABLE IF NOT EXISTS task_org_assignments (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    task_id TEXT NOT NULL,\n    org_id TEXT NOT NULL,\n    application_id TEXT,\n    org_goal_id TEXT,\n    status TEXT NOT NULL DEFAULT 'assigned',\n    assigned_at BIGINT NOT NULL,\n    submitted_at BIGINT,\n    completed_at BIGINT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_task ON task_org_assignments (tenant_id, task_id, created_at)",
+      "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_org ON task_org_assignments (tenant_id, org_id, status)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
