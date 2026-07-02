@@ -14,7 +14,7 @@ First release candidate for `2.0.0` GA — ~172 commits since `2.0.0-beta.7`, ha
 - **Per-(tenant, persona) cognitive core isolation** (ADR-0056) — one organization can run multiple distinct digital-employee personas, each born with its own deterministic cognitive core + personality archetype (explorer / guardian / analyst / doer).
 - **Digital workforce organization** (M0–M7) — org chart, deterministic decomposition, delegation/reporting, escalation chains, SLA time-awareness, versioned Manager playbooks, bounded autonomous operation, strategy-assist layer.
 - **Bidirectional task marketplace + org bidding** (ADR-0058) — organizations bid on, accept, execute, and settle marketplace tasks into an org wallet.
-- **Perception as a sensory teacher** (ADR-0051, all phases) — multimodal ingestion → distillation gate → memories; realtime stream, rhythm, and voice perception; GDPR Art.17 media physical-deletion closure.
+- **Perception as a sensory teacher** (ADR-0051, Phases 1–5) — deterministic provider contract, BYOK multimodal teacher + quota, `perception_events` audit ledger, deterministic environment sidecar → rhythm, realtime WebSocket stream, voice ASR; multimodal ingestion → distillation gate → memories; GDPR Art.17 media physical-deletion closure.
 - **Proactivity** (ADR-0054) — deterministic gate over existing internal signals; outbound nudges, proactive reply enhancement, push delivery groundwork.
 - **Job-function-driven learning** (ADR-0057) — gap detection → request → shadow-kernel exam verification → distillation, all zero-LLM at runtime.
 - **Humanization** (ADR-0056 humanization) — mood, relationship, temporal awareness, stance, variability, internal drive — all deterministic.

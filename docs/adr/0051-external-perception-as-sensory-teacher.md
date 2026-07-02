@@ -1,6 +1,6 @@
 # 0051 — External perception is a sensory teacher, not a runtime sense
 
-**Status:** Accepted (Phase 1)
+**Status:** Accepted（Phase 1-5 均已交付——见下方「后续阶段」清单已由 📋 转为 ✅；原头部标 "Phase 1" 已滞后，全维评审 G7 校正）
 **Date:** 2026-06-13
 **Scope:** `src/perception` (new bounded context), `packages/kernel`
 (core-self distilled-artifact source), reuses `src/intelligence`
@@ -67,7 +67,7 @@
 
 ## Phasing（分阶段）
 
-本 ADR 当前落地 **Phase 1**（论点兼容性的真实证明，零外部依赖、本地可验证）：
+Phase 1（论点兼容性的真实证明，零外部依赖、本地可验证）——**已交付**，后续 Phase 2-5 亦已交付（见下）：
 
 - `src/perception/`：`PerceptionProvider` 契约 + `MockPerceptionProvider`（确定性、可测、
   无需外部 key）+ `PerceptionDistiller`。
@@ -76,14 +76,14 @@
   血缘——溯源/审计能分清一条候选源自「听了段经历」还是「读了篇文档」。感知 provenance 也体现在
   记忆内容第一人称「我听到/我看到」+ evidence 指向真实记忆 id。
 
-后续阶段（未实现，登记）：
+后续阶段（**均已交付**，全维评审 G7 由「未实现，登记」校正为已落地）：
 
-- **Phase 2**：BYOK perception provider（用户自带多模态 key，沿用 BYOK fail-closed 语义）+
-  配额（perception_minutes/frames）+ 真实云/本地 ollama-llava provider。
-- **Phase 3**：`perception_events` / `perception_media_refs` 落库 + GDPR 导出/擦除 +
-  对象存储引用 + retention worker + 引入 `'perception'` artifact source。
-- **Phase 4**：确定性环境旁路（光强/声压等低维信号纯确定性提取 → 环境状态喂节律，无 LLM）。
-- **Phase 5**：实时流（分片/websocket，异步处理不阻塞决策主循环）。
+- ✅ **Phase 2**：BYOK perception provider（用户自带多模态 key，沿用 BYOK fail-closed 语义）+
+  配额（perception_minutes/frames）+ 真实云/本地 provider（`src/perception/perception-provider.ts`）。
+- ✅ **Phase 3**：`perception_events` / `perception_media_refs` 落库 + GDPR 导出/擦除 +
+  对象存储引用 + retention worker（`src/perception/media/media-retention-worker.ts`）+ `'perception'` artifact source。
+- ✅ **Phase 4**：确定性环境旁路（`src/perception/environment/`，低维信号纯确定性提取 → 环境状态喂节律，无 LLM）。
+- ✅ **Phase 5**：实时流（分片/websocket，`src/server/routes/companion/perceive-stream.ts`，异步处理不阻塞决策主循环）。
 
 ## Consequences（后果）
 
@@ -100,7 +100,7 @@
 - 原始音视频是最敏感 PII，**绝不进主库**（Phase 3 对象存储引用 + process-and-delete）。
 - 不存人脸/声纹生物模板（除非另开合规 ADR）。
 - 多模态推理成本高（Phase 2 配额 + 上传前 duration/size 上限 + 异步 job）。
-- 第一阶段**不做** getUserMedia / 实时流 / 硬件 / 多人会议 / 自动改写身份。
+- 实时流已交付（Phase 5，分片/WS）；仍**不做** getUserMedia 直采 / 硬件 / 多人会议 / 自动改写身份（身份类变更恒走审批门）。
 
 ## Product framing（产品定位，来自 ADR-0046 C 端）
 

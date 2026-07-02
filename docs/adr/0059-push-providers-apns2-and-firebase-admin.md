@@ -1,4 +1,6 @@
-# 0032 — Push providers: apns2 (iOS) + firebase-admin (Android)
+# 0059 — Push providers: apns2 (iOS) + firebase-admin (Android)
+
+> 注：本 ADR 原误用编号 0032（与 0032-ppf-v1-zod-schemas 冲突），已重编为 0059（全维评审 G5）。
 
 **Status:** Accepted
 **Date:** 2026-05-10

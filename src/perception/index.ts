@@ -7,8 +7,9 @@
  * 注：media/（Edge-P5 媒体引用 + GDPR）是 privacy/retention 基础设施，由 privacy-service / retention
  * worker 直接 import，**不经本 barrel 导出**（非感知能力出口，是存储侧引用元数据管理）。
  * 真 LLM 感官老师已实现（LlmPerceptionProvider，按租户 BYOK 选用）；感知配额计量（#113）、
- * perception_events 审计落库（#114）、独立 'perception' artifact source（v088）均已落地。
- * 未实现（登记债）：实时流；感知节律集成（环境状态影响打扰阈值等）；failed-status 感知事件。
+ * perception_events 审计落库（#114，含 failed-status 区分老师失败）、独立 'perception' artifact source（v088）、
+ * 实时流式感知（perceive-stream.ts，分片/WS）、确定性环境旁路→节律集成（environment/）均已落地
+ * （ADR-0051 Phase 1-5 全部交付；原「未实现登记债」注释已滞后，全维评审 G7 校正）。
  */
 
 export type {
