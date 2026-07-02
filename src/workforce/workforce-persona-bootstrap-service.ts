@@ -87,17 +87,27 @@ export class WorkforcePersonaBootstrapService {
   /**
    * 给一个 worker 出生独立人格内核（K3 工厂取独立 core；幂等不覆盖已成长状态）。bootstrap 与 hireWorker 共用，
    * 同一出生逻辑不漂移。
-   *   幂等：该 persona 内核已有人格痕迹 → 不覆盖（保护已成长人格）。只看 decisionStyle.exists() 不够：某 persona
-   *   可能已写 narrative/cognitiveModel 却无 decision_style row，会被误判新生而覆盖叙事（与 PR #159 出生扰动同构
-   *   的坑）。故检查本片已 persona 隔离的三张人格特征表 (decisionStyle/cognitiveModel/narrative)。decisionStyle/
-   *   cognitiveModel 判 row 存在；narrative 判**内容非空**（空串叙事与未出生不可区分，按新生处理是正确语义）。
-   *   **不**查 values/memories/survival——它们在 CoreRhythmLayer 仍 tenant 级、尚未 persona-aware，全核心检查会
-   *   误伤同租户其他 persona 共享的状态。
+   *   幂等：该 persona 内核**任一核心维度非空** → 视为已出生/已成长，不覆盖（保护已成长人格）。
+   *   必须覆盖 CoreSelfState 全部 7 个持久核心维度——ADR-0056 K5b 后 values/memories/survival 也已按
+   *   (tenant, persona) 隔离（见 CoreRhythmLayer 构造），某 persona 可能已写 values/memories/survival 却无
+   *   decision_style/cognitive/narrative row，只看三件套会误判新生、污染其已有核心人格出生状态（与 PR #159
+   *   出生扰动同构的坑；此处镜像 ChronoSynthOS.maybeSeedPersonality 的 7 维纯净判定）。decisionStyle/
+   *   cognitiveModel 用 row 存在性判（非 updatedAt，避 TestClock(0) 误判）；其余维度判非空。
+   *   边界：纯净以**核心人格 7 维**为界，不以租户外围业务表（wallet/avatars 等）为界。
    */
   private birthPersona(spec: WorkerPersonaSpec): PersonaBirthOutcome {
     const core = this.os.getCore(spec.personaId);
     const base = { personaId: spec.personaId, roleCode: spec.roleCode, archetype: spec.archetype } as const;
-    if (core.decisionStyle.exists() || core.cognitiveModel.exists() || core.narrative.get().trim() !== '') {
+    const state = core.getState();
+    const isPristine =
+      !core.decisionStyle.exists() &&
+      !core.cognitiveModel.exists() &&
+      state.values.size === 0 &&
+      state.memories.size === 0 &&
+      state.edges.length === 0 &&
+      state.survivalAnchors.length === 0 &&
+      state.narrative.trim() === '';
+    if (!isPristine) {
       return { ...base, kind: 'skipped_existing' };
     }
     /* 出生：写原型决策风格 + 一句出生叙事（确定性）。 */

@@ -201,6 +201,39 @@ describe('WorkerExecutionService（D3 真实执行接线）', () => {
     assert.equal(invokeLog.length, 0, '抢不到的执行者不调用管线');
   });
 
+  it('★改派竞态门★：任务被 reassign 改派（仍 delegated）后，旧 assignee 的执行 CAS 抢不到（不越权用旧 persona 执行）', () => {
+    /* 功能评审 Codex 确认 High：执行 CAS 若只按 status 不锁 assignee，则任务在 requireExecutableTask 校验后、
+     * CAS 前被改派给别人（仍 delegated），旧 worker 仍抢到执行并用旧 persona 内核——跨人格/越权。修复=CAS 同时
+     * 锁 assigned_to_worker_id。此处直接验证 store CAS 语义（fix 的核心保证）。 */
+    const taskId = seedTask('low', true, icId);
+    /* 任务被改派给 mgr（仍 delegated）——模拟执行门校验后、CAS 前发生的并发改派。 */
+    assert.equal(store.reassignDelegatedTaskIfHeldBy('org-1', taskId, icId, mgrId, clock), true, '改派成功');
+    /* 旧 assignee(ic) 的 assignee-scoped CAS 抢不到（status 仍 delegated 但 assignee 已非 ic）。 */
+    assert.equal(
+      store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'in_progress', null, clock, icId),
+      false, '旧 assignee 的 CAS 必须落空（防越权执行）',
+    );
+    /* 任务状态未被旧 worker 改动（仍 delegated，仍归 mgr）。 */
+    const t = store.getTask('org-1', taskId)!;
+    assert.equal(t.status, 'delegated');
+    assert.equal(t.assignedToWorkerId, mgrId);
+    /* 新 assignee(mgr) 的 CAS 能抢到（合法执行者）。 */
+    assert.equal(
+      store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'in_progress', null, clock, mgrId),
+      true, '新 assignee 的 CAS 应成功',
+    );
+  });
+
+  it('★改派竞态门·省略 assignee 向后兼容★：不传 expectedAssignee 时 CAS 只按 status（挂起/复位路径旧行为不变）', () => {
+    const taskId = seedTask('low', true, icId);
+    /* 不传 expectedAssignee → 只按 status，delegated→blocked 成功（复位/挂起等非执行推进不锁 assignee）。 */
+    assert.equal(
+      store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '复位', clock),
+      true, '省略 assignee → 旧 status-only 行为',
+    );
+    assert.equal(store.getTask('org-1', taskId)!.status, 'blocked');
+  });
+
   it('★铁律4★：管线 pending_confirmation → 不自动补 token，回 needs_pipeline_confirmation，任务退回 delegated 可重入', async () => {
     const taskId = seedTask('low');
     nextDecision = { ok: false, invocationId: 'inv-2', status: 'pending_confirmation', reason: '高风险工具需二次确认', confirmationTokenId: 'ctok-1' };

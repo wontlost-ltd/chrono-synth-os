@@ -276,11 +276,21 @@ export class OrgWorkforceStore {
    * 防同一任务被并发重复执行（两个执行循环同时把 delegated 任务拉起执行）。返回是否真的改了（changes>0）。
    * 只有抢到「delegated→in_progress」转移的那一个执行者真正调用工具，其余拿到 false 直接退出。
    */
-  transitionTaskExecutionIfStatus(orgId: string, taskId: string, expectedStatus: TaskStatus, nextStatus: TaskStatus, resultSummary: string | null, now: number): boolean {
-    const r = this.db.prepare<void>(
+  /**
+   * 状态 CAS 推进任务执行状态。可选 `expectedAssignee`：给定时 CAS **同时**约束 assigned_to_worker_id
+   * ——发起执行门（delegated→in_progress）必须传本 worker id，否则任务在 require 校验后、CAS 前被
+   * reassign 改派（仍 delegated），旧 worker 会凭 status-only CAS 抢到执行、用旧 persona 内核执行（越权/内核串味，
+   * 功能评审 Codex 确认的 High 竞态）。挂起/复位等非执行推进不需约束 assignee，省略即旧行为（向后兼容）。
+   */
+  transitionTaskExecutionIfStatus(orgId: string, taskId: string, expectedStatus: TaskStatus, nextStatus: TaskStatus, resultSummary: string | null, now: number, expectedAssignee?: string): boolean {
+    const assigneeClause = expectedAssignee !== undefined ? ' AND assigned_to_worker_id = ?' : '';
+    const stmt = this.db.prepare<void>(
       `UPDATE org_tasks SET status = ?, result_summary = ?, updated_at = ?
-       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = ?`,
-    ).run(nextStatus, resultSummary, now, this.tenantId, orgId, taskId, expectedStatus);
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = ?${assigneeClause}`,
+    );
+    const r = expectedAssignee !== undefined
+      ? stmt.run(nextStatus, resultSummary, now, this.tenantId, orgId, taskId, expectedStatus, expectedAssignee)
+      : stmt.run(nextStatus, resultSummary, now, this.tenantId, orgId, taskId, expectedStatus);
     return r.changes > 0;
   }
 

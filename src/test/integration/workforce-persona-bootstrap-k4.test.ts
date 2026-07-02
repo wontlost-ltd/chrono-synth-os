@@ -88,6 +88,32 @@ describe('K4 ADR-0056 数字员工人格出生（多原型独立内核）', () =
     assert.equal(os.getCore('p-researcher').decisionStyle.exists(), false, '跳过的 persona 不写决策风格');
   });
 
+  /* 功能评审 Codex 确认 High：ADR-0056 K5b 后 values/memories/survival 已 per-persona。守卫若只看三件套
+   * (decision_style/cognitive/narrative)，只写过这些维度的 persona 会被误判新生、覆盖其已有核心人格出生状态。
+   * 修复=守卫检查 CoreSelfState 全 7 维纯净（镜像 maybeSeedPersonality）。逐维参数化，防未来维度漂移。 */
+  const K5B_DIMS: Array<{ name: string; write: (core: ReturnType<ChronoSynthOS['getCore']>) => void }> = [
+    { name: 'values', write: (core) => { core.addValue('求真', 0.77); } },
+    { name: 'memories', write: (core) => { core.addMemory('semantic', '记得第一次交付', 0.6, 0.7); } },
+    { name: 'survivalAnchors', write: (core) => { core.addSurvivalAnchor('不可越权', 'constraint', { rule: 'no-priv-esc' }, 5); } },
+  ];
+  for (const dim of K5B_DIMS) {
+    it(`★幂等·仅 ${dim.name} 已写也不覆盖（K5b 维度）★：persona 只有该维度但无三件套 → skipped，不污染核心`, () => {
+      const core = os.getCore('p-researcher');
+      dim.write(core);
+      /* 前置确认：只写了该 K5b 维度，三件套均空（否则测不到「仅 K5b 维度」的守卫）。 */
+      assert.equal(core.decisionStyle.exists(), false);
+      assert.equal(core.cognitiveModel.exists(), false);
+      assert.equal(core.narrative.get().trim(), '');
+
+      const r = svc.bootstrap('org-1', pod());
+      const outcome = r.births.find((b) => b.personaId === 'p-researcher')!;
+      assert.equal(outcome.kind, 'skipped_existing', `仅 ${dim.name} 已写 → 视为已存在，不重新出生`);
+      /* 未被 seed：出生流程整体跳过，不写决策风格/不覆盖叙事。 */
+      assert.equal(core.decisionStyle.exists(), false, '跳过的 persona 不写决策风格');
+      assert.equal(core.narrative.get().trim(), '', '跳过的 persona 不写出生叙事');
+    });
+  }
+
   it('★出生叙事★：每 worker 有原型化自我叙事', () => {
     svc.bootstrap('org-1', pod());
     assert.match(os.getCore('p-researcher').narrative.get(), /探索者/);

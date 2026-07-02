@@ -128,7 +128,10 @@ export class WorkerExecutionService {
      *    登记学习请求 + 挂起任务（零-LLM 铁律：遇缺口不当场调 LLM）。在风险/审批/CAS **之前**短路，
      *    避免为一个学不会的任务白烧审批/并发状态。未注入 learning service = 跳过（向后兼容）。 */
     if (this.learning && task.requiredCapabilities.length > 0) {
-      const personaId = this.personaIdOf(input.orgId, task);
+      /* persona 用 **input.workerId** 解析（非 task 快照）：requireExecutableTask 已确认此刻 assignee===workerId，
+       * 故二者等价；显式用 workerId 与执行门口径一致、去除 stale-task 表象。学习请求按此 worker 的**客观能力缺口**
+       * 登记，与后续是否被改派无关——缺口是这名数字员工自身的事实，改派不会使其消失，故有意不随挂起 CAS 回滚。 */
+      const personaId = this.personaIdOfWorker(input.orgId, input.workerId);
       const outcomes = this.learning.detectAndRegister({
         orgId: input.orgId,
         personaId,
@@ -155,11 +158,12 @@ export class WorkerExecutionService {
           /* d.kind === 'suspend'：落回 L8a 挂起。 */
         }
 
-        /* 挂起任务（delegated→blocked，原因=能力缺口）——**CAS** 而非无条件覆盖：本路径未抢 in_progress、不拥有
-         * 任务状态，若任务已被并发改走则不覆盖（Codex L2 复审）。学习请求已登记不回滚（缺口客观存在）；
-         * CAS 没抢到说明状态已变，按并发冲突抛错让调用方重试。学完唤醒重跑（L8a）。 */
-        if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'blocked', `能力缺口待进修：${caps}`, this.now())) {
-          throw new WorkerExecutionError(`任务 ${input.taskId} 非 delegated 或已被并发改动，挂起失败（学习请求已登记，请重试）`);
+        /* 挂起任务（delegated→blocked，原因=能力缺口）——**CAS 且锁 assignee**：本路径未抢 in_progress、不拥有
+         * 任务状态，若任务已被并发改走（状态变 / reassign 改派给别人）则不覆盖（Codex 复审）。CAS 同时约束
+         * assigned_to_worker_id=input.workerId，避免任务在能力检测后被改派、本 worker 仍把别人的任务挂起。
+         * 学习请求已登记不回滚（缺口客观存在）；CAS 没抢到说明状态/指派已变，按并发冲突抛错让调用方重试。 */
+        if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'blocked', `能力缺口待进修：${caps}`, this.now(), input.workerId)) {
+          throw new WorkerExecutionError(`任务 ${input.taskId} 非 delegated 或已被并发改动/改派，挂起失败（学习请求已登记，请重试）`);
         }
         return { kind: 'learning_required', gaps: outcomes, reason: `缺能力：${caps}（已登记学习请求，待进修后重跑）` };
       }
@@ -187,9 +191,13 @@ export class WorkerExecutionService {
     /* ③ actor 身份（D1）：org_worker + 人类 principal 绝不为空（resolve 内部对空 principal 抛错）。 */
     const actor = resolveWorkerExecutionActor(input.workerId, input.principalUserId);
 
-    /* ④ 并发门：CAS delegated→in_progress；没抢到（已被并发拉起/状态变了）→ 不执行。 */
-    if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'in_progress', null, this.now())) {
-      throw new WorkerExecutionError(`任务 ${input.taskId} 非 delegated 或已被并发执行，无法发起执行`);
+    /* ④ 并发门：CAS delegated→in_progress，**且锁 assignee=input.workerId**。只按 status 会有致命竞态：
+     *    requireExecutableTask 校验 assignee 后、本 CAS 前，任务若被并发 reassign 改派给别人（仍 delegated），
+     *    旧 worker 凭 status-only CAS 仍抢到执行，并用**下方 stale task 对象里的旧 assignee** 解析 persona 内核执行
+     *    ——跨人格/越权执行（功能评审 Codex 确认 High）。CAS 约束 assigned_to_worker_id 后，改派即令本次 CAS 落空、
+     *    安全中止。 */
+    if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'in_progress', null, this.now(), input.workerId)) {
+      throw new WorkerExecutionError(`任务 ${input.taskId} 非 delegated 或已被并发执行/改派，无法发起执行`);
     }
 
     /* ⑤ 真实执行：调用管线。管线自身 confirmation 与审批门叠加（铁律4）。 */
@@ -197,7 +205,9 @@ export class WorkerExecutionService {
     try {
       decision = await this.executor.invoke({
         tenantId: this.tenantId,
-        personaId: task.assignedToWorkerId ? this.personaIdOf(input.orgId, task) : '',
+        /* persona 从 **CAS 已锁定的 input.workerId** 解析（非 stale task 对象）：④ 的 assignee-scoped CAS 已确保
+         * 任务此刻仍指派给本 worker，用其 worker→persona 是本次执行的唯一合法人格上下文，杜绝 stale task 串味。 */
+        personaId: this.personaIdOfWorker(input.orgId, input.workerId),
         toolId: input.toolId,
         invokerType: actor.invokerType,
         invokerId: actor.invokerId,
@@ -241,9 +251,9 @@ export class WorkerExecutionService {
     return task;
   }
 
-  /** 取执行者数字员工绑定的人格内核 id（喂给管线做权限/人格上下文）。 */
-  private personaIdOf(orgId: string, task: OrgTask): string {
-    const worker = this.store.getWorker(orgId, task.assignedToWorkerId ?? '');
+  /** 取指定 worker 绑定的人格内核 id（喂给管线做权限/人格上下文）。执行门/缺口检测都用 workerId，非 stale task。 */
+  private personaIdOfWorker(orgId: string, workerId: string): string {
+    const worker = this.store.getWorker(orgId, workerId);
     return worker?.personaId ?? '';
   }
 
