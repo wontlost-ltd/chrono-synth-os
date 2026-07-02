@@ -3,7 +3,7 @@
  *
  * 实现 MCP Spec 2024-11-05 的核心方法：
  *  - initialize：协商协议版本和能力
- *  - tools/list：返回当前 token 可调用的工具
+ *  - tools/list：返回本部署的能力目录（注册了哪些工具），非 per-token 过滤清单；真授权在 tools/call 强制
  *  - tools/call：执行工具调用，路由至 ToolInvocationPipeline
  *  - ping：保活
  *
@@ -90,8 +90,10 @@ export class ChronoMcpServer {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      /* 内部异常细节只进日志，对外（含已认证 MCP 客户端）只回通用文案——避免把 DB/内部错误消息透传出去
+       * 被用于枚举内部实现（全维评审 G1）。 */
       this.logger.warn(LAYER, `请求处理异常 method=${request.method}: ${msg}`);
-      return errorResponse(request.id, JSONRPC_ERROR_INTERNAL, `内部错误: ${msg}`);
+      return errorResponse(request.id, JSONRPC_ERROR_INTERNAL, '内部错误');
     }
   }
 
@@ -106,6 +108,12 @@ export class ChronoMcpServer {
     };
   }
 
+  /**
+   * tools/list：返回**能力目录**（本部署注册了哪些工具及其 schema/风险标记），非「当前 token 可调用的工具」。
+   * 真正的调用授权在 tools/call 经 ToolInvocationPipeline 双层门控（authz + permission）逐次强制，未授权工具
+   * 调用会被拒——故目录本身对已认证同租户客户端可见是可接受的（全维评审漏报：语义应是 capability catalog，
+   * 不是 per-token 过滤清单）。工具元数据不含敏感实现细节，仅 id/描述/风险/输入 schema。
+   */
   private handleToolsList(): McpToolsListResult {
     const tools: McpTool[] = this.registry.list().map((adapter) => ({
       name: adapter.metadata.id,
@@ -149,12 +157,30 @@ export class ChronoMcpServer {
     }
 
     const code = mapStatusToErrorCode(decision.status);
-    return errorResponse(request.id, code, decision.reason, {
+    /* 对外错误文案脱敏（全维评审 G1 收口）：业务性拒绝（授权/权限/配额/待确认/工具不存在）的 reason 对客户端
+     * 有意义且不含内部串，原样返回；**系统性失败**（failed/timeout/circuit_open 等，reason 可能内嵌 adapter/DB
+     * 异常 err.message）只回通用文案，细节留 status + 内部日志。 */
+    const message = isBusinessDecisionStatus(decision.status) ? decision.reason : '工具执行失败';
+    if (!isBusinessDecisionStatus(decision.status)) {
+      this.logger.warn(LAYER, `工具执行失败 status=${decision.status}: ${decision.reason}`);
+    }
+    return errorResponse(request.id, code, message, {
       invocationId: decision.invocationId,
       status: decision.status,
       confirmationTokenId: decision.confirmationTokenId,
     });
   }
+}
+
+/**
+ * 业务性决策状态（reason 是 pipeline 刻意构造的清晰文案、不含内部异常串，对客户端有意义，可原样回显）；
+ * 其余（failed/timeout/denied_circuit_open——reason 在 catch 里源自 err.message）为系统性失败，须脱敏。
+ * denied_budget 与 denied_quota 同属预算/配额类业务拒绝，reason 是「当日预算/配额已耗尽」清晰文案（全维评审 G1 复审补）。
+ */
+function isBusinessDecisionStatus(status: string): boolean {
+  return status === 'denied_authorization' || status === 'denied_permission'
+    || status === 'denied_quota' || status === 'denied_budget'
+    || status === 'pending_confirmation' || status === 'tool_not_found';
 }
 
 function mapStatusToErrorCode(status: string): number {
@@ -163,6 +189,7 @@ function mapStatusToErrorCode(status: string): number {
     case 'denied_permission':
       return MCP_ERROR_PERMISSION_DENIED;
     case 'denied_quota':
+    case 'denied_budget':
       return MCP_ERROR_QUOTA_EXCEEDED;
     case 'pending_confirmation':
       return MCP_ERROR_CONFIRMATION_REQUIRED;

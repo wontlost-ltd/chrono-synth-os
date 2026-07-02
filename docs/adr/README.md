@@ -85,6 +85,11 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 52 | [Edge autonomy & perception phase re-rank](0052-edge-autonomy-and-perception-phase-rerank.md) | Accepted |
 | 53 | [Firmware persona subset spec](0053-firmware-persona-subset-spec.md) | Accepted |
 | 54 | [Proactivity is a deterministic gate over existing signals, not a new reasoning loop](0054-proactive-persona-self-initiated-contact.md) | Accepted |
+| 55 | [Digital workforce execution governance: worker is actor, not principal; high-risk requires human auth](0055-digital-workforce-execution-governance.md) | Accepted |
+| 56 | [Per-(tenant, persona) cognitive core isolation](0056-per-persona-cognitive-core-isolation.md) | Accepted |
+| 57 | [Job-function-driven learning: gap detection + dual-teacher review + shadow-kernel exam + deterministic scoring](0057-job-function-driven-learning.md) | Accepted |
+| 58 | [Bidirectional task marketplace: orgs & personas bid for tasks, publisher confirms assignment](0058-bidirectional-task-market-org-bidding.md) | Accepted |
+| 59 | [Push providers: apns2 (iOS) + firebase-admin (Android)](0059-push-providers-apns2-and-firebase-admin.md) | Accepted |
 
 The first 31 records were back-filled in P1.5 to cover kernel
 architecture, storage, agent layer, deployment, and product policy.
