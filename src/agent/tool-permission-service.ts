@@ -182,8 +182,9 @@ export class ToolPermissionService {
       completedAt: input.completedAt ?? invokedAt,
       confirmationTokenId: input.confirmationTokenId,
     }));
+    /* 不带 tenant_id label（全维评审 F2）：tenant_id 是无界基数，× tool × outcome 会让 OTel 后端时序爆炸/成本失控。
+     * 项目约定 metrics 默认不带租户维度（与 requestsTotal 一致）；租户级归因走 DB/审计/rollup，不进指标标签。 */
     toolInvocationOutcomeTotal.add(1, {
-      tenant_id: input.tenantId,
       tool_id: input.toolId,
       outcome: input.status,
     });

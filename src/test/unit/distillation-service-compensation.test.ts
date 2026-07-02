@@ -113,7 +113,9 @@ describe('DistillationService compile compensation (ADR-0047)', () => {
     assert.equal(store.artifact.status, 'compiled');
   });
 
-  it('补偿时回滚自身抛异常也不冒泡（best-effort），但 reject 仍被尝试并落终态', () => {
+  it('补偿时回滚抛异常/失败 → 不冒泡，且**绝不**标 rejected（保留 approved 作待修信号，F3）', () => {
+    /* 全维评审 F3：回滚失败 = 核心可能已脏。若此时仍标 rejected，会造成「假了结」掩盖核心不一致
+     * （比悬挂 approved 更危险，巡检看不到）。修复后契约=回滚失败 → 保留 approved，不 reject。 */
     const store = new MockStore();
     store.compiledBehavior = 'throw';
     const guard: SnapshotGuard = { snapshot: () => 'snap-1', rollback: () => { throw new Error('rollback also failed'); } };
@@ -121,8 +123,22 @@ describe('DistillationService compile compensation (ADR-0047)', () => {
     /* 不应抛出——补偿是 best-effort，吞掉并记录 */
     const r = svc.approve('p1', 'dart-x');
     assert.equal(r.ok, false);
-    /* 回滚失败不阻止 reject 尝试：artifact 仍落终态 rejected，不悬挂 approved */
-    assert.ok(store.setStatusCalls.some((c) => c.to === 'rejected'), 'reject 仍应被尝试');
+    /* 回滚失败 → **不**标 rejected，工件保留 approved 作为可见待修信号。 */
+    assert.ok(!store.setStatusCalls.some((c) => c.to === 'rejected'), '回滚失败时绝不标 rejected');
+    assert.equal(store.artifact.status, 'approved', '回滚失败 → 保留 approved 待人工/巡检修复');
+  });
+
+  it('补偿时回滚成功 → 才标 rejected 收尾（回滚成功是标终态的前提，F3）', () => {
+    const store = new MockStore();
+    store.compiledBehavior = 'throw';
+    let rolledBack = false;
+    const guard: SnapshotGuard = { snapshot: () => 'snap-1', rollback: () => { rolledBack = true; return true; } };
+    const svc = buildService(store, okOutcome, guard);
+    const r = svc.approve('p1', 'dart-x');
+    assert.equal(r.ok, false);
+    assert.ok(rolledBack, '回滚成功');
+    /* 回滚成功 → 标 rejected 收尾（核心已复原，安全）。 */
+    assert.ok(store.setStatusCalls.some((c) => c.to === 'rejected'), '回滚成功后标 rejected');
     assert.equal(store.artifact.status, 'rejected');
   });
 });

@@ -347,8 +347,13 @@ export class DistillationService {
   }
 
   /**
-   * 编译已应用但工件状态未能推进到 compiled 时的补偿：回滚核心写 + best-effort
-   * 标记 rejected（approved→rejected 合法）。两步都记录成败，不静默失败。
+   * 编译已应用但工件状态未能推进到 compiled 时的补偿：回滚核心写 + best-effort 标记 rejected。
+   *
+   * 两步非原子（快照恢复 + 状态标记不在同一事务）。关键一致性守则（全维评审 F3，Codex 确认）：
+   * **回滚失败时绝不把工件标 rejected**——否则会留下「核心已脏（回滚没成功）但工件看似 rejected 已了结」的
+   * 隐蔽不一致（比悬挂 approved 更危险，因为看起来已解决、巡检不会发现）。故回滚失败 → 保留工件 approved
+   * 作为**可见的待修信号**，并计 step='rollback' 指标；只有回滚成功后才标 rejected 收尾。
+   * 回滚成功但标记失败 → 工件悬挂 approved（可重试/巡检），计 step='reject' 指标——这是安全侧不一致。
    */
   private compensateAfterCompile(personaId: string, artifactId: string, snapshotId: string, why: string): void {
     let restored = false;
@@ -356,8 +361,14 @@ export class DistillationService {
       restored = this.deps.snapshotGuard.rollback(snapshotId);
     } catch (err) {
       this.deps.logger.error(LAYER, `补偿回滚抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
-      distillationCompensationFailures.add(1, { step: 'rollback' });
     }
+    if (!restored) {
+      /* 回滚未成功：核心可能已脏。**不**标 rejected——保留 approved 作为待修信号，避免「假了结」掩盖核心不一致。 */
+      distillationCompensationFailures.add(1, { step: 'rollback' });
+      this.deps.logger.error(LAYER, `编译后补偿(${why}): rollback=FAILED → 工件保留 approved 待人工/巡检修复（核心可能不一致）— ${artifactId}`);
+      return;
+    }
+    /* 回滚成功，核心已复原：标记工件 rejected 收尾（approved→rejected 合法）。 */
     let marked = false;
     try {
       marked = this.deps.store.setStatus(personaId, artifactId, 'approved', 'rejected', `rolled back: ${why}`, null);
@@ -365,11 +376,11 @@ export class DistillationService {
       this.deps.logger.error(LAYER, `补偿标记 rejected 抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
     }
     /* reject 未命中（rowsAffected=0 且未抛）通常是并发已离开 approved——非不一致；
-     * 但 reject 标记彻底失败（未 marked）意味着工件可能悬挂，计入需巡检指标。 */
+     * 但 reject 标记彻底失败（未 marked）意味着工件可能悬挂 approved（核心已回滚，安全侧）——计需巡检指标。 */
     if (!marked) {
       distillationCompensationFailures.add(1, { step: 'reject' });
     }
-    this.deps.logger.warn(LAYER, `编译后补偿(${why}): rollback=${restored ? 'ok' : 'FAILED'} reject=${marked ? 'ok' : 'FAILED'} — ${artifactId}`);
+    this.deps.logger.warn(LAYER, `编译后补偿(${why}): rollback=ok reject=${marked ? 'ok' : 'FAILED'} — ${artifactId}`);
   }
 }
 

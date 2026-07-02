@@ -9,7 +9,7 @@ import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
 import { PersonaEarningService } from '../../intelligence/persona-earning-service.js';
 import type { PersonaCoreService } from '../../persona-core/persona-core-service.js';
-import type { DecisionEngine } from '../../intelligence/decision-engine.js';
+import type { AutonomousDecisionEngine } from '../../intelligence/decision-engine.js';
 import type { ToolInvocationPipeline } from '../../agent/tool-invocation-pipeline.js';
 import { DEFAULT_EARNING_POLICY } from '@chrono/kernel';
 
@@ -57,9 +57,10 @@ function harness(opts: {
     listMarketplaceTasks: () => opts.openTasks,
   } as unknown as PersonaCoreService;
 
+  /* F8：earning 依赖窄接口 AutonomousDecisionEngine，只暴露确定性 evaluateAutonomous（同步、零 LLM）。 */
   const decisionEngine = {
-    evaluate: async () => ({ caseId: 'c', recommendedAlternative: opts.decision, rankedOptions: [], simulatedAt: 1 }),
-  } as unknown as DecisionEngine;
+    evaluateAutonomous: () => ({ caseId: 'c', recommendedAlternative: opts.decision, rankedOptions: [], simulatedAt: 1 }),
+  } as unknown as AutonomousDecisionEngine;
 
   const pipeline = {
     invoke: async (req: { arguments: { action: string } }) => {
@@ -223,9 +224,10 @@ function harnessWithHistory(opts: { openTasks: Record<string, unknown>[]; decisi
     getPersonaDetail: () => ({ id: PERSONA, status: 'active', reputation: 10, marketplaceTasks: opts.history }),
     listMarketplaceTasks: () => opts.openTasks,
   } as unknown as PersonaCoreService;
+  /* F8：earning 依赖窄接口 AutonomousDecisionEngine，只暴露确定性 evaluateAutonomous（同步、零 LLM）。 */
   const decisionEngine = {
-    evaluate: async () => ({ caseId: 'c', recommendedAlternative: opts.decision, rankedOptions: [], simulatedAt: 1 }),
-  } as unknown as DecisionEngine;
+    evaluateAutonomous: () => ({ caseId: 'c', recommendedAlternative: opts.decision, rankedOptions: [], simulatedAt: 1 }),
+  } as unknown as AutonomousDecisionEngine;
   const pipeline = {
     invoke: async (req: { arguments: { action: string } }) => {
       if (req.arguments.action === 'apply') applyCalls++;
