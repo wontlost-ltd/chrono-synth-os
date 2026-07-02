@@ -81,7 +81,7 @@
   "overrides": {
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "@types/react": "19.2.15",
+    "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "serialize-javascript": "^7.0.4",
     "undici": "^7.28.0"
