@@ -16,7 +16,7 @@ import type { EventBus } from '../events/event-bus.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { ToolInvocationPipeline } from '../agent/tool-invocation-pipeline.js';
 import type { PersonaLeaseStore } from '../storage/persona-lease-store.js';
-import type { DecisionEngine } from './decision-engine.js';
+import type { AutonomousDecisionEngine } from './decision-engine.js';
 import {
   evaluateEarningAdmission,
   evaluateAmlAggregate,
@@ -64,7 +64,8 @@ export interface EarningCycleResult {
 
 export interface PersonaEarningDeps {
   personaCore: PersonaCoreService;
-  decisionEngine: DecisionEngine;
+  /* 窄接口：只能走确定性 autonomous 路径，类型层杜绝漏传 mode 触发 LLM（ADR-0047 F8）。 */
+  decisionEngine: AutonomousDecisionEngine;
   pipeline: ToolInvocationPipeline;
   bus: EventBus;
   clock: Clock;
@@ -222,16 +223,14 @@ export class PersonaEarningService {
 
   /** 确定性决策：accept / skip / needs_human_review（走 DecisionEngine autonomous 模式） */
   private async decideAccept(task: MarketplaceTask, admission: EarningAdmission): Promise<'accept' | 'skip' | 'needs_human_review'> {
-    const result = await this.deps.decisionEngine.evaluate(
-      {
-        id: `earn_${task.id}`,
-        title: `接受任务: ${task.title}`,
-        description: `category=${task.category} reward=${task.reward} ${task.description}`,
-        alternatives: ['接受任务', '跳过任务', '请人工复核'],
-        context: { reward: task.reward, category: task.category, admission },
-      },
-      { mode: 'autonomous' },
-    );
+    /* 走窄接口 evaluateAutonomous（无 mode 参数）——确定性、零 LLM，不可能因漏传 mode 退回 growth。 */
+    const result = this.deps.decisionEngine.evaluateAutonomous({
+      id: `earn_${task.id}`,
+      title: `接受任务: ${task.title}`,
+      description: `category=${task.category} reward=${task.reward} ${task.description}`,
+      alternatives: ['接受任务', '跳过任务', '请人工复核'],
+      context: { reward: task.reward, category: task.category, admission },
+    });
     const top = result.recommendedAlternative;
     if (top === '请人工复核') return 'needs_human_review';
     if (top === '接受任务') return 'accept';

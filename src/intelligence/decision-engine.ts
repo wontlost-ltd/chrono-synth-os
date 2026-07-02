@@ -47,6 +47,15 @@ export interface DecisionEngineOptions {
   readonly mode?: ReasoningMode;
 }
 
+/**
+ * 自主决策的**窄接口**（ADR-0047 F8）：只暴露确定性 evaluateAutonomous，不暴露可能触发 LLM 的 growth 路径。
+ * 自主运营调用方（earning 等）应依赖本接口而非完整 DecisionEngine——从类型上杜绝「漏传 mode → 静默调 LLM」。
+ * DecisionEngine 实现本接口（结构兼容），无需改造构造。
+ */
+export interface AutonomousDecisionEngine {
+  evaluateAutonomous(decisionCase: DecisionCase, options?: DecisionEngineOptions): DecisionResult;
+}
+
 const LAYER = 'DecisionEngine';
 
 export class DecisionEngine {
@@ -76,7 +85,7 @@ export class DecisionEngine {
   async evaluate(decisionCase: DecisionCase, options?: DecisionEngineOptions): Promise<DecisionResult> {
     /* ADR-0047：autonomous 模式下确定性内核是一等主路径，不触碰 LLM。 */
     if (options?.mode === 'autonomous') {
-      return this.evaluateAutonomous(decisionCase, options);
+      return this.evaluateAutonomousImpl(decisionCase, options);
     }
 
     /* growth 模式：LLM 增强，失败回退规则引擎（保留既有韧性）。 */
@@ -93,10 +102,16 @@ export class DecisionEngine {
   }
 
   /**
-   * 自主模式评估（ADR-0047）：纯确定性规则引擎，零 LLM 调用。
-   * 规则引擎在此处是主路径而非降级回退；离线/无 LLM 时数字人据此决策。
+   * 自主模式评估（ADR-0047）：纯确定性规则引擎，零 LLM 调用。**公开**给自主路径（earning/自主运营）直接调用——
+   * 无 mode 参数，故**不可能**因漏传 mode 而退回 growth(LLM) 路径（全维评审 F8 footgun：evaluate() 默认 growth，
+   * 若自主调用方漏传 {mode:'autonomous'} 会静默调 LLM 破坏零-LLM 论点）。自主调用方应依赖窄接口
+   * AutonomousDecisionEngine 并调本方法，把「不调 LLM」变成类型层面的保证而非调用纪律。
    */
-  private evaluateAutonomous(decisionCase: DecisionCase, options?: DecisionEngineOptions): DecisionResult {
+  evaluateAutonomous(decisionCase: DecisionCase, options?: DecisionEngineOptions): DecisionResult {
+    return this.evaluateAutonomousImpl(decisionCase, options);
+  }
+
+  private evaluateAutonomousImpl(decisionCase: DecisionCase, options?: DecisionEngineOptions): DecisionResult {
     if (!this.ruleEngine) {
       throw new Error('autonomous 模式需要 RuleEngine，但未注入');
     }

@@ -184,10 +184,18 @@ export function registerCognitiveMemoryExecutors(): void {
   });
 
   registerCommand<PcmemUpsertEdgeParams>(PCMEM_CMD_UPSERT_EDGE, (db, p) => {
+    /* 边 upsert 的租户边界守卫（全维评审 Codex 确认 Medium）：persona_memory_edges 的唯一约束是
+     * (source, target) 不含 tenant_id/persona_id，故 ON CONFLICT 会跨租户命中同名边。source/target 是
+     * randomUUID 派生的 mem_* id（跨租户碰撞概率天文级，正常路径不会误撞），真实风险是：租户 B 若得知
+     * 租户 A 的 node id，构造同 (source,target) 边即可凭 ON CONFLICT **覆盖** A 的 strength/relation。
+     * 加 WHERE 守卫：仅当既有行 tenant/persona **与本次相同**才 UPDATE，否则冲突为 no-op（不越租户改写）。
+     * 不重建主键（改 PK 需 SQLite 全表重建 + PG 方言分叉，风险远大于收益；id 唯一使跨租户合法插入本就不撞）。 */
     const result = db.prepare<void>(
       `INSERT INTO persona_memory_edges (tenant_id, persona_id, source, target, strength, relation)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(source, target) DO UPDATE SET strength = excluded.strength, relation = excluded.relation`,
+       ON CONFLICT(source, target) DO UPDATE SET strength = excluded.strength, relation = excluded.relation
+         WHERE persona_memory_edges.tenant_id = excluded.tenant_id
+           AND persona_memory_edges.persona_id = excluded.persona_id`,
     ).run(p.tenantId, p.personaId, p.source, p.target, p.strength, p.relation);
     return { rowsAffected: result.changes };
   });
