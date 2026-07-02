@@ -62,4 +62,25 @@ describe('F5 privacy export/erase 业务审计留痕', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(businessEvents('privacy.export.started').length, 1, '应有 1 条 export.started 业务审计');
   });
+
+  it('★POST /privacy/import/commit 无效 token → 403 + 写 privacy.import.failed 业务审计（F5 debt）', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/privacy/import/commit',
+      payload: { manifestJson: '{}', commitToken: 'bogus-token-not-issued' },
+    });
+    assert.equal(res.statusCode, 403, '无效 commit token → 403');
+    const events = businessEvents('privacy.import.failed');
+    assert.equal(events.length, 1, '应有 1 条 import.failed 业务审计');
+    assert.equal(events[0].targetType, 'tenant_data');
+  });
+
+  it('★v2 portability import 同级审计★：POST /api/v2/portability/import 无效 token → 403 + import.failed（Codex 复审补：v2 不得绕过审计）', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/api/v2/portability/import',
+      payload: { manifestJson: '{}', commitToken: 'bogus-token-not-issued' },
+    });
+    assert.equal(res.statusCode, 403, 'v2 无效 commit token → 403');
+    /* v1 + v2 各一条 import.failed（同类操作都留审计，无绕过）。 */
+    assert.equal(businessEvents('privacy.import.failed').length, 1, 'v2 也应写 import.failed 业务审计');
+  });
 });

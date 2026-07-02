@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
-import { DistillationService, type SnapshotGuard } from '../../intelligence/distillation-service.js';
+import { DistillationService, NEEDS_REPAIR_REASON_PREFIX, type SnapshotGuard } from '../../intelligence/distillation-service.js';
 import type { ArtifactCompiler, CompileOutcome } from '../../intelligence/artifact-compiler.js';
 import type { DistilledArtifactStore } from '../../storage/distilled-artifact-store.js';
 import { DEFAULT_DISTILLATION_POLICY, type DistilledArtifact, type ArtifactStatus } from '@chrono/kernel';
@@ -34,13 +34,15 @@ class MockStore {
   listByPersona(): DistilledArtifact[] { return [this.artifact]; }
   listByStatus(): DistilledArtifact[] { return this.artifact.status === 'candidate' ? [this.artifact] : []; }
 
-  setStatus(_personaId: string, _id: string, from: ArtifactStatus, to: ArtifactStatus): boolean {
+  setStatus(_personaId: string, _id: string, from: ArtifactStatus, to: ArtifactStatus, reason?: string | null): boolean {
     this.setStatusCalls.push({ from, to });
     if (to === 'compiled') {
       if (this.compiledBehavior === 'throw') throw new Error('simulated DB lock on compiled advance');
       if (this.compiledBehavior === 'false') return false;
     }
-    this.artifact = { ...this.artifact, status: to };
+    /* CAS：仅当当前状态匹配 from 才推进（贴近真实 store 语义，供 F3 自转移 approved→approved 写 reason 测试）。 */
+    if (this.artifact.status !== from) return false;
+    this.artifact = { ...this.artifact, status: to, ...(reason != null ? { reason } : {}) };
     return true;
   }
 }
@@ -140,6 +142,29 @@ describe('DistillationService compile compensation (ADR-0047)', () => {
     /* 回滚成功 → 标 rejected 收尾（核心已复原，安全）。 */
     assert.ok(store.setStatusCalls.some((c) => c.to === 'rejected'), '回滚成功后标 rejected');
     assert.equal(store.artifact.status, 'rejected');
+  });
+
+  it('★F3 待修守卫★：回滚失败 → 工件打 NEEDS_REPAIR 标记（仍 approved），且 approve() 拒绝重编译', () => {
+    /* debt 收口：回滚失败的 approved 工件核心可能已脏，须与「干净可重试 approved」区分——用 reason 前缀标记，
+     * approve() 见标记即拒绝重编译（避免在可能不一致的核心上二次编译加剧污染）。 */
+    const store = new MockStore();
+    store.compiledBehavior = 'throw';            /* 编译后状态推进抛错 → 触发补偿 */
+    const guard: SnapshotGuard = { snapshot: () => 'snap-1', rollback: () => false }; /* 回滚失败 */
+    const svc = buildService(store, okOutcome, guard);
+
+    const first = svc.approve('p1', 'dart-x');
+    assert.equal(first.ok, false);
+    /* 工件仍 approved（未标 rejected），且 reason 带 NEEDS_REPAIR 前缀。 */
+    assert.equal(store.artifact.status, 'approved', '回滚失败保留 approved');
+    assert.ok(store.artifact.reason?.startsWith(NEEDS_REPAIR_REASON_PREFIX), 'reason 带待修标记');
+    assert.ok(!store.setStatusCalls.some((c) => c.to === 'rejected'), '回滚失败不标 rejected');
+
+    /* 再次 approve（模拟人工/巡检误触重试）→ 被待修守卫拒绝，不重编译。 */
+    store.compiledBehavior = 'ok';               /* 即便这次编译能成，也不该走到 */
+    const retry = svc.approve('p1', 'dart-x');
+    assert.equal(retry.ok, false, 'NEEDS_REPAIR 工件拒绝重编译');
+    if (!retry.ok) assert.match(retry.reason, /needs repair/i);
+    assert.notEqual(store.artifact.status, 'compiled', '待修工件绝不被重编译进核心');
   });
 });
 

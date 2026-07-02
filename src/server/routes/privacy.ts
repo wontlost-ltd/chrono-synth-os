@@ -10,8 +10,7 @@ import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { PrivacyService } from '../../privacy/privacy-service.js';
 import { CommitImportBodySchema, DryRunImportBodySchema, PaginationQuerySchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
-import { recordBusinessAuditLog } from '../../audit/audit-log-store.js';
-import type { JwtPayload } from '../../types/auth.js';
+import { recordPrivacyAudit } from '../../audit/privacy-audit.js';
 
 export function registerPrivacyRoutes(
   app: FastifyInstance,
@@ -21,26 +20,9 @@ export function registerPrivacyRoutes(
 ): void {
   const service = new PrivacyService(os, tenantFactory, config);
 
-  /**
-   * 记录一条隐私操作的**业务审计**（写不可篡改 hash-chain 审计链，非仅通用 request 审计）。
-   * GDPR Art.12（数据主体知情权）+ SOC2 CC6.1 要求关键数据操作留可证明的证据链：谁触发、目标、结果。
-   * payload 只放非敏感元数据（job id / 删除计数 / 阻断 hold id），绝不含导出内容/个人数据本身。
-   * 审计失败**不阻塞**主操作返回（best-effort，与既有 recordBusinessAuditLog 调用点一致）。
-   */
-  function auditPrivacy(request: { tenantId: string; user?: unknown }, actionType: string, targetId: string, payload: Record<string, unknown>): void {
-    const actorId = (request.user as JwtPayload | undefined)?.sub ?? 'unknown';
-    try {
-      recordBusinessAuditLog(os.getDatabase(), {
-        tenantId: request.tenantId,
-        actorType: 'user',
-        actorId,
-        actionType,
-        targetType: 'tenant_data',
-        targetId,
-        payload,
-      });
-    } catch { /* 审计失败不阻塞主操作（合规留痕是尽力而为，不能反噬用户请求） */ }
-  }
+  /* 隐私业务审计（GDPR Art.12/SOC2）——委托共享 recordPrivacyAudit，v1/v2 同一实现不漂移（F5）。 */
+  const auditPrivacy = (request: { tenantId: string; user?: unknown }, actionType: string, targetId: string, payload: Record<string, unknown>): void =>
+    recordPrivacyAudit(os.getDatabase(), request, actionType, targetId, payload);
 
   /* POST /api/v1/privacy/export — 完整租户数据导出（仅 admin，限流: 3 次/分钟） */
   app.post('/api/v1/privacy/export', { preHandler: requireRole('admin'), config: { rateLimit: { max: 3, timeWindow: '1 minute' } } }, async (request) => {
@@ -157,9 +139,15 @@ export function registerPrivacyRoutes(
     }
     try {
       const result = service.commitImport(request.tenantId, body.data.manifestJson, body.data.commitToken);
+      /* import 写入租户数据，留业务审计（F5 debt：与 export/erase 同级的合规证据链）——payload 仅计数元数据。 */
+      auditPrivacy(request, 'privacy.import.committed', result.importId, {
+        importId: result.importId, importedCount: result.importedCount,
+        skippedCount: result.skippedCount, failedCount: result.failedCount,
+      });
       return { data: result };
     } catch (err) {
       if (err instanceof Error && err.message.includes('invalid or expired')) {
+        auditPrivacy(request, 'privacy.import.failed', request.tenantId, { reason: 'invalid or expired commit token' });
         return reply.code(403).send({ error: err.message });
       }
       throw err;

@@ -90,6 +90,8 @@ export interface DistilledArtifact {
   /** 当前状态（只读：经 transitionArtifact 推进） */
   readonly status: ArtifactStatus;
   readonly createdAt: number;
+  /** 状态附注（审批/拒绝/编译/补偿原因）；补偿回滚失败会打 NEEDS_REPAIR 前缀供 approve() 拒绝重编译（F3）。 */
+  readonly reason?: string;
   /** 编译落库时间（compiled 后写入） */
   readonly compiledAt?: number;
   /**

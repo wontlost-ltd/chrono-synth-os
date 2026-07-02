@@ -35,6 +35,14 @@ import {
 const LAYER = 'DistillationService';
 /* compile mutex 存活时长：远大于单次编译耗时，仅在持有者崩溃后供抢占。 */
 const COMPILE_LEASE_TTL_MS = 60_000;
+/**
+ * 待修标记前缀（ADR-0047 F3 debt 收口）：编译后补偿**回滚失败**时，工件被迫保留 approved（核心可能已脏），
+ * 其 reason 打上本前缀。approve() 见此前缀即**拒绝重编译**——把「approved 假可重试」与「待修（核心可能不一致）」
+ * 从语义上分开，避免人工/巡检误触 approve 二次编译污染核心。用 reason 前缀而非新增 status：distilled_artifacts
+ * 的 status CHECK 改动需核心表 rebuild 迁移（本仓刻意避免，见 perception 复用既有 source 值的先例），
+ * reason 标记是等效且零迁移的守卫。修复流程另行处置带此标记的工件（回滚核心 / 人工核对后显式清标记）。
+ */
+export const NEEDS_REPAIR_REASON_PREFIX = 'NEEDS_REPAIR: ';
 
 /** 蒸馏候选输入（调用方提供；service 负责赋 id/createdAt/status） */
 export interface CandidateInput {
@@ -189,6 +197,11 @@ export class DistillationService {
      * 防御性再校验：保持「compiled 必须来自合法工件」不变量（approved 理论上已校验过，
      * 但重试入口独立，显式校验避免被绕过）。 */
     if (artifact.status === 'approved') {
+      /* F3 待修守卫：若该 approved 工件带 NEEDS_REPAIR 标记（上次编译后补偿回滚失败，核心可能已脏），
+       * **拒绝重编译**——避免在可能不一致的核心上再次编译加剧污染。须由修复流程核对/回滚核心后显式清标记。 */
+      if (artifact.reason?.startsWith(NEEDS_REPAIR_REASON_PREFIX)) {
+        return { ok: false, reason: `artifact needs repair (prior compensation rollback failed); manual repair required before recompile: ${artifact.reason}` };
+      }
       const retryProblems = validateArtifact(artifact);
       if (retryProblems.length > 0) {
         return { ok: false, reason: `invalid artifact: ${retryProblems.join('; ')}` };
@@ -363,9 +376,16 @@ export class DistillationService {
       this.deps.logger.error(LAYER, `补偿回滚抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
     }
     if (!restored) {
-      /* 回滚未成功：核心可能已脏。**不**标 rejected——保留 approved 作为待修信号，避免「假了结」掩盖核心不一致。 */
+      /* 回滚未成功：核心可能已脏。**不**标 rejected——保留 approved 作为待修信号，避免「假了结」掩盖核心不一致。
+       * 同时给 reason 打上 NEEDS_REPAIR 前缀（approved→approved 自转移写 reason），使 approve() 拒绝重编译
+       * （F3：区分「待修·核心可能脏」与「approved·干净可重试」）。写标记 best-effort，失败也已有指标+日志兜底。 */
       distillationCompensationFailures.add(1, { step: 'rollback' });
-      this.deps.logger.error(LAYER, `编译后补偿(${why}): rollback=FAILED → 工件保留 approved 待人工/巡检修复（核心可能不一致）— ${artifactId}`);
+      try {
+        this.deps.store.setStatus(personaId, artifactId, 'approved', 'approved', `${NEEDS_REPAIR_REASON_PREFIX}${why}`, null);
+      } catch (err) {
+        this.deps.logger.error(LAYER, `补偿写待修标记抛异常: ${artifactId} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+      this.deps.logger.error(LAYER, `编译后补偿(${why}): rollback=FAILED → 工件标记 NEEDS_REPAIR（核心可能不一致，approve 将拒绝重编译，待修复流程处置）— ${artifactId}`);
       return;
     }
     /* 回滚成功，核心已复原：标记工件 rejected 收尾（approved→rejected 合法）。 */

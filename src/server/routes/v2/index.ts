@@ -11,6 +11,7 @@ import { personaCoreDualWrite } from '../../../data-plane/persona-core-dual-writ
 import { PrivacyService } from '../../../privacy/privacy-service.js';
 import { DryRunImportBodySchema, CommitImportBodySchema } from '../../schemas/api-schemas.js';
 import { requireRole } from '../../plugins/rbac.js';
+import { recordPrivacyAudit } from '../../../audit/privacy-audit.js';
 
 export function registerV2Routes(
   app: FastifyInstance,
@@ -105,6 +106,8 @@ export function registerV2Routes(
         config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
       }, async (request) => {
         const status = privacyService.startExportJob(request.tenantId);
+        /* F5：v2 export 与 v1 同级留业务审计。 */
+        if (os) recordPrivacyAudit(os.getDatabase(), request, 'privacy.export.started', status.exportId, { exportId: status.exportId, state: status.state });
         return { data: status };
       });
 
@@ -132,9 +135,17 @@ export function registerV2Routes(
             body.data.manifestJson,
             body.data.commitToken,
           );
+          /* F5：v2 portability import 与 v1 同级留业务审计——同类「真实写入租户数据」不能绕过审计链。 */
+          if (os) {
+            recordPrivacyAudit(os.getDatabase(), request, 'privacy.import.committed', result.importId, {
+              importId: result.importId, importedCount: result.importedCount,
+              skippedCount: result.skippedCount, failedCount: result.failedCount,
+            });
+          }
           return { data: result };
         } catch (err) {
           if (err instanceof Error && err.message.includes('invalid or expired')) {
+            if (os) recordPrivacyAudit(os.getDatabase(), request, 'privacy.import.failed', request.tenantId, { reason: 'invalid or expired commit token' });
             return reply.code(403).send({ error: err.message });
           }
           throw err;
