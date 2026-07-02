@@ -101,6 +101,7 @@ export class DistilledArtifactStore {
       evidence: safeParse<ArtifactEvidence[]>(row.evidence, []),
       status: row.status as ArtifactStatus,
       createdAt: row.created_at,
+      ...(row.reason !== null ? { reason: row.reason } : {}),
     };
     const withCompiledAt = row.compiled_at !== null ? { ...base, compiledAt: row.compiled_at } : base;
     return row.compiled_via !== null
