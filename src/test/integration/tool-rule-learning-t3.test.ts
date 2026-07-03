@@ -24,7 +24,7 @@ function candidate(over: Partial<CandidateToolRule> = {}): CandidateToolRule {
   return {
     personaId: 'p1', toolId: 'invoice.issue', capability: 'invoicing',
     schemaVersion: 'v1', ruleVersion: 'r1', contentHash: 'h1', createdBy: 'teacher', expiresAt: null,
-    sourceArtifactId: 'artifact-1',
+    sourceArtifactId: 'artifact-1', riskClass: 'low',
     argMappings: {
       customer: { kind: 'pick', field: 'customerName' },
       currency: { kind: 'enum', field: 'ccy', allow: ['USD', 'EUR'] },
@@ -130,6 +130,7 @@ describe('T3 ADR-0060 工具规则门控学习（真实 SQLite）', () => {
         id: 'x', personaId: 'p1', toolId: 'invoice.issue', capability: 'invoicing', schemaVersion: 'v1',
         ruleVersion: 'r1', contentHash: 'h1', argMappings: { action: { kind: 'const', value: 'draft' } },
         createdBy: 'teacher', compiledAt: 2000, expiresAt: null, active: true, sourceArtifactId: '',
+        examSpecVersion: 'texam::tool-exam-v1', riskClass: 'low',
       }),
       /source_artifact_id 不得为空/,
     );

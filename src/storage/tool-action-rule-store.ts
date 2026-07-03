@@ -27,6 +27,8 @@ interface ToolActionRuleRow {
   readonly expires_at: number | string | null;
   readonly active: number;
   readonly source_artifact_id: string | null;
+  readonly exam_spec_version: string | null;
+  readonly risk_class: string | null;
 }
 
 export interface InsertToolActionRuleInput {
@@ -44,6 +46,21 @@ export interface InsertToolActionRuleInput {
   readonly active: boolean;
   /** 来源蒸馏产物 id（红线 6 provenance；门控学习通道落表时强制非空，来源可审计）。 */
   readonly sourceArtifactId: string;
+  /** 放行该规则的工具考试标识（examId::scorerVersion，红线 11 eligibility 陈旧失效溯源；service 强制非空）。 */
+  readonly examSpecVersion: string;
+  /** 学习期评定风险类（'high'|'low'，红线 11 溯源；红线 13：非授权依据；service 强制非空）。 */
+  readonly riskClass: string;
+}
+
+/** 规则的 eligibility 溯源（红线 11）：T4 projector 从活跃规则读，产出建议的 examSpecVersion/riskClass/ruleVersion。 */
+export interface RuleEligibilityProvenance {
+  readonly toolId: string;
+  readonly schemaVersion: string;
+  readonly ruleVersion: string;
+  /** 规则内容哈希（防「同 ruleVersion 内容被替换」治理事故，纳入 constraintsHash 陈旧指纹，Codex T4 复审补）。 */
+  readonly contentHash: string;
+  readonly examSpecVersion: string;
+  readonly riskClass: 'high' | 'low';
 }
 
 export class ToolActionRuleStore {
@@ -69,16 +86,41 @@ export class ToolActionRuleStore {
     if (typeof input.sourceArtifactId !== 'string' || input.sourceArtifactId.length === 0) {
       throw new Error('tool_action_rules.source_artifact_id 不得为空（红线 6：规则来源必须可追溯，禁直灌）');
     }
+    if (typeof input.examSpecVersion !== 'string' || input.examSpecVersion.length === 0) {
+      throw new Error('tool_action_rules.exam_spec_version 不得为空（红线 11：eligibility 陈旧失效需考试溯源）');
+    }
+    if (input.riskClass !== 'high' && input.riskClass !== 'low') {
+      throw new Error(`tool_action_rules.risk_class 必须为 'high'|'low'（红线 11 溯源），得到「${String(input.riskClass)}」`);
+    }
     this.db.prepare<void>(
       `INSERT INTO tool_action_rules
         (id, tenant_id, persona_id, tool_id, capability, schema_version, rule_version, content_hash,
-         arg_mappings, created_by, compiled_at, expires_at, active, source_artifact_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         arg_mappings, created_by, compiled_at, expires_at, active, source_artifact_id, exam_spec_version, risk_class)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.id, this.tenantId, input.personaId, input.toolId, input.capability, input.schemaVersion,
       input.ruleVersion, input.contentHash, JSON.stringify(input.argMappings), input.createdBy,
       input.compiledAt, input.expiresAt, input.active ? 1 : 0, input.sourceArtifactId,
+      input.examSpecVersion, input.riskClass,
     );
+  }
+
+  /**
+   * 取某 (persona, capability) 下所有 active 规则的 eligibility 溯源（红线 11）——供 T4 ToolEligibilityProjector
+   * 产出建议。只返回溯源列齐全（exam_spec_version + risk_class 非空且 risk_class 合法）的规则；旧行（无溯源）跳过。
+   */
+  listActiveEligibilityProvenance(personaId: string, capability: string): RuleEligibilityProvenance[] {
+    const rows = this.db.prepare<Pick<ToolActionRuleRow, 'tool_id' | 'schema_version' | 'rule_version' | 'content_hash' | 'exam_spec_version' | 'risk_class'>>(
+      `SELECT tool_id, schema_version, rule_version, content_hash, exam_spec_version, risk_class FROM tool_action_rules
+       WHERE tenant_id = ? AND persona_id = ? AND capability = ? AND active = 1`,
+    ).all(this.tenantId, personaId, capability);
+    const out: RuleEligibilityProvenance[] = [];
+    for (const r of rows) {
+      if (typeof r.exam_spec_version !== 'string' || r.exam_spec_version.length === 0) continue;
+      if (r.risk_class !== 'high' && r.risk_class !== 'low') continue;
+      out.push({ toolId: r.tool_id, schemaVersion: r.schema_version, ruleVersion: r.rule_version, contentHash: r.content_hash, examSpecVersion: r.exam_spec_version, riskClass: r.risk_class });
+    }
+    return out;
   }
 
   /**

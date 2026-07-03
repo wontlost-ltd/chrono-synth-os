@@ -1235,6 +1235,23 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "/* safe:add-column:tool_action_rules:source_artifact_id */ ALTER TABLE tool_action_rules ADD COLUMN source_artifact_id TEXT"
     ]
+  },
+  {
+    "version": "v115",
+    "description": "ADR-0060 T4: tool action rule eligibility provenance (exam_spec_version, risk_class) — 红线 11 陈旧失效溯源",
+    "sql": [
+      "/* safe:add-column:tool_action_rules:exam_spec_version */ ALTER TABLE tool_action_rules ADD COLUMN exam_spec_version TEXT",
+      "/* safe:add-column:tool_action_rules:risk_class */ ALTER TABLE tool_action_rules ADD COLUMN risk_class TEXT"
+    ]
+  },
+  {
+    "version": "v116",
+    "description": "ADR-0060 T4: capability→tool eligibility recommendations (recommendation only, never grant; 红线 11 staleness metadata)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS capability_tool_eligibility (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    schema_version TEXT NOT NULL,\n    source_rule_version TEXT NOT NULL,\n    exam_spec_version TEXT NOT NULL,\n    risk_class TEXT NOT NULL,\n    constraints_hash TEXT NOT NULL,\n    recommended_at INTEGER NOT NULL,\n    expires_at INTEGER,\n    active INTEGER NOT NULL DEFAULT 1\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_capability_tool_eligibility_lookup ON capability_tool_eligibility(tenant_id, persona_id)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_capability_tool_eligibility_active ON capability_tool_eligibility(tenant_id, persona_id, capability, tool_id) WHERE active = 1"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2440,6 +2457,23 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "ADR-0060 T3: tool action rule provenance (source_artifact_id) — 红线 6 来源可追溯",
     "sql": [
       "ALTER TABLE tool_action_rules ADD COLUMN IF NOT EXISTS source_artifact_id TEXT"
+    ]
+  },
+  {
+    "version": "v117",
+    "description": "ADR-0060 T4: tool action rule eligibility provenance (exam_spec_version, risk_class) — 红线 11 陈旧失效溯源",
+    "sql": [
+      "ALTER TABLE tool_action_rules ADD COLUMN IF NOT EXISTS exam_spec_version TEXT",
+      "ALTER TABLE tool_action_rules ADD COLUMN IF NOT EXISTS risk_class TEXT"
+    ]
+  },
+  {
+    "version": "v118",
+    "description": "ADR-0060 T4: capability→tool eligibility recommendations (recommendation only, never grant; 红线 11 staleness metadata)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS capability_tool_eligibility (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    schema_version TEXT NOT NULL,\n    source_rule_version TEXT NOT NULL,\n    exam_spec_version TEXT NOT NULL,\n    risk_class TEXT NOT NULL,\n    constraints_hash TEXT NOT NULL,\n    recommended_at BIGINT NOT NULL,\n    expires_at BIGINT,\n    active INTEGER NOT NULL DEFAULT 1\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_capability_tool_eligibility_lookup ON capability_tool_eligibility (tenant_id, persona_id)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_capability_tool_eligibility_active ON capability_tool_eligibility (tenant_id, persona_id, capability, tool_id) WHERE active = 1"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

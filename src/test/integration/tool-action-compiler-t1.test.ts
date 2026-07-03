@@ -25,6 +25,7 @@ function ruleInput(over: Partial<InsertToolActionRuleInput> = {}): InsertToolAct
     personaId: 'p1', toolId: 'invoice.issue', capability: 'invoicing',
     schemaVersion: 'v1', ruleVersion: 'r1', contentHash: 'h1', createdBy: 'teacher',
     compiledAt: 1000, expiresAt: null, active: true, sourceArtifactId: 'artifact-1',
+    examSpecVersion: 'texam::tool-exam-v1', riskClass: 'low',
     argMappings: {
       customer: { kind: 'pick', field: 'customerName' },
       currency: { kind: 'enum', field: 'ccy', allow: ['USD', 'EUR'] },
