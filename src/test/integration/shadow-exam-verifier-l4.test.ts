@@ -231,4 +231,23 @@ describe('L4 ADR-0057 影子内核验收（闭环零-LLM）', () => {
     assert.ok(captured);
     assert.equal(captured!.ok, false, 'SQLite 外层事务内 → 内层 BEGIN 冲突 → ok:false（不静默成功）');
   });
+
+  it('★R4 rubric 健康门★：烂 ExamSpec（空评分项）→ verify fail-closed，即便候选本可满分', () => {
+    /* tool-learning-deep-research R4：验收前 lint ExamSpec。空 rubric（无 keypoints 无 structuredFields）
+     * 任何作答都会假过/0——必须拒绝验收而非放行。用一个否则完美的候选证明守卫先于评分生效。 */
+    const badExam = { ...researchExam(), keypoints: [], structuredFields: [] };
+    /* 用一个「若换回原健康 rubric 本可满分」的候选，证明守卫先于评分生效（空 rubric 下它无法满分，正是问题）。 */
+    const perfectCandidate = narrativeCandidate('我是一名研究员，擅长文献检索、综合归纳、引用来源。');
+    const r = verifier.verify('p-researcher', badExam, perfectCandidate);
+    assert.equal(r.ok, false, '烂 rubric → 拒绝验收（fail-closed，不假过）');
+    if (r.ok) return;
+    assert.match(r.reason, /rubric 不健康|no_scoring_items/, '原因指明 rubric 不健康');
+  });
+
+  it('★R4 rubric 健康门·健康 rubric 不误伤★：正常 ExamSpec 仍正常验收（守卫不挡合法 rubric）', () => {
+    const r = verifier.verify('p-researcher', researchExam(), narrativeCandidate('我是研究员，擅长文献检索、综合归纳、引用来源。'));
+    assert.equal(r.ok, true, '健康 rubric 正常进入验收');
+    if (!r.ok) return;
+    assert.equal(r.passed, true);
+  });
 });
