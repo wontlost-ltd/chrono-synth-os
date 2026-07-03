@@ -53,6 +53,11 @@ export interface ToolMetadata {
   readonly displayName: string;
   readonly description: string;
   readonly inputSchema: McpToolSchema;
+  /**
+   * inputSchema 版本标识（ADR-0060 T4/T5 eligibility 陈旧失效检测点）。工具变更 inputSchema 时须 bump 此串，
+   * 使据旧 schemaVersion 学的规则/建议在授权侧读时失效（红线 11）。缺省 'v1'（与规则候选常用约定一致，向后兼容）。
+   */
+  readonly schemaVersion?: string;
   /** 高风险工具：强制二次确认（pipeline 自动校验） */
   readonly highRisk: boolean;
   /** 默认超时（ms）；pipeline 强制；null = 无超时（仅极少数同步工具用） */

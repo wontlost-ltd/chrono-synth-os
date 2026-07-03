@@ -88,6 +88,8 @@ const TENANT_TABLES = [
   'tool_action_rules',
   /* ADR-0060 T4：能力→工具授权资格建议（tenant/persona/capability/tool 溯源，确定性派生无敏感列），A 类标准导出+擦除 */
   'capability_tool_eligibility',
+  /* ADR-0060 T5：工具授权待审批请求（tenant/persona/capability/tool 请求队列，无敏感列），A 类标准导出+擦除 */
+  'tool_authorization_requests',
   /* digital workforce 组织金库：org_wallets（余额账户）+ 结算账本（结算记录/流水，业务派生财务数据，无敏感凭证列），A 类标准导出+擦除 */
   'org_wallets', 'org_wallet_settlements', 'org_wallet_transactions',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',

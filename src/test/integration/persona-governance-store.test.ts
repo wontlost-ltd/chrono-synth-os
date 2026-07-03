@@ -91,6 +91,27 @@ describe('per-persona 治理策略 store（ADR-0048）', () => {
     assert.equal(sanitizeGovernanceOverride({ unverifiedGrowthBudgetPerWindow: 0 }).unverifiedGrowthBudgetPerWindow, 0, '0 合法');
   });
 
+  it('sanitize toolAutoAuthWhitelist（ADR-0060 T5 红线 13）：合法保留，非法抛错', () => {
+    /* 合法：scope + 正数 maxExpiryMs + 可选 requireConfirmation。（白名单是 null-prototype map，按内容比较。）*/
+    const clean = sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': { scope: 'read', maxExpiryMs: 1000, requireConfirmation: false } } });
+    assert.deepEqual({ ...clean.toolAutoAuthWhitelist }, { 'tool.a': { scope: 'read', maxExpiryMs: 1000, requireConfirmation: false } });
+    /* 非对象整体 / 条目非对象 → 抛错。 */
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: [] }), /必须是对象/);
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': 'x' } }), /策略必须是对象/);
+    /* 非法 scope。 */
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': { scope: 'admin', maxExpiryMs: 1000 } } }), /scope/);
+    /* maxExpiryMs 必须正数（禁 0/负/非有限——自动授权禁永久）。 */
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': { scope: 'read', maxExpiryMs: 0 } } }), /maxExpiryMs/);
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': { scope: 'read', maxExpiryMs: -1 } } }), /maxExpiryMs/);
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { '': { scope: 'read', maxExpiryMs: 1 } } }), /toolId 不得为空/);
+    /* 授权层从严：原型污染键 / policy 为数组 拒绝（Codex T5 复审）。 */
+    assert.throws(() => sanitizeGovernanceOverride(JSON.parse('{"toolAutoAuthWhitelist": {"__proto__": {"scope": "read", "maxExpiryMs": 1}}}')), /原型污染键|scope|策略必须是对象/);
+    assert.throws(() => sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': [] } }), /策略必须是对象/);
+    /* 输出为 null-prototype（无继承 toString 等）。 */
+    const clean2 = sanitizeGovernanceOverride({ toolAutoAuthWhitelist: { 'tool.a': { scope: 'read', maxExpiryMs: 1 } } });
+    assert.equal(Object.getPrototypeOf(clean2.toolAutoAuthWhitelist), null, 'null-prototype map');
+  });
+
   it('upsert 落库规范化 JSON（非用户原始）：getOverride 取回 sanitize 后的对象', () => {
     const store = new PersonaGovernanceStore(db, TENANT);
     store.upsert(PERSONA, { maxAutonomousReward: 80, junk: 'drop' } as unknown, 'owner_1', 1000);

@@ -1252,6 +1252,15 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_capability_tool_eligibility_lookup ON capability_tool_eligibility(tenant_id, persona_id)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_capability_tool_eligibility_active ON capability_tool_eligibility(tenant_id, persona_id, capability, tool_id) WHERE active = 1"
     ]
+  },
+  {
+    "version": "v117",
+    "description": "ADR-0060 T5: pending tool authorization requests (non-whitelisted / high-risk eligibility → manual approval, never auto-grant)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tool_authorization_requests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    source_rule_version TEXT NOT NULL,\n    risk_class TEXT NOT NULL,\n    reason TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    requested_at INTEGER NOT NULL,\n    decided_at INTEGER,\n    decided_by TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tool_authorization_requests_lookup ON tool_authorization_requests(tenant_id, persona_id, status)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_authorization_requests_pending ON tool_authorization_requests(tenant_id, persona_id, capability, tool_id) WHERE status = 'pending'"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2474,6 +2483,15 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS capability_tool_eligibility (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    schema_version TEXT NOT NULL,\n    source_rule_version TEXT NOT NULL,\n    exam_spec_version TEXT NOT NULL,\n    risk_class TEXT NOT NULL,\n    constraints_hash TEXT NOT NULL,\n    recommended_at BIGINT NOT NULL,\n    expires_at BIGINT,\n    active INTEGER NOT NULL DEFAULT 1\n  )",
       "CREATE INDEX IF NOT EXISTS idx_capability_tool_eligibility_lookup ON capability_tool_eligibility (tenant_id, persona_id)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_capability_tool_eligibility_active ON capability_tool_eligibility (tenant_id, persona_id, capability, tool_id) WHERE active = 1"
+    ]
+  },
+  {
+    "version": "v119",
+    "description": "ADR-0060 T5: pending tool authorization requests (non-whitelisted / high-risk eligibility → manual approval, never auto-grant)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tool_authorization_requests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    source_rule_version TEXT NOT NULL,\n    risk_class TEXT NOT NULL,\n    reason TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    requested_at BIGINT NOT NULL,\n    decided_at BIGINT,\n    decided_by TEXT\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tool_authorization_requests_lookup ON tool_authorization_requests (tenant_id, persona_id, status)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_authorization_requests_pending ON tool_authorization_requests (tenant_id, persona_id, capability, tool_id) WHERE status = 'pending'"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
