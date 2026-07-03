@@ -84,6 +84,8 @@ const TENANT_TABLES = [
   'learning_requests',
   /* ADR-0057 L7：能力索引（已学能力正式来源，业务派生），A 类标准导出+擦除 */
   'capability_index',
+  /* ADR-0060 T1：工具动作规则（确定性参数构造映射，业务派生，无个人数据/敏感凭证），A 类标准导出+擦除 */
+  'tool_action_rules',
   /* digital workforce 组织金库：org_wallets（余额账户）+ 结算账本（结算记录/流水，业务派生财务数据，无敏感凭证列），A 类标准导出+擦除 */
   'org_wallets', 'org_wallet_settlements', 'org_wallet_transactions',
   'billing_outbox', 'ws_event_log', 'tenant_add_ons', 'entitlements',

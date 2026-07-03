@@ -99,6 +99,7 @@ export { v109_capability_index } from './v109.js';
 export { v110_org_tasks_resume_guard } from './v110.js';
 export { v111_org_wallet } from './v111.js';
 export { v112_bidirectional_task_market } from './v112.js';
+export { v113_tool_action_rules } from './v113.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -202,6 +203,7 @@ import { v109_capability_index } from './v109.js';
 import { v110_org_tasks_resume_guard } from './v110.js';
 import { v111_org_wallet } from './v111.js';
 import { v112_bidirectional_task_market } from './v112.js';
+import { v113_tool_action_rules } from './v113.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -305,4 +307,5 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v110_org_tasks_resume_guard,
   v111_org_wallet,
   v112_bidirectional_task_market,
+  v113_tool_action_rules,
 ];
