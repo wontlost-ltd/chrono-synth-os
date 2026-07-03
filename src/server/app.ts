@@ -164,6 +164,7 @@ import { RetrievalService } from '../intelligence/retrieval-service.js';
 import { InMemoryEmbeddingIndex } from '../intelligence/embedding-index-memory.js';
 import { PersonaEarningService } from '../intelligence/persona-earning-service.js';
 import { registerEarningRoutes } from './routes/earning.js';
+import { registerToolAutoAuthorizationRoutes } from './routes/tool-auto-authorization.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -710,6 +711,15 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     earning: personaEarningService,
     personaCore: bulkImportPersonaCoreService,
     db,
+  });
+  /* ADR-0060 T7：工具自动授权运营端点（owner-only）——触发据资格自动授权 + 待审批请求列表/决议。
+   * 治理白名单本身经既有 governance/policy 端点配（toolAutoAuthWhitelist 字段）；本路由只做运营。 */
+  registerToolAutoAuthorizationRoutes(app, {
+    db,
+    registry: toolRegistry,
+    personaCore: bulkImportPersonaCoreService,
+    logger: deps.os.getLogger(),
+    clock: deps.os.getClock(),
   });
   /* ④ 数字员工 */
   /* 数字员工组织只读 API（E1）：org chart/goals/tasks/reports（只读，不触发执行）。

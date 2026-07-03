@@ -426,7 +426,8 @@
     "agencyAuthorizations": "Agency Authorizations",
     "toolPermissions": "Tool Permissions",
     "toolInvocations": "Tool Invocations",
-    "safetyDrift": "Drift Monitor"
+    "safetyDrift": "Drift Monitor",
+    "toolAutoAuth": "Tool Auto-Authorization"
   },
   "appShell": {
     "skipToMain": "Skip to main content",
@@ -1796,6 +1797,39 @@
         "title": "Life Simulations",
         "desc": "Explore multi-path life simulations (deterministic engine)."
       }
+    }
+  },
+  "toolAutoAuth": {
+    "title": "Tool Auto-Authorization",
+    "subtitle": "Process eligibility recommendations: whitelisted low-risk tools are auto-granted; others queue for approval",
+    "actions": {
+      "run": "Run auto-authorization",
+      "running": "Running…",
+      "approve": "Approve",
+      "reject": "Reject"
+    },
+    "filters": {
+      "personaPlaceholder": "Enter persona ID"
+    },
+    "runResult": {
+      "title": "Last run result",
+      "granted": "Auto-granted: {{count}}",
+      "requested": "Queued for approval: {{count}}",
+      "skipped": "Skipped: {{count}}",
+      "expiresAt": "expires {{at}}"
+    },
+    "pending": {
+      "title": "Pending approval requests",
+      "reason": "reason: {{reason}}",
+      "approveHint": "Approving only records your review — it does NOT grant the permission. Actual authorization still requires an explicit grant on the Tool Permissions page."
+    },
+    "empty": {
+      "enterPersona": "Enter a persona ID to view its tool authorization requests",
+      "noPending": "No pending tool authorization requests"
+    },
+    "errors": {
+      "runFailed": "Run failed: {{message}}",
+      "loadFailed": "Failed to load: {{message}}"
     }
   }
 }

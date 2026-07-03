@@ -62,6 +62,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/admin/agency-authorizations', labelKey: 'sidebar.agencyAuthorizations', icon: 'shield', adminOnly: true },
       { to: '/admin/tool-permissions', labelKey: 'sidebar.toolPermissions', icon: 'shield', adminOnly: true },
       { to: '/admin/tool-invocations', labelKey: 'sidebar.toolInvocations', icon: 'list', adminOnly: true },
+      { to: '/admin/tool-auto-auth', labelKey: 'sidebar.toolAutoAuth', icon: 'shield' },
       { to: '/admin/safety/drift', labelKey: 'sidebar.safetyDrift', icon: 'gauge', adminOnly: true },
     ],
   },

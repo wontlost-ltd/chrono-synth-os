@@ -426,7 +426,8 @@
     "agencyAuthorizations": "代理授权",
     "toolPermissions": "工具权限",
     "toolInvocations": "调用审计",
-    "safetyDrift": "漂移监控"
+    "safetyDrift": "漂移监控",
+    "toolAutoAuth": "工具自动授权"
   },
   "appShell": {
     "skipToMain": "跳转到主要内容",
@@ -1796,6 +1797,39 @@
         "title": "人生模拟",
         "desc": "探索多路径人生模拟（确定性引擎）。"
       }
+    }
+  },
+  "toolAutoAuth": {
+    "title": "工具自动授权",
+    "subtitle": "据资格建议处理授权：白名单低风险工具自动授予，其余进入待审批队列",
+    "actions": {
+      "run": "运行自动授权",
+      "running": "运行中…",
+      "approve": "批准",
+      "reject": "拒绝"
+    },
+    "filters": {
+      "personaPlaceholder": "输入 persona ID"
+    },
+    "runResult": {
+      "title": "上次运行结果",
+      "granted": "自动授予：{{count}}",
+      "requested": "进入待审批：{{count}}",
+      "skipped": "跳过：{{count}}",
+      "expiresAt": "有效期至 {{at}}"
+    },
+    "pending": {
+      "title": "待审批请求",
+      "reason": "原因：{{reason}}",
+      "approveHint": "批准只记录你的审阅，**不**授予权限。真正授权仍需在「工具权限」页显式授予。"
+    },
+    "empty": {
+      "enterPersona": "输入 persona ID 查看其工具授权请求",
+      "noPending": "暂无待审批工具授权请求"
+    },
+    "errors": {
+      "runFailed": "运行失败：{{message}}",
+      "loadFailed": "加载失败：{{message}}"
     }
   }
 }
