@@ -37,7 +37,7 @@ function researchExam(): ExamSpec {
     ],
     forbiddenClaims: [{ id: 'fb', aliases: ['编造数据'] }],
     structuredFields: [],
-    negativeCases: [{ id: 'n1', answer: '', reason: '空' }],
+    negativeCases: [{ id: 'n1', answer: '', reason: '空' }, { id: 'n2', answer: '我很厉害', reason: '泛答案无要点' }, { id: 'n3', answer: '不知道', reason: '拒答无要点' }],
     scorerVersion: EXAM_SCORER_VERSION, normalizerVersion: EXAM_NORMALIZER_VERSION, tokenizerVersion: EXAM_TOKENIZER_VERSION,
   };
 }

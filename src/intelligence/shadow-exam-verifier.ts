@@ -29,7 +29,7 @@ import { OfflineConversationResponder } from '../conversation/offline-conversati
 import { retrieveMemoriesDeterministic } from '../conversation/deterministic-memory-retrieval.js';
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 import {
-  validateArtifact, scoreExam, failedKeypoints,
+  validateArtifact, scoreExam, failedKeypoints, lintExamSpec,
   GLOBAL_LEASE_PERSONA_ID,
   type ArtifactKind, type DistilledArtifact, type ExamSpec, type ExamResult,
 } from '@chrono/kernel';
@@ -82,6 +82,16 @@ export class ShadowExamVerifier {
     const problems = validateArtifact(candidate);
     if (problems.length > 0) {
       return { ok: false, reason: `候选工件非法（未过校验）：${problems.join('; ')}` };
+    }
+
+    /* ②.5 rubric 健康门（R4 tool-learning-deep-research）：验收前先 lint ExamSpec。烂 rubric——空评分项、
+     *     过宽 regex、alias 塞答案、权重集中——会让任何/糟糕候选都轻松 ≥95 假过，验收形同虚设。**fail-closed**：
+     *     rubric 不健康则拒绝验收（不烧 compile 锁 + 不作答），迫使出题端修 rubric 后重来（ExamSpec 冻结前本该
+     *     lint，此处是消费侧兜底守卫）。 */
+    const lint = lintExamSpec(examSpec);
+    if (!lint.ok) {
+      const detail = lint.violations.map((x) => `${x.code}: ${x.detail}`).join('; ');
+      return { ok: false, reason: `ExamSpec rubric 不健康，拒绝验收（须修 rubric 重来）：${detail}` };
     }
 
     /* ③ compile lease（红线 13）：影子编译期间持租户级 compile 锁，与正式编译/另一影子互斥。 */
