@@ -24,7 +24,7 @@ function ruleInput(over: Partial<InsertToolActionRuleInput> = {}): InsertToolAct
     id: `rule-${Math.abs(hash(JSON.stringify(over)))}`,
     personaId: 'p1', toolId: 'invoice.issue', capability: 'invoicing',
     schemaVersion: 'v1', ruleVersion: 'r1', contentHash: 'h1', createdBy: 'teacher',
-    compiledAt: 1000, expiresAt: null, active: true,
+    compiledAt: 1000, expiresAt: null, active: true, sourceArtifactId: 'artifact-1',
     argMappings: {
       customer: { kind: 'pick', field: 'customerName' },
       currency: { kind: 'enum', field: 'ccy', allow: ['USD', 'EUR'] },

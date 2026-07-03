@@ -71,7 +71,8 @@
 3. **最小权限**：高风险/外部副作用/写操作工具的自动授权一律禁止；只能自动创建**待审批请求**。
 4. **参数编译 fail-closed**：无法确定性构造合法 arguments → 要求人工补字段，不猜、不放行。
 5. **不绕现有 7 门**：编译出的 `ToolCallPlan` 仍全程过 `ToolInvocationPipeline`（授权/权限/配额/预算/确认/断路器），编译层只解决「参数从哪来」，不替代任何执行门。
-6. **蒸馏门唯一入口**：映射规则经**同一** `DistillationService.ingest`（不新开绕门通道），落 per-persona（[[0057]] 红线 8）。
+6. **蒸馏门控纪律唯一，来源可追溯**（T3 实现复审修订）：映射规则**不得**由任意调用方直灌规则表——必须经**等价蒸馏门控纪律**（lint → 工具考试验收 → 过考才落表，与 `DistillationService.ingest` 同纪律）产出，且每条落表规则**必须携带 provenance**（`sourceArtifactId`）指向其上游蒸馏产物，来源可审计。落 per-persona（[[0057]] 红线 8）。
+   > **偏离说明**：原措辞要求走**同一物理入口** `DistillationService.ingest`。工具动作规则本质不是「知识 artifact」，且复用该入口需迁移 `distilled_artifacts.kind` CHECK（本仓刻意规避，见 perception/F3 先例）。实现采用**专门的门控通道** `ToolRuleLearningService`（同 lint+验收+落表纪律）+ **强制 provenance 字段**证明来源，实质等价「不绕门」——门的本质是「有据可查的验收产物，非任意直灌」，非物理入口单一性。
 7. **per-persona eligibility**：eligibility 投影按 (tenant, persona) 隔离；事件缺 tenantId 直接 drop（不默认 default）。规则表同隔离。
 8. **审计完整**：编译出的每次工具调用、每条 eligibility 建议、每次自动授权请求都入审计链。
 9. **规则确定性与防篡改**（Codex 复审补）：ToolActionRule 是版本化、内容哈希（contentHash）、可 lint 的确定性 DSL/IR；运行时构造 arguments **禁** LLM/prompt/eval/网络/时间/随机；规则缺元数据或 schemaVersion 与 tool 当前 inputSchema 不匹配 → fail-closed。
