@@ -27,6 +27,7 @@ const SafetyDriftReport = lazy(() => import('./pages/SafetyDriftReport').then(m 
 const AdminToolPermissions = lazy(() => import('./pages/AdminToolPermissions').then(m => ({ default: m.AdminToolPermissions })));
 const AdminAgencyAuthorizations = lazy(() => import('./pages/AdminAgencyAuthorizations').then(m => ({ default: m.AdminAgencyAuthorizations })));
 const AdminToolInvocations = lazy(() => import('./pages/AdminToolInvocations').then(m => ({ default: m.AdminToolInvocations })));
+const AdminToolAutoAuth = lazy(() => import('./pages/AdminToolAutoAuth').then(m => ({ default: m.AdminToolAutoAuth })));
 const AgentOauthGoogle = lazy(() => import('./pages/AgentOauthGoogle').then(m => ({ default: m.AgentOauthGoogle })));
 const AgentPendingConfirmations = lazy(() => import('./pages/AgentPendingConfirmations').then(m => ({ default: m.AgentPendingConfirmations })));
 
@@ -98,6 +99,7 @@ export const routes: RouteObject[] = [
   { path: '/admin/tool-permissions', element: <Protected><AdminOnly><AdminToolPermissions /></AdminOnly></Protected> },
   { path: '/admin/agency-authorizations', element: <Protected><AdminOnly><AdminAgencyAuthorizations /></AdminOnly></Protected> },
   { path: '/admin/tool-invocations', element: <Protected><AdminOnly><AdminToolInvocations /></AdminOnly></Protected> },
+  { path: '/admin/tool-auto-auth', element: <Protected><AdminToolAutoAuth /></Protected> },
   { path: '/agent/oauth/google', element: <Protected><AgentOauthGoogle /></Protected> },
   { path: '/agent/confirmations', element: <Protected><AgentPendingConfirmations /></Protected> },
   { path: '/sso/callback', element: <LazyPage><SSOCallback /></LazyPage> },

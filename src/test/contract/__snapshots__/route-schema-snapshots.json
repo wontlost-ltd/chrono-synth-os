@@ -562,6 +562,12 @@
   ],
   "sse.ts": [],
   "tasks.ts": [],
+  "tool-auto-authorization.ts": [
+    {
+      "name": "DecideToolAuthorizationRequestSchema",
+      "hash": "a93bf63b0fef5faa90ba1b0c6c771e4d6068a4a304155a2b1066d8ef1f764fb1"
+    }
+  ],
   "users.ts": [],
   "values.ts": [
     {

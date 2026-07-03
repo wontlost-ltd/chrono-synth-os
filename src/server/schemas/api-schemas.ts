@@ -821,6 +821,11 @@ export const RevokeReasonSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 
+/** ADR-0060 T7：决议一条待审批工具授权请求（approved/rejected）。 */
+export const DecideToolAuthorizationRequestSchema = z.object({
+  decision: z.enum(['approved', 'rejected']),
+});
+
 export const CreateAgencyAuthorizationSchema = z.object({
   personaId: z.string().min(1),
   principalUserId: z.string().min(1),
