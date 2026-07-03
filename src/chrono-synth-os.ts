@@ -42,6 +42,7 @@ import { compilePersonaState } from './intelligence/persona-state.js';
 import { ArtifactCompiler } from './intelligence/artifact-compiler.js';
 import { DistillationService } from './intelligence/distillation-service.js';
 import { CapabilityIndexProjector } from './intelligence/capability-index-projector.js';
+import { ToolEligibilityProjector } from './intelligence/tool-eligibility-projector.js';
 import { TaskWakeHandler } from './workforce/task-wake-handler.js';
 import { TaskWakeReconciler, type ReconcileStats } from './workforce/task-wake-reconciler.js';
 import { TaskWakeReconcilerWorker } from './workforce/task-wake-reconciler-worker.js';
@@ -143,6 +144,7 @@ export class ChronoSynthOS {
 
   /** ADR-0057 L7 能力索引投影器：订阅 capability-learned → 投影 capability_index（start() 时启动）。 */
   private readonly capabilityIndexProjector: CapabilityIndexProjector;
+  private readonly toolEligibilityProjector: ToolEligibilityProjector;
 
   /** ADR-0057 L8a 任务唤醒处理器：订阅 capability-learned → 复检 GapDetector → 无缺口唤醒重跑（start() 时启动）。 */
   private readonly taskWakeHandler: TaskWakeHandler;
@@ -331,6 +333,16 @@ export class ChronoSynthOS {
       now: () => this.clock.now(),
     });
 
+    /* ADR-0060 T4：工具授权资格投影器——订阅 capability-learned → 据活跃 tool_action_rule 溯源为每个已过工具
+     * 考试的 tool 产出 eligibility **建议**（capability_tool_eligibility）。只建议不 grant（红线 2/12），零-LLM
+     * 确定性，红线 11 陈旧即失效。缺 tenantId drop（红线 7），失败隔离。start() 时订阅。 */
+    this.toolEligibilityProjector = new ToolEligibilityProjector({
+      bus: this.bus,
+      db: this.db,
+      logger: this.logger,
+      now: () => this.clock.now(),
+    });
+
     /* ADR-0057 L8a：任务唤醒处理器——订阅 capability-learned → 找因该缺口挂起的任务 → 确定性 GapDetector
      * 复检 → 无缺口唤醒重跑（blocked→delegated，零-LLM）/ 仍缺 fail-closed。复用 LearningRequestService
      * （含 CapabilityIndexStore，已学能力 = 索引 ∪ L2 passed）。start() 时订阅。 */
@@ -432,6 +444,7 @@ export class ChronoSynthOS {
     this.maybeSeedPersonality();
     this.proactiveEngine.start();
     this.capabilityIndexProjector.start();
+    this.toolEligibilityProjector.start();
     this.taskWakeHandler.start();
     this.taskWakeReconcilerWorker.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
@@ -682,6 +695,7 @@ export class ChronoSynthOS {
     try {
       this.proactiveEngine.stop();
       this.capabilityIndexProjector.stop();
+      this.toolEligibilityProjector.stop();
       this.taskWakeHandler.stop();
       this.taskWakeReconcilerWorker.stop();
       this.auditChainAnchors?.stop();

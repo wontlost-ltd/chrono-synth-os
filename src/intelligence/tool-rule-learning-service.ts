@@ -39,6 +39,8 @@ export interface CandidateToolRule {
   readonly argMappings: ToolActionRule['argMappings'];
   /** 来源蒸馏产物 id（红线 6 provenance）：候选规则必须能追溯到其上游蒸馏产物，禁任意直灌。 */
   readonly sourceArtifactId: string;
+  /** 学习期评定风险类（红线 11 eligibility 溯源；红线 13：仅记录/失效判定用，非授权依据）。 */
+  readonly riskClass: 'high' | 'low';
 }
 
 /** 学习结果：learned=过门落表 / rejected=未过门（附原因，供重训）。 */
@@ -100,7 +102,9 @@ export class ToolRuleLearningService {
       return { ok: false, learned: false, stage: 'exam', reason: `工具考试未过（coverage=${exam.coverage.toFixed(2)}）：${failed}` };
     }
 
-    /* ④ 过考 → 原子落表：先停同 key 旧 active，再插新 active（部分唯一索引恒单条，红线 10）。 */
+    /* ④ 过考 → 原子落表：先停同 key 旧 active，再插新 active（部分唯一索引恒单条，红线 10）。
+     * examSpecVersion = 放行本规则的那份冻结考试的唯一标识（examId::scorerVersion，红线 11 eligibility 溯源）。 */
+    const examSpecVersion = `${examSpec.examId}::${examSpec.scorerVersion}`;
     const ruleId = generatePrefixedId('tarule');
     const deactivatedPriorCount = this.db.transaction(() => {
       const deactivated = this.store.deactivateActive(rule.personaId, rule.toolId, rule.capability, rule.schemaVersion);
@@ -110,6 +114,7 @@ export class ToolRuleLearningService {
         schemaVersion: rule.schemaVersion, ruleVersion: rule.ruleVersion, contentHash: rule.contentHash,
         argMappings: rule.argMappings, createdBy: rule.createdBy, compiledAt: rule.compiledAt,
         expiresAt: rule.expiresAt, active: true, sourceArtifactId: candidate.sourceArtifactId,
+        examSpecVersion, riskClass: candidate.riskClass,
       });
       return deactivated;
     });

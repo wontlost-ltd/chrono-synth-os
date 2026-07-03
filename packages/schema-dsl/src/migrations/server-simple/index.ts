@@ -101,6 +101,8 @@ export { v111_org_wallet } from './v111.js';
 export { v112_bidirectional_task_market } from './v112.js';
 export { v113_tool_action_rules } from './v113.js';
 export { v114_tool_action_rule_provenance } from './v114.js';
+export { v115_tool_action_rule_eligibility_provenance } from './v115.js';
+export { v116_capability_tool_eligibility } from './v116.js';
 
 import type { Migration } from '../../index.js';
 import { v001_initial_schema } from './v001.js';
@@ -206,6 +208,8 @@ import { v111_org_wallet } from './v111.js';
 import { v112_bidirectional_task_market } from './v112.js';
 import { v113_tool_action_rules } from './v113.js';
 import { v114_tool_action_rule_provenance } from './v114.js';
+import { v115_tool_action_rule_eligibility_provenance } from './v115.js';
+import { v116_capability_tool_eligibility } from './v116.js';
 
 export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v001_initial_schema,
@@ -311,4 +315,6 @@ export const SERVER_SIMPLE_MIGRATIONS: readonly Migration[] = [
   v112_bidirectional_task_market,
   v113_tool_action_rules,
   v114_tool_action_rule_provenance,
+  v115_tool_action_rule_eligibility_provenance,
+  v116_capability_tool_eligibility,
 ];

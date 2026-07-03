@@ -93,7 +93,7 @@
 | **T1** | `ToolActionCompiler` 接口 + 确定性 `tool_action_rules` DSL/IR 表模型（含红线 9 元数据）+ 运行时查规则构造 ToolCallPlan（无规则/冲突/版本不匹配 → fail-closed 要人工） | T0 | 待做 |
 | **T2** | **工具专属 ExamSpec + lint + fixture dry-run**（R3 前移）：考 schema 构造 / payload 精确匹配 / 安全场景（越权/超预算/缺确认/高险）/ 错误恢复——**作为 T3 规则入表的前置验收门**（复用 R4 已实现的 rubric lint 门 + 扩 shadow-exam 到工具语义） | T1、R4 | 待做 |
 | **T3** | 映射规则学习通道：LLM 候选规则 → 蒸馏门 + lint → **过 T2 工具考试才编译进规则表**（复用 ADR-0057 蒸馏门，红线 6） | T1、T2、[[0057]] | 待做 |
-| **T4** | `capability_tool_eligibility` 表（含红线 11 元数据）+ `capability-learned` 新订阅者产出**授权建议**（不 grant，红线 2/12） | T0、T3、[[0057]] L7 | 待做 |
+| **T4** | `capability_tool_eligibility` 表（含红线 11 元数据）+ `capability-learned` 新订阅者产出**授权建议**（不 grant，红线 2/12） | T0、T3、[[0057]] L7 | ✅ 已实现（PR：ToolEligibilityProjector + 规则表回填 exam_spec_version/risk_class 供红线 11 陈旧失效溯源） |
 | **T5** | 低风险白名单自动授权桥（R5）：治理白名单驱动的显式 `capability→toolId→constraints` 策略，高险仍人工（红线 3/13） | T4 | 待做 |
 | **T6** | 端到端接线：新工具（示例 invoice_api）走完 学技能→过工具考试→编译参数规则→eligibility 建议→授权→执行 全链 | T1-T5 | 待做 |
 
@@ -119,4 +119,9 @@
 
 - `contentHash` 取**规范化后的 DSL/IR** 哈希（非原始 JSON 字符串），避免字段顺序造成假变更。
 - 「tool schema / riskClass 变化即失效」需明确**检测触发点**：如 tool registry metadata version 或 inputSchema 内容哈希；否则「变化即失效」无落点。
+  > **T4 落点（Codex T4 复审补）**：检测触发点定为**消费侧读时校验**，非依赖 registry 变更事件源（本仓无该事件）。
+  > `CapabilityToolEligibilityStore.listValidForAuthorization(persona, now, currentToolState)` 是授权侧**唯一**合法消费入口：
+  > 对每条 active 建议 fail-closed 校验「过期 / 建议记录的 schemaVersion≠当前 / riskClass≠当前 / 工具已下线」，任一不符即排除。
+  > `listActive` 仅审计用（返回 active 全量不过滤，禁授权直接消费）。examSpecVersion=`examId::scorerVersion` 依赖
+  > **ExamSpec 生成后冻结不可变**（R4 exam 冻结纪律，tool-exam-types.ts 已载）——同 id+scorer 内容不得覆盖。
 - T5 自动授权**强制 `expiresAt` 非空**，避免低风险策略长期漂移成永久授权。
