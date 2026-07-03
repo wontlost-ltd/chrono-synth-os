@@ -1219,6 +1219,15 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_task ON task_org_assignments(tenant_id, task_id, created_at)",
       "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_org ON task_org_assignments(tenant_id, org_id, status)"
     ]
+  },
+  {
+    "version": "v113",
+    "description": "ADR-0060 T1: deterministic tool action rules (runtime zero-LLM argument construction)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tool_action_rules (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    schema_version TEXT NOT NULL,\n    rule_version TEXT NOT NULL,\n    content_hash TEXT NOT NULL,\n    arg_mappings TEXT NOT NULL,\n    created_by TEXT NOT NULL,\n    compiled_at INTEGER NOT NULL,\n    expires_at INTEGER,\n    active INTEGER NOT NULL DEFAULT 1\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tool_action_rules_lookup ON tool_action_rules(tenant_id, persona_id, tool_id, capability)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_action_rules_active ON tool_action_rules(tenant_id, persona_id, tool_id, capability, schema_version) WHERE active = 1"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2408,6 +2417,15 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS task_org_assignments (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    task_id TEXT NOT NULL,\n    org_id TEXT NOT NULL,\n    application_id TEXT,\n    org_goal_id TEXT,\n    status TEXT NOT NULL DEFAULT 'assigned',\n    assigned_at BIGINT NOT NULL,\n    submitted_at BIGINT,\n    completed_at BIGINT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
       "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_task ON task_org_assignments (tenant_id, task_id, created_at)",
       "CREATE INDEX IF NOT EXISTS idx_task_org_assignments_org ON task_org_assignments (tenant_id, org_id, status)"
+    ]
+  },
+  {
+    "version": "v115",
+    "description": "ADR-0060 T1: deterministic tool action rules (runtime zero-LLM argument construction)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tool_action_rules (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    schema_version TEXT NOT NULL,\n    rule_version TEXT NOT NULL,\n    content_hash TEXT NOT NULL,\n    arg_mappings TEXT NOT NULL,\n    created_by TEXT NOT NULL,\n    compiled_at BIGINT NOT NULL,\n    expires_at BIGINT,\n    active INTEGER NOT NULL DEFAULT 1\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tool_action_rules_lookup ON tool_action_rules (tenant_id, persona_id, tool_id, capability)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_action_rules_active ON tool_action_rules (tenant_id, persona_id, tool_id, capability, schema_version) WHERE active = 1"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { SERVER_SIMPLE_MIGRATIONS } from '../../src/migrations/server-simple/index.js';
 
 describe('server-simple coverage', () => {
-  it('covers v001-v089 simple migrations + v091 compiled_via (raw 9 + PG-only v071/v072 deferred; v074=W2.1; v075=P0-E hash chain; v076=P1-F SOC2; v077=P1-N legal holds; v078=P1-M v2 break-glass jti; v079=P0-E v2 audit chain anchors; v080=P0-D #2 jwt signing keys; v081=GA §8 #1 audit anchor failures; v082=ADR-0047 distillation artifacts; v083=ADR-0047/0048 persona leases; v084=ADR-0047 response templates; v085=ADR-0047 persona rules; v086=BYOK llm provider credentials; v087=BYOK tenant llm settings; v088=ADR-0052 perception media refs; v089=perception event audit; v091=ADR-0047 growth budget compiled_via; v093=ADR-0054 proactive messages; v110=ADR-0057 L2 learning_requests; v111=ADR-0057 L7 capability_index; v112=ADR-0057 L8a org_tasks resume guard; v113=digital workforce org_wallet; v114=bidirectional task market ADR-0058)', () => {
+  it('covers v001-v089 simple migrations + v091 compiled_via (raw 9 + PG-only v071/v072 deferred; v074=W2.1; v075=P0-E hash chain; v076=P1-F SOC2; v077=P1-N legal holds; v078=P1-M v2 break-glass jti; v079=P0-E v2 audit chain anchors; v080=P0-D #2 jwt signing keys; v081=GA §8 #1 audit anchor failures; v082=ADR-0047 distillation artifacts; v083=ADR-0047/0048 persona leases; v084=ADR-0047 response templates; v085=ADR-0047 persona rules; v086=BYOK llm provider credentials; v087=BYOK tenant llm settings; v088=ADR-0052 perception media refs; v089=perception event audit; v091=ADR-0047 growth budget compiled_via; v093=ADR-0054 proactive messages; v110=ADR-0057 L2 learning_requests; v111=ADR-0057 L7 capability_index; v112=ADR-0057 L8a org_tasks resume guard; v113=digital workforce org_wallet; v114=bidirectional task market ADR-0058; v115=tool action rules ADR-0060 T1)', () => {
     const versions = SERVER_SIMPLE_MIGRATIONS
       .map(migration => migration.aliases.postgres ?? migration.aliases['sqlite-sql'])
       .filter((version): version is string => Boolean(version))
@@ -26,6 +26,8 @@ describe('server-simple coverage', () => {
       'v113',
       /* 双边工单市场 ADR-0058（pg alias v114）。 */
       'v114',
+      /* 工具动作规则 ADR-0060 T1（pg alias v115）。 */
+      'v115',
     ]);
   });
 });
