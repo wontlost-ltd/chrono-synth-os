@@ -1,6 +1,6 @@
 # 0060 — 工具动作编译器 + 能力→工具授权资格：数字人格自主学会用新外部工具
 
-**Status:** Accepted（架构；分阶段——T0 本 ADR 仅定「参数编译 + eligibility 三层分离」模型 + 红线 + 分片路线，T1-T6 后续实现）
+**Status:** Accepted + **Implemented**（T0-T6 全部实现：T1 编译器+规则表、T2 工具考试、T3 门控学习、T4 eligibility 投影、T5 白名单自动授权桥、T6 端到端接线；三层分离 + 13 红线全链验证）
 
 **关联：** [[0047]] LLM 是可蒸馏的老师（运行时零-LLM 根基）、[[0055]] 数字员工执行治理（7 门执行）、[[0057]] 按职能学习（能力缺口→蒸馏进核）、本仓库 `feat/tool-learning-r4-examspec-lint`（R4 rubric 健康门，已实现）。
 
@@ -95,7 +95,7 @@
 | **T3** | 映射规则学习通道：LLM 候选规则 → 蒸馏门 + lint → **过 T2 工具考试才编译进规则表**（复用 ADR-0057 蒸馏门，红线 6） | T1、T2、[[0057]] | 待做 |
 | **T4** | `capability_tool_eligibility` 表（含红线 11 元数据）+ `capability-learned` 新订阅者产出**授权建议**（不 grant，红线 2/12） | T0、T3、[[0057]] L7 | ✅ 已实现（PR：ToolEligibilityProjector + 规则表回填 exam_spec_version/risk_class 供红线 11 陈旧失效溯源） |
 | **T5** | 低风险白名单自动授权桥（R5）：治理白名单驱动的显式 `capability→toolId→constraints` 策略，高险仍人工（红线 3/13） | T4 | ✅ 已实现（ToolAutoAuthorizationBridge：治理白名单 toolAutoAuthWhitelist + 白名单低险→自动 grant ToolPermission / 非白名单·高险→建 tool_authorization_requests 待审批；expiresAt 强制非空；只消费 listValidForAuthorization 守红线 11） |
-| **T6** | 端到端接线：新工具（示例 invoice_api）走完 学技能→过工具考试→编译参数规则→eligibility 建议→授权→执行 全链 | T1-T5 | 待做 |
+| **T6** | 端到端接线：新工具（示例 invoice_api）走完 学技能→过工具考试→编译参数规则→eligibility 建议→授权→执行 全链 | T1-T5 | ✅ 已实现（tool-learning-e2e-t6.test：invoice.issue 全链贯通真正执行 + 高风险三层分离 denied_permission 端到端红线验证） |
 
 ---
 
