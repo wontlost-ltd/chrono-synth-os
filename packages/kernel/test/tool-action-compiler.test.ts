@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  resolveActiveRule, compileToolCall,
+  resolveActiveRule, compileToolCall, lintToolActionRule,
   type ToolActionRule, type ToolRuleKey,
 } from '../src/index.js';
 import type { McpToolSchema } from '../src/domain/agent/mcp-protocol-types.js';
@@ -158,5 +158,36 @@ describe('compileToolCall（ADR-0060 T1）', () => {
     const r = compileToolCall(rule({ expiresAt: 1500 }), FIELDS, SCHEMA, 2000);
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.code, 'rule_expired');
+  });
+});
+
+describe('lintToolActionRule（ADR-0060 T3 规则形状门）', () => {
+  it('合法映射（pick/const/enum/template）→ 无违规', () => {
+    assert.deepEqual(lintToolActionRule(rule().argMappings), []);
+  });
+  it('★空规则 → 违规★', () => {
+    assert.ok(lintToolActionRule({}).length > 0);
+  });
+  it('★未知 kind → 违规★', () => {
+    assert.ok(lintToolActionRule({ x: { kind: 'bogus' } }).some((p) => /未知映射 kind/.test(p)));
+  });
+  it('★pick 缺 field / enum 空 allow / template 空 segments / const 非标量 → 各违规★', () => {
+    assert.ok(lintToolActionRule({ x: { kind: 'pick' } }).length > 0);
+    assert.ok(lintToolActionRule({ x: { kind: 'enum', field: 'f', allow: [] } }).length > 0);
+    assert.ok(lintToolActionRule({ x: { kind: 'template', segments: [] } }).length > 0);
+    assert.ok(lintToolActionRule({ x: { kind: 'const', value: { obj: 1 } } }).length > 0);
+  });
+  it('template 合法段（literal + 非空 field，含空 literal）→ 无违规', () => {
+    assert.deepEqual(lintToolActionRule({ x: { kind: 'template', segments: [{ literal: 'INV-' }, { field: 'id' }, { literal: '' }] } }), []);
+  });
+  it('★template 畸形段（空 field / 既非 literal 也非 field / 二者兼有 / 非对象）→ 各违规（不漏到运行时）★', () => {
+    assert.ok(lintToolActionRule({ x: { kind: 'template', segments: [{ field: '' }] } }).length > 0);
+    assert.ok(lintToolActionRule({ x: { kind: 'template', segments: [{}] } }).length > 0);
+    assert.ok(lintToolActionRule({ x: { kind: 'template', segments: [{ literal: 'a', field: 'b' }] } }).length > 0);
+    assert.ok(lintToolActionRule({ x: { kind: 'template', segments: [null] } }).length > 0);
+  });
+  it('★映射非对象（null）→ 违规不抛★', () => {
+    assert.doesNotThrow(() => lintToolActionRule({ x: null }));
+    assert.ok(lintToolActionRule({ x: null }).length > 0);
   });
 });

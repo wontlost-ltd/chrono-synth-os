@@ -64,6 +64,51 @@ export function resolveActiveRule(candidates: readonly ToolActionRule[], key: To
 }
 
 /**
+ * 规则形状 lint（T3 规则入表前的结构门）——校验每条 argMapping 是结构合法的已知 kind（pick/const/enum/template
+ * 及其必需字段）。返回违规列表（空=通过）。纯函数：只查形状，不跑构造（构造由工具考试 scoreToolExam 覆盖）。
+ * 与 compileToolCall 的运行时防御互补：这里在**落表前**挡畸形规则，运行时那层是持久化数据被篡改的兜底。
+ */
+export function lintToolActionRule(argMappings: Readonly<Record<string, unknown>>): string[] {
+  const problems: string[] = [];
+  const names = Object.keys(argMappings);
+  if (names.length === 0) problems.push('规则无任何 argMapping（构造不出参数）');
+  for (const name of names) {
+    const raw = argMappings[name];
+    if (raw === null || typeof raw !== 'object') { problems.push(`参数「${name}」映射非对象`); continue; }
+    const m = raw as { kind?: unknown; field?: unknown; value?: unknown; allow?: unknown; segments?: unknown };
+    switch (m.kind) {
+      case 'const':
+        if (typeof m.value !== 'string' && typeof m.value !== 'number' && typeof m.value !== 'boolean') problems.push(`参数「${name}」const 值非标量`);
+        break;
+      case 'pick':
+        if (typeof m.field !== 'string' || m.field.length === 0) problems.push(`参数「${name}」pick 缺合法 field`);
+        break;
+      case 'enum':
+        if (typeof m.field !== 'string' || m.field.length === 0) problems.push(`参数「${name}」enum 缺合法 field`);
+        if (!Array.isArray(m.allow) || m.allow.length === 0) problems.push(`参数「${name}」enum 缺非空 allow 白名单`);
+        break;
+      case 'template':
+        if (!Array.isArray(m.segments) || m.segments.length === 0) {
+          problems.push(`参数「${name}」template 缺非空 segments`);
+        } else {
+          /* 逐段校验：每段必须是 {literal:string} 或 {field:string}（非空）——否则畸形段会漏到运行时才拒（Codex T3 复审补）。 */
+          m.segments.forEach((seg, i) => {
+            if (seg === null || typeof seg !== 'object') { problems.push(`参数「${name}」template 段[${i}] 非对象`); return; }
+            const s = seg as { literal?: unknown; field?: unknown };
+            const hasLiteral = typeof s.literal === 'string';
+            const hasField = typeof s.field === 'string' && s.field.length > 0;
+            if (hasLiteral === hasField) problems.push(`参数「${name}」template 段[${i}] 必须恰为 literal 或非空 field 之一`);
+          });
+        }
+        break;
+      default:
+        problems.push(`参数「${name}」未知映射 kind「${String(m.kind)}」`);
+    }
+  }
+  return problems;
+}
+
+/**
  * 据规则确定性构造工具调用计划。
  * @param rule       已 resolveActiveRule 选出的唯一规则
  * @param taskFields 任务结构化字段（pick/template/enum 的取值源）

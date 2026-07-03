@@ -26,6 +26,7 @@ interface ToolActionRuleRow {
   readonly compiled_at: number | string;
   readonly expires_at: number | string | null;
   readonly active: number;
+  readonly source_artifact_id: string | null;
 }
 
 export interface InsertToolActionRuleInput {
@@ -41,6 +42,8 @@ export interface InsertToolActionRuleInput {
   readonly compiledAt: number;
   readonly expiresAt: number | null;
   readonly active: boolean;
+  /** 来源蒸馏产物 id（红线 6 provenance；门控学习通道落表时强制非空，来源可审计）。 */
+  readonly sourceArtifactId: string;
 }
 
 export class ToolActionRuleStore {
@@ -58,18 +61,44 @@ export class ToolActionRuleStore {
     return rows.map((r) => this.toRule(r));
   }
 
-  /** 最小 insert（T2/T3 学习通道落规则前的占位写入；测试/后续用）。 */
+  /**
+   * 落规则入表（T3 学习通道过考后写入）。存储层强制 provenance 非空（红线 6 fail-closed 兜底）：即便有人
+   * 绕过 ToolRuleLearningService 门控直接调本方法，也拒绝无来源规则落表——TS required string 不挡运行时空串。
+   */
   insert(input: InsertToolActionRuleInput): void {
+    if (typeof input.sourceArtifactId !== 'string' || input.sourceArtifactId.length === 0) {
+      throw new Error('tool_action_rules.source_artifact_id 不得为空（红线 6：规则来源必须可追溯，禁直灌）');
+    }
     this.db.prepare<void>(
       `INSERT INTO tool_action_rules
         (id, tenant_id, persona_id, tool_id, capability, schema_version, rule_version, content_hash,
-         arg_mappings, created_by, compiled_at, expires_at, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         arg_mappings, created_by, compiled_at, expires_at, active, source_artifact_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       input.id, this.tenantId, input.personaId, input.toolId, input.capability, input.schemaVersion,
       input.ruleVersion, input.contentHash, JSON.stringify(input.argMappings), input.createdBy,
-      input.compiledAt, input.expiresAt, input.active ? 1 : 0,
+      input.compiledAt, input.expiresAt, input.active ? 1 : 0, input.sourceArtifactId,
     );
+  }
+
+  /**
+   * 停用同 key (persona,tool,capability,schemaVersion) 的所有 active 规则（T3：新规则过考落表前先停旧，
+   * 保证部分唯一索引 WHERE active=1 恒单条——新旧版本平滑替换，旧版留档 active=0 供审计）。返回停用条数。
+   */
+  deactivateActive(personaId: string, toolId: string, capability: string, schemaVersion: string): number {
+    const r = this.db.prepare<void>(
+      `UPDATE tool_action_rules SET active = 0
+       WHERE tenant_id = ? AND persona_id = ? AND tool_id = ? AND capability = ? AND schema_version = ? AND active = 1`,
+    ).run(this.tenantId, personaId, toolId, capability, schemaVersion);
+    return r.changes;
+  }
+
+  /** 取某规则的来源蒸馏产物 id（红线 6 provenance 审计；null=历史无 provenance 行）。 */
+  getSourceArtifactId(ruleId: string): string | null {
+    const row = this.db.prepare<{ source_artifact_id: string | null }>(
+      `SELECT source_artifact_id FROM tool_action_rules WHERE tenant_id = ? AND id = ?`,
+    ).get(this.tenantId, ruleId);
+    return row?.source_artifact_id ?? null;
   }
 
   private toRule(r: ToolActionRuleRow): ToolActionRule {

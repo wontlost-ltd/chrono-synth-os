@@ -1228,6 +1228,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_tool_action_rules_lookup ON tool_action_rules(tenant_id, persona_id, tool_id, capability)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_action_rules_active ON tool_action_rules(tenant_id, persona_id, tool_id, capability, schema_version) WHERE active = 1"
     ]
+  },
+  {
+    "version": "v114",
+    "description": "ADR-0060 T3: tool action rule provenance (source_artifact_id) — 红线 6 来源可追溯",
+    "sql": [
+      "/* safe:add-column:tool_action_rules:source_artifact_id */ ALTER TABLE tool_action_rules ADD COLUMN source_artifact_id TEXT"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2426,6 +2433,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS tool_action_rules (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    schema_version TEXT NOT NULL,\n    rule_version TEXT NOT NULL,\n    content_hash TEXT NOT NULL,\n    arg_mappings TEXT NOT NULL,\n    created_by TEXT NOT NULL,\n    compiled_at BIGINT NOT NULL,\n    expires_at BIGINT,\n    active INTEGER NOT NULL DEFAULT 1\n  )",
       "CREATE INDEX IF NOT EXISTS idx_tool_action_rules_lookup ON tool_action_rules (tenant_id, persona_id, tool_id, capability)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_action_rules_active ON tool_action_rules (tenant_id, persona_id, tool_id, capability, schema_version) WHERE active = 1"
+    ]
+  },
+  {
+    "version": "v116",
+    "description": "ADR-0060 T3: tool action rule provenance (source_artifact_id) — 红线 6 来源可追溯",
+    "sql": [
+      "ALTER TABLE tool_action_rules ADD COLUMN IF NOT EXISTS source_artifact_id TEXT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
