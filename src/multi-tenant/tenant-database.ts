@@ -75,6 +75,8 @@ const TENANT_TABLES = new Set([
   'tool_action_rules',
   /* ADR-0060 T4：能力→工具授权资格建议（capability-learned 事件投影），须自动租户隔离 + per-persona */
   'capability_tool_eligibility',
+  /* ADR-0060 T5：工具授权待审批请求，须自动租户隔离 + per-persona */
+  'tool_authorization_requests',
   /* digital workforce 组织金库：org_wallets（组织级账户）+ 结算账本（结算记录/流水），须自动租户隔离 */
   'org_wallets', 'org_wallet_settlements', 'org_wallet_transactions',
   /* 双边工单市场 ADR-0058：org 平行申请/指派表（org 竞标接单），须自动租户隔离 */

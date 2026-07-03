@@ -24,6 +24,7 @@ import {
   type CategoryRouteMode,
   type MarketplaceTaskCategory,
   type PersonaGovernanceRow,
+  type ToolScope,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from './executors/index.js';
 
@@ -50,6 +51,24 @@ export interface PersonaGovernanceOverride {
    * 允许 0（= 完全禁止自动吸收未验证成长，全部转人工审批）。
    */
   readonly unverifiedGrowthBudgetPerWindow?: number;
+  /**
+   * ADR-0060 T5 工具自动授权白名单（红线 13：「低风险」由**治理白名单**维护，非 tool.metadata.highRisk 自证）。
+   * key=toolId；出现在白名单 = 治理显式批准该工具可被自动授权。value 是自动授权时写入的策略：
+   *   - scope：授予的权限范围（read/write/any）；
+   *   - maxExpiryMs：自动授予权限的**强制**有效期上限（红线：T5 自动授权 expiresAt 必须非空，防漂移成永久授权）；
+   *   - requireConfirmation：授予的 constraints 是否强制二次确认（默认 true——自动授权更保守）。
+   * 不在白名单 / 高风险的 eligibility 建议 → 不自动授权，只自动创建待审批请求（红线 3）。
+   */
+  readonly toolAutoAuthWhitelist?: Record<string, ToolAutoAuthPolicy>;
+}
+
+/** T5 工具自动授权白名单条目（治理维护）。 */
+export interface ToolAutoAuthPolicy {
+  readonly scope: ToolScope;
+  /** 自动授予权限有效期上限 ms（必须 >0；红线：自动授权禁永久）。 */
+  readonly maxExpiryMs: number;
+  /** 授予 constraints 是否强制二次确认（默认 true）。 */
+  readonly requireConfirmation?: boolean;
 }
 
 export class PersonaGovernanceStore {
@@ -191,7 +210,60 @@ export function sanitizeGovernanceOverride(input: unknown): PersonaGovernanceOve
     /* 允许 0（完全禁止自动吸收）；非负整数。 */
     out.unverifiedGrowthBudgetPerWindow = requireNonNegativeInt(o.unverifiedGrowthBudgetPerWindow, 'unverifiedGrowthBudgetPerWindow');
   }
+  if (o.toolAutoAuthWhitelist !== undefined) {
+    out.toolAutoAuthWhitelist = sanitizeToolAutoAuthWhitelist(o.toolAutoAuthWhitelist);
+  }
   return out;
+}
+
+const VALID_TOOL_SCOPES: ReadonlySet<string> = new Set(['read', 'write', 'any']);
+
+/** 原型污染键：授权白名单是安全敏感面，显式拒绝（防 __proto__/constructor/prototype 作为 toolId 键）。 */
+const PROTO_POLLUTION_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * sanitize T5 工具自动授权白名单：每条须合法 scope + 正数 maxExpiryMs；非法抛错（宁拒写不落脏授权策略）。
+ * 授权层从严（Codex T5 复审补）：输出用 null-prototype map，拒绝原型污染键，policy 用 own-property 校验且拒数组。
+ */
+function sanitizeToolAutoAuthWhitelist(input: unknown): Record<string, ToolAutoAuthPolicy> {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('toolAutoAuthWhitelist 必须是对象（toolId → 策略）');
+  }
+  const out: Record<string, ToolAutoAuthPolicy> = Object.create(null);
+  for (const [toolId, raw] of Object.entries(input as Record<string, unknown>)) {
+    if (toolId.length === 0) throw new Error('toolAutoAuthWhitelist toolId 不得为空');
+    if (PROTO_POLLUTION_KEYS.has(toolId)) throw new Error(`toolAutoAuthWhitelist toolId 不得为原型污染键「${toolId}」`);
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`toolAutoAuthWhitelist「${toolId}」策略必须是对象`);
+    const p = raw as Record<string, unknown>;
+    const scope = Object.hasOwn(p, 'scope') ? p.scope : undefined;
+    const maxExpiryMs = Object.hasOwn(p, 'maxExpiryMs') ? p.maxExpiryMs : undefined;
+    if (typeof scope !== 'string' || !VALID_TOOL_SCOPES.has(scope)) {
+      throw new Error(`toolAutoAuthWhitelist「${toolId}」scope 必须为 read/write/any`);
+    }
+    if (typeof maxExpiryMs !== 'number' || !Number.isFinite(maxExpiryMs) || maxExpiryMs <= 0) {
+      throw new Error(`toolAutoAuthWhitelist「${toolId}」maxExpiryMs 必须为正数（红线：自动授权禁永久）`);
+    }
+    const requireConfirmation = Object.hasOwn(p, 'requireConfirmation') ? p.requireConfirmation : undefined;
+    const policy: ToolAutoAuthPolicy = {
+      scope: scope as ToolScope,
+      maxExpiryMs,
+      ...(requireConfirmation !== undefined ? { requireConfirmation: requireConfirmation === true } : {}),
+    };
+    out[toolId] = policy;
+  }
+  return out;
+}
+
+/**
+ * 解析某 persona 的工具自动授权白名单（T5 桥消费）。返回 owner/治理设的白名单；无覆盖 → 空对象
+ * （= 无任何工具可自动授权，安全默认——不在白名单一律走待审批）。
+ */
+export function resolvePersonaToolAutoAuthWhitelist(
+  tx: SyncWriteUnitOfWork,
+  tenantId: string,
+  personaId: string,
+): Record<string, ToolAutoAuthPolicy> {
+  return new PersonaGovernanceStore(tx, tenantId).getOverride(personaId)?.toolAutoAuthWhitelist ?? {};
 }
 
 function sanitizeCategoryRoutes(input: unknown): Partial<Record<MarketplaceTaskCategory, CategoryRouteMode>> {

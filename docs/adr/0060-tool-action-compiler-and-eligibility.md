@@ -94,7 +94,7 @@
 | **T2** | **工具专属 ExamSpec + lint + fixture dry-run**（R3 前移）：考 schema 构造 / payload 精确匹配 / 安全场景（越权/超预算/缺确认/高险）/ 错误恢复——**作为 T3 规则入表的前置验收门**（复用 R4 已实现的 rubric lint 门 + 扩 shadow-exam 到工具语义） | T1、R4 | 待做 |
 | **T3** | 映射规则学习通道：LLM 候选规则 → 蒸馏门 + lint → **过 T2 工具考试才编译进规则表**（复用 ADR-0057 蒸馏门，红线 6） | T1、T2、[[0057]] | 待做 |
 | **T4** | `capability_tool_eligibility` 表（含红线 11 元数据）+ `capability-learned` 新订阅者产出**授权建议**（不 grant，红线 2/12） | T0、T3、[[0057]] L7 | ✅ 已实现（PR：ToolEligibilityProjector + 规则表回填 exam_spec_version/risk_class 供红线 11 陈旧失效溯源） |
-| **T5** | 低风险白名单自动授权桥（R5）：治理白名单驱动的显式 `capability→toolId→constraints` 策略，高险仍人工（红线 3/13） | T4 | 待做 |
+| **T5** | 低风险白名单自动授权桥（R5）：治理白名单驱动的显式 `capability→toolId→constraints` 策略，高险仍人工（红线 3/13） | T4 | ✅ 已实现（ToolAutoAuthorizationBridge：治理白名单 toolAutoAuthWhitelist + 白名单低险→自动 grant ToolPermission / 非白名单·高险→建 tool_authorization_requests 待审批；expiresAt 强制非空；只消费 listValidForAuthorization 守红线 11） |
 | **T6** | 端到端接线：新工具（示例 invoice_api）走完 学技能→过工具考试→编译参数规则→eligibility 建议→授权→执行 全链 | T1-T5 | 待做 |
 
 ---

@@ -118,6 +118,15 @@ export class ToolPermissionService {
     return rows.map(rowToPermission);
   }
 
+  /**
+   * 按 (tenant, persona, tool) 取当前权限 row（真实持久化 id）。grant 是 ON CONFLICT upsert——冲突更新时保留
+   * 原 row id，grant() 返回的新 id 非落库 id；需要真实 id（如自动授权桥审计）时用本方法取回。null=无权限。
+   */
+  getByPersonaTool(tenantId: string, personaId: string, toolId: string): ToolPermission | null {
+    const row = this.tx.queryOne(tpermQueryByPersonaTool({ tenantId, personaId, toolId }));
+    return row ? rowToPermission(row) : null;
+  }
+
   /** 列出 tenant 所有权限（admin 用） */
   listByTenant(tenantId: string): ToolPermission[] {
     const rows = this.tx.queryMany(tpermQueryListByTenant(tenantId));
