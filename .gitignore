@@ -22,3 +22,7 @@ packages/*/*.tgz
 # Python 字节码（check-i18n.py 等脚本被 import/运行时生成）
 __pycache__/
 *.pyc
+
+# 本地 rc arm64 验证 compose（引用 localhost 本机构建镜像 pull_policy:never + 本地端口/密钥，
+# 是个人本地验证产物，不入库——提交会误导队友，镜像在别处不存在）
+deploy/digital-org/staging-rc-arm64.yml
