@@ -5,6 +5,10 @@ dist/
 dist-test/
 dist-sidecar/
 .sidecar-staging/
+# ADR-0061 S4：桌面安装包资源（sidecar bundle + node runtime）由 assemble-desktop-resources.mjs 在 CI 构建期填入，非源码
+apps/desktop/src-tauri/resources/sidecar/
+apps/desktop/src-tauri/resources/node
+apps/desktop/src-tauri/resources/node.exe
 *.tsbuildinfo
 .DS_Store
 .idea/

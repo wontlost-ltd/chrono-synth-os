@@ -1,0 +1,95 @@
+# ADR-0061 S4：桌面本地安装包多平台构建（Tauri）。
+#
+# 把完整 Node OS sidecar（build-sidecar.mjs → dist-sidecar）+ Node runtime 打进 Tauri 安装包，多平台出包
+# （macOS arm64/x64、Windows x64、Linux）。触发：desktop-v* tag（发版）或手动 workflow_dispatch。
+# 红线 7（可复现 + 供应链）：CI 构建 node 走 .nvmrc；**随附进安装包的 sidecar Node runtime 由 assemble 脚本完整
+# pin**（独立于 .nvmrc）+ SHASUMS256 校验；npm ci 锁依赖；tauri-action 出产物（签名/公证走 secrets，缺省跳过）。
+#
+# 注：这是**预发**桌面构建（draft release）；签名/公证凭据经仓库 secrets 注入，未配置时产未签名包供内测。
+name: desktop release
+
+on:
+  push:
+    tags:
+      - 'desktop-v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write # 创建 draft release + 上传安装包
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            rust-target: aarch64-apple-darwin
+          - platform: macos-latest
+            args: '--target x86_64-apple-darwin'
+            rust-target: x86_64-apple-darwin
+          - platform: ubuntu-latest
+            args: ''
+            rust-target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            args: ''
+            rust-target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      # Linux Tauri 系统依赖（webkit2gtk 等）。
+      - name: Install Linux deps
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      # 锁 lockfile 装依赖（红线 7；注意跨平台 rollup/emnapi lockfile 陷阱由 npm ci 严格校验）。
+      - name: Install workspace deps
+        run: npm ci
+
+      # 组装 sidecar 资源：build → 便携 sidecar bundle → 拷进 tauri resources + **按目标架构下载锁版本 Node**
+      # （红线 6/7：Node runtime 架构必须 == rust-target 架构，绝不拷 host node；红线 8：生产裁剪）。
+      - name: Assemble sidecar resources
+        run: |
+          npm run build
+          node scripts/build-sidecar.mjs --verify
+          node scripts/assemble-desktop-resources.mjs --target ${{ matrix.rust-target }}
+
+      - name: Install desktop app deps
+        working-directory: apps/desktop
+        run: npm ci
+
+      # Tauri 多平台构建 + 产物上传到 draft release。签名/公证凭据缺省则出未签名包（内测用）。
+      - name: Build desktop app
+        uses: tauri-apps/tauri-action@v0.5.24 # pin（红线 7 可复现；升级需显式改版本）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS 签名+公证（配置后启用；未配置=跳过签名，出未签名 .app/.dmg 供内测）。
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Tauri updater 签名私钥（tauri.conf plugins.updater.pubkey 对应）。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-v0.0.0-dev-{0}', github.run_number) }}
+          releaseName: 'ChronoSynth Desktop ${{ github.ref_name }}'
+          releaseBody: '本地安装包（内嵌 Node OS sidecar，ADR-0061）。⚠️ 未配置签名/公证凭据时为 **unsigned internal testing only** —— 不进正式 updater 通道、不作为 GA 下载入口（macOS Gatekeeper / Windows SmartScreen 会拦）。多平台产物见附件。'
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }}

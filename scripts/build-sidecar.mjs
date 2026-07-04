@@ -113,7 +113,12 @@ cpSync(resolve(ROOT, 'dist'), resolve(OUT, 'dist'), {
   recursive: true,
   filter: (src) => !src.includes(`${join('dist', 'test')}`) && !src.endsWith(join('dist', 'test')),
 });
-cpSync(resolve(STAGING, 'node_modules'), resolve(OUT, 'node_modules'), { recursive: true });
+/* 拷 node_modules 但**排除 .bin/**（CLI 可执行符号链接——运行时 import 模块不需，且 Tauri bundle 枚举资源时
+ * 会因这些符号链接指向的 bin 相对路径而报 resource-not-exist 打包失败，S4 tauri build 实测）。 */
+cpSync(resolve(STAGING, 'node_modules'), resolve(OUT, 'node_modules'), {
+  recursive: true,
+  filter: (src) => !src.split(/[\\/]/).includes('.bin'),
+});
 writeFileSync(resolve(OUT, 'package.json'), JSON.stringify({ name: 'chrono-synth-sidecar', version: rootPkg.version, private: true, type: 'module' }, null, 2));
 
 /* 5. 清理 staging。 */
