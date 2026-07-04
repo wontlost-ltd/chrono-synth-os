@@ -3,6 +3,8 @@
 node_modules/
 dist/
 dist-test/
+dist-sidecar/
+.sidecar-staging/
 *.tsbuildinfo
 .DS_Store
 .idea/
