@@ -113,6 +113,42 @@ describe('PostgreSQL 集成测试', { skip: !TEST_URL }, () => {
     assert.deepEqual(rows.map((row) => row.id), ['mem_pg_a2']);
   });
 
+  it('★memory executor 在 PG 上 bigint/numeric 列强转 number（防 pg-bigint-string-coercion，rc.2 烟测发现）★', async () => {
+    /* 复现并锁死：node-pg 把 bigint(created_at 等)+numeric 返回 string，toNode 不强转会让 companion /memories
+     * 响应 schema(number) 校验 400 + decay 的 Number.isFinite(lastAccessedAt) 对 string 恒 false 误触回退。
+     * SQLite 测试全绿（返 number）掩盖了它——本测试在真实 PG 上断言类型，补上缺的那道门。 */
+    const { getMemoriesPaginated, getMemory } = await import('@chrono/kernel');
+    const { registerCoreSelfExecutors } = await import('../../storage/executors/index.js');
+    const { NOOP_ENCRYPTOR } = await import('@chrono/kernel');
+    registerCoreSelfExecutors();
+    const now = Date.now();
+    db.prepare<void>(
+      `INSERT INTO memory_nodes (
+        id, tenant_id, persona_id, kind, content, valence, salience,
+        created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at, consolidated_from
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('mem_coerce_1', 'tenant-c', 'default', 'episodic', 'coercion probe', 0.25, 0.85, now, now, 3, 0.0002, now, null);
+
+    const tenantDb = new TenantDatabase(db, 'tenant-c');
+    const paginated = getMemoriesPaginated(tenantDb, NOOP_ENCRYPTOR, 10, 0, 'default');
+    assert.equal(typeof paginated.total, 'number', 'total(COUNT) 必为 number 非 string');
+    assert.ok(paginated.nodes.length >= 1);
+    const n = paginated.nodes.find((x) => x.id === 'mem_coerce_1')!;
+    for (const f of ['createdAt', 'lastAccessedAt', 'lastDecayedAt', 'accessCount', 'valence', 'salience', 'decayLambda'] as const) {
+      assert.equal(typeof n[f], 'number', `MemoryNode.${f} 在 PG 上必为 number（bigint/numeric 强转）`);
+    }
+    /* Number.isFinite 对 string 恒 false——强转后为 true，decay 回退分支不会误触。 */
+    assert.equal(Number.isFinite(n.lastAccessedAt), true);
+    const single = getMemory(tenantDb, NOOP_ENCRYPTOR, 'mem_coerce_1', 'default')!;
+    assert.equal(typeof single.createdAt, 'number', 'getMemory 单条同样强转');
+
+    /* MEM_QUERY_LOWEST_SALIENCE 直返 salience（不走 toNode）——也须 num()（evictExcess 契约，Codex 复审补）。 */
+    const { memLowestSalience } = await import('@chrono/kernel');
+    const lowest = tenantDb.queryMany(memLowestSalience(5, 'default')) as Array<{ id: string; salience: number }>;
+    assert.ok(lowest.length >= 1);
+    assert.equal(typeof lowest[0].salience, 'number', 'lowest-salience.salience 在 PG 上必为 number');
+  });
+
   it('占位符转换正确', async () => {
     const { convertPlaceholders } = await import('../../storage/postgres-database.js');
     /* 基本替换 */

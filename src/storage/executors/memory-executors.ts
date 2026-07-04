@@ -30,57 +30,68 @@ import {
 
 /* ── 行类型映射 ── */
 
+/* ⚠️ bigint/numeric 列在 PG(node-pg) 返回 string、SQLite 返回 number——行类型标 number|string，映射时 num() 强转。 */
 interface MemoryRow {
   id: string;
   kind: string;
   content: string;
-  valence: number;
-  salience: number;
-  created_at: number;
-  last_accessed_at: number;
-  access_count: number;
-  decay_lambda: number;
-  last_decayed_at: number;
+  valence: number | string;
+  salience: number | string;
+  created_at: number | string;
+  last_accessed_at: number | string;
+  access_count: number | string;
+  decay_lambda: number | string;
+  last_decayed_at: number | string;
   consolidated_from: string | null;
 }
 
 interface EdgeRow {
   source: string;
   target: string;
-  strength: number;
+  strength: number | string;
   relation: string;
 }
 
 interface WorkingMemoryRow {
   memory_id: string;
-  score: number;
-  entered_at: number;
+  score: number | string;
+  entered_at: number | string;
 }
 
 /* ── 行转换 ── */
+
+/**
+ * bigint/numeric 列强制转 number（PG bigint string coercion 陷阱）：node-pg 把 bigint(int8) 与 numeric/float8
+ * 返回为 string，SQLite 返回 number。MemoryNode 契约全为 number——不强转会让 (a) 响应 schema 校验失败（number
+ * vs string，companion /memories 400）、(b) `Number.isFinite(mem.lastAccessedAt)` 对 string 恒 false 致 decay
+ * 回退分支误触发（PG 上静默算错）。统一 Number() + null 守卫。
+ */
+function num(v: number | string): number {
+  return typeof v === 'number' ? v : Number(v);
+}
 
 function toNode(row: MemoryRow): MemoryNode {
   return {
     id: row.id,
     kind: row.kind as MemoryNode['kind'],
     content: row.content,
-    valence: row.valence,
-    salience: row.salience,
-    createdAt: row.created_at,
-    lastAccessedAt: row.last_accessed_at,
-    accessCount: row.access_count,
-    decayLambda: row.decay_lambda,
-    lastDecayedAt: row.last_decayed_at,
+    valence: num(row.valence),
+    salience: num(row.salience),
+    createdAt: num(row.created_at),
+    lastAccessedAt: num(row.last_accessed_at),
+    accessCount: num(row.access_count),
+    decayLambda: num(row.decay_lambda),
+    lastDecayedAt: num(row.last_decayed_at),
     consolidatedFrom: row.consolidated_from,
   };
 }
 
 function toEdge(row: EdgeRow): MemoryEdge {
-  return { source: row.source, target: row.target, strength: row.strength, relation: row.relation };
+  return { source: row.source, target: row.target, strength: num(row.strength), relation: row.relation };
 }
 
 function toSlot(row: WorkingMemoryRow): WorkingMemorySlot {
-  return { memoryId: row.memory_id, score: row.score, enteredAt: row.entered_at };
+  return { memoryId: row.memory_id, score: num(row.score), enteredAt: num(row.entered_at) };
 }
 
 /* ── 注册 ── */
@@ -108,7 +119,8 @@ export function registerMemoryExecutors(): void {
   });
 
   registerQuery<MemPaginatedResult, MemPaginatedParams>(MEM_QUERY_PAGINATED, (db, params) => {
-    const total = db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes WHERE persona_id = ?').get(params.personaId)?.count ?? 0;
+    /* COUNT(*) 在 PG 返回 bigint→string，须 num() 强转（否则 pagination.total number 契约校验失败）。 */
+    const total = num(db.prepare<{ count: number | string }>('SELECT COUNT(*) as count FROM memory_nodes WHERE persona_id = ?').get(params.personaId)?.count ?? 0);
     /* 稳定排序：created_at 之外加 id 作为 tie-breaker，避免同一毫秒多条记忆在 LIMIT/OFFSET
      * 跨页时顺序不定导致重复或漏项。id 是 memory_nodes 主键（唯一，UUID——非单调，故同毫秒内
      * 不保证「后创建排前」，但能确保**稳定全序**，这正是分页去重/不漏所需。 */
@@ -119,7 +131,7 @@ export function registerMemoryExecutors(): void {
   });
 
   registerQuery<number, MemCountParams>(MEM_QUERY_COUNT, (db: IDatabase, params) => {
-    return db.prepare<{ count: number }>('SELECT COUNT(*) as count FROM memory_nodes WHERE persona_id = ?').get(params.personaId)?.count ?? 0;
+    return num(db.prepare<{ count: number | string }>('SELECT COUNT(*) as count FROM memory_nodes WHERE persona_id = ?').get(params.personaId)?.count ?? 0);
   });
 
   registerQuery<string[], MemConsolidationCandidatesParams>(MEM_QUERY_CONSOLIDATION_CANDIDATES, (db, params) => {
@@ -143,9 +155,10 @@ export function registerMemoryExecutors(): void {
   });
 
   registerQuery<Array<{ id: string; salience: number }>, MemLowestSalienceParams>(MEM_QUERY_LOWEST_SALIENCE, (db, params) => {
-    return db.prepare<{ id: string; salience: number }>(
+    /* salience(numeric) 直返未走 toNode——PG 返 string，须 num() 强转（否则 evictExcess EvictionResult.salience 违约）。 */
+    return db.prepare<{ id: string; salience: number | string }>(
       'SELECT id, salience FROM memory_nodes WHERE persona_id = ? ORDER BY salience ASC, last_accessed_at ASC LIMIT ?',
-    ).all(params.personaId, params.limit);
+    ).all(params.personaId, params.limit).map((r) => ({ id: r.id, salience: num(r.salience) }));
   });
 
   /* ── Memory Node Commands ── */
@@ -260,10 +273,10 @@ export function registerMemoryExecutors(): void {
   });
 
   registerQuery<number, MemWmAllParams>(MEM_WM_QUERY_COUNT, (db: IDatabase, params) => {
-    return db.prepare<{ cnt: number }>(
+    return num(db.prepare<{ cnt: number | string }>(
       `SELECT COUNT(*) AS cnt FROM working_memory
        WHERE EXISTS (SELECT 1 FROM memory_nodes mn WHERE mn.id = working_memory.memory_id AND mn.persona_id = ?)`,
-    ).get(params.personaId)!.cnt;
+    ).get(params.personaId)!.cnt);
   });
 
   registerQuery<WorkingMemorySlot | null, MemWmAllParams>(MEM_WM_QUERY_LOWEST, (db: IDatabase, params) => {
