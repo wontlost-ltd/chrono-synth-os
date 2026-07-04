@@ -88,6 +88,29 @@ fn generate_handshake_token() -> String {
     format!("{uuid}{extra:x}")
 }
 
+/// Keyring service + entry for the persistent JWT signing secret (red-line 5).
+const KEYRING_SERVICE: &str = "chrono-synth-desktop";
+const JWT_SECRET_USER: &str = "chrono-desktop-jwt-secret";
+
+/// Resolve the **persistent** JWT signing secret from the platform keyring, generating + storing one
+/// on first run (red-line 5: generated once, never hardcoded / bundled). Reused across launches so
+/// issued JWTs survive restarts. Two concatenated UUID v4 values (~244 bits of randomness after v4's
+/// fixed version/variant bits) — ample signing entropy for HS256.
+fn resolve_or_create_jwt_secret() -> Result<String, String> {
+    use keyring_core::Entry;
+    let entry = Entry::new(KEYRING_SERVICE, JWT_SECRET_USER)
+        .map_err(|e| format!("keyring entry (jwt secret): {e}"))?;
+    match entry.get_password() {
+        Ok(v) if !v.is_empty() => Ok(v), // reuse existing persistent secret
+        Ok(_) | Err(keyring_core::Error::NoEntry) => {
+            let secret = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+            entry.set_password(&secret).map_err(|e| format!("keyring store (jwt secret): {e}"))?;
+            Ok(secret)
+        }
+        Err(e) => Err(format!("keyring read (jwt secret): {e}")),
+    }
+}
+
 /// Spawn + wait-ready the sidecar. Returns the resolved endpoint. Blocks until the ready marker
 /// is seen (or timeout). Called once during app setup.
 pub fn start_sidecar(app: &AppHandle, state: &SidecarState) -> Result<SidecarEndpoint, String> {
@@ -103,7 +126,13 @@ pub fn start_sidecar(app: &AppHandle, state: &SidecarState) -> Result<SidecarEnd
     std::fs::create_dir_all(&app_data).map_err(|e| format!("create app_data: {e}"))?;
     let db_path = app_data.join("chrono-os.db");
 
+    // Red-line 11: per-launch handshake token (rotates every launch).
     let handshake = generate_handshake_token();
+
+    // Red-line 5: JWT signing secret is a **persistent** local secret (NOT per-launch, else every restart
+    // invalidates issued tokens). Generated once, stored in the platform keyring, reused thereafter —
+    // never hardcoded, never in the install bundle. Distinct from the handshake token above.
+    let jwt_secret = resolve_or_create_jwt_secret()?;
 
     // Prefer a bundled node (resources/node); fall back to PATH `node` (dev). S4 bundles node.
     let node_bin = {
@@ -117,6 +146,8 @@ pub fn start_sidecar(app: &AppHandle, state: &SidecarState) -> Result<SidecarEnd
         .env("CHRONO_DB_PATH", &db_path)
         .env("CHRONO_QUEUE_ENABLED", "true")
         .env("CHRONO_JWT_ENABLED", "true")
+        // Red-line 5: persistent JWT secret from keyring (issued tokens survive restarts).
+        .env("CHRONO_JWT_SECRET", &jwt_secret)
         // Red-line 11: pass the handshake token; the server's desktop-session plugin enforces it.
         .env("CHRONO_DESKTOP_SESSION", &handshake)
         .stdout(Stdio::piped())
