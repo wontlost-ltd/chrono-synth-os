@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod sidecar;
 mod tray;
 
 use std::sync::Mutex;
@@ -18,6 +19,8 @@ use commands::sync::{
     mark_sync_failed,
 };
 use rusqlite::Connection;
+use sidecar::{get_sidecar_endpoint, SidecarState};
+use tauri::Manager;
 use tray::{set_tray_status, TrayStatusState};
 
 pub struct AppState {
@@ -55,6 +58,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new(keyring_init_error))
         .manage(TrayStatusState::default())
+        .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             open_database,
             query_personas,
@@ -78,10 +82,29 @@ fn main() {
             upsert_snapshots,
             query_snapshots,
             count_snapshots,
+            get_sidecar_endpoint,
         ])
         .setup(|app| {
             tray::setup_tray(app.handle())?;
+            /* ADR-0061 S2：拉起本地 Node OS sidecar（spawn + 读 ready + 健康 + 握手 token）。
+             * 失败不阻塞窗口启动——前端 get_sidecar_endpoint 会拿到错误并展示「本地引擎启动失败」。
+             * dev（无打包 resources/sidecar）下 start 会返回入口不存在错误，属预期（S4 打包后随附）。 */
+            let handle = app.handle().clone();
+            let state = app.state::<SidecarState>();
+            match sidecar::start_sidecar(&handle, &state) {
+                Ok(ep) => {
+                    /* 绝不打印 handshake_token（红线 11：不写日志）；只记端口用于排障。 */
+                    eprintln!("[sidecar] 本地 OS 已就绪: {}", ep.base_url);
+                }
+                Err(e) => eprintln!("[sidecar] 启动失败（前端将提示）: {e}"),
+            }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            /* 红线 4：窗口关闭 → 关停 sidecar，不留孤儿进程。 */
+            if let tauri::WindowEvent::Destroyed = event {
+                window.state::<SidecarState>().shutdown();
+            }
         })
         .run(tauri::generate_context!())
         .expect("failed to run ChronoSynth desktop");

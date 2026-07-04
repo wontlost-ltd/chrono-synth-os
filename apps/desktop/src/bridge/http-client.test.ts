@@ -5,6 +5,17 @@ vi.mock('./tauri-commands', () => ({
   setAppSetting: vi.fn(async () => undefined),
 }));
 
+/* ADR-0061 S2：mock sidecar 端点桥，验 apiFetch 的本地 sidecar 优先 + 陈旧重试逻辑（Codex 复审补测试）。 */
+const sidecarEp = vi.hoisted(() => ({
+  endpoint: null as { baseUrl: string; handshakeToken: string; instanceNonce: string } | null,
+  getCalls: 0,
+  invalidateCalls: 0,
+}));
+vi.mock('./sidecar-endpoint', () => ({
+  getSidecarEndpoint: vi.fn(async () => { sidecarEp.getCalls++; return sidecarEp.endpoint; }),
+  invalidateSidecarEndpoint: vi.fn(() => { sidecarEp.invalidateCalls++; }),
+}));
+
 import {
   ApiNotConfiguredError,
   apiFetch,
@@ -25,6 +36,9 @@ const setAppSettingMock = setAppSetting as unknown as ReturnType<typeof vi.fn>;
 beforeEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
+  sidecarEp.endpoint = null;
+  sidecarEp.getCalls = 0;
+  sidecarEp.invalidateCalls = 0;
 });
 
 afterEach(() => {
@@ -161,5 +175,73 @@ describe('apiFetch', () => {
       vi.fn().mockResolvedValue(new Response('persona not found', { status: 404 })),
     );
     await expect(apiFetch('/x')).rejects.toThrow(/HTTP 404/);
+  });
+});
+
+describe('apiFetch — ADR-0061 S2 本地 sidecar 优先 + 陈旧重试', () => {
+  beforeEach(() => {
+    setApiToken('jwt-x'); /* sidecar 模式仍需 JWT token */
+    sidecarEp.endpoint = { baseUrl: 'http://127.0.0.1:50000', handshakeToken: 'hs-token-1', instanceNonce: 'n1' };
+  });
+
+  it('有 sidecar → 用其 base + 带 X-Chrono-Desktop-Session 握手头（红线 11）', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await apiFetch('/api/v1/personas');
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://127.0.0.1:50000/api/v1/personas');
+    expect((init.headers as Record<string, string>)['x-chrono-desktop-session']).toBe('hs-token-1');
+  });
+
+  it('★握手失效 403（code=AUTH_MISSING_DESKTOP_SESSION）→ 失效缓存 + 重取端点 + 重试一次（拿新 token）★', async () => {
+    /* 第一次握手失效 403（带专用 code），重取端点后返回新 token，第二次 200。 */
+    let call = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      call++;
+      if (call === 1) return new Response(JSON.stringify({ code: 'AUTH_MISSING_DESKTOP_SESSION' }), { status: 403, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    /* 重取端点时给新 token（模拟 sidecar 重启）。 */
+    const { getSidecarEndpoint } = await import('./sidecar-endpoint');
+    (getSidecarEndpoint as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      sidecarEp.getCalls++;
+      return sidecarEp.getCalls >= 2 ? { baseUrl: 'http://127.0.0.1:50001', handshakeToken: 'hs-token-2', instanceNonce: 'n2' } : sidecarEp.endpoint;
+    });
+    const r = await apiFetch<{ ok: boolean }>('/api/v1/personas');
+    expect(r).toEqual({ ok: true });
+    expect(sidecarEp.invalidateCalls).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    /* 第二次用新 token。 */
+    expect((fetchMock.mock.calls[1]![1].headers as Record<string, string>)['x-chrono-desktop-session']).toBe('hs-token-2');
+  });
+
+  it('★普通业务/RBAC 403（非握手码）→ POST 不重试（防重复副作用/掩盖真拒绝）★', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'AUTH_INSUFFICIENT_ROLE' }), { status: 403, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(apiFetch('/api/v1/personas', { method: 'POST', body: {} })).rejects.toThrow(/HTTP 403/);
+    expect(sidecarEp.invalidateCalls).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('★POST + 网络错(TypeError) → 不自动重试（非幂等，可能已提交副作用）★', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(apiFetch('/api/v1/personas', { method: 'POST', body: {} })).rejects.toBeInstanceOf(TypeError);
+    expect(sidecarEp.invalidateCalls).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('GET + 网络错(TypeError) → 重试一次（安全方法）', async () => {
+    let call = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      call++;
+      if (call === 1) throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await apiFetch('/api/v1/personas'); /* 默认 GET */
+    expect(sidecarEp.invalidateCalls).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

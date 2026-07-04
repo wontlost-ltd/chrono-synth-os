@@ -28,6 +28,7 @@ import { registerWebSocket } from './plugins/websocket.js';
 import { registerCors } from './plugins/cors.js';
 import { registerHelmet } from './plugins/helmet.js';
 import { registerAuth } from './plugins/auth.js';
+import { registerDesktopSession } from './plugins/desktop-session.js';
 import { registerCsrf } from './plugins/csrf.js';
 import { registerJwtAuth } from './plugins/jwt-auth.js';
 import { JwtKeyStore } from './plugins/jwt-key-store.js';
@@ -206,6 +207,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerApiVersion(app);
   registerMetrics(app);
   registerRequestTimeout(app, config);
+  /* ADR-0061 红线 11：desktop sidecar 本地握手 guard（仅 CHRONO_DESKTOP_SESSION 存在时激活；否则 no-op）。
+   * 放在 auth 之前=最外层 fail-closed，同机其他进程/误连即便有 JWT 也过不了本地会话门。 */
+  registerDesktopSession(app);
   registerAuth(app, config, deps.db);
   registerAuditLog(app, deps.db);
   registerObservability(app, config);
