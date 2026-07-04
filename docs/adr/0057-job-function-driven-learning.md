@@ -1,6 +1,6 @@
 # 0057 — 数字员工按职能进修：缺口驱动的请教式深度学习，沉淀成自己的知识体系
 
-**Status:** Accepted（架构；分阶段——L0 本 ADR 仅定学习模型 + 红线 + 分片路线，L1-L8 后续实现）
+**Status:** Accepted + **Implemented**（架构；分阶段——L0-L8c 全部已交付：L1 GapDetector / L2 学习请求账本 / L3 ExamSpec+Scorer / L4 影子内核验收 / L5+L5b 双老师互审 / L6 蒸馏门编排 / L7 CapabilityIndex / L8a-c 学完唤醒+委派降级+reconciler，均已合入 main；原头部 "L1-L8 后续实现" 已滞后，文档漂移校正 2026-07-04。详见下方 roadmap 表）
 **Date:** 2026-06-22
 **Scope:** `src/intelligence`（蒸馏门 / LLM 老师 / 新增 GapDetector / TeacherReviewGate / ExamScorer）、
 `src/knowledge`（文档导入 / 知识体系沉淀）、`src/core`（影子内核验收 / consolidation 接通）、

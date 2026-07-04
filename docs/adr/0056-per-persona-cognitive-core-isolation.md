@@ -1,6 +1,6 @@
 # 0056 — 每-(租户, 人格) 认知内核隔离：一个组织里多个不同认知人格的数字员工
 
-**Status:** Accepted（架构；分阶段——K0 本 ADR 仅定隔离模型 + 分片路线，K1-K6 后续实现）
+**Status:** Accepted + **Implemented**（架构；分阶段——K0-K6 + K5b 全部已交付：认知核心全 7 维 per-persona 隔离 + 一键 podman 多原型数字员工组织，均已合入 main；原头部 "K1-K6 后续实现" 已滞后，文档漂移校正 2026-07-04）
 **Date:** 2026-06-21
 **Scope:** `packages/kernel/src/domain/core-self`（认知核心服务）、`src/core`（`CoreRhythmLayer` 及各 Store）、
 `src/chrono-synth-os.ts`（OS 的 `core` 生命周期）、`packages/schema-dsl`（核心状态表迁移）、

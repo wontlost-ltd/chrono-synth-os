@@ -1,6 +1,6 @@
 # 0058 — 双边工单市场：组织/数字人格竞标接单，发布者确认委派
 
-**Status:** Accepted（架构；分阶段——M0 本 ADR 仅定双边状态机 + assignee 抽象 + 红线 + 分片路线，M1-M5 后续实现）
+**Status:** Accepted + **Implemented**（架构；分阶段——M0-M5 全部已交付：M1 数据层 + M2-M4 双边竞标状态机（org apply/confirm/start/submit/accept）+ 结算入 org 金库 + M5 前端 marketplace UI，均已合入 main；原头部 "M1-M5 后续实现" 已滞后，文档漂移校正 2026-07-04）
 
 **关联：** [[0048]] persona 自主赚钱（已有 persona 市场）、[[0055]] 数字员工执行治理、本仓库 `org-marketplace-wallet`（org wallet + 外部引用接单 S1-S4，已实现）。
 
