@@ -91,6 +91,7 @@ belong in `CONTRIBUTING.md` or `README.md`.
 | 58 | [Bidirectional task marketplace: orgs & personas bid for tasks, publisher confirms assignment](0058-bidirectional-task-market-org-bidding.md) | Accepted |
 | 59 | [Push providers: apns2 (iOS) + firebase-admin (Android)](0059-push-providers-apns2-and-firebase-admin.md) | Accepted |
 | 60 | [Tool Action Compiler + capability→tool eligibility: personas autonomously learn to use new external tools (spec-only, T0)](0060-tool-action-compiler-and-eligibility.md) | Accepted |
+| 61 | [Desktop local install: embed full Node OS as a Tauri sidecar (double-click, no Docker; spec-only, S0)](0061-desktop-local-install-node-os-sidecar.md) | Accepted |
 
 The first 31 records were back-filled in P1.5 to cover kernel
 architecture, storage, agent layer, deployment, and product policy.
