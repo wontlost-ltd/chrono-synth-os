@@ -44,6 +44,14 @@ async function start(): Promise<void> {
   os.start();
   serverState.ready = true;
 
+  /* 生产入口 guard（ADR-0061 S1 Codex 复审补）：port 0（内核动态分配）只应用于桌面 sidecar（走 main-desktop.ts
+   * 且绑 loopback）。此主入口若误配 port=0 且 host 非 loopback，会绑到不确定的公网/局域网端口——破坏端口治理确定性
+   * 与可观测性。fail-closed 拒绝：动态端口必须 loopback。 */
+  const isLoopback = config.server.host === '127.0.0.1' || config.server.host === '::1' || config.server.host === 'localhost';
+  if (config.server.port === 0 && !isLoopback) {
+    throw new Error(`拒绝启动：port=0（动态端口）仅允许 loopback（桌面 sidecar 走 main-desktop.js）；主入口 host=${config.server.host} 须显式指定端口`);
+  }
+
   await app.listen({ host: config.server.host, port: config.server.port });
   logger.info('Server', `服务已启动: http://${config.server.host}:${config.server.port}`);
 

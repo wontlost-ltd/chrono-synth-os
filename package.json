@@ -39,6 +39,8 @@
     "test": "npm run test:unit && npm run test:integration",
     "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run ga:check && npm run check:licenses",
     "start": "node dist/main.js",
+    "start:desktop": "node dist/main-desktop.js",
+    "build:sidecar": "npm run build && node scripts/build-sidecar.mjs",
     "start:observability-worker": "node dist/main-observability-worker.js",
     "dev": "npm run build && node dist/main.js",
     "dev:observability-worker": "npm run build && node dist/main-observability-worker.js",

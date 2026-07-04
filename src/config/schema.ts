@@ -26,7 +26,8 @@ const logSchema = z.object({
 
 const serverSchema = z.object({
   host: z.string().default('0.0.0.0'),
-  port: z.coerce.number().int().min(1).max(65535).default(3000),
+  /* port 0 = 让内核动态分配空闲端口（ADR-0061 桌面 sidecar：绑 127.0.0.1:0 避端口冲突，实际端口由入口读回上报父进程）。 */
+  port: z.coerce.number().int().min(0).max(65535).default(3000),
   publicUrl: z.string().url().optional(),
 });
 

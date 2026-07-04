@@ -39,6 +39,12 @@ describe('配置系统', () => {
     assert.equal(config.server.port, 8080);
   });
 
+  it('server.port 允许 0（ADR-0061 桌面 sidecar 动态端口，内核分配）', () => {
+    const config = loadConfig({ server: { host: '127.0.0.1', port: 0 } });
+    assert.equal(config.server.port, 0, 'port 0 合法（内核动态分配空闲端口）');
+    assert.equal(config.server.host, '127.0.0.1');
+  });
+
   describe('intelligenceProvidesEmbeddings（ADR-0047 Ollama layer-2 embedding gate）', () => {
     it('ollama 无 apiKey → true（本地 provider 不需 key 即可 embedding，修复静默禁用 bug）', () => {
       const config = loadConfig({ intelligence: { provider: 'ollama', baseUrl: 'http://localhost:11434' } });
