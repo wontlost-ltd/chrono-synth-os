@@ -648,6 +648,44 @@
       "hash": "1657eae007b08c9b0a8cd4cea6fb2a80f465c4ff8d43e045101666975c03366e"
     }
   ],
+  "workforce-collab.ts": [
+    {
+      "name": "WorkforceEscalationCancelBodySchema",
+      "hash": "b44cf82a41e81e86bcd7d5369513e303fd1941c0bd2809553f80597774c3c5c3"
+    },
+    {
+      "name": "WorkforceEscalationRaiseBodySchema",
+      "hash": "cd407acd32f89d8fbd5369dbb528f9eeb0c01f59200db539b7aefcf657387fb9"
+    },
+    {
+      "name": "WorkforceEscalationReescalateBodySchema",
+      "hash": "1214edcd060df3d2bb815b00506f35c841796c5f7b158630f6a97631db49fc24"
+    },
+    {
+      "name": "WorkforceEscalationResolveBodySchema",
+      "hash": "b73ee1413aed0ec7a262cb5fca9f778db92a8e889448815aa3056b28930c0221"
+    },
+    {
+      "name": "WorkforceHandoffProposeBodySchema",
+      "hash": "2b83f2e2a31140a79772aad590c93fc8a3a0a89236bd4061db496728ea07bab1"
+    },
+    {
+      "name": "WorkforceHandoffRespondBodySchema",
+      "hash": "b44cf82a41e81e86bcd7d5369513e303fd1941c0bd2809553f80597774c3c5c3"
+    },
+    {
+      "name": "WorkforceMessageSendBodySchema",
+      "hash": "a7ef6cb593421d0e2c743d93f8b45dceb44d11ea1f2981716b2a926c2e84c070"
+    },
+    {
+      "name": "WorkforceStrategyAdviseBodySchema",
+      "hash": "805dd0afb3bd9efd25bd9a20cd6e9e69e691003838e964d3c76f876346bf32c1"
+    },
+    {
+      "name": "WorkforceThreadOpenBodySchema",
+      "hash": "b21e761e4ff8821aea8ec0cd53bf08b5e38025a1a9c54914e82f406a239eca91"
+    }
+  ],
   "workforce-viz.ts": [],
   "workforce.ts": [],
   "plugins/jwt-auth.ts": [

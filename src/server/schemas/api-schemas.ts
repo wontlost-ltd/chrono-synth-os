@@ -1032,6 +1032,77 @@ export const WorkforceExecuteTaskBodySchema = z.object({
   }).optional(),
 });
 
+/* ── 数字员工组织协作接线（B 链：升级/交接/协作消息 + M7 战略辅助）────────────────────── */
+
+const WORKER_ID = z.string().min(1).max(128);
+
+/** B3 升级：发起（阻塞执行者向直接上级求助）。 */
+export const WorkforceEscalationRaiseBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  fromWorkerId: WORKER_ID,
+  reason: z.string().min(1).max(1000),
+  correlationId: z.string().max(128).nullable().optional(),
+});
+/** B3 升级：处置（被升级到的上级 resolve）。 */
+export const WorkforceEscalationResolveBodySchema = z.object({
+  resolvingWorkerId: WORKER_ID,
+  resolution: z.string().min(1).max(1000),
+});
+/** B3 升级：再升级（上级无法处置 → 升给自己的上级）。 */
+export const WorkforceEscalationReescalateBodySchema = z.object({
+  byWorkerId: WORKER_ID,
+  reason: z.string().min(1).max(1000),
+});
+/** B3 升级：撤回（发起者）。 */
+export const WorkforceEscalationCancelBodySchema = z.object({
+  byWorkerId: WORKER_ID,
+});
+
+/** B2 交接：提议（当前执行者提议转给同事）。 */
+export const WorkforceHandoffProposeBodySchema = z.object({
+  taskId: z.string().min(1).max(128),
+  fromWorkerId: WORKER_ID,
+  toWorkerId: WORKER_ID,
+  reason: z.string().max(1000).optional(),
+});
+/** B2 交接：响应（接受/拒绝/撤回，by 响应/撤回者）。 */
+export const WorkforceHandoffRespondBodySchema = z.object({
+  byWorkerId: WORKER_ID,
+});
+
+/** B1 协作：开线程（创建者须组织内 worker）。 */
+export const WorkforceThreadOpenBodySchema = z.object({
+  threadType: z.enum(['delegation', 'report', 'handoff', 'coordination']),
+  createdByWorkerId: WORKER_ID,
+  goalId: z.string().max(128).nullable().optional(),
+  taskId: z.string().max(128).nullable().optional(),
+});
+/** B1 协作：发结构化消息（to 为空=线程广播；高治理类型须可追溯）。 */
+export const WorkforceMessageSendBodySchema = z.object({
+  fromWorkerId: WORKER_ID,
+  toWorkerId: WORKER_ID.nullable().optional(),
+  messageType: z.enum(['request', 'response', 'report', 'note', 'escalation']),
+  content: z.string().min(1).max(4000),
+  correlationId: z.string().max(128).nullable().optional(),
+});
+
+/** M7 战略辅助：确定性展开人类战略输入为多视角备选（非自动 CEO，requiresHumanApproval）。 */
+export const WorkforceStrategyAdviseBodySchema = z.object({
+  objective: z.string().min(1).max(1000),
+  budgetCap: z.number().nonnegative(),
+  riskTolerance: z.enum(['low', 'medium', 'high']),
+  initiatives: z.array(z.object({
+    id: z.string().min(1).max(128),
+    title: z.string().min(1).max(500),
+    goalType: z.string().min(1).max(64),
+    priority: z.number().int().min(1).max(5),
+    impact: z.number().min(1).max(5),
+    feasibility: z.number().min(1).max(5),
+    riskLevel: z.enum(['low', 'medium', 'high']),
+    estimatedCost: z.number().nonnegative(),
+  })).min(1).max(100),
+});
+
 /* 请求一个执行审批（执行前先按有效风险拿审批 id；low 直接 auto_cleared）。 */
 export const WorkforceRequestApprovalBodySchema = z.object({
   taskId: z.string().min(1).max(128),

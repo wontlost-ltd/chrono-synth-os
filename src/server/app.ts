@@ -131,6 +131,7 @@ import { registerWorkforceRoutes } from './routes/workforce.js';
 import { registerWorkforceVizRoutes } from './routes/workforce-viz.js';
 import { registerWorkforceAdminRoutes } from './routes/workforce-admin.js';
 import { registerWorkforceActionRoutes } from './routes/workforce-actions.js';
+import { registerWorkforceCollabRoutes } from './routes/workforce-collab.js';
 import { registerSseRoutes } from './routes/sse.js';
 import { registerFeatureFlagRoutes } from './routes/feature-flags.js';
 import { registerScimRoutes } from './routes/scim.js';
@@ -733,6 +734,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 数字员工组织交互控制台写/动作 API（E3）：发起目标/审批/真实执行（接 D2 审批门 + D3 ToolInvocationPipeline）。
    * toolRegistry 作 ToolRiskSource：服务端按 toolId 派生工具风险（body 风险信号只能上调不能省略绕审批门）。 */
   registerWorkforceActionRoutes(app, db, toolInvocationPipeline, deps.os.getClock(), toolRegistry);
+  /* 数字员工组织协作接线（B 链升级/交接/协作消息 + M7 战略辅助）：把已建成 4 service 接进生产（admin 驱动）。 */
+  registerWorkforceCollabRoutes(app, db, deps.os.getClock());
   registerHealthRoutes(app, {
     os: deps.os,
     db: deps.db,

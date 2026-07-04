@@ -37,7 +37,8 @@ describe('AgentCommunicationService（B1 结构化协作）', () => {
   });
 
   it('开线程 + 发结构化消息 + 列消息 round-trip', () => {
-    const thread = comm.openThread({ orgId: 'org-1', threadType: 'delegation', createdByWorkerId: mgrId, taskId: 't-1' });
+    /* 不绑 taskId（openThread 现校验存在性）——高治理消息用 correlationId 满足可追溯。 */
+    const thread = comm.openThread({ orgId: 'org-1', threadType: 'delegation', createdByWorkerId: mgrId });
     assert.equal(thread.status, 'open');
     comm.sendMessage({ orgId: 'org-1', threadId: thread.id, fromWorkerId: mgrId, toWorkerId: icId, messageType: 'request', content: '请处理任务 t-1', correlationId: 't-1' });
     comm.sendMessage({ orgId: 'org-1', threadId: thread.id, fromWorkerId: icId, toWorkerId: mgrId, messageType: 'response', content: '已接受' });
@@ -60,6 +61,17 @@ describe('AgentCommunicationService（B1 结构化协作）', () => {
     assert.throws(
       () => comm.openThread({ orgId: 'org-1', threadType: 'coordination', createdByWorkerId: 'ghost' }),
       InvalidCollaborationError,
+    );
+  });
+
+  it('治理纪律（Codex 复审）：绑定不存在的 task/goal 开线程 → 拒绝（防伪造可追溯绕高治理门）', () => {
+    assert.throws(
+      () => comm.openThread({ orgId: 'org-1', threadType: 'coordination', createdByWorkerId: mgrId, taskId: 'ghost-task' }),
+      /任务 ghost-task 不存在/,
+    );
+    assert.throws(
+      () => comm.openThread({ orgId: 'org-1', threadType: 'coordination', createdByWorkerId: mgrId, goalId: 'ghost-goal' }),
+      /目标 ghost-goal 不存在/,
     );
   });
 

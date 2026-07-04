@@ -42,6 +42,14 @@ export class AgentCommunicationService {
     taskId?: string | null;
   }): OrgConversationThread {
     this.assertWorkerInOrg(input.orgId, input.createdByWorkerId);
+    /* 绑定的 task/goal 必须真实存在且属本 org（Codex 复审补）——否则高治理消息「可追溯」门可被伪造
+     * taskId/goalId 绕过（sendMessage 只查 thread.taskId!==null||goalId!==null）。存在性在开线程时钉死。 */
+    if (input.taskId != null && !this.store.getTask(input.orgId, input.taskId)) {
+      throw new InvalidCollaborationError(`线程绑定的任务 ${input.taskId} 不存在于本组织`);
+    }
+    if (input.goalId != null && !this.store.getGoal(input.orgId, input.goalId)) {
+      throw new InvalidCollaborationError(`线程绑定的目标 ${input.goalId} 不存在于本组织`);
+    }
     const ts = this.now();
     const thread: Omit<OrgConversationThread, 'tenantId'> = {
       id: this.idgen(), orgId: input.orgId, threadType: input.threadType,
