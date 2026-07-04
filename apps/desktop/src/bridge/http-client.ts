@@ -125,12 +125,62 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
 }
 
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  const base = getApiBaseUrl();
+  /* ADR-0061 S2：优先本地 sidecar（内嵌 Node OS）。取到 → 用其 base + 握手头（红线 11）；否则回退手工
+   * 配置的远端 server（localStorage，自托管模式）。 */
+  const { getSidecarEndpoint } = await import('./sidecar-endpoint');
+  const sidecar = await getSidecarEndpoint();
+  try {
+    return await doFetch<T>(path, options, sidecar);
+  } catch (err) {
+    /* sidecar 模式下 403(握手失效)/网络错（sidecar 崩溃重启后端口+token 变）→ 失效缓存 + 重取端点 + 重试一次
+     * （拿新 token/端口）。Codex S2 复审补：防「重启后旧 token 缓存踩坑」+「首次 invoke 失败永久缓存 null」。 */
+    if (sidecar && isRetriableSidecarError(err, options.method)) {
+      const { invalidateSidecarEndpoint } = await import('./sidecar-endpoint');
+      invalidateSidecarEndpoint();
+      const fresh = await getSidecarEndpoint();
+      if (fresh) return await doFetch<T>(path, options, fresh);
+    }
+    throw err;
+  }
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** 握手失效的**专用**错误码（server desktop-session guard 返回）。只有它才代表「未执行副作用的握手层拒绝」。 */
+const DESKTOP_SESSION_DENY_CODE = 'AUTH_MISSING_DESKTOP_SESSION';
+
+/** 带状态码 + 解析出的业务 code 的 HTTP 错误（供重试决策精确判定，不再 regex message）。 */
+export class ApiHttpError extends Error {
+  constructor(readonly status: number, readonly code: string | null, message: string) {
+    super(message);
+    this.name = 'ApiHttpError';
+  }
+}
+
+/**
+ * 判定是否可安全重试（sidecar 端点陈旧）。
+ *  - **握手失效 403（且 code=AUTH_MISSING_DESKTOP_SESSION）**：server guard 在业务 handler **之前**拒绝 →
+ *    未产生副作用 → **任何方法**都可安全重试（拿新 token）。**普通 403**（RBAC/plan/CSRF/业务）**不重试**——
+ *    那是真实拒绝/可能已触达 handler，泛化重试会重复副作用或掩盖真错（Codex S2 复审补，收窄到专用 code）。
+ *  - **网络错（TypeError）**：可能发生在请求已到达并提交副作用、响应断开之后 → 非幂等方法（POST/DELETE/PATCH）
+ *    **不自动重试**（不可证明未触达）；仅 GET/HEAD/OPTIONS 等安全方法重试。
+ */
+function isRetriableSidecarError(err: unknown, method?: string): boolean {
+  if (err instanceof ApiHttpError && err.status === 403 && err.code === DESKTOP_SESSION_DENY_CODE) return true;
+  if (err instanceof TypeError) return SAFE_METHODS.has((method ?? 'GET').toUpperCase());
+  return false;
+}
+
+async function doFetch<T>(path: string, options: ApiFetchOptions, sidecar: { baseUrl: string; handshakeToken: string } | null): Promise<T> {
+  const base = sidecar ? sidecar.baseUrl : getApiBaseUrl();
   const token = getApiToken();
+  /* 本地 sidecar 模式仍需 JWT token（S3 自动 provision 本地 admin）；远端模式 base+token 都须配。 */
   if (!base || !token) throw new ApiNotConfiguredError();
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     authorization: `Bearer ${token}`,
+    /* 红线 11：本地 sidecar 请求带 per-launch 握手 token（同机其他进程/误连无此 token → 403）。 */
+    ...(sidecar ? { 'x-chrono-desktop-session': sidecar.handshakeToken } : {}),
     ...((options.headers as Record<string, string>) ?? {}),
   };
   const init: RequestInit = {
@@ -141,7 +191,10 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   const res = await fetch(`${base}${path}`, init);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+    /* 解析业务 code（供重试精确判定：只有握手失效码才全方法重试）。非 JSON 或无 code → null。 */
+    let code: string | null = null;
+    try { const j = JSON.parse(text) as { code?: unknown }; if (typeof j.code === 'string') code = j.code; } catch { /* 非 JSON */ }
+    throw new ApiHttpError(res.status, code, `HTTP ${res.status}: ${text.slice(0, 200)}`);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
