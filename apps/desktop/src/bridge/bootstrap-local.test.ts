@@ -1,0 +1,108 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/* 只 mock sidecar-endpoint + tauri-commands + http-client 的 token getter/setter；**不 mock fetch 逻辑**——
+ * bootstrapLocalSession 用真实 fetch（Codex S5 复审：上版 mock apiFetch 掩盖了「apiFetch 前置要求 token」致命）。 */
+const sc = vi.hoisted(() => ({ endpoint: null as { baseUrl: string; handshakeToken: string; instanceNonce: string } | null }));
+vi.mock('./sidecar-endpoint', () => ({ getSidecarEndpoint: vi.fn(async () => sc.endpoint) }));
+
+const tok = vi.hoisted(() => ({ value: null as string | null }));
+vi.mock('./http-client', () => ({
+  getApiToken: vi.fn(() => tok.value),
+  setApiToken: vi.fn((t: string | null) => { tok.value = t; }),
+}));
+
+const store = vi.hoisted(() => ({ map: new Map<string, string>() }));
+vi.mock('./tauri-commands', () => ({
+  getAppSetting: vi.fn(async (k: string) => store.map.get(k) ?? null),
+  setAppSetting: vi.fn(async (k: string, v: string) => { store.map.set(k, v); }),
+}));
+
+import { bootstrapLocalSession } from './bootstrap-local';
+
+const SIDE = { baseUrl: 'http://127.0.0.1:5000', handshakeToken: 'hs-tok', instanceNonce: 'n' };
+function jsonRes(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+beforeEach(() => {
+  sc.endpoint = null;
+  tok.value = null;
+  store.map.clear();
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
+afterEach(() => vi.unstubAllGlobals());
+
+describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => {
+  it('无本地 sidecar（远端模式）→ false，不动凭据', async () => {
+    sc.endpoint = null;
+    vi.stubGlobal('fetch', vi.fn());
+    expect(await bootstrapLocalSession()).toBe(false);
+    expect(tok.value).toBeNull();
+  });
+
+  it('★首启（无 token 无密码）→ 真实 fetch register 拿 token（不受 apiFetch token 前置约束）★', async () => {
+    sc.endpoint = SIDE;
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith('/register')) return jsonRes(201, { data: { accessToken: 'new-jwt' } });
+      return jsonRes(400, {});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await bootstrapLocalSession()).toBe(true);
+    expect(tok.value).toBe('new-jwt');
+    /* 密码持久 + register 请求真发出（带握手头）。 */
+    expect(store.map.get('chrono.local.adminPassword')).toBeTruthy();
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/register'))!;
+    expect((call[1] as RequestInit).headers).toMatchObject({ 'x-chrono-desktop-session': 'hs-tok' });
+    /* auth 请求不带 authorization（免 token）。 */
+    expect(((call[1] as RequestInit).headers as Record<string, string>).authorization).toBeUndefined();
+  });
+
+  it('已有 token 且仍有效（/companion/me 200）→ 幂等 true，不重新 login', async () => {
+    sc.endpoint = SIDE;
+    tok.value = 'valid-jwt';
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/companion/me')) return jsonRes(200, { data: {} });
+      throw new Error('不应调 auth');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await bootstrapLocalSession()).toBe(true);
+    expect(tok.value).toBe('valid-jwt');
+  });
+
+  it('★已有 token 但过期（/companion/me 401）→ 清 token + 用持久密码重新 login★', async () => {
+    sc.endpoint = SIDE;
+    tok.value = 'stale-jwt';
+    store.map.set('chrono.local.adminPassword', 'existing-pw');
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/companion/me')) return jsonRes(401, { code: 'AUTH_EXPIRED' });
+      if (String(url).endsWith('/login')) return jsonRes(200, { data: { accessToken: 'fresh-jwt' } });
+      return jsonRes(400, {});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await bootstrapLocalSession()).toBe(true);
+    expect(tok.value).toBe('fresh-jwt'); /* 过期 token 被换成新的 */
+  });
+
+  it('老用户（有密码无 token）→ 优先 login', async () => {
+    sc.endpoint = SIDE;
+    store.map.set('chrono.local.adminPassword', 'existing-pw');
+    const order: string[] = [];
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.endsWith('/login')) { order.push('login'); return jsonRes(200, { data: { accessToken: 'login-jwt' } }); }
+      order.push('other'); return jsonRes(400, {});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await bootstrapLocalSession()).toBe(true);
+    expect(tok.value).toBe('login-jwt');
+    expect(order[0]).toBe('login'); /* 老用户优先 login */
+  });
+
+  it('provision 全失败 → false（不静默假成功）', async () => {
+    sc.endpoint = SIDE;
+    vi.stubGlobal('fetch', vi.fn(async () => jsonRes(500, {})));
+    expect(await bootstrapLocalSession()).toBe(false);
+    expect(tok.value).toBeNull();
+  });
+});

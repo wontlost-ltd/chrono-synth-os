@@ -3,7 +3,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { EnterpriseRoutes } from './routers/EnterpriseRoutes';
 import { CompanionRoutes } from './routers/CompanionRoutes';
-import { getFirstRunCompleted, openDatabase } from './bridge/tauri-commands';
+import { getFirstRunCompleted, markFirstRunCompleted, openDatabase } from './bridge/tauri-commands';
+import { bootstrapLocalSession } from './bridge/bootstrap-local';
 import { resolveAccountPlan } from './plan/account-plan-runtime';
 import type { AccountPlan } from './plan/account-plan';
 import { useTrayStatusSync } from './tray/useTrayStatusSync';
@@ -71,8 +72,22 @@ export function App() {
       }
       if (cancelled) return;
       if (!onboarded) {
-        setGate('first-run');
-        return;
+        /* ADR-0061 S5：单机模式（有本地内嵌 sidecar）自动 provision 本地 admin，跳过手工 server URL onboarding。
+         * bootstrapLocalSession 非单机（无 sidecar）→ false，落回既有手工 onboarding（远端自托管）。失败不阻塞
+         * （回退 onboarding，用户仍可手工配远端）。 */
+        let localReady = false;
+        try {
+          localReady = await bootstrapLocalSession();
+        } catch {
+          localReady = false;
+        }
+        if (cancelled) return;
+        if (!localReady) {
+          setGate('first-run');
+          return;
+        }
+        /* 单机自动就绪：标记 first-run 完成（下次直接进 plan 解析），继续走 plan 探测。 */
+        try { await markFirstRunCompleted(); } catch { /* 标记失败不致命，下次再引导 */ }
       }
 
       /* 已 onboard：探测 plan 决定渲染哪套外壳。resolveAccountPlan 设计为不抛（失败回退缓存/

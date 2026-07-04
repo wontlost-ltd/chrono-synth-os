@@ -6,6 +6,7 @@
  */
 
 import { getApiBaseUrl, getApiToken } from '@/bridge/http-client';
+import { getSidecarEndpoint } from '@/bridge/sidecar-endpoint';
 import { getAppSetting, setAppSetting } from '@/bridge/tauri-commands';
 import {
   resolveAccountPlanWith,
@@ -16,16 +17,21 @@ import {
 
 /**
  * 探测 `/api/v1/companion/me`：只关心状态码，不解析响应体。
+ * ADR-0061 S5：优先本地 sidecar（base + 握手头，红线 11）；否则回退手工配置远端（localStorage）。
  * 网络/fetch 异常吞掉转成 `status: 0`（= 不可达），交给上层回退缓存——探测本身不抛。
  */
 async function probeCompanionPlan(): Promise<PlanProbeResult> {
-  const base = getApiBaseUrl();
+  const sidecar = await getSidecarEndpoint();
+  const base = sidecar ? sidecar.baseUrl : getApiBaseUrl();
   const token = getApiToken();
   if (!base || !token) return { unconfigured: true, status: 0 };
   try {
     const res = await fetch(`${base}/api/v1/companion/me`, {
       method: 'GET',
-      headers: { authorization: `Bearer ${token}` },
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(sidecar ? { 'x-chrono-desktop-session': sidecar.handshakeToken } : {}),
+      },
     });
     return { unconfigured: false, status: res.status };
   } catch {
