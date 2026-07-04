@@ -1,6 +1,6 @@
 # 0055 — 数字员工的真实执行：worker 是执行 actor，不是法律 principal；高风险必须人类授权
 
-**Status:** Accepted（架构；分阶段——D0 本 ADR 仅定治理模型，D1/D2/D3 后续实现）
+**Status:** Accepted + **Implemented**（架构；分阶段——D0-D3 全部已交付：D1 actor / D2 审批门 / D3 真实执行经 ToolInvocationPipeline，均已合入 main；原头部 "D1/D2/D3 后续实现" 已滞后，文档漂移校正 2026-07-04）
 **Date:** 2026-06-21
 **Scope:** `src/workforce`（数字员工组织 bounded context），复用 `src/agent`
 （`ToolInvocationPipeline` / `AgencyAuthorizationService` / `ToolPermissionService`）、

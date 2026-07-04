@@ -1,6 +1,6 @@
 # 0054 — Proactivity is a deterministic gate over existing signals, not a new reasoning loop
 
-**Status:** Accepted (architecture; phased — Phase 1 spec only)
+**Status:** Accepted + **Implemented**（architecture; phased — Phase 1-6 全部已交付；原头部 "Phase 1 spec only" 已滞后，文档漂移校正 2026-07-04）
 **Date:** 2026-06-18
 **Scope:** `src/proactivity`（new bounded context，规划中），订阅既有
 `src/events`（EventBus）、复用 `src/conversation`（OfflineConversationResponder）、
@@ -110,21 +110,21 @@
 **Phase 1（本 ADR 落地：spec only）**：确立架构与红线，不写实现。产出本文档 + 在
 `.ccg/tasks/proactivity-adr/` 登记信号清单与门控参数草案。
 
-后续阶段（未实现，登记）：
+后续阶段（**Phase 2-6 均已交付**——原标「未实现，登记」已滞后，文档漂移校正 2026-07-04，附落地证据）：
 
-- **Phase 2 — Outbound 通道 + 拉取**：`proactive_messages` 表（schema-dsl 迁移 + 隐私分类 +
+- **Phase 2 — Outbound 通道 + 拉取**：✅ 已交付。`proactive_messages` 表（迁移 sqlite v091/v092，含隐私分类 +
   隔离集 + **幂等键唯一约束** `tenantId+personaId+signalType+sourceId+signalVersion`，红线 8）+
-  `GET /companion/me/nudges`（未读主动消息）+ web/mobile 小红点。先打通管道，触发逻辑用最小规则。
+  `GET /companion/me/nudges`（`src/server/routes/companion/me.ts`）+ `src/storage/proactive-message-store.ts`。
   in-app 未读 nudge 默认开启；移动/桌面 push 默认关闭（红线 9）。
-- **Phase 3 — ProactiveEngine + Gate**：订阅 EventBus 信号子集（memory-consolidated /
-  narrative-changed / evolution-completed / drift 越阈），订阅回调**自身 try/catch**（红线 10）+
-  **入口 drop 无 tenantId 信号**（红线 7）。确定性门（阈值 + 静默期 + 频率上限 + per-persona 开关，
-  复用 persona-governance 配置模式）。
-- **Phase 4 — ProactiveComposer**：据信号类型选确定性模板，复用 OfflineResponder + drift 渲染，
-  过 never_discuss 自检；主动消息可复现性测试。
-- **Phase 5 — 主动响应增强**：OfflineResponder 回答后确定性追问 / 关联记忆 / 提及近期成长
-  （独立于 push，可与 Phase 2-4 并行）。
-- **Phase 6 — Push 投递**：复用既有 SSE/WS 把未读主动消息实时推到在线客户端（离线则下次拉取）。
+- **Phase 3 — ProactiveEngine + Gate**：✅ 已交付。`src/proactivity/proactive-engine.ts`（订阅 EventBus 信号子集，
+  回调**自身 try/catch** 红线 10 + **入口 drop 无 tenantId 信号** 红线 7 + 确定性门：阈值/静默期/频率上限/
+  per-persona 开关，复用 persona-governance）；`ChronoSynthOS.start()` 已 `proactiveEngine.start()` 接入生产。
+- **Phase 4 — ProactiveComposer**：✅ 已交付。`src/proactivity/proactive-composer.ts`（据信号类型选确定性模板，
+  复用 OfflineResponder + drift 渲染，过 never_discuss 自检；可复现性测试）。
+- **Phase 5 — 主动响应增强**：✅ 已交付。`src/conversation/offline-conversation-responder.ts`（回答后确定性追问 /
+  关联记忆 / 提及近期成长）。
+- **Phase 6 — Push 投递**：✅ 已交付。`src/server/services/nudge-push-bridge.ts`（复用 SSE/WS 把未读主动消息实时推到
+  在线客户端，离线下次拉取）；`app.ts` 已 `nudgePushBridge.start()` 接入生产。
 
 ## Consequences（后果）
 
