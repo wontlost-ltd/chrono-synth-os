@@ -58,6 +58,16 @@ jobs:
       - name: Install workspace deps
         run: npm ci
 
+      # 干净 checkout 上 workspace `@chrono/*` 是符号链接但**无 dist**——根 tsconfig.json 的 project
+      # references 在本地能靠增量 dist 解析，在 CI 首次构建会报 `Cannot find module '@chrono/kernel'`。
+      # 故必须像主 ci.yml 一样**先按依赖序显式构建核心包 dist**，再跑 tsc -b 主源与 npm run build。
+      # （与 .github/workflows/ci.yml "Build core packages" 保持一致，避免漂移。）
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
+
       # 组装 sidecar 资源：build → 便携 sidecar bundle → 拷进 tauri resources + **按目标架构下载锁版本 Node**
       # （红线 6/7：Node runtime 架构必须 == rust-target 架构，绝不拷 host node；红线 8：生产裁剪）。
       - name: Assemble sidecar resources
