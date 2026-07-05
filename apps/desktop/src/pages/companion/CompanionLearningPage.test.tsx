@@ -87,8 +87,10 @@ describe('CompanionLearningPage（LLM 老师学习）', () => {
   it('已配 key → 显示撤销按钮，点击调 putLlmSettings apiKey=\'\'', async () => {
     api.getLlmSettings.mockResolvedValue({ ...BASE_SETTINGS, activeProvider: 'openai', hasApiKey: true, canStoreApiKey: true });
     renderPage();
-    const revoke = await screen.findByText('撤销已存 key');
-    fireEvent.click(revoke);
+    /* 等 useEffect 把 provider 灌进表单（「当前生效：openai」仅在 settings 载入后出现）再点撤销——
+     * 否则表单 provider 仍是默认 ollama，撤销会带错 provider。 */
+    await waitFor(() => expect(screen.getByText(/当前生效：openai/)).toBeInTheDocument());
+    fireEvent.click(await screen.findByText('撤销已存 key'));
     await waitFor(() => expect(api.putLlmSettings).toHaveBeenCalledTimes(1));
     expect(api.putLlmSettings.mock.calls[0][0]).toMatchObject({ provider: 'openai', apiKey: '' });
   });
