@@ -1,6 +1,6 @@
 # 0061 — 桌面本地安装包：完整 Node OS 内嵌为 Tauri sidecar（双击即用，无需 Docker）
 
-**Status:** Accepted（架构；分阶段——S0 本 ADR 仅定内嵌形态 + 11 红线 + 分片路线 spec-only，S1-S6 后续实现）
+**Status:** Accepted + **Implemented**（架构；分阶段——S0-S6 全部实现：S1 服务器可分发化+local profile / S2 Tauri sidecar 接线+握手 guard / S3 JWT secret keyring 持久 / S4 多平台构建 CI / S5 前端单机自动 provision / S6 端到端全链冒烟；11 红线闭环。⚠️ 崩溃 auto-restart + 跨平台真机矩阵签名/公证 = 生产发版前 follow-up）
 
 **Date:** 2026-07-04
 
@@ -55,13 +55,13 @@ ChronoSynth OS 的全部核心能力（零-LLM 人格内核、自主学习/劳�
 
 | 阶段 | 内容 | 依赖 | 状态 |
 |---|---|---|---|
-| **S0** | 本 ADR：内嵌形态 + 10 红线 + 路线（spec-only） | — | ✅ 本 ADR |
-| **S1** | **local profile 契约 + 服务器可分发化**：先定 desktop-local profile config 契约（`CHRONO_SERVER_HOST=127.0.0.1`、动态端口、`CHRONO_DB_PATH`→app-data、JWT secret 来源、queue in-process、Redis/PG/OTEL off、offline defaults、握手 token 来源）；再把 ESM `dist/main.js` + **生产裁剪 node_modules**（`npm ci --omit=dev`，含 `@node-rs/argon2` 平台 `.node`，**不含** dev/test/build 的 rolldown/lightningcss/better-sqlite3 等 `.node`）打成随附 sidecar 产物（优先随附 Node runtime，SEA 为可选优化）。本地起停 + `/readyz` 冒烟 | S0 | 待做 |
-| **S2** | **Tauri sidecar 接线**：`externalBin` 配置 + Rust 侧 spawn/健康等待(轮询 `/readyz`)/优雅关停/崩溃重启（tauri-plugin-shell）；动态端口分配传前端；**per-launch 握手 token 生成→env 传 sidecar + invoke 传前端**（红线 11）；前端 API base 指向本地 sidecar + 带握手头（替换手工配 server URL）；红线 2/4/11 落地 | S1 | 待做 |
-| **S3** | **数据与密钥本地化**：SQLite 落 app-data-dir + 首启迁移幂等 + JWT secret keyring 生成 + 单用户自动 provision 本地 admin（token 走 keyring 不进 localStorage，红线 3/5/9/11） | S2 | 待做 |
-| **S4** | **桌面构建 CI**：新 workflow 多平台 `tauri build`（macos arm64/x64、win x64、linux AppImage/deb），签名+公证，产物出 release（红线 7）；沿用既有 updater endpoint | S2 | 待做 |
-| **S5** | **前端单机适配**：companion + enterprise UI 在单机 profile 下的引导（首启无需填 server URL/token）；离线降级 UX（红线 10）；企业面在单机隐藏或标注「本地单租户」 | S2、S3 | 待做 |
-| **S6** | **端到端 + 冒烟**：安装包在干净机（无 Docker/Node）双击装 → 起 → 建人格 → companion chat → 自主学习 → 工具学习全链本地跑通；跨平台矩阵冒烟；卸载/升级数据保全验证 | S1-S5 | 待做 |
+| **S0** | 本 ADR：内嵌形态 + 11 红线 + 路线（spec-only） | — | ✅ 本 ADR（#255） |
+| **S1** | **local profile 契约 + 服务器可分发化**：先定 desktop-local profile config 契约（`CHRONO_SERVER_HOST=127.0.0.1`、动态端口、`CHRONO_DB_PATH`→app-data、JWT secret 来源、queue in-process、Redis/PG/OTEL off、offline defaults、握手 token 来源）；再把 ESM `dist/main.js` + **生产裁剪 node_modules**（`npm ci --omit=dev`，含 `@node-rs/argon2` 平台 `.node`，**不含** dev/test/build 的 rolldown/lightningcss/better-sqlite3 等 `.node`）打成随附 sidecar 产物（优先随附 Node runtime，SEA 为可选优化）。本地起停 + `/readyz` 冒烟 | S0 | ✅ 已实现（#256） |
+| **S2** | **Tauri sidecar 接线**：`externalBin` 配置 + Rust 侧 spawn/健康等待(轮询 `/readyz`)/优雅关停/崩溃重启（tauri-plugin-shell）；动态端口分配传前端；**per-launch 握手 token 生成→env 传 sidecar + invoke 传前端**（红线 11）；前端 API base 指向本地 sidecar + 带握手头（替换手工配 server URL）；红线 2/4/11 落地 | S1 | ✅ 已实现（#257） |
+| **S3** | **数据与密钥本地化**：SQLite 落 app-data-dir + 首启迁移幂等 + JWT secret keyring 生成 + 单用户自动 provision 本地 admin（token 走 keyring 不进 localStorage，红线 3/5/9/11） | S2 | ✅ 已实现（#258） |
+| **S4** | **桌面构建 CI**：新 workflow 多平台 `tauri build`（macos arm64/x64、win x64、linux）+ 按目标架构下载锁版本 Node + SHASUMS 校验；签名/公证凭据经 secrets 注入（**缺省跳过出 unsigned 内测包**——正式签名/公证 + 跨平台矩阵实跑 = follow-up，红线 7）；沿用既有 updater endpoint | S2 | ✅ 已实现（#259，CI 骨架+资源打包；正式签名公证 follow-up） |
+| **S5** | **前端单机适配**：companion + enterprise UI 在单机 profile 下的引导（首启无需填 server URL/token）；离线降级 UX（红线 10）；企业面在单机隐藏或标注「本地单租户」 | S2、S3 | ✅ 已实现（#260） |
+| **S6** | **端到端 + 冒烟**（本 PR 落地范围）：**便携 sidecar bundle 本地全链冒烟**（`e2e:desktop-local`——拷临时目录断符号链接起 bundle → 握手/红线11 → auto-provision → companion 零-LLM → per-persona 组织出生 → T7 路由接通 → SQLite 落库 → 优雅关停无孤儿）。⚠️ **真·干净机双击安装 / 跨平台安装器矩阵 / 签名公证 / 卸载升级数据保全** = 生产发版前 follow-up（须实机 + 签名凭据 + CI 矩阵实跑）。 | S1-S5 | ✅ 已实现（本 PR，范围=便携 bundle 本地全链；真机/矩阵/签名 follow-up） |
 
 ---
 
