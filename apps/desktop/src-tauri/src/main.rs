@@ -16,7 +16,7 @@ use commands::personas::{query_personas, upsert_personas};
 use commands::snapshots::{count_snapshots, query_snapshots, upsert_snapshots};
 use commands::sync::{
     complete_sync, enqueue_offline_op, flush_offline_queue, force_sync, get_sync_state,
-    mark_sync_failed,
+    mark_sync_failed, mark_sync_local,
 };
 use rusqlite::Connection;
 use sidecar::{get_sidecar_endpoint, SidecarState};
@@ -70,6 +70,7 @@ fn main() {
             force_sync,
             complete_sync,
             mark_sync_failed,
+            mark_sync_local,
             enqueue_offline_op,
             flush_offline_queue,
             crdt_apply_local_field_update,

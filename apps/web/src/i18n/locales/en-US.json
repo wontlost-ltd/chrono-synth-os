@@ -1300,7 +1300,8 @@
     "conflict_inbox": "Conflicts",
     "degraded_remote": "Remote degraded",
     "reauth_required": "Re-auth required",
-    "recovery_required": "Manual recovery required"
+    "recovery_required": "Manual recovery required",
+    "local": "Local"
   },
   "chart": {
     "yearAxis": "Year"

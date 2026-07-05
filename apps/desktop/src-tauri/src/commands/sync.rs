@@ -71,17 +71,24 @@ pub async fn force_sync(state: State<'_, AppState>, app: AppHandle) -> Result<()
             .as_ref()
             .ok_or_else(|| "database is not open".to_string())?;
 
-        conn.execute(
-            r#"
-            UPDATE sync_state
-            SET state = 'syncing',
-                last_error = NULL,
-                updated_at = unixepoch('now') * 1000
-            WHERE id = 'singleton'
-            "#,
-            [],
-        )
-        .map_err(|e| e.to_string())?;
+        /* ADR-0061：单机模式（state='local'）无远端可同步——强制同步是 no-op，绝不把 settled 的 `local`
+         * 打回 `syncing`（进而 fetch 失败落 `degraded_remote`，把本地态污染成远端异常）。`WHERE ... AND
+         * state != 'local'` 使更新影响 0 行；据此提前返回，跳过远端 fetch。前端也会禁用按钮（双重防护）。 */
+        let changed = conn
+            .execute(
+                r#"
+                UPDATE sync_state
+                SET state = 'syncing',
+                    last_error = NULL,
+                    updated_at = unixepoch('now') * 1000
+                WHERE id = 'singleton' AND state != 'local'
+                "#,
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed == 0 {
+            return Ok(());
+        }
     }
 
     app.emit("sync://started", ()).map_err(|e| e.to_string())?;
@@ -156,6 +163,34 @@ pub async fn mark_sync_failed(state: State<'_, AppState>, error: String) -> Resu
         WHERE id = 'singleton'
         "#,
         params![error],
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+/// ADR-0061 S5/follow-up：单机模式（内嵌本地 sidecar，无远端后端）标 `local` 同步态——本地即真源，无远端可同步。
+/// 修「本地一直卡 initial_sync/Syncing…」：初始 seed 是 `initial_sync`（等首次远端同步），但单机根本没有远端，
+/// 会永久 syncing。前端确认本地 sidecar 模式后调本命令落 `local`。幂等：只从**未真正远端同步过**的态
+/// （initial_sync）切到 local，不覆盖用户显式连远端后的 online_synced/degraded（远端模式共存）。
+#[tauri::command]
+pub async fn mark_sync_local(state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state
+        .db
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    let conn = guard
+        .as_ref()
+        .ok_or_else(|| "database is not open".to_string())?;
+
+    conn.execute(
+        r#"
+        UPDATE sync_state
+        SET state = 'local',
+            last_error = NULL,
+            updated_at = unixepoch('now') * 1000
+        WHERE id = 'singleton' AND state = 'initial_sync'
+        "#,
+        [],
     )
     .map(|_| ())
     .map_err(|e| e.to_string())

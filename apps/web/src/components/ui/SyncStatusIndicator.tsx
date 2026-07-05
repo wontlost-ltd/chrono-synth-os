@@ -18,6 +18,8 @@ const STATE_COLORS: Record<RuntimeSyncStateV2, string> = {
   degraded_remote:   '#9f2621',
   reauth_required:   '#C2410C',
   recovery_required: '#9f2621',
+  /* 单机模式 settled 态（本地即真源，无远端同步）——绿点同 online_synced。 */
+  local:             '#2f6b3b',
 };
 
 export function SyncStatusIndicator({

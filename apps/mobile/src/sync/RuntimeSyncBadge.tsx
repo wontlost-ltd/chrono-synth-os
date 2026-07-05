@@ -13,6 +13,8 @@ const SYNC_STATE_COLORS: Record<RuntimeSyncStateV2, string> = {
   degraded_remote: '#f97316',
   reauth_required: '#dc2626',
   recovery_required: '#dc2626',
+  /* 单机模式 settled 态（本地即真源，无远端同步）——绿点同 online_synced，非脉冲。 */
+  local: '#22c55e',
 };
 
 const SYNC_STATE_LABELS: Record<RuntimeSyncStateV2, string> = {
@@ -26,6 +28,7 @@ const SYNC_STATE_LABELS: Record<RuntimeSyncStateV2, string> = {
   degraded_remote: 'Degraded',
   reauth_required: 'Sign-in required',
   recovery_required: 'Recovery required',
+  local: 'Local',
 };
 
 interface Props {
