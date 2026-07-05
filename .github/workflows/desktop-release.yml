@@ -58,6 +58,16 @@ jobs:
       - name: Install workspace deps
         run: npm ci
 
+      # 干净 checkout 上 workspace `@chrono/*` 是符号链接但**无 dist**——根 tsconfig.json 的 project
+      # references 在本地能靠增量 dist 解析，在 CI 首次构建会报 `Cannot find module '@chrono/kernel'`。
+      # 故必须像主 ci.yml 一样**先按依赖序显式构建核心包 dist**，再跑 tsc -b 主源与 npm run build。
+      # （与 .github/workflows/ci.yml "Build core packages" 保持一致，避免漂移。）
+      - name: Build core packages
+        run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
+
+      - name: Build main source
+        run: npx tsc -b tsconfig.src.json
+
       # 组装 sidecar 资源：build → 便携 sidecar bundle → 拷进 tauri resources + **按目标架构下载锁版本 Node**
       # （红线 6/7：Node runtime 架构必须 == rust-target 架构，绝不拷 host node；红线 8：生产裁剪）。
       - name: Assemble sidecar resources
@@ -70,26 +80,64 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
-      # Tauri 多平台构建 + 产物上传到 draft release。签名/公证凭据缺省则出未签名包（内测用）。
-      - name: Build desktop app
+      # 探测签名凭据是否配置——决定「正式签名发版」还是「未签名内测 dry-run」两种构建模式。
+      # 两个坑（均为「凭据缺省本应出未签名包，实际却构建失败」，跨平台矩阵实跑暴露）：
+      #  1) tauri.conf 配了 plugins.updater.pubkey + bundle.createUpdaterArtifacts=true → **强制**签
+      #     updater 产物；TAURI_SIGNING_PRIVATE_KEY 缺失时 tauri 报「Missing comment in secret key」失败。
+      #  2) macOS：APPLE_CERTIFICATE **存在但为空串**时，tauri-action 仍进签名路径跑 `security import`
+      #     导入空证书 → 「failed to import keychain certificate」失败。空串 ≠ 未设置——故未配置凭据时
+      #     必须**根本不传** Apple 签名 env（不能传空串）。
+      # 结论：无凭据（内测/dry-run）→ 关 updater 产物 + 不传任何签名 env，只出未签名常规安装器。
+      - name: Detect signing capability
+        id: signing
+        shell: bash
+        env:
+          HAS_TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_TAURI_KEY" = "true" ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "extra_args=" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            # 无 updater 私钥：关掉 updater 产物签名；常规 .dmg/.msi/.deb/.AppImage 照出。
+            echo 'extra_args=-c {"bundle":{"createUpdaterArtifacts":false}}' >> "$GITHUB_OUTPUT"
+          fi
+
+      # 正式签名构建（配置了凭据）：传全套 Apple 公证 + Tauri updater 签名 env。
+      - name: Build desktop app (signed release)
+        if: steps.signing.outputs.signed == 'true'
         uses: tauri-apps/tauri-action@v0.5.24 # pin（红线 7 可复现；升级需显式改版本）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS 签名+公证（配置后启用；未配置=跳过签名，出未签名 .app/.dmg 供内测）。
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Tauri updater 签名私钥（tauri.conf plugins.updater.pubkey 对应）。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-v0.0.0-dev-{0}', github.run_number) }}
           releaseName: 'ChronoSynth Desktop ${{ github.ref_name }}'
-          releaseBody: '本地安装包（内嵌 Node OS sidecar，ADR-0061）。⚠️ 未配置签名/公证凭据时为 **unsigned internal testing only** —— 不进正式 updater 通道、不作为 GA 下载入口（macOS Gatekeeper / Windows SmartScreen 会拦）。多平台产物见附件。'
+          releaseBody: '本地安装包（内嵌 Node OS sidecar，ADR-0061）。签名 + 公证正式发版；含 updater 产物。多平台产物见附件。'
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}
+
+      # 未签名内测 / dry-run（无凭据）：**不传任何签名 env**（空串会触发 macOS `security import` 失败），
+      # 且 -c 关掉 updater 产物（无私钥无法签）。产物为 unsigned，仅内测。
+      - name: Build desktop app (unsigned internal)
+        if: steps.signing.outputs.signed != 'true'
+        uses: tauri-apps/tauri-action@v0.5.24 # pin（红线 7 可复现；升级需显式改版本）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('desktop-v0.0.0-dev-{0}', github.run_number) }}
+          releaseName: 'ChronoSynth Desktop ${{ github.ref_name }}'
+          releaseBody: '本地安装包（内嵌 Node OS sidecar，ADR-0061）。⚠️ **unsigned internal testing only** —— 未配置签名/公证凭据：不进正式 updater 通道、不作为 GA 下载入口（macOS Gatekeeper / Windows SmartScreen 会拦）。多平台产物见附件。'
+          releaseDraft: true
+          prerelease: true
+          args: ${{ matrix.args }} ${{ steps.signing.outputs.extra_args }}

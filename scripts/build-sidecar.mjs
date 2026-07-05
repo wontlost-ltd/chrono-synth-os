@@ -19,7 +19,7 @@
  * 只留运行时（@node-rs/argon2 是唯一运行时原生依赖）。
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { cpSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,15 @@ const OUT = resolve(ROOT, 'dist-sidecar');
 const STAGING = resolve(ROOT, '.sidecar-staging');
 
 function run(cmd, args, cwd = ROOT) {
+  /* Windows 上 `npm` 是 `npm.cmd`——Node 18.20+/20+/22+/24 起为堵 CVE-2024-27980，`.cmd/.bat`
+   * **必须经 shell 才能执行**（`spawnSync npm.cmd EINVAL`），且 execFileSync 直接找 `npm` 也 ENOENT。
+   * 故 win32 下用 shell:true 跑 `npm`（shell 解析到 npm.cmd）。为防参数被 shell 二次解析/注入，用
+   * JSON.stringify 给每个 arg 加引号（本脚本 args 均为内部常量，无外部输入，仍显式加固）。 */
+  if (process.platform === 'win32' && cmd === 'npm') {
+    const quoted = args.map((a) => JSON.stringify(a)).join(' ');
+    execSync(`npm ${quoted}`, { cwd, stdio: 'inherit' });
+    return;
+  }
   execFileSync(cmd, args, { cwd, stdio: 'inherit' });
 }
 
