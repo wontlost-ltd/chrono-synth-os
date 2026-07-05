@@ -6,6 +6,15 @@ let firstRunCompleted = true;
 vi.mock('@/bridge/tauri-commands', () => ({
   openDatabase: vi.fn().mockResolvedValue(undefined),
   getFirstRunCompleted: vi.fn(async () => firstRunCompleted),
+  markFirstRunCompleted: vi.fn().mockResolvedValue(undefined),
+}));
+
+/* bootstrapLocalSession/settleLocalSync 显式 mock：验证「每次启动都跑 bootstrap 刷新 token」
+ * （修 onboarded 老用户 token 过期→探测 401→落错外壳）。默认 true=单机就绪。 */
+const bootstrapMock = vi.hoisted(() => ({ fn: vi.fn(async () => true) }));
+vi.mock('@/bridge/bootstrap-local', () => ({
+  bootstrapLocalSession: bootstrapMock.fn,
+  settleLocalSync: vi.fn().mockResolvedValue(undefined),
 }));
 
 /* useTrayStatusSync 有独立测试（useTrayStatusSync.test.tsx）；这里 mock 成 no-op，让 App 测试
@@ -46,6 +55,8 @@ const resolvePlanMock = resolveAccountPlan as unknown as ReturnType<typeof vi.fn
 beforeEach(() => {
   resolvePlanMock.mockReset();
   firstRunCompleted = true;
+  bootstrapMock.fn.mockClear();
+  bootstrapMock.fn.mockResolvedValue(true);
 });
 
 describe('App plan-based router switch (ADR-0046 2.4a)', () => {
@@ -75,6 +86,8 @@ describe('App plan-based router switch (ADR-0046 2.4a)', () => {
 describe('App 启动状态机回归（Codex PR-A Critical）', () => {
   it('first-run：完成 onboarding 后重跑 boot 进入主应用，而非卡在 onboarding', async () => {
     firstRunCompleted = false; // 首次启动未 onboard
+    /* 远端自托管模式（无本地 sidecar）→ bootstrap 返回 false → 走手工 onboarding（本测试的场景）。 */
+    bootstrapMock.fn.mockResolvedValue(false);
     resolvePlanMock.mockResolvedValue('enterprise');
     render(<App />);
 
@@ -95,5 +108,15 @@ describe('App 启动状态机回归（Codex PR-A Critical）', () => {
     render(<App />);
     /* 即便解析抛错，App 也必须到达 ready 并渲染某套 router（这里是企业版兜底）。 */
     await waitFor(() => expect(screen.getByTestId('enterprise-router')).toBeInTheDocument());
+  });
+
+  it('★onboarded 老用户也**每次启动跑 bootstrapLocalSession**（刷新 token，防探测 401→落错外壳）★', async () => {
+    /* 关键回归：#269 同类首启门控 bug——bootstrap 曾只在 !onboarded 跑，onboarded 老用户 token 过期
+     * 后永不刷新 → resolveAccountPlan 探测 401 → 回退旧缓存 plan（崩溃期误缓存 enterprise）→ 落错外壳。 */
+    firstRunCompleted = true; // 已 onboarded
+    resolvePlanMock.mockResolvedValue('companion');
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('companion-router')).toBeInTheDocument());
+    expect(bootstrapMock.fn).toHaveBeenCalledTimes(1); // onboarded 仍跑了 bootstrap
   });
 });
