@@ -20,8 +20,20 @@ export const CompanionLlmSettingsRequestV1Schema = z
     provider: CompanionLlmProviderV1Schema,
     /** 模型名覆盖（空串/省略 → 用该 provider 默认 / 全局）。 */
     model: z.string().max(200).optional(),
-    /** 自定义端点（OpenAI 兼容网关 / 订阅代理 / 本机 ollama）。空串/省略 → 官方/默认端点。 */
-    baseUrl: z.string().max(500).optional(),
+    /**
+     * 自定义端点（OpenAI 兼容网关 / 订阅代理 / 本机 ollama）。空串/省略 → 官方/默认端点。
+     * 仅允许 http(s)——挡掉 file:/gopher: 等危险 scheme（SSRF 面收窄）。空串放行（=清除覆盖）。
+     * ⚠️ 本地单机（loopback sidecar）信任模型下允许指向 127.0.0.1（ollama 正当用途）；hosted/多租户
+     * 部署若开放此端点，须在部署层额外加私网 IP 阻断 / allowlist（见 me.ts 端点注释）。
+     */
+    baseUrl: z
+      .string()
+      .max(500)
+      .refine(
+        (v) => v === '' || /^https?:\/\//i.test(v),
+        { message: 'baseUrl 必须是 http(s) 端点' },
+      )
+      .optional(),
     /**
      * API key。提供非空 → 加密存该 provider 的 key；提供空串 → 撤销该 provider 的 key；
      * 省略（undefined）→ 不动既有 key。绝不回传。

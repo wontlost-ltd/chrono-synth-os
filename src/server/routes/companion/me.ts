@@ -390,7 +390,14 @@ export function registerCompanionRoutes(
   /* PUT：设置 LLM 老师。body: { provider, model?, baseUrl?, apiKey? }。
    *   - provider 必填且合法（openai/anthropic/ollama）。
    *   - apiKey 提供且加密可用 → 加密落库该 provider 的 key；apiKey='' → 删除该 provider 的 key。
-   *   - model/baseUrl 空串 → 清除覆盖（回退全局/该 provider 默认）。 */
+   *   - model/baseUrl 空串 → 清除覆盖（回退全局/该 provider 默认）。
+   *
+   * ⚠️ SSRF 部署边界（Codex 复审）：自定义 baseUrl 让服务端向用户给定 URL 发请求。本端点为**桌面单机
+   *    loopback sidecar 信任模型**设计——用户指向 127.0.0.1（本机 ollama）是正当用途，故这里**不**阻断
+   *    私网 IP（阻断会废掉本地 ollama 主用例）。契约仅收窄到 http(s) scheme。若此路由在 **hosted/多租户**
+   *    部署开放，必须在部署层追加私网 IP 阻断 / host allowlist（src/security/ssrf-guard.ts 可用），或
+   *    仅桌面构建启用本端点——否则是 SSRF 面。resolveTenantLlmConfig 既有安全门仍在：租户覆盖 base_url
+   *    时绝不外送平台 key（只用租户 BYOK key），故即便被滥用也不泄露平台凭据。 */
   app.put('/api/v1/companion/me/llm-settings', async (request, reply) => {
     assertCompanionAccess(request);
     setPrivateNoStore(reply);
@@ -398,7 +405,14 @@ export function registerCompanionRoutes(
     const now = getOS(request).getClock().now();
     const userId = (request.user as JwtPayload | undefined)?.sub ?? null;
 
-    /* 先存偏好（provider/model/baseUrl）。非法 provider 由 store.upsert 抛 ValidationError 前的枚举校验。 */
+    /* **前置校验所有先决条件，再落任何库**（Codex 复审：原子性）——避免「偏好写了但 key 因加密不可用
+     * 报错」的部分写入，让用户误以为 key 存了。非空 apiKey 但加密不可用 → 直接拒，此时 upsert 尚未执行。 */
+    const wantsStoreKey = body.apiKey !== undefined && body.apiKey !== '';
+    if (wantsStoreKey && !llmSettingsEncryption) {
+      throw new ValidationError('本机未启用凭据加密，无法安全保存 API key；可改用 Ollama 或自定义端点（无需 key）');
+    }
+
+    /* 存偏好（provider/model/baseUrl）。非法 provider 由 store.upsert 前的枚举校验挡。 */
     new TenantLlmSettingsStore(db, request.tenantId).upsert({
       activeProvider: body.provider,
       model: body.model ?? null,
@@ -407,13 +421,10 @@ export function registerCompanionRoutes(
       now,
     });
 
-    /* 再处理该 provider 的 API key（仅加密可用时）。apiKey 非空 → 存；apiKey==='' → 删（撤销）。
-     * apiKey===undefined（未提供）→ 不动既有 key。 */
+    /* 处理该 provider 的 API key。apiKey 非空 → 存（加密已在上面确认可用）；apiKey==='' → 删（撤销，
+     * 加密不可用也允许删——删不需要加密）；apiKey===undefined → 不动既有 key。 */
     let keyStored = false;
-    if (body.apiKey !== undefined) {
-      if (!llmSettingsEncryption) {
-        throw new ValidationError('本机未启用凭据加密，无法安全保存 API key；可改用 Ollama 或自定义端点（无需 key）');
-      }
+    if (body.apiKey !== undefined && llmSettingsEncryption) {
       const credStore = new LlmCredentialStore(db, llmSettingsEncryption, request.tenantId);
       if (body.apiKey === '') {
         credStore.delete(body.provider);
