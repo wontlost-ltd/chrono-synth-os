@@ -1,6 +1,6 @@
 # 0061 — 桌面本地安装包：完整 Node OS 内嵌为 Tauri sidecar（双击即用，无需 Docker）
 
-**Status:** Accepted + **Implemented**（架构；分阶段——S0-S6 全部实现：S1 服务器可分发化+local profile / S2 Tauri sidecar 接线+握手 guard / S3 JWT secret keyring 持久 / S4 多平台构建 CI / S5 前端单机自动 provision / S6 端到端全链冒烟；11 红线闭环。⚠️ 崩溃 auto-restart + 跨平台真机矩阵签名/公证 = 生产发版前 follow-up）
+**Status:** Accepted + **Implemented**（架构；分阶段——S0-S6 全部实现：S1 服务器可分发化+local profile / S2 Tauri sidecar 接线+握手 guard / S3 JWT secret keyring 持久 / S4 多平台构建 CI / S5 前端单机自动 provision / S6 端到端全链冒烟；11 红线闭环。follow-up：**单机 `local` 同步态 + 崩溃 auto-restart 已实现**——`local` 态修「本地无远端却永久 Syncing」(#262)；supervisor 线程 `try_wait` 侦测崩溃→有限次退避重启→轮换握手 token/复用持久 JWT secret→刷新端点 + emit `sidecar://restarted`（红线 4/5/11），前端失效缓存与重试解耦（任何 sidecar 网络错都失效端点缓存，让下次重取活端口）。⚠️ 剩余 follow-up：跨平台真机矩阵 + 签名/公证 = 生产发版前须实机 + 签名凭据）
 
 **Date:** 2026-07-04
 

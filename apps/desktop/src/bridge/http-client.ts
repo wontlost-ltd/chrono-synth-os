@@ -133,12 +133,19 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     return await doFetch<T>(path, options, sidecar);
   } catch (err) {
     /* sidecar 模式下 403(握手失效)/网络错（sidecar 崩溃重启后端口+token 变）→ 失效缓存 + 重取端点 + 重试一次
-     * （拿新 token/端口）。Codex S2 复审补：防「重启后旧 token 缓存踩坑」+「首次 invoke 失败永久缓存 null」。 */
-    if (sidecar && isRetriableSidecarError(err, options.method)) {
+     * （拿新 token/端口）。Codex S2 复审补：防「重启后旧 token 缓存踩坑」+「首次 invoke 失败永久缓存 null」。
+     *
+     * 缓存失效与重试**分离**（crash auto-restart follow-up）：只要是本地 sidecar 的网络错（端点可能因崩溃重启
+     * 而陈旧），就**先失效缓存**——失效纯粹是清缓存、无副作用，让**下一次**请求重取活端点。而是否在**本次**
+     * 补发重试仍受方法约束（非幂等 POST 不自证「未触达」，不重试；否则会重复副作用）。这样即便本次 POST
+     * 不重试，紧接着的请求也不会再打死端口。 */
+    if (sidecar && shouldInvalidateOnSidecarError(err)) {
       const { invalidateSidecarEndpoint } = await import('./sidecar-endpoint');
       invalidateSidecarEndpoint();
-      const fresh = await getSidecarEndpoint();
-      if (fresh) return await doFetch<T>(path, options, fresh);
+      if (isRetriableSidecarError(err, options.method)) {
+        const fresh = await getSidecarEndpoint();
+        if (fresh) return await doFetch<T>(path, options, fresh);
+      }
     }
     throw err;
   }
@@ -169,6 +176,16 @@ function isRetriableSidecarError(err: unknown, method?: string): boolean {
   if (err instanceof ApiHttpError && err.status === 403 && err.code === DESKTOP_SESSION_DENY_CODE) return true;
   if (err instanceof TypeError) return SAFE_METHODS.has((method ?? 'GET').toUpperCase());
   return false;
+}
+
+/**
+ * 是否应在此错误上**失效** sidecar 端点缓存（与是否重试解耦）。失效无副作用（仅清缓存），故比重试更宽：
+ * 握手失效 403 + **任何**网络错（TypeError）都失效——崩溃重启后端口/token 变，任何方法的网络错都可能是
+ * 「打到了死端口」，下次请求应重取活端点。返回 true 的集合是 isRetriableSidecarError 的超集。
+ */
+function shouldInvalidateOnSidecarError(err: unknown): boolean {
+  if (err instanceof ApiHttpError && err.status === 403 && err.code === DESKTOP_SESSION_DENY_CODE) return true;
+  return err instanceof TypeError;
 }
 
 async function doFetch<T>(path: string, options: ApiFetchOptions, sidecar: { baseUrl: string; handshakeToken: string } | null): Promise<T> {
