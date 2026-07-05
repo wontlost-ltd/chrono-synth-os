@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 /* mock 对话数据层——验 UI 行为（发送/渲染回应/来源标签/错误），不打真后端。 */
 const chatMock = vi.hoisted(() => ({ fn: vi.fn() }));
@@ -31,13 +31,16 @@ describe('CompanionChatPage（零-LLM 对话 UI）', () => {
     expect(chatMock.fn).toHaveBeenCalledWith('你叫什么名字');
   });
 
-  it('knowledge_grounded 标「据我记得的」；无据落「我还不了解这个」', async () => {
-    chatMock.fn.mockResolvedValueOnce({ reply: '据记忆答', kind: 'knowledge_grounded', confidence: 0.7, groundedMemoryCount: 2 });
+  it('knowledge_grounded → 来源标「据我记得的」', async () => {
+    chatMock.fn.mockResolvedValue({ reply: '据记忆答', kind: 'knowledge_grounded', confidence: 0.7, groundedMemoryCount: 2 });
     render(<CompanionChatPage />);
     typeAndSend('讲讲那件事');
     expect(await screen.findByText('据我记得的')).toBeInTheDocument();
+  });
 
-    chatMock.fn.mockResolvedValueOnce({ reply: '不了解', kind: 'honest_offline', confidence: 0.3, groundedMemoryCount: 0 });
+  it('honest_offline 无据 → 来源标「我还不了解这个」', async () => {
+    chatMock.fn.mockResolvedValue({ reply: '不了解', kind: 'honest_offline', confidence: 0.3, groundedMemoryCount: 0 });
+    render(<CompanionChatPage />);
     typeAndSend('随便问');
     expect(await screen.findByText('我还不了解这个')).toBeInTheDocument();
   });
@@ -50,14 +53,17 @@ describe('CompanionChatPage（零-LLM 对话 UI）', () => {
     expect(chatMock.fn).not.toHaveBeenCalled();
   });
 
-  it('403 → 面向个人版提示；未配置 → 本地引擎未就绪提示', async () => {
-    chatMock.fn.mockRejectedValueOnce(new ApiHttpError(403, 'X', 'HTTP 403'));
+  it('403 → 提示对话面向个人版', async () => {
+    chatMock.fn.mockRejectedValue(new ApiHttpError(403, 'X', 'HTTP 403'));
     render(<CompanionChatPage />);
     typeAndSend('hi');
     expect(await screen.findByRole('alert')).toHaveTextContent('对话面向个人版');
+  });
 
-    chatMock.fn.mockRejectedValueOnce(new ApiNotConfiguredError());
-    typeAndSend('hi again');
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('本地引擎尚未就绪'));
+  it('未配置 → 提示本地引擎未就绪', async () => {
+    chatMock.fn.mockRejectedValue(new ApiNotConfiguredError());
+    render(<CompanionChatPage />);
+    typeAndSend('hi');
+    expect(await screen.findByRole('alert')).toHaveTextContent('本地引擎尚未就绪');
   });
 });
