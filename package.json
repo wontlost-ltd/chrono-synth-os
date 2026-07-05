@@ -41,6 +41,7 @@
     "start": "node dist/main.js",
     "start:desktop": "node dist/main-desktop.js",
     "build:sidecar": "npm run build && node scripts/build-sidecar.mjs",
+    "e2e:desktop-local": "node scripts/desktop-local-e2e.mjs",
     "start:observability-worker": "node dist/main-observability-worker.js",
     "dev": "npm run build && node dist/main.js",
     "dev:observability-worker": "npm run build && node dist/main-observability-worker.js",
