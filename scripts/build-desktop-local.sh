@@ -57,7 +57,31 @@ fi
 log "目标架构: $TARGET"
 
 if [ "${SKIP_ASSEMBLE:-0}" != "1" ]; then
-  log "1/5 构建 workspace 包（npm run build）…"
+  # 0) 先 `npm ci` 恢复 workspace `@chrono/*` 符号链接。TS 靠 node_modules/@chrono/<pkg> 符号链接
+  #    解析这些包；链接不全（build-sidecar 的 --install-links staging、误删、部分安装等都可能导致）
+  #    会让 tsc 报 `Cannot find module '@chrono/kernel'`。CI 每次 `npm ci` 天然有全套链接；本地脚本
+  #    必须同样保证。设 SKIP_NPM_CI=1 可跳过（确定链接已齐时省时间）。
+  if [ "${SKIP_NPM_CI:-0}" != "1" ]; then
+    log "0/5 npm ci（恢复 workspace 符号链接，保证 @chrono/* 可解析）…"
+    npm ci
+  fi
+
+  # 1) 干净 checkout 上 workspace 包**无 dist**——根 tsconfig.json 的 project references 在有增量 dist
+  #    时能解析，干净树首次构建会报 `Cannot find module '@chrono/kernel'`。故必须像
+  #    .github/workflows/ci.yml「Build core packages」一样先按依赖序显式建核心包 dist，再建主源与
+  #    npm run build。（与 ci.yml / desktop-release.yml 保持一致，避免漂移。）
+  log "1/5 构建 workspace 包（先核心包 dist，再主源 + npm run build）…"
+  npx tsc -b \
+    packages/contracts/tsconfig.json \
+    packages/kernel/tsconfig.json \
+    packages/data-plane/tsconfig.json \
+    packages/sync-engine/tsconfig.json \
+    packages/design-tokens/tsconfig.json \
+    packages/schema-dsl/tsconfig.json \
+    packages/adapter-web/tsconfig.json \
+    packages/adapter-tauri/tsconfig.json \
+    packages/adapter-react-native/tsconfig.json
+  npx tsc -b tsconfig.src.json
   npm run build
 
   log "2/5 构建便携 sidecar bundle + 便携启动 smoke（build-sidecar.mjs --verify）…"
