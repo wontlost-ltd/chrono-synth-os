@@ -224,11 +224,12 @@ describe('apiFetch — ADR-0061 S2 本地 sidecar 优先 + 陈旧重试', () => 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('★POST + 网络错(TypeError) → 不自动重试（非幂等，可能已提交副作用）★', async () => {
+  it('★POST + 网络错(TypeError) → 本次不重试（非幂等），但失效缓存让下次重取活端点（crash-restart follow-up）★', async () => {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
     await expect(apiFetch('/api/v1/personas', { method: 'POST', body: {} })).rejects.toBeInstanceOf(TypeError);
-    expect(sidecarEp.invalidateCalls).toBe(0);
+    /* 失效缓存（无副作用，仅清缓存）——防「崩溃重启后 POST 反复打死端口」；但**本次不补发重试**（不可自证未触达）。 */
+    expect(sidecarEp.invalidateCalls).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
