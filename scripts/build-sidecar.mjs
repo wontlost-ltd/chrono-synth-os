@@ -29,7 +29,10 @@ const OUT = resolve(ROOT, 'dist-sidecar');
 const STAGING = resolve(ROOT, '.sidecar-staging');
 
 function run(cmd, args, cwd = ROOT) {
-  execFileSync(cmd, args, { cwd, stdio: 'inherit' });
+  /* Windows 上 `npm` 是 `npm.cmd`——execFileSync 不经 shell 解析不了 `.cmd`（`spawnSync npm ENOENT`）。
+   * 显式补后缀（比 shell:true 更安全，避免参数被 shell 二次解析）。其它命令名保持原样。 */
+  const resolved = process.platform === 'win32' && cmd === 'npm' ? 'npm.cmd' : cmd;
+  execFileSync(resolved, args, { cwd, stdio: 'inherit' });
 }
 
 function log(msg) { process.stdout.write(`[build-sidecar] ${msg}\n`); }

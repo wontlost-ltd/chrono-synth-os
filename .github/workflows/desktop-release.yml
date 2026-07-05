@@ -80,6 +80,25 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      # 有无 updater 签名私钥？tauri.conf 配了 plugins.updater.pubkey + createUpdaterArtifacts=true，
+      # 会**强制**对 updater 产物签名——私钥缺失时 tauri 直接报「Missing comment in secret key」构建失败
+      # （不是「出未签名包」，是根本不出包）。故内测/无凭据构建须**关掉 updater 产物**（-c 覆盖
+      # createUpdaterArtifacts=false），只出常规安装器；配了私钥的正式发版才签 updater。
+      - name: Detect updater signing capability
+        id: signing
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "updater=true" >> "$GITHUB_OUTPUT"
+            echo "extra_args=" >> "$GITHUB_OUTPUT"
+          else
+            echo "updater=false" >> "$GITHUB_OUTPUT"
+            # 关掉 updater 产物签名（无私钥的内测/dry-run 构建）；常规 .dmg/.msi/.deb/.AppImage 照出。
+            echo 'extra_args=-c {"bundle":{"createUpdaterArtifacts":false}}' >> "$GITHUB_OUTPUT"
+          fi
+
       # Tauri 多平台构建 + 产物上传到 draft release。签名/公证凭据缺省则出未签名包（内测用）。
       - name: Build desktop app
         uses: tauri-apps/tauri-action@v0.5.24 # pin（红线 7 可复现；升级需显式改版本）
@@ -92,7 +111,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Tauri updater 签名私钥（tauri.conf plugins.updater.pubkey 对应）。
+          # Tauri updater 签名私钥（tauri.conf plugins.updater.pubkey 对应）。缺失时上一步已关 updater 产物。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -102,4 +121,4 @@ jobs:
           releaseBody: '本地安装包（内嵌 Node OS sidecar，ADR-0061）。⚠️ 未配置签名/公证凭据时为 **unsigned internal testing only** —— 不进正式 updater 通道、不作为 GA 下载入口（macOS Gatekeeper / Windows SmartScreen 会拦）。多平台产物见附件。'
           releaseDraft: true
           prerelease: true
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} ${{ steps.signing.outputs.extra_args }}
