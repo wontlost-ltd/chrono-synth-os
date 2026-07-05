@@ -208,8 +208,15 @@ fn spawn_and_wait_ready(params: &SpawnParams) -> Result<(Child, SidecarEndpoint)
 
     // Read stdout for the ready marker on a **separate thread** and deliver via channel, so the
     // wait honours a **real hard timeout** — a blocking read_line inside a deadline loop would hang
-    // forever if the child stays alive but emits no newline (Codex S2 复审 Major). The reader thread
-    // is detached; it ends on marker/EOF/error. Token env is never logged here.
+    // forever if the child stays alive but emits no newline (Codex S2 复审 Major).
+    //
+    // CRITICAL: after the ready marker is seen the thread MUST keep draining stdout to EOF — it must
+    // NOT break and drop the pipe. The sidecar logs to stdout continuously (workers every few
+    // seconds); if we stop reading, the OS stdout pipe buffer (~64KB) fills, the child's next write
+    // blocks, and Node eventually dies on the stalled/broken pipe — which the supervisor then sees as
+    // a "crash" and respawns, producing an endless ready→stall→crash→restart loop. So: send readiness
+    // through the channel ONCE, then continue reading and echo each line to our stderr (inherited by
+    // the app) for observability, until EOF. Token env is never logged here.
     let stdout = match child.stdout.take() {
         Some(s) => s,
         None => { let _ = child.kill(); let _ = child.wait(); return Err("no sidecar stdout".to_string()); }
@@ -218,19 +225,34 @@ fn spawn_and_wait_ready(params: &SpawnParams) -> Result<(Child, SidecarEndpoint)
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
+        let mut signalled = false; // readiness sent exactly once; keep draining afterwards.
         loop {
             line.clear();
             match reader.read_line(&mut line) {
-                Ok(0) => { let _ = tx.send(None); break; } // EOF: exited before ready
-                Ok(_) => {
-                    if let Some(rest) = line.trim_end().strip_prefix(READY_PREFIX) {
-                        let m = serde_json::from_str::<ReadyMarker>(rest).ok();
-                        let _ = tx.send(m);
-                        break;
-                    }
-                    // else: ordinary log line; keep reading.
+                Ok(0) => {
+                    // EOF: child closed stdout (exited). Only report "exited before ready" if we
+                    // never signalled; after ready this is just normal shutdown.
+                    if !signalled { let _ = tx.send(None); }
+                    break;
                 }
-                Err(_) => { let _ = tx.send(None); break; }
+                Ok(_) => {
+                    if !signalled {
+                        if let Some(rest) = line.trim_end().strip_prefix(READY_PREFIX) {
+                            let m = serde_json::from_str::<ReadyMarker>(rest).ok();
+                            let _ = tx.send(m);
+                            signalled = true;
+                            continue; // keep the loop alive to drain subsequent log lines.
+                        }
+                        // else: pre-ready log line; keep reading.
+                    } else {
+                        // Post-ready: drain + echo to stderr so the pipe never fills (see CRITICAL).
+                        eprint!("[sidecar] {line}");
+                    }
+                }
+                Err(_) => {
+                    if !signalled { let _ = tx.send(None); }
+                    break;
+                }
             }
         }
     });
