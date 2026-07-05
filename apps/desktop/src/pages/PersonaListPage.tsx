@@ -26,6 +26,8 @@ export function PersonaListPage() {
   const syncState = useSyncState();
   const isSyncing =
     syncState.data?.state === 'syncing' || syncState.data?.state === 'initial_sync';
+  /* 单机模式（本地即真源，无远端）：强制同步无意义——禁用按钮（Rust force_sync 对 local 也 no-op，双重防护）。 */
+  const isLocalOnly = syncState.data?.state === 'local';
 
   const forceSyncMutation = useMutation({
     mutationFn: forceSync,
@@ -36,6 +38,8 @@ export function PersonaListPage() {
       ]);
     },
   });
+
+  const forceSyncDisabled = isSyncing || isLocalOnly || forceSyncMutation.isPending;
 
   function renderPersonaContent() {
     if (personas.isError) {
@@ -74,15 +78,19 @@ export function PersonaListPage() {
           <button
             type="button"
             onClick={() => forceSyncMutation.mutate()}
-            disabled={isSyncing || forceSyncMutation.isPending}
+            disabled={forceSyncDisabled}
             className={clsx(
               'rounded-lg px-4 py-2 text-sm font-semibold transition',
-              isSyncing || forceSyncMutation.isPending
+              forceSyncDisabled
                 ? 'cursor-not-allowed bg-chrono-border text-chrono-text-secondary'
                 : 'bg-chrono-primary text-white hover:bg-chrono-primary/90',
             )}
           >
-            {isSyncing || forceSyncMutation.isPending ? 'Syncing…' : 'Force Sync'}
+            {isLocalOnly
+              ? 'Local only'
+              : isSyncing || forceSyncMutation.isPending
+                ? 'Syncing…'
+                : 'Force Sync'}
           </button>
           {forceSyncMutation.isError ? (
             <p className="text-xs text-red-300">Sync failed — check connection.</p>

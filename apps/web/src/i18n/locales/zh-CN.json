@@ -1300,7 +1300,8 @@
     "conflict_inbox": "有冲突",
     "degraded_remote": "远端异常",
     "reauth_required": "需重新认证",
-    "recovery_required": "需手动恢复"
+    "recovery_required": "需手动恢复",
+    "local": "本地"
   },
   "chart": {
     "yearAxis": "年"

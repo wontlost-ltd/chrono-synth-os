@@ -12,9 +12,12 @@ vi.mock('./http-client', () => ({
 }));
 
 const store = vi.hoisted(() => ({ map: new Map<string, string>() }));
+const markLocal = vi.hoisted(() => ({ fn: vi.fn(async () => {}) }));
 vi.mock('./tauri-commands', () => ({
   getAppSetting: vi.fn(async (k: string) => store.map.get(k) ?? null),
   setAppSetting: vi.fn(async (k: string, v: string) => { store.map.set(k, v); }),
+  /* settleLocalSync 动态 import 本模块调 markSyncLocal——必须导出，否则被 try/catch 吞掉、新行为无覆盖。 */
+  markSyncLocal: markLocal.fn,
 }));
 
 import { bootstrapLocalSession } from './bootstrap-local';
@@ -28,17 +31,19 @@ beforeEach(() => {
   sc.endpoint = null;
   tok.value = null;
   store.map.clear();
+  markLocal.fn.mockClear();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 afterEach(() => vi.unstubAllGlobals());
 
 describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => {
-  it('无本地 sidecar（远端模式）→ false，不动凭据', async () => {
+  it('无本地 sidecar（远端模式）→ false，不动凭据，且不标 local（远端态不污染）', async () => {
     sc.endpoint = null;
     vi.stubGlobal('fetch', vi.fn());
     expect(await bootstrapLocalSession()).toBe(false);
     expect(tok.value).toBeNull();
+    expect(markLocal.fn).not.toHaveBeenCalled();
   });
 
   it('★首启（无 token 无密码）→ 真实 fetch register 拿 token（不受 apiFetch token 前置约束）★', async () => {
@@ -50,6 +55,8 @@ describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => 
     vi.stubGlobal('fetch', fetchMock);
     expect(await bootstrapLocalSession()).toBe(true);
     expect(tok.value).toBe('new-jwt');
+    /* 单机成功路径落 local 同步态（修「永久 syncing」）。 */
+    expect(markLocal.fn).toHaveBeenCalledTimes(1);
     /* 密码持久 + register 请求真发出（带握手头）。 */
     expect(store.map.get('chrono.local.adminPassword')).toBeTruthy();
     const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/register'))!;
@@ -68,6 +75,8 @@ describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => 
     vi.stubGlobal('fetch', fetchMock);
     expect(await bootstrapLocalSession()).toBe(true);
     expect(tok.value).toBe('valid-jwt');
+    /* 幂等 true 路径也落 local（重启后既有有效 token 仍要标本地态）。 */
+    expect(markLocal.fn).toHaveBeenCalledTimes(1);
   });
 
   it('★已有 token 但过期（/companion/me 401）→ 清 token + 用持久密码重新 login★', async () => {
@@ -99,10 +108,24 @@ describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => 
     expect(order[0]).toBe('login'); /* 老用户优先 login */
   });
 
-  it('provision 全失败 → false（不静默假成功）', async () => {
+  it('provision 全失败 → false（不静默假成功），不标 local', async () => {
     sc.endpoint = SIDE;
     vi.stubGlobal('fetch', vi.fn(async () => jsonRes(500, {})));
     expect(await bootstrapLocalSession()).toBe(false);
     expect(tok.value).toBeNull();
+    expect(markLocal.fn).not.toHaveBeenCalled();
+  });
+
+  it('markSyncLocal 失败不致命（settleLocalSync 吞异常，仍返回成功）', async () => {
+    sc.endpoint = SIDE;
+    markLocal.fn.mockRejectedValueOnce(new Error('command not registered'));
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/register')) return jsonRes(201, { data: { accessToken: 'jwt' } });
+      return jsonRes(400, {});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await bootstrapLocalSession()).toBe(true); /* 标 local 失败不影响会话就绪 */
+    expect(tok.value).toBe('jwt');
+    expect(markLocal.fn).toHaveBeenCalledTimes(1);
   });
 });

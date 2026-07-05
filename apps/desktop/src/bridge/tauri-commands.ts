@@ -51,6 +51,11 @@ export async function forceSync(): Promise<void> {
   return invoke<void>('force_sync');
 }
 
+/** ADR-0061 单机模式：标本地同步态（无远端可同步）。幂等——只从 initial_sync 切到 local。 */
+export async function markSyncLocal(): Promise<void> {
+  return invoke<void>('mark_sync_local');
+}
+
 /* ── P2.1 / P3.4: memories + offline queue ───────────────────────── */
 
 export interface MemoryNodeRow {

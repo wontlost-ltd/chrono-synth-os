@@ -19,6 +19,8 @@ const syncStateViews: Record<RuntimeSyncStateV2, SyncStateView> = {
   degraded_remote: { color: 'bg-orange-400', icon: '⚡', label: 'Degraded' },
   reauth_required: { color: 'bg-red-500', icon: '✕', label: 'Re-auth' },
   recovery_required: { color: 'bg-red-500', icon: '✕', label: 'Recovery' },
+  /* 单机模式：本地即真源，无远端同步——settled 绿点「本地」（非 Syncing 脉冲）。 */
+  local: { color: 'bg-green-500', icon: '🖥', label: '本地' },
 };
 
 export function SyncBadge({ state }: { state: RuntimeSyncStateV2 }) {

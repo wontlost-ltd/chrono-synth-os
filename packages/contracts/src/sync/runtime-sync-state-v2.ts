@@ -11,6 +11,8 @@ export const RuntimeSyncStateV2Values = [
   'degraded_remote',
   'reauth_required',
   'recovery_required',
+  /* ADR-0061 桌面单机模式：内嵌本地 sidecar，本地即真源，无远端可同步——settled 态（非 syncing/非 offline）。 */
+  'local',
 ] as const;
 
 export const RuntimeSyncStateV2Schema = z.enum(RuntimeSyncStateV2Values);

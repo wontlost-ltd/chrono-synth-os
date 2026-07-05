@@ -50,7 +50,7 @@ export async function bootstrapLocalSession(): Promise<boolean> {
   /* 已有 token：验其仍有效（红线——JWT access TTL 15min，重启后旧 token 可能过期）。有效→幂等 true；
    * 过期(401)→清 token 走下面重新 login（用持久密码），不卡在死 token（Codex S5 复审 Major）。 */
   const existing = getApiToken();
-  if (existing && await tokenStillValid(sidecar, existing)) return true;
+  if (existing && await tokenStillValid(sidecar, existing)) { await settleLocalSync(); return true; }
   if (existing) setApiToken(null);
 
   /* login-or-register：**直接 fetch**（不用 apiFetch——它前置要求 token；auth 端点本就免 token）。带 sidecar
@@ -58,7 +58,18 @@ export async function bootstrapLocalSession(): Promise<boolean> {
   const token = await loginOrRegister(sidecar, LOCAL_ADMIN_EMAIL, password, firstProvision);
   if (!token) return false; /* provision 失败 → 回退（前端展示「本地引擎初始化失败」，不静默假成功） */
   setApiToken(token);
+  await settleLocalSync();
   return true;
+}
+
+/** 单机模式确认后落 `local` 同步态：修「本地无远端却永久卡 initial_sync/Syncing…」。失败不致命（下次再标）。 */
+async function settleLocalSync(): Promise<void> {
+  try {
+    const { markSyncLocal } = await import('./tauri-commands');
+    await markSyncLocal();
+  } catch {
+    /* 非 Tauri / 命令不可用 → 忽略（远端模式本就不该标 local）。 */
+  }
 }
 
 /** 带握手头 fetch 一个 sidecar 端点（红线 11）。auth 端点免 token，故不带 authorization。 */
