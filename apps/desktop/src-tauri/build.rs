@@ -34,17 +34,15 @@ fn resolve_schema_dsl_cli() -> PathBuf {
         return PathBuf::from(p);
     }
 
-    // 2. Production path: node_modules/.bin (after `npm install @wontlost-ltd/schema-dsl`)
-    //    src-tauri/build.rs runs from src-tauri/, so node_modules is one level up.
-    let from_node_modules = PathBuf::from("..")
-        .join("node_modules")
-        .join(".bin")
-        .join("schema-dsl-render-rust");
-    if from_node_modules.is_file() {
-        return from_node_modules;
-    }
+    // We invoke the CLI as `node <path>`, so the path MUST be the real `.js` entry — NOT the
+    // `node_modules/.bin/schema-dsl-render-rust` shim. On Linux/macOS that shim is a symlink to the
+    // `.js` (so `node <shim>` happens to work), but on **Windows npm creates a bash/`.cmd`/`.ps1`
+    // wrapper** instead of a symlink, and `node <bash-shim>` parses the shell script as JS →
+    // `SyntaxError: missing ) after argument list` (Windows tauri build failure). So resolve the
+    // package's `bin/render-rust.js` directly and NEVER hand a `.bin` shim to `node`.
 
-    // 3. Alternative: direct require path under node_modules (in case .bin symlink isn't present)
+    // 2. Installed package's real JS entry (after `npm install @wontlost-ltd/schema-dsl`).
+    //    src-tauri/build.rs runs from src-tauri/, so node_modules is one level up.
     let from_pkg = PathBuf::from("..")
         .join("node_modules")
         .join("@wontlost-ltd")
@@ -59,12 +57,11 @@ fn resolve_schema_dsl_cli() -> PathBuf {
     // node_modules (not apps/desktop/node_modules). build.rs runs from apps/desktop/src-tauri/,
     // so the repo root is three levels up.
     //
-    // CRITICAL: both the root `.bin` symlink (candidate 4) and the source path (candidate 5)
-    // resolve to the SAME in-repo `packages/schema-dsl/bin/render-rust.js`, which imports the
-    // package's built `dist/` output — and `dist/` is NOT git-tracked. So `npm ci` creates the
-    // symlink but does NOT build `dist/`. We must only use these candidates when `dist/` is
-    // actually built; otherwise node would crash with a cryptic module-not-found instead of the
-    // helpful panic below. Guard BOTH candidates on `dist` being built (both import entrypoints).
+    // CRITICAL: the source path resolves to the in-repo `packages/schema-dsl/bin/render-rust.js`,
+    // which imports the package's built `dist/` output — and `dist/` is NOT git-tracked. So
+    // `npm ci` links the package but does NOT build `dist/`. Only use this candidate when `dist/`
+    // is actually built; otherwise node would crash with a cryptic module-not-found instead of the
+    // helpful panic below.
     let workspace_root = PathBuf::from("..").join("..").join("..");
     let schema_dsl_pkg = workspace_root.join("packages").join("schema-dsl");
     let dist_src = schema_dsl_pkg.join("dist").join("src");
@@ -79,15 +76,7 @@ fn resolve_schema_dsl_cli() -> PathBuf {
             .is_file();
 
     if dist_built {
-        // 4. root node_modules/.bin symlink (after `npm ci` at the root).
-        let from_root_bin = workspace_root
-            .join("node_modules")
-            .join(".bin")
-            .join("schema-dsl-render-rust");
-        if from_root_bin.is_file() {
-            return from_root_bin;
-        }
-        // 5. the workspace package source directly (even if the .bin symlink isn't present).
+        // 3. the workspace package source `.js` directly (cross-platform safe; never a .bin shim).
         let from_workspace_pkg = schema_dsl_pkg.join("bin").join("render-rust.js");
         if from_workspace_pkg.is_file() {
             return from_workspace_pkg;
