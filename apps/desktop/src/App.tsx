@@ -78,26 +78,31 @@ export function App() {
         return;
       }
       if (cancelled) return;
+
+      /* ADR-0061 S5：单机模式（有本地内嵌 sidecar）自动 provision 本地 admin，跳过手工 server URL onboarding。
+       * **每次启动都跑**（不仅首启）——bootstrapLocalSession 幂等（token 仍有效→直接 true；过期→用持久密码
+       * 重新 login 刷新 token）。若只在 !onboarded 首启跑，则 onboarded 老用户的 JWT 过期后永不刷新，随后的
+       * resolveAccountPlan 探测 /companion/me 拿 401 → 回退旧缓存 plan（可能是崩溃期误缓存的 enterprise）→
+       * 落错外壳（那些「未配置 API」的企业 agent 页）。与 #269 settleLocalSync 同一「首启门控」反模式。
+       * 非单机（无 sidecar）→ false，落回既有手工 onboarding（远端自托管）。失败不阻塞。 */
+      let localReady = false;
+      try {
+        localReady = await bootstrapLocalSession();
+      } catch {
+        localReady = false;
+      }
+      if (cancelled) return;
+      if (!onboarded && !localReady) {
+        /* 首启且非单机（无 sidecar）→ 手工 onboarding（远端自托管）。 */
+        setGate('first-run');
+        return;
+      }
       if (!onboarded) {
-        /* ADR-0061 S5：单机模式（有本地内嵌 sidecar）自动 provision 本地 admin，跳过手工 server URL onboarding。
-         * bootstrapLocalSession 非单机（无 sidecar）→ false，落回既有手工 onboarding（远端自托管）。失败不阻塞
-         * （回退 onboarding，用户仍可手工配远端）。 */
-        let localReady = false;
-        try {
-          localReady = await bootstrapLocalSession();
-        } catch {
-          localReady = false;
-        }
-        if (cancelled) return;
-        if (!localReady) {
-          setGate('first-run');
-          return;
-        }
-        /* 单机自动就绪：标记 first-run 完成（下次直接进 plan 解析），继续走 plan 探测。 */
+        /* 单机自动就绪：标记 first-run 完成（下次直接进 plan 解析）。 */
         try { await markFirstRunCompleted(); } catch { /* 标记失败不致命，下次再引导 */ }
       }
 
-      /* 已 onboard：探测 plan 决定渲染哪套外壳。resolveAccountPlan 设计为不抛（失败回退缓存/
+      /* 已 onboard / 单机就绪：探测 plan 决定渲染哪套外壳。resolveAccountPlan 设计为不抛（失败回退缓存/
        * unconfigured）；这里再包一层 try 兜底——即便未来它意外抛出，也降级 unconfigured（→ 企业版），
        * 绝不把 App 卡在 resolving-plan（Codex PR-A Critical：防启动死锁）。 */
       setGate('resolving-plan');
