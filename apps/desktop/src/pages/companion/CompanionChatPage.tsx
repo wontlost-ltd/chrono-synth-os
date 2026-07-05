@@ -72,8 +72,14 @@ export function CompanionChatPage(): JSX.Element {
         ...prev,
         { id: nextId(), role: 'persona', text: res.reply, meta: metaForKind(res.kind, res.groundedMemoryCount) },
       ]);
-      /* 回应到达后滚到底。 */
-      queueMicrotask(() => listEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+      /* 回应到达后滚到底。scrollIntoView 在 jsdom/无 DOM 环境不存在 → 守卫（否则微任务里抛未捕获
+       * 异常，测试环境会判失败）。 */
+      queueMicrotask(() => {
+        const el = listEndRef.current;
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
     } catch (err) {
       setError(readableError(err));
     } finally {
