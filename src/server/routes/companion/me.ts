@@ -40,8 +40,9 @@ import { ProactiveMessageStore } from '../../../storage/proactive-message-store.
 import { parsePagination } from '../../plugins/pagination.js';
 import { ModelRouter } from '../../../intelligence/model-router.js';
 import { LlmReflectionDistiller, type ReflectMemory, type ReflectValue } from '../../../intelligence/llm-reflection-distiller.js';
-import { resolveTenantLlmConfig } from '../../../storage/tenant-llm-settings-store.js';
-import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
+import { resolveTenantLlmConfig, TenantLlmSettingsStore } from '../../../storage/tenant-llm-settings-store.js';
+import { tryByokEncryption, LlmCredentialStore } from '../../../storage/llm-credential-store.js';
+import { CompanionLlmSettingsRequestV1Schema } from '@chrono/contracts';
 import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
 import { LlmTranslationService, TRANSLATION_BATCH_SIZE, MAX_TRANSLATE_PER_CALL, type TranslatableMemory } from '../../../intelligence/llm-translation-service.js';
 import { isSupportedLocale, type SupportedLocale } from '../../../i18n/locale-resolver.js';
@@ -350,6 +351,97 @@ export function registerCompanionRoutes(
     const compiled = result.results.filter((r) => r.status === 'compiled').length;
     const pending = result.results.filter((r) => r.status === 'pending').length;
     return { data: { candidatesIngested: result.candidatesIngested, compiled, pending } };
+  });
+
+  /* ── LLM 老师接入配置（ADR-0047「LLM 当老师」C 端补全）─────────────────────────────
+   * 让单机/个人用户给自己的数字人**接一个 LLM 老师**（用于 reflect/perceive 成长期；运行时 chat 仍
+   * 零-LLM）。三种合规接入：
+   *   - openai/anthropic + API key（BYOK；官方开发者 API 额度）
+   *   - 任意 provider + 自定义 baseUrl（+可选 key）→ 接 OpenAI 兼容网关/订阅代理（subscription 用户
+   *     的合规接入方式；官方不开放订阅登录态跑 API，故经用户自备的兼容端点）
+   *   - ollama（本机开源模型，零 key 零订阅，纯本地）
+   * key 经 FieldEncryption 加密落库，**明文绝不持久化、GET 绝不回传**（只回 hasApiKey 布尔）。 */
+  const llmSettingsEncryption = tryByokEncryption(config.encryption);
+
+  /* GET：当前 LLM 老师配置（provider/model/baseUrl + 是否已配 key + 全局默认 provider）。绝不回 key 明文。 */
+  app.get('/api/v1/companion/me/llm-settings', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const settings = new TenantLlmSettingsStore(db, request.tenantId).get();
+    const activeProvider = settings?.active_provider ?? config.intelligence.provider;
+    /* 是否已配该 provider 的 BYOK key（加密不可用则恒 false——无法安全存 key）。绝不回 key 本身。 */
+    let hasApiKey = false;
+    if (llmSettingsEncryption) {
+      hasApiKey = new LlmCredentialStore(db, llmSettingsEncryption, request.tenantId).get(activeProvider) !== undefined;
+    }
+    return { data: {
+      schemaVersion: 'companion-llm-settings.v1',
+      activeProvider,
+      model: settings?.model ?? null,
+      baseUrl: settings?.base_url ?? null,
+      hasApiKey,
+      /* 加密未启用时无法存 BYOK key（只能用 ollama/自定义端点无鉴权，或全局配置）——告知前端。 */
+      canStoreApiKey: llmSettingsEncryption !== undefined,
+      /* 全局默认（用户未设偏好时的回退），供 UI 展示「当前用全局/gpt-5.5 老师」。 */
+      globalProvider: config.intelligence.provider,
+    } };
+  });
+
+  /* PUT：设置 LLM 老师。body: { provider, model?, baseUrl?, apiKey? }。
+   *   - provider 必填且合法（openai/anthropic/ollama）。
+   *   - apiKey 提供且加密可用 → 加密落库该 provider 的 key；apiKey='' → 删除该 provider 的 key。
+   *   - model/baseUrl 空串 → 清除覆盖（回退全局/该 provider 默认）。
+   *
+   * ⚠️ SSRF 部署边界（Codex 复审）：自定义 baseUrl 让服务端向用户给定 URL 发请求。本端点为**桌面单机
+   *    loopback sidecar 信任模型**设计——用户指向 127.0.0.1（本机 ollama）是正当用途，故这里**不**阻断
+   *    私网 IP（阻断会废掉本地 ollama 主用例）。契约仅收窄到 http(s) scheme。若此路由在 **hosted/多租户**
+   *    部署开放，必须在部署层追加私网 IP 阻断 / host allowlist（src/security/ssrf-guard.ts 可用），或
+   *    仅桌面构建启用本端点——否则是 SSRF 面。resolveTenantLlmConfig 既有安全门仍在：租户覆盖 base_url
+   *    时绝不外送平台 key（只用租户 BYOK key），故即便被滥用也不泄露平台凭据。 */
+  app.put('/api/v1/companion/me/llm-settings', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const body = CompanionLlmSettingsRequestV1Schema.parse(request.body);
+    const now = getOS(request).getClock().now();
+    const userId = (request.user as JwtPayload | undefined)?.sub ?? null;
+
+    /* **前置校验所有先决条件，再落任何库**（Codex 复审：原子性）——避免「偏好写了但 key 因加密不可用
+     * 报错」的部分写入，让用户误以为 key 存了。非空 apiKey 但加密不可用 → 直接拒，此时 upsert 尚未执行。 */
+    const wantsStoreKey = body.apiKey !== undefined && body.apiKey !== '';
+    if (wantsStoreKey && !llmSettingsEncryption) {
+      throw new ValidationError('本机未启用凭据加密，无法安全保存 API key；可改用 Ollama 或自定义端点（无需 key）');
+    }
+
+    /* 存偏好（provider/model/baseUrl）。非法 provider 由 store.upsert 前的枚举校验挡。 */
+    new TenantLlmSettingsStore(db, request.tenantId).upsert({
+      activeProvider: body.provider,
+      model: body.model ?? null,
+      baseUrl: body.baseUrl ?? null,
+      updatedBy: userId,
+      now,
+    });
+
+    /* 处理该 provider 的 API key：
+     *   - apiKey==='' → 撤销（**加密可用与否都执行**——删无需解密，走 static deleteCredential，
+     *     修 Codex 复审「无加密撤销 no-op」缺陷：否则关加密后撤销不生效、旧密文残留可能复活）。
+     *   - apiKey 非空 → 存（加密已在前置校验确认可用）。
+     *   - apiKey===undefined → 不动既有 key。 */
+    let keyStored = false;
+    if (body.apiKey === '') {
+      LlmCredentialStore.deleteCredential(db, request.tenantId, body.provider);
+    } else if (body.apiKey !== undefined && llmSettingsEncryption) {
+      keyStored = new LlmCredentialStore(db, llmSettingsEncryption, request.tenantId)
+        .store(body.provider, body.apiKey, userId, now);
+    }
+    return { data: { schemaVersion: 'companion-llm-settings.v1', activeProvider: body.provider, keyStored } };
+  });
+
+  /* DELETE：清除本租户 LLM 偏好（恢复全局默认老师）。不删已存 key（key 撤销走 PUT apiKey=''）。 */
+  app.delete('/api/v1/companion/me/llm-settings', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    new TenantLlmSettingsStore(db, request.tenantId).delete();
+    return { data: { schemaVersion: 'companion-llm-settings.v1', reset: true } };
   });
 
   /* POST /api/v1/companion/me/translate —「内容多语」：成长期 LLM 老师把记忆内容翻译成目标语言，

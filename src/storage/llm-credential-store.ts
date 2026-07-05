@@ -58,7 +58,17 @@ export class LlmCredentialStore {
 
   /** 删除某 provider 凭据（撤销 / GDPR）。 */
   delete(provider: string): void {
-    this.tx.execute(llmCredCmdDelete({ tenantId: this.tenantId, provider }));
+    LlmCredentialStore.deleteCredential(this.tx, this.tenantId, provider);
+  }
+
+  /**
+   * 静态删除某 provider 凭据——**不依赖 FieldEncryption**（删除无需解密）。
+   * 用于「加密不可用但需撤销既有 key」的场景（如曾启用加密存过 key、后关闭加密时用户撤销）：此时
+   * 无法构造实例化 store（构造 fail-closed 要求启用加密），但撤销必须仍能执行，否则旧密文残留、
+   * 重启加密后可能复活（Codex 复审：无加密撤销 no-op 缺陷）。
+   */
+  static deleteCredential(tx: SyncWriteUnitOfWork, tenantId: string, provider: string): void {
+    tx.execute(llmCredCmdDelete({ tenantId, provider }));
   }
 }
 

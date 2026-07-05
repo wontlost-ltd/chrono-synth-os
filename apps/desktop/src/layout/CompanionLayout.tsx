@@ -19,6 +19,7 @@ interface CompanionNavItem {
 const navItems: CompanionNavItem[] = [
   { to: '/', icon: '🪞', label: '我的数字人' },
   { to: '/chat', icon: '💬', label: '聊聊' },
+  { to: '/learn', icon: '🎓', label: '学习' },
   { to: '/growth', icon: '🌱', label: '成长' },
   { to: '/settings', icon: '⚙', label: '设置' },
 ];

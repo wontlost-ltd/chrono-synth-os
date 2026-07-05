@@ -9,6 +9,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { CompanionLayout } from '@/layout/CompanionLayout';
 import { CompanionHomePage } from '@/pages/companion/CompanionHomePage';
 import { CompanionChatPage } from '@/pages/companion/CompanionChatPage';
+import { CompanionLearningPage } from '@/pages/companion/CompanionLearningPage';
 import { CompanionGrowthPage } from '@/pages/companion/CompanionGrowthPage';
 import { CompanionSettingsPage } from '@/pages/companion/CompanionSettingsPage';
 import type { AccountPlan } from '@/plan/account-plan';
@@ -24,6 +25,7 @@ export function CompanionRoutes({ plan }: CompanionRoutesProps) {
       <Routes>
         <Route path="/" element={<CompanionHomePage />} />
         <Route path="/chat" element={<CompanionChatPage />} />
+        <Route path="/learn" element={<CompanionLearningPage />} />
         <Route path="/growth" element={<CompanionGrowthPage />} />
         <Route path="/settings" element={<CompanionSettingsPage plan={plan} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
