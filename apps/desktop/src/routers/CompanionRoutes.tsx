@@ -1,12 +1,14 @@
 /**
  * ChronoCompanion 路由表（ADR-0046 Phase 2.4a）。
  *
- * 个人版精简三页：/（我的数字人）、/growth（成长）、/settings（精简设置）。全部渲染**本地**数据。
+ * 个人版精简四页：/（我的数字人）、/chat（跟 TA 聊聊，零-LLM 对话）、/growth（成长）、
+ * /settings（精简设置）。除对话经内嵌 sidecar HTTP 外，其余渲染**本地**数据。
  */
 
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { CompanionLayout } from '@/layout/CompanionLayout';
 import { CompanionHomePage } from '@/pages/companion/CompanionHomePage';
+import { CompanionChatPage } from '@/pages/companion/CompanionChatPage';
 import { CompanionGrowthPage } from '@/pages/companion/CompanionGrowthPage';
 import { CompanionSettingsPage } from '@/pages/companion/CompanionSettingsPage';
 import type { AccountPlan } from '@/plan/account-plan';
@@ -21,6 +23,7 @@ export function CompanionRoutes({ plan }: CompanionRoutesProps) {
     <CompanionLayout>
       <Routes>
         <Route path="/" element={<CompanionHomePage />} />
+        <Route path="/chat" element={<CompanionChatPage />} />
         <Route path="/growth" element={<CompanionGrowthPage />} />
         <Route path="/settings" element={<CompanionSettingsPage plan={plan} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
