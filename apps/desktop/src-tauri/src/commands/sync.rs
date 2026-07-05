@@ -182,6 +182,17 @@ pub async fn mark_sync_local(state: State<'_, AppState>) -> Result<(), String> {
         .as_ref()
         .ok_or_else(|| "database is not open".to_string())?;
 
+    let changed = mark_sync_local_sql(conn).map_err(|e| e.to_string())?;
+    // 观测面包屑：单机同步态落定。changed=1 表示本次从 initial_sync 切到 local（首次自愈）；
+    // changed=0 表示已是 local 或处于远端态（幂等 no-op）。不含敏感信息。
+    eprintln!("[sync] mark_sync_local: rows_changed={changed}（1=已落定 local，0=已就位/远端态）");
+    Ok(())
+}
+
+/// 执行「单机同步态落定」的实际 SQL：仅从 `initial_sync` 切到 `local`（幂等，不覆盖远端
+/// online_synced/degraded_remote）。返回受影响行数（1=本次切换，0=已就位/远端态）。抽出便于
+/// 用真实迁移后的 schema 做集成测试（rusqlite 单 Mutex 串行化，无并发问题）。
+fn mark_sync_local_sql(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
     conn.execute(
         r#"
         UPDATE sync_state
@@ -192,8 +203,6 @@ pub async fn mark_sync_local(state: State<'_, AppState>) -> Result<(), String> {
         "#,
         [],
     )
-    .map(|_| ())
-    .map_err(|e| e.to_string())
 }
 
 async fn fetch_remote_personas() -> anyhow::Result<serde_json::Value> {
@@ -422,5 +431,54 @@ mod tests {
         assert!(is_known_operation("memory.delete"));
         assert!(!is_known_operation("rogue.command"));
         assert!(!is_known_operation(""));
+    }
+
+    // ── mark_sync_local：真实迁移后 schema 的端到端 DB 行为（修「永久 Syncing」的核心 SQL）──────
+    use crate::db::migrations::run_migrations;
+    use rusqlite::Connection;
+
+    fn migrated_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        conn
+    }
+
+    fn sync_state(conn: &Connection) -> String {
+        conn.query_row("SELECT state FROM sync_state WHERE id='singleton'", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn fresh_db_seeds_initial_sync_and_marks_local() {
+        // 迁移 seed 应是 initial_sync（正是「永久 Syncing」的来源）。
+        let conn = migrated_db();
+        assert_eq!(sync_state(&conn), "initial_sync", "迁移应 seed initial_sync");
+        // mark_sync_local 把它切成 local，返回 1。
+        assert_eq!(mark_sync_local_sql(&conn).unwrap(), 1);
+        assert_eq!(sync_state(&conn), "local", "应落定为 local（不再 Syncing）");
+    }
+
+    #[test]
+    fn mark_sync_local_is_idempotent() {
+        // 第二次调用是 no-op（已是 local），返回 0，状态不变。
+        let conn = migrated_db();
+        assert_eq!(mark_sync_local_sql(&conn).unwrap(), 1);
+        assert_eq!(mark_sync_local_sql(&conn).unwrap(), 0, "已 local → 幂等 no-op");
+        assert_eq!(sync_state(&conn), "local");
+    }
+
+    #[test]
+    fn mark_sync_local_does_not_clobber_remote_states() {
+        // 远端模式：online_synced / degraded_remote 不应被标 local（WHERE state='initial_sync' 守卫）。
+        for remote in ["online_synced", "degraded_remote", "syncing"] {
+            let conn = migrated_db();
+            conn.execute(
+                "UPDATE sync_state SET state=?1 WHERE id='singleton'",
+                [remote],
+            )
+            .unwrap();
+            assert_eq!(mark_sync_local_sql(&conn).unwrap(), 0, "{remote} 不该被切");
+            assert_eq!(sync_state(&conn), remote, "{remote} 应保持不变");
+        }
     }
 }
