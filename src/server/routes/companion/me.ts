@@ -421,16 +421,17 @@ export function registerCompanionRoutes(
       now,
     });
 
-    /* 处理该 provider 的 API key。apiKey 非空 → 存（加密已在上面确认可用）；apiKey==='' → 删（撤销，
-     * 加密不可用也允许删——删不需要加密）；apiKey===undefined → 不动既有 key。 */
+    /* 处理该 provider 的 API key：
+     *   - apiKey==='' → 撤销（**加密可用与否都执行**——删无需解密，走 static deleteCredential，
+     *     修 Codex 复审「无加密撤销 no-op」缺陷：否则关加密后撤销不生效、旧密文残留可能复活）。
+     *   - apiKey 非空 → 存（加密已在前置校验确认可用）。
+     *   - apiKey===undefined → 不动既有 key。 */
     let keyStored = false;
-    if (body.apiKey !== undefined && llmSettingsEncryption) {
-      const credStore = new LlmCredentialStore(db, llmSettingsEncryption, request.tenantId);
-      if (body.apiKey === '') {
-        credStore.delete(body.provider);
-      } else {
-        keyStored = credStore.store(body.provider, body.apiKey, userId, now);
-      }
+    if (body.apiKey === '') {
+      LlmCredentialStore.deleteCredential(db, request.tenantId, body.provider);
+    } else if (body.apiKey !== undefined && llmSettingsEncryption) {
+      keyStored = new LlmCredentialStore(db, llmSettingsEncryption, request.tenantId)
+        .store(body.provider, body.apiKey, userId, now);
     }
     return { data: { schemaVersion: 'companion-llm-settings.v1', activeProvider: body.provider, keyStored } };
   });

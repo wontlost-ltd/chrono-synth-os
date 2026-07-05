@@ -76,6 +76,13 @@ function LlmTeacherSection(): JSX.Element {
     onSuccess: async () => { setSaved(false); await qc.invalidateQueries({ queryKey: ['companion', 'llm-settings'] }); },
   });
 
+  /* 显式撤销已存 key（apiKey=''）——保留 provider/端点偏好，只删 key（Codex 复审：需明确撤销入口，
+   * 「切 ollama/恢复默认」不等价于删库里的旧 key）。 */
+  const revokeKey = useMutation({
+    mutationFn: () => putLlmSettings({ provider, baseUrl: baseUrl.trim(), model: model.trim(), apiKey: '' }),
+    onSuccess: async () => { setApiKey(''); await qc.invalidateQueries({ queryKey: ['companion', 'llm-settings'] }); },
+  });
+
   const canStoreKey = settings.data?.canStoreApiKey ?? false;
   const hasKey = settings.data?.hasApiKey ?? false;
   const hint = PROVIDERS.find((p) => p.value === provider)?.hint ?? '';
@@ -152,6 +159,14 @@ function LlmTeacherSection(): JSX.Element {
         >
           恢复默认
         </button>
+        {hasKey && (
+          <button
+            type="button" onClick={() => revokeKey.mutate()} disabled={revokeKey.isPending}
+            className="rounded-lg border border-red-500/40 px-4 py-2 text-sm font-medium text-red-200 transition hover:bg-red-500/10 disabled:opacity-50"
+          >
+            {revokeKey.isPending ? '撤销中…' : '撤销已存 key'}
+          </button>
+        )}
       </div>
       {settings.data && (
         <p className="text-xs text-chrono-text-muted">

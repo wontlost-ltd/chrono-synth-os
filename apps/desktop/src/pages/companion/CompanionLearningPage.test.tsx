@@ -84,6 +84,22 @@ describe('CompanionLearningPage（LLM 老师学习）', () => {
     expect(screen.getByText('我听到：今天很累')).toBeInTheDocument();
   });
 
+  it('已配 key → 显示撤销按钮，点击调 putLlmSettings apiKey=\'\'', async () => {
+    api.getLlmSettings.mockResolvedValue({ ...BASE_SETTINGS, activeProvider: 'openai', hasApiKey: true, canStoreApiKey: true });
+    renderPage();
+    const revoke = await screen.findByText('撤销已存 key');
+    fireEvent.click(revoke);
+    await waitFor(() => expect(api.putLlmSettings).toHaveBeenCalledTimes(1));
+    expect(api.putLlmSettings.mock.calls[0][0]).toMatchObject({ provider: 'openai', apiKey: '' });
+  });
+
+  it('未配 key → 不显示撤销按钮', async () => {
+    api.getLlmSettings.mockResolvedValue({ ...BASE_SETTINGS, activeProvider: 'openai', hasApiKey: false, canStoreApiKey: true });
+    renderPage();
+    await waitFor(() => screen.getByText('保存老师配置'));
+    expect(screen.queryByText('撤销已存 key')).not.toBeInTheDocument();
+  });
+
   it('空材料不喂', async () => {
     renderPage();
     await waitFor(() => screen.getByLabelText('喂料输入'));
