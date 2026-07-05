@@ -20,7 +20,7 @@ vi.mock('./tauri-commands', () => ({
   markSyncLocal: markLocal.fn,
 }));
 
-import { bootstrapLocalSession } from './bootstrap-local';
+import { bootstrapLocalSession, settleLocalSync } from './bootstrap-local';
 
 const SIDE = { baseUrl: 'http://127.0.0.1:5000', handshakeToken: 'hs-tok', instanceNonce: 'n' };
 function jsonRes(status: number, body: unknown): Response {
@@ -126,6 +126,35 @@ describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => 
     vi.stubGlobal('fetch', fetchMock);
     expect(await bootstrapLocalSession()).toBe(true); /* 标 local 失败不影响会话就绪 */
     expect(tok.value).toBe('jwt');
+    expect(markLocal.fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('settleLocalSync（每次启动标 local——修 onboarded 老用户永久 Syncing）', () => {
+  it('有本地 sidecar → 调 markSyncLocal（不依赖 provision / onboarding）', async () => {
+    sc.endpoint = SIDE;
+    await settleLocalSync();
+    expect(markLocal.fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('无本地 sidecar（远端模式）→ 轮询超时后跳过，不标 local', async () => {
+    sc.endpoint = null;
+    /* 用假定时器把 ~10s 轮询推进到超时，避免真等。 */
+    vi.useFakeTimers();
+    try {
+      const p = settleLocalSync();
+      await vi.runAllTimersAsync();
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(markLocal.fn).not.toHaveBeenCalled();
+  });
+
+  it('markSyncLocal 抛错被吞（失败不致命，下次启动再标）', async () => {
+    sc.endpoint = SIDE;
+    markLocal.fn.mockRejectedValueOnce(new Error('db locked'));
+    await expect(settleLocalSync()).resolves.toBeUndefined();
     expect(markLocal.fn).toHaveBeenCalledTimes(1);
   });
 });

@@ -4,7 +4,7 @@ import { OnboardingPage } from './pages/OnboardingPage';
 import { EnterpriseRoutes } from './routers/EnterpriseRoutes';
 import { CompanionRoutes } from './routers/CompanionRoutes';
 import { getFirstRunCompleted, markFirstRunCompleted, openDatabase } from './bridge/tauri-commands';
-import { bootstrapLocalSession } from './bridge/bootstrap-local';
+import { bootstrapLocalSession, settleLocalSync } from './bridge/bootstrap-local';
 import { resolveAccountPlan } from './plan/account-plan-runtime';
 import type { AccountPlan } from './plan/account-plan';
 import { useTrayStatusSync } from './tray/useTrayStatusSync';
@@ -55,6 +55,13 @@ export function App() {
         return;
       }
       if (cancelled) return;
+
+      /* 单机模式**每次启动**都落 `local` 同步态——不依赖 onboarding 分支（bootstrapLocalSession 只在
+       * 首启跑；老用户 onboarded=true 会跳过它，若只在那里标 local 则每次启动都卡 Syncing）。
+       * **fire-and-forget**（不 await）：settleLocalSync 内部要等 sidecar 就绪（最多 ~10s），绝不能阻塞
+       * boot gate——尤其远端模式无 sidecar 会轮询到超时。它只更新本地 sync_state，SyncBadge 经 react-query
+       * 轮询会自动读到 local。只在检测到本地 sidecar 时生效、幂等（initial_sync→local）、失败不致命。 */
+      void settleLocalSync();
       setGate('checking');
 
       let onboarded: boolean;
