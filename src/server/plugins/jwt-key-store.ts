@@ -103,7 +103,17 @@ export class JwtKeyStore {
          FROM jwt_signing_keys`,
     ).all();
     if (rows.length === 0) return undefined;
-    return new KeyRing(rows.map(row => this.rowToEntry(row)));
+    /* 迁移韧性：若某行无法解密（如加密**从关到开**后，既有 JWT key 行是加密前写的明文/旧格式 →
+     * decrypt 抛「不支持的加密版本」），**不炸整个 sidecar**——JWT key 是可再生的临时密钥，视作「ring
+     * 不可用」返回 undefined → 调用方回退 env-seed 重新生成（加密格式）。若逐行降级会导致「一条明文
+     * 一条密文」的混合 ring 更难推理，故整体重建更安全。 */
+    try {
+      return new KeyRing(rows.map(row => this.rowToEntry(row)));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[jwt-key-store] 既有 JWT key 行无法解密（很可能加密从关到开的迁移）→ 丢弃重生成: ${msg}\n`);
+      return undefined;
+    }
   }
 
   /**
