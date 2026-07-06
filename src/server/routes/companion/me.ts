@@ -432,14 +432,21 @@ export function registerCompanionRoutes(
       }
     }
     if (!material) {
-      /* 无搜索 key / 搜索无结果或失败 → LLM 老师就主题产知识（次选）。 */
-      const gen = await llm.chat([
-        { role: 'system', content: [
-          '你是数字人格的「学习老师」。学习者要学一个主题——用简洁中文写一段该主题的核心知识，供学习者内化为记忆。',
-          '要点式、事实性、每条独立一句；只输出知识本身，不要寒暄/不要 markdown 标题。控制在 12 条内。',
-        ].join('\n') },
-        { role: 'user', content: `我要学习的主题：${body.topic}` },
-      ], { temperature: 0.4 });
+      /* 无搜索 key / 搜索无结果或失败 → LLM 老师就主题产知识（次选）。
+       * LLM 调用失败（坏 key/错 model/网关 4xx-5xx）→ 转**明确 4xx**（不裸抛 500 让用户看「internal server
+       * error」摸不着头脑）——把底层原因（如「HTTP 401: 无效的API Key」）带给用户，好排查网关配置。 */
+      let gen;
+      try {
+        gen = await llm.chat([
+          { role: 'system', content: [
+            '你是数字人格的「学习老师」。学习者要学一个主题——用简洁中文写一段该主题的核心知识，供学习者内化为记忆。',
+            '要点式、事实性、每条独立一句；只输出知识本身，不要寒暄/不要 markdown 标题。控制在 12 条内。',
+          ].join('\n') },
+          { role: 'user', content: `我要学习的主题：${body.topic}` },
+        ], { temperature: 0.4 });
+      } catch (err) {
+        throw new ValidationError(`LLM 老师调用失败——请检查「学习」页的 provider/baseURL/model/API key：${err instanceof Error ? err.message : String(err)}`);
+      }
       material = gen.content.trim();
       groundedBy = 'llm_teacher';
       if (!material) {
@@ -448,20 +455,26 @@ export function registerCompanionRoutes(
     }
 
     /* ② 走既有感知蒸馏管线把材料沉淀成记忆（LlmPerceptionProvider 抽事实 → 蒸馏门 → memories）。
-     *    web_search 抓的真资料同样交给 LLM 抽事实——LLM 只做「读资料→抽事实」，知识来源是真网页。 */
+     *    web_search 抓的真资料同样交给 LLM 抽事实——LLM 只做「读资料→抽事实」，知识来源是真网页。
+     *    此步也调 LLM（抽事实）——同样 try/catch 转明确 4xx，不裸抛 500。 */
     const provider = new LlmPerceptionProvider(llm);
     const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
     const representation = `关于「${body.topic}」，我学到：\n${material}`;
-    const result = await distiller.perceive({
-      personaId: COMPANION_PERSONA_ID,
-      tenantId: request.tenantId,
-      media: {
-        modality: 'audio',
-        mediaSha256: createHash('sha256').update(representation).digest('hex'),
-        durationMs: 0,
-        representation,
-      },
-    });
+    let result;
+    try {
+      result = await distiller.perceive({
+        personaId: COMPANION_PERSONA_ID,
+        tenantId: request.tenantId,
+        media: {
+          modality: 'audio',
+          mediaSha256: createHash('sha256').update(representation).digest('hex'),
+          durationMs: 0,
+          representation,
+        },
+      });
+    } catch (err) {
+      throw new ValidationError(`学习材料消化失败（LLM 老师抽取事实时出错）——请检查 LLM 配置：${err instanceof Error ? err.message : String(err)}`);
+    }
     const learnedMemories = result.memoryIds.map((id) => {
       const node = tenantOS.core.memories.getMemory(id);
       return { id, content: node?.content ?? '' };
