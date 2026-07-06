@@ -239,6 +239,9 @@ const intelligenceSchema = z.object({
   })).default([]),
   maxTokens: z.coerce.number().int().default(4096),
   temperature: z.coerce.number().min(0).max(2).default(0.7),
+  /** LLM 单次请求超时（ms）。默认 30s；接慢网关（如自建 OpenAI 兼容代理）可经
+   * CHRONO_INTELLIGENCE_TIMEOUT_MS 调大。0=用 ModelRouter 内置默认。 */
+  timeoutMs: z.coerce.number().int().min(0).default(30_000),
   simulation: intelligenceSimulationSchema,
   budget: intelligenceBudgetSchema,
 });
@@ -558,7 +561,7 @@ export const AppConfigSchema = z.object({
   intelligence: intelligenceSchema.default({
     provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
     embeddingDims: 1536, useVectorExtension: false, vectorExtensionTenants: [], fallbacks: [],
-    maxTokens: 4096, temperature: 0.7, simulation: { rollouts: 3, maxOptions: 4 },
+    maxTokens: 4096, temperature: 0.7, timeoutMs: 30_000, simulation: { rollouts: 3, maxOptions: 4 },
     budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
   }),
   agent: agentSchema.default({
@@ -723,6 +726,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_INTELLIGENCE_BASE_URL:           (v) => { deepSet(env, 'intelligence.baseUrl', v); },
     CHRONO_INTELLIGENCE_MAX_TOKENS:         (v) => { deepSet(env, 'intelligence.maxTokens', parseInt(v, 10)); },
     CHRONO_INTELLIGENCE_TEMPERATURE:        (v) => { deepSet(env, 'intelligence.temperature', parseFloat(v)); },
+    CHRONO_INTELLIGENCE_TIMEOUT_MS:         (v) => { deepSet(env, 'intelligence.timeoutMs', parseInt(v, 10)); },
     CHRONO_INTELLIGENCE_SIM_ROLLOUTS:       (v) => { deepSet(env, 'intelligence.simulation.rollouts', parseInt(v, 10)); },
     CHRONO_INTELLIGENCE_SIM_MAX_OPTIONS:    (v) => { deepSet(env, 'intelligence.simulation.maxOptions', parseInt(v, 10)); },
     /* P3 Agent / Tool adapters */
