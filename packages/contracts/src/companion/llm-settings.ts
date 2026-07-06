@@ -92,6 +92,8 @@ export const CompanionLearnTopicResultV1Schema = z
     learnedMemories: z.array(LearnedMemoryV1Schema),
     /** 老师调用是否失败（真语义学习需要老师；失败=没学到，前端诚实提示）。 */
     teacherFailed: z.boolean(),
+    /** 知识来源：'web_search'=调搜索工具抓真网页；'llm_teacher'=LLM 老师凭知识讲（无搜索 key 时）。 */
+    groundedBy: z.enum(['web_search', 'llm_teacher']),
   })
   .strict();
 

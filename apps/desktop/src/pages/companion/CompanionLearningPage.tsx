@@ -189,8 +189,9 @@ function LearnTopicSection(): JSX.Element {
     <section className="space-y-3 rounded-2xl border border-chrono-border bg-chrono-elevated p-6">
       <h2 className="text-lg font-semibold text-chrono-text-primary">让它学一个主题</h2>
       <p className="text-sm text-chrono-text-secondary">
-        给一个主题（如「Java 并发」「唐诗」），配好的 LLM 老师会就该主题讲一遍，**沉淀成数字人的记忆**。
-        之后聊天它就能据此作答（零-LLM）。需要先接一个 LLM 老师。
+        给一个主题（如「Java 并发」「唐诗」）——**优先调网络搜索工具抓真实资料**（配了搜索 key 时），
+        再由 LLM 老师读资料抽事实 → 沉淀成数字人的记忆。没配搜索 key 则退回 LLM 老师凭知识讲。
+        之后聊天它就能据此作答（零-LLM）。需先接一个 LLM 老师。
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -212,6 +213,7 @@ function LearnTopicSection(): JSX.Element {
         <div className="text-sm">
           <p className="text-green-300">
             就「{r.topic}」学到 {r.learnedMemoryCount} 条记忆
+            {r.groundedBy === 'web_search' ? '（来自真实网络搜索）' : '（LLM 老师凭知识讲——未配搜索 key）'}
             {r.teacherFailed ? '（⚠ 老师调用失败——检查 LLM 配置/网关）' : ''}
           </p>
           {r.learnedMemories.length > 0 && (
