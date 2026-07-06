@@ -341,6 +341,7 @@ export function registerCompanionRoutes(
       fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
       temperature: config.intelligence.temperature,
+      timeoutMs: config.intelligence.timeoutMs || undefined,
       tenantId: request.tenantId,
     });
     const distiller = new LlmReflectionDistiller(tenantOS.distillation, llm, tenantOS.getLogger());
@@ -391,6 +392,7 @@ export function registerCompanionRoutes(
       fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
       temperature: config.intelligence.temperature,
+      timeoutMs: config.intelligence.timeoutMs || undefined,
       tenantId: request.tenantId,
     });
 
@@ -626,6 +628,7 @@ export function registerCompanionRoutes(
       fallbacks: config.intelligence.fallbacks,
       maxTokens: config.intelligence.maxTokens,
       temperature: config.intelligence.temperature,
+      timeoutMs: config.intelligence.timeoutMs || undefined,
       tenantId: request.tenantId,
     });
     const translator = new LlmTranslationService(llm, tenantOS.getLogger());
