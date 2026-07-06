@@ -106,7 +106,7 @@ jobs:
       # 正式签名构建（配置了凭据）：传全套 Apple 公证 + Tauri updater 签名 env。
       - name: Build desktop app (signed release)
         if: steps.signing.outputs.signed == 'true'
-        uses: tauri-apps/tauri-action@v0.5.24 # pin（红线 7 可复现；升级需显式改版本）
+        uses: tauri-apps/tauri-action@v1.0.0 # pin（红线 7 可复现；升级需显式改版本）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -130,7 +130,7 @@ jobs:
       # 且 -c 关掉 updater 产物（无私钥无法签）。产物为 unsigned，仅内测。
       - name: Build desktop app (unsigned internal)
         if: steps.signing.outputs.signed != 'true'
-        uses: tauri-apps/tauri-action@v0.5.24 # pin（红线 7 可复现；升级需显式改版本）
+        uses: tauri-apps/tauri-action@v1.0.0 # pin（红线 7 可复现；升级需显式改版本）
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
