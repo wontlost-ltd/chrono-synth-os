@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   resetLlmSettings: vi.fn(),
   reflect: vi.fn(),
   perceive: vi.fn(),
+  learnTopic: vi.fn(),
 }));
 vi.mock('@/companion/learning-data', () => ({
   getLlmSettings: api.getLlmSettings,
@@ -15,7 +16,9 @@ vi.mock('@/companion/learning-data', () => ({
   resetLlmSettings: api.resetLlmSettings,
   reflect: api.reflect,
   perceive: api.perceive,
+  learnTopic: api.learnTopic,
   PERCEIVE_MAX_LEN: 4000,
+  LEARN_TOPIC_MAX_LEN: 200,
 }));
 
 import { CompanionLearningPage } from './CompanionLearningPage';
@@ -41,6 +44,7 @@ beforeEach(() => {
   api.resetLlmSettings.mockResolvedValue(undefined);
   api.reflect.mockResolvedValue({ candidatesIngested: 0, reason: 'no_material' });
   api.perceive.mockResolvedValue({ perceivedMemories: [], perceivedBy: 'deterministic' });
+  api.learnTopic.mockResolvedValue({ topic: 'Java', learnedMemoryCount: 0, learnedMemories: [], teacherFailed: false });
 });
 
 describe('CompanionLearningPage（LLM 老师学习）', () => {
@@ -107,5 +111,26 @@ describe('CompanionLearningPage（LLM 老师学习）', () => {
     await waitFor(() => screen.getByLabelText('喂料输入'));
     fireEvent.change(screen.getByLabelText('喂料输入'), { target: { value: '   ' } });
     expect((screen.getByText('喂给它') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('学主题 → 调 learnTopic + 渲染学到的记忆', async () => {
+    api.learnTopic.mockResolvedValue({
+      topic: 'Java', learnedMemoryCount: 2, teacherFailed: false,
+      learnedMemories: [{ id: 'm1', content: 'Java 是面向对象语言' }, { id: 'm2', content: 'JVM 跨平台运行' }],
+    });
+    renderPage();
+    await waitFor(() => screen.getByLabelText('学习主题'));
+    fireEvent.change(screen.getByLabelText('学习主题'), { target: { value: 'Java' } });
+    fireEvent.click(screen.getByText('让它学'));
+    await waitFor(() => expect(api.learnTopic).toHaveBeenCalledWith('Java'));
+    expect(await screen.findByText(/就「Java」学到 2 条记忆/)).toBeInTheDocument();
+    expect(screen.getByText('Java 是面向对象语言')).toBeInTheDocument();
+  });
+
+  it('空主题不学', async () => {
+    renderPage();
+    await waitFor(() => screen.getByLabelText('学习主题'));
+    fireEvent.change(screen.getByLabelText('学习主题'), { target: { value: '  ' } });
+    expect((screen.getByText('让它学') as HTMLButtonElement).disabled).toBe(true);
   });
 });

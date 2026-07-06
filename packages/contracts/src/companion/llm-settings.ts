@@ -64,3 +64,35 @@ export const CompanionLlmSettingsV1Schema = z
   .strict();
 
 export type CompanionLlmSettingsV1 = z.infer<typeof CompanionLlmSettingsV1Schema>;
+
+/* ── 「学一个主题」——给主题让 LLM 老师自主教，蒸馏成记忆（ADR-0047）─────────────── */
+
+/** 主题长度上限（是主题词/短语，非长文；长文走 perceive 喂料）。 */
+export const LEARN_TOPIC_MAX_LEN = 200;
+
+export const CompanionLearnTopicRequestV1Schema = z
+  .object({
+    /** 要学的主题，如「Java 并发」「唐诗」。 */
+    topic: z.string().min(1).max(LEARN_TOPIC_MAX_LEN),
+  })
+  .strict();
+
+export type CompanionLearnTopicRequestV1 = z.infer<typeof CompanionLearnTopicRequestV1Schema>;
+
+/** 一条学到的记忆（第一人称）。 */
+export const LearnedMemoryV1Schema = z
+  .object({ id: z.string(), content: z.string() })
+  .strict();
+
+export const CompanionLearnTopicResultV1Schema = z
+  .object({
+    schemaVersion: z.literal('companion-learn-topic-result.v1'),
+    topic: z.string(),
+    learnedMemoryCount: z.number().int().nonnegative(),
+    learnedMemories: z.array(LearnedMemoryV1Schema),
+    /** 老师调用是否失败（真语义学习需要老师；失败=没学到，前端诚实提示）。 */
+    teacherFailed: z.boolean(),
+  })
+  .strict();
+
+export type CompanionLearnTopicResultV1 = z.infer<typeof CompanionLearnTopicResultV1Schema>;

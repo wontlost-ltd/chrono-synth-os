@@ -99,3 +99,39 @@ export async function perceive(modality: PerceiveModality, representation: strin
   if (!d) throw new Error('感知失败');
   return { perceivedMemories: d.perceivedMemories ?? [], perceivedBy: d.perceivedBy ?? 'deterministic' };
 }
+
+/* ── 学一个主题（LLM 老师自主教 → 蒸馏成记忆）─────────────────────────────────── */
+
+export interface LearnedMemory {
+  readonly id: string;
+  readonly content: string;
+}
+
+export interface LearnTopicResult {
+  readonly topic: string;
+  readonly learnedMemoryCount: number;
+  readonly learnedMemories: readonly LearnedMemory[];
+  readonly teacherFailed: boolean;
+}
+
+/** 主题长度上限（对齐服务端 LEARN_TOPIC_MAX_LEN）。 */
+export const LEARN_TOPIC_MAX_LEN = 200;
+
+/**
+ * 给数字人一个主题，让配好的 LLM 老师就该主题产知识 → 蒸馏门 → 沉淀成记忆。
+ * 未接 LLM 老师时服务端返 400（前端转「先去配老师」提示）。运行时 chat 仍零-LLM。
+ */
+export async function learnTopic(topic: string): Promise<LearnTopicResult> {
+  const env = await apiFetch<{ data?: LearnTopicResult }>('/api/v1/companion/me/learn-topic', {
+    method: 'POST',
+    body: { topic },
+  });
+  const d = env?.data;
+  if (!d) throw new Error('学习失败');
+  return {
+    topic: d.topic ?? topic,
+    learnedMemoryCount: d.learnedMemoryCount ?? 0,
+    learnedMemories: d.learnedMemories ?? [],
+    teacherFailed: d.teacherFailed ?? false,
+  };
+}

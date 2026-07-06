@@ -14,8 +14,8 @@
 import { useEffect, useState, type JSX } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  getLlmSettings, putLlmSettings, resetLlmSettings, reflect, perceive,
-  type LlmProvider, type PerceiveModality, PERCEIVE_MAX_LEN,
+  getLlmSettings, putLlmSettings, resetLlmSettings, reflect, perceive, learnTopic,
+  type LlmProvider, type PerceiveModality, PERCEIVE_MAX_LEN, LEARN_TOPIC_MAX_LEN,
 } from '@/companion/learning-data';
 import { ApiNotConfiguredError, ApiHttpError } from '@/bridge/http-client';
 
@@ -179,6 +179,56 @@ function LlmTeacherSection(): JSX.Element {
   );
 }
 
+function LearnTopicSection(): JSX.Element {
+  const [topic, setTopic] = useState('');
+  const run = useMutation({ mutationFn: () => learnTopic(topic.trim()) });
+  const trimmed = topic.trim();
+  const canLearn = trimmed.length > 0 && trimmed.length <= LEARN_TOPIC_MAX_LEN && !run.isPending;
+  const r = run.data;
+  return (
+    <section className="space-y-3 rounded-2xl border border-chrono-border bg-chrono-elevated p-6">
+      <h2 className="text-lg font-semibold text-chrono-text-primary">让它学一个主题</h2>
+      <p className="text-sm text-chrono-text-secondary">
+        给一个主题（如「Java 并发」「唐诗」），配好的 LLM 老师会就该主题讲一遍，**沉淀成数字人的记忆**。
+        之后聊天它就能据此作答（零-LLM）。需要先接一个 LLM 老师。
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          type="text" value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={LEARN_TOPIC_MAX_LEN}
+          placeholder="想让它学什么？如：Java 并发"
+          aria-label="学习主题"
+          onKeyDown={(e) => { if (e.key === 'Enter' && canLearn) run.mutate(); }}
+          className="flex-1 rounded-lg border border-chrono-border bg-chrono-surface px-3 py-2 text-sm text-chrono-text-primary placeholder:text-chrono-text-muted"
+        />
+        <button
+          type="button" onClick={() => run.mutate()} disabled={!canLearn}
+          className="rounded-lg bg-chrono-primary px-4 py-2 text-sm font-semibold text-white transition hover:bg-chrono-primary/90 disabled:opacity-50"
+        >
+          {run.isPending ? '学习中…' : '让它学'}
+        </button>
+      </div>
+      {run.isError && <p role="alert" className="text-sm text-red-200">{readableError(run.error)}</p>}
+      {r && (
+        <div className="text-sm">
+          <p className="text-green-300">
+            就「{r.topic}」学到 {r.learnedMemoryCount} 条记忆
+            {r.teacherFailed ? '（⚠ 老师调用失败——检查 LLM 配置/网关）' : ''}
+          </p>
+          {r.learnedMemories.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {r.learnedMemories.map((m) => (
+                <li key={m.id} className="rounded-lg border border-chrono-border bg-chrono-surface p-2 text-chrono-text-primary">
+                  {m.content}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ReflectSection(): JSX.Element {
   const run = useMutation({ mutationFn: reflect });
   const r = run.data;
@@ -275,6 +325,7 @@ export function CompanionLearningPage(): JSX.Element {
         </p>
       </header>
       <LlmTeacherSection />
+      <LearnTopicSection />
       <ReflectSection />
       <FeedSection />
     </div>

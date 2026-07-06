@@ -42,7 +42,10 @@ import { ModelRouter } from '../../../intelligence/model-router.js';
 import { LlmReflectionDistiller, type ReflectMemory, type ReflectValue } from '../../../intelligence/llm-reflection-distiller.js';
 import { resolveTenantLlmConfig, TenantLlmSettingsStore } from '../../../storage/tenant-llm-settings-store.js';
 import { tryByokEncryption, LlmCredentialStore } from '../../../storage/llm-credential-store.js';
-import { CompanionLlmSettingsRequestV1Schema } from '@chrono/contracts';
+import { CompanionLlmSettingsRequestV1Schema, CompanionLearnTopicRequestV1Schema } from '@chrono/contracts';
+import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
+import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
+import { createHash } from 'node:crypto';
 import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
 import { LlmTranslationService, TRANSLATION_BATCH_SIZE, MAX_TRANSLATE_PER_CALL, type TranslatableMemory } from '../../../intelligence/llm-translation-service.js';
 import { isSupportedLocale, type SupportedLocale } from '../../../i18n/locale-resolver.js';
@@ -351,6 +354,82 @@ export function registerCompanionRoutes(
     const compiled = result.results.filter((r) => r.status === 'compiled').length;
     const pending = result.results.filter((r) => r.status === 'pending').length;
     return { data: { candidatesIngested: result.candidatesIngested, compiled, pending } };
+  });
+
+  /* POST /api/v1/companion/me/learn-topic —「给个主题让它自己学」（ADR-0047「LLM 当老师」）。
+   * 你填一个主题（如「Java」）→ 配好的 LLM 老师**就该主题产出一段知识**（学习材料）→ 走**既有感知
+   * 蒸馏管线**（同 perceive：LlmPerceptionProvider.analyze → PerceptionDistiller → 蒸馏门）→ 沉淀成
+   * 记忆。之后 chat 就能**零-LLM**据这些记忆答该主题。LLM 只在此摄取阶段被调（两次：产知识 + 抽事实），
+   * 绝不进 runtime。无 LLM 老师（provider 无 key/非 ollama）→ 明确报错引导去配（不静默确定性回退——
+   * 「学主题」离开真老师无意义，不同于 perceive 有确定性 mock 兜底）。 */
+  const learnTopicQuota = new QuotaManager(db);
+  app.post('/api/v1/companion/me/learn-topic', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const body = CompanionLearnTopicRequestV1Schema.parse(request.body);
+    const tenantOS = getOS(request);
+
+    /* 学习配额（与 perception 同套路——每次调 LLM 老师有成本）。 */
+    if (!learnTopicQuota.consumeQuota(request.tenantId, 'perception')) {
+      throw new QuotaExceededError('学习配额已用尽，请稍后再试');
+    }
+
+    /* BYOK 解析有效 LLM。必须真有老师可用（有 key 的云 provider 或 ollama）——否则「学主题」无意义。 */
+    const effectiveLlm = resolveTenantLlmConfig(db, request.tenantId, config.intelligence, reflectLlmEncryption);
+    const hasUsableTeacher = effectiveLlm.provider === 'ollama' || !!effectiveLlm.apiKey;
+    if (!hasUsableTeacher) {
+      throw new ValidationError('尚未接入可用的 LLM 老师——请先在「学习」页配置 provider + API key（或用本机 Ollama），再让它学主题');
+    }
+    const llm = new ModelRouter({
+      provider: effectiveLlm.provider as LLMProviderName,
+      model: effectiveLlm.model,
+      embeddingModel: effectiveLlm.embeddingModel,
+      apiKey: effectiveLlm.apiKey,
+      baseUrl: effectiveLlm.baseUrl,
+      fallbacks: config.intelligence.fallbacks,
+      maxTokens: config.intelligence.maxTokens,
+      temperature: config.intelligence.temperature,
+      tenantId: request.tenantId,
+    });
+
+    /* ① LLM 老师就该主题产出一段学习材料（第一人称视角的知识陈述，供蒸馏成记忆）。 */
+    const material = await llm.chat([
+      { role: 'system', content: [
+        '你是数字人格的「学习老师」。学习者要学一个主题——用简洁中文写一段该主题的核心知识，供学习者内化为记忆。',
+        '要点式、事实性、每条独立一句；只输出知识本身，不要寒暄/不要 markdown 标题。控制在 12 条内。',
+      ].join('\n') },
+      { role: 'user', content: `我要学习的主题：${body.topic}` },
+    ], { temperature: 0.4 });
+    const knowledge = material.content.trim();
+    if (!knowledge) {
+      throw new ValidationError('LLM 老师未就该主题产出内容，请换个说法或稍后再试');
+    }
+
+    /* ② 走既有感知蒸馏管线把材料沉淀成记忆（LlmPerceptionProvider 抽事实 → 蒸馏门 → memories）。 */
+    const provider = new LlmPerceptionProvider(llm);
+    const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
+    const representation = `关于「${body.topic}」，我学到：\n${knowledge}`;
+    const result = await distiller.perceive({
+      personaId: COMPANION_PERSONA_ID,
+      tenantId: request.tenantId,
+      media: {
+        modality: 'audio',
+        mediaSha256: createHash('sha256').update(representation).digest('hex'),
+        durationMs: 0,
+        representation,
+      },
+    });
+    const learnedMemories = result.memoryIds.map((id) => {
+      const node = tenantOS.core.memories.getMemory(id);
+      return { id, content: node?.content ?? '' };
+    });
+    return { data: {
+      schemaVersion: 'companion-learn-topic-result.v1',
+      topic: body.topic,
+      learnedMemoryCount: learnedMemories.length,
+      learnedMemories,
+      teacherFailed: result.teacherFailed ?? false,
+    } };
   });
 
   /* ── LLM 老师接入配置（ADR-0047「LLM 当老师」C 端补全）─────────────────────────────
