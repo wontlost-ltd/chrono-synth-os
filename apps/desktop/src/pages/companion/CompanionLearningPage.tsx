@@ -19,11 +19,27 @@ import {
 } from '@/companion/learning-data';
 import { ApiNotConfiguredError, ApiHttpError } from '@/bridge/http-client';
 
+/** 从 ApiHttpError 的 message（形如 `HTTP 400: {"...","message":"真原因"}`）里抽出后端的 message 文本。 */
+function backendMessage(err: ApiHttpError): string | null {
+  const m = err.message.match(/HTTP \d+:\s*(\{.*\})/s);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[1]) as { message?: unknown };
+    return typeof j.message === 'string' && j.message.length > 0 ? j.message : null;
+  } catch {
+    return null;
+  }
+}
+
 function readableError(err: unknown): string {
   if (err instanceof ApiNotConfiguredError) return '本地引擎尚未就绪，请稍候再试。';
   if (err instanceof ApiHttpError) {
     if (err.status === 403) return '当前账号无法使用（面向个人版）。';
     if (err.status === 429) return '有点频繁，歇一下再试。';
+    /* 400 是**给用户看的可操作校验错**（如「LLM 老师调用失败：HTTP 401 无效的API Key」）——直接展示
+     * 后端原因，别吞成无用的「操作失败（HTTP 400）」。其它状态码回退通用文案。 */
+    const detail = backendMessage(err);
+    if (detail) return detail;
     return `操作失败（HTTP ${err.status}）。`;
   }
   return err instanceof Error ? err.message : '操作失败';
