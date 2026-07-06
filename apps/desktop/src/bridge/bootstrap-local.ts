@@ -36,8 +36,18 @@ function generateLocalPassword(): string {
  * 幂等：已有 token 直接返回 true（不重复 provision）。
  */
 export async function bootstrapLocalSession(): Promise<boolean> {
-  const sidecar = await getSidecarEndpoint();
-  if (!sidecar) return false; /* 无本地 sidecar = 远端自托管模式，不接管 */
+  /* 等 sidecar 就绪再判定——sidecar 在 Rust setup 里**异步**拉起，boot 时 App 调本函数的瞬间它常
+   * 尚未就绪，getSidecarEndpoint() 暂返 null（瞬态，不缓存）。若此刻直接 `return false`（当成远端
+   * 模式），token 永不刷新 → 随后 resolveAccountPlan 探测 /companion/me 拿 401 → 回退旧缓存 plan
+   * （崩溃期误缓存的 enterprise）→ 落**企业版**外壳（真机实测：Personas/Conflicts/… 而非 聊聊/学习）。
+   * 故先轮询等就绪（最多 ~10s）；真远端模式（非 Tauri/无内嵌 sidecar）会一直 null，超时后才 return
+   * false 走手工 onboarding。与 settleLocalSync 同口径（#269）。 */
+  let sidecar = await getSidecarEndpoint();
+  for (let i = 0; !sidecar && i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    sidecar = await getSidecarEndpoint();
+  }
+  if (!sidecar) return false; /* 超时仍无 sidecar = 远端自托管模式，不接管 */
 
   /* 取/建本地 admin 密码（加密本地设置持久，供 token 过期后重新 login）。 */
   let password = await getAppSetting(APP_SETTING_LOCAL_ADMIN_PW);
