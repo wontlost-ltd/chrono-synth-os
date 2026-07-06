@@ -12,7 +12,9 @@ export async function registerCors(app: FastifyInstance, config: AppConfig): Pro
     origin: config.cors.origin,
     credentials: config.cors.credentials,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Correlation-Id', 'X-API-Key', 'X-Tenant-Id', 'X-CSRF-Protection', 'X-CSRF-Token'],
+    /* X-Chrono-Desktop-Session：桌面单机 sidecar 握手头（红线 11）。前端每请求带它 → 属非简单请求 →
+     * 触发 CORS 预检；allowedHeaders 必须含它，否则 WebView 预检拒绝、真请求发不出（登录/provision 全挂）。 */
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Correlation-Id', 'X-API-Key', 'X-Tenant-Id', 'X-CSRF-Protection', 'X-CSRF-Token', 'X-Chrono-Desktop-Session'],
     exposedHeaders: ['X-Request-Id', 'X-Correlation-Id', 'X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   });
 }

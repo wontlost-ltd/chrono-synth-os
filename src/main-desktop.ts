@@ -17,9 +17,22 @@ import { randomUUID } from 'node:crypto';
 import { loadConfig } from './config/index.js';
 
 /* 单机 profile 覆盖：显式钉死 loopback + 动态端口（红线 2）——不依赖默认（现状默认 0.0.0.0:3000）。
- * 其余（db.path/queue/redis/otel）走既有 env + 默认；Rust 父进程经 env 传 CHRONO_DB_PATH 等。 */
+ * 其余（db.path/queue/redis/otel）走既有 env + 默认；Rust 父进程经 env 传 CHRONO_DB_PATH 等。
+ *
+ * CORS：Tauri WebView 用自定义 scheme origin（macOS `tauri://localhost`，Windows/Linux `http://tauri.localhost`），
+ * dev 用 `http://localhost:1420`。前端 apiFetch 带自定义头 `X-Chrono-Desktop-Session`（红线 11 握手）→ 属
+ * **非简单请求** → 浏览器先发 CORS 预检 OPTIONS；sidecar 默认 cors.origin=false 会让预检 404 → 真请求被
+ * WebView 拦下 → provision/plan 探测全发不出 → 落错外壳/无法登录（真机实测：OPTIONS /auth/login 404）。
+ * 故单机 profile 显式放行这些 WebView origin。credentials=false（用 Bearer token 非 cookie），origin 用
+ * 白名单数组（非通配），安全边界仍是握手 token（红线 11：loopback≠鉴权边界）。允许 env CHRONO_CORS_ORIGIN 覆盖。 */
 const config = loadConfig({
   server: { host: '127.0.0.1', port: 0 },
+  cors: {
+    origin: (process.env.CHRONO_CORS_ORIGIN
+      ? process.env.CHRONO_CORS_ORIGIN.split(',').map((s) => s.trim())
+      : ['tauri://localhost', 'http://tauri.localhost', 'http://localhost:1420']),
+    credentials: false,
+  },
 });
 
 /* OTEL 单机默认关（config 默认 observability.enabled=false）；仍走两阶段 import 保持与 main.ts 同构。 */
