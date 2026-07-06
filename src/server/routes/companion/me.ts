@@ -45,6 +45,7 @@ import { tryByokEncryption, LlmCredentialStore } from '../../../storage/llm-cred
 import { CompanionLlmSettingsRequestV1Schema, CompanionLearnTopicRequestV1Schema } from '@chrono/contracts';
 import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
 import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
+import { WebSearchTool } from '../../../agent/tools/web-search-tool.js';
 import { createHash } from 'node:crypto';
 import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
 import { LlmTranslationService, TRANSLATION_BATCH_SIZE, MAX_TRANSLATE_PER_CALL, type TranslatableMemory } from '../../../intelligence/llm-translation-service.js';
@@ -368,6 +369,7 @@ export function registerCompanionRoutes(
     setPrivateNoStore(reply);
     const body = CompanionLearnTopicRequestV1Schema.parse(request.body);
     const tenantOS = getOS(request);
+    const userId = (request.user as JwtPayload | undefined)?.sub ?? null;
 
     /* 学习配额（与 perception 同套路——每次调 LLM 老师有成本）。 */
     if (!learnTopicQuota.consumeQuota(request.tenantId, 'perception')) {
@@ -392,23 +394,64 @@ export function registerCompanionRoutes(
       tenantId: request.tenantId,
     });
 
-    /* ① LLM 老师就该主题产出一段学习材料（第一人称视角的知识陈述，供蒸馏成记忆）。 */
-    const material = await llm.chat([
-      { role: 'system', content: [
-        '你是数字人格的「学习老师」。学习者要学一个主题——用简洁中文写一段该主题的核心知识，供学习者内化为记忆。',
-        '要点式、事实性、每条独立一句；只输出知识本身，不要寒暄/不要 markdown 标题。控制在 12 条内。',
-      ].join('\n') },
-      { role: 'user', content: `我要学习的主题：${body.topic}` },
-    ], { temperature: 0.4 });
-    const knowledge = material.content.trim();
-    if (!knowledge) {
-      throw new ValidationError('LLM 老师未就该主题产出内容，请换个说法或稍后再试');
+    /* ① 取学习材料。**优先调 WebSearch 工具抓真实网页**（ADR-0060「调用工具学习」——学到的是当前、
+     *    可溯源的真资料，而非 LLM 凭训练记忆凭空讲，避免过时/编造）。仅当配了真搜索 provider
+     *    （非 mock + 有 key）时用；否则退回 LLM 老师就主题产知识。SSRF 安全：WebSearchTool 直连
+     *    Exa/Serper HTTPS、不走用户 URL。 */
+    let material = '';
+    let groundedBy: 'web_search' | 'llm_teacher' = 'llm_teacher';
+    const ws = config.agent.webSearch;
+    const webSearchUsable = ws.provider !== 'mock' && !!ws.apiKey;
+    if (webSearchUsable) {
+      /* 搜索失败（坏 key/超时/provider 5xx）**不 500**——记日志后优雅回退 LLM 老师（下面），保证「学」这个
+       * 动作不因搜索抖动而崩。成功则用真网页片段当学习材料。 */
+      try {
+        const tool = new WebSearchTool({
+          provider: ws.provider, apiKey: ws.apiKey,
+          maxResults: ws.maxResults, maxContentLength: ws.maxContentLength, costCentsPerCall: ws.costCentsPerCall,
+        }, tenantOS.getLogger());
+        const res = await tool.invoke({
+          tenantId: request.tenantId, personaId: COMPANION_PERSONA_ID,
+          invokerType: 'internal', invokerId: userId ?? 'local', invokerUserId: userId,
+          arguments: { query: body.topic, topK: 5 },
+          deadline: Date.now() + 20_000,
+        });
+        const searchJson = res.content.find((c) => c.type === 'json') as { json?: { results?: Array<{ title?: string; snippet?: string; url?: string }> } } | undefined;
+        const snippets = (searchJson?.json?.results ?? [])
+          .map((r) => `- ${r.title ?? ''}：${r.snippet ?? ''}（来源 ${r.url ?? ''}）`)
+          .join('\n')
+          .trim();
+        if (snippets) {
+          material = snippets;
+          groundedBy = 'web_search';
+        } else {
+          tenantOS.getLogger().warn('learn-topic', `web_search 就「${body.topic}」无结果，回退 LLM 老师`);
+        }
+      } catch (err) {
+        tenantOS.getLogger().warn('learn-topic', `web_search 失败，回退 LLM 老师: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (!material) {
+      /* 无搜索 key / 搜索无结果或失败 → LLM 老师就主题产知识（次选）。 */
+      const gen = await llm.chat([
+        { role: 'system', content: [
+          '你是数字人格的「学习老师」。学习者要学一个主题——用简洁中文写一段该主题的核心知识，供学习者内化为记忆。',
+          '要点式、事实性、每条独立一句；只输出知识本身，不要寒暄/不要 markdown 标题。控制在 12 条内。',
+        ].join('\n') },
+        { role: 'user', content: `我要学习的主题：${body.topic}` },
+      ], { temperature: 0.4 });
+      material = gen.content.trim();
+      groundedBy = 'llm_teacher';
+      if (!material) {
+        throw new ValidationError('未能就该主题产出可学内容，请换个说法或稍后再试');
+      }
     }
 
-    /* ② 走既有感知蒸馏管线把材料沉淀成记忆（LlmPerceptionProvider 抽事实 → 蒸馏门 → memories）。 */
+    /* ② 走既有感知蒸馏管线把材料沉淀成记忆（LlmPerceptionProvider 抽事实 → 蒸馏门 → memories）。
+     *    web_search 抓的真资料同样交给 LLM 抽事实——LLM 只做「读资料→抽事实」，知识来源是真网页。 */
     const provider = new LlmPerceptionProvider(llm);
     const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
-    const representation = `关于「${body.topic}」，我学到：\n${knowledge}`;
+    const representation = `关于「${body.topic}」，我学到：\n${material}`;
     const result = await distiller.perceive({
       personaId: COMPANION_PERSONA_ID,
       tenantId: request.tenantId,
@@ -429,6 +472,8 @@ export function registerCompanionRoutes(
       learnedMemoryCount: learnedMemories.length,
       learnedMemories,
       teacherFailed: result.teacherFailed ?? false,
+      /* 透明度：知识来自真网页搜索（web_search）还是 LLM 老师凭知识讲（llm_teacher）。 */
+      groundedBy,
     } };
   });
 

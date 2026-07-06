@@ -44,7 +44,7 @@ beforeEach(() => {
   api.resetLlmSettings.mockResolvedValue(undefined);
   api.reflect.mockResolvedValue({ candidatesIngested: 0, reason: 'no_material' });
   api.perceive.mockResolvedValue({ perceivedMemories: [], perceivedBy: 'deterministic' });
-  api.learnTopic.mockResolvedValue({ topic: 'Java', learnedMemoryCount: 0, learnedMemories: [], teacherFailed: false });
+  api.learnTopic.mockResolvedValue({ topic: 'Java', learnedMemoryCount: 0, learnedMemories: [], teacherFailed: false, groundedBy: 'llm_teacher' });
 });
 
 describe('CompanionLearningPage（LLM 老师学习）', () => {
@@ -113,9 +113,9 @@ describe('CompanionLearningPage（LLM 老师学习）', () => {
     expect((screen.getByText('喂给它') as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('学主题 → 调 learnTopic + 渲染学到的记忆', async () => {
+  it('学主题（web_search 来源）→ 调 learnTopic + 渲染记忆 + 标真实搜索来源', async () => {
     api.learnTopic.mockResolvedValue({
-      topic: 'Java', learnedMemoryCount: 2, teacherFailed: false,
+      topic: 'Java', learnedMemoryCount: 2, teacherFailed: false, groundedBy: 'web_search',
       learnedMemories: [{ id: 'm1', content: 'Java 是面向对象语言' }, { id: 'm2', content: 'JVM 跨平台运行' }],
     });
     renderPage();
@@ -124,7 +124,20 @@ describe('CompanionLearningPage（LLM 老师学习）', () => {
     fireEvent.click(screen.getByText('让它学'));
     await waitFor(() => expect(api.learnTopic).toHaveBeenCalledWith('Java'));
     expect(await screen.findByText(/就「Java」学到 2 条记忆/)).toBeInTheDocument();
+    expect(screen.getByText(/来自真实网络搜索/)).toBeInTheDocument();
     expect(screen.getByText('Java 是面向对象语言')).toBeInTheDocument();
+  });
+
+  it('学主题（llm_teacher 来源，无搜索 key）→ 标 LLM 老师凭知识讲', async () => {
+    api.learnTopic.mockResolvedValue({
+      topic: 'Java', learnedMemoryCount: 1, teacherFailed: false, groundedBy: 'llm_teacher',
+      learnedMemories: [{ id: 'm1', content: 'Java 是面向对象语言' }],
+    });
+    renderPage();
+    await waitFor(() => screen.getByLabelText('学习主题'));
+    fireEvent.change(screen.getByLabelText('学习主题'), { target: { value: 'Java' } });
+    fireEvent.click(screen.getByText('让它学'));
+    expect(await screen.findByText(/LLM 老师凭知识讲/)).toBeInTheDocument();
   });
 
   it('空主题不学', async () => {

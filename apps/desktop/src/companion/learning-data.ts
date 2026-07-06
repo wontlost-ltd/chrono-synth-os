@@ -112,6 +112,8 @@ export interface LearnTopicResult {
   readonly learnedMemoryCount: number;
   readonly learnedMemories: readonly LearnedMemory[];
   readonly teacherFailed: boolean;
+  /** 'web_search'=调搜索工具抓真网页；'llm_teacher'=LLM 老师凭知识讲。 */
+  readonly groundedBy: 'web_search' | 'llm_teacher';
 }
 
 /** 主题长度上限（对齐服务端 LEARN_TOPIC_MAX_LEN）。 */
@@ -133,5 +135,6 @@ export async function learnTopic(topic: string): Promise<LearnTopicResult> {
     learnedMemoryCount: d.learnedMemoryCount ?? 0,
     learnedMemories: d.learnedMemories ?? [],
     teacherFailed: d.teacherFailed ?? false,
+    groundedBy: d.groundedBy ?? 'llm_teacher',
   };
 }
