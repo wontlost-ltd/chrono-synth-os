@@ -50,6 +50,9 @@ struct SpawnParams {
     node_bin: OsString,
     db_path: PathBuf,
     jwt_secret: String,
+    /// Persistent field-encryption master key (base64→32 bytes) from keyring. Enables encrypted
+    /// at-rest storage of BYOK LLM api keys etc.; reused across restarts so ciphertext stays readable.
+    encryption_key: String,
 }
 
 /// Managed sidecar state. Child is kept so Drop / explicit shutdown can kill it (red-line 4).
@@ -164,6 +167,10 @@ fn generate_handshake_token() -> String {
 /// Keyring service + entry for the persistent JWT signing secret (red-line 5).
 const KEYRING_SERVICE: &str = "chrono-synth-desktop";
 const JWT_SECRET_USER: &str = "chrono-desktop-jwt-secret";
+/// Keyring entry for the persistent field-encryption master key (encrypts BYOK LLM api keys etc.
+/// at rest). Red-line 5: generated once, never hardcoded/bundled; persistent so already-encrypted
+/// data stays readable across restarts.
+const ENCRYPTION_KEY_USER: &str = "chrono-desktop-encryption-master-key";
 
 /// Resolve the **persistent** JWT signing secret from the platform keyring, generating + storing one
 /// on first run (red-line 5: generated once, never hardcoded / bundled). Reused across launches so
@@ -184,6 +191,38 @@ fn resolve_or_create_jwt_secret() -> Result<String, String> {
     }
 }
 
+/// Resolve the **persistent** field-encryption master key from the platform keyring, generating one
+/// on first run (red-line 5: generated once, never hardcoded / bundled). The server's FieldEncryption
+/// requires a base64 string decoding to exactly 32 bytes; we build 32 cryptographically-random bytes
+/// from two UUID v4 values (16 random bytes each, sourced from the OS CSPRNG) and base64-encode them.
+/// Persistent so data already encrypted at rest (e.g. stored BYOK LLM api keys) stays decryptable
+/// across restarts — rotating this key would orphan existing ciphertext.
+fn resolve_or_create_encryption_key() -> Result<String, String> {
+    use keyring_core::Entry;
+    let entry = Entry::new(KEYRING_SERVICE, ENCRYPTION_KEY_USER)
+        .map_err(|e| format!("keyring entry (encryption key): {e}"))?;
+    match entry.get_password() {
+        Ok(v) if !v.is_empty() => Ok(v), // reuse existing persistent key
+        Ok(_) | Err(keyring_core::Error::NoEntry) => {
+            let key_b64 = generate_encryption_master_key();
+            entry.set_password(&key_b64).map_err(|e| format!("keyring store (encryption key): {e}"))?;
+            Ok(key_b64)
+        }
+        Err(e) => Err(format!("keyring read (encryption key): {e}")),
+    }
+}
+
+/// Build a fresh field-encryption master key: 32 cryptographically-random bytes (two UUID v4, 16
+/// random bytes each from the OS CSPRNG) base64-encoded. Server's FieldEncryption requires the value
+/// to base64-decode to exactly 32 bytes — enforced by the test below.
+fn generate_encryption_master_key() -> String {
+    use base64::Engine;
+    let mut bytes = Vec::with_capacity(32);
+    bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    bytes.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
+    base64::engine::general_purpose::STANDARD.encode(&bytes)
+}
+
 /// Spawn the sidecar child from resolved params and block until the ready marker (or hard timeout).
 /// Returns the live child + resolved endpoint. A **fresh handshake token is minted per (re)spawn**
 /// (red-line 11 rotation); the JWT secret is the persistent one from `params`. Failure paths kill +
@@ -199,6 +238,10 @@ fn spawn_and_wait_ready(params: &SpawnParams) -> Result<(Child, SidecarEndpoint)
         .env("CHRONO_JWT_ENABLED", "true")
         // Red-line 5: persistent JWT secret from keyring (issued tokens survive restarts).
         .env("CHRONO_JWT_SECRET", &params.jwt_secret)
+        // 凭据加密：启用 + 传持久 masterKey（keyring），让 sidecar 能加密存 BYOK LLM api key（学习页
+        // 「本机未启用凭据加密」即此项未传所致）。key 持久跨重启，密文可读；env 不打印（同 jwt secret）。
+        .env("CHRONO_ENCRYPTION_ENABLED", "true")
+        .env("CHRONO_ENCRYPTION_MASTER_KEY", &params.encryption_key)
         // Red-line 11: pass the handshake token; the server's desktop-session plugin enforces it.
         .env("CHRONO_DESKTOP_SESSION", &handshake)
         .stdout(Stdio::piped())
@@ -300,13 +343,17 @@ pub fn start_sidecar(app: &AppHandle, state: &SidecarState) -> Result<SidecarEnd
     // never hardcoded, never in the install bundle. Distinct from the handshake token (per-spawn).
     let jwt_secret = resolve_or_create_jwt_secret()?;
 
+    // 持久字段加密 masterKey（同 JWT secret：keyring 生成一次、跨重启复用、不硬编码）——让 sidecar 能
+    // 加密存 BYOK LLM api key（学习页保存 key 的前提）。
+    let encryption_key = resolve_or_create_encryption_key()?;
+
     // Prefer a bundled node (resources/node); fall back to PATH `node` (dev). S4 bundles node.
     let node_bin = {
         let bundled = resource_dir.join(if cfg!(windows) { "node.exe" } else { "node" });
         if bundled.exists() { bundled.into_os_string() } else { OsString::from("node") }
     };
 
-    let params = SpawnParams { entry, node_bin, db_path, jwt_secret };
+    let params = SpawnParams { entry, node_bin, db_path, jwt_secret, encryption_key };
     let (child, endpoint) = spawn_and_wait_ready(&params)?;
 
     // Store child + endpoint + params so shutdown can kill it (red-line 4) and the supervisor can respawn.
@@ -528,5 +575,16 @@ mod tests {
         state.shutdown();
         assert!(state.shutting_down.load(Ordering::SeqCst));
         assert!(state.endpoint().is_none());
+    }
+
+    // 加密 masterKey 必须 base64 解码后**恰 32 字节**（server FieldEncryption 硬要求，否则启动即抛）。
+    #[test]
+    fn encryption_master_key_is_base64_32_bytes() {
+        use base64::Engine;
+        let k = generate_encryption_master_key();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(&k).expect("valid base64");
+        assert_eq!(decoded.len(), 32, "masterKey 解码须 32 字节");
+        // 两次生成不同（随机，非硬编码——红线 5）。
+        assert_ne!(k, generate_encryption_master_key(), "每次生成应不同（随机）");
     }
 }
