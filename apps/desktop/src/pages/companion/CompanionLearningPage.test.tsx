@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ApiHttpError } from '@/bridge/http-client';
 
 const api = vi.hoisted(() => ({
   getLlmSettings: vi.fn(),
@@ -145,5 +146,18 @@ describe('CompanionLearningPage（LLM 老师学习）', () => {
     await waitFor(() => screen.getByLabelText('学习主题'));
     fireEvent.change(screen.getByLabelText('学习主题'), { target: { value: '  ' } });
     expect((screen.getByText('让它学') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('学主题 400 → 显示后端真实原因（不吞成「操作失败（HTTP 400）」）', async () => {
+    const body = JSON.stringify({ error: 'ValidationError', code: 'VALIDATION_RANGE',
+      message: 'LLM 老师调用失败——请检查「学习」页的 provider/baseURL/model/API key：HTTP 401: 无效的API Key' });
+    api.learnTopic.mockRejectedValue(new ApiHttpError(400, 'VALIDATION_RANGE', `HTTP 400: ${body}`));
+    renderPage();
+    await waitFor(() => screen.getByLabelText('学习主题'));
+    fireEvent.change(screen.getByLabelText('学习主题'), { target: { value: 'Java' } });
+    fireEvent.click(screen.getByText('让它学'));
+    /* 应展示后端 message 里的真实原因（含 401 无效 key），而非通用「操作失败」。 */
+    expect(await screen.findByText(/HTTP 401: 无效的API Key/)).toBeInTheDocument();
+    expect(screen.queryByText(/操作失败（HTTP 400）/)).not.toBeInTheDocument();
   });
 });
