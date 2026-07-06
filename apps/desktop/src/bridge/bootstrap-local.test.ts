@@ -38,12 +38,49 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('bootstrapLocalSession（ADR-0061 S5 单机自动 provision）', () => {
-  it('无本地 sidecar（远端模式）→ false，不动凭据，且不标 local（远端态不污染）', async () => {
+  it('无本地 sidecar（远端模式）→ 轮询超时后 false，不动凭据，且不标 local（远端态不污染）', async () => {
     sc.endpoint = null;
     vi.stubGlobal('fetch', vi.fn());
-    expect(await bootstrapLocalSession()).toBe(false);
+    /* bootstrapLocalSession 现在会轮询等 sidecar（最多 ~10s）；用假定时器快进到超时，避免真等。 */
+    vi.useFakeTimers();
+    try {
+      const p = bootstrapLocalSession();
+      await vi.runAllTimersAsync();
+      expect(await p).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(tok.value).toBeNull();
     expect(markLocal.fn).not.toHaveBeenCalled();
+  });
+
+  it('★sidecar 启动初期未就绪（getSidecarEndpoint 先 null 后就绪）→ 轮询等就绪再 provision，不误判远端★', async () => {
+    /* 真机 bug 回归：sidecar 在 Rust setup 异步拉起，boot 时首查 null。旧实现直接 return false→当远端
+     * 模式→token 不刷新→plan 探测 401→落企业版外壳。新实现轮询等就绪再 provision。 */
+    const { getSidecarEndpoint } = await import('./sidecar-endpoint');
+    const mock = getSidecarEndpoint as unknown as ReturnType<typeof vi.fn>;
+    let calls = 0;
+    mock.mockImplementation(async () => {
+      calls += 1;
+      return calls >= 3 ? SIDE : null; /* 前两次 null（未就绪），第三次起就绪。 */
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/register')) return jsonRes(201, { data: { accessToken: 'ready-jwt' } });
+      return jsonRes(400, {});
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.useFakeTimers();
+    try {
+      const p = bootstrapLocalSession();
+      await vi.runAllTimersAsync(); /* 快进轮询间隔 */
+      expect(await p).toBe(true); /* 等到就绪后成功 provision，而非误判远端 return false */
+    } finally {
+      vi.useRealTimers();
+      /* 还原默认实现（读 sc.endpoint）——mockImplementation 不被 clearAllMocks 清，会漏进下个用例。 */
+      mock.mockImplementation(async () => sc.endpoint);
+    }
+    expect(tok.value).toBe('ready-jwt');
+    expect(calls).toBeGreaterThanOrEqual(3); /* 确实轮询了多次 */
   });
 
   it('★首启（无 token 无密码）→ 真实 fetch register 拿 token（不受 apiFetch token 前置约束）★', async () => {
