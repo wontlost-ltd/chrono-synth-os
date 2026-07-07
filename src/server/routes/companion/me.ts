@@ -46,6 +46,7 @@ import { CompanionLlmSettingsRequestV1Schema, CompanionLearnTopicRequestV1Schema
 import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
 import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
 import { WebSearchTool } from '../../../agent/tools/web-search-tool.js';
+import { linkMemoryAssociatively } from '../../../conversation/deterministic-memory-association.js';
 import { createHash } from 'node:crypto';
 import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
 import { LlmTranslationService, TRANSLATION_BATCH_SIZE, MAX_TRANSLATE_PER_CALL, type TranslatableMemory } from '../../../intelligence/llm-translation-service.js';
@@ -181,6 +182,8 @@ function storeLearnedReference(os: ChronoSynthOS, topic: string, material: strin
   for (const chunk of chunkLearnedMaterial(material)) {
     /* 前缀主题让检索按主题词命中；salience 0.5（参考料<核心洞察），valence 0（中性知识）。 */
     const node = os.core.memories.addMemory('semantic', `关于「${topic}」：${chunk}`, 0, 0.5);
+    /* 融会贯通：新学的知识块确定性联想连边到既有相关记忆——学的东西不再是孤岛，日后检索能联想串联。 */
+    linkMemoryAssociatively(os.core.memories, node.id, node.content);
     ids.push(node.id);
   }
   return ids;

@@ -33,6 +33,7 @@ import {
 } from '@chrono/contracts';
 import { OfflineConversationResponder } from '../../../conversation/offline-conversation-responder.js';
 import { tokenize, scoreTextByKeyword } from '../../../conversation/conversation-knowledge-retriever.js';
+import { linkMemoryAssociatively } from '../../../conversation/deterministic-memory-association.js';
 import { retrieveMemoriesDeterministic } from '../../../conversation/deterministic-memory-retrieval.js';
 import type { ContentFor } from '../../../conversation/deterministic-memory-retrieval.js';
 import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
@@ -482,9 +483,12 @@ export function registerCompanionChatRoutes(
         /* 去重：已存在完全相同正文的记忆则不重复写——防「反复说同一句」无限追加噪声（Codex 复审）。 */
         const already = [...tenantOS.core.memories.getAllMemories().values()].some((m) => m.content === decision.content);
         if (!already) {
-          tenantOS.core.memories.addMemory(
+          const node = tenantOS.core.memories.addMemory(
             'episodic', decision.content, CONVERSATION_MEMORY_VALENCE, CONVERSATION_MEMORY_SALIENCE,
           );
+          /* 融会贯通：把这条新对话记忆确定性联想连边到既有相关记忆（共享关键词），让日后检索能跨话题
+           * 联想串联。零-LLM、确定性。仅链接真实记忆，安全。 */
+          linkMemoryAssociatively(tenantOS.core.memories, node.id, node.content);
         }
       }
     }
