@@ -181,3 +181,33 @@ describe('多跳图遍历检索（②）', () => {
     assert.ok(ids.includes('m_a') && ids.includes('m_b') && ids.includes('m_c'), '环上节点都召回一次');
   });
 });
+
+describe('联想边遍历门槛（关系相关 + isAssociation 标注）', () => {
+  /* co_occurrence 联想边强度天然落 0.15–0.43 带。0.25 的边：通用 related 门槛 0.3 会拦掉（死区），
+   * co_occurrence 关系放宽到 0.15 应能遍历——这是用户「杭州美食靠联想拉到」场景的隔离验证。 */
+  it('co_occurrence 边 0.25（<通用0.3）仍被遍历，标 isAssociation', () => {
+    const nodes = [
+      mem('m_hit', '杭州 西湖 旅游 玩得 开心'),          // 直接命中「旅游」
+      mem('m_assoc', '杭州 西湖 美食 小笼包 龙井虾仁'),  // 不含「旅游」，仅靠联想边可达
+    ];
+    const edges = [edge('m_hit', 'm_assoc', 0.25, 'co_occurrence')];
+    const ds = dataset(nodes, edges);
+    const res = retrieveMemoriesDeterministic('旅游', ds.memories, buildEdgeLookup(ds.edges), withHops(1));
+    const assoc = res.find((r) => r.id === 'm_assoc');
+    assert.ok(assoc, 'co_occurrence 边 0.25 应被遍历到（不落死区）');
+    assert.equal(assoc!.isAssociation, true, '联想到的记忆须标 isAssociation=true（猜测须明确指出）');
+    const hit = res.find((r) => r.id === 'm_hit')!;
+    assert.notEqual(hit.isAssociation, true, '直接命中不标 isAssociation');
+  });
+
+  it('通用 related 关系仍守 0.3：0.25 的 related 边不被遍历（未放宽非联想边）', () => {
+    const nodes = [
+      mem('m_hit', '杭州 西湖 旅游 玩得 开心'),
+      mem('m_far', '一段无关的其它记忆内容描述'),
+    ];
+    const edges = [edge('m_hit', 'm_far', 0.25, 'related')]; // related 非 co_occurrence → 守 0.3
+    const ds = dataset(nodes, edges);
+    const res = retrieveMemoriesDeterministic('旅游', ds.memories, buildEdgeLookup(ds.edges), withHops(1));
+    assert.ok(!res.some((r) => r.id === 'm_far'), 'related 关系 0.25 边仍被 0.3 门槛拦掉（只放宽 co_occurrence）');
+  });
+});
