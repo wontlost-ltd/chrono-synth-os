@@ -46,6 +46,7 @@ import { CompanionLlmSettingsRequestV1Schema, CompanionLearnTopicRequestV1Schema
 import { LlmPerceptionProvider } from '../../../perception/sources/llm-perception-provider.js';
 import { PerceptionDistiller } from '../../../perception/perception-distiller.js';
 import { WebSearchTool } from '../../../agent/tools/web-search-tool.js';
+import { linkMemoryAssociatively } from '../../../conversation/deterministic-memory-association.js';
 import { createHash } from 'node:crypto';
 import { MemoryTranslationStore } from '../../../storage/memory-translation-store.js';
 import { LlmTranslationService, TRANSLATION_BATCH_SIZE, MAX_TRANSLATE_PER_CALL, type TranslatableMemory } from '../../../intelligence/llm-translation-service.js';
@@ -141,6 +142,51 @@ function ensureCompanionGenesisValues(core: ChronoSynthOS['core'], logger?: { in
     core.values.create(label, weight);
   }
   logger?.info('CompanionGenesis', `首次反思 bootstrap 经理人价值内核（${MANAGER_GENESIS_VALUES.length} 个）`);
+}
+
+/** 学习材料上限（防单主题灌爆记忆）+ 单块记忆上限（存储层无硬限，此为软上限防超长块）。 */
+const LEARN_MATERIAL_MAX_LEN = 8000;
+const LEARN_CHUNK_MAX_LEN = 3000;
+/** 参考料每主题最多存几条（防碎片刷屏；概念事实另由蒸馏管线存）。 */
+const LEARN_MAX_REFERENCE_MEMORIES = 6;
+
+/**
+ * 纯确定性拆块：把学习材料切成参考记忆块——**代码块（```…```）整块保留**（保代码完整），普通文本按
+ * 空行分段、太碎（≤20 字）的段跳过（概念事实已覆盖）。零 LLM，便于单测。上限 LEARN_MAX_REFERENCE_MEMORIES。
+ */
+export function chunkLearnedMaterial(material: string): string[] {
+  const trimmed = material.slice(0, LEARN_MATERIAL_MAX_LEN).trim();
+  if (!trimmed) return [];
+  const parts = trimmed.split(/(```[\s\S]*?```)/g); // 奇数段=代码块，偶数段=普通文本
+  const chunks: string[] = [];
+  for (const part of parts) {
+    if (!part.trim()) continue;
+    if (part.startsWith('```')) {
+      chunks.push(part.trim().slice(0, LEARN_CHUNK_MAX_LEN)); // 代码块整块
+    } else {
+      for (const para of part.split(/\n\s*\n/)) {
+        const p = para.trim();
+        if (p.length > 20) chunks.push(p.slice(0, LEARN_CHUNK_MAX_LEN)); // 跳过太碎的段
+      }
+    }
+  }
+  return chunks.slice(0, LEARN_MAX_REFERENCE_MEMORIES);
+}
+
+/**
+ * 把学习材料按块存为**逐字参考记忆**（semantic）——供聊天检索时吐出完整例子（尤其代码块）。
+ * 区别于蒸馏管线的「≤500 字概念事实」：这是原文参考料，answer「写个例子」用。返回新建记忆 id。
+ */
+function storeLearnedReference(os: ChronoSynthOS, topic: string, material: string): string[] {
+  const ids: string[] = [];
+  for (const chunk of chunkLearnedMaterial(material)) {
+    /* 前缀主题让检索按主题词命中；salience 0.5（参考料<核心洞察），valence 0（中性知识）。 */
+    const node = os.core.memories.addMemory('semantic', `关于「${topic}」：${chunk}`, 0, 0.5);
+    /* 融会贯通：新学的知识块确定性联想连边到既有相关记忆——学的东西不再是孤岛，日后检索能联想串联。 */
+    linkMemoryAssociatively(os.core.memories, node.id, node.content);
+    ids.push(node.id);
+  }
+  return ids;
 }
 
 /* ── 路由注册 ──────────────────────────────────────────────────── */
@@ -441,8 +487,10 @@ export function registerCompanionRoutes(
       try {
         gen = await llm.chat([
           { role: 'system', content: [
-            '你是数字人格的「学习老师」。学习者要学一个主题——用简洁中文写一段该主题的核心知识，供学习者内化为记忆。',
-            '要点式、事实性、每条独立一句；只输出知识本身，不要寒暄/不要 markdown 标题。控制在 12 条内。',
+            '你是数字人格的「学习老师」。学习者要学一个主题——写一段该主题的核心知识供其内化为记忆。',
+            '先给要点式核心知识（每条独立一句、事实性）；**若该主题适合用例子说明（如编程/算法/操作步骤），',
+            '再附一个具体、完整、可直接用的例子**（编程主题给可运行代码，用 ``` 代码块包裹并注明语言）。',
+            '只输出知识与例子本身，不要寒暄。',
           ].join('\n') },
           { role: 'user', content: `我要学习的主题：${body.topic}` },
         ], { temperature: 0.4 });
@@ -477,7 +525,14 @@ export function registerCompanionRoutes(
     } catch (err) {
       throw new ValidationError(`学习材料消化失败（LLM 老师抽取事实时出错）——请检查 LLM 配置：${err instanceof Error ? err.message : String(err)}`);
     }
-    const learnedMemories = result.memoryIds.map((id) => {
+
+    /* ③ 除了蒸馏出的「概念事实」（≤500 字摘要，答概念用），**再把原始学习材料按块存为逐字参考记忆**
+     *    ——尤其代码例子（易 >500 字，会被 fact 抽取丢弃）。这样问「写个例子」时零-LLM 检索能吐出完整
+     *    代码块，而非只有概念碎片（用户实测缺口）。直接 core.addMemory 存 semantic 记忆（绕过 fact
+     *    抽取的 500 字上限；存储层无长度限）；代码块整块不拆（保代码完整），其余段落各成一条。
+     *    salience 略低于蒸馏事实（参考料，非核心洞察），不喧宾夺主。 */
+    const referenceMemoryIds = storeLearnedReference(tenantOS, body.topic, material);
+    const learnedMemories = [...result.memoryIds, ...referenceMemoryIds].map((id) => {
       const node = tenantOS.core.memories.getMemory(id);
       return { id, content: node?.content ?? '' };
     });

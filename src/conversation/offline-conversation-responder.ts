@@ -31,10 +31,16 @@ export interface DeterministicBoundaryMatcher {
 
 /** 单条知识在回应中摘要的最大字符数 */
 const KNOWLEDGE_SNIPPET_CAP = 280;
-/** 参与回应拼装的最多知识条数 */
+/** 参与回应拼装的最多知识条数（直接命中） */
 const MAX_KNOWLEDGE_ITEMS = 3;
-/** 知识相关度低于此阈值视为"无可靠知识" */
+/** 联想（推测）条数上限——独立于直接命中，防弱关联淹没回应（只作点缀提示）。 */
+const MAX_ASSOCIATION_ITEMS = 2;
+/** 直接命中相关度低于此阈值视为"无可靠知识" */
 const MIN_USEFUL_RELEVANCE = 0.1;
+/** 联想（isAssociation）相关度门槛，独立且更低：联想 relevance 天然被逐跳衰减（seed×边强×decay），
+ * 用直接命中的 0.1 门槛会把几乎所有联想滤掉、联想段永不出现。联想本就是「弱但值得一提的推测」，
+ * 故给更低下限；由 associationLeadIn「不太确定，仅供参考」明确标注，且 MAX_ASSOCIATION_ITEMS 限量。 */
+const MIN_ASSOCIATION_RELEVANCE = 0.02;
 /** 主动响应 follow-up 引用的近期成长片段最大字符数（P5；不复述整段，降外泄面） */
 const PROACTIVE_GROWTH_CAP = 50;
 
@@ -227,11 +233,19 @@ export class OfflineConversationResponder {
 
   /** 过滤出相关度达标的知识，截断到上限并保持相关度降序 */
   private selectUsableKnowledge(items: RelevantKnowledge[]): RelevantKnowledge[] {
-    return items
-      .filter((k) => k.relevance >= MIN_USEFUL_RELEVANCE && k.content.trim().length > 0)
-      .slice()
-      .sort((a, b) => b.relevance - a.relevance)
+    const nonEmpty = items.filter((k) => k.content.trim().length > 0);
+    /* 直接命中：0.1 门槛，取 top-N（不变，零回归）。 */
+    const direct = nonEmpty
+      .filter((k) => !k.isAssociation && k.relevance >= MIN_USEFUL_RELEVANCE)
+      .sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id))
       .slice(0, MAX_KNOWLEDGE_ITEMS);
+    /* 联想（推测）：独立更低门槛 + 独立限量——否则被逐跳衰减的联想永远过不了直接命中的门槛。
+     * 仅当有直接命中作锚点时才附带联想（无直接依据的裸推测不单独成答，避免「纯猜测当记忆」）。 */
+    const associations = direct.length === 0 ? [] : nonEmpty
+      .filter((k) => k.isAssociation && k.relevance >= MIN_ASSOCIATION_RELEVANCE)
+      .sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id))
+      .slice(0, MAX_ASSOCIATION_ITEMS);
+    return [...direct, ...associations];
   }
 
   /** 以叙事口吻把知识拼装为回应（lead-in 按 locale 取自 companion-locale.knowledgeLeadIn）。 */
@@ -250,11 +264,21 @@ export class OfflineConversationResponder {
     if (narrative.length > 0) {
       parts.push(narrative);
     }
+    /* 分两组：**直接命中**（查询关键词命中的确定记忆）vs **联想**（沿记忆边推测拉到的，isAssociation）。
+     * 「猜测须明确指出」：直接命中标「据我记得的」；联想单列「由此我联想到（推测）」，不把推测当确定记忆。 */
+    const direct = knowledge.filter((k) => !k.isAssociation);
+    const associations = knowledge.filter((k) => k.isAssociation);
+    const snippet = (k: RelevantKnowledge): string => `· ${k.content.trim().slice(0, KNOWLEDGE_SNIPPET_CAP)}`;
+
     /* ADR-0056 立场前缀：迟疑（不太确定）/表态（我觉得）拼在 lead-in 前。confident → 空（零回归）。 */
-    parts.push(`${t.stancePrefix(stance)}${t.knowledgeLeadIn(userInput)}`);
-    for (const k of knowledge) {
-      const snippet = k.content.trim().slice(0, KNOWLEDGE_SNIPPET_CAP);
-      parts.push(`· ${snippet}`);
+    if (direct.length > 0) {
+      parts.push(`${t.stancePrefix(stance)}${t.knowledgeLeadIn(userInput)}`);
+      for (const k of direct) parts.push(snippet(k));
+    }
+    if (associations.length > 0) {
+      /* 联想推测组：明确措辞「由此我联想到（不确定）」——让用户一眼分清确定记忆 vs 我的联想推测。 */
+      parts.push(t.associationLeadIn());
+      for (const k of associations) parts.push(snippet(k));
     }
     /* ADR-0056 变化性：离线脚注按轮次确定性轮换（seed=0 → 原文，零回归）。 */
     parts.push(variantPick(resources.replyVariants.offlineNote, variantSeed));

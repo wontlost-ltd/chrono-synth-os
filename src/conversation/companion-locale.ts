@@ -43,6 +43,8 @@ export interface CompanionLocaleResources {
     readonly noNameYet: string;
     /** 知识回应的 lead-in（按问句类型可不同；此处给通用一句）。 */
     readonly knowledgeLeadIn: (userInput: string) => string;
+    /** 联想（推测）组的 lead-in——明确标注「以下是我的联想推测，非确定记忆」。 */
+    readonly associationLeadIn: () => string;
     /** 知识回应末尾的「离线声明」。 */
     readonly offlineNote: string;
     /** 无知识时的诚实离线回应主体。 */
@@ -147,6 +149,7 @@ const zhCN: CompanionLocaleResources = {
       if (/怎么|如何|什么|为什么|哪些|怎样/.test(q)) return '这个我有印象：';
       return '根据我已经记住的内容：';
     },
+    associationLeadIn: () => '由此我联想到（不太确定，仅供参考）：',
     offlineNote: '（当前离线，以上基于已学习的内容；联网后我可以补充更多。）',
     honestOffline: '我现在处于离线状态，还无法就这个新话题学习或展开。我已经把它记下，等联网后会一起整理再回应你。',
     inviteContinue: '如果你愿意，我们可以接着这个话题多聊一会儿。',
@@ -310,6 +313,7 @@ const en: CompanionLocaleResources = {
     myNameIs: (name) => `My name is ${name}.`,
     noNameYet: "I don't have a name yet. What would you like to call me?",
     knowledgeLeadIn: () => "Here's what I remember:",
+    associationLeadIn: () => 'This also comes to mind (a guess, not certain):',
     offlineNote: "(I'm offline right now, so this is from what I've already learned; I can add more once I'm online.)",
     honestOffline: "I'm offline right now and can't look into this new topic yet. I've made a note of it and will get back to you once I'm online.",
     inviteContinue: 'If you like, we can keep talking about this.',

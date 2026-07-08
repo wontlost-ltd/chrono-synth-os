@@ -26,6 +26,9 @@ export interface RelevantKnowledge {
   title: string;
   content: string;
   relevance: number;  // 0..1
+  /** true=沿记忆边**联想**到的（非查询直接命中）→ 回应须标为「推测/联想」而非「据我记得的」确定记忆。
+   * 缺省/false=查询关键词直接命中（确定记忆）。用于「猜测须明确指出」。 */
+  isAssociation?: boolean;
 }
 
 /** ValueGuard.preCheck 输出 */

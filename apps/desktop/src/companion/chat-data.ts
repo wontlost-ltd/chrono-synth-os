@@ -27,13 +27,26 @@ export const CHAT_MESSAGE_MAX_LEN = 2000;
  * 失败（ApiNotConfiguredError / ApiHttpError / 网络错）向上抛，由页面转成用户可读提示。
  */
 export async function chatWithCompanion(message: string): Promise<CompanionChatResult> {
-  const env = await apiFetch<{ data?: CompanionChatResult }>('/api/v1/companion/me/chat', {
-    method: 'POST',
-    body: { message },
+  const env = await postChatOnce(message).catch(async (err) => {
+    /* sidecar 崩溃重启后端口变（#268），前端缓存旧端口 → 首次 POST 网络错（TypeError「Load failed」）。
+     * apiFetch 已在网络错时**失效端点缓存**，故重发会重取活端口。chat 消息重发安全（人格确定性 + 记忆
+     * 去重，不会重复沉淀）——网络错自动重试一次，避免用户对着「Load failed」手动重发（真机遇到）。
+     * 非网络错（如 4xx 业务错）不重试，原样抛。 */
+    if (err instanceof TypeError) {
+      return postChatOnce(message);
+    }
+    throw err;
   });
   const data = env?.data;
   if (!data || typeof data.reply !== 'string') {
     throw new Error('数字人回应格式异常');
   }
   return data;
+}
+
+async function postChatOnce(message: string): Promise<{ data?: CompanionChatResult }> {
+  return apiFetch<{ data?: CompanionChatResult }>('/api/v1/companion/me/chat', {
+    method: 'POST',
+    body: { message },
+  });
 }

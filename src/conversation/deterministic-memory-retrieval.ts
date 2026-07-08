@@ -27,6 +27,17 @@ export const MIN_GROUNDING_SCORE = 1;
 export const GRAPH_EXPAND_SEEDS = 2;
 /** 边强度门槛：弱于此的语义边不拉邻居（避免噪声边引入无关记忆）。 */
 export const MIN_EDGE_STRENGTH = 0.3;
+/** 确定性共现联想边关系名（deterministic-memory-association 建的边）。 */
+export const CO_OCCURRENCE_RELATION = 'co_occurrence';
+/** 共现联想边的遍历门槛：等于其建边下限（0.15），低于通用 0.3。
+ *
+ * 为何**关系相关**而非统一降门槛：两类边信任语义不同。
+ *   - 通用语义边（LLM 蒸馏提议的 co_perceived 等）：需 ≥0.3 才可信，降门槛会引噪；
+ *   - co_occurrence 边：确定性按共享关键词（≥3 词）建、非模型提议、本身即自洽可信，
+ *     其强度天然落 0.15–0.43 带（3 共享词的 Jaccard），若沿用 0.3 则 3 共享词的中长记忆联想
+ *     （Jaccard 0.23–0.30）永不被遍历——联想边建了却走不到，功能静默失效。
+ * 故只对 co_occurrence 放宽到建边下限，其余关系保持 0.3。单一有据分支，非噪声。 */
+export const CO_OCCURRENCE_TRAVERSE_MIN = 0.15;
 /** 图遍历邻居相关度衰减系数：沿同一路径每跳 relevance = 上一跳 relevance × 边强度 × 此系数（同路径逐跳衰减）。 */
 export const NEIGHBOR_DECAY = 0.8;
 /** 图遍历最大跳数：1 = 仅直接命中的 1 跳邻居（默认，向后兼容）；2+ 启用多跳串联。 */
@@ -103,8 +114,12 @@ export function retrieveMemoriesDeterministic(
    * 纯确定性图遍历——边由蒸馏期老师产，运行期不调任何模型。 */
   const neighborBest = expandGraph(direct, memories, edgesFor, params, textOf);
 
-  /* 合并：直接命中（按 relevance）在前，图遍历邻居（按 relevance，id 稳定 tie-break）在后，截断 top-K。 */
-  const neighbors = [...neighborBest.values()].sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id));
+  /* 合并：直接命中（按 relevance）在前，图遍历邻居（按 relevance，id 稳定 tie-break）在后，截断 top-K。
+   * 邻居标 isAssociation=true——它们是**沿记忆边联想**到的（非查询直接命中），回应须标为「推测/联想」
+   * 而非「据我记得的」确定记忆（「猜测须明确指出」）。 */
+  const neighbors = [...neighborBest.values()]
+    .sort((a, b) => b.relevance - a.relevance || a.id.localeCompare(b.id))
+    .map((n) => ({ ...n, isAssociation: true }));
   return [...direct, ...neighbors].slice(0, params.maxResults);
 }
 
@@ -148,7 +163,12 @@ function expandGraph(
 
     for (const seed of ordered) {
       for (const edge of edgesFor(seed.id)) {
-        if (edge.strength < params.minEdgeStrength) continue;
+        /* 关系相关门槛：co_occurrence 确定性联想边可低至建边下限（0.15），其余关系用通用门槛（0.3）。
+         * 见 CO_OCCURRENCE_TRAVERSE_MIN 注释——避免 3 共享词的中长记忆联想（Jaccard<0.3）永不被遍历。 */
+        const edgeFloor = edge.relation === CO_OCCURRENCE_RELATION
+          ? Math.min(params.minEdgeStrength, CO_OCCURRENCE_TRAVERSE_MIN)
+          : params.minEdgeStrength;
+        if (edge.strength < edgeFloor) continue;
         const neighborId = edge.source === seed.id ? edge.target : edge.source;
         if (directIds.has(neighborId)) continue; /* 直接命中不被邻居覆盖（防回头 + 强信号下界） */
         const node = memories.get(neighborId);

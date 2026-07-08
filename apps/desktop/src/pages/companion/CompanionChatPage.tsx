@@ -46,6 +46,9 @@ function readableError(err: unknown): string {
     if (err.status === 429) return '对话有点频繁，歇一下再聊。';
     return `发送失败（HTTP ${err.status}）。`;
   }
+  /* 网络错（TypeError，WebKit 原生 message 是「Load failed」）——本地引擎可能刚重连，端口变了；
+   * 已自动重试一次仍失败 → 给可操作提示而非原始「Load failed」。 */
+  if (err instanceof TypeError) return '连不上本地引擎（可能刚重连）——请再发一次。';
   return err instanceof Error ? err.message : '发送失败';
 }
 

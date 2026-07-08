@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   toCompanionValue,
   toCompanionMemory,
+  chunkLearnedMaterial,
 } from '../../server/routes/companion/me.js';
 import { driftReportToGrowth } from '@chrono/contracts';
 import type { DriftLike } from '@chrono/contracts';
@@ -108,5 +109,40 @@ describe('driftReportToGrowth（企业 drift → C 端探索语义）', () => {
     assert.equal(byId.b.direction, 'away');
     assert.equal(byId.c.direction, 'steady');
     assert.equal(byId.c.magnitude, 0);
+  });
+});
+
+describe('chunkLearnedMaterial（学主题参考料拆块——代码块整块保留）', () => {
+  it('代码块（```…```）整块保留，不被拆断', () => {
+    const material = [
+      '互斥锁保证同一时刻只有一个线程访问共享资源。',
+      '',
+      '```java\npublic class Counter {\n  private final Object lock = new Object();\n  private int count = 0;\n  public void inc() { synchronized(lock) { count++; } }\n}\n```',
+      '',
+      '以上是最基本的互斥锁例子。',
+    ].join('\n');
+    const chunks = chunkLearnedMaterial(material);
+    const code = chunks.find((c) => c.includes('synchronized(lock)'));
+    assert.ok(code, '应有含代码的块');
+    assert.ok(code!.includes('public class Counter') && code!.includes('public void inc'), '代码块须整块保留');
+  });
+
+  it('普通文本按空行分段，太碎（≤20 字）的段跳过', () => {
+    const longA = '这是第一段足够长的完整知识陈述内容用于验证会被保留下来。';
+    const longB = '这是第二段同样足够长的知识内容也应当被保留下来用于验证。';
+    const chunks = chunkLearnedMaterial(`${longA}\n\n短句\n\n${longB}`);
+    assert.ok(chunks.every((c) => c.length > 20), '每块都应 >20 字（太碎的「短句」被跳过）');
+    assert.ok(chunks.includes(longA) && chunks.includes(longB), '两个长段都应保留');
+    assert.equal(chunks.length, 2);
+  });
+
+  it('空/纯空白材料 → 空数组', () => {
+    assert.deepEqual(chunkLearnedMaterial('   '), []);
+    assert.deepEqual(chunkLearnedMaterial(''), []);
+  });
+
+  it('块数上限 6（防碎片刷屏）', () => {
+    const many = Array.from({ length: 20 }, (_, i) => `这是第 ${i} 段足够长的知识内容用于测试上限截断行为。`).join('\n\n');
+    assert.equal(chunkLearnedMaterial(many).length, 6);
   });
 });
