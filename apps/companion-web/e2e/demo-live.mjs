@@ -85,7 +85,9 @@ try {
   await page.getByLabel('密码').fill('password123');
   await page.getByRole('button', { name: '登录' }).click();
   await page.getByRole('tablist', { name: '主导航' }).waitFor();
-  await page.locator('.edge-badge').filter({ hasText: '本设备支持端侧人格内核运行' }).waitFor({ timeout: 15000 });
+  /* 选择器：EdgeRuntimeBadge 已在 P3 试点把手写 .edge-badge class 迁到 Tailwind utility（class 删）；
+   * 徽章是 HomeView 里唯一 aria-live=polite 的元素（无障碍语义锚定，比 class 名稳，与 edge-worker.spec 一致）。 */
+  await page.locator('[aria-live="polite"]').filter({ hasText: '本设备支持端侧人格内核运行' }).waitFor({ timeout: 15000 });
   await page.screenshot({ path: join(OUT, '2-home-edge-badge.png'), fullPage: true });
   log('3 Home + Edge 端侧内核徽章（✓ 真 Worker 自检通过）');
 

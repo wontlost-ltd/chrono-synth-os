@@ -46,6 +46,10 @@ import { ToolEligibilityProjector } from './intelligence/tool-eligibility-projec
 import { TaskWakeHandler } from './workforce/task-wake-handler.js';
 import { TaskWakeReconciler, type ReconcileStats } from './workforce/task-wake-reconciler.js';
 import { TaskWakeReconcilerWorker } from './workforce/task-wake-reconciler-worker.js';
+import { LearningWorker } from './workforce/learning-worker.js';
+import type { DriveStats } from './intelligence/deterministic-learning-service.js';
+import { ShadowExamVerifier } from './intelligence/shadow-exam-verifier.js';
+import { DeterministicLearningService } from './intelligence/deterministic-learning-service.js';
 import { OrgWorkforceStore } from './storage/org-workforce-store.js';
 import { LearningRequestService } from './workforce/learning-request-service.js';
 import { LearningRequestStore } from './storage/learning-request-store.js';
@@ -154,6 +158,8 @@ export class ChronoSynthOS {
 
   /** ADR-0057 L8c-wire 唤醒对账周期 worker：start() 时启动 setInterval 周期反扫（生产丢事件兜底自动化）。 */
   private readonly taskWakeReconcilerWorker: TaskWakeReconcilerWorker;
+  /** ADR-0057 进修闭环：确定性进修 worker（周期驱动 pending 学习请求 → 零-LLM 教学+验收+落核 → 唤醒）。 */
+  private readonly learningWorker: LearningWorker;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -374,6 +380,21 @@ export class ChronoSynthOS {
     this.taskWakeReconcilerWorker = new TaskWakeReconcilerWorker(
       this.taskWakeReconciler, () => this.clock.now(), this.logger,
     );
+
+    /* ADR-0057 进修闭环生产驱动（闭合批评者指出的「死代码」缺口）：确定性进修 service + worker。
+     * 影子验收器复用蒸馏门同一把 compile 锁（personaLeases，红线 13）与影子核工厂（createShadowCore）；
+     * 落核经同一 DistillationService（红线 2 不绕门）。零-LLM 主路：职能相关性由 GapDetector 已保证
+     * （capability 必在任务 requiredCapabilities 才登记学习请求），学会没由零-LLM 影子验收保证。
+     * 完整双老师「该不该学」互审（L6）保留为可选增强，需两套独立 LLM 凭据的部署才启用。 */
+    const learningVerifier = new ShadowExamVerifier(
+      this.db, (pid) => this.createShadowCore(pid), () => this.clock.now(), this.logger,
+      this.responseTemplates, this.clock, this.rules, this.personaLeases,
+    );
+    const deterministicLearning = new DeterministicLearningService(
+      new LearningRequestStore(this.db, this.tenantId), learningVerifier, this.distillation,
+      this.bus, () => this.clock.now(), this.tenantId, this.logger,
+    );
+    this.learningWorker = new LearningWorker(deterministicLearning, this.logger);
   }
 
   /**
@@ -382,6 +403,14 @@ export class ChronoSynthOS {
    */
   reconcileTaskWakes(orgId: string, now = this.clock.now()): ReconcileStats {
     return this.taskWakeReconciler.reconcileOnce(orgId, now);
+  }
+
+  /**
+   * ADR-0057 进修闭环：手动驱动一轮 pending 学习请求（零-LLM 确定性教学+验收+落核+唤醒）。
+   * 生产周期触发已由 LearningWorker（start() 时启动）自动化；此入口供运维按需/测试调用。
+   */
+  driveLearning(): DriveStats {
+    return this.learningWorker.driveOnce();
   }
 
   /** 获取数据库实例 */
@@ -447,6 +476,7 @@ export class ChronoSynthOS {
     this.toolEligibilityProjector.start();
     this.taskWakeHandler.start();
     this.taskWakeReconcilerWorker.start();
+    this.learningWorker.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -698,6 +728,7 @@ export class ChronoSynthOS {
       this.toolEligibilityProjector.stop();
       this.taskWakeHandler.stop();
       this.taskWakeReconcilerWorker.stop();
+      this.learningWorker.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');

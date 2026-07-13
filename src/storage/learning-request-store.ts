@@ -111,6 +111,20 @@ export class LearningRequestStore {
     return rows.map((r) => toRequest(r, this.tenantId));
   }
 
+  /**
+   * 列出本租户**跨 org** 某状态的全部学习请求（进修 worker 驱动闭环用——枚举 pending 逐条教学）。
+   * listByOrg 需先有 org 列表（store 不提供），此方法直接按 (tenant, status) 扫，避免枚举 org。
+   * 确定性排序（created_at ASC, id ASC）——同批 pending 处理顺序稳定、可复现。
+   */
+  listByStatus(status: LearningRequestStatus): LearningRequest[] {
+    const rows = this.db.prepare<LearningRequestRow>(
+      `SELECT id, org_id, persona_id, capability, is_unknown, evidence, priority, triggered_by_task_id, status, created_at, updated_at
+       FROM learning_requests WHERE tenant_id = ? AND status = ?
+       ORDER BY created_at ASC, id ASC`,
+    ).all(this.tenantId, status);
+    return rows.map((r) => toRequest(r, this.tenantId));
+  }
+
   /** 推进状态（pending→learning→passed/failed/cancelled）。返回是否命中（条件 = 同 id + 当前状态匹配，防并发覆盖）。 */
   transitionStatus(id: string, fromStatus: LearningRequestStatus, toStatus: LearningRequestStatus, updatedAt: number): boolean {
     const res = this.db.prepare<void>(

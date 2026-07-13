@@ -326,6 +326,13 @@ export class OfflineConversationResponder {
   /** 无知识时的诚实离线回应 */
   private composeHonestOffline(narrative: string, escalate: boolean, locale: SupportedLocale): string {
     const t = companionLocale(locale).reply;
+    /* 冷启动引导（缺口修复）：全新数字人（无身份叙事——尚未 perceive/reflect 出「我是谁」）且非人工
+     * 升级场景时，用人格化自我介绍替代死板的「我处于离线状态」。这命中的是消费者「注册→首聊→空
+     * grounding→觉得是废物→卸载」的真实痛点，只作用于「叙事为空」这一冷启动信号，不注入任何记忆、
+     * 不改记忆基线。有叙事的数字人（已成长）仍走原诚实离线路径（叙事作 lead + honestOffline）。 */
+    if (narrative.length === 0 && !escalate) {
+      return t.coldStartIntro;
+    }
     const lead = narrative.length > 0 ? `${narrative}\n` : '';
     const tail = escalate ? (locale === 'zh-CN' ? '\n（已记录为需要人工跟进）' : '\n(Flagged for human follow-up.)') : '';
     return `${lead}${t.honestOffline}${tail}`;

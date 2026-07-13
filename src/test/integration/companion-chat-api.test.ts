@@ -1160,6 +1160,8 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
   });
 
   it('多语种：英文无相关记忆 → 英文 honest_offline（不是中文）', async () => {
+    /* 已有叙事（非全新——避免触发冷启动引导，测的是「已成长数字人问无关问题」的诚实离线场景）。 */
+    os.core.updateNarrative('I am a seasoned project manager.');
     const local = await localChatApp(os);
     try {
       const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: 'what is quantum entanglement' } });

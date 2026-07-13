@@ -49,6 +49,9 @@ export interface CompanionLocaleResources {
     readonly offlineNote: string;
     /** 无知识时的诚实离线回应主体。 */
     readonly honestOffline: string;
+    /** 冷启动引导：全新数字人（无叙事无记忆）首聊时的人格化自我介绍，替代死板的 honestOffline，
+     * 让新用户第一印象不是「废物」，而是「一个刚诞生、愿意认识你、会记住你的数字人」。 */
+    readonly coldStartIntro: string;
     /** 主动 follow-up（邀请继续）。 */
     readonly inviteContinue: string;
     /** 心情前缀（ADR-0056）：按当前心情标签给一句语气前缀，neutral → 空串（零回归）。
@@ -152,6 +155,7 @@ const zhCN: CompanionLocaleResources = {
     associationLeadIn: () => '由此我联想到（不太确定，仅供参考）：',
     offlineNote: '（当前离线，以上基于已学习的内容；联网后我可以补充更多。）',
     honestOffline: '我现在处于离线状态，还无法就这个新话题学习或展开。我已经把它记下，等联网后会一起整理再回应你。',
+    coldStartIntro: '你好，我是你的数字人——我刚刚诞生，对这个世界、对你都还很陌生。我还没有属于自己的记忆和想法，但我会记住我们聊过的每一件事，并慢慢长成更懂你的样子。跟我聊聊你自己吧，或者点「让 TA 听」给我讲一段你的经历，我会用我的视角记住它。',
     inviteContinue: '如果你愿意，我们可以接着这个话题多聊一会儿。',
     moodPrefix: (label) => {
       switch (label) {
@@ -316,6 +320,7 @@ const en: CompanionLocaleResources = {
     associationLeadIn: () => 'This also comes to mind (a guess, not certain):',
     offlineNote: "(I'm offline right now, so this is from what I've already learned; I can add more once I'm online.)",
     honestOffline: "I'm offline right now and can't look into this new topic yet. I've made a note of it and will get back to you once I'm online.",
+    coldStartIntro: "Hi, I'm your digital companion — I've just come into being, and the world (and you) are still new to me. I don't have my own memories or views yet, but I'll remember everything we talk about and slowly grow into someone who understands you. Tell me about yourself, or tap “Let me listen” to share an experience — I'll remember it in my own words.",
     inviteContinue: 'If you like, we can keep talking about this.',
     moodPrefix: (label) => {
       switch (label) {

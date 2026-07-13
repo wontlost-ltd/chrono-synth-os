@@ -15,21 +15,23 @@ test('端侧人格 Worker 在真浏览器里加载 kernel 并跑通确定性自�
 
   /* Home tab 默认激活，EdgeRuntimeBadge 在其中。自检异步（spawn worker + 一条 addValue 闭环），
    * 等成功态文案出现——出现即证明 kernel 真在 Web Worker 里运行。 */
-  const badge = page.locator('.edge-badge');
+  /* 选择器：EdgeRuntimeBadge 已在 P3 试点把手写 .edge-badge class 迁到 Tailwind utility，
+   * class 被删；徽章是 HomeView 里唯一 aria-live=polite 的元素（无障碍语义锚定，比 class 名稳）。 */
+  const badge = page.locator('[aria-live="polite"]');
   await expect(badge).toContainText('本设备支持端侧人格内核运行', { timeout: 15_000 });
 });
 
 test('Worker 自检前显示 checking 文案，自检后转为 running（不白屏不卡）', async ({ page }) => {
   await mockLoginAndEnter(page);
   /* 最终稳定到 running 文案（checking 是瞬时态，可能太快抓不到；这里只断言终态可达，不 flaky 抓中间）。 */
-  await expect(page.locator('.edge-badge')).toContainText('✓', { timeout: 15_000 });
+  await expect(page.locator('[aria-live="polite"]')).toContainText('✓', { timeout: 15_000 });
   /* 徽章是 aria-live=polite（无障碍：自检结果播报给读屏）。 */
-  await expect(page.locator('.edge-badge')).toHaveAttribute('aria-live', 'polite');
+  await expect(page.locator('[aria-live="polite"]')).toHaveAttribute('aria-live', 'polite');
 });
 
 test('真打包出的 persona-worker chunk 被浏览器加载（资源时序佐证，非 DOM 假绿）', async ({ page }) => {
   await mockLoginAndEnter(page);
-  await expect(page.locator('.edge-badge')).toContainText('✓', { timeout: 15_000 });
+  await expect(page.locator('[aria-live="polite"]')).toContainText('✓', { timeout: 15_000 });
   /* 资源时序里出现 persona-worker-*.js —— 直接佐证 Worker chunk 真被浏览器拉取执行
    * （而非仅 DOM 文案对就算过）。这是 vite build 产物的真 chunk 名。 */
   const workerChunks = await page.evaluate(() =>
