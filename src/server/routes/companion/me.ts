@@ -404,6 +404,47 @@ export function registerCompanionRoutes(
     return { data: { candidatesIngested: result.candidatesIngested, compiled, pending } };
   });
 
+  /* POST /api/v1/companion/me/grow —「确定性成长」：不需要任何 LLM/BYOK key，数字人也能从已沉淀
+   * 记忆里**自主成长**——跑一次确定性认知周期（记忆固化 episodic→semantic、衰减遗忘、容量淘汰、
+   * 强情绪事件→即时价值漂移、统计模式提取→价值漂移），全部零-LLM 确定性，经统一成长门控落地。
+   *
+   * 为什么要这个：/reflect 是「LLM 当老师」的语义内化，无 key 用户碰不到。但成长不该只属于配了
+   * key 的人——MemoryPatternExtractor 的确定性反思（固化/衰减/模式→价值漂移）本就零-LLM，此前只在
+   * avatar-autorun 内部周期跑，companion 单人格用户没有触发入口。此端点把它暴露给 C 端，让「无云
+   * LLM 也能成长」这条产品承诺对无 key 用户也成立（对话零-LLM + 成长零-LLM，两条都不依赖外部老师）。
+   *
+   * 与 /reflect 的分工：/grow=确定性自省（从既有记忆里沉淀规律，无需外部知识）；/reflect=LLM 老师
+   * 语义内化（需 key，能产更丰富的 value_shift/narrative 候选）。两者互补，/grow 是 /reflect 的零-LLM 底座。 */
+  app.post('/api/v1/companion/me/grow', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    const tenantOS = getOS(request);
+    const core = tenantOS.core;
+
+    /* 无记忆 → 无可成长的材料，短路不扣配额（与 /reflect 的 no_material 同语义）。 */
+    if (core.memories.getAllMemories().size === 0) {
+      return { data: { grew: false, reason: 'no_material' } };
+    }
+    /* 配额（复用 reflection 口径）：确定性无 LLM 成本，但仍限流防滥用刷价值漂移。 */
+    if (!reflectQuota.consumeQuota(request.tenantId, 'reflection')) {
+      throw new QuotaExceededError('成长配额已用尽，请稍后再试');
+    }
+    /* 反思须有价值内核可强化——与 /reflect 一致：仅当 values 为空时一次性 bootstrap（幂等、pristine）。 */
+    ensureCompanionGenesisValues(core, tenantOS.getLogger());
+    /* 确定性认知周期（零-LLM）：固化/衰减/淘汰 + 情绪事件/模式提取 → 价值漂移（经 UpdateGate）。 */
+    const cycle = tenantOS.runCognitionCycle();
+    return {
+      data: {
+        grew: cycle.patternsFound > 0 || cycle.emotionalEvents > 0 || cycle.consolidatedCount > 0,
+        consolidated: cycle.consolidatedCount,
+        patternsFound: cycle.patternsFound,
+        emotionalEvents: cycle.emotionalEvents,
+        decayed: cycle.decayedCount,
+        evicted: cycle.evictedCount,
+      },
+    };
+  });
+
   /* POST /api/v1/companion/me/learn-topic —「给个主题让它自己学」（ADR-0047「LLM 当老师」）。
    * 你填一个主题（如「Java」）→ 配好的 LLM 老师**就该主题产出一段知识**（学习材料）→ 走**既有感知
    * 蒸馏管线**（同 perceive：LlmPerceptionProvider.analyze → PerceptionDistiller → 蒸馏门）→ 沉淀成
