@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@chrono/contracts": "*",
-    "@tanstack/react-query": "^5",
+    "@tanstack/react-query": "^5.101.2",
     "@tauri-apps/api": "^2",
     "clsx": "^2",
     "react": "^19.2.5",
@@ -38,6 +38,6 @@
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.9"
   }
 }
