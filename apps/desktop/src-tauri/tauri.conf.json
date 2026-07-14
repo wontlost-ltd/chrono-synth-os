@@ -16,7 +16,9 @@
         "title": "ChronoSynth",
         "width": 1200,
         "height": 800,
-        "decorations": false
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
