@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口默认能力集。窗口装饰跟随系统（decorations:true + macOS titleBarStyle:Overlay）——关闭/最小化/最大化用**系统原生按钮**，不再需要自定义窗口控制权限。仅保留 start-dragging（macOS Overlay 模式的品牌条 data-tauri-drag-region 需要）+ 已注册插件（shell/updater）。Tauri 2 默认拒绝，最小权限。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "shell:default",
+    "updater:default"
+  ]
+}
