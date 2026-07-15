@@ -67,11 +67,11 @@ function EscalationsBlock({ orgId, taskId, workerNames }: { orgId: string; taskI
               <p className="mt-1 text-text-secondary">{e.reason}</p>
               {e.status === 'pending' && (
                 <div className="mt-2 flex flex-wrap gap-1">
-                  <button disabled={resolve.isPending} onClick={() => { const r = window.prompt(t('collab.escalations.resolvePrompt')); const w = window.prompt(t('collab.escalations.byWorkerPrompt')); if (r && w) resolve.mutate({ escalationId: e.id, resolvingWorkerId: w, resolution: r }); }}
+                  <button disabled={resolve.isPending} onClick={() => { const r = window.prompt(t('collab.escalations.resolvePrompt'))?.trim(); const w = window.prompt(t('collab.escalations.byWorkerPrompt'))?.trim(); if (r && w) resolve.mutate({ escalationId: e.id, resolvingWorkerId: w, resolution: r }); }}
                     className="rounded bg-primary px-2 py-0.5 text-white disabled:opacity-50">{t('collab.escalations.resolve')}</button>
-                  <button disabled={reesc.isPending} onClick={() => { const w = window.prompt(t('collab.escalations.byWorkerPrompt')); const r = window.prompt(t('collab.escalations.reescReasonPrompt')); if (w && r) reesc.mutate({ escalationId: e.id, byWorkerId: w, reason: r }); }}
+                  <button disabled={reesc.isPending} onClick={() => { const w = window.prompt(t('collab.escalations.byWorkerPrompt'))?.trim(); const r = window.prompt(t('collab.escalations.reescReasonPrompt'))?.trim(); if (w && r) reesc.mutate({ escalationId: e.id, byWorkerId: w, reason: r }); }}
                     className="rounded border border-border px-2 py-0.5 disabled:opacity-50">{t('collab.escalations.reescalate')}</button>
-                  <button disabled={cancel.isPending} onClick={() => { const w = window.prompt(t('collab.escalations.byWorkerPrompt')); if (w) cancel.mutate({ escalationId: e.id, byWorkerId: w }); }}
+                  <button disabled={cancel.isPending} onClick={() => { const w = window.prompt(t('collab.escalations.byWorkerPrompt'))?.trim(); if (w) cancel.mutate({ escalationId: e.id, byWorkerId: w }); }}
                     className="rounded border border-border px-2 py-0.5 text-error disabled:opacity-50">{t('collab.cancel')}</button>
                 </div>
               )}
@@ -107,7 +107,7 @@ function HandoffsBlock({ orgId, taskId, workerNames }: { orgId: string; taskId: 
   const [reason, setReason] = useState('');
 
   const canPropose = fromWorkerId.trim() && toWorkerId.trim() && !propose.isPending;
-  const respond = (m: { mutate: (v: { handoffId: string; byWorkerId: string }) => void }, id: string) => { const w = window.prompt(t('collab.escalations.byWorkerPrompt')); if (w) m.mutate({ handoffId: id, byWorkerId: w }); };
+  const respond = (m: { mutate: (v: { handoffId: string; byWorkerId: string }) => void }, id: string) => { const w = window.prompt(t('collab.escalations.byWorkerPrompt'))?.trim(); if (w) m.mutate({ handoffId: id, byWorkerId: w }); };
 
   return (
     <div>

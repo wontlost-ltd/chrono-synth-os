@@ -12,7 +12,14 @@ export function StrategyAdvisorPanel({ orgId }: { orgId: string }) {
   const [riskTolerance, setRiskTolerance] = useState<'low' | 'medium' | 'high'>('medium');
   const [initiatives, setInitiatives] = useState<StrategicInitiative[]>([blankInitiative(1)]);
 
-  const canSubmit = objective.trim() && Number(budgetCap) >= 0 && initiatives.length >= 1 && initiatives.every(i => i.title.trim() && i.goalType.trim()) && !advise.isPending;
+  /* 数值校验（Codex 复审）：budgetCap 须 finite ≥0；每个举措 priority/impact/feasibility 须 1..5、cost ≥0——
+   * 否则空串→0 / NaN / 越界会让后端 zod 400。前端在此挡住，避免可点却必败。 */
+  const budgetOk = Number.isFinite(Number(budgetCap)) && Number(budgetCap) >= 0;
+  const initiativesOk = initiatives.length >= 1 && initiatives.every(i =>
+    i.title.trim() && i.goalType.trim() &&
+    [i.priority, i.impact, i.feasibility].every(n => Number.isInteger(n) && n >= 1 && n <= 5) &&
+    Number.isFinite(i.estimatedCost) && i.estimatedCost >= 0);
+  const canSubmit = objective.trim() && budgetOk && initiativesOk && !advise.isPending;
 
   const update = (idx: number, patch: Partial<StrategicInitiative>) =>
     setInitiatives(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it));

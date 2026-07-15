@@ -65,4 +65,16 @@ describe('StrategyAdvisorPanel', () => {
     render(<StrategyAdvisorPanel orgId="org-1" />);
     expect(screen.getByRole('button', { name: 'collab.strategy.advise' })).toBeDisabled();
   });
+
+  it('★数值校验（Codex 复审）★：priority 越界（>5）→ 提交禁用（挡后端 400）', () => {
+    render(<StrategyAdvisorPanel orgId="org-1" />);
+    fireEvent.change(screen.getByPlaceholderText('collab.strategy.objective'), { target: { value: '目标' } });
+    fireEvent.change(screen.getByPlaceholderText('collab.strategy.initTitle'), { target: { value: '举措' } });
+    fireEvent.change(screen.getByPlaceholderText('collab.strategy.initGoalType'), { target: { value: 'content_piece' } });
+    /* priority 输入框（第一个 NumField，label=collab.strategy.priority）设成 9（越界 1..5）。 */
+    const priorityInput = screen.getByLabelText('collab.strategy.priority', { selector: 'input' }) as HTMLInputElement | null
+      ?? screen.getAllByRole('spinbutton')[1]!; /* 兜底：spinbutton[0]=budgetCap，[1]=priority */
+    fireEvent.change(priorityInput, { target: { value: '9' } });
+    expect(screen.getByRole('button', { name: 'collab.strategy.advise' })).toBeDisabled();
+  });
 });
