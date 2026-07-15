@@ -152,8 +152,8 @@ const ALLOWED_GLOBAL_SQL: readonly AllowedGlobalSql[] = [
     fingerprint: 'update life_simulations set summary_json = ?, updated_at = ? where id = ?',
     reason: '模拟 worker 按 simulation id 写摘要' },
   { table: 'life_simulations', globalKind: 'tenant_owner_resolution',
-    fingerprint: 'select tenant_id from life_simulations where id = ?',
-    reason: '协作流程从全局 simulation id 反查所属 tenant，再做 share 鉴权' },
+    fingerprint: 'select tenant_id, owner_user_id from life_simulations where id = ?',
+    reason: '协作流程从全局 simulation id 反查所属 tenant + owner，再做 owner-only share 鉴权' },
 ];
 
 /**
