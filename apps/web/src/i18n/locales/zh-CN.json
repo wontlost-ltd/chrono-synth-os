@@ -403,6 +403,7 @@
     "knowledgeSources": "知识源",
     "marketplace": "任务市场",
     "earning": "收益钱包",
+    "distillation": "蒸馏审批",
     "billing": "计费",
     "enterprise": "企业控制台",
     "settings": "设置",
@@ -1351,6 +1352,65 @@
     },
     "errors": {
       "rateLimited": "操作过于频繁，请稍后再试（限流 12 次/分钟）"
+    }
+  },
+  "distillation": {
+    "title": "蒸馏审批",
+    "subtitle": "LLM 老师蒸馏出的候选人格变更，需你人工批准才编译进数字人内核",
+    "personaLabel": "数字人",
+    "noPersona": "还没有数字人",
+    "noPersonaHint": "先在「人格内核」创建一个数字人",
+    "confidence": "置信度",
+    "evidenceCount": "{n} 条证据",
+    "tab": {
+      "candidates": "待审批",
+      "artifacts": "历史工件"
+    },
+    "candidates": {
+      "empty": "没有待审批的候选",
+      "emptyHint": "数字人在成长中蒸馏出新的候选变更时会出现在这里"
+    },
+    "artifacts": {
+      "empty": "还没有蒸馏工件",
+      "emptyHint": "批准/拒绝过的工件会作为审计历史留在这里"
+    },
+    "actions": {
+      "approve": "批准",
+      "reject": "拒绝"
+    },
+    "reject": {
+      "title": "拒绝这个候选",
+      "hint": "拒绝会阻止该变更编译进内核。请填写拒绝原因（供审计）。",
+      "reasonLabel": "拒绝原因",
+      "reasonPlaceholder": "为什么拒绝这个候选变更…"
+    },
+    "kind": {
+      "rule": "规则",
+      "value_shift": "价值观调整",
+      "memory_edge": "记忆关联",
+      "decision_style_patch": "决策风格补丁",
+      "cognitive_model_patch": "认知模型补丁",
+      "response_template": "回复模板",
+      "narrative_patch": "自述补丁"
+    },
+    "source": {
+      "reflection": "反思",
+      "conversation": "对话",
+      "knowledge_import": "知识导入",
+      "onboarding": "初始化",
+      "perception": "感知"
+    },
+    "status": {
+      "candidate": "待审批",
+      "approved": "已批准",
+      "compiled": "已编译",
+      "rejected": "已拒绝",
+      "rolled_back": "已回滚"
+    },
+    "errors": {
+      "rateLimited": "操作过于频繁，请稍后再试（限流 30 次/分钟）",
+      "conflict": "该工件状态已变更，无法执行此操作",
+      "notFound": "未找到该工件"
     }
   },
   "conflicts": {

@@ -43,6 +43,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/knowledge-sources', labelKey: 'sidebar.knowledgeSources', icon: 'book' },
       { to: '/marketplace', labelKey: 'sidebar.marketplace', icon: 'cart' },
       { to: '/earning', labelKey: 'sidebar.earning', icon: 'card' },
+      { to: '/distillation', labelKey: 'sidebar.distillation', icon: 'brain' },
     ],
   },
   {
