@@ -402,6 +402,8 @@
     "personaCore": "Persona Core",
     "knowledgeSources": "Knowledge Sources",
     "marketplace": "Marketplace",
+    "earning": "Earnings & Wallet",
+    "distillation": "Distillation Review",
     "billing": "Billing",
     "enterprise": "Enterprise",
     "settings": "Settings",
@@ -1311,6 +1313,105 @@
     "trough": "Trough",
     "cross_up": "Crossed up",
     "cross_down": "Crossed down"
+  },
+  "earning": {
+    "title": "Earnings & Wallet",
+    "subtitle": "Autonomous earning: wallet balance, earnings feed, and running earning cycles",
+    "personaLabel": "Digital human",
+    "noPersona": "No digital human yet",
+    "noPersonaHint": "Create a digital human in Persona Core first to start earning",
+    "wallet": {
+      "heading": "Wallet",
+      "balance": "Balance",
+      "tokenBalance": "Token balance",
+      "withdrawalNote": "Autonomous earning is credit-only; withdrawals require human confirmation and are not done here."
+    },
+    "cycle": {
+      "heading": "Earning cycle",
+      "hint": "Scans open tasks and autonomously applies / queues for review / skips within governance gates (rate-limited 12/min)",
+      "run": "Run a cycle",
+      "result": "Scanned {scanned} · Applied {applied} · Queued {reviewQueued} · Skipped {skipped}"
+    },
+    "feed": {
+      "heading": "Earnings feed",
+      "empty": "No earnings yet",
+      "emptyHint": "After running an earning cycle, applied tasks will appear here"
+    },
+    "category": {
+      "writing": "Writing",
+      "coding": "Coding",
+      "research": "Research",
+      "operations": "Operations",
+      "general": "General"
+    },
+    "taskStatus": {
+      "open": "Open",
+      "accepted": "Accepted",
+      "completed": "Completed",
+      "cancelled": "Cancelled"
+    },
+    "errors": {
+      "rateLimited": "Too many requests, please try again later (rate-limited 12/min)"
+    }
+  },
+  "distillation": {
+    "title": "Distillation Review",
+    "subtitle": "Candidate persona changes distilled by the LLM teacher require your approval before compiling into the digital human's core",
+    "personaLabel": "Digital human",
+    "noPersona": "No digital human yet",
+    "noPersonaHint": "Create a digital human in Persona Core first",
+    "confidence": "Confidence",
+    "evidenceCount": "{n} evidence",
+    "tab": {
+      "candidates": "Pending",
+      "artifacts": "History"
+    },
+    "candidates": {
+      "empty": "No pending candidates",
+      "emptyHint": "New candidate changes distilled as the digital human grows will appear here"
+    },
+    "artifacts": {
+      "empty": "No distillation artifacts yet",
+      "emptyHint": "Approved / rejected artifacts remain here as audit history"
+    },
+    "actions": {
+      "approve": "Approve",
+      "reject": "Reject"
+    },
+    "reject": {
+      "title": "Reject this candidate",
+      "hint": "Rejecting prevents this change from compiling into the core. Please provide a reason (for audit).",
+      "reasonLabel": "Reject reason",
+      "reasonPlaceholder": "Why reject this candidate change…"
+    },
+    "kind": {
+      "rule": "Rule",
+      "value_shift": "Value shift",
+      "memory_edge": "Memory edge",
+      "decision_style_patch": "Decision style patch",
+      "cognitive_model_patch": "Cognitive model patch",
+      "response_template": "Response template",
+      "narrative_patch": "Narrative patch"
+    },
+    "source": {
+      "reflection": "Reflection",
+      "conversation": "Conversation",
+      "knowledge_import": "Knowledge import",
+      "onboarding": "Onboarding",
+      "perception": "Perception"
+    },
+    "status": {
+      "candidate": "Pending",
+      "approved": "Approved",
+      "compiled": "Compiled",
+      "rejected": "Rejected",
+      "rolled_back": "Rolled back"
+    },
+    "errors": {
+      "rateLimited": "Too many requests, please try again later (rate-limited 30/min)",
+      "conflict": "This artifact's status has changed; the operation can't proceed",
+      "notFound": "Artifact not found"
+    }
   },
   "conflicts": {
     "title": "Conflict Inbox",
