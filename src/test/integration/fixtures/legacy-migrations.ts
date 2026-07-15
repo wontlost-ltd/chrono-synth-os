@@ -1261,6 +1261,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE INDEX IF NOT EXISTS idx_tool_authorization_requests_lookup ON tool_authorization_requests(tenant_id, persona_id, status)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_authorization_requests_pending ON tool_authorization_requests(tenant_id, persona_id, capability, tool_id) WHERE status = 'pending'"
     ]
+  },
+  {
+    "version": "v118",
+    "description": "安全: life_simulations 补 owner_user_id 列（模拟归属权，owner-only 分享鉴权基础）",
+    "sql": [
+      "/* safe:add-column:life_simulations:owner_user_id */ ALTER TABLE life_simulations ADD COLUMN owner_user_id TEXT"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2492,6 +2499,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS tool_authorization_requests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL DEFAULT 'default',\n    persona_id TEXT NOT NULL,\n    capability TEXT NOT NULL,\n    tool_id TEXT NOT NULL,\n    source_rule_version TEXT NOT NULL,\n    risk_class TEXT NOT NULL,\n    reason TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'pending',\n    requested_at BIGINT NOT NULL,\n    decided_at BIGINT,\n    decided_by TEXT\n  )",
       "CREATE INDEX IF NOT EXISTS idx_tool_authorization_requests_lookup ON tool_authorization_requests (tenant_id, persona_id, status)",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_authorization_requests_pending ON tool_authorization_requests (tenant_id, persona_id, capability, tool_id) WHERE status = 'pending'"
+    ]
+  },
+  {
+    "version": "v120",
+    "description": "安全: life_simulations 补 owner_user_id 列（模拟归属权，owner-only 分享鉴权基础）",
+    "sql": [
+      "ALTER TABLE life_simulations ADD COLUMN IF NOT EXISTS owner_user_id TEXT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
