@@ -36,6 +36,8 @@ describe('server-simple coverage', () => {
       'v118',
       /* 工具授权待审批请求 ADR-0060 T5 红线 3（pg alias v119）。 */
       'v119',
+      /* life_simulations owner_user_id 安全修复（模拟归属权，owner-only 分享鉴权；pg alias v120）。 */
+      'v120',
     ]);
   });
 });

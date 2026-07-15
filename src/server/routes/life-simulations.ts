@@ -82,7 +82,9 @@ export function registerLifeSimulationRoutes(
       throw new QuotaExceededError('模拟次数配额已用尽');
     }
 
-    const { simulationId, taskId } = service.enqueue(body, tenantId);
+    /* owner_user_id = 发起模拟的登录用户（owner-only 分享鉴权基础）；JWT 关闭时可能无 user → null。 */
+    const ownerUserId = (request.user as { sub?: string } | undefined)?.sub ?? null;
+    const { simulationId, taskId } = service.enqueue(body, tenantId, undefined, ownerUserId);
     usageTracker?.record(tenantId, 'simulation', 1);
 
     if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
@@ -194,7 +196,9 @@ export function registerLifeSimulationRoutes(
         throw new QuotaExceededError('模拟次数配额已用尽');
       }
 
-      const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id);
+      /* owner_user_id = 发起压力测试的登录用户（变体归属发起者，使其可分享自己的变体）；JWT 关闭 → null。 */
+      const ownerUserId = (request.user as { sub?: string } | undefined)?.sub ?? null;
+      const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id, ownerUserId);
       usageTracker?.record(tenantId, 'simulation', 1);
 
       if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {

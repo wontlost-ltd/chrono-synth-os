@@ -67,6 +67,8 @@ export interface LsimCreateParams {
   taskId: string;
   baseSimulationId: string | null;
   configJson: string;
+  /** 创建该模拟的用户（owner-only 分享鉴权基础）；历史/系统创建可为 null。 */
+  ownerUserId: string | null;
   now: number;
 }
 

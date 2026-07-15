@@ -11,6 +11,7 @@ export const COLLAB_QUERY_EXISTING_SHARE = 'collab.existingShare' as const;
 export const COLLAB_QUERY_SHARE_COUNT = 'collab.shareCount' as const;
 export const COLLAB_QUERY_SHARED_LIST = 'collab.sharedList' as const;
 export const COLLAB_QUERY_SHARE_OWNER = 'collab.shareOwner' as const;
+export const COLLAB_QUERY_SHARES_FOR_SIMULATION = 'collab.sharesForSimulation' as const;
 
 /* ── Command Kinds ── */
 
@@ -22,6 +23,8 @@ export const COLLAB_CMD_DELETE_SHARE = 'collab.deleteShare' as const;
 
 export interface CollabSimTenantRow {
   readonly tenant_id: string;
+  /** 模拟创建者（owner-only 分享鉴权的真实来源）；历史模拟无 owner → null。 */
+  readonly owner_user_id: string | null;
 }
 
 export interface CollabExistingShareRow {
@@ -45,6 +48,14 @@ export interface CollabShareOwnerRow {
   readonly owner_user_id: string;
 }
 
+/** 某模拟的一条分享记录（列「分享给了谁」用；owner 视角）。 */
+export interface CollabShareForSimulationRow {
+  readonly id: string;
+  readonly shared_with_user_id: string;
+  readonly permission: string;
+  readonly created_at: number;
+}
+
 /* ── 参数类型 ── */
 
 export interface CollabExistingShareParams {
@@ -56,6 +67,11 @@ export interface CollabSharedListParams {
   userId: string;
   limit: number;
   offset: number;
+}
+
+/** 列某模拟分享给了谁（owner 视角，按 simulationId）。 */
+export interface CollabSharesForSimulationParams {
+  simulationId: string;
 }
 
 export interface CollabUpdatePermissionParams {
@@ -98,6 +114,10 @@ export function collabQuerySharedList(params: CollabSharedListParams): Query<Col
 
 export function collabQueryShareOwner(params: CollabExistingShareParams): Query<CollabShareOwnerRow | null, CollabExistingShareParams> {
   return { kind: COLLAB_QUERY_SHARE_OWNER, params };
+}
+
+export function collabQuerySharesForSimulation(params: CollabSharesForSimulationParams): Query<CollabShareForSimulationRow, CollabSharesForSimulationParams> {
+  return { kind: COLLAB_QUERY_SHARES_FOR_SIMULATION, params };
 }
 
 /* ── Command 工厂 ── */

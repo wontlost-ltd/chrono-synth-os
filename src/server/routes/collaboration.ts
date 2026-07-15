@@ -1,8 +1,9 @@
 /**
  * 协作路由
  * POST   /api/v1/simulations/:id/share          — 分享模拟给其他用户
+ * GET    /api/v1/simulations/:id/shares          — 列某模拟分享给了谁（owner 视角）
  * GET    /api/v1/shared                           — 获取分享给我的模拟列表
- * DELETE /api/v1/simulations/:id/share/:userId    — 取消分享
+ * DELETE /api/v1/simulations/:id/share/:userId    — 取消分享（按 targetUserId）
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -23,6 +24,16 @@ export function registerCollaborationRoutes(app: FastifyInstance, services: AppS
     const { userId, permission } = ShareSimulationSchema.parse(request.body);
     const result = service.share(simulationId, ownerUserId, request.tenantId, userId, permission);
     return result.created ? reply.status(201).send({ data: result }) : { data: result };
+  });
+
+  app.get<{ Params: { id: string } }>('/api/v1/simulations/:id/shares', async (request) => {
+    const { id: simulationId } = request.params;
+    const requesterUserId = (request.user as { sub?: string })?.sub;
+    if (!requesterUserId) {
+      throw new AuthenticationError('需要登录', ErrorCode.AUTH_INVALID_TOKEN);
+    }
+    const data = service.listSharesForSimulation(simulationId, requesterUserId, request.tenantId);
+    return { data };
   });
 
   app.get('/api/v1/shared', async (request) => {
@@ -46,7 +57,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, services: AppS
       throw new AuthenticationError('需要登录', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
-    service.unshare(simulationId, userId, ownerUserId);
+    service.unshare(simulationId, userId, ownerUserId, request.tenantId);
     return reply.status(204).send();
   });
 }

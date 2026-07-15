@@ -80,7 +80,7 @@ export function ShareModal({ open, onClose, simulationId }: ShareModalProps) {
                     </span>
                     <button
                       type="button"
-                      onClick={() => revoke.mutate(entry.id)}
+                      onClick={() => revoke.mutate(entry.targetUserId)}
                       disabled={revoke.isPending}
                       className="text-xs text-error hover:underline disabled:opacity-50"
                     >

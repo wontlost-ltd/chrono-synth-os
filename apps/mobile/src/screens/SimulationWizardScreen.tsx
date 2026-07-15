@@ -52,15 +52,49 @@ const TEMPLATES: Template[] = [
   },
 ];
 
+/** 后端 life-simulation 创建请求（对齐 CreateLifeSimulationSchema 的 mobile 子集：无分支的候选路径）。 */
+export interface LifeSimulationPayload {
+  paths: Array<{ id: string; label: string; description: string; initialConditions: Record<string, number>; branches: never[] }>;
+  horizonYears: number;
+}
+
+/** 把 defaults（dimension/weight）转成后端 path 的 initialConditions（Record<维度, 权重>）。 */
+function toInitialConditions(defaults: Array<{ dimension: string; weight: number }>): Record<string, number> {
+  return Object.fromEntries(defaults.map(d => [d.dimension, d.weight]));
+}
+
+/**
+ * 据选中模板 + 当前调整后权重，构造后端 life-simulation 请求（纯函数，便于单测）。
+ * 全部模板作候选路径（life-sim 对比多路径，满足后端 paths.min(2)）；选中模板用当前权重覆盖其 initialConditions。
+ */
+export function buildLifeSimulationPayload(
+  selectedTemplateId: string | null,
+  currentValues: Array<{ dimension: string; weight: number }>,
+  horizonYears: number,
+): LifeSimulationPayload {
+  const paths = TEMPLATES.map(t => ({
+    id: t.id,
+    label: t.label,
+    description: t.description,
+    initialConditions: t.id === selectedTemplateId ? toInitialConditions(currentValues) : toInitialConditions(t.defaults),
+    branches: [] as never[],
+  }));
+  return { paths, horizonYears };
+}
+
 export function SimulationWizardScreen() {
   const [step, setStep] = useState<Step>('template');
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [values, setValues] = useState<Array<{ dimension: string; weight: number }>>([]);
   const [horizonYears, setHorizonYears] = useState('10');
 
+  /* 后端 life-simulation 端点：POST /api/v1/simulations/life（不是 decisions——decisions 域要先建 case 再按
+   * :id/simulate 跑蒙特卡洛，与本向导的「模板+权重」模型不符）。CreateLifeSimulationSchema 要 paths[]（≥2 条），
+   * 每条 path 的 initialConditions 承载该模板的维度权重。本向导把**全部模板**作为候选路径提交（对比多条人生路径，
+   * 满足 .min(2)），选中模板用当前调整后的权重覆盖其 initialConditions。 */
   const runMutation = useMutation({
-    mutationFn: (payload: { horizonYears: number; values: Array<{ dimension: string; weight: number }> }) =>
-      apiFetch('/api/v1/decisions/simulate', { method: 'POST', body: JSON.stringify(payload) }),
+    mutationFn: (payload: LifeSimulationPayload) =>
+      apiFetch('/api/v1/simulations/life', { method: 'POST', body: JSON.stringify(payload) }),
   });
 
   const selectTemplate = (t: Template) => {
@@ -76,7 +110,7 @@ export function SimulationWizardScreen() {
   };
 
   const submit = () => {
-    runMutation.mutate({ horizonYears: parseInt(horizonYears, 10) || 10, values });
+    runMutation.mutate(buildLifeSimulationPayload(selectedTemplate?.id ?? null, values, parseInt(horizonYears, 10) || 10));
   };
 
   if (runMutation.isSuccess) {
