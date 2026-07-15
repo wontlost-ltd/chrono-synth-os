@@ -397,6 +397,7 @@
     "dashboard": "仪表盘",
     "simulations": "我的模拟",
     "newSimulation": "新建模拟",
+    "decisions": "决策模拟",
     "values": "价值观",
     "avatars": "分身管理",
     "personaCore": "核心人格",
@@ -1412,6 +1413,46 @@
       "rateLimited": "操作过于频繁，请稍后再试（限流 30 次/分钟）",
       "conflict": "该工件状态已变更，无法执行此操作",
       "notFound": "未找到该工件"
+    }
+  },
+  "decisions": {
+    "title": "决策模拟",
+    "subtitle": "建决策 case（≥2 备选）→ 蒙特卡洛模拟 → 看排序结果 → 反馈校准",
+    "create": {
+      "heading": "新建决策",
+      "title": "决策标题",
+      "description": "决策描述",
+      "alternatives": "备选方案（每行一个，至少 2 个）",
+      "constraints": "约束条件（每行一个，可选）",
+      "submit": "创建"
+    },
+    "listHeading": "决策列表",
+    "empty": "还没有决策",
+    "emptyHint": "创建一个决策 case 开始",
+    "alternativesCount": "个备选",
+    "selectTitle": "选择一个决策",
+    "selectHint": "从左侧选一个决策查看/模拟",
+    "simulate": "运行模拟",
+    "simulating": "模拟中…",
+    "result": {
+      "heading": "排序结果",
+      "recommended": "推荐方案",
+      "overall": "综合",
+      "alignment": "对齐",
+      "risk": "风险",
+      "confidence": "置信度",
+      "regret": "后悔概率"
+    },
+    "feedback": {
+      "heading": "反馈校准",
+      "satisfaction": "满意度",
+      "notes": "备注（可选）",
+      "submit": "提交反馈",
+      "thanks": "感谢反馈，已记录用于校准"
+    },
+    "errors": {
+      "rateLimited": "模拟过于频繁，请稍后再试（限流 10 次/分钟）",
+      "quota": "模拟配额已用尽，请升级套餐"
     }
   },
   "conflicts": {

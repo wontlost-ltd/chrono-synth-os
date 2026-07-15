@@ -46,6 +46,7 @@ const MarketplacePage = lazy(() => import('./features/marketplace/pages/Marketpl
 const EarningPage = lazy(() => import('./features/earning/pages/EarningPage'));
 const DistillationPage = lazy(() => import('./features/distillation/pages/DistillationPage'));
 const ConflictInboxPage = lazy(() => import('./features/conflicts/ConflictInboxPage').then(m => ({ default: m.ConflictInboxPage })));
+const DecisionsPage = lazy(() => import('./features/decisions/pages/DecisionsPage'));
 const NotFound = lazy(() => import('./pages/NotFound').then(m => ({ default: m.NotFound })));
 const Forbidden = lazy(() => import('./pages/Forbidden').then(m => ({ default: m.Forbidden })));
 const PersonaHealthPage = lazy(() =>
@@ -90,6 +91,7 @@ export const routes: RouteObject[] = [
   { path: '/simulations/:id/stress', element: <Protected><StressTest /></Protected> },
   { path: '/simulations/:id/milestones', element: <Protected><Milestones /></Protected> },
   { path: '/values', element: <Protected><ValuesManager /></Protected> },
+  { path: '/decisions', element: <Protected><DecisionsPage /></Protected> },
   { path: '/system', element: <Protected><SystemStatus /></Protected> },
   { path: '/billing', element: <Protected><Billing /></Protected> },
   { path: '/settings', element: <Protected><Settings /></Protected> },
