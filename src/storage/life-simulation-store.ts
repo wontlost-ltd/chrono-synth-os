@@ -64,13 +64,14 @@ export class LifeSimulationStore {
     this.tx = db;
   }
 
-  /** 创建模拟记录 */
-  create(id: string, tenantId: string, taskId: string, config: LifeSimulationConfig, baseSimulationId?: string): void {
+  /** 创建模拟记录。ownerUserId=创建者（owner-only 分享鉴权基础）；缺省 null（系统/派生创建，如 stress-test 变体）。 */
+  create(id: string, tenantId: string, taskId: string, config: LifeSimulationConfig, baseSimulationId?: string, ownerUserId?: string | null): void {
     const now = Date.now();
     this.tx.execute(lsimCmdCreate({
       id, tenantId, taskId,
       baseSimulationId: baseSimulationId ?? null,
       configJson: JSON.stringify(config),
+      ownerUserId: ownerUserId ?? null,
       now,
     }));
   }

@@ -100,9 +100,9 @@ export function registerLifeSimExecutors(): void {
 
   registerCommand<LsimCreateParams>(LSIM_CMD_CREATE, (db, p) => {
     const result = db.prepare<void>(
-      `INSERT INTO life_simulations (id, tenant_id, task_id, base_simulation_id, config_json, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    ).run(p.id, p.tenantId, p.taskId, p.baseSimulationId, p.configJson, p.now, p.now);
+      `INSERT INTO life_simulations (id, tenant_id, task_id, base_simulation_id, config_json, status, owner_user_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+    ).run(p.id, p.tenantId, p.taskId, p.baseSimulationId, p.configJson, p.ownerUserId, p.now, p.now);
     return { rowsAffected: result.changes };
   });
 

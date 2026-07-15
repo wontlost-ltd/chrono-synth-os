@@ -39,7 +39,7 @@ describe('useShareSimulation', () => {
     const { result } = renderHook(() => useShareSimulation('sim1'), { wrapper: createWrapper() });
     result.current.mutate(body);
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(mockApiFetch).toHaveBeenCalledWith(`/api/v1/simulations/${encodeURIComponent('sim1')}/shares`, {
+    expect(mockApiFetch).toHaveBeenCalledWith(`/api/v1/simulations/${encodeURIComponent('sim1')}/share`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -47,13 +47,13 @@ describe('useShareSimulation', () => {
 });
 
 describe('useRevokeShare', () => {
-  it('sends DELETE with encoded ids', async () => {
+  it('sends DELETE by targetUserId with encoded ids（后端按 userId 取消分享）', async () => {
     mockApiFetch.mockResolvedValue(undefined);
     const { result } = renderHook(() => useRevokeShare('sim/1'), { wrapper: createWrapper() });
-    result.current.mutate('share/2');
+    result.current.mutate('user/2');
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(mockApiFetch).toHaveBeenCalledWith(
-      `/api/v1/simulations/${encodeURIComponent('sim/1')}/shares/${encodeURIComponent('share/2')}`,
+      `/api/v1/simulations/${encodeURIComponent('sim/1')}/share/${encodeURIComponent('user/2')}`,
       { method: 'DELETE' },
     );
   });

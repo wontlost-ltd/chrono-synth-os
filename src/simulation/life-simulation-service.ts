@@ -20,11 +20,11 @@ export class LifeSimulationService {
     private readonly getState: () => PersonaOSState,
   ) {}
 
-  /** 入队模拟任务 */
-  enqueue(config: LifeSimulationConfig, tenantId: string, baseSimulationId?: string): { simulationId: string; taskId: string } {
+  /** 入队模拟任务。ownerUserId=发起模拟的用户（owner-only 分享鉴权基础）；缺省 null（系统/派生创建）。 */
+  enqueue(config: LifeSimulationConfig, tenantId: string, baseSimulationId?: string, ownerUserId?: string | null): { simulationId: string; taskId: string } {
     const simulationId = generatePrefixedId('lsim');
     const taskId = this.queue.enqueue(tenantId, 'life_simulation', { simulationId }, 1);
-    this.store.create(simulationId, tenantId, taskId, config, baseSimulationId);
+    this.store.create(simulationId, tenantId, taskId, config, baseSimulationId, ownerUserId ?? null);
     return { simulationId, taskId };
   }
 

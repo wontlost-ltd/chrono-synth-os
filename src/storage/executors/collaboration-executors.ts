@@ -6,19 +6,20 @@ import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
   COLLAB_QUERY_SIMULATION_TENANT, COLLAB_QUERY_EXISTING_SHARE,
   COLLAB_QUERY_SHARE_COUNT, COLLAB_QUERY_SHARED_LIST, COLLAB_QUERY_SHARE_OWNER,
+  COLLAB_QUERY_SHARES_FOR_SIMULATION,
   COLLAB_CMD_UPDATE_PERMISSION, COLLAB_CMD_CREATE_SHARE, COLLAB_CMD_DELETE_SHARE,
 } from '@chrono/kernel';
 import type {
   CollabSimTenantRow, CollabExistingShareRow, CollabShareCountRow,
-  CollabSharedRow, CollabShareOwnerRow,
-  CollabExistingShareParams, CollabSharedListParams,
+  CollabSharedRow, CollabShareOwnerRow, CollabShareForSimulationRow,
+  CollabExistingShareParams, CollabSharedListParams, CollabSharesForSimulationParams,
   CollabUpdatePermissionParams, CollabCreateShareParams, CollabDeleteShareParams,
 } from '@chrono/kernel';
 
 export function registerCollaborationExecutors(): void {
   registerQuery<CollabSimTenantRow | null, string>(COLLAB_QUERY_SIMULATION_TENANT, (db, simulationId) => {
     return db.prepare<CollabSimTenantRow>(
-      'SELECT tenant_id FROM life_simulations WHERE id = ?',
+      'SELECT tenant_id, owner_user_id FROM life_simulations WHERE id = ?',
     ).get(simulationId) ?? null;
   });
 
@@ -46,6 +47,12 @@ export function registerCollaborationExecutors(): void {
     return db.prepare<CollabShareOwnerRow>(
       'SELECT owner_user_id FROM shared_simulations WHERE simulation_id = ? AND shared_with_user_id = ?',
     ).get(p.simulationId, p.targetUserId) ?? null;
+  });
+
+  registerQuery<readonly CollabShareForSimulationRow[], CollabSharesForSimulationParams>(COLLAB_QUERY_SHARES_FOR_SIMULATION, (db, p) => {
+    return db.prepare<CollabShareForSimulationRow>(
+      'SELECT id, shared_with_user_id, permission, created_at FROM shared_simulations WHERE simulation_id = ? ORDER BY created_at DESC',
+    ).all(p.simulationId);
   });
 
   registerCommand<CollabUpdatePermissionParams>(COLLAB_CMD_UPDATE_PERMISSION, (db, p) => {
