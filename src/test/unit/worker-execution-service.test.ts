@@ -9,8 +9,10 @@ import { ApprovalService } from '../../workforce/approval-service.js';
 import {
   WorkerExecutionService, WorkerExecutionError,
   type ToolExecutor, type ToolInvokeRequest, type ToolInvokeDecision,
+  type ToolActionParamCompiler, type ToolSchemaResolver,
 } from '../../workforce/worker-execution-service.js';
 import type { OrgTask, RiskLevel } from '../../workforce/types.js';
+import type { McpToolSchema, ToolCompileResult } from '@chrono/kernel';
 
 /* ADR-0055 D3：数字员工真实执行接线——风险门→审批门→actor→CAS 并发门→pipeline→写回。零-LLM 确定性。 */
 describe('WorkerExecutionService（D3 真实执行接线）', () => {
@@ -318,5 +320,123 @@ describe('WorkerExecutionService（D3 真实执行接线）', () => {
     const r2 = await svc().execute({ orgId: 'org-1', taskId: t2, workerId: icId, principalUserId: 'owner-1', toolId: 'editor.write', arguments: { text: 'x' } });
     assert.equal(r1.kind, r2.kind);
     assert.equal(store.getTask('org-1', t1)!.status, store.getTask('org-1', t2)!.status);
+  });
+
+  /* ── ADR-0060 T1：工具参数编译接线（运行时零-LLM，据确定性规则从任务字段编译 arguments）── */
+  describe('参数编译接线（ADR-0060 T1）', () => {
+    const SCHEMA: McpToolSchema = { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] };
+    const resolver: ToolSchemaResolver = () => ({ schema: SCHEMA, schemaVersion: 'v1' });
+
+    /** 造带 requiredCapabilities 的 delegated 任务。 */
+    function seedTaskWithCaps(caps: readonly string[], title = '写一段'): string {
+      const id = `task-${++counter}`;
+      store.insertTask({
+        orgId: 'org-1', goalId: 'g1', parentTaskId: null, assignedToWorkerId: icId, accountableWorkerId: mgrId,
+        title, taskType: 'draft', status: 'delegated', riskLevel: 'low', allowsToolExecution: true,
+        acceptanceCriteria: '达标', requiredCapabilities: caps, resultSummary: null, dueAt: null, id,
+        createdAt: clock, updatedAt: clock,
+      });
+      return id;
+    }
+
+    /** 按 capability→预设结果的假编译器（不依赖 DB/规则；直接验接线分支）。 */
+    function compilerReturning(byCapability: Record<string, ToolCompileResult>): ToolActionParamCompiler {
+      return {
+        compile(input) {
+          return byCapability[input.capability] ?? { ok: false, failClosed: true, reason: '无匹配 active 规则', code: 'no_rule' };
+        },
+      };
+    }
+
+    function svcWith(compiler: ToolActionParamCompiler): WorkerExecutionService {
+      return new WorkerExecutionService(store, approvals, fakeExecutor, () => clock, 'tenant-a', undefined, undefined, compiler, resolver);
+    }
+
+    it('★有规则命中★：编译出的 arguments **覆盖**调用方裸参数（真正据规则构造）', async () => {
+      const taskId = seedTaskWithCaps(['write_copy'], '基于任务标题写');
+      /* 规则命中 → 用编译产物；调用方传的 {text:'裸参数'} 应被覆盖为 {text:'编译值'}。 */
+      const compiler = compilerReturning({
+        write_copy: { ok: true, plan: { toolId: 'editor.write', arguments: { text: '编译值' }, ruleVersion: 'r1', contentHash: 'h', idempotencyKey: 'k' } },
+      });
+      const r = await svcWith(compiler).execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'editor.write', arguments: { text: '裸参数' } });
+      assert.equal(r.kind, 'executed');
+      assert.equal(invokeLog.length, 1);
+      assert.deepEqual(invokeLog[0].arguments, { text: '编译值' }, '管线收到的是编译产物，非裸参数');
+      assert.equal(store.getTask('org-1', taskId)!.status, 'submitted');
+    });
+
+    it('★no_rule 向后兼容★：该工具在所有声明能力下都无规则 → 回退调用方裸参数（不打挂现有执行）', async () => {
+      const taskId = seedTaskWithCaps(['cap_a', 'cap_b']);
+      /* 两个 capability 都 no_rule（默认分支）→ 回退。 */
+      const r = await svcWith(compilerReturning({})).execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'editor.write', arguments: { text: '裸参数' } });
+      assert.equal(r.kind, 'executed');
+      assert.deepEqual(invokeLog[0].arguments, { text: '裸参数' }, 'no_rule 回退用调用方 arguments');
+    });
+
+    it('★fail-closed 拦截★：有规则但构造失败（缺字段）→ param_compile_failed，不执行、不用裸参数蒙混，任务仍 delegated', async () => {
+      const taskId = seedTaskWithCaps(['write_copy']);
+      const compiler = compilerReturning({
+        write_copy: { ok: false, failClosed: true, reason: '任务字段「headline」缺失', code: 'missing_field' },
+      });
+      const r = await svcWith(compiler).execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'editor.write', arguments: { text: '裸参数' } });
+      assert.equal(r.kind, 'param_compile_failed');
+      if (r.kind === 'param_compile_failed') assert.equal(r.code, 'missing_field');
+      assert.equal(invokeLog.length, 0, '构造失败绝不用裸参数调用管线');
+      assert.equal(store.getTask('org-1', taskId)!.status, 'delegated', '编译在 CAS 前，任务从未抢 in_progress，始终 delegated 待人工补');
+    });
+
+    it('★多能力择一★：首个 capability no_rule 跳过，第二个命中规则 → 用第二个的编译产物', async () => {
+      const taskId = seedTaskWithCaps(['cap_norule', 'cap_hit']);
+      const compiler = compilerReturning({
+        /* cap_norule 走默认 no_rule；cap_hit 命中。 */
+        cap_hit: { ok: true, plan: { toolId: 'editor.write', arguments: { text: '第二个能力的值' }, ruleVersion: 'r2', contentHash: 'h2', idempotencyKey: 'k2' } },
+      });
+      const r = await svcWith(compiler).execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'editor.write', arguments: { text: '裸参数' } });
+      assert.equal(r.kind, 'executed');
+      assert.deepEqual(invokeLog[0].arguments, { text: '第二个能力的值' });
+    });
+
+    it('★未配编译器向后兼容★：未注入 compiler → 直接用调用方裸参数（旧行为不变）', async () => {
+      const taskId = seedTaskWithCaps(['write_copy']);
+      /* svc() 不注入 compiler。 */
+      const r = await svc().execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'editor.write', arguments: { text: '裸参数' } });
+      assert.equal(r.kind, 'executed');
+      assert.deepEqual(invokeLog[0].arguments, { text: '裸参数' });
+    });
+
+    /* ── 4b 安全回归（Codex 交叉审查致命）：风险派生必须基于**编译后的最终执行参数**，不是裸参数 ── */
+    it('★4b 审批门绕过回归★：裸参数低风险、编译参数高风险 → 用编译参数派生风险 → needs_approval，绝不执行', async () => {
+      const taskId = seedTaskWithCaps(['send_payment']);
+      /* 规则把裸参数编译成高额支付参数（amount=9999）。 */
+      const compiler = compilerReturning({
+        send_payment: { ok: true, plan: { toolId: 'pay.send', arguments: { amount: 9999 }, ruleVersion: 'r1', contentHash: 'h', idempotencyKey: 'k' } },
+      });
+      /* riskDeriver：金额 ≥ 1000 判高风险（模拟工具 isHighRisk(args)）。裸参数 {text:'x'} 无 amount → low；
+       * 编译参数 {amount:9999} → high。若接线错用裸参数派生，会漏判 → 直接执行（绕过审批门）。 */
+      const riskDeriver = (_toolId: string, args: Record<string, unknown>): { toolRisk: RiskLevel; requireConfirmation: boolean } => {
+        const amount = typeof args.amount === 'number' ? args.amount : 0;
+        return amount >= 1000 ? { toolRisk: 'high', requireConfirmation: true } : { toolRisk: 'low', requireConfirmation: false };
+      };
+      const svcSecure = new WorkerExecutionService(store, approvals, fakeExecutor, () => clock, 'tenant-a', undefined, undefined, compiler, resolver, riskDeriver);
+      const r = await svcSecure.execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'pay.send', arguments: { text: 'x' } });
+      assert.equal(r.kind, 'needs_approval', '据编译参数(amount=9999)判高风险 → 需审批');
+      assert.equal(invokeLog.length, 0, '未放行审批 → 绝不调用管线（审批门未被裸参数绕过）');
+      assert.equal(store.getTask('org-1', taskId)!.status, 'delegated', '任务未被抢 in_progress（编译在 CAS 前，风险门在 CAS 前）');
+    });
+
+    it('★4b 一致性★：编译参数低风险 → 用编译参数派生 low → 正常执行（无误升风险）', async () => {
+      const taskId = seedTaskWithCaps(['send_payment']);
+      const compiler = compilerReturning({
+        send_payment: { ok: true, plan: { toolId: 'pay.send', arguments: { amount: 5 }, ruleVersion: 'r1', contentHash: 'h', idempotencyKey: 'k' } },
+      });
+      const riskDeriver = (_toolId: string, args: Record<string, unknown>): { toolRisk: RiskLevel; requireConfirmation: boolean } => {
+        const amount = typeof args.amount === 'number' ? args.amount : 0;
+        return amount >= 1000 ? { toolRisk: 'high', requireConfirmation: true } : { toolRisk: 'low', requireConfirmation: false };
+      };
+      const svcSecure = new WorkerExecutionService(store, approvals, fakeExecutor, () => clock, 'tenant-a', undefined, undefined, compiler, resolver, riskDeriver);
+      const r = await svcSecure.execute({ orgId: 'org-1', taskId, workerId: icId, principalUserId: 'owner-1', toolId: 'pay.send', arguments: { text: 'x' } });
+      assert.equal(r.kind, 'executed');
+      assert.deepEqual(invokeLog[0].arguments, { amount: 5 }, '执行的是编译参数');
+    });
   });
 });
