@@ -33,7 +33,9 @@ import {
   NoOrgApplicationError, DuplicateOrgApplicationError, OrgAssignmentStateError,
 } from '../../workforce/org-bidding-service.js';
 import { ApprovalService, InvalidApprovalError } from '../../workforce/approval-service.js';
-import { WorkerExecutionService, WorkerExecutionError, type ToolExecutor } from '../../workforce/worker-execution-service.js';
+import { WorkerExecutionService, WorkerExecutionError, type ToolExecutor, type ToolActionParamCompiler, type ToolSchemaResolver, type ToolRiskDeriver } from '../../workforce/worker-execution-service.js';
+import { ToolActionCompilerService } from '../../intelligence/tool-action-compiler-service.js';
+import { ToolActionRuleStore } from '../../storage/tool-action-rule-store.js';
 import { MissingHumanPrincipalError } from '../../workforce/worker-execution-actor.js';
 import { LearningRequestService } from '../../workforce/learning-request-service.js';
 import { LearningRequestStore } from '../../storage/learning-request-store.js';
@@ -260,8 +262,12 @@ export function registerWorkforceActionRoutes(
     const store = storeFor(request);
     const task = store.getTask(orgId, body.taskId);
     if (!task) throw new NotFoundError(`任务 ${body.taskId} 不存在`, ErrorCode.NOT_FOUND_TASK);
-    /* 风险信号服务端派生（toolId 给定时读 registry，用**真实 args** 派生动态高风险——与 execute 同 args，
-     * 避免「申请审批 auto_cleared 但执行又 needs_approval」的坏流程；否则按 body 声明；只增不减）。 */
+    /* 风险信号服务端派生（toolId 给定时读 registry 用 body.arguments 派生动态高风险；否则按 body 声明；只增不减）。
+     * ⚠️ 语义边界（ADR-0060 T1 接线后）：这里是**审批申请阶段的乐观预估**，用调用方**裸参数**估风险——因为
+     * 审批申请早于执行、此时未必有编译上下文。**最终安全关口是 execute**：WorkerExecutionService 会用**编译后的
+     * 最终执行参数**重新派生风险 + 审批门校验（isExecutionApprovalCleared 要求批准风险≥执行风险），故此处即便
+     * 预估偏低也**不构成绕过**（execute 会重新拦）。代价：预审批 auto_cleared 后 execute 仍可能 needs_approval
+     * （规则把裸参数编译成更高风险时）——这是可接受的 UX 不一致，非安全问题。 */
     const signals = body.toolId
       ? deriveRiskSignals(toolRisk, body.toolId, body.arguments, body.riskSignals)
       : (body.riskSignals ?? {});
@@ -318,17 +324,33 @@ export function registerWorkforceActionRoutes(
     const disposition = new TaskDispositionService({
       store, capabilities: new CapabilityAssignmentService(store, learning), now,
     });
-    const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId, learning, disposition);
-    /* 风险信号服务端派生（读 registry；body 只能上调，不能省略高风险工具来绕审批门）。 */
-    const signals = deriveRiskSignals(toolRisk, body.toolId, body.arguments, body.riskSignals);
+    /* ADR-0060 T1：工具参数编译器——执行前用确定性规则从任务字段编译工具 arguments（运行时零-LLM）。
+     * schemaResolver 从同一 registry（toolRisk）读目标工具 inputSchema + schemaVersion（缺省 'v1'）。
+     * compiler+resolver 成对注入；规则表为空时编译一律 no_rule → service 回退调用方 arguments（向后兼容）。 */
+    const compiler: ToolActionParamCompiler = new ToolActionCompilerService(
+      new ToolActionRuleStore(db, request.tenantId), request.tenantId, now,
+    );
+    const schemaResolver: ToolSchemaResolver = (toolId) => {
+      const adapter = toolRisk.get(toolId);
+      const schema = adapter?.metadata.inputSchema;
+      if (!adapter || schema === undefined) return null; /* 未注册/无 schema → 不编译，回退（与 no_rule 同语义） */
+      return { schema: schema as Parameters<ToolActionParamCompiler['compile']>[0]['toolSchema'], schemaVersion: adapter.metadata.schemaVersion ?? 'v1' };
+    };
+    /* 工具动态风险派生器（读 registry；body 声明信号只能上调不能下调）——**注入 service**，让它用**编译后的
+     * 最终执行参数**派生工具动态风险（而非在此用裸 body.arguments 预派生）。否则「按裸参数评估风险、按编译参数
+     * 执行」= 审批门绕过（Codex 交叉审查致命）。声明信号（outbound/funds 等）仍来自 body，作 riskSignals 传入。 */
+    const riskDeriver: ToolRiskDeriver = (toolId, args, declared) => deriveRiskSignals(toolRisk, toolId, args, declared);
+    const svc = new WorkerExecutionService(store, approvals, executor, now, request.tenantId, learning, disposition, compiler, schemaResolver, riskDeriver);
     let result;
     try {
       result = await svc.execute({
         orgId, taskId, workerId: body.workerId,
         /* 人类法律 principal = 当前登录用户（org_worker 不得无 principal 执行，ADR-0055 D0.1）。 */
         principalUserId: user.sub,
+        /* arguments = 调用方裸参数（编译器命中规则时会在 service 内被编译产物覆盖）；riskSignals = body 声明的
+         * 硬信号（outbound/funds/sensitive/irreversible，只增不减）。工具动态风险由 riskDeriver 用编译参数在 service 内算。 */
         toolId: body.toolId, arguments: body.arguments,
-        riskSignals: signals,
+        ...(body.riskSignals ? { riskSignals: body.riskSignals } : {}),
         ...(body.approvalId ? { approvalId: body.approvalId } : {}),
         ...(body.confirmationToken ? { confirmationToken: body.confirmationToken } : {}),
       });

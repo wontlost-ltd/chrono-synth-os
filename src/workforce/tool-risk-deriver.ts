@@ -16,7 +16,13 @@ import type { ExecutionRiskSignals } from './execution-risk.js';
 /** 能按 toolId 查工具风险的最小接口（ToolRegistry 子集，便于解耦+单测）。 */
 export interface ToolRiskSource {
   get(toolId: string): {
-    readonly metadata: { readonly highRisk: boolean };
+    readonly metadata: {
+      readonly highRisk: boolean;
+      /** ADR-0060 T1：工具 inputSchema（供参数编译校验必填 + schemaVersion 比对）。真 registry 恒有；窄测试桩可省。 */
+      readonly inputSchema?: unknown;
+      /** inputSchema 版本（据旧 schemaVersion 学的规则失效检测）；缺省 'v1'。 */
+      readonly schemaVersion?: string;
+    };
     isHighRisk?(args: Record<string, unknown>): boolean;
   } | undefined;
 }
