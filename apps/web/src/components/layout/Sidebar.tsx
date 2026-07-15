@@ -30,6 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/dashboard', labelKey: 'sidebar.dashboard', icon: 'dashboard' },
       { to: '/simulations', labelKey: 'sidebar.simulations', icon: 'list' },
       { to: '/simulations/new', labelKey: 'sidebar.newSimulation', icon: 'plus' },
+      { to: '/decisions', labelKey: 'sidebar.decisions', icon: 'conflict' },
       { to: '/growth', labelKey: 'sidebar.growth', icon: 'growth' },
     ],
   },

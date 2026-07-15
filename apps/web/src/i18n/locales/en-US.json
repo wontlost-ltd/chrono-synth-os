@@ -397,6 +397,7 @@
     "dashboard": "Dashboard",
     "simulations": "My Simulations",
     "newSimulation": "New Simulation",
+    "decisions": "Decision Sim",
     "values": "Values",
     "avatars": "Avatars",
     "personaCore": "Persona Core",
@@ -1411,6 +1412,46 @@
       "rateLimited": "Too many requests, please try again later (rate-limited 30/min)",
       "conflict": "This artifact's status has changed; the operation can't proceed",
       "notFound": "Artifact not found"
+    }
+  },
+  "decisions": {
+    "title": "Decision Simulation",
+    "subtitle": "Create a decision case (>=2 alternatives), Monte Carlo simulation, ranked results, feedback calibration",
+    "create": {
+      "heading": "New decision",
+      "title": "Decision title",
+      "description": "Decision description",
+      "alternatives": "Alternatives (one per line, at least 2)",
+      "constraints": "Constraints (one per line, optional)",
+      "submit": "Create"
+    },
+    "listHeading": "Decisions",
+    "empty": "No decisions yet",
+    "emptyHint": "Create a decision case to start",
+    "alternativesCount": "alternatives",
+    "selectTitle": "Select a decision",
+    "selectHint": "Pick a decision on the left to view/simulate",
+    "simulate": "Run simulation",
+    "simulating": "Simulating...",
+    "result": {
+      "heading": "Ranked results",
+      "recommended": "Recommended",
+      "overall": "Overall",
+      "alignment": "Alignment",
+      "risk": "Risk",
+      "confidence": "Confidence",
+      "regret": "Regret prob"
+    },
+    "feedback": {
+      "heading": "Feedback calibration",
+      "satisfaction": "Satisfaction",
+      "notes": "Notes (optional)",
+      "submit": "Submit feedback",
+      "thanks": "Thanks - recorded for calibration"
+    },
+    "errors": {
+      "rateLimited": "Too many simulations, please try again later (rate-limited 10/min)",
+      "quota": "Simulation quota exhausted, please upgrade your plan"
     }
   },
   "conflicts": {
