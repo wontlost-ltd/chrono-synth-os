@@ -43,6 +43,7 @@ const PersonaListPage = lazy(() => import('./features/personas/pages/PersonaList
 const PersonaCorePage = lazy(() => import('./features/persona-core/pages/PersonaCorePage'));
 const PersonaGovernance = lazy(() => import('./pages/PersonaGovernance'));
 const MarketplacePage = lazy(() => import('./features/marketplace/pages/MarketplacePage'));
+const EarningPage = lazy(() => import('./features/earning/pages/EarningPage'));
 const ConflictInboxPage = lazy(() => import('./features/conflicts/ConflictInboxPage').then(m => ({ default: m.ConflictInboxPage })));
 const NotFound = lazy(() => import('./pages/NotFound').then(m => ({ default: m.NotFound })));
 const Forbidden = lazy(() => import('./pages/Forbidden').then(m => ({ default: m.Forbidden })));
@@ -120,6 +121,7 @@ export const routes: RouteObject[] = [
   { path: '/personas/:id/health', element: <Protected><PersonaHealthPage /></Protected> },
   { path: '/growth', element: <Protected><GrowthPage /></Protected> },
   { path: '/marketplace', element: <Protected><MarketplacePage /></Protected> },
+  { path: '/earning', element: <Protected><EarningPage /></Protected> },
   { path: '/conflicts', element: <Protected><ConflictInboxPage /></Protected> },
   /* P3.9 — branded error pages instead of silent redirects */
   { path: '/403', element: <LazyPage><Forbidden /></LazyPage> },

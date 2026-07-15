@@ -402,6 +402,7 @@
     "personaCore": "核心人格",
     "knowledgeSources": "知识源",
     "marketplace": "任务市场",
+    "earning": "收益钱包",
     "billing": "计费",
     "enterprise": "企业控制台",
     "settings": "设置",
@@ -1311,6 +1312,46 @@
     "trough": "谷值",
     "cross_up": "上穿",
     "cross_down": "下穿"
+  },
+  "earning": {
+    "title": "收益与钱包",
+    "subtitle": "数字人自主赚钱：钱包余额、收益流水、触发赚钱周期",
+    "personaLabel": "数字人",
+    "noPersona": "还没有数字人",
+    "noPersonaHint": "先在「人格内核」创建一个数字人，才能开始赚钱",
+    "wallet": {
+      "heading": "钱包",
+      "balance": "余额",
+      "tokenBalance": "Token 余额",
+      "withdrawalNote": "自主赚钱只增不减；提现需人工确认，不在此页操作。"
+    },
+    "cycle": {
+      "heading": "赚钱周期",
+      "hint": "扫描开放任务，在治理门内自主接单/送审/跳过（限流 12 次/分钟）",
+      "run": "运行一轮",
+      "result": "扫描 {scanned} · 接单 {applied} · 待审 {reviewQueued} · 跳过 {skipped}"
+    },
+    "feed": {
+      "heading": "收益流水",
+      "empty": "还没有收益记录",
+      "emptyHint": "运行一轮赚钱周期后，接下的任务会出现在这里"
+    },
+    "category": {
+      "writing": "写作",
+      "coding": "编程",
+      "research": "研究",
+      "operations": "运营",
+      "general": "通用"
+    },
+    "taskStatus": {
+      "open": "开放",
+      "accepted": "已接单",
+      "completed": "已完成",
+      "cancelled": "已取消"
+    },
+    "errors": {
+      "rateLimited": "操作过于频繁，请稍后再试（限流 12 次/分钟）"
+    }
   },
   "conflicts": {
     "title": "冲突收件箱",

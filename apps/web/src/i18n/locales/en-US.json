@@ -402,6 +402,7 @@
     "personaCore": "Persona Core",
     "knowledgeSources": "Knowledge Sources",
     "marketplace": "Marketplace",
+    "earning": "Earnings & Wallet",
     "billing": "Billing",
     "enterprise": "Enterprise",
     "settings": "Settings",
@@ -1311,6 +1312,46 @@
     "trough": "Trough",
     "cross_up": "Crossed up",
     "cross_down": "Crossed down"
+  },
+  "earning": {
+    "title": "Earnings & Wallet",
+    "subtitle": "Autonomous earning: wallet balance, earnings feed, and running earning cycles",
+    "personaLabel": "Digital human",
+    "noPersona": "No digital human yet",
+    "noPersonaHint": "Create a digital human in Persona Core first to start earning",
+    "wallet": {
+      "heading": "Wallet",
+      "balance": "Balance",
+      "tokenBalance": "Token balance",
+      "withdrawalNote": "Autonomous earning is credit-only; withdrawals require human confirmation and are not done here."
+    },
+    "cycle": {
+      "heading": "Earning cycle",
+      "hint": "Scans open tasks and autonomously applies / queues for review / skips within governance gates (rate-limited 12/min)",
+      "run": "Run a cycle",
+      "result": "Scanned {scanned} · Applied {applied} · Queued {reviewQueued} · Skipped {skipped}"
+    },
+    "feed": {
+      "heading": "Earnings feed",
+      "empty": "No earnings yet",
+      "emptyHint": "After running an earning cycle, applied tasks will appear here"
+    },
+    "category": {
+      "writing": "Writing",
+      "coding": "Coding",
+      "research": "Research",
+      "operations": "Operations",
+      "general": "General"
+    },
+    "taskStatus": {
+      "open": "Open",
+      "accepted": "Accepted",
+      "completed": "Completed",
+      "cancelled": "Cancelled"
+    },
+    "errors": {
+      "rateLimited": "Too many requests, please try again later (rate-limited 12/min)"
+    }
   },
   "conflicts": {
     "title": "Conflict Inbox",
