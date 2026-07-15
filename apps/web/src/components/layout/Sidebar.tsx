@@ -51,6 +51,7 @@ const NAV_GROUPS: NavGroup[] = [
     labelKey: 'sidebar.groups.workforce',
     items: [
       { to: '/workforce', labelKey: 'sidebar.workforce', icon: 'workforce', adminOnly: true },
+      { to: '/workforce/collab', labelKey: 'sidebar.workforceCollab', icon: 'network', adminOnly: true },
       { to: '/workforce/marketplace', labelKey: 'sidebar.workforceMarketplace', icon: 'cart', adminOnly: true },
       { to: '/workforce/viz', labelKey: 'sidebar.workforceViz', icon: 'network', adminOnly: true },
     ],
