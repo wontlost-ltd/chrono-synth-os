@@ -20,6 +20,9 @@ import type { DecisionStyle } from './decision-style-types.js';
 const RISK_MIN = 0, RISK_MAX = 1;
 const LOSS_AVERSION_MIN = 1; /* ≥1，无上界——扰动只向上不向下越界 */
 const DELIBERATION_MIN = 1, DELIBERATION_MAX = 5;
+/** 整数维（deliberationDepth）扰动缩放：float 维用 ±mag，整数维需更大缩放才能在 5 档整数上产生 ±1~2
+ * 分散（mag=0.15、×10 时 base=3 → 分布 {2,3,4}）。×2（旧值）在 0.15 下 round 恒回 base，整数维不动。 */
+const INT_DIM_SCALE = 10;
 
 /**
  * 给 base decision style 加可复现随机扰动。
@@ -53,9 +56,10 @@ export function perturbDecisionStyle(
     regretSensitivity: unit(base.regretSensitivity, 'regretSensitivity'),
     /* lossAversion（≥1 无上界）：base ± mag×参考幅度（1.0），向下 clamp 到 1。 */
     lossAversion: Math.max(LOSS_AVERSION_MIN, base.lossAversion + jitter('lossAversion') * mag * 1.0),
-    /* deliberationDepth（1..5 整数）：base ± round(mag×2)，clamp 到 [1,5]。 */
+    /* deliberationDepth（1..5 整数）：base ± round(mag×INT_DIM_SCALE)，clamp 到 [1,5]。
+     * mag=0 时 jitter×0×SCALE=0 → 恒等 base（向后兼容）。 */
     deliberationDepth: clampInt(
-      Math.round(base.deliberationDepth + jitter('deliberationDepth') * mag * 2),
+      Math.round(base.deliberationDepth + jitter('deliberationDepth') * mag * INT_DIM_SCALE),
       DELIBERATION_MIN, DELIBERATION_MAX,
     ),
     updatedAt: now,
@@ -64,16 +68,18 @@ export function perturbDecisionStyle(
 
 /* ── 确定性 PRNG（FNV-1a 哈希 → [0,1)）——纯函数，无依赖 ── */
 
-/** FNV-1a 32-bit 哈希 → [0,1)。同字符串恒得同值（确定性）。 */
+/** FNV-1a 64-bit 哈希 → [0,1)。同字符串恒得同值（确定性）。64 位使扰动值空间从 ~4.3e9 提升到 ~1.8e19，
+ * 大规模出生种子碰撞降到可忽略。纯 BigInt、无依赖；出生低频调用，BigInt 开销无关紧要。 */
 function hashSeed(s: string): number {
-  let h = 0x811c9dc5;
+  const MASK = 0xFFFFFFFFFFFFFFFFn;         // 64 位掩码
+  const PRIME = 0x100000001b3n;             // FNV-1a 64 位 prime
+  let h = 0xcbf29ce484222325n;              // FNV-1a 64 位 offset basis
   for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    /* h *= 16777619，用位运算保 32-bit。 */
-    h = Math.imul(h, 0x01000193);
+    h ^= BigInt(s.charCodeAt(i));
+    h = (h * PRIME) & MASK;
   }
-  /* 转无符号 → [0,1)。 */
-  return (h >>> 0) / 0x100000000;
+  /* 无符号 64 位 → [0,1)。2^64 = 18446744073709551616。 */
+  return Number(h) / 18446744073709551616;
 }
 
 /** [0,1) → [-1,1]（对称抖动）。 */
