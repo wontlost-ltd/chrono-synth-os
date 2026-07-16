@@ -70,8 +70,8 @@ describe('K4 ADR-0056 数字员工人格出生（多原型独立内核）', () =
     const a = os.getCore('p-scout-a');
     const b = os.getCore('p-scout-b');
     assert.notStrictEqual(a, b, '不同 personaId → 不同 core 实例');
-    /* 同原型 → 出生风格相同（模板一致），但是写入两行独立。 */
-    assert.deepEqual(a.decisionStyle.get(), b.decisionStyle.get(), '同原型出生风格一致');
+    /* 同原型不同 personaId → 出生即被 per-persona 扰动拉开（出生多样性），至少一维不同。 */
+    assert.notDeepEqual(a.decisionStyle.get(), b.decisionStyle.get(), '同原型不同 personaId 出生应被扰动拉开');
     /* 各自独立成长互不影响。 */
     a.decisionStyle.set({ riskAppetite: 0.5 });
     assert.notEqual(a.decisionStyle.get().riskAppetite, b.decisionStyle.get().riskAppetite, '成长后各自独立');

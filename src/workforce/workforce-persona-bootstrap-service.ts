@@ -18,7 +18,11 @@
 
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { OrgChartService, WorkerSpec, BootstrapResult } from './org-chart-service.js';
-import { archetypeDecisionStyle, type PersonalityArchetype } from '@chrono/kernel';
+import { archetypeDecisionStyle, perturbDecisionStyle, type PersonalityArchetype } from '@chrono/kernel';
+
+/** 出生扰动幅度（同原型内个体差异）。与多租户路径 tenant-os-factory 的 DEFAULT_PERSONALITY_BIRTH_MAGNITUDE
+ * 同值 0.15；该常量未从 kernel 导出，此处本地定义（镜像 tenant-factory 模式，不扩 kernel API）。 */
+const BIRTH_MAGNITUDE = 0.15;
 
 /** worker 出生规格 = 组织结构规格 + 原型。 */
 export interface WorkerPersonaSpec extends WorkerSpec {
@@ -110,8 +114,9 @@ export class WorkforcePersonaBootstrapService {
     if (!isPristine) {
       return { ...base, kind: 'skipped_existing' };
     }
-    /* 出生：写原型决策风格 + 一句出生叙事（确定性）。 */
-    core.decisionStyle.set(archetypeDecisionStyle(spec.archetype, this.now()));
+    /* 出生：原型基准决策风格 + per-persona 扰动（seed=personaId，同原型个体也不同）→ 写 + 一句出生叙事（确定性）。 */
+    const baseStyle = archetypeDecisionStyle(spec.archetype, this.now());
+    core.decisionStyle.set(perturbDecisionStyle(baseStyle, spec.personaId, BIRTH_MAGNITUDE, this.now()));
     core.narrative.set(this.birthNarrative(spec));
     return { ...base, kind: 'seeded' };
   }
