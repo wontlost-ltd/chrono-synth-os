@@ -9,6 +9,7 @@ import { OfflineConversationResponder } from './conversation/offline-conversatio
 import { COMPANION_BASELINE_BOUNDARIES } from './conversation/companion-boundaries.js';
 import { AcceleratedLayer } from './accelerated/accelerated-layer.js';
 import { CoreRhythmLayer } from './core/core-rhythm-layer.js';
+import { PersonaCoreCache, type PersonaCoreCacheStats } from './core/persona-core-cache.js';
 import { MemoryPatternExtractor, type PatternExtractionConfig, type ValueUpdateProposal } from './core/memory-pattern-extractor.js';
 import { EventBus } from './events/event-bus.js';
 import { MetaRegulationLayer } from './meta/meta-regulation-layer.js';
@@ -77,6 +78,9 @@ export interface ChronoSynthOSConfig {
   evaluator?: EvaluatorFn;
   /** 认知记忆配置 */
   cognitionConfig?: Partial<MemoryCognitionConfig>;
+  /** per-persona 认知内核缓存（防 OOM）：max=容量上限（默认 512，<=0 无上限），ttlMs=可选 TTL（默认 0=关）。
+   * 缺省 → 默认 512 容量、无 TTL（宽松：日常不驱逐=零回归，仅异常多人格时兜底）。 */
+  personaCoreCache?: { max?: number; ttlMs?: number };
   /** 更新闸门配置 */
   updateGateConfig?: Partial<UpdateGateConfig>;
   /** 蒸馏策略（含不确定性预算：窗口内 auto-compile 上限）；缺省用 DEFAULT_DISTILLATION_POLICY */
@@ -167,7 +171,7 @@ export class ChronoSynthOS {
   private readonly tenantId: string;
   /* K3(ADR-0056) per-persona CoreRhythmLayer 工厂：按 personaId 缓存独立认知内核（缓存 persona-aware，
    * 防 DB 隔离了内存却共享同一 core 实例而串脑，ADR 红线5）。 */
-  private readonly personaCores = new Map<string, CoreRhythmLayer>();
+  private readonly personaCores: PersonaCoreCache<CoreRhythmLayer>;
   private cognitionConfig?: Partial<MemoryCognitionConfig>;
   private encryption?: FieldEncryption;
   /** 性格出生设定（②原型 + ③随机化）；缺省不设。仅在 start() 用一次。 */
@@ -213,7 +217,11 @@ export class ChronoSynthOS {
     registerCoreSelfExecutors();
 
     /* 初始化三层。core = default persona 的 CoreRhythmLayer（兼容 facade；新代码用 getCore(personaId)）。 */
+    /* per-persona 内核缓存（防 OOM）：容量 LRU + 可选 TTL。须在 getCore('default') 之前建（this.clock 已就绪）。 */
+    this.personaCores = new PersonaCoreCache<CoreRhythmLayer>(this.clock, config.personaCoreCache);
     this.core = this.getCore('default');
+    /* pin 'default'：this.core 长活引用它，绝不能被驱逐（否则 this.core 与缓存分叉）。 */
+    this.personaCores.pin('default');
     this.accelerated = new AcceleratedLayer(this.db, this.bus, this.clock, this.logger, config.evaluator, this.tenantId);
     this.meta = new MetaRegulationLayer(this.db, this.bus, this.clock, this.logger, config.integrationConfig, this.updateGate, this.tenantId);
 
@@ -445,9 +453,14 @@ export class ChronoSynthOS {
     return core;
   }
 
-  /** 已实例化(缓存)的 persona core 身份列表（可观测；不含未被 getCore 触达的 persona）。 */
+  /** 已实例化(缓存)的 persona core 身份列表（可观测；不含未被 getCore 触达或已被驱逐的 persona）。 */
   listPersonaCores(): readonly string[] {
-    return [...this.personaCores.keys()].sort();
+    return this.personaCores.keys();
+  }
+
+  /** per-persona 内核缓存指标（size/max/evictions/pinned），供内存监控。 */
+  personaCoreCacheStats(): PersonaCoreCacheStats {
+    return this.personaCores.stats();
   }
 
   /**
