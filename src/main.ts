@@ -22,6 +22,15 @@ const { serverState } = await import('./server/routes/health.js');
 
 const logger = new PinoLogger(config.log.level, config.log.json);
 const db = createDatabase(config);
+
+/** 从 env 读一个整数；缺省或非法（NaN）→ undefined（让下游用默认值）。 */
+function envInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 const os = new ChronoSynthOS({
   db,
   logger,
@@ -31,6 +40,11 @@ const os = new ChronoSynthOS({
   },
   cognitionConfig: config.cognition,
   encryptionConfig: config.encryption,
+  /* per-persona 内核缓存（防 OOM）：env 覆盖，缺省走内核默认（max=512、无 TTL）。NaN 守卫 → undefined 用默认。 */
+  personaCoreCache: {
+    max: envInt('CHRONO_PERSONA_CORE_CACHE_MAX'),
+    ttlMs: envInt('CHRONO_PERSONA_CORE_CACHE_TTL_MS'),
+  },
   /* ADR-0054 主动性配置（生产可达关闭/红线 3）。 */
   proactivity: config.proactivity,
   /* ADR-0048 动态成长预算（婴儿激进/成熟保守，默认开）。 */
