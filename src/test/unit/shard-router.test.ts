@@ -51,12 +51,19 @@ describe('ShardRouter', () => {
     assert.notStrictEqual(r.dbForTenant(ta!), r.dbForTenant(tb!), '落不同 shard → 不同 db 实例');
   });
 
-  it("default 钉显式 homeShardId 的 db", () => {
+  it("default 钉显式 homeShardId（换 home 则 default 路由随之变——变异可抓）", () => {
     const { buildDb } = trackingBuild();
-    const r = new ShardRouter({ shards: { s1: 'c1', s2: 'c2' }, homeShardId: 's2', buildDb });
-    /* 直接验：default 恒同 db + 与手动取 home shard 的 db 一致（不用不可靠探针）。 */
-    const home = r.dbForTenant('default');
-    assert.strictEqual(r.dbForTenant('default'), home, 'default 恒同 db');
+    const shards = { s1: 'c1', s2: 'c2' };
+    const rHome1 = new ShardRouter({ shards, homeShardId: 's1', buildDb });
+    const rHome2 = new ShardRouter({ shards, homeShardId: 's2', buildDb });
+    /* default 必须落各自的 home shard db（connStr 不同 → 不同 db 实例）。若 default 参与哈希（bug）,
+       两个 router 的 default 会落同一个哈希算出的 shard,此断言就会红。 */
+    assert.notStrictEqual(rHome1.dbForTenant('default'), rHome2.dbForTenant('default'),
+      'default 随 homeShardId 走,换 home 则落不同 shard db');
+    /* 且 default 的 db 与手动取该 router home shard 的 db（用 coordinatorDb,缺省 == home shard 的 connStr）一致——
+       直接钉死 default == home,而非仅仅"稳定"。 */
+    assert.strictEqual(rHome1.dbForTenant('default'), rHome1.coordinatorDb(), 'default 落 home shard（=缺省 coordinator）');
+    assert.strictEqual(rHome2.dbForTenant('default'), rHome2.coordinatorDb(), 'default 落 home shard（=缺省 coordinator）');
   });
 
   it('池按 connStr 去重缓存：同 shard 多 tenant 共享一 db', () => {
@@ -84,5 +91,19 @@ describe('ShardRouter', () => {
     r.close();  // 幂等
     assert.equal(closes.get('c1'), 1, 'c1（shard s1 与 coordinator 共享）只关一次');
     assert.equal(closes.get('c2'), 1, 'c2 只关一次');
+  });
+
+  it('initialize 中途 buildDb 抛错 → close 回收已建池 + 重抛', () => {
+    const closed: string[] = [];
+    const buildDb = (connStr: string): IDatabase => {
+      if (connStr === 'c2') throw new Error('boom');
+      const db = createMemoryDatabase();
+      (db as { close: () => void }).close = () => { closed.push(connStr); };
+      return db;
+    };
+    /* Object.values 按插入序:c1 先建成功入池,c2 建时抛错 → catch 里 close() 应回收已建的 c1。 */
+    const r = new ShardRouter({ shards: { s1: 'c1', s2: 'c2' }, homeShardId: 's1', buildDb });
+    assert.throws(() => r.initialize(), /boom/);
+    assert.deepEqual(closed, ['c1'], '已建的 c1 被回收,不半泄漏');
   });
 });
