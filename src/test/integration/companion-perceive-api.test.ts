@@ -230,7 +230,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     const auth = await registerAndGetAuth(app, 'perceive-quota@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
     /* 给该租户设感知限额：每窗 1 次。 */
-    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'perception', 1, 60_000);
+    QuotaManager.fromUnitOfWork(os.getDatabase()).setLimit(auth.tenantId, 'perception', 1, 60_000);
 
     /* 第一次成功（200）。 */
     const r1 = await app.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', headers, payload: { modality: 'audio', representation: '第一次' } });
@@ -268,7 +268,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     };
     registerCompanionPerceiveRoutes(local, os2, undefined, undefined, undefined, counting);
     await local.ready();
-    new QuotaManager(os2.getDatabase()).setLimit('default', 'perception', 1, 60_000);
+    QuotaManager.fromUnitOfWork(os2.getDatabase()).setLimit('default', 'perception', 1, 60_000);
 
     await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: '一' } });
     assert.equal(analyzeCalls, 1, '第一次调 provider');

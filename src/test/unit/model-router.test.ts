@@ -215,7 +215,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额充足时正常调用', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100_000, 3_600_000);
 
       const r = new ModelRouter({
@@ -231,7 +231,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额耗尽时 chat 抛出 QuotaExceededError', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100, 3_600_000);
 
       const r = new ModelRouter({
@@ -250,7 +250,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额耗尽时 embed 抛出 QuotaExceededError', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 1, 3_600_000);
 
       const r = new ModelRouter({

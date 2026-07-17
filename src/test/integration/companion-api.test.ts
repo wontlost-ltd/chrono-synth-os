@@ -346,7 +346,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     assert.equal(m.statusCode, 201, m.body);
 
     /* 把 reflection 配额设为 0：本窗口直接用尽。 */
-    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'reflection', 0, 60_000);
+    QuotaManager.fromUnitOfWork(os.getDatabase()).setLimit(auth.tenantId, 'reflection', 0, 60_000);
 
     const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/reflect', headers });
     assert.equal(res.statusCode, 429, `配额用尽应 429，实得 ${res.statusCode}: ${res.body}`);
@@ -390,7 +390,7 @@ describe('ChronoCompanion C 端 API 集成测试', () => {
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
     /* 写一条记忆（越过 up_to_date 短路）。 */
     await app.inject({ method: 'POST', url: '/api/v1/memories', headers, payload: { kind: 'semantic', content: '我学过授权', valence: 0.2, salience: 0.7 } });
-    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'translation', 0, 60_000);
+    QuotaManager.fromUnitOfWork(os.getDatabase()).setLimit(auth.tenantId, 'translation', 0, 60_000);
     const res = await app.inject({ method: 'POST', url: '/api/v1/companion/me/translate', headers, payload: { language: 'en' } });
     assert.equal(res.statusCode, 429, `配额用尽应 429，实得 ${res.statusCode}: ${res.body}`);
   });

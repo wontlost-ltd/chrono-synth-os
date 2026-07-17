@@ -26,7 +26,7 @@ describe('quota_usage prune on Postgres', { skip: !TEST_URL }, () => {
     const iso = await createIsolatedPgSchema('quota', TEST_URL!, { max: 3 });
     db = iso.db;
     cleanup = iso.cleanup;
-    qm = new QuotaManager(db);
+    qm = QuotaManager.fromUnitOfWork(db);
   });
 
   after(async () => { if (cleanup) await cleanup(); });

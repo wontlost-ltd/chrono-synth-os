@@ -8,6 +8,7 @@ import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import type { AppConfig } from '../config/schema.js';
 import { intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { IDatabase } from '../storage/database.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 import type { MemoryNode, MemoryEdge, MemoryKind, ActivationResult, ConsolidationResult, EvictionResult, WorkingMemorySlot } from '../types/core-self.js';
 import type { PersonaMemorySensitivity } from '../persona-core/types.js';
 import type { MemorySourceKind } from '../server/schemas/api-schemas.js';
@@ -99,7 +100,7 @@ export class MemoryFacade {
     this.personaCoreService = new PersonaCoreService(sharedTx, encryption);
     this.tokenBudget = config ? new TokenBudget(config.intelligence.budget, this.sharedDb) : undefined;
     this.costTracker = config ? new CostTracker(this.sharedDb) : undefined;
-    this.quotaManager = config ? new QuotaManager(sharedTx) : undefined;
+    this.quotaManager = config ? QuotaManager.fromResolver(new SingleDbResolver(sharedTx)) : undefined;
     this.usageTracker = config ? new UsageTracker(sharedTx) : undefined;
     this.billingOutbox = config ? new BillingOutbox(sharedTx, config) : undefined;
   }

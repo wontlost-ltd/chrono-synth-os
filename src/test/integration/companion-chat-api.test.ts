@@ -370,7 +370,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
   it('配额：设了 companion_chat 限额并用尽 → 429', async () => {
     const auth = await registerAndGetAuth(app, 'chat-quota@test.com');
     const headers = { authorization: `Bearer ${auth.accessToken}`, 'x-tenant-id': auth.tenantId };
-    new QuotaManager(os.getDatabase()).setLimit(auth.tenantId, 'companion_chat', 1, 60_000);
+    QuotaManager.fromUnitOfWork(os.getDatabase()).setLimit(auth.tenantId, 'companion_chat', 1, 60_000);
     const send = async (): Promise<number> => (await app.inject({ method: 'POST', url: '/api/v1/companion/me/chat', headers, payload: { message: '你好' } })).statusCode;
     assert.equal(await send(), 200, '第一次成功');
     assert.equal(await send(), 429, '超额 429');

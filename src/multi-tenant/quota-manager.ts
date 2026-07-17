@@ -1,80 +1,97 @@
 /**
- * 租户配额管理
- * 基于 quota_limits / quota_usage 表实现每租户资源限制
- * 支持按数量消费（如 LLM token 按实际用量计量）
+ * 租户配额管理（双入口过渡契约，租户分片 Phase 0）。
+ * 基于 quota_limits / quota_usage 表实现每租户资源限制，支持按数量消费。
+ *
+ * 两模式（语义诚实分离）：
+ *   - resolver 模式（fromResolver）：未绑事务的长期服务（route 注册期）。per-tenant 经
+ *     resolver.dbForTenant(tenantId) 选 db；cross-tenant（pruneUsageBefore）经 allShardDbs() fan-out。
+ *   - bound-UoW 模式（fromUnitOfWork）：已进事务的调用链（billing/entitlement）。所有操作固定用该
+ *     事务，不重新解析 db（否则脱离事务），pruneUsageBefore 单次 execute 不 fan-out。
+ * 因 IDatabase extends SyncWriteUnitOfWork，两模式内部统一到 SyncWriteUnitOfWork 接口，无适配层。
  */
-
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   quotaQueryLimit, quotaQueryUsage,
   quotaCmdSetLimit, quotaCmdClearLimit, quotaCmdConsume, quotaCmdRecordUsage, quotaCmdPruneUsage,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
+
+/** 内部 db 取源：resolver 模式按 tenantId 解析；UoW 模式固定 tx。 */
+interface QuotaSource {
+  /** per-tenant 操作取 db。 */
+  forTenant(tenantId: string): SyncWriteUnitOfWork;
+  /** cross-tenant fan-out 的所有 db（UoW 模式返 [tx]）。 */
+  allDbs(): SyncWriteUnitOfWork[];
+}
 
 export class QuotaManager {
-  constructor(private readonly tx: SyncWriteUnitOfWork) {
+  private constructor(private readonly source: QuotaSource) {
     registerCoreSelfExecutors();
   }
 
-  /** 设置租户某项资源的配额限制 */
+  /** resolver 模式：per-tenant→dbForTenant，prune→allShardDbs fan-out。用于 route 等未绑事务的长期服务。 */
+  static fromResolver(resolver: TenantDbResolver): QuotaManager {
+    return new QuotaManager({
+      forTenant: (tenantId) => resolver.dbForTenant(tenantId),
+      allDbs: () => resolver.allShardDbs(),
+    });
+  }
+
+  /** bound-UoW 模式：固定用该事务，不 fan-out。用于 billing/entitlement 等已绑事务的调用链。 */
+  static fromUnitOfWork(tx: SyncWriteUnitOfWork): QuotaManager {
+    return new QuotaManager({
+      forTenant: () => tx,
+      allDbs: () => [tx],
+    });
+  }
+
   setLimit(tenantId: string, resource: string, maxPerWindow: number, windowMs: number): void {
-    this.tx.execute(quotaCmdSetLimit({ tenantId, resource, maxPerWindow, windowMs }));
+    this.source.forTenant(tenantId).execute(quotaCmdSetLimit({ tenantId, resource, maxPerWindow, windowMs }));
   }
 
-  /** 清除租户某项资源的配额限制（用于无限计划） */
   clearLimit(tenantId: string, resource: string): void {
-    this.tx.execute(quotaCmdClearLimit({ tenantId, resource }));
+    this.source.forTenant(tenantId).execute(quotaCmdClearLimit({ tenantId, resource }));
   }
 
-  /** 检查租户是否还有配额（无限制返回 true） */
   checkQuota(tenantId: string, resource: string, quantity = 1, now?: number): boolean {
-    const limit = this.tx.queryOne(quotaQueryLimit(tenantId, resource));
+    const tx = this.source.forTenant(tenantId);
+    const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));
     if (!limit) return true;
-
     const ts = now ?? Date.now();
     const windowStart = ts - (ts % limit.window_ms);
-
-    const usage = this.tx.queryOne(quotaQueryUsage(tenantId, resource, windowStart));
+    const usage = tx.queryOne(quotaQueryUsage(tenantId, resource, windowStart));
     const used = usage?.used ?? 0;
     return (used + quantity) <= limit.max_per_window;
   }
 
-  /** 原子性检查并消费配额（支持按数量消费） */
   consumeQuota(tenantId: string, resource: string, quantity = 1, now?: number): boolean {
+    const tx = this.source.forTenant(tenantId);
     const ts = now ?? Date.now();
-    const limit = this.tx.queryOne(quotaQueryLimit(tenantId, resource));
-
+    const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));
     if (!limit) {
       this.recordUsage(tenantId, resource, quantity, ts);
       return true;
     }
     if (limit.max_per_window <= 0 || quantity > limit.max_per_window) return false;
-
     const windowStart = ts - (ts % limit.window_ms);
-    const result = this.tx.execute(quotaCmdConsume({
+    const result = tx.execute(quotaCmdConsume({
       tenantId, resource, quantity, windowStart, maxPerWindow: limit.max_per_window,
     }));
     return result.rowsAffected > 0;
   }
 
-  /** 记录资源使用（按数量） */
   recordUsage(tenantId: string, resource: string, quantity = 1, now?: number): void {
+    const tx = this.source.forTenant(tenantId);
     const ts = now ?? Date.now();
-    const limit = this.tx.queryOne(quotaQueryLimit(tenantId, resource));
+    const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));
     const windowStart = limit ? ts - (ts % limit.window_ms) : ts;
-
-    this.tx.execute(quotaCmdRecordUsage({ tenantId, resource, quantity, windowStart }));
+    tx.execute(quotaCmdRecordUsage({ tenantId, resource, quantity, windowStart }));
   }
 
-  /**
-   * 清理一批旧窗口行（计量只读当前窗口，旧窗口是死重）。**绝不删当前窗口**——按每个资源的
-   * window_ms 算其当前窗口起点，只删 window_start 既早于 cutoff 又早于当前窗口的行（防当期用量被
-   * 清零导致配额绕过）。
-   * @param now 当前时刻（算各资源当前窗口用）。
-   * @param cutoff 删除阈值：window_start < cutoff 才考虑删。
-   * @returns 本批实删行数（< batchSize 表示已清完）。
-   */
+  /** Task 4 改为 fan-out + {totalDeleted,mayHaveMore}。本任务先保持单-source 语义（用 allDbs()[0] 或遍历——见 Task 4）。 */
   pruneUsageBefore(now: number, cutoff: number, batchSize = 1000): number {
-    return this.tx.execute(quotaCmdPruneUsage({ now, cutoff, batchSize })).rowsAffected;
+    /* 临时：本任务只重构入口，prune 仍单次（用第一个/唯一 db）。Task 4 改 fan-out。 */
+    return this.source.allDbs()[0]!.execute(quotaCmdPruneUsage({ now, cutoff, batchSize })).rowsAffected;
   }
 }

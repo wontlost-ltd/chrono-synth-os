@@ -24,7 +24,7 @@ describe('P0-C negative — Quota 越限尝试（rate-limit subset；full HTTP r
   beforeEach(() => {
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    qm = new QuotaManager(db);
+    qm = QuotaManager.fromUnitOfWork(db);
   });
 
   it('越限消费失败：consumeQuota 不可越过 max_per_window', () => {

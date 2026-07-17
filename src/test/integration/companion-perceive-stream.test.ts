@@ -184,7 +184,7 @@ describe('实时流感知 WS', () => {
     if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
     /* 设 perception 限额 1：第一段 finalize 用掉，第二段 finalize 超额。 */
     const { QuotaManager } = await import('../../multi-tenant/quota-manager.js');
-    new QuotaManager(ctx.os.getDatabase()).setLimit('default', 'perception', 1, 60_000);
+    QuotaManager.fromUnitOfWork(ctx.os.getDatabase()).setLimit('default', 'perception', 1, 60_000);
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
     try {
       await open(ws);

@@ -381,7 +381,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     const autorunStore = new AvatarAutorunStore(queueDb);
     const knowledgeStore = new KnowledgeSourceStore(queueTx);
     const avatarService = new AvatarService(queueTx);
-    const quotaManager = new QuotaManager(queueTx);
+    const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(queueTx));
     const knowledgeRegistry = new KnowledgeSourceRegistry();
     knowledgeRegistry.register('manual', new ManualKnowledgeSource());
     knowledgeRegistry.register('rss', new RssKnowledgeSource());
@@ -491,7 +491,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
   const conversationTokenBudget = new ConversationTokenBudget(config.intelligence.budget, db);
   const conversationCostTracker = new ConversationCostTracker(db);
-  const conversationQuotaManager = new QuotaManager(tx);
+  const conversationQuotaManager = QuotaManager.fromResolver(new SingleDbResolver(tx));
   const conversationCircuitBreaker = new ConversationCircuitBreaker({
     failureThreshold: 5,
     halfOpenMaxRequests: 1,

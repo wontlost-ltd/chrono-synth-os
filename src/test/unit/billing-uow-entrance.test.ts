@@ -88,8 +88,8 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
       syncPlanToQuota(db, 'tenant_a', 'free');
       syncPlanToQuota(db, 'tenant_b', 'starter');
 
-      assert.equal(new QuotaManager(db).checkQuota('tenant_a', 'simulation'), true);
-      assert.equal(new QuotaManager(db).checkQuota('tenant_b', 'simulation'), true);
+      assert.equal(QuotaManager.fromUnitOfWork(db).checkQuota('tenant_a', 'simulation'), true);
+      assert.equal(QuotaManager.fromUnitOfWork(db).checkQuota('tenant_b', 'simulation'), true);
     } finally { db.close(); }
   });
 

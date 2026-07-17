@@ -20,6 +20,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
+import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -67,7 +68,7 @@ export function registerCompanionPerceiveStreamRoutes(
 
   const sharedDb = db ?? os.getDatabase();
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
-  const quotaManager = new QuotaManager(sharedDb);
+  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
 
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);

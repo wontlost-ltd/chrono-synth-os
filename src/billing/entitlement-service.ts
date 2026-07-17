@@ -47,7 +47,7 @@ export class EntitlementService {
   syncTenantEntitlements(tenantId: string): EffectiveLimits {
     const limits = this.computeEffectiveLimits(tenantId);
     const now = Date.now();
-    const qm = new QuotaManager(this.tx);
+    const qm = QuotaManager.fromUnitOfWork(this.tx);
     const monthMs = 30 * 24 * 60 * 60 * 1000;
 
     for (const [resource, limit] of Object.entries(limits)) {
