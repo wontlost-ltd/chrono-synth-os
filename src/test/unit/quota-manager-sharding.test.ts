@@ -92,18 +92,35 @@ describe('QuotaManager 分片探针', () => {
     assert.equal(res.mayHaveMore, true, 's1 删满一批 → 还有');
   });
 
-  it('5. fan-out fail-fast：中途 shard 抛错 → 整体抛错 + 后续 shard 未执行 + 幂等重试收敛', () => {
+  it('5. fan-out fail-fast：中途 shard 抛错 → 整体抛错 + s1 已部分执行 + 后续 shard 未执行；换掉坏 shard 后重试收敛', () => {
     const s1 = quotaDb(), s3 = quotaDb();
-    /* s2 是会抛错的 db 桩（execute 抛）。三 shard 顺序 a→bad→c。 */
+    /* bad 是会抛错的 db 桩（execute 抛）。三 shard 顺序 a→bad→c。 */
     const bad = throwingDb();
     const r = new FakeMultiShardResolver({ coordinator: s1, shards: { a: s1, bad: bad, c: s3 }, tenantToShard: {} });
     const qm = QuotaManager.fromResolver(r);
     seedOldUsage(s1, 1);
     seedOldUsage(s3, 1);
+    const s1Before = (s1.prepare('SELECT COUNT(*) AS c FROM quota_usage').get() as { c: number }).c;
+    assert.equal(s1Before, 1, '前置：s1 初始 1 行旧窗口');
     assert.throws(() => qm.pruneUsageBefore(10_000_000, 9_000_000, 1000), /boom/);
-    /* s1 已删（fail-fast 前）；s3 本轮未执行（bad 在 s3 之前抛）——观测 s3 旧行仍在。 */
+    /* s1 已删（fail-fast 前 s1 排在 bad 之前，本轮已执行）——断言行数比初始减少。 */
+    const s1After = (s1.prepare('SELECT COUNT(*) AS c FROM quota_usage').get() as { c: number }).c;
+    assert.ok(s1After < s1Before, 's1 在抛错前已被部分/全部删除（fail-fast 前置执行）');
+    /* s3 本轮未执行（bad 在 s3 之前抛）——观测 s3 旧行仍在。 */
     const s3Remaining = (s3.prepare('SELECT COUNT(*) AS c FROM quota_usage').get() as { c: number }).c;
     assert.equal(s3Remaining, 1, 's3 本轮未被触碰（后续 shard 不跑）');
+
+    /* 幂等重试收敛：把 bad 换成正常 db（同一物理 s1/s3，模拟「故障 shard 恢复」后重试）。
+       prune 对旧窗口行是幂等的（已删的不会再删、未删的补删）——重试应不抛错且最终全清空。 */
+    const recovered = quotaDb();
+    const rRetry = new FakeMultiShardResolver({ coordinator: s1, shards: { a: s1, bad: recovered, c: s3 }, tenantToShard: {} });
+    const qmRetry = QuotaManager.fromResolver(rRetry);
+    const retryRes = qmRetry.pruneUsageBefore(10_000_000, 9_000_000, 1000);
+    assert.equal(retryRes.mayHaveMore, false, '重试收敛：本批已清空，无需再分页');
+    const s1Final = (s1.prepare('SELECT COUNT(*) AS c FROM quota_usage').get() as { c: number }).c;
+    const s3Final = (s3.prepare('SELECT COUNT(*) AS c FROM quota_usage').get() as { c: number }).c;
+    assert.equal(s1Final, 0, '重试后 s1 旧行清空');
+    assert.equal(s3Final, 0, '重试后 s3 旧行清空（首轮未执行的部分被追上）');
   });
 
   it('6. UoW 模式：固定 tx、prune 单次不 fan-out', () => {
