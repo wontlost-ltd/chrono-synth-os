@@ -17,6 +17,11 @@ const dbSchema = z.object({
   path: z.string().default(':memory:'),
   connectionString: z.string().optional(),
   pool: dbPoolSchema.default({ max: 10, idleTimeoutMs: 30_000 }),
+  /* 分片（Phase 0）：shardId → connStr。**任何非空 shards 目前会被 createDatabase fail-closed 拒绝启动**——
+   * 生产分片 activation 待后续子片把全 inventory 访问点接线完成（防单/多 shard 半截启用致静默错-shard）。 */
+  shards: z.record(z.string(), z.object({ connectionString: z.string() })).optional(),
+  coordinator: z.object({ connectionString: z.string() }).optional(),
+  homeShardId: z.string().optional(),
 });
 
 const logSchema = z.object({
