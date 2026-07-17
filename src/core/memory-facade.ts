@@ -102,7 +102,7 @@ export class MemoryFacade {
     this.costTracker = config ? CostTracker.fromResolver(new SingleDbResolver(this.sharedDb)) : undefined;
     this.quotaManager = config ? QuotaManager.fromResolver(new SingleDbResolver(sharedTx)) : undefined;
     this.usageTracker = config ? UsageTracker.fromResolver(new SingleDbResolver(sharedTx)) : undefined;
-    this.billingOutbox = config ? new BillingOutbox(sharedTx, config) : undefined;
+    this.billingOutbox = config ? BillingOutbox.fromResolver(new SingleDbResolver(sharedTx), config) : undefined;
   }
 
   private getOS(tenantId: string): ChronoSynthOS {

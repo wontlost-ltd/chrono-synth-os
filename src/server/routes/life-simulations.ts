@@ -39,7 +39,7 @@ export function registerLifeSimulationRoutes(
   const optTx = options?.db ? options.db : undefined;
   const quotaManager = optTx ? QuotaManager.fromResolver(new SingleDbResolver(optTx)) : undefined;
   const usageTracker = optTx ? UsageTracker.fromResolver(new SingleDbResolver(optTx)) : undefined;
-  const billingOutbox = optTx && options?.config ? new BillingOutbox(optTx, options.config) : undefined;
+  const billingOutbox = optTx && options?.config ? BillingOutbox.fromResolver(new SingleDbResolver(optTx), options.config) : undefined;
   const subscriptionQuery = optTx ? new SubscriptionQueryService(optTx) : undefined;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */

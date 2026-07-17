@@ -74,7 +74,7 @@ export function registerOnboardingRoutes(
   const llmEncryption = tryByokEncryption(config.encryption);
   const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
   const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
-  const billingOutbox = new BillingOutbox(sharedTx, config);
+  const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(sharedTx), config);
   const questionnaire = new QuestionnaireEngine();
 
   function getOS(tenantId: string): ChronoSynthOS {

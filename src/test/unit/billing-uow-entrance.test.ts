@@ -12,6 +12,7 @@ import { runDslSqliteMigrations } from '../../storage/index.js';
 import { loadConfig } from '../../config/schema.js';
 import { ApiKeyService } from '../../billing/api-key-service.js';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { SubscriptionQueryService } from '../../billing/subscription-query-service.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
@@ -38,8 +39,22 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
       assert.deepEqual(new ApiKeyService(db).list('default'), []);
       assert.deepEqual(new ApiKeyService(db).list('default'), []);
 
-      assert.equal(new BillingOutbox(db, config).pendingCount(), 0);
-      assert.equal(new BillingOutbox(db, config).pendingCount(), 0);
+      assert.equal(BillingOutbox.fromUnitOfWork(db, config).pendingCount(), 0);
+      assert.equal(BillingOutbox.fromUnitOfWork(db, config).pendingCount(), 0);
+    } finally { db.close(); }
+  });
+
+  it('BillingOutbox.fromResolver：enqueue 落对应 db + flush 返回 FlushResult', async () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const config = loadConfig({});
+    try {
+      const ob = BillingOutbox.fromResolver(new SingleDbResolver(db), config);
+      assert.equal(ob.enqueue('t1', 'cus_1', 'llm_tokens', 100, 'msg-1'), true);
+      assert.equal(ob.pendingCount(), 1);
+      const r = await ob.flush();
+      assert.equal(typeof r.processed, 'number');
+      assert.ok(Array.isArray(r.shardErrors), 'flush 返回 shardErrors 数组');
     } finally { db.close(); }
   });
 
@@ -48,7 +63,7 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     runDslSqliteMigrations(db);
     const config = loadConfig({});
     try {
-      const outbox = new BillingOutbox(db, config);
+      const outbox = BillingOutbox.fromUnitOfWork(db, config);
 
       /* 同一逻辑计量事件（同 sourceId）重复入队 → 仅一条落库（ON CONFLICT DO NOTHING） */
       assert.equal(outbox.enqueue('t1', 'cus_1', 'llm_tokens', 100, 'msg-abc'), true, '首次入队返回 true（已落库）');
@@ -70,7 +85,7 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     runDslSqliteMigrations(db);
     const config = loadConfig({});
     try {
-      const outbox = new BillingOutbox(db, config);
+      const outbox = BillingOutbox.fromUnitOfWork(db, config);
       /* 无 sourceId：回退键用 clock+seq，单实例内多次入队互不冲突且全部落库 */
       outbox.enqueue('t1', 'cus_1', 'simulation', 1);
       outbox.enqueue('t1', 'cus_1', 'simulation', 1);

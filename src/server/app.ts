@@ -445,7 +445,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const bulkImportTemplateService = new PersonaTemplateService(tx, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
   const p1dUsageTracker = P1dUsageTracker.fromResolver(new SingleDbResolver(tx));
-  const p1dBillingOutbox = config.stripe.enabled ? new P1dBillingOutbox(tx, config) : undefined;
+  const p1dBillingOutbox = config.stripe.enabled ? P1dBillingOutbox.fromResolver(new SingleDbResolver(tx), config) : undefined;
   const stripeCustomerLookup = (tenantId: string): string | null => {
     try {
       const row = db.prepare<{ stripe_customer_id: string | null }>(
@@ -864,7 +864,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
   if (config.stripe.enabled) {
-    const billingOutbox = new BillingOutbox(tx, config);
+    const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(tx), config);
     const FLUSH_INTERVAL_MS = 60_000;
     const flushTimer = setInterval(() => {
       void billingOutbox.flush().catch((err) => {

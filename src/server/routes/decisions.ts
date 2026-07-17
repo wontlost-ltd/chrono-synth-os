@@ -70,7 +70,7 @@ export function registerDecisionRoutes(
   const llmEncryption = tryByokEncryption(config.encryption);
   const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
   const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
-  const billingOutbox = new BillingOutbox(sharedTx, config);
+  const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(sharedTx), config);
 
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
