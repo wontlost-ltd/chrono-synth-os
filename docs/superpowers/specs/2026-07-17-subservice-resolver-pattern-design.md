@@ -129,11 +129,12 @@ class QuotaManager {
 
 ## 调用点更新（一次覆盖所有构造点，零回归）
 
-**全部** `new QuotaManager(x)` → 按 x 的类型选工厂（plan 阶段用 `grep -rn "new QuotaManager(" src --include=*.ts` 复核，逐一分类）：
-- x 是 `IDatabase`（route 层 `sharedDb`/`sharedTx`/`queueTx`/`db`；测试里的内存 db）→ `QuotaManager.fromResolver(new SingleDbResolver(x))`。
-- x 是 `SyncWriteUnitOfWork`（billing/plans、entitlement-service 的 `this.tx`；life-simulations 的 `optTx`；memory-facade 的 `sharedTx`——**逐个核对实际静态类型**）→ `QuotaManager.fromUnitOfWork(x)`。
+**全部** `new QuotaManager(x)` → 按 x 的**声明静态类型**选工厂（plan 阶段用 `grep -rn "new QuotaManager(" src --include=*.ts` 复核，逐一分类）。判据是**声明类型**，不是运行时可能是什么：
 
-判据：能确定 x 是 `IDatabase` 且该点语义是「注册期长期服务」→ resolver 模式；x 只是 `SyncWriteUnitOfWork` 或已在事务上下文 → UoW 模式。plan 阶段**逐点列出分类表**，不许漏（漏一个编译红）。
+- x 声明为 `IDatabase`（**绝大多数**）→ `QuotaManager.fromResolver(new SingleDbResolver(x))`。已核实属此类的生产点：route 层 `sharedDb`/`sharedTx`/`queueTx`（decisions/onboarding/companion×3）、`app.ts:384 queueTx`、`app.ts:494 tx`（`const tx = db`，db 为 IDatabase）、`memory-facade.ts:97 sharedTx`（`= this.sharedDb`，`sharedDb: IDatabase`）、`life-simulations.ts:38 optTx`（`= options?.db`，`db?: IDatabase`）；测试里的内存 db 同此。
+- x 声明**仅**为 `SyncWriteUnitOfWork`（已在事务上下文）→ `QuotaManager.fromUnitOfWork(x)`。已核实**仅两处**生产点：`billing/plans.ts:58`（参数 `tx: SyncWriteUnitOfWork`）、`entitlement-service.ts:50`（`this.tx`，构造器 `tx: SyncWriteUnitOfWork`）。
+
+plan 阶段**逐点列出分类表**核对（漏一个编译红）。经验法则：声明为 `IDatabase` → `fromResolver`；声明仅 `SyncWriteUnitOfWork` → `fromUnitOfWork`。`IDatabase extends SyncWriteUnitOfWork` 单向，故只有「声明就是 IDatabase」才可安全包 `SingleDbResolver`。
 
 `SingleDbResolver` 三方法恒返回同一 db → resolver 模式在单库下与改造前逐字等价。UoW 模式行为完全不变。**零回归**。
 
@@ -160,7 +161,7 @@ class FakeMultiShardResolver implements TenantDbResolver {
 2. **fan-out**：两 shard 各预置旧窗口行；调 `pruneUsageBefore`；断言两 shard 旧行都被删、`totalDeleted` = 两 shard 之和。
 3. **fan-out 去重**：构造两 shardId 映射同一 db 实例的 resolver（或直接用真实 ShardRouter 同 connStr 场景）；断言 prune 只对该物理库执行一次（`totalDeleted` 不翻倍）。
 4. **mayHaveMore 分页**：构造「shard1 满一批（≥batchSize）、shard2 未满」，断言 `mayHaveMore === true`；两 shard 都未满 → `mayHaveMore === false`。
-5. **fan-out fail-fast**：让第二个 shard 的 execute 抛错；断言 `pruneUsageBefore` 整体抛出、第一个 shard 已删的不回滚（观测其 db）、再次调用最终收敛（幂等）。
+5. **fan-out fail-fast**：三 shard，让**第二个** shard 的 execute 抛错；断言 `pruneUsageBefore` 整体抛出、第一个 shard 已删的不回滚（观测其 db）、**第三个 shard 本轮未执行**（观测其 db 未被触碰——真证「后续 shard 本轮不跑」，非仅整体抛错）、再次调用最终收敛（幂等）。
 6. **UoW 模式**：`QuotaManager.fromUnitOfWork(tx)`，per-tenant 操作落该 tx、`pruneUsageBefore` 单次 execute 不 fan-out，返回值与单-shard 等价。
 7. **单库零回归**：`fromResolver(new SingleDbResolver(oneDb))`，跑 per-tenant + prune，断言行为与改造前等价。
 
@@ -174,7 +175,7 @@ worker 改用新返回类型后现有测试须绿；新增断言：多-shard 下
 |---|---|---|
 | `src/storage/shard-router.ts` | 改（前置） | `allShardDbs()` 按 connStr 去重 + 针对性单测 |
 | `src/multi-tenant/quota-manager.ts` | 改 | 私有构造器 + `fromResolver`/`fromUnitOfWork` 双入口；per-tenant→按模式取 db；`pruneUsageBefore`→resolver 模式 fan-out(fail-fast)、UoW 模式单次；返回 `{totalDeleted,mayHaveMore}` |
-| `src/multi-tenant/quota-usage-retention-worker.ts` | 改 | 适配新返回类型（`mayHaveMore` 判终止）+ 其 `new QuotaManager` 构造点选对工厂 |
+| `src/multi-tenant/quota-usage-retention-worker.ts` | 改 | 仅适配 `pruneUsageBefore` 新返回类型（`mayHaveMore` 判终止）。**本文件内无 `new QuotaManager` 构造点**——worker 接收 app.ts 建好的实例（`conversationQuotaManager`，走 `fromResolver`），构造点在 app.ts 已归上表。 |
 | 全部 20+ 个 `new QuotaManager()` 构造点 | 改 | 按传入类型选 `fromResolver(SingleDbResolver(...))` 或 `fromUnitOfWork(...)`（plan 逐点分类表） |
 | `src/test/support/fake-multi-shard-resolver.ts` | 建 | 复用验收脚手架（allShardDbs 去重语义对齐） |
 | `src/test/unit/quota-manager-sharding.test.ts` | 建 | 探针测试（分流/fan-out/去重/分页/fail-fast/UoW/零回归 7 类） |
