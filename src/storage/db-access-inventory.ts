@@ -84,4 +84,10 @@ export const DB_ACCESS_INVENTORY: readonly DbAccessPoint[] = [
   { id: 'src/storage/factory.ts#createDatabase', file: 'src/storage/factory.ts', category: 'root-only', note: '全仓唯一制造顶层 db 实例的工厂（new PostgresDatabase/new SqliteDatabase）；是 Phase 0 shard 路由要改造的根源——ShardRouter 将按 shard 配置多次调用此工厂' },
   { id: 'src/storage/database.ts#createMemoryDatabase', file: 'src/storage/database.ts', category: 'root-only', note: 'new SqliteDatabase(\':memory:\') 内存库工厂（测试/无配置兜底用，chrono-synth-os.ts 默认走它）；同 factory.ts#createDatabase 性质，与租户分片无关的顶层构造原语' },
   { id: 'src/storage/postgres-database.ts#PostgresDatabase', file: 'src/storage/postgres-database.ts', category: 'root-only', note: ':199 new Pool（pg 连接池，DB 适配器内部）；分片 spec 点名的单 pg.Pool 物理证据，Phase 0 ShardRouter 按 shard 复制' },
+  /* 分片路由基建（Phase 0）：显式登记为 root-only 作人类可读的「已刻意判定」记录。二者都不触发 ratchet
+   * PATTERNS（router 靠注入的 buildDb，自身无 new XxxDatabase(/new Pool(；hash 是纯函数），故 ratchet 永不
+   * flag 它们；此处登记非 ratchet 强制，而是防未来读者误以为漏归类。它们是路由引擎本身，非「按 tenantId 拿
+   * host db」的访问点。 */
+  { id: 'src/storage/shard-router.ts#ShardRouter', file: 'src/storage/shard-router.ts', category: 'root-only', note: '分片路由引擎（实现 TenantDbResolver 契约），连接池 owner；池经注入的 buildDb 构造，自身不 new db——非拿-host-db 访问点，是路由机制本身' },
+  { id: 'src/storage/shard-hash.ts#shardIdForTenant', file: 'src/storage/shard-hash.ts', category: 'root-only', note: '确定性 FNV-1a 模哈希纯函数（tenantId→shardId）；无任何 db 访问，登记仅为完整记录分片基建，与租户 host db 无关' },
 ];
