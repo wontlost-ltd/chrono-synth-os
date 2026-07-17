@@ -29,6 +29,7 @@ const PATTERNS = [
   /\bsharedDb\b\s*=/,
   /\bsharedTx\b\s*=/,
   /new\s+\w*Database\s*\(/,
+  /new\s+Pool\s*\(/, /* 连接池构造——pg.Pool，分片 spec 点名的单实例物理证据 */
   /buildAppServices\s*\(/,
 ];
 

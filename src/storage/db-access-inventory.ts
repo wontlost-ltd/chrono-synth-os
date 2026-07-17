@@ -75,4 +75,5 @@ export const DB_ACCESS_INVENTORY: readonly DbAccessPoint[] = [
   // —— root-only（确无租户归属，造顶层 db 实例的工厂原语） ——
   { id: 'src/storage/factory.ts#createDatabase', file: 'src/storage/factory.ts', category: 'root-only', note: '全仓唯一制造顶层 db 实例的工厂（new PostgresDatabase/new SqliteDatabase）；是 Phase 0 shard 路由要改造的根源——ShardRouter 将按 shard 配置多次调用此工厂' },
   { id: 'src/storage/database.ts#createMemoryDatabase', file: 'src/storage/database.ts', category: 'root-only', note: 'new SqliteDatabase(\':memory:\') 内存库工厂（测试/无配置兜底用，chrono-synth-os.ts 默认走它）；同 factory.ts#createDatabase 性质，与租户分片无关的顶层构造原语' },
+  { id: 'src/storage/postgres-database.ts#PostgresDatabase', file: 'src/storage/postgres-database.ts', category: 'root-only', note: ':199 new Pool（pg 连接池，DB 适配器内部）；分片 spec 点名的单 pg.Pool 物理证据，Phase 0 ShardRouter 按 shard 复制' },
 ];
