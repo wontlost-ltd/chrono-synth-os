@@ -52,17 +52,21 @@ request.tenantId ──► TenantOSFactory.getTenantOS(tenantId)
   2. **父表继承归属表**（无自己的 tenant_id，靠父表 JOIN 归属：`refresh_tokens`/`life_simulation_paths`/`shared_simulations`/`users`/`avatars`/`device_avatars`）→ 随父租户 shard，import/erase 用 JOIN 保同 shard。
   3. **平台表**（无 tenant_id，全局：`event_ledger_authority` 单例 / `event_ledger_consumer_checkpoints` 全局 offset / `schema_migrations` 每实例）→ 协调库或每实例，Phase 2 定。
   4. **全局 worker**（跨租户迭代：settlement / dual-write-flush / evidence-collector / TaskQueue.dequeue / runtime-recovery / media-retention / data-retention timer / observability worker）→ per-shard 或协调库跑，Phase 2 定。
-  5. **显式 tenant_id store（绕过 TenantDatabase 拿裸 db）**（Codex 抓的核心：`decisions.ts`/`onboarding.ts`/`admin-templates.ts`/`privacy.ts`/`companion/{perceive,perceive-stream,chat}.ts` 等，及注册期持 db 的服务 `app.ts:672`）→ **全部改经 `dbForTenant(tenantId)`**，Phase 0 纳入。
-  6. **root-only 表**（确实无租户归属的）→ 协调库。
-- **接线策略：** `createApp`/`registerXxxRoutes` 注入 `TenantDbResolver` 而非裸 `db`；每个显式 tenant_id 访问点从 `os.getDatabase()` 改为 `resolver.dbForTenant(request.tenantId)`。
+  5. **显式 tenant_id store — per-request 型（在 request 作用域内拿 db）**：从 `os.getDatabase()` 改为 `resolver.dbForTenant(request.tenantId)`——**换 db 源即可**（小改）。
+  6. **显式 tenant_id store — 注册/构造期捕获型（大改，第 2 轮复审新增）**：在**注册/构造期**把 `os.getDatabase()` 捕获成长生命 `sharedDb`，并把子服务（`TokenBudget/CostTracker/QuotaManager/UsageTracker/BillingOutbox`）**绑死在它上面**——`decisions.ts:64`、`memory-facade.ts:82,96,100-101`（`:221` 注释明说用 sharedDb 绕 TenantDatabase 做 `UPDATE memory_nodes`，非 default 租户会**静默写错 shard**）。这类**不能只换 db 源**：`sharedDb` 不在 request 作用域，须把 resolver 调用**下沉到 per-request** + 子服务改成**按租户重建/重绑**（生命周期重构，工作量远大于第 5 类）。Phase 0 须标注此二分。
+  7. **模块级/全局单例 db 引用（第 2 轮复审新增，跨请求）**：`websocket.ts:81` `let eventLogDb = os.getDatabase()`（模块级单例，`:99/:107` INSERT + `:137` SELECT `ws_event_log ... tenant_id=?`，跨请求事件背板，连 request.tenantId 都拿不到）。既非 per-request、也非普通 worker——须单列设计（按事件的 tenantId 路由到对应 shard，或 ws_event_log 整表归协调库）。
+  8. **root-only 表**（确实无租户归属的）→ 协调库。
+- **接线策略：** `createApp`/`registerXxxRoutes` 注入 `TenantDbResolver` 而非裸 `db`；第 5 类换 db 源；**第 6 类做子服务生命周期重构**；第 7 类单列。
 
-**不变量：** 清单覆盖**所有** `os.getDatabase()` / 裸 `db.prepare` 拿点（用 grep 全量枚举，逐个归类，无遗漏——ratchet 测试：新增拿点未归类则 CI 红）；单 shard 下 `TenantDbResolver` 三方法返回同一 db（零回归）。
+**不变量（第 2 轮复审修正——原不变量与自己给的清单自相矛盾，改为可执行的 ratchet）：**
+- **ratchet 是权威，不是「清单已穷尽」**：本 spec 给的清单是**已知样本，非声称完整**。真正的完整性由 **ratchet 测试**保证——静扫全仓 `os.getDatabase()` / 裸 `db.prepare`/`new .*Database(` 拿点，逐个必须出现在归类 allowlist（第 1-8 类之一），**未归类即 CI 红**。Phase -1 的交付物之一就是把当前全部拿点跑一遍 ratchet、逐个归类落 allowlist（含上面漏过的 websocket + 后面补的 worker）。
+- 单 shard 下 `TenantDbResolver` 三方法返回同一 db（零回归）。
 
-**为什么先做这个：** Codex 独立核实证明「注入点干净」为假——不盘清就分片 = 部分租户数据留在错 shard 的静默 bug。这是整个 #3 的真正地基。
+**为什么先做这个：** 两轮独立审查证明「注入点干净」为假——decisions/memory-facade 注册期捕获 sharedDb（`memory-facade.ts:221` 已有静默错-shard 写）、websocket 模块级单例都绕过 TenantDatabase。不盘清就分片 = 部分租户数据静默留错 shard。这是整个 #3 的真正地基，且第 6/7 类揭示 Phase 0 藏着「子服务生命周期重构」，非「换 db 源」的小活。
 
 ### Phase 0 — 分片路由机制（ShardRouter + 接线 TenantDbResolver，默认单 shard 零回归）
 
-**目标：** 落 `ShardRouter` 实现 `TenantDbResolver` 契约 + 把 Phase -1 清单里的显式 tenant_id store 接到 `dbForTenant`。默认单 shard，行为等价现状（零回归）。
+**目标：** 落 `ShardRouter` 实现 `TenantDbResolver` 契约 + 把 Phase -1 清单里的显式 tenant_id store 接到 `dbForTenant`。默认单 shard，行为等价现状（零回归）。**范围警示（第 2 轮复审）：** 第 5 类（per-request）是换 db 源的小改；**第 6 类（注册期捕获 sharedDb + 绑子服务）是子服务生命周期重构**——工作量与风险远大于第 5 类，Phase 0 plan 须把二者分开估。具名验收用例：`memory-facade.ts:221` 的 confidence UPDATE 对非 default 租户必须落对 shard（现状静默错-shard）。
 
 **组件：**
 - **`ShardRouter`（新，`src/storage/shard-router.ts`，实现 `TenantDbResolver`）：**
@@ -108,7 +112,7 @@ request.tenantId ──► TenantOSFactory.getTenantOS(tenantId)
   - SUM 类（rollup/queue/billing-outbox）→ 各 shard 求和再相加。
   - tenant usage（已按 tenant keyed）→ 各 shard 结果 concat。
   - **population diversity（O(n²) 全量 decision_style）→ 拉所有 shard 的 decision_style 行做并集，再跑 `personalityDiversity()`**（成对函数需全量人口）。
-- **跨租户 worker 归类（Codex 补全清单，逐个定 per-shard / 协调库）：** settlement-reconciliation、dual-write-flush、evidence-collector、**`TaskQueue.dequeue` 全局公平调度（`task-queue.ts:102`）**、**runtime-recovery 全局扫超时 session（`persona-core-executors.ts:747`）**、**media-retention 全局扫（`media-ref-store.ts:110`）**、**app 内 data-retention timer 全局删（`app.ts:831`）**、observability worker——每个明确 per-shard 跑（各自枚举本 shard 租户）或协调库跑。Phase 2 spec 逐项定。
+- **跨租户 worker 归类（两轮审查补全清单，逐个定 per-shard / 协调库）：** settlement-reconciliation、dual-write-flush、evidence-collector、`TaskQueue.dequeue` 全局公平调度（`task-queue.ts:102`）、runtime-recovery 全局扫超时 session（`persona-core-executors.ts:747`）、media-retention 全局扫（`media-ref-store.ts:110`）、observability worker，**+ 第 2 轮复审补漏：** `ConversationRetentionWorker`（`app.ts:525`）、`QuotaUsageRetentionWorker`（`app.ts:534`）、`ToolInvocationsRetentionWorker`（`app.ts:649`）、refresh-token cleanup timer（`app.ts:824`）、Stripe billing-outbox flush timer（`app.ts:868`，与 dual-write-flush 是两回事）、avatar autorun scheduler（`app.ts:426`）。**每个明确 per-shard 跑或协调库跑。** 完整性同样由 ratchet（Phase -1）兜底——app.ts 里所有 `setInterval`/worker 接线须逐个归类。
 - **平台表归位（3 张无 tenant_id）：** `event_ledger_authority`（单例）→ 协调库；`event_ledger_consumer_checkpoints`（全局 offset）→ 每 shard 或重键 `(shard, consumer_id)`；`schema_migrations` → 保持每实例（每 shard 独立跑同一迁移集，须 lockstep）。
 
 **不变量：** metrics 全局数字 = 各 shard 之和/并集（用 2 shard 测：分别塞数据，断言聚合 = 合并值）；diversity score 在多 shard 下等于单库同数据的值。
@@ -176,4 +180,6 @@ Phase 0 是**唯一低风险、可先独立交付**的一阶段（默认单库�
   3. 【致命·已修】迁移「全保真是唯一差异」错 → 补 source/target shard 参数化 + 父表继承子表 JOIN + 对象存储/KMS 可达性 + credential/解密校验。
   4. 【已补】跨租户 worker 清单不全 → 补 TaskQueue/runtime-recovery/media-retention/retention-timer/observability。
   5. 【已修】IDatabase 端口漏 `queryOne/queryMany/execute` → 契约须覆盖全同步端口。
-- **结论：修订后待 Codex 复审**（退回项已逐条处理，尤其新增 Phase -1 消化了「注入点非唯一」这个根因）。
+- **第 2 轮复审（Codex MCP 版本不兼容失败 → 降级为独立 Claude subagent 对抗复审，守生成者≠审查者）：72/100，需讨论。** 三致命诊断已补全，但根因只消化一半——独立发现两轮都漏的：① `websocket.ts:81` 模块级单例（→ 新增第 7 类）；② 注册期捕获 sharedDb + 绑子服务这个更大重构维度 + `memory-facade.ts:221` 静默错-shard 写（→ 新增第 6 类 + 二分 + 具名验收）；③ 漏 6 个跨租户 worker（→ 补全清单）；④ 不变量「已穷尽」与样本清单自相矛盾（→ 改为 ratchet 权威）。
+- **主 AI 决策（本轮修订采纳全部第 2 轮发现）：** 已加第 6/7 类 + per-request/注册期二分 + 补全 worker + ratchet 不变量重写 + memory-facade 具名验收。**交付范围决定（用户定）：只实现 Phase -1**（盘点 + `TenantDbResolver` 契约 + ratchet + 逐点归类，默认单库零回归）；Phase 0-3 待真规模信号再推。
+- **降级说明:** Codex CLI 报 `gpt-5.6-sol requires a newer Codex` 两次失败，本轮交叉审查由独立 Claude subagent（opus，无修订立场）替代，记录在 `.claude/review-report-sharding.md`。
