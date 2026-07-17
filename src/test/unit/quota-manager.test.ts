@@ -152,6 +152,12 @@ describe('QuotaManager 双入口', () => {
     const t1OnS2 = s2.prepare('SELECT max_per_window FROM quota_limits WHERE tenant_id=? AND resource=?').get('t1', 'sim');
     assert.ok(t1OnS1, 't1 limit 落 s1');
     assert.equal(t1OnS2, undefined, 't1 limit 不在 s2');
+
+    /* 对称断言：t2 落 s2、不落 s1 */
+    const t2OnS2 = s2.prepare('SELECT max_per_window FROM quota_limits WHERE tenant_id=? AND resource=?').get('t2', 'sim');
+    const t2OnS1 = s1.prepare('SELECT max_per_window FROM quota_limits WHERE tenant_id=? AND resource=?').get('t2', 'sim');
+    assert.ok(t2OnS2, 't2 limit 落 s2');
+    assert.equal(t2OnS1, undefined, 't2 limit 不在 s1');
   });
 
   it('fromUnitOfWork：所有操作固定用该 tx（不 fan-out、不重新解析）', () => {
