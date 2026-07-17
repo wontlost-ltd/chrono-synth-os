@@ -22,7 +22,6 @@ import { distillationCompensationFailures } from '../observability/metrics.js';
 import {
   validateArtifact, canAutoCompile, canTransition,
   DEFAULT_DISTILLATION_POLICY,
-  GLOBAL_LEASE_PERSONA_ID,
   type DistilledArtifact,
   type DistillationPolicy,
   type ArtifactKind,
@@ -90,13 +89,11 @@ export interface DistillationServiceDeps {
    */
   budgetResolver?: (personaId: string) => number | undefined;
   /**
-   * 租户级全局 compile mutex（ADR-0047 多实例 gating item）。可选：未注入时为
-   * 单进程同步语义（向后兼容）；注入后用 GLOBAL_LEASE_PERSONA_ID 串行化整个租户的
-   * 编译。**仍是租户级全局而非 per-persona**：ADR-0056 K5 后 coreSelf 快照/回滚已按 persona
-   * 隔离，且 rollback 用 coreSelfOnly（不再恢复租户级状态）。保持租户级全局的原因转为：
-   * value_shift/memory_edge 底层 ValueStore/CognitiveMemoryGraph 仍 tenant 共享（K5b 前），不同
-   * persona 的并发编译会在这些**共享价值/记忆**上互相覆盖；待 K5b 宽表 persona-aware 后可重新评估
-   * 是否降为 per-persona 锁。
+   * per-persona compile mutex（ADR-0047 多实例 gating item，#4 收窄）。可选：未注入时为
+   * 单进程同步语义（向后兼容）；注入后用真实 personaId 串行化该 persona 自己的编译。
+   * **已从租户级全局收窄为 per-persona**：ADR-0056 K5b 后编译写集（value_shift/memory_edge）与
+   * coreSelf 快照/回滚均已 persona 隔离，不再有跨 persona 共享状态被并发编译互相覆盖的风险
+   * （安全网见 compile-cross-persona-isolation.test.ts）。同 persona 互斥、跨 persona 并行。
    */
   leaseStore?: PersonaLeaseStore;
 }
@@ -275,14 +272,15 @@ export class DistillationService {
   }
 
   /**
-   * approved → compiled，受 **租户级全局 compile mutex** 保护（ADR-0047 多实例 gating）。
+   * approved → compiled，受 **per-persona compile mutex** 保护（ADR-0047 多实例 gating，#4 收窄）。
    *
-   * 锁粒度是全局而非 per-persona：ADR-0056 K5 后 coreSelf 快照/回滚已按 persona 隔离，且 rollback 用
-   * coreSelfOnly（不再恢复租户级状态）。保持全局的原因转为 value_shift/memory_edge 底层 ValueStore/
-   * CognitiveMemoryGraph 仍 tenant 共享（K5b 前），不同 persona 的并发编译会在这些**共享价值/记忆**上互相
-   * 覆盖，故仍必须互斥。用 GLOBAL_LEASE_PERSONA_ID 让全租户编译竞争同一把锁。
+   * 锁粒度收窄到 personaId：ADR-0056 K5b 后编译写集（value_shift/memory_edge 落库）与快照/回滚均已
+   * per-persona 隔离（各 persona 有自己的 ValueStore/CognitiveMemoryGraph 分区），不再有跨 persona
+   * 共享状态被并发编译互相覆盖的风险（安全网见 compile-cross-persona-isolation.test.ts）。故锁 key
+   * 从 GLOBAL_LEASE_PERSONA_ID 换成真实 personaId：同 persona 互斥（防止同一 persona 的并发编译互踩），
+   * 跨 persona 并行（不同 persona 编译不再互相阻塞）。
    * 锁覆盖快照→编译→状态推进→补偿全程。未注入 leaseStore = 单进程同步语义。
-   * 拿不到锁说明另一实例/另一 persona 正在编译，返回 'lease_busy' 待重试。此时工件状态**取决于入锁前进度**：
+   * 拿不到锁说明同 persona 的另一实例正在编译，返回 'lease_busy' 待重试。此时工件状态**取决于入锁前进度**：
    * 自动路径（checkBudget=true，candidate→approved 推进已移进锁内）拿不到锁时**仍是 candidate**；人工 approve
    * 路径传入的已是 approved 工件，故仍 approved。两者的重试入口都是 approve()（对 candidate/approved 均可编译）。
    */
@@ -291,10 +289,10 @@ export class DistillationService {
       return this.compileApprovedLocked(personaId, artifact, via, checkBudget);
     }
     const handle: LeaseHandle | null = this.deps.leaseStore.acquire(
-      GLOBAL_LEASE_PERSONA_ID, 'compile', this.deps.clock.now(), COMPILE_LEASE_TTL_MS,
+      personaId, 'compile', this.deps.clock.now(), COMPILE_LEASE_TTL_MS,
     );
     if (!handle) {
-      this.deps.logger.warn(LAYER, `编译延后：全局 compile 锁被占用，另一编译进行中（persona=${personaId}）`);
+      this.deps.logger.warn(LAYER, `编译延后：persona=${personaId} 的 compile 锁被占用（同 persona 另一编译/影子进行中）`);
       return 'lease_busy';
     }
     try {
