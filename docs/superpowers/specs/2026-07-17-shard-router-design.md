@@ -137,3 +137,4 @@ TenantOSFactory.createTenantOS(tenantId)
   - 命名（确定性模哈希）/显式 homeShardId/12 项/UTF-16 golden 等第 1 轮修订,Codex 确认已基本解决。
 - **结论：修订后待 Codex 第 3 轮复审**（单-shard 洞已用「非空即拒」堵死,静默错-shard 现在真的从可能变为不可能）。
 - **第 3 轮复审（Codex）：88/100，需讨论（修 3 处即通过）。核心裁决:单-shard 洞已堵死、静默错-shard 变为不可能。** 3 处残留（改新段落漏改旧段落）已修：① 决策 E row 的 `shard>1` → 任何非空；② 风险段 `shard>1` → 任何非空；③ 本地验证段补不变量 8/9/10 的自动化测试（`shard-router-guard.test.ts`：非空/单-shard-不同-root 被拒 + homeShardId 校验 + 幂等 close/共享实例关一次/init 回收 + FNV golden vector）。唯一 assembler 覆盖三入口、幂等 close、init 回收 Codex 确认已解决,无新架构问题。
+- **第 4 轮复审（Codex，确认小修）：96/100，通过（好品味）。** 三处必修清干净（决策 E/风险段统一「任何非空 shards 含 1 拒」+ 验证段映射不变量 8/9/10 四类）。**特别裁决:单-shard activation 漏洞已堵死,当前生产 activation 约束下静默错-shard 变为不可能。** **交叉审查闭环:68→78→88→96 通过。** 通过范围=ShardRouter 引擎（fail-closed 挡生产多 shard,单库缺省零回归）;12 项访问点接线是下一子片。
