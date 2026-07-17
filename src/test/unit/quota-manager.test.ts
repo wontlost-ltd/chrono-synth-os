@@ -167,4 +167,12 @@ describe('QuotaManager 双入口', () => {
     const row = db.prepare('SELECT max_per_window FROM quota_limits WHERE tenant_id=? AND resource=?').get('tX', 'sim');
     assert.ok(row);
   });
+
+  it('pruneUsageBefore 返回 {totalDeleted, mayHaveMore}', () => {
+    const db = makeQuotaDb();
+    const qm = QuotaManager.fromUnitOfWork(db);
+    const r = qm.pruneUsageBefore(1000, 500, 10);
+    assert.equal(typeof r.totalDeleted, 'number');
+    assert.equal(typeof r.mayHaveMore, 'boolean');
+  });
 });

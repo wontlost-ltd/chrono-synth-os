@@ -25,6 +25,12 @@ interface QuotaSource {
   allDbs(): SyncWriteUnitOfWork[];
 }
 
+export interface PruneResult {
+  readonly totalDeleted: number;
+  /** 任一 shard 本轮 removed >= batchSize（保守分页信号，是否继续下一批）。 */
+  readonly mayHaveMore: boolean;
+}
+
 export class QuotaManager {
   private constructor(private readonly source: QuotaSource) {
     registerCoreSelfExecutors();
@@ -89,9 +95,21 @@ export class QuotaManager {
     tx.execute(quotaCmdRecordUsage({ tenantId, resource, quantity, windowStart }));
   }
 
-  /** Task 4 改为 fan-out + {totalDeleted,mayHaveMore}。本任务先保持单-source 语义（用 allDbs()[0] 或遍历——见 Task 4）。 */
-  pruneUsageBefore(now: number, cutoff: number, batchSize = 1000): number {
-    /* 临时：本任务只重构入口，prune 仍单次（用第一个/唯一 db）。Task 4 改 fan-out。 */
-    return this.source.allDbs()[0]!.execute(quotaCmdPruneUsage({ now, cutoff, batchSize })).rowsAffected;
+  /**
+   * 清理旧窗口行（计量只读当前窗口，旧窗口是死重）。绝不删当前窗口。
+   * resolver 模式：fan-out 到 allShardDbs()（唯一物理 db），fail-fast——某 shard 抛错立即整体抛出，
+   * 后续 shard 本轮不执行；无跨-shard 原子性，靠 prune 幂等下周期重试收敛。
+   * UoW 模式：allDbs() 返 [tx]，等价单次 execute。
+   * @returns totalDeleted 本轮各 shard 实删之和；mayHaveMore=任一 shard removed>=batchSize。
+   */
+  pruneUsageBefore(now: number, cutoff: number, batchSize = 1000): PruneResult {
+    let totalDeleted = 0;
+    let mayHaveMore = false;
+    for (const db of this.source.allDbs()) {
+      const removed = db.execute(quotaCmdPruneUsage({ now, cutoff, batchSize })).rowsAffected;
+      totalDeleted += removed;
+      if (removed >= batchSize) mayHaveMore = true;
+    }
+    return { totalDeleted, mayHaveMore };
   }
 }

@@ -80,11 +80,13 @@ export class QuotaUsageRetentionWorker {
     let batches = 0;
     for (let i = 0; i < this.options.maxBatchesPerCycle; i++) {
       /* pruneUsageBefore 内部按各资源 window_ms 算当前窗口、绝不删当前窗口（即使 retentionMs <
-       * window_ms 也安全）。 */
-      const removed = this.quota.pruneUsageBefore(now, cutoff, this.options.batchSize);
-      total += removed;
+       * window_ms 也安全）。resolver 模式下 fan-out 到各 shard，用 mayHaveMore（任一 shard 本轮
+       * removed>=batchSize）判是否继续下一批——累加后的 totalDeleted 不再等价单 shard 的
+       * removed<batchSize 终止假设。 */
+      const { totalDeleted, mayHaveMore } = this.quota.pruneUsageBefore(now, cutoff, this.options.batchSize);
+      total += totalDeleted;
       batches++;
-      if (removed < this.options.batchSize) break;
+      if (!mayHaveMore) break;
     }
     if (total > 0) {
       this.logger.info(LAYER, `已清理 ${total} 条 quota_usage 旧窗口（${batches} 批次）`);
