@@ -15,7 +15,7 @@ Phase -1（已合 main）交付了 `TenantDbResolver` 契约 + `SingleDbResolver
 
 **⚠️ 致命风险 → fail-closed 护栏（Codex 退回核心，必须加）：** 若有人配 `db.shards` 两个 shard,TenantOSFactory 内核路径走对 shard,但那 12 处访问点仍走 host db → **同一 tenant 的数据静默分裂到两库**(decisions 的 subscriptions/BYOK、privacy 导出、memory-facade confidence 写等)。仅文档写「本片不足以正确多 shard」**不构成运行时约束**。故本片**必须加启动期 fail-closed**（镜像 `main.ts:61-66` 的 port-0 guard 模式）：
 
-> **`db.shards` 有效 shard 数 > 1 时，启动期直接 `throw`（拒绝启动），错误信息指向「多 shard 须待全 inventory 访问点语义接线完成」。** 解除条件 = 全 inventory（12 项 + 其余类别）接线 + 跨真实 route/service 的 2-shard 验收通过，不是模糊的「访问点改完」，更不能用 ratchet/路由器单测替代此护栏。
+> **任何非空 `db.shards`（含恰好 1 个 shard）在生产装配都启动期直接 `throw`（拒绝启动）。** —— Codex 第 2 轮更正：只拒 `>1` 有漏洞——配 1 个 shard 时,那个 shard 的 `IDatabase` 与 root/host db 是**不同实例**,TenantOSFactory 会走 shard db,而未接线的 12 项访问点仍走 host db → 单 shard 下也静默分裂。故护栏收紧到「非空 shards 即拒」。解除条件 = 全 inventory（12 项 + 其余类别）接线 + 跨真实 route/service 的 2-shard 验收通过,不是模糊的「访问点改完」,更不能用 ratchet/路由器单测替代此护栏。**测试通过注入 config 直接构造 ShardRouter 验证引擎（绕过生产 guard）,生产入口一律拒非空 shards。**
 
 即：本片 `ShardRouter` 作为**可单测的引擎**合入(2-shard 单测证明路由逻辑对)，但**生产多 shard activation 被 fail-closed 挡住**——单库缺省路径正常,多 shard 配置在下一子片接线完成前无法启用。这把「静默错-shard」从可能变为不可能。
 
@@ -43,8 +43,8 @@ Phase -1（已合 main）交付了 `TenantDbResolver` 契约 + `SingleDbResolver
 
 - `db.shards?: Record<string, { connectionString: string }>`（可选）+ `db.coordinator?: { connectionString: string }`（可选）+ `db.homeShardId?: string`（可选,default 租户的 home shard,须 ∈ shards key）。
 - **缺省（无 shards）→ 单库**：工厂用 `SingleDbResolver(createDatabase(config))`，行为不变（向后兼容零回归）。
-- **有 shards（>1）→ 启动期 fail-closed `throw`**（本片护栏）：拒绝启动,信息指向「多 shard 须待全 inventory 访问点接线完成」。即本片**不放开**生产多 shard activation——`ShardRouter` 引擎合入 + 可单测,但配了多 shard 会被拒。下一子片接线完成 + 2-shard 验收后才解除。
-- shards 恰好 1 个 → 允许(等价单库,可用于验证 ShardRouter 单 shard 路径)；homeShardId 不 ∈ shards → fail-closed。
+- **任何非空 `db.shards`（≥1）→ 生产启动期 fail-closed `throw`**（Codex 第 2 轮：不是 >1,是非空即拒——单 shard 也会因 shard db≠host db 致未接线访问点分裂）。即本片**不放开**任何生产 shard activation——`ShardRouter` 引擎合入 + 可单测（测试注入 config 直构,绕过 guard），但生产配了 shards 会被拒。下一子片接线完成 + 2-shard 验收后才解除。
+- shards=1 也拒（Codex：单 shard db≠host db 仍分裂）;ShardRouter 的单/多 shard 路径由**单测注入 config 直构**验证,不经生产 guard。homeShardId 不 ∈ shards → fail-closed。
 
 ### 4. 建 shard db（`src/storage/factory.ts`）
 
@@ -76,7 +76,7 @@ TenantOSFactory.createTenantOS(tenantId)
 | D. default 租户 | 钉**显式配置的** `homeShardId`（不用 sortedShardIds[0]——新增字典序更小 shard 会漂移,Codex） | 对应 Phase 1 default 归位前置；`dbForTenant('default')` 明确落 home shard。 |
 | 路由哈希 | 64 位 FNV-1a **确定性模哈希**（抽公用纯函数,不 reach 内核私有;golden vector 锁定） | 静态 shard 集合下够用;非一致性哈希(增删 shard 大部分重映射,rebalance 是 Phase 3);无 Math.random、可复现。 |
 | E. 多 shard 启用（Codex 致命1） | **启动期 fail-closed**：shard>1 拒绝启动 | 12 项访问点未接线前放开多 shard = 静默错-shard；护栏是运行时约束,非文档承诺。 |
-| F. 池 owner/关闭（Codex 致命2） | ShardRouter 唯一 owner,app shutdown 接 `router.close()` | 现有 onClose 只 clear 租户 OS,不关 router 池 → 泄漏；且防与 root OS 双关同一 db。 |
+| F. 池 owner/关闭（Codex 致命2 + 第 2 轮补） | ShardRouter 唯一 owner,app shutdown 接 `router.close()`；**幂等 close**（共享实例只关一次）；**init 失败回收**（`initialize()` 中途失败须关已建的池,不半泄漏）；main/main-desktop/createApp 共用**唯一启动 assembler/validator** | 现有 onClose 只 clear 租户 OS,不关 router 池 → 泄漏；防与 root OS 双关同一 db；防三个入口各写一套装配致 guard 漏挂。 |
 | G. 启动预热 | `initialize()` 预建+预迁移所有 shard | 懒建的同步迁移会阻塞首个请求（PG 主线程同步等待,30s 超时）。 |
 
 ## 不变量（测试必须覆盖）
@@ -88,7 +88,7 @@ TenantOSFactory.createTenantOS(tenantId)
 5. **单库等价现状（零回归）**：无 shards 配置时工厂用 `SingleDbResolver`，`dbForTenant` 恒返回同一 db；全量回归零回归。
 6. **close 关全部**：`ShardRouter.close()` 关所有缓存 shard db + 协调库（不泄漏连接）。
 7. **懒建**：未访问的 shard 不建池（`poolFor` 首次访问才 `buildDb`）；`initialize()` 后所有配置 shard 已建（不阻塞首个请求）。
-8. **【安全护栏】多 shard fail-closed**：config `db.shards` 有效 shard 数 >1 → 启动期 `throw` 拒绝（本片不放开多 shard activation）；homeShardId ∉ shards → `throw`。
+8. **【安全护栏】任何非空 shards fail-closed（Codex 第 2 轮收紧）**：生产装配（main/main-desktop/createApp 共用的唯一启动 validator）见**非空** `db.shards`（含 1 个）→ **在建任何池/worker 之前** `throw` 拒绝；homeShardId ∉ shards → `throw`。此 guard 是自动化测试覆盖项（不变量 8/9/10 均须落测试,非仅文字）：测单-shard-不同-root 也被拒、生产入口 guard 生效、共享实例只 close 一次。
 9. **close 唯一 owner 不双关**：单库路径下 root OS close 那个 db,ShardRouter 不重复 close 同一实例（coordinator==某 shard 时复用同实例）。
 10. **FNV golden vector**：`fnv1a64` 对 ASCII/BMP 中文/代理对 emoji 三类 tenantId 有锁定的 golden 输出（防算法漂移）。
 
@@ -127,3 +127,11 @@ TenantOSFactory.createTenantOS(tenantId)
   7. 【更正·已修】13 项 → 12 项（jwtKeyStore 是 platform-table）。
   8. 【更正·已补】FNV UTF-16 charCode 语义须 golden vector 锁定（不变量 10）；懒建同步迁移阻塞首请求 → `initialize()` 预热（决策 G + 不变量 7）。
 - **结论：修订后待 Codex 复审**（两个致命的根因——静默错-shard 用 fail-closed 变为不可能、池泄漏用 owner+close 链堵住——已处理）。
+
+- **第 2 轮复审（Codex，确认修订）：78/100，仍退回。** 抓到决定性残留：**单-shard activation 漏洞**——原 fail-closed 只拒 `>1`,但配 1 个 shard 时那个 shard db 与 host db 是不同实例,TenantOSFactory 走 shard db 而未接线的 12 项走 host db → 单 shard 下也静默分裂。**主 AI 独立核实确认**（spec 原 `:47` 确写「shards=1 允许」+ `createShardDb` 建的是新实例）,Codex 对。已收紧：
+  1. 【致命1 残留·已修】fail-closed 从「shards>1 拒」改为「**任何非空 shards（含 1）在建任何池/worker 前拒**」（背景段 + 决策 E + config + 不变量 8）；测试注入 config 直构验证引擎,绕过生产 guard。
+  2. 【补】main/main-desktop/createApp 共用**唯一启动 assembler/validator**（防三入口各写装配致 guard 漏挂,决策 F）。
+  3. 【补】幂等 close（共享实例只关一次）+ init 失败回收（决策 F + 不变量 9）。
+  4. 【补】不变量 8/9/10 须落**自动化测试**（单-shard-不同-root 被拒 / 生产入口 guard / 共享实例关一次），非仅文字。
+  - 命名（确定性模哈希）/显式 homeShardId/12 项/UTF-16 golden 等第 1 轮修订,Codex 确认已基本解决。
+- **结论：修订后待 Codex 第 3 轮复审**（单-shard 洞已用「非空即拒」堵死,静默错-shard 现在真的从可能变为不可能）。
