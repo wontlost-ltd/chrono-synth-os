@@ -8,6 +8,10 @@
  *     GLOBAL_LEASE_PERSONA_ID），否则全局 restoreFromSnapshot 回滚会被并发写者
  *     互相覆盖快照——per-persona 锁挡不住不同 persona 的并发编译。
  *
+ *   注（2026-07：ADR-0056 K5 后）：compile 锁已收窄到 per-persona（distillation/shadow-exam 传 personaId），
+ *   因快照/回滚已 per-persona（createSnapshot(personaId) + coreSelfOnly）。GLOBAL_LEASE_PERSONA_ID 常量保留
+ *   备用，compile 路径不再使用它。
+ *
  * 设计（方向由 ADR-0048 指定：DB 级、compare-and-set、unique running per scope）：
  *   - 一张 persona_leases 表，UNIQUE(tenant_id, persona_id, purpose)，保证同一数字人
  *     同一用途同时只有一个持有者。
@@ -30,11 +34,14 @@ export const PERSONA_LEASE_PURPOSES: readonly PersonaLeasePurpose[] = ['earning'
 /**
  * 全局（租户级）锁的 sentinel persona_id。
  *
- * 用于「作用域是整个租户而非单个 persona」的互斥：典型是 compile——
- * DistillationService 的编译走 system-global 的 createSnapshot/restoreFromSnapshot
- * （快照覆盖 coreSelf + 全部 personas + 全部 conflicts），因此不同 persona 的并发
- * 编译必须互斥，不能各持一把 per-persona 锁。让所有 persona 的 compile 都竞争
- * (tenant, GLOBAL_LEASE_PERSONA_ID, 'compile') 这一把锁即得到租户级全局互斥。
+ * 用于「作用域是整个租户而非单个 persona」的互斥。历史上 compile 曾是典型用例——
+ * 彼时 DistillationService 的编译走 system-global 的 createSnapshot/restoreFromSnapshot
+ * （快照覆盖 coreSelf + 全部 personas + 全部 conflicts），故不同 persona 的并发编译
+ * 必须互斥，各持一把 per-persona 锁挡不住。
+ *
+ * 注（2026-07：ADR-0056 K5 后）：快照/回滚已收窄到 per-persona，compile 锁随之改为
+ * 竞争 (tenant, personaId, 'compile')，不再使用本 sentinel。此常量保留备用，供未来
+ * 若出现新的「租户级全局互斥」场景复用。
  *
  * 形如真实 persona id 不会用的保留值（双下划线包裹），避免与真实 persona 冲突。
  */

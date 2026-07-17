@@ -61,7 +61,7 @@ export class ShadowExamVerifier {
     private readonly templates?: ResponseTemplateStore,
     private readonly clock?: Clock,
     private readonly rules?: RuleStore,
-    /** 影子编译期间持租户级 compile 锁（红线 13）。未注入 = 单进程同步语义（向后兼容）。 */
+    /** 影子编译期间持该 persona 的 compile 锁（红线 13）。未注入 = 单进程同步语义（向后兼容）。 */
     private readonly leaseStore?: PersonaLeaseStore,
     /** 作答边界（never_discuss 等，红线 2）；缺省空。 */
     private readonly boundaries: BehaviorBoundary[] = [],

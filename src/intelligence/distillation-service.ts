@@ -304,8 +304,9 @@ export class DistillationService {
 
   /**
    * 编译主体：持有 compile 锁（如启用）期间执行。via 标记编译路径（auto/approved），随状态推进落库。
-   * checkBudget（仅自动路径 true）：**在锁内**复核不确定性预算——此刻锁串行化全租户编译，COUNT 已含所有并发
-   * 实例先前落库的编译，是权威判定。超预算 → 不推进不编译，工件留 candidate，返回 'budget_exceeded' 降级人工。
+   * checkBudget（仅自动路径 true）：**在锁内**复核不确定性预算——此刻锁串行化该 persona 的编译，COUNT（本就
+   * per-persona 统计）已含该 persona 所有并发实例先前落库的编译，是该 persona 的权威判定。超预算 → 不推进
+   * 不编译，工件留 candidate，返回 'budget_exceeded' 降级人工。
    * 传入的 artifact 为 candidate（自动路径）时，candidate→approved 推进也在锁内做（预算通过后），保证
    * {复核预算 → approve → compile} 三步对其他编译者原子。
    */
