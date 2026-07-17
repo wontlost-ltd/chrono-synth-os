@@ -58,7 +58,16 @@ export class ShardRouter implements TenantDbResolver {
   }
 
   allShardDbs(): IDatabase[] {
-    return Object.values(this.shards).map((c) => this.dbForConn(c));
+    /* 返唯一物理 db：两 shardId 映射同一 connStr 时只出现一次（防 fan-out 消费方对同库重复执行）。
+     * 按 shards 声明顺序取首次出现，稳定顺序。 */
+    const seen = new Set<string>();
+    const out: IDatabase[] = [];
+    for (const connStr of Object.values(this.shards)) {
+      if (seen.has(connStr)) continue;
+      seen.add(connStr);
+      out.push(this.dbForConn(connStr));
+    }
+    return out;
   }
 
   /** 预建+预迁移所有 shard + 协调库（生产启动预热,避免懒建同步迁移阻塞首请求）。中途失败回收已建。 */

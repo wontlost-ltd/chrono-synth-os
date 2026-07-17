@@ -106,4 +106,16 @@ describe('ShardRouter', () => {
     assert.throws(() => r.initialize(), /boom/);
     assert.deepEqual(closed, ['c1'], '已建的 c1 被回收,不半泄漏');
   });
+
+  it('allShardDbs 按 connStr 去重：两 shardId 映射同一 connStr → 只返回一个实例', () => {
+    const { buildDb } = trackingBuild();
+    /* s1 与 s2 指向同一 connStr 'c1'，s3 独立 'c3' */
+    const r = new ShardRouter({ shards: { s1: 'c1', s2: 'c1', s3: 'c3' }, homeShardId: 's1', buildDb });
+    const dbs = r.allShardDbs();
+    assert.equal(dbs.length, 2, '唯一物理 db 数（c1 去重 + c3）');
+    /* 稳定顺序：c1 首次出现在 s1，c3 在 s3 */
+    assert.strictEqual(dbs[0], r.dbForTenant('default'), '首个是 home(s1=c1) 的 db');
+    /* 两个返回的实例互不相同（c1 vs c3） */
+    assert.notStrictEqual(dbs[0], dbs[1]);
+  });
 });
