@@ -30,7 +30,6 @@ import { retrieveMemoriesDeterministic } from '../conversation/deterministic-mem
 import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';
 import {
   validateArtifact, scoreExam, failedKeypoints, lintExamSpec,
-  GLOBAL_LEASE_PERSONA_ID,
   type ArtifactKind, type DistilledArtifact, type ExamSpec, type ExamResult,
 } from '@chrono/kernel';
 
@@ -94,8 +93,10 @@ export class ShadowExamVerifier {
       return { ok: false, reason: `ExamSpec rubric 不健康，拒绝验收（须修 rubric 重来）：${detail}` };
     }
 
-    /* ③ compile lease（红线 13）：影子编译期间持租户级 compile 锁，与正式编译/另一影子互斥。 */
-    const lease = this.leaseStore?.acquire(GLOBAL_LEASE_PERSONA_ID, 'compile', this.now(), SHADOW_COMPILE_LEASE_TTL_MS);
+    /* ③ compile lease（红线 13）：影子编译期间持**该 persona 的** compile 锁——与**同 persona** 的正式编译/
+     *    另一影子互斥（抢同一把 (tenant, personaId, 'compile')）；不同 persona 无需互斥（影子核独立 EventBus +
+     *    per-persona 快照，K5b）。 */
+    const lease = this.leaseStore?.acquire(personaId, 'compile', this.now(), SHADOW_COMPILE_LEASE_TTL_MS);
     if (this.leaseStore && !lease) {
       return { ok: false, reason: 'compile lease 被占（另一编译/影子验收进行中），稍后重试' };
     }

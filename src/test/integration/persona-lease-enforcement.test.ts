@@ -23,7 +23,6 @@ import type { DecisionEngine } from '../../intelligence/decision-engine.js';
 import type { ToolInvocationPipeline } from '../../agent/tool-invocation-pipeline.js';
 import { EventBus } from '../../events/event-bus.js';
 import { TestClock, SilentLogger } from '../../utils/index.js';
-import { GLOBAL_LEASE_PERSONA_ID } from '@chrono/kernel';
 import { SqliteDatabase } from '../../storage/database.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,12 +66,14 @@ describe('PersonaLease enforcement in real consumers (ADR-0047/0048)', () => {
       tenantId: TENANT, leaseStore: leases,
     });
 
-    /* 另一实例先占住【全局】compile 锁（compile 走全局快照，锁是租户级而非 per-persona） */
-    const held = leases.acquire(GLOBAL_LEASE_PERSONA_ID, 'compile', 1000, 60_000);
-    assert.ok(held, 'precondition: hold the global compile lease');
+    /* 另一实例先占住**同一 persona 的** compile 锁：Task 2（#4）后编译锁 per-persona（distillation-service.ts
+     * acquire(personaId,...)），blocker 必须占工件所属 persona（PERSONA）的锁才互斥；快照/回滚亦 per-persona
+     * （chrono-synth-os.ts:545,595,611-615）。 */
+    const held = leases.acquire(PERSONA, 'compile', 1000, 60_000);
+    assert.ok(held, 'precondition: hold the same-persona compile lease');
 
     const r = svc.approve(PERSONA, 'dart-lease');
-    assert.equal(r.ok, false, 'approve should not complete compile while global lease held');
+    assert.equal(r.ok, false, 'approve should not complete compile while same-persona lease held');
     assert.match(r.ok ? '' : r.reason, /lease busy/i, 'reason should indicate lease busy, not compile failure');
     assert.equal(snapshotTaken, false, 'snapshot must NOT be taken when compile lease unavailable');
     assert.equal(compiled, false, 'compiler must NOT run when compile lease unavailable');
@@ -97,15 +98,19 @@ describe('PersonaLease enforcement in real consumers (ADR-0047/0048)', () => {
       tenantId: TENANT, leaseStore: leases,
     });
 
-    /* 无人占锁 → 正常编译；并且编译期间全局 compile 锁应被本服务持有再释放 */
+    /* 无人占锁 → 正常编译；并且编译期间**该 persona 的** compile 锁应被本服务持有再释放（Task 2 #4：
+     * 锁 per-persona，见 distillation-service.ts acquire(personaId,...)）。 */
     const r = svc.approve(PERSONA, 'dart-ok');
     assert.equal(r.ok, true);
     assert.equal(store.getById(PERSONA, 'dart-ok')?.status, 'compiled');
-    /* 编译结束全局锁已释放：可立即再获取 */
-    assert.ok(leases.acquire(GLOBAL_LEASE_PERSONA_ID, 'compile', 2000, 60_000), 'global compile lease released after compile');
+    /* 编译结束该 persona 的锁已释放：可立即再获取 */
+    assert.ok(leases.acquire(PERSONA, 'compile', 2000, 60_000), 'persona compile lease released after compile');
   });
 
-  it('跨 persona 全局互斥：persona B 占住全局 compile 锁 → persona A 的 approve 被挡（防全局快照覆盖）', () => {
+  it('跨 persona 不互斥（#4：per-persona 锁）：persona B 占自己的 compile 锁 → persona A 仍能编译', () => {
+    /* 前提演进：ADR-0056 K5 后快照/回滚已 per-persona（createSnapshot(personaId) + coreSelfOnly，
+     * 见 chrono-synth-os.ts:545,595,611-615），原「A/B 覆盖 system-global 快照」的风险不存在，
+     * 故锁收窄到 per-persona——跨 persona 编译并行。 */
     const store = new DistilledArtifactStore(db, TENANT);
     const personaA = 'persona_A';
     store.insert(personaA, {
@@ -123,17 +128,40 @@ describe('PersonaLease enforcement in real consumers (ADR-0047/0048)', () => {
       bus: new EventBus(), clock: new TestClock(1000), logger: new SilentLogger(),
       tenantId: TENANT, leaseStore: leases,
     });
-
-    /* persona B 的编译正占着全局锁（用 GLOBAL sentinel，模拟另一 persona 正在编译） */
-    const heldByB = leases.acquire(GLOBAL_LEASE_PERSONA_ID, 'compile', 1000, 60_000);
+    /* persona B 占住**自己的** compile 锁（per-persona key）。 */
+    const heldByB = leases.acquire('persona_B', 'compile', 1000, 60_000);
     assert.ok(heldByB);
-
-    /* persona A 的 approve 必须被同一把全局锁挡住——这正是 per-persona 锁会漏掉、
-     * 而全局锁修复的核心场景（防 A/B 并发覆盖 system-global 快照） */
+    /* persona A 的 approve 不被 B 的锁挡——跨 persona 并行。 */
     const r = svc.approve(personaA, 'dart-A');
+    assert.equal(r.ok, true, 'A 应能编译（跨 persona 不互斥）');
+    assert.equal(snapshotTaken, true, 'A 正常快照并编译');
+    assert.equal(store.getById(personaA, 'dart-A')?.status, 'compiled');
+  });
+
+  it('同 persona 互斥：persona A 占自己的 compile 锁 → A 的另一次 approve 被挡', () => {
+    const store = new DistilledArtifactStore(db, TENANT);
+    const personaA = 'persona_A';
+    store.insert(personaA, {
+      id: 'dart-A2', kind: 'value_shift', source: 'reflection',
+      payload: { valueId: 'v1', currentWeight: 0.5, suggestedWeight: 0.51, delta: 0.01, patternAgrees: true },
+      confidence: 0.9,
+      evidence: [{ type: 'pattern', id: 'e1', score: 0.8 }, { type: 'memory', id: 'm1', score: 0.6 }],
+      status: 'candidate', createdAt: 1000,
+    });
+    let snapshotTaken = false;
+    const guard: SnapshotGuard = { snapshot: () => { snapshotTaken = true; return 'snap'; }, rollback: () => true };
+    const compiler = { compile: (): CompileOutcome => ({ ok: true, applied: 'x' }) } as unknown as ArtifactCompiler;
+    const svc = new DistillationService({
+      store, compiler, snapshotGuard: guard,
+      bus: new EventBus(), clock: new TestClock(1000), logger: new SilentLogger(),
+      tenantId: TENANT, leaseStore: leases,
+    });
+    const heldByA = leases.acquire(personaA, 'compile', 1000, 60_000);
+    assert.ok(heldByA);
+    const r = svc.approve(personaA, 'dart-A2');
     assert.equal(r.ok, false);
-    assert.equal(snapshotTaken, false, 'A must not snapshot while B holds the global compile lease');
-    assert.equal(store.getById(personaA, 'dart-A')?.status, 'approved');
+    assert.equal(snapshotTaken, false, '同 persona 锁被占时不快照');
+    assert.equal(store.getById(personaA, 'dart-A2')?.status, 'approved');
   });
 
   it('lease_busy 重试路径：锁释放后再次 approve（工件已 approved）→ 成功编译到 compiled', () => {
@@ -153,8 +181,10 @@ describe('PersonaLease enforcement in real consumers (ADR-0047/0048)', () => {
       tenantId: TENANT, leaseStore: leases,
     });
 
-    /* 第一次：全局锁被占 → approve 失败，工件留 approved（lease_busy） */
-    const blocker = leases.acquire(GLOBAL_LEASE_PERSONA_ID, 'compile', 1000, 60_000);
+    /* 第一次：**同一 persona 的** compile 锁被占 → approve 失败，工件留 approved（lease_busy）。Task 2（#4）
+     * 后锁 per-persona，blocker 须占工件所属 persona（PERSONA）的锁才互斥（distillation-service.ts
+     * acquire(personaId,...)）。 */
+    const blocker = leases.acquire(PERSONA, 'compile', 1000, 60_000);
     assert.ok(blocker);
     const first = svc.approve(PERSONA, 'dart-retry');
     assert.equal(first.ok, false);
