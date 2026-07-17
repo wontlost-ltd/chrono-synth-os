@@ -3,7 +3,7 @@
 **日期:** 2026-07-17
 **范围:** `src/storage/`（factory + shard router）、`src/multi-tenant/`（tenant-os-factory 路由点）、`src/config/schema.ts`（shard map 配置）、`src/server/routes/metrics.ts` + `src/observability/`（fan-out）、`src/privacy/`（迁移复用）、协调库 schema
 **关联:** 规模化缺口 #3；依赖 #4（编译锁去全局化，PR #312）——分片后每 shard 内部仍需 per-persona 锁才不被大租户串行卡死
-**状态:** 多阶段**设计总览**（Phase 0-3 的架构 + 接口契约 + 依赖顺序）。**本文件不直接可实现**——每个 Phase 落地前须各自出一份详细 spec + plan（本总览定契约与边界，细节在各 Phase spec）。Phase 0 优先。
+**状态:** 多阶段**设计总览**（Phase 0-3 的架构 + 接口契约 + 依赖顺序）。**本文件不直接可实现**——每个 Phase 落地前须各自出一份详细 spec + plan（本总览定契约与边界，细节在各 Phase spec）。**Phase -1 优先（当前唯一交付）；Phase 0 暂缓**（含高风险的第 6 类子服务生命周期重构）。
 
 ## 背景与问题
 
@@ -61,7 +61,7 @@ request.tenantId ──► TenantOSFactory.getTenantOS(tenantId)
     - **`personas.ts:31-32`**（注册期 `new PersonaCoreService(os.getDatabase())` 长寿命，请求时传任意 `request.tenantId` 查——Codex 补）
     - **`privacy-service.ts:425-436,490,552,570,647,657,788`**（捕获长寿命 root `os`，方法内反复 `this.os.getDatabase()`——第四种写法，第 6 类定义须含此形态）
     - 修法：resolver 下沉 per-request + 子服务**按租户重建/重绑**（生命周期重构，工作量远大于第 5 类）。Phase 0 plan 须把第 5/6 类分开估。
-  7. **模块级/全局单例 db 引用（跨请求）**：`websocket.ts:213` `eventLogDb = os.getDatabase()`（模块级单例，`:99-116` INSERT + `:126-143` SELECT `ws_event_log ... tenant_id=?`，**且 `:219-221` 起全局 prune timer**——跨请求事件背板，连 request.tenantId 都拿不到）。既非 per-request、也非普通 worker——单列（按事件 tenantId 路由，或 ws_event_log 整表归协调库）。
+  7. **模块级/全局单例 db 引用（跨请求）**：`websocket.ts:213` `eventLogDb = os.getDatabase()`（模块级单例，`:99-116` INSERT + `:133-144` SELECT `ws_event_log ... tenant_id=?`，**且 `:219-221` 起全局 prune timer**——跨请求事件背板，连 request.tenantId 都拿不到）。既非 per-request、也非普通 worker——单列（按事件 tenantId 路由，或 ws_event_log 整表归协调库）。
   8. **root-only 表**（确实无租户归属的）→ 协调库。
 - **接线策略：** `createApp`/`registerXxxRoutes` 注入 `TenantDbResolver` 而非裸 `db`；第 5 类换 db 源；**第 6 类做子服务生命周期重构（decisions/onboarding/companion/personas/privacy/memory-facade 全在此列）**；第 7 类单列。
 
@@ -73,7 +73,7 @@ request.tenantId ──► TenantOSFactory.getTenantOS(tenantId)
 
 ### Phase 0 — 分片路由机制（ShardRouter + 接线 TenantDbResolver，默认单 shard 零回归）
 
-**目标：** 落 `ShardRouter` 实现 `TenantDbResolver` 契约 + 把 Phase -1 清单里的显式 tenant_id store 接到 `dbForTenant`。默认单 shard，行为等价现状（零回归）。**范围警示（第 2 轮复审）：** 第 5 类（per-request）是换 db 源的小改；**第 6 类（注册期捕获 sharedDb + 绑子服务）是子服务生命周期重构**——工作量与风险远大于第 5 类，Phase 0 plan 须把二者分开估。具名验收用例：`memory-facade.ts:221` 的 confidence UPDATE 对非 default 租户必须落对 shard（现状静默错-shard）。
+**目标：** 落 `ShardRouter` 实现 `TenantDbResolver` 契约 + 把 Phase -1 清单里的显式 tenant_id store 接到 `dbForTenant`。默认单 shard，行为等价现状（零回归）。**范围警示：** 第 5 类（per-request，handler 内一次性取 db）是换 db 源的小改；**第 6 类（长寿命对象捕获 root OS/root DB + 绑子服务）是子服务生命周期重构**——工作量与风险远大于第 5 类，Phase 0 plan 须把二者分开估。具名验收用例：`memory-facade.ts:221` 的 confidence UPDATE 对非 default 租户必须落对 shard（现状静默错-shard）。
 
 **组件：**
 - **`ShardRouter`（新，`src/storage/shard-router.ts`，实现 `TenantDbResolver`）：**
@@ -81,9 +81,10 @@ request.tenantId ──► TenantOSFactory.getTenantOS(tenantId)
   - `shardIdFor(tenantId)` 一致性哈希（稳定、不用 Math.random）；`poolFor(shardId)` 按 **shardId** 缓存 `IDatabase`（同 shard 多租户共享一池——防连接爆）。
   - `coordinatorDb()` / `allShardDbs()` 供平台表 + fan-out。
 - **配置扩展（`config/schema.ts`）：** `db.shards?: Record<shardId, { connectionString }>` + `db.coordinator?: { connectionString }`。缺省（无 shards）→ 单库，`createDatabase` 不变（向后兼容）。
-- **接线（两处，缺一不可）：**
+- **接线（三处，缺一不可）：**
   1. `tenant-os-factory.ts:111`：`new TenantDatabase(this.resolver.dbForTenant(tenantId), tenantId)`。
-  2. **Phase -1 清单第 5 类的显式 tenant_id store**：从 `os.getDatabase()` 改为 `resolver.dbForTenant(request.tenantId)`（decisions/onboarding/privacy/companion 等）。这是 Codex 退回后 Phase 0 必须包含的部分。
+  2. **第 5 类（per-request 一次性取 db）**：从 `os.getDatabase()` 改为 `resolver.dbForTenant(request.tenantId)`——换 db 源。
+  3. **第 6 类（长寿命捕获 root OS/DB + 绑子服务）——子服务生命周期重构**：`decisions/onboarding/companion/personas/privacy/memory-facade` 全在此列（**第 3 轮更正：它们不是第 5 类小改**）。resolver 下沉 per-request + 子服务按租户重建/重绑。这是 Phase 0 的**大头**，与第 2 步的工作量不可混估。
 
 **连接生命周期（硬约束）：** per-shard 池缓存**按 shard 键**，不按 tenant——64 缓存租户散在 N shard，池数 = 去重 shard 数，每池 `pool.max`（默认 10）。按 tenant 缓存会连接爆。
 
@@ -119,7 +120,7 @@ request.tenantId ──► TenantOSFactory.getTenantOS(tenantId)
   - SUM 类（rollup/queue/billing-outbox）→ 各 shard 求和再相加。
   - tenant usage（已按 tenant keyed）→ 各 shard 结果 concat。
   - **population diversity（O(n²) 全量 decision_style）→ 拉所有 shard 的 decision_style 行做并集，再跑 `personalityDiversity()`**（成对函数需全量人口）。
-- **跨租户 worker 归类（两轮审查补全清单，逐个定 per-shard / 协调库）：** settlement-reconciliation、dual-write-flush、evidence-collector、`TaskQueue.dequeue` 全局公平调度（`task-queue.ts:102`）、runtime-recovery 全局扫超时 session（`persona-core-executors.ts:747`）、media-retention 全局扫（`media-ref-store.ts:110`）、observability worker，**+ 第 2 轮复审补漏：** `ConversationRetentionWorker`（`app.ts:525`）、`QuotaUsageRetentionWorker`（`app.ts:534`）、`ToolInvocationsRetentionWorker`（`app.ts:649`）、refresh-token cleanup timer（`app.ts:824`）、Stripe billing-outbox flush timer（`app.ts:868`，与 dual-write-flush 是两回事）、avatar autorun scheduler（`app.ts:426`）、**WebSocket event-log prune timer（`websocket.ts:219-221`，第 3 轮 Codex 补——与第 7 类同源）**、**TaskWorker 自带 poll/reaper/purge 三 timer（`task-worker.ts:64-67`，归 TaskQueue 项下但须展开）**。**每个明确 per-shard 跑或协调库跑。** 完整性同样由 ratchet（Phase -1）兜底——app.ts + 各 worker 里所有 `setInterval` 须逐个归类（不能只查 app.ts 接线）。（注：`AuditChainAnchor`/`TaskWakeReconciler`/`LearningWorker` 是每个 ChronoSynthOS 自带、随 tenant OS DB 跑的，非新 root 遗漏——Codex 澄清。）
+- **跨租户 worker 归类（两轮审查补全清单，逐个定 per-shard / 协调库）：** settlement-reconciliation、dual-write-flush、evidence-collector、`TaskQueue.dequeue` 全局公平调度（`task-queue.ts:102`）、runtime-recovery 全局扫超时 session（`persona-core-executors.ts:747`）、media-retention 全局扫（`media-ref-store.ts:110`）、observability worker，**+ 第 2 轮复审补漏：** `ConversationRetentionWorker`（`app.ts:525`）、`QuotaUsageRetentionWorker`（`app.ts:534`）、`ToolInvocationsRetentionWorker`（`app.ts:649`）、refresh-token cleanup timer（`app.ts:824`）、Stripe billing-outbox flush timer（`app.ts:868`，与 dual-write-flush 是两回事）、avatar autorun scheduler（`app.ts:426`）、**WebSocket event-log prune timer（`websocket.ts:219-221`，第 3 轮 Codex 补——与第 7 类同源）**、**TaskWorker 自带 poll/reaper/purge 三 timer（`task-worker.ts:64-67`，归 TaskQueue 项下但须展开）**、**JWT key-store reload timer（第 4 轮 Codex 补：`jwt-auth.ts:278-299` 每 60s `reloadKeyRing()`，key store 注册期绑 root db `app.ts:218-233`，访问平台级 `jwt_signing_keys`→归协调库）**。**每个明确 per-shard 跑或协调库跑。** 完整性同样由 ratchet（Phase -1）兜底——app.ts + 各 worker 里所有 `setInterval` 须逐个归类（不能只查 app.ts 接线）。（注：`AuditChainAnchor`/`TaskWakeReconciler`/`LearningWorker` 是每个 ChronoSynthOS 自带、随 tenant OS DB 跑的，非新 root 遗漏——Codex 澄清。）
 - **平台表归位（3 张无 tenant_id）：** `event_ledger_authority`（单例）→ 协调库；`event_ledger_consumer_checkpoints`（全局 offset）→ 每 shard 或重键 `(shard, consumer_id)`；`schema_migrations` → 保持每实例（每 shard 独立跑同一迁移集，须 lockstep）。
 
 **不变量：** metrics 全局数字 = 各 shard 之和/并集（用 2 shard 测：分别塞数据，断言聚合 = 合并值）；diversity score 在多 shard 下等于单库同数据的值。
@@ -165,7 +166,7 @@ Phase 3（迁移：全保真 + shard 参数化 + KMS/对象存储校验）  ← 
 
 ## 本地验证策略（全 spec）
 
-- Phase -1：inventory 覆盖所有 `os.getDatabase()`/裸 db 拿点（grep 全量枚举 + ratchet 测试防新增未归类）。
+- Phase -1：inventory 覆盖所有 DB source/sink（**非仅 grep 三串**——须 AST/类型感知或 DB source/sink allowlist 覆盖别名传播 `tx.prepare`/`sharedTx`/`IDatabase` 字段 + 构造器注入 `new Service(db)`/`buildAppServices(db)` + 长寿命 OS 捕获，见上「不变量」）+ ratchet 防新增未归类。
 - Phase 0：单测 ShardRouter（哈希稳定/池按 shard 缓存/单库等价）+ **2-shard 负测试（显式 tenant_id store 落对应 shard）** + 全量回归零回归。
 - Phase 1：default 路由到 home shard 测试 + companion 流回归。
 - Phase 2：**2 shard 集成测试**（内存 SQLite 起两个 db 当两 shard），塞数据分别落两 shard，断言 metrics 聚合 = 合并值。
@@ -174,7 +175,7 @@ Phase 3（迁移：全保真 + shard 参数化 + KMS/对象存储校验）  ← 
 
 ## 风险
 
-- **高（整体）**，但**分阶段后 Phase 0 低**（默认单库、纯机制、零回归）。真风险集中在 Phase 1（跨 20 文件的 default 语义）+ Phase 2（metrics 静默错误——聚合返回局部值不报错）+ Phase 3（迁移保真 + saga 原子性）。缓解：分阶段独立交付 + 每阶段独立审查；Phase 2 的「静默错误」用 2-shard 集成测试挡（断言聚合值 = 合并值，错了就红）。
+- **高（整体）**，但**分阶段后 Phase -1 低**（纯盘点 + resolver 契约 + ratchet，不启用路由/不改 DB 选择，零回归）——这是当前唯一交付。**Phase 0 本身不低风险**：它含第 6 类子服务生命周期重构（decisions/onboarding/companion/personas/privacy/memory-facade 的 resolver 下沉 + 子服务按租户重建），是全 spec 最大的行为改动面，故暂缓。真风险还集中在 Phase 1（跨 ~23 处 default 语义）+ Phase 2（metrics 静默错误——聚合返回局部值不报错）+ Phase 3（迁移保真 + saga 原子性）。缓解：分阶段独立交付 + 每阶段独立审查；Phase 2 的「静默错误」用 2-shard 集成测试挡（断言聚合值 = 合并值，错了就红）。
 - 跨审：本 spec 交 Codex 交叉审查（Claude 生成→Codex 审）。
 
 ## 交叉审查记录（CLAUDE.md 互审规范）
@@ -190,4 +191,5 @@ Phase 3（迁移：全保真 + shard 参数化 + KMS/对象存储校验）  ← 
 - **第 2 轮复审（Codex MCP 版本不兼容失败 → 降级为独立 Claude subagent 对抗复审，守生成者≠审查者）：72/100，需讨论。** 三致命诊断已补全，但根因只消化一半——独立发现两轮都漏的：① `websocket.ts:81` 模块级单例（→ 新增第 7 类）；② 注册期捕获 sharedDb + 绑子服务这个更大重构维度 + `memory-facade.ts:221` 静默错-shard 写（→ 新增第 6 类 + 二分 + 具名验收）；③ 漏 6 个跨租户 worker（→ 补全清单）；④ 不变量「已穷尽」与样本清单自相矛盾（→ 改为 ratchet 权威）。
 - **主 AI 决策（本轮修订采纳全部第 2 轮发现）：** 已加第 6/7 类 + per-request/注册期二分 + 补全 worker + ratchet 不变量重写 + memory-facade 具名验收。**交付范围决定（用户定）：只实现 Phase -1**（盘点 + `TenantDbResolver` 契约 + ratchet + 逐点归类，默认单库零回归）；Phase 0-3 待真规模信号再推。
 - **降级说明:** 第 2 轮 Codex CLI 报 `gpt-5.6-sol requires a newer Codex` 两次失败，由独立 Claude subagent（opus）替代。
+- **第 4 轮复审（Codex，确认小修）：88/100，需讨论（差一次全局一致性小修）。** 抓到小修「改新段落漏改旧段落」致 spec 内部矛盾：Phase 0 接线段仍称 decisions/onboarding 第 5 类（与新第 6 类冲突）、文件头+风险段仍称 Phase 0 优先/低风险、验证段仍用 grep 口径、新漏 JWT key reload timer。**主 AI 全局一致性小修（本轮已做）：** ① Phase 0 接线改三步（第 5 类换源 / 第 6 类生命周期重构，decisions/onboarding/companion/personas/privacy/memory-facade 全归第 6）；② 文件头「Phase -1 优先/Phase 0 暂缓」+ 风险段「Phase 0 非低风险」；③ 验证段口径升级到 AST/source-sink（非 grep 三串）；④ 补 JWT key reload timer（`jwt-auth.ts:278-299`→协调库）；⑤ 校正 websocket SELECT 坐标 `:133-144`；⑥ 术语统一「长寿命 root OS/DB」。逐处已 grep 验证无残留矛盾。
 - **第 3 轮复审（Codex，已更新版本后成功）：82/100，需讨论（小修后可通过）。** default/迁移=已解决；注入边界/worker 清单=部分解决（方向对，仍有可复现遗漏）。**主 AI 采纳全部并小修（本轮）：** ① onboarding/companion/chat 从第 5 类**更正**到第 6 类（独立核实确认注册期捕获 sharedDb）；② 第 6 类定义扩为「长寿命对象捕获 root OS/root DB」+ 点名 personas/privacy；③ ratchet 机制补「须覆盖别名传播/构造器注入，非三条 grep」；④ 修文档错误（六类→8 类、websocket `:81`→`:213`、Phase 0「唯一低风险」矛盾→Phase -1 唯一交付/Phase 0 暂缓）；⑤ 补 websocket prune timer + TaskWorker 三 timer。**Phase -1 验收合同收紧（Codex 4 条）：稳定 ID+1-8 类归属、ratchet 防别名/构造器注入漏、resolver 仅交接口+单库适配器不接业务点、Phase -1 不承诺修错-shard bug（那在 Phase 0）。**
