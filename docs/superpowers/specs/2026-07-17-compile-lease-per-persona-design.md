@@ -18,7 +18,7 @@
 | 编译目标 | 写入表 / 路径 | 隔离状态（已核实） |
 | --- | --- | --- |
 | value_shift | `core_values ... WHERE id=? AND persona_id=?`（`value-executors.ts:71`） | ✅ per-persona |
-| memory_edge | `core.linkMemories → addEdge(...,personaId) → persona_memory_edges WHERE tenant_id=? AND persona_id=?`（`cognitive-memory-executors.ts:194-198`） | ✅ per-persona |
+| memory_edge | `core.linkMemories → CognitiveMemoryGraph.addEdge(...,personaId) → kernel addEdge → **memory_edges**（`memory-executors.ts:238-239`，非 persona_memory_edges）`；读/写/删均 `WHERE persona_id=?`（`memory-executors.ts:217,238,246`） | ✅ per-persona（隔离成立，见下「已知风险」冲突键弱守卫） |
 | narrative / decision_style / cognitive_model patch | 人格特征三件套（K2 executor） | ✅ per-persona |
 | response_template | `response_templates (…, persona_id, …)` 对象级追加版本 | ✅ per-persona |
 | rule | 专用规则表，per-persona | ✅ per-persona |
@@ -29,6 +29,10 @@ ADR-0056 头部佐证：「K0-K6 + K5b 全部已交付，认知核心**全 7 维
 **结论：编译临界区触碰的全部状态（7 维内核 + 快照 + 回滚）均已 per-persona 隔离。不同 persona 的并发编译不会互相踩状态。全局锁的唯一理由（共享价值/记忆存储）已消失。**
 
 > ⚠️ 此论证是本设计的**安全根基**。若判读有偏差（某写路径实际仍 tenant 共享），并发编译会污染同 persona 或跨 persona 状态。故实现**必须先落一个并发隔离测试作安全网**（见「不变量 1」），用测试证明隔离真成立，再收窄锁——即使论证有误，测试会挡住。
+
+### 已知风险（Codex 交叉审查补，实施前须处理）
+
+`memory_edges` 的 upsert 冲突键是 `ON CONFLICT(source, target)`（`memory-executors.ts:239`），**无 tenant/persona guard**——而并行表 `persona_memory_edges` 有（`cognitive-memory-executors.ts:187-198`）。因 memory id 是全局随机 UUID，跨 persona 撞同一 `(source,target)` 概率极低，**不是本次锁收窄的直接阻断点**，但它削弱「memory_edge 全隔离」的强度：理论上两 persona 恰好引用同一对 memory id 时，后写者会覆盖前者的 persona_id。缓解：不变量 1 的跨 persona memory_edge 隔离测试须覆盖此边界；实施时评估是否顺带给 `memory_edges` upsert 补 persona guard（对齐 `persona_memory_edges`），或至少补一条同类守卫测试（本 spec 列为「实施时评估」，非强制前置——见「明确不做」的边界）。
 
 ## 设计决策
 
@@ -64,7 +68,8 @@ ADR-0056 头部佐证：「K0-K6 + K5b 全部已交付，认知核心**全 7 维
 
 ## 不变量（测试必须覆盖）
 
-1. **【安全网·最先写】跨 persona 编译互不污染**：同租户两个 persona A/B，各有一个 value_shift 候选，依次编译，断言 A 的价值权重只变 A、B 只变 B，读回互不串（证明底层 store 隔离真成立）。「并发」用**注入 leaseStore + 手动交错持锁**模拟（Node 单线程，非真多线程）：先让 A 持锁，此时对 B 发起编译应成功（拿到 B 自己的锁），再验两者落到各自 core。（此测试证明 per-persona 锁安全的前提——隔离真成立——先于收窄锁落地。）
+1. **【安全网·最先写】跨 persona 编译互不污染（value_shift + memory_edge 两类都测）**：同租户两个 persona A/B，各有一个 value_shift 候选**和**一个 memory_edge 候选，依次编译，断言 A 的价值权重/记忆边只变 A、B 只变 B，读回互不串（证明底层 `core_values` + `memory_edges` 隔离真成立）。「并发」用**注入 leaseStore + 手动交错持锁**模拟（Node 单线程，非真多线程）：先让 A 持锁，此时对 B 发起编译应成功（拿到 B 自己的锁），再验两者落到各自 core。（此测试证明 per-persona 锁安全的前提——隔离真成立——先于收窄锁落地。）
+   1b. **memory_edges 冲突键边界（Codex 补）**：两 persona 恰好引用同一对 `(source,target)` memory id 时，验证后写者不覆盖前者的 persona_id 归属（若现状 `ON CONFLICT(source,target)` 无 persona guard 导致覆盖，此测试会红 → 实施时决定补 guard 或接受该极低概率边界并文档标注）。
 2. **同 persona 编译互斥**：同一 persona 的两次并发 compile，第二次拿不到锁 → `lease_busy`（正式 vs 影子亦然：同 persona 影子编译持锁时，正式编译 `lease_busy`）。
 3. **跨 persona 不再互相 busy**：persona A 持锁编译时，persona B 的编译**能拿到锁**（不再 `lease_busy`）——这是本改动的**收益证明**（修复前 B 会被 A 的全局锁挡成 `lease_busy`）。
 4. **单进程语义零回归**：未注入 leaseStore 时，行为与现状完全一致（同步 `compileApprovedLocked`，无锁交互）。
@@ -78,13 +83,27 @@ ADR-0056 头部佐证：「K0-K6 + K5b 全部已交付，认知核心**全 7 维
 - 不改快照/回滚机制（已 per-persona，本改动只收窄锁 key）。
 - 不做 #3 分片（独立子项目，本 spec 之后单独走）。
 - 不清理 `GLOBAL_LEASE_PERSONA_ID` 常量（可能仍有其它/未来用途；仅停止在这两处用它）。
+- 不修「动态成长预算 resolver 仍读 default core」（`chrono-synth-os.ts:282-295`，Codex 指出）——这是**既有设计债**，不破坏本次锁安全（预算 COUNT 仍按 persona 权威），不归入本 spec 范围；仅在此标注，避免 spec 宣称「预算输入完全 per-persona」的过度表述。
 
 ## 本地验证
 
-- **单测** `src/test/unit/`：覆盖上述 6 条不变量，用内存 SQLite + 注入 `PersonaLeaseStore`（真 CAS 语义）+ 手动交错验证并发。
-- `npm run typecheck` + `npm run build` + 相关既有蒸馏/影子验收测试回归（`distillation-service` / `shadow-exam-verifier` / persona-lease 相关）。
+- **单测** `src/test/unit/`：覆盖上述不变量（1 + 1b + 2-6），用内存 SQLite + 注入 `PersonaLeaseStore`（真 CAS 语义）+ 手动交错验证并发。
+- **文档注释同步**（Codex 改进4）：实施时一并更新陈旧注释——`artifact-compiler.ts:79-82`（「executor 未扩」已过时）、`distillation-service.ts:280-283`（「K5b 前共享」已过时）、`shadow-exam-verifier.ts` compile 锁注释、`persona-lease-types.ts` 全局锁说明，改为反映 per-persona 现状。
+- `npm run typecheck` + `npm run build` + 相关既有蒸馏/影子验收测试回归（`distillation-service` / `shadow-exam-verifier` / persona-lease 相关；更新既有 lease 测试断言：同 persona busy、跨 persona 不 busy、影子同 persona 互斥）。
 - 失败即止。
 
 ## 风险
 
 - **中**。改动代码面极小（两处 key），但**语义是并发正确性**：从「全租户串行」放宽到「per-persona 并行」，若某编译目标实际仍 tenant 共享（论证有误），会引入跨 persona 状态污染。缓解：不变量 1（跨 persona 隔离安全网）**先于收窄锁**落地并通过，把安全性建立在测试证据而非论证之上。次要风险：`GLOBAL_LEASE_PERSONA_ID` 若被其它未审代码路径依赖为「全局屏障」——已 grep 确认仅这两处 acquire 用它作 compile 锁，无第三方依赖。
+
+## 交叉审查记录（CLAUDE.md 互审规范）
+
+- **生成:** Claude；**审查:** Codex（独立，非自审）；报告落 `.claude/review-report.md`。
+- **Codex 综合评分:** 82/100，建议「需讨论后可实现」，品味 8/10。**安全论证独立核实=基本支持**（K5b 后编译写集 + 快照/回滚均 per-persona，全局锁理由已失效）。
+- **主 AI 决策（82 落 80-89 边界，仔细审阅后）:** 采纳，不退回。方案核心成立，Codex 发现的问题均为可修订项，已逐条并入本 spec：
+  1. 【事实错误·已修】`memory_edge` 落表更正为 `memory_edges`（非 `persona_memory_edges`）——主 AI 独立核实确认（`memory-executors.ts:238`），Codex 抓对。隔离结论不变。
+  2. 【风险·已补】`memory_edges` upsert `ON CONFLICT(source,target)` 无 persona guard → 已加「已知风险」段 + 不变量 1b 覆盖该边界。
+  3. 【安全网·已在】跨 persona 隔离测试先于收窄锁——已扩为同时测 value_shift + memory_edge。
+  4. 【文档债·已列】陈旧注释同步（artifact-compiler / distillation-service / shadow-exam / lease-types）纳入本地验证清单。
+  5. 【既有债·已标】动态预算 resolver 读 default core → 标注为既有设计债，不归入本次安全论证。
+- 结论：**spec 通过（修订后）**，进入 writing-plans。
