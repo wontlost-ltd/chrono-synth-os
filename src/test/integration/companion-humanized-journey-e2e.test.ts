@@ -35,6 +35,7 @@ import type { AppConfig } from '../../config/schema.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { CompanionRelationshipStore } from '../../storage/companion-relationship-store.js';
 import { CompanionMoodStore } from '../../storage/companion-mood-store.js';
 
@@ -71,7 +72,7 @@ function testConfig(): AppConfig {
  * 才能被 chat 读到——这正是「seed base os 但 chat 读 tenant OS」假绿陷阱的规避法。
  */
 function makeSeeder(db: IDatabase, clock: TestClock): (tenantId: string, content: string) => void {
-  const factory = new TenantOSFactory(db, clock, new SilentLogger());
+  const factory = new TenantOSFactory(new SingleDbResolver(db), clock, new SilentLogger());
   return (tenantId: string, content: string) => {
     const tenantOS = factory.getTenantOS(tenantId);
     /* salience 高 → 稳定进 grounding；valence 中性，不污染 mood 断言。 */

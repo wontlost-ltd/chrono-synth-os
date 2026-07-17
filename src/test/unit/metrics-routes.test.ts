@@ -7,6 +7,7 @@ import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/lega
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import type { Query, Command, ExecResult } from '@chrono/kernel';
@@ -131,7 +132,7 @@ describe('metrics routes', () => {
     /* 真实内存库 + 多租户出生扰动 → 群体多样性应被两个端点 surface。 */
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    const factory = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+    const factory = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), {
       personalityBirthMagnitude: 0.15,
     });
     for (const t of ['t-a', 't-b', 't-c']) factory.getTenantOS(t);

@@ -19,6 +19,7 @@ import type { FieldCrypto } from '@chrono/data-plane';
 import { loadConfig, intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerA11yHeaders } from './plugins/a11y-headers.js';
 import { registerRequestId } from './plugins/request-id.js';
@@ -278,7 +279,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const services = buildAppServices(db, config, deps.logger);
   const tenantFactory = new TenantOSFactory(
-    db,
+    new SingleDbResolver(db),
     deps.os.getClock(),
     deps.os.getLogger(),
     /* 透传给所有租户 OS：①ADR-0054 主动性配置（红线 3）；②ADR-0048 动态成长预算开关。 */

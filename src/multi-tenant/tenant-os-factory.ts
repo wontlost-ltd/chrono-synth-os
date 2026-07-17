@@ -4,8 +4,8 @@
  */
 
 import { ChronoSynthOS } from '../chrono-synth-os.js';
-import type { IDatabase } from '../storage/database.js';
 import type { EncryptionConfig } from '../storage/encryption.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import type { Clock } from '../utils/clock.js';
 import type { Logger } from '../utils/logger.js';
 import { TenantDatabase } from './tenant-database.js';
@@ -50,7 +50,7 @@ export class TenantOSFactory {
   private readonly dynamicGrowthBudgetEnabled?: boolean;
 
   constructor(
-    private readonly db: IDatabase,
+    private readonly resolver: TenantDbResolver,
     private readonly clock: Clock,
     private readonly logger: Logger,
     config?: TenantOSFactoryConfig,
@@ -108,7 +108,7 @@ export class TenantOSFactory {
   }
 
   private createTenantOS(tenantId: string): ChronoSynthOS {
-    const tenantDb = new TenantDatabase(this.db, tenantId);
+    const tenantDb = new TenantDatabase(this.resolver.dbForTenant(tenantId), tenantId);
     const os = new ChronoSynthOS({
       db: tenantDb,
       clock: this.clock,
