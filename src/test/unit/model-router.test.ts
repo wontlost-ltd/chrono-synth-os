@@ -134,7 +134,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('预算充足时正常调用', async () => {
-      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 }, db);
+      const tokenBudget = TokenBudget.fromUnitOfWork({ monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 }, db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -148,7 +148,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('预算不足时抛出 QuotaExceededError', async () => {
-      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 10, dailyTokenLimit: 10, alertThreshold: 0.8 }, db);
+      const tokenBudget = TokenBudget.fromUnitOfWork({ monthlyTokenLimit: 10, dailyTokenLimit: 10, alertThreshold: 0.8 }, db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -165,7 +165,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('embed 预算不足时抛出 QuotaExceededError', async () => {
-      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 1, dailyTokenLimit: 1, alertThreshold: 0.8 }, db);
+      const tokenBudget = TokenBudget.fromUnitOfWork({ monthlyTokenLimit: 1, dailyTokenLimit: 1, alertThreshold: 0.8 }, db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -178,6 +178,17 @@ describe('ModelRouter (Mock Provider)', () => {
         () => r.embed(['a long text that will exceed the tiny budget limit set above']),
         (err: unknown) => err instanceof QuotaExceededError,
       );
+    });
+
+    it('TokenBudget.fromResolver：getSummary 按 tenantId 读对应 db', () => {
+      const tb = TokenBudget.fromResolver(
+        { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
+        new SingleDbResolver(db),
+      );
+      const sum = tb.getSummary('tX');
+      assert.ok(sum, 'getSummary 返回结构');
+      assert.equal(sum.daily.used, 0);
+      assert.equal(sum.monthly.limit, 1_000_000);
     });
   });
 

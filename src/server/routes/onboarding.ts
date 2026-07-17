@@ -67,7 +67,7 @@ export function registerOnboardingRoutes(
   tenantFactory?: TenantOSFactory,
 ): void {
   const sharedDb = db ?? os.getDatabase();
-  const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
+  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(sharedDb));
   const costTracker = CostTracker.fromResolver(new SingleDbResolver(sharedDb));
   const sharedTx = sharedDb;
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */

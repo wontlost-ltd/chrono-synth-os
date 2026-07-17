@@ -64,7 +64,7 @@ export function registerDecisionRoutes(
 ): void {
   const sharedDb = db ?? os.getDatabase();
   const sharedTx = sharedDb;
-  const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
+  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(sharedDb));
   const costTracker = CostTracker.fromResolver(new SingleDbResolver(sharedDb));
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = tryByokEncryption(config.encryption);

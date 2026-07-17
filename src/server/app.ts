@@ -489,7 +489,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     temperature: config.intelligence.temperature,
   });
   const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
-  const conversationTokenBudget = new ConversationTokenBudget(config.intelligence.budget, db);
+  const conversationTokenBudget = ConversationTokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(db));
   const conversationCostTracker = ConversationCostTracker.fromResolver(new SingleDbResolver(db));
   const conversationQuotaManager = QuotaManager.fromResolver(new SingleDbResolver(tx));
   const conversationCircuitBreaker = new ConversationCircuitBreaker({
