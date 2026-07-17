@@ -77,4 +77,22 @@ describe('决策风格随机初始化（③）', () => {
     ).diversityScore;
     assert.ok(mk(0.5) > mk(0.1), '幅度大多样性大');
   });
+
+  it('deliberationDepth 在 magnitude=0.15 下真拉开（补齐第 6 维）', () => {
+    const depths = new Set<number>();
+    for (let i = 0; i < 200; i++) {
+      const r = perturbDecisionStyle(BASE, `persona_${i}`, 0.15, 1000);
+      assert.ok(r.deliberationDepth >= 1 && r.deliberationDepth <= 5 && Number.isInteger(r.deliberationDepth));
+      depths.add(r.deliberationDepth);
+    }
+    /* 修复前恒为单一值（BASE.deliberationDepth=3）；修复后应出现 ≥2 个不同取值。 */
+    assert.ok(depths.size >= 2, `deliberationDepth 应分散，实际取值集=${[...depths]}`);
+  });
+
+  it('magnitude=0 时 deliberationDepth 恒等 base（向后兼容，含整数维缩放改动后仍成立）', () => {
+    for (let i = 0; i < 20; i++) {
+      const r = perturbDecisionStyle(BASE, `persona_${i}`, 0, 1000);
+      assert.equal(r.deliberationDepth, BASE.deliberationDepth);
+    }
+  });
 });
