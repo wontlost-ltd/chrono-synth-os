@@ -76,10 +76,9 @@ export class ArtifactCompiler {
    *   - narrative_patch / decision_style_patch / cognitive_model_patch → 人格特征三件套，**已按
    *     (tenant, persona) 隔离**（K2 executor 已扩）：不同 persona 各自落各自的行，互不串脑。
    *   - response_template / rule → 专用持久表，已**按 persona 对象级**落库。
-   *   - value_shift / memory_edge → ValueStore / CognitiveMemoryGraph 在 CoreRhythmLayer 内**仍是
-   *     tenant 键**（persona_id 列已加但 executor 未扩，K5b 后续子片）。故对非 default persona，这两类
-   *     编译写入的是**同租户共享**的价值/记忆，尚未 persona 隔离——resolver 正确寻址，但底层 store 未隔离。
-   *     未在本片声明 per-persona 隔离；K5 的 per-persona 自成长以三件套为准。
+   *   - value_shift / memory_edge → ValueStore（core_values）/ CognitiveMemoryGraph（memory_edges）在
+   *     CoreRhythmLayer 内**已按 persona_id 隔离**（ADR-0056 K5b：executor 已扩，见 value-executors.ts /
+   *     memory-executors.ts 的 WHERE persona_id）。不同 persona 各自落各自的行，互不串脑。
    */
   compile(personaId: string, artifact: DistilledArtifact): CompileOutcome {
     try {

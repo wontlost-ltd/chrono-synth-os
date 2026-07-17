@@ -156,9 +156,9 @@ describe('L4 ADR-0057 影子内核验收（闭环零-LLM）', () => {
       os.getDatabase(), (pid) => os.createShadowCore(pid), () => clock.now(), new SilentLogger(),
       undefined, undefined, undefined, leaseStore,
     );
-    /* 先占住全局 compile 锁。 */
-    const held = leaseStore.acquire('__global__', 'compile', clock.now(), 60_000);
-    assert.ok(held, '先占锁成功');
+    /* #4：锁 per-persona——占住**同 persona** 的 compile 锁才互斥。 */
+    const held = leaseStore.acquire('p-researcher', 'compile', clock.now(), 60_000);
+    assert.ok(held, '先占同 persona 锁成功');
     const r = v.verify('p-researcher', researchExam(), narrativeCandidate('我擅长文献检索、综合归纳、引用来源。'));
     assert.equal(r.ok, false);
     if (r.ok) return;
@@ -167,6 +167,12 @@ describe('L4 ADR-0057 影子内核验收（闭环零-LLM）', () => {
     /* 释放后可正常验收。 */
     const r2 = v.verify('p-researcher', researchExam(), narrativeCandidate('我擅长文献检索、综合归纳、引用来源。'));
     assert.equal(r2.ok, true);
+    /* #4 收益：另一 persona 占锁不挡本 persona 验收（跨 persona 并行）。 */
+    const heldOther = leaseStore.acquire('p-other', 'compile', clock.now(), 60_000);
+    assert.ok(heldOther, '占另一 persona 锁');
+    const r3 = v.verify('p-researcher', researchExam(), narrativeCandidate('我擅长文献检索、综合归纳、引用来源。'));
+    assert.equal(r3.ok, true, '另一 persona 占锁不挡本 persona');
+    leaseStore.release(heldOther!);
   });
 
   it('★事件不外发（红线 18，Codex 复审）★：影子验收不触发任何 core:*/system:* 事件', () => {
