@@ -11,7 +11,8 @@ describe('TenantDbResolver（分片地基 Phase -1）', () => {
     assert.strictEqual(r.dbForTenant('t2'), db, '不同租户单库下也是同一 db');
     assert.strictEqual(r.dbForTenant('default'), db);
     assert.strictEqual(r.coordinatorDb(), db);
-    assert.deepEqual(r.allShardDbs(), [db], 'allShardDbs 单库下就一个');
+    assert.strictEqual(r.allShardDbs().length, 1, 'allShardDbs 单库下就一个');
+    assert.strictEqual(r.allShardDbs()[0], db, 'allShardDbs[0] 是同一个 db 实例');
   });
 
   it('dbForTenant 对任意 tenantId 都不抛（单库恒同 db）', () => {
