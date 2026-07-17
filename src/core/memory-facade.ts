@@ -99,7 +99,7 @@ export class MemoryFacade {
     const encryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.personaCoreService = new PersonaCoreService(sharedTx, encryption);
     this.tokenBudget = config ? new TokenBudget(config.intelligence.budget, this.sharedDb) : undefined;
-    this.costTracker = config ? new CostTracker(this.sharedDb) : undefined;
+    this.costTracker = config ? CostTracker.fromResolver(new SingleDbResolver(this.sharedDb)) : undefined;
     this.quotaManager = config ? QuotaManager.fromResolver(new SingleDbResolver(sharedTx)) : undefined;
     this.usageTracker = config ? new UsageTracker(sharedTx) : undefined;
     this.billingOutbox = config ? new BillingOutbox(sharedTx, config) : undefined;

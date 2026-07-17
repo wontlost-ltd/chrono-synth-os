@@ -8,6 +8,7 @@ import { UsageTracker } from '../../billing/usage-tracker.js';
 import { QuotaExceededError } from '../../errors/index.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 
 describe('ModelRouter (Mock Provider)', () => {
   const router = new ModelRouter({
@@ -189,7 +190,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('chat 后 CostTracker 写入 llm_usage 记录', async () => {
-      const costTracker = new CostTracker(db);
+      const costTracker = CostTracker.fromUnitOfWork(db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -203,6 +204,13 @@ describe('ModelRouter (Mock Provider)', () => {
       /* mock 不返回 usage，所以 inputTokens/outputTokens 为 0，但应有写入记录 */
       const summary = costTracker.getMonthlySummary('tenant-1');
       assert.equal(summary.totalCalls, 1);
+    });
+
+    it('CostTracker.fromResolver：record 落对应 db 且可读回', () => {
+      const ct = CostTracker.fromResolver(new SingleDbResolver(db));
+      ct.record('tX', 'openai', 'gpt-x', 10, 20);
+      const sum = ct.getMonthlySummary('tX');
+      assert.ok(sum.totalTokens > 0, 'record 落库、getMonthlySummary 读回');
     });
   });
 
