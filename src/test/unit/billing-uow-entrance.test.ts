@@ -29,8 +29,8 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
     runDslSqliteMigrations(db);
     const config = loadConfig({});
     try {
-      assert.equal(new UsageTracker(db).getUsage('default', 'simulation'), 0);
-      assert.equal(new UsageTracker(db).getUsage('default', 'simulation'), 0);
+      assert.equal(UsageTracker.fromUnitOfWork(db).getUsage('default', 'simulation'), 0);
+      assert.equal(UsageTracker.fromUnitOfWork(db).getUsage('default', 'simulation'), 0);
 
       assert.equal(new SubscriptionQueryService(db).getLatestPlanId('default'), 'free');
       assert.equal(new SubscriptionQueryService(db).getLatestPlanId('default'), 'free');

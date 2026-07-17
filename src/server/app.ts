@@ -444,7 +444,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const bulkImportPersonaCoreService = new PersonaCoreService(tx);
   const bulkImportTemplateService = new PersonaTemplateService(tx, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
-  const p1dUsageTracker = new P1dUsageTracker(tx);
+  const p1dUsageTracker = P1dUsageTracker.fromResolver(new SingleDbResolver(tx));
   const p1dBillingOutbox = config.stripe.enabled ? new P1dBillingOutbox(tx, config) : undefined;
   const stripeCustomerLookup = (tenantId: string): string | null => {
     try {

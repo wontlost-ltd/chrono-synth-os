@@ -101,7 +101,7 @@ export class MemoryFacade {
     this.tokenBudget = config ? TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(this.sharedDb)) : undefined;
     this.costTracker = config ? CostTracker.fromResolver(new SingleDbResolver(this.sharedDb)) : undefined;
     this.quotaManager = config ? QuotaManager.fromResolver(new SingleDbResolver(sharedTx)) : undefined;
-    this.usageTracker = config ? new UsageTracker(sharedTx) : undefined;
+    this.usageTracker = config ? UsageTracker.fromResolver(new SingleDbResolver(sharedTx)) : undefined;
     this.billingOutbox = config ? new BillingOutbox(sharedTx, config) : undefined;
   }
 

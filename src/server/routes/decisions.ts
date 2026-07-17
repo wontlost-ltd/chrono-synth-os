@@ -68,7 +68,7 @@ export function registerDecisionRoutes(
   const costTracker = CostTracker.fromResolver(new SingleDbResolver(sharedDb));
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = tryByokEncryption(config.encryption);
-  const usageTracker = new UsageTracker(sharedTx);
+  const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
   const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
   const billingOutbox = new BillingOutbox(sharedTx, config);
 

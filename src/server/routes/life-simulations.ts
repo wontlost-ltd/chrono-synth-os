@@ -38,7 +38,7 @@ export function registerLifeSimulationRoutes(
   }
   const optTx = options?.db ? options.db : undefined;
   const quotaManager = optTx ? QuotaManager.fromResolver(new SingleDbResolver(optTx)) : undefined;
-  const usageTracker = optTx ? new UsageTracker(optTx) : undefined;
+  const usageTracker = optTx ? UsageTracker.fromResolver(new SingleDbResolver(optTx)) : undefined;
   const billingOutbox = optTx && options?.config ? new BillingOutbox(optTx, options.config) : undefined;
   const subscriptionQuery = optTx ? new SubscriptionQueryService(optTx) : undefined;
 

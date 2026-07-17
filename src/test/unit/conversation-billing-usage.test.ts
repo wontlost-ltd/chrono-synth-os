@@ -68,7 +68,7 @@ describe('ConversationService 计费上报', () => {
     });
     personaId = persona.id;
 
-    usageTracker = new UsageTracker(db);
+    usageTracker = UsageTracker.fromUnitOfWork(db);
     billingOutbox = new StubBillingOutbox();
     llm = new StubLLM();
 

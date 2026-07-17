@@ -73,7 +73,7 @@ export function registerOnboardingRoutes(
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = tryByokEncryption(config.encryption);
   const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
-  const usageTracker = new UsageTracker(sharedTx);
+  const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
   const billingOutbox = new BillingOutbox(sharedTx, config);
   const questionnaire = new QuestionnaireEngine();
 

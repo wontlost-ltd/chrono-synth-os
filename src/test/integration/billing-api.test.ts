@@ -130,7 +130,7 @@ describe('计费 API 集成测试', () => {
       };
 
       const tx = os.getDatabase();
-      const usageTracker = new UsageTracker(tx);
+      const usageTracker = UsageTracker.fromUnitOfWork(tx);
       usageTracker.record(auth.tenantId, 'llm_tokens', 1200);
       usageTracker.record(auth.tenantId, 'simulation', 2);
 

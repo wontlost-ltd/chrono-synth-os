@@ -308,7 +308,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('chat 后 UsageTracker 记录 llm_tokens 用量', async () => {
-      const usageTracker = new UsageTracker(db);
+      const usageTracker = UsageTracker.fromUnitOfWork(db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -321,6 +321,12 @@ describe('ModelRouter (Mock Provider)', () => {
       await r.chat([{ role: 'user', content: '普通消息' }]);
       const summary = usageTracker.getSummary('tenant-1');
       assert.equal(summary.llm_tokens ?? 0, 0);
+    });
+
+    it('UsageTracker.fromResolver：record 落对应 db 且可读回', () => {
+      const ut = UsageTracker.fromResolver(new SingleDbResolver(db));
+      ut.record('tX', 'sim', 3);
+      assert.equal(ut.getUsage('tX', 'sim'), 3);
     });
   });
 });

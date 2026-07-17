@@ -74,7 +74,7 @@ export class BillingRouteFacade {
   constructor(private readonly tx: SyncWriteUnitOfWork, private readonly config: AppConfig) {
     this.billingService = new BillingService(tx);
     this.settlementService = new SettlementReconciliationService(tx);
-    this.usageTracker = new UsageTracker(tx);
+    this.usageTracker = UsageTracker.fromUnitOfWork(tx);
     this.entitlementService = new EntitlementService(tx);
     this.webhookService = new StripeWebhookService(tx, this.entitlementService);
 
