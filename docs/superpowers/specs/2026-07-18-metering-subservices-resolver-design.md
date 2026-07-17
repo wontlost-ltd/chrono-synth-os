@@ -1,6 +1,6 @@
 # 计量子服务双入口化（TokenBudget/CostTracker/UsageTracker）设计
 
-> **状态**：设计已定，待 writing-plans。
+> **状态**：设计已定（Codex 复审 86→采纳 5 处收口），待 writing-plans。
 > **归属**：#3 租户分片 Phase 0 —— 「12 访问点接线」sub-phase 的第二批子服务（第一批 QuotaManager 已合入 PR #314）。
 > **前置**：QuotaManager 双入口模式（PR #314）已立范本；`TenantDbResolver`/`SingleDbResolver`/`FakeMultiShardResolver` 已就位。
 
@@ -43,18 +43,33 @@ interface MeterSource {
 - 方法（全 per-tenant，首参 tenantId）：`record`/`getMonthlySummary`/`getRecent` → 内部 `this.source.forTenant(tenantId)`。
 - **无-db 第三态砍掉**：现 `db?` 可选，但已 grep 确认**所有生产点都传 db**（memory-facade:102/decisions:68/onboarding:71），无-db 态生产无人用。工厂 resolver/tx 必填。测试若依赖无-db，改传 `fromUnitOfWork(内存db)`。
 
-### TokenBudget（`src/intelligence/token-budget.ts`）——保 config 首参
+### TokenBudget（`src/intelligence/token-budget.ts`）——保 config 首参；**纯读服务（无 db 写）**
 - 现构造：`constructor(config?: Partial<TokenBudgetConfig>, db?: IDatabase)`。
 - 双入口后：`static fromResolver(config, resolver)` / `static fromUnitOfWork(config, tx)`（**config 位保留**）。
-- 方法（全 per-tenant）：`checkBudget`/`recordUsage`/`checkAlert`/`getSummary`。
-  - 注意 `recordUsage` 只写内存 cache（`Map<tenantId, UsageCache>`），不落库——保持原样，内存 cache key 是纯 tenantId，同租户恒路由同 shard，fan-out 无关（本就无 fan-out）。
-- 无-db 第三态同 CostTracker 砍掉（生产点 memory-facade:101/decisions:67/onboarding:70 全传 db）。
+- **已核实事实（Codex + 亲验）：TokenBudget 无任何 db 写方法**。`getUsage`（私有）经 `this.tx.queryOne(llmQueryPeriodTotal(...))` **读** `llm_usage` 表（该表由 `CostTracker.record` 写）。checkBudget/checkAlert/getSummary 全走 `getUsage` **读**。`recordUsage` **只写内存 cache**（`Map<tenantId, UsageCache>`），不碰 db。
+- 改造：
+  - `checkBudget`/`checkAlert`/`getSummary`（读路径）→ 内部 `this.source.forTenant(tenantId).queryOne(...)`（**读**对应 shard）。
+  - `recordUsage`（纯内存）→ **保持原样不碰 source**（红线 2：纯内存方法不得为形式统一伪解析 db）。
+- 无-db 第三态砍掉（生产点 memory-facade:101/decisions:67/onboarding:70 全传 db，亲验无生产/测试依赖无-db 态）。
 
 ### UsageTracker（`src/billing/usage-tracker.ts`）——声明放宽
 - 现构造：`constructor(tx: SyncWriteUnitOfWork)`（声明窄，但生产实传多为 IDatabase）。
 - 双入口后：`static fromResolver(resolver)` / `static fromUnitOfWork(tx)`。
 - 方法（全 per-tenant）：`record`/`getUsage`/`getSummary`。
 - **注意 usage_records 的清理**：侦察发现清理逻辑**不在 UsageTracker 类内**（是 `app.ts:856` 独立 `pruneTable` 闭包裸 SQL）——本批不碰它（那是后续「裸 SQL 访问点」子片的事）。UsageTracker 自身无 cross-tenant 方法，纯 per-tenant。
+
+## 有意的公共 API 破坏（Codex 采纳）
+
+三个类是导出的公共类，构造器私有化是**有意的编译期 API 破坏**（消费者不再能 `new`，必须走工厂）。仓内全部构造点原子迁移保编译；仓外消费者（若有）按此迁移映射：
+
+```
+new TokenBudget(config, db)  →  TokenBudget.fromUnitOfWork(config, db)   // 已绑事务
+                             或  TokenBudget.fromResolver(config, new SingleDbResolver(db))
+new CostTracker(db)          →  CostTracker.fromUnitOfWork(db) / fromResolver(new SingleDbResolver(db))
+new UsageTracker(tx)         →  UsageTracker.fromUnitOfWork(tx) / fromResolver(...)
+```
+
+不保留无-db 第三态：它让 db 缺失静默退化为「零用量」，会掩盖配置错误（fail-silent 反模式）。
 
 ## 构造点迁移（按声明静态类型分类，原子提交保编译）
 
@@ -72,20 +87,31 @@ TokenBudget/CostTracker 私有化构造器后，config 位在 fromResolver/fromU
 
 ## 验收脚手架（复用上片）
 
-`FakeMultiShardResolver`（`src/test/support/fake-multi-shard-resolver.ts`，上片已建）直接复用。每个子服务一个探针测试文件（或合并到一个 `metering-subservices-sharding.test.ts`——plan 定，倾向每子服务一组 describe 便于定位）：
+`FakeMultiShardResolver`（`src/test/support/fake-multi-shard-resolver.ts`，上片已建）直接复用。**一个文件 `src/test/unit/metering-subservices-sharding.test.ts`，三个 describe**（CostTracker/UsageTracker 用写路由探针，TokenBudget 用读路由探针）。
 
-1. **per-tenant 分流（对称）**：tA→shard1、tB→shard2；各自写（CostTracker.record / TokenBudget 落库方法 / UsageTracker.record）；断言 shard1 db 查得到 tA 的行、查不到 tB（**且对称：tB 落 shard2、不在 shard1**——上片教训：不对称断言会漏「固定返回恰好等于 tA 目标」的 bug）。
-2. **UoW 模式**：`fromUnitOfWork(db)` 操作落该 db。
-3. **单库零回归**：`fromResolver(new SingleDbResolver(db))` 行为与改造前等价。
+### CostTracker / UsageTracker（写路由探针）
+1. **per-tenant 分流（对称）**：tA→shard1、tB→shard2；各自 `record(...)`；断言 shard1 db 查得到 tA 的行且查不到 tB、shard2 查得到 tB 且查不到 tA（**对称**——上片教训：不对称断言漏「固定返回恰好等于 tA 目标」的 bug）。
+2. **UoW 模式**：`fromUnitOfWork(db)` 写落该 db。
+3. **单库零回归**：`fromResolver(new SingleDbResolver(db))` 与改造前等价。
+
+### TokenBudget（读路由探针——它无 db 写方法，Codex 采纳的确定契约）
+TokenBudget 只**读** `llm_usage`（CostTracker 写的表），故探针验「按 tenantId 从对应 shard **读**对了」：
+1. **预置**（读前先写）：shard1 的 `llm_usage` 预置 tA 数据（如 total_tokens=11），shard2 预置 tB 数据（**不同值** total_tokens=22）；两 shard 不复制同一 tenant。
+2. **读路由**：同一 `TokenBudget.fromResolver(config, resolver)`，`getSummary(tA)` 读出 11、`getSummary(tB)` 读出 22（用 `getSummary`——返回精确 used 值；不用 `checkBudget`——布尔区分弱）。
+3. **变异**：`dbForTenant` 恒返 shard1 → `getSummary(tB)` 读到 0（非 22）→ 测试失败。
+4. **cache 防假阳性**（TokenBudget 有 `Map<tenantId,UsageCache>` 首读缓存）：预置 db 数据**在首次读之前**完成；每 tenant 只触发一次首读或每测试新建实例；**不要先调 recordUsage**（污染 cache）。
+5. `recordUsage` 只测「tenantId 维度内存 cache 隔离」（行为回归），**不算 shard 分流探针**（不碰 resolver）。
 
 **无 fan-out/fail-fast/去重断言**（三者无 cross-tenant 方法）。
 
-> TokenBudget 特例：`recordUsage` 只写内存不落库，per-tenant 分流断言要挑**真落库**的方法验（如 `checkBudget`/`getSummary` 读的是 CostTracker 写的 llm 表——TokenBudget 自身可能无独立落库写方法）。plan 阶段核实 TokenBudget 哪个方法真写 db；若它纯读+内存，则其探针断言「按 tenantId 从对应 shard 读」而非「写落对应 shard」。
+## usage_records 清理的多-shard 风险（登记，归后续子片）
+
+`usage_records` 旧行清理**不在 UsageTracker 类内**——是 `app.ts:856` 独立 `pruneTable('usage_records', ...)` 闭包裸 SQL，捕获单个 `db`。**多 shard 启用后只清理该单库、其余 shard 的 usage_records 持续累积**（保留失效 + 存储膨胀）——与 BillingOutbox 定时器同类风险。本批不碰（归后续「裸 SQL/跨租户维护」子片），但**显式登记为多-shard 启用前阻塞风险**：真正 activate 分片前必须完成该清理 fan-out。本批只「铺路」，不宣称 retention 已具备多-shard 正确性。
 
 ## 红线（不变量）
 
 1. **零回归**：单库（SingleDbResolver）+ UoW 模式与改造前逐字等价；全量 unit fail=0。
-2. **per-tenant 必经 forTenant**：所有带 tenantId 方法经 `this.source.forTenant(tenantId)`，不残留直接持 db。
+2. **实际访问 db 的 per-tenant 路径必经 forTenant**：所有**真正读写 db** 的带 tenantId 方法经 `this.source.forTenant(tenantId)`，不残留直接持 db。**纯内存方法（TokenBudget.recordUsage）不得为形式统一伪解析 db**（Codex 采纳：伪路由降低数据结构诚实性）。
 3. **UoW 模式固定 tx**：`forTenant` 忽略 tenantId 恒返 tx，不重新解析（结构上不可能脱离事务）。
 4. **无 cross-tenant/fan-out**：三者无 allShardDbs 调用（它们没有跨租户方法）；若 plan 发现漏判的 cross-tenant 方法，退回补 fan-out 设计。
 5. **无适配层**：直接用 IDatabase extends SyncWriteUnitOfWork。
