@@ -123,7 +123,7 @@ GitHubWritePort          createIssueComment/createReview（只写；对外副作
 **摄入契约更正（Codex ①，最关键）**：真实 `PerceptionInput`（`src/perception/perception-provider.ts`）只有 `modality: PerceptionModality`（`audio|video`）+ 媒体专用字段 `mediaSha256`/`durationMs` + `representation`。**GitHub 文本没有 mediaSha256/durationMs，套不进媒体形状**。两条修法（实现计划二选一，spec 层给判据）：
 - **(推荐) 扩 `PerceptionModality` 加 `text`**，并把 `mediaSha256`/`durationMs` 改为**媒体专用可选字段**（text modality 时用内容 SHA 代替 mediaSha256 做 provenance/去重，durationMs 省略）。改动小、复用整条 perceive 管线，但**动了内核感知契约**（破坏性分析见 §5 破坏性）。
 - **(备选) 学习不走 perceive，直接走确定性记忆写入 + core-update-gate**：GitHubLearningMapper 产出事实 → `memoryGraph.addMemory`；若有身份/价值提议 → 自行 `distillation.ingest`。绕开 PerceptionInput 媒体形状，但**重复 perceive 已封装的封顶/校验逻辑**（违 DRY）。
-- **判据（第 3 轮已核实真实现状）**：`learn-topic`（`me.ts:557-564`）现状**用 `modality:'audio'` + `mediaSha256=sha256(representation)` + `durationMs:0` 承载文本**——即"audio 壳装文本"已是既有做法。故最省的落地是**沿用这个既有范式**（GitHub representation 同样填 audio 壳 + 内容 SHA + durationMs:0），零内核契约改动；若嫌语义脏，再考虑扩 `text` modality（Codex 建议用 discriminated union，媒体字段随 modality 收敛，而非把所有媒体字段改 optional）。Plan 0 定二选一，但默认沿用既有范式（改动最小、已验证可行）。
+- **首版决定（第 3 轮已核实真实现状）**：`learn-topic`（`me.ts:557-564`）现状**用 `modality:'audio'` + `mediaSha256=sha256(representation)` + `durationMs:0` 承载文本**——"audio 壳装文本"已是既有做法。**首版沿用这个既有范式**（GitHub representation 同样填 audio 壳 + 内容 SHA + durationMs:0），零内核契约改动、已验证可行。扩 `text` modality（Codex 建议的 discriminated union）列为**后续清理项**，不在首版范围。plan 不再回退二选一。
 
 **端点前缀约定（有意区分）**：手动学习走 `companion/me/*`（数字人主人发起的学习动作，与 learn-topic 同层）；系统入站 webhook 走 `integrations/github/*`（5.3，非用户动作、无 companion 身份、走签名校验）。两者鉴权与身份模型不同，故前缀不同。
 
@@ -156,7 +156,7 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 **决策：走 perceive 而非 KnowledgeIngestionService**。`KnowledgeIngestionService` 直写记忆且**不产生身份/价值提议、不过 core-update-gate**；走 perceive 才让 GitHub 学习的**身份/价值影响**自动过内核封顶门。**不新建 `knowledge_sources` 的 `github` 类型**。（注：仅就"记忆写入"而言两者都直写；差别在 perceive 额外产出并封顶身份/价值提议。）
 
 **增量与去重**：
-- 新表 `github_learn_state`（见 6），记每个 `(tenant_id, persona_id, repo, resource_type)` 的同步游标：issue/PR 用 `updated_at`，commit 用 SHA，repo 用 tree SHA。
+- 新表 `github_learn_state`（见 6），记每个 `(tenant_id, persona_id, repo, resource_type)` 的同步游标：issue/PR 用 `updated_at`，commit 用 `{ts, sha}`（时间戳锚 + SHA 边界，见 §6 游标语义），repo 用 tree SHA。
 - 已学过且未变的跳过，只把新增/变更喂进 perception，避免同一 issue 反复灌记忆 + 重烧不确定性预算。
 
 **触发**：手动（`learn-github` 端点）；自动（5.3 webhook 增量喂单条）。
@@ -174,7 +174,7 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 ```
 ① GitHub webhook（新 issue / 新 PR）
     →【签名校验:X-Hub-Signature-256，HMAC-SHA256 + timingSafeEqual；失败直接拒】
-    →【幂等:webhook_events 表，防 GitHub 重投】
+    →【幂等:github_webhook_events 表（tenant, delivery_id），防 GitHub 重投】
 ② 增量学习（5.2）:把这条新 issue/PR 喂进 perception
 ③ 创建 workforce 任务（taskType:'github_issue_triage' | 'pr_review'）
     → status='delegated' + allowsToolExecution=true
@@ -187,7 +187,7 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 ⑦ 审计留痕（谁批的、发了什么、到哪个 issue/PR）
 ```
 
-**Webhook 接收器**：复用 Stripe 模式（`src/server/routes/billing.ts` + `src/billing/stripe-webhook-service.ts`）——raw body + 签名头校验 + 幂等。GitHub 用 `X-Hub-Signature-256`（HMAC-SHA256，复用现有 `createHmac`+`timingSafeEqual` 助手，非 Stripe SDK）。**幂等键更正（Codex ⑥）**：真实 `webhook_events` 表只有 `event_id(PK)/event_type/processed_at`，**无 provider 列**——GitHub 与 Stripe 的 delivery id 空间会撞 PK。修法：迁移给 `webhook_events` 加 `provider` 列并改 PK 为 `(provider, event_id)`，**或**给 GitHub 用独立幂等表 `github_webhook_events`。实现计划二选一（加列改 PK 是破坏性迁移，需评估 Stripe 现有行；独立表更隔离）。签名校验失败直接拒，不进流程。
+**Webhook 接收器**：复用 Stripe 的**处理模式**（`src/server/routes/billing.ts` + `src/billing/stripe-webhook-service.ts`）——raw body + 签名头校验 + 幂等。GitHub 用 `X-Hub-Signature-256`（HMAC-SHA256，复用现有 `createHmac`+`timingSafeEqual` 助手，非 Stripe SDK）。**幂等键（首版决定 Codex ⑥）**：真实 `webhook_events`（`event_id` PK，无 provider 列）会与 Stripe delivery id 撞 → **新建独立 `github_webhook_events` 表**（不动 Stripe 表，见 §6），键 `(tenant_id, delivery_id)`。签名校验失败直接拒，不进流程。
 
 **两个 playbook**：注册进 `PlaybookRegistry`（`src/workforce/playbook-registry.ts`），产出 `TaskSpec`（真实字段：`assigneeRoleCode`、`title`、`taskType`、`riskLevel: RiskLevel`、`allowsToolExecution:true`、`acceptanceCriteria`、`requiredCapabilities`、可选 `slaMs`）。**更正（Codex ③）**：强制审批**不靠 playbook 字段**——由 GitHub 写工具的 `metadata.highRisk=true` 在执行时经 `tool-risk-deriver` 置 `toolRisk='high'`，再由 `assessExecutionRisk` 强制 `requiresHuman`。playbook 只需把任务标 `allowsToolExecution:true` + 用要求 GitHub 写工具的 `requiredCapabilities`。（`outboundCommitment` 是 `ExecutionRiskSignals` 里只由 body 上调的硬信号，`highRisk` 不派生它，playbook 也不设它。）
 
@@ -259,7 +259,7 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 
 **游标语义（第 3 轮更正 Codex ⑦）**：
 - `issues`/`pulls`：游标 = 已成功摄入的**最大 `updated_at`**；拉取用 GitHub `since=<cursor 时间戳>` + 按 `updated_at asc` 分页；**游标只在一页全部成功摄入后才推进**（成功后 CAS 更新，失败不推进 → 下次重拉该页）。并列 `updated_at` 用 `(updated_at, id)` 复合序防跳过。
-- `commits`（**更正 ⑦c**）：GitHub commits API 的 `since` 是**ISO-8601 时间戳，不接受 SHA**。故游标 = 最后已摄入 commit 的**时间戳**作 `since` 锚（+ 记录 last-seen SHA 做边界去重）；或用 compare API（base=last SHA…head）遍历。force-push/分叉：SHA 对不上时回退到时间戳窗口重扫。实现计划定 since-时间戳 vs compare（默认 since-时间戳 + SHA 边界去重，最简）。
+- `commits`（**更正 ⑦c，首版决定**）：GitHub commits API 的 `since` 是**ISO-8601 时间戳，不接受 SHA**。**首版用「时间戳锚 + SHA 边界去重」**：`cursor` 编码为 `{ts, sha}`（JSON），拉取用 `since=<ts>`（含重叠窗防边界漏）、`sha` 做 last-seen 边界去重（配合 §6 digest 账本兜重复）。force-push/分叉：SHA 对不上时按时间戳窗口重扫 + digest 去重。compare-API 遍历列为备选（不在首版）。
 - `code`：游标 = 已学的 tree SHA；tree SHA 变 → 重算关键文件差异；不变 → 跳过。
 - **失败恢复 + 摄入幂等（更正 ⑦b）**：任何一步失败，游标不推进（`cursor_advanced_at` 不更新），下次从旧游标重来。重来不重复灌记忆由 `github_ingest_digests` 的**原子 claim + 同事务落地**协议保证（见 §6 表 4），非应用层 check-then-act。
 
@@ -285,10 +285,10 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 
 这补 `PerceptionDistiller` 无内置去重的空缺；「重复摄入不重灌」由 DB 唯一约束 + 同事务保证，非应用层 check-then-act。
 
-**四表双登记（约束 8，强制）**：`github_app_credentials`/`github_installations`/`github_learn_state`/`github_ingest_digests` 均登记进 `tenant-database.ts` 的 `TENANT_TABLES` + `privacy-service.ts` 的 `TENANT_TABLES`/`TENANT_TABLE_SET`；`github_app_credentials` 导出脱敏不导密文列。迁移经 schema-dsl 同步既有同步点。
+**五表双登记（约束 8，强制）**：`github_app_credentials`/`github_installations`/`github_learn_state`/`github_ingest_digests`/`github_webhook_events` 均登记进 `tenant-database.ts` 的 `TENANT_TABLES` + `privacy-service.ts` 的 `TENANT_TABLES`/`TENANT_TABLE_SET`；`github_app_credentials` 导出脱敏不导密文列。迁移经 schema-dsl 同步既有同步点。
 
 ### 复用表 / 迁移
-- **`webhook_events`（Codex ⑥）**：现状 PK=`event_id` 无 provider 列 → GitHub 与 Stripe delivery id 会撞。修法二选一（实现计划定）：(a) 迁移加 `provider` 列 + PK 改 `(provider, event_id)`（破坏性，须迁移现有 Stripe 行）；(b) 新建独立 `github_webhook_events` 表（更隔离，推荐）。
+- **`webhook_events`（Codex ⑥）——首版决定：新建独立 `github_webhook_events` 表**（不动 Stripe 的 `webhook_events`，最隔离、零破坏性）。列：`(tenant_id, delivery_id) PK`、`event_type`、`status`（`received|processing|completed|failed`）、`retry_count`、`received_at`/`processed_at`。双登记（约束 8）。plan Task 0 仅确认列细节，不再回退二选一。
 - 记忆表（`persona_memories` 等，经 perceive 写入，复用）。
 - **不复用** `user_oauth_tokens`（用户级 OAuth，语义不符——见新表 1）。
 
@@ -324,7 +324,7 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 | 重复摄入灌爆记忆（perceive 无去重）+ 并发/崩溃窗 | github_ingest_digests 原子 claim（INSERT ON CONFLICT）+ 同事务落地记忆（§6 表 4，Codex ⑦b） |
 | commit 增量锚错用 SHA 当 since | since 用时间戳锚 + SHA 边界去重 或 compare 遍历（§6 游标语义，Codex ⑦c） |
 | installation token 泄露面 | 只内存缓存不落库；私钥加密存储 |
-| webhook 重投导致重复起草 | 幂等表（加 provider 键或独立 github_webhook_events，见 §6） |
+| webhook 重投导致重复起草 | 独立 github_webhook_events 表（tenant, delivery_id）幂等（§6，Codex ⑥） |
 | 大 repo 全量拉爆配额/预算 | 增量游标（成功才推进）+ 只喂变更 + X-RateLimit 退避 + 内核封顶不确定性预算 |
 | 反馈误发（对外不可逆） | 不可降级人工审批门 + 绑定审批 + 并发 CAS + 写方法只经审批 executor（约束 3/4/5） |
 | SSRF / 重定向逃逸 allowlist | ssrf-guard host allowlist + redirect:manual；首版不支持私网 GHE（assertResolvedAddressSafe 无条件拒私网，host allowlist 绕不过，Codex ④） |
