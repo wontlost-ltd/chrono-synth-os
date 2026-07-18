@@ -1,7 +1,15 @@
 # 数字人 GitHub 集成（接入 / 学习 / 反馈）设计
 
-> 状态：第 2 轮修订（采纳 Codex 复审 64/100 退回，修 8 条契约层硬伤）。待用户审阅 → writing-plans。
+> 状态：第 3 轮修订（采纳 Codex 第 2 轮 72/100 退回，修我修订时新引入的 API 语义臆造 ③④⑦ + 补 ⑤fail-closed/⑦b去重账本）。待 Codex 第 3 轮确认 → 用户审阅 → writing-plans。
 > 日期：2026-07-19
+
+> **第 3 轮修订（采纳 Codex 第 2 轮复审）**——核验真实代码后修正我上轮改动时新引入的臆造：
+> ③ `highRisk` 只派生 `toolRisk='high'`+`requireConfirmation`（`tool-risk-deriver.ts:55`），**不派生 `outboundCommitment`**（后者只 body 上调）。安全结论不变（high 即强制人工审批），改正描述。
+> ④ `assertResolvedAddressSafe` 无条件拒私网 IP，host allowlist 绕不过 → 首版**不支持私网 GHE**（非「host allowlist bypass」）。
+> ⑤ `FieldEncryption.encrypt()` 在 `enabled=false` 返回明文（`encryption.ts:53`）→ 凭据 store 须 **fail-closed**（disabled 即拒写）。补 installation→tenant 入站定位契约。
+> ⑦b `PerceptionDistiller` **无内容 SHA 去重**（`addMemory` 直写）→ 新建 `github_ingest_digests` 幂等账本，勿臆造 perceive 已有。
+> ⑦c GitHub commits API `since` 是**时间戳非 SHA** → 游标用时间戳锚 + SHA 边界去重（或 compare 遍历）。
+> ⑦a（好消息）`learn-topic` 现状已用 `audio` 壳 + `sha256` + `durationMs:0` 装文本（`me.ts:557`）→ 摄入契约默认沿用既有范式，零内核改动。
 > 关联 ADR：0047（零-LLM 内核 / LLM-as-teacher）、0051（感知层）、0055（数字员工执行链）、0060（工具学习三层分离）、0056（per-persona 内核）。
 
 > **修订说明（第 2 轮，采纳 Codex 独立复审）**：初版基于探针摘要，多处契约与真实代码不符，已逐条核验真实代码后修正：
@@ -54,11 +62,11 @@
 
 1. **零-LLM 内核铁律**：运行时（起草回应、对话引用）不得调用 LLM。LLM 仅作为 perception 的可选老师（BYOK，per-tenant 选择），其产出为**候选**，事实沉淀为记忆、身份/价值提议须过 core-update-gate。`GitHubResponseComposer` 是零-LLM 确定性编译器。
 2. **内核封顶（非记忆信任档）**：GitHub 学习经 perception 时，**事实型观察如实写入记忆**（`memoryGraph.addMemory`，与现有 audio/video 感知事实同级，记忆本身无 provenance/信任字段）；**只有身份/价值提议**（value_shift/narrative_patch）过 `distillation.ingest` → `core-update-gate`，被感知封顶（对齐现有 `MAX_PERCEPTION_DELTA=0.05`、`patternAgrees=false`）→ 永远 `pending`，绝不自动改内核。**信任层（core-update-gate 的 trustTier）管的是内核身份/价值更新，不是普通记忆写入**——不得声称"记忆走 external 信任档"。
-3. **反馈=不可降级人工审批**：GitHub 写工具在 registry 注册 `metadata.highRisk=true`；`tool-risk-deriver.deriveRiskSignals` 从工具 metadata 派生 `ExecutionRiskSignals.outboundCommitment=true`（**这是风险信号，非 TaskSpec 字段**）→ `assessExecutionRisk` 强制 `effectiveRisk:'high'` + `requiresHuman:true`，**代码路径上不可降级**。执行时用 `isExecutionApprovalCleared`（绑定本次执行），**不得**用裸 `isApprovalCleared`。
+3. **反馈=不可降级人工审批**：GitHub 写工具在 registry 注册 `metadata.highRisk=true`。**真实派生链（第 3 轮更正 Codex ③）**：`tool-risk-deriver.deriveRiskSignals` 见 `highRisk` → 置 `toolRisk='high'` + `requireConfirmation=true`（**不**自动置 `outboundCommitment`；`outboundCommitment` 只由 body 声明上调）→ `assessExecutionRisk` 因 `toolRisk='high'` 强制 `requiresHuman:true`，**代码路径不可降级**（body 不能下调工具派生的 high）。执行时用 `isExecutionApprovalCleared`（绑定本次执行），**不得**用裸 `isApprovalCleared`。（安全结论不变：high tool risk 即强制人工审批；只是不经 outboundCommitment 这条信号。）
 4. **人类法律主体永不为 null**：发布动作经 `resolveWorkerExecutionActor`，缺主体抛 `MissingHumanPrincipalError`。
 5. **出站唯一出口**：所有 GitHub 网络调用只经 `GitHubConnector`；**GitHub 写方法（comment/review）只能经审批 executor（ToolInvocationPipeline / WorkerExecutionService）持有**，不得被业务层/webhook 处理器直接调用（否则绕过审批门）。每次调用过 `validateOutboundUrl(rawUrl, opts)`，`opts.hostAllowlist` 锁 `api.github.com`。
-6. **凭据只存密文**：GitHub App 私钥 PEM + webhook secret 经 `FieldEncryption`（AES-256-GCM）加密落**新建的租户级凭据表**（参照 `llm_provider_credentials` 的 `tenant_id`+`provider`+密文列模式，**非** `user_oauth_tokens` 的用户级 OAuth 模型）；installation token 是短时派生物，只在内存缓存，不落库。
-7. **SSRF host 约定**：公有云走 `api.github.com`（scheme 强制 https，`isPrivateAddress` 拒私网正常）；**GHE 私网自托管**（私有 IP）会被 `isPrivateAddress` 拒，须经**显式配置的 host allowlist bypass**（记录在配置 + 审计），不得默认放开私网。
+6. **凭据只存密文 + fail-closed（第 3 轮更正 Codex ⑤）**：GitHub App 私钥 PEM + webhook secret 经 `FieldEncryption`（AES-256-GCM）加密落**新建的租户级凭据表**（参照 `llm_provider_credentials` 的 `tenant_id`+密文列模式，**非** `user_oauth_tokens` 用户级 OAuth）。**注意 `FieldEncryption` 在 `enabled=false` 时 `encrypt()` 返回明文**（`encryption.ts:53`）——凭据存储须 **fail-closed**：encryption 未启用时**拒绝写入凭据**（参照 `LlmCredentialStore` 的 fail-closed），绝不明文落库。installation token 是短时派生物，只在内存缓存，不落库。
+7. **SSRF host 约定（第 3 轮更正 Codex ④）**：公有云走 `api.github.com`（scheme 强制 https）。**私网自托管 GHE**：`assertResolvedAddressSafe`（anti-rebinding）无条件拒私网 IP，host allowlist **绕不过**它——所以「host allowlist bypass」不能让私网 GHE 通过。两条路（实现计划定）：(a) **本阶段明确不支持私网 GHE**（首版只公有云 + 公网可达 GHE）；(b) 若必须支持私网 GHE，须新增**专用 trusted-host/CIDR 契约** + resolve-once + pinned-transport，且该 bypass 配置化 + 审计。首版默认 (a)。
 8. **新表双登记**：任何新增租户级表（`github_learn_state`、`github_app_credentials`）必须同时登记进 `src/multi-tenant/tenant-database.ts` 的 `TENANT_TABLES` **和** `src/privacy/privacy-service.ts` 的 `TENANT_TABLES`/`TENANT_TABLE_SET`（GDPR export/erase；凭据表导出须脱敏不导密文列）。迁移须同步 schema-dsl 既有同步点（迁移文件/index/version-map/parity/legacy fixture 等）。
 9. **per-persona scope**：学习与游标按 `(tenant_id, persona_id)` 隔离（延续 ADR-0056）。
 10. **前置人工步骤（非代码）**：GitHub App 的注册（拿 App ID / 私钥 PEM / webhook secret）是外部人工步骤，代码无法自动完成——作为配置输入，像 BYOK 一样。
@@ -81,14 +89,14 @@
 
 **凭据存储（新建租户级专用表，不复用 user_oauth_tokens）**：
 - **更正（Codex ⑤）**：`user_oauth_tokens` 是**用户级** OAuth（`user_id` + access/refresh token + `access_expires_at`），语义不符租户级 App 私钥。改**新建 `github_app_credentials` 表**（见 6），参照 `llm_provider_credentials`（`packages/kernel/src/domain/enterprise/llm-credential-queries.ts`）的**租户级加密凭据**模式：`tenant_id` + 密文列，无 `user_id`。
-- 存：**App ID、App 私钥 PEM（`FieldEncryption` 加密）、webhook secret（加密）**。installation 映射（一对多 repo/org→installation_id）单独一表 `github_installations`（或凭据表的 `config_json` 密文），因是一对多，不塞单密钥列。
-- 加密复用 `FieldEncryption`（`src/storage/encryption.ts`，AES-256-GCM，与 BYOK 同）。
-- installation token 不落库（约束 6）。
+- 存：**App ID、App 私钥 PEM（`FieldEncryption` 加密）、webhook secret（加密）**。installation 映射（一对多 repo/org→installation_id）单独一表 `github_installations`，因是一对多，不塞单密钥列。
+- 加密复用 `FieldEncryption`（`src/storage/encryption.ts`，AES-256-GCM，与 BYOK 同）。**fail-closed（约束 6）**：`encrypt()` 在 `enabled=false` 时返回明文（`encryption.ts:53`）——store 须在 encryption 未启用时**拒绝写凭据**，不明文落库。
+- installation token 不落库（约束 6）。**入站定位（Codex ⑤ 补全）**：webhook 到来时用 payload 的 `installation.id` → `github_installations` 查 `tenant_id`，再取该租户 `github_app_credentials` 的 webhook secret 验签；`(tenant_id, installation_id)` 唯一约束保证无歧义。凭据轮换：upsert 覆盖（secret 不留版本史，同 BYOK）。
 
 **出站安全（复用）**：
 - 每次调用先 `validateOutboundUrl(rawUrl, opts)`（`src/security/ssrf-guard.ts`，真实签名 `(rawUrl, opts: SsrfGuardOptions)`），`opts.hostAllowlist=['api.github.com']`，`opts.allowedSchemes` 强制 https。
-- **GHE 私网（约束 7）**：`isPrivateAddress` 会拒私网自托管 GHE；须经显式配置的 host allowlist bypass（配置项 + 审计），不默认放开。
-- **DNS-pin 更正（Codex ④）**：`url-content-fetcher.ts` 现状**未做真正的 resolve-then-pin**（只有 `isPrivateHostname` 主机名判断）；若需 anti-rebinding，用 `ssrf-guard.ts` 的 `assertResolvedAddressSafe(ip)`（post-DNS-resolve）。GitHub API 走公有云、host 固定，rebinding 面小；GHE bypass 场景才需 pin——由实现计划按需接 `assertResolvedAddressSafe`，不臆造 fetcher 已有能力。大小上限 / 超时 / `redirect:'manual'` 复用 fetcher。
+- **私网 GHE（约束 7）**：`assertResolvedAddressSafe` 无条件拒私网 IP，host allowlist 绕不过 → **首版不支持私网 GHE**（只公有云 + 公网可达 GHE）；若未来支持须专用 trusted-CIDR + resolve-once + pin 契约。
+- **DNS-pin 更正（Codex ④）**：`url-content-fetcher.ts` 现状**未做 resolve-then-pin**（只有 `isPrivateHostname` 主机名判断）；GitHub API 走公有云、host 固定，rebinding 面小。若实现计划要 anti-rebinding，接 `ssrf-guard.ts` 的 `assertResolvedAddressSafe(ip)`（resolve-once → 验 IP → pin 连该 IP）——不臆造 fetcher 已有此能力。大小上限 / 超时 / `redirect:'manual'` 复用 fetcher。
 - 速率限制：读响应 `X-RateLimit-Remaining`，近枯竭时退避，不硬打 429。
 
 **分层**：
@@ -111,7 +119,7 @@ GitHubConnector          唯一网络出口（读方法公开；写方法只经�
 **摄入契约更正（Codex ①，最关键）**：真实 `PerceptionInput`（`src/perception/perception-provider.ts`）只有 `modality: PerceptionModality`（`audio|video`）+ 媒体专用字段 `mediaSha256`/`durationMs` + `representation`。**GitHub 文本没有 mediaSha256/durationMs，套不进媒体形状**。两条修法（实现计划二选一，spec 层给判据）：
 - **(推荐) 扩 `PerceptionModality` 加 `text`**，并把 `mediaSha256`/`durationMs` 改为**媒体专用可选字段**（text modality 时用内容 SHA 代替 mediaSha256 做 provenance/去重，durationMs 省略）。改动小、复用整条 perceive 管线，但**动了内核感知契约**（破坏性分析见 §5 破坏性）。
 - **(备选) 学习不走 perceive，直接走确定性记忆写入 + core-update-gate**：GitHubLearningMapper 产出事实 → `memoryGraph.addMemory`；若有身份/价值提议 → 自行 `distillation.ingest`。绕开 PerceptionInput 媒体形状，但**重复 perceive 已封装的封顶/校验逻辑**（违 DRY）。
-- **判据**：优先推荐项（扩 text modality），除非复审认为动内核契约风险过高。**learn-topic 现状怎么绕过的**须在实现计划里先核（它也喂 perceive，那它如何填 mediaSha256/durationMs？——这是实现计划 Task 0 必须先验证的既有事实，不臆断）。
+- **判据（第 3 轮已核实真实现状）**：`learn-topic`（`me.ts:557-564`）现状**用 `modality:'audio'` + `mediaSha256=sha256(representation)` + `durationMs:0` 承载文本**——即"audio 壳装文本"已是既有做法。故最省的落地是**沿用这个既有范式**（GitHub representation 同样填 audio 壳 + 内容 SHA + durationMs:0），零内核契约改动；若嫌语义脏，再考虑扩 `text` modality（Codex 建议用 discriminated union，媒体字段随 modality 收敛，而非把所有媒体字段改 optional）。Plan 0 定二选一，但默认沿用既有范式（改动最小、已验证可行）。
 
 **端点前缀约定（有意区分）**：手动学习走 `companion/me/*`（数字人主人发起的学习动作，与 learn-topic 同层）；系统入站 webhook 走 `integrations/github/*`（5.3，非用户动作、无 companion 身份、走签名校验）。两者鉴权与身份模型不同，故前缀不同。
 
@@ -184,7 +192,7 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 **GitHub 写工具（新建，注册进 ToolRegistry）**：`github-comment-tool` / `github-review-tool`，`ToolAdapter.metadata.highRisk=true`（参照 email/calendar tool），`isHighRisk(args)` 恒 true。**只经 `ToolInvocationPipeline`/`WorkerExecutionService` 调用**，写方法不暴露给 webhook 处理器/业务层直调（约束 5）。
 
 **治理红线（全部由现有机制强制）**：
-- 写工具 `metadata.highRisk=true` → `tool-risk-deriver` 派生 `outboundCommitment` → `assessExecutionRisk` 强制 high + `requiresHuman:true` 不可降级（约束 3）。
+- 写工具 `metadata.highRisk=true` → `tool-risk-deriver` 置 `toolRisk='high'`（**非** outboundCommitment，见约束 3 更正）→ `assessExecutionRisk` 因 high 强制 `requiresHuman:true` 不可降级。
 - 执行时 `isExecutionApprovalCleared` 绑定本次执行（防「批 A 发 B」）。
 - 人类法律主体永不为 null（约束 4）。
 - 并发 CAS `delegated→in_progress`（防同一草稿双发）。
@@ -244,13 +252,27 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 
 **唯一约束**：`(tenant_id, persona_id, repo, resource_type)`。
 
-**游标语义（Codex ⑦，须明确避免漂移）**：
-- `issues`/`pulls`：游标 = 已成功摄入的**最大 `updated_at`**；拉取用 GitHub `since=<cursor>` + 按 `updated_at asc` 分页；**游标只在一页全部成功摄入后才推进**（成功后 CAS 更新，失败不推进 → 下次重拉该页，幂等靠记忆去重）。并列 `updated_at` 用 `(updated_at, id)` 复合序防跳过。
-- `commits`：游标 = 最后已摄入 commit 的 SHA（作 `since` 锚，非分页游标）；从锚**之后**拉。
+**游标语义（第 3 轮更正 Codex ⑦）**：
+- `issues`/`pulls`：游标 = 已成功摄入的**最大 `updated_at`**；拉取用 GitHub `since=<cursor 时间戳>` + 按 `updated_at asc` 分页；**游标只在一页全部成功摄入后才推进**（成功后 CAS 更新，失败不推进 → 下次重拉该页）。并列 `updated_at` 用 `(updated_at, id)` 复合序防跳过。
+- `commits`（**更正 ⑦c**）：GitHub commits API 的 `since` 是**ISO-8601 时间戳，不接受 SHA**。故游标 = 最后已摄入 commit 的**时间戳**作 `since` 锚（+ 记录 last-seen SHA 做边界去重）；或用 compare API（base=last SHA…head）遍历。force-push/分叉：SHA 对不上时回退到时间戳窗口重扫。实现计划定 since-时间戳 vs compare（默认 since-时间戳 + SHA 边界去重，最简）。
 - `code`：游标 = 已学的 tree SHA；tree SHA 变 → 重算关键文件差异；不变 → 跳过。
-- **失败恢复**：任何一步失败，游标不推进（`cursor_advanced_at` 不更新），下次从旧游标重来；记忆写入幂等（内容 SHA 去重）保证重来不重复灌。
+- **失败恢复 + 摄入幂等（更正 ⑦b）**：任何一步失败，游标不推进（`cursor_advanced_at` 不更新），下次从旧游标重来。**`PerceptionDistiller` 现状无内容 SHA 去重**（`addMemory` 直写），所以重来会重复灌记忆——须**新建持久化 digest ledger**（表 `github_ingest_digests`：`(tenant_id, persona_id, repo, resource_type, content_sha)` 唯一）：摄入前查 ledger，已摄入则跳过。这是新增去重设施，不臆造 perceive 已有。
 
-**三表双登记（约束 8，强制）**：均登记进 `tenant-database.ts` 的 `TENANT_TABLES` + `privacy-service.ts` 的 `TENANT_TABLES`/`TENANT_TABLE_SET`；`github_app_credentials` 导出脱敏。迁移经 schema-dsl 同步既有同步点。
+### 新表 4：`github_ingest_digests`（摄入幂等账本，Codex ⑦b）
+
+| 列 | 类型 | 说明 |
+|---|---|---|
+| id | TEXT PK | |
+| tenant_id | TEXT | 隔离键 |
+| persona_id | TEXT | per-persona |
+| repo | TEXT | |
+| resource_type | TEXT | |
+| content_sha | TEXT | 摄入内容的 SHA-256（去重键） |
+| ingested_at | INTEGER | |
+
+**唯一约束**：`(tenant_id, persona_id, repo, resource_type, content_sha)`。摄入前查，命中则跳过（补 `PerceptionDistiller` 无内置去重的空缺）。
+
+**四表双登记（约束 8，强制）**：`github_app_credentials`/`github_installations`/`github_learn_state`/`github_ingest_digests` 均登记进 `tenant-database.ts` 的 `TENANT_TABLES` + `privacy-service.ts` 的 `TENANT_TABLES`/`TENANT_TABLE_SET`；`github_app_credentials` 导出脱敏不导密文列。迁移经 schema-dsl 同步既有同步点。
 
 ### 复用表 / 迁移
 - **`webhook_events`（Codex ⑥）**：现状 PK=`event_id` 无 provider 列 → GitHub 与 Stripe delivery id 会撞。修法二选一（实现计划定）：(a) 迁移加 `provider` 列 + PK 改 `(provider, event_id)`（破坏性，须迁移现有 Stripe 行）；(b) 新建独立 `github_webhook_events` 表（更隔离，推荐）。
@@ -272,9 +294,9 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 
 按段拆，每片自含、可独立验证：
 
-- **Plan 0（前置核查）**：核 learn-topic 现状怎么喂 perceive（如何填 mediaSha256/durationMs）→ 定摄入契约修法（扩 text modality vs 走确定性记忆+gate，§5.2）。这决定 Plan 2 的地基，必须先做。
-- **Plan 1（接）**：新 `github_app_credentials`/`github_installations` 表 + GitHubConnector + AuthManager + ApiClient（读端点）。验证：真拉 public repo；token 强制过期→静默重签。
-- **Plan 2（学）**：GitHubLearningMapper + 摄入契约（按 Plan 0 定论）+ learn-github 端点 + github_learn_state 表 + 增量去重（成功才推进游标）。验证：学完可零-LLM 问答 grounded（记忆层）；**内核身份/价值封顶**变异测试。
+- **Plan 0（前置核查，已部分坐实）**：摄入契约默认沿用 learn-topic 既有范式（audio 壳 + sha256 + durationMs:0，已核实 `me.ts:557`）；仅需确认 discriminated-union 是否值得（否则直接沿用）。轻量，可并入 Plan 2 首步。
+- **Plan 1（接）**：新 `github_app_credentials`（fail-closed）/`github_installations` 表 + GitHubConnector + AuthManager + ApiClient（读端点）。验证：真拉 public repo；token 强制过期→静默重签；encryption disabled→拒写凭据。
+- **Plan 2（学）**：GitHubLearningMapper + 摄入（沿用既有范式）+ learn-github 端点 + `github_learn_state`（成功才推进游标）+ `github_ingest_digests` 去重账本。验证：学完可零-LLM 问答 grounded（记忆层）；**内核身份/价值封顶**变异测试；重复摄入不重灌（digest 命中跳过）。
 - **Plan 3（反馈起草）**：github webhook 接收器（签名+幂等，provider 键）+ 两 playbook + GitHubResponseComposer。验证：签名正/误、起草停在 delegated。
 - **Plan 4（反馈发布接线）**：github 写工具（highRisk，注册 ToolRegistry）+ 接 workforce 执行链，写方法只经审批 executor。验证：审批门变异测试、绑定审批测试、批准后真发到测试 repo（隔离环境）。
 
@@ -285,11 +307,14 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 | 风险 | 缓解 |
 |---|---|
 | GitHub 结构化数据压成 representation 损失结构 | 映射器针对性保留 symbol/files-changed/结论等关键结构（5.2 模板） |
+| 凭据明文落库（encryption 未启用） | store fail-closed：encryption disabled 即拒写凭据（约束 6，Codex ⑤） |
+| 重复摄入灌爆记忆（perceive 无去重） | 新建 github_ingest_digests 账本，摄入前查 content_sha（§6 表 4，Codex ⑦b） |
+| commit 增量锚错用 SHA 当 since | since 用时间戳锚 + SHA 边界去重 或 compare 遍历（§6 游标语义，Codex ⑦c） |
 | installation token 泄露面 | 只内存缓存不落库；私钥加密存储 |
 | webhook 重投导致重复起草 | 幂等表（加 provider 键或独立 github_webhook_events，见 §6） |
 | 大 repo 全量拉爆配额/预算 | 增量游标（成功才推进）+ 只喂变更 + X-RateLimit 退避 + 内核封顶不确定性预算 |
 | 反馈误发（对外不可逆） | 不可降级人工审批门 + 绑定审批 + 并发 CAS + 写方法只经审批 executor（约束 3/4/5） |
-| SSRF / 重定向逃逸 allowlist | ssrf-guard host allowlist + redirect:manual；GHE bypass 场景按需接 `assertResolvedAddressSafe` 做 anti-rebinding（fetcher 现状无真 DNS-pin） |
+| SSRF / 重定向逃逸 allowlist | ssrf-guard host allowlist + redirect:manual；首版不支持私网 GHE（assertResolvedAddressSafe 无条件拒私网，host allowlist 绕不过，Codex ④） |
 | 新表漏登记 GDPR/隔离 | 约束 8 三表双登记 + ratchet 测试强制 |
 | GitHub 文本套不进媒体 PerceptionInput | 扩 text modality 或走确定性记忆+gate（§5.2 摄入契约更正，Task 0 先核 learn-topic 现状） |
 
@@ -299,3 +324,4 @@ GitHubLearningMapper.map(githubContent) → 文本表征
 - 不做 GitHub 之外的 SCM（GitLab/Bitbucket）——未来另立。
 - 不做自动合并 PR / 自动关 issue 等高危写动作（首版只 comment/review）。
 - 不做 GitHub App 的自动注册（前置人工步骤）。
+- **首版不支持私网自托管 GHE**（SSRF anti-rebinding 拒私网 IP；公有云 + 公网可达 GHE 可用）。未来支持须专用 trusted-CIDR + resolve-once + pin 契约。
