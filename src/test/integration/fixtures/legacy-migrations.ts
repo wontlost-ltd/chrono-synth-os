@@ -1268,6 +1268,15 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "/* safe:add-column:life_simulations:owner_user_id */ ALTER TABLE life_simulations ADD COLUMN owner_user_id TEXT"
     ]
+  },
+  {
+    "version": "v119",
+    "description": "GitHub integration foundation: github_app_credentials + github_installations tables",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_app_credentials (\n    tenant_id TEXT PRIMARY KEY,\n    app_id TEXT NOT NULL,\n    private_key_encrypted TEXT NOT NULL,\n    webhook_secret_encrypted TEXT NOT NULL,\n    ghe_base_url TEXT,\n    created_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS github_installations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    installation_id TEXT NOT NULL,\n    github_host TEXT NOT NULL,\n    account TEXT,\n    repos TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_installations_host_iid ON github_installations (github_host, installation_id)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2506,6 +2515,15 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "安全: life_simulations 补 owner_user_id 列（模拟归属权，owner-only 分享鉴权基础）",
     "sql": [
       "ALTER TABLE life_simulations ADD COLUMN IF NOT EXISTS owner_user_id TEXT"
+    ]
+  },
+  {
+    "version": "v121",
+    "description": "GitHub integration foundation: github_app_credentials + github_installations tables",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_app_credentials (\n    tenant_id TEXT PRIMARY KEY,\n    app_id TEXT NOT NULL,\n    private_key_encrypted TEXT NOT NULL,\n    webhook_secret_encrypted TEXT NOT NULL,\n    ghe_base_url TEXT,\n    created_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS github_installations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    installation_id TEXT NOT NULL,\n    github_host TEXT NOT NULL,\n    account TEXT,\n    repos TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_installations_host_iid ON github_installations (github_host, installation_id)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
