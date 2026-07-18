@@ -88,6 +88,10 @@ GitHubConnector          唯一网络出口
 - `src/integrations/github/github-learning-mapper.ts` — 四类内容 → representation 映射（本段唯一新领域逻辑）。
 - `src/server/routes/companion/learn-github.ts` — 手动学习端点 `POST /api/v1/companion/me/learn-github`（body: repo + 要学哪几类）。与现有 `learn-topic`（`src/server/routes/companion/me.ts`）同层，复用 companion 路由骨架。
 
+**端点前缀约定（有意区分）**：手动学习走 `companion/me/*`（数字人主人发起的学习动作，与 learn-topic 同层）；系统入站 webhook 走 `integrations/github/*`（5.3，非用户动作、无 companion 身份、走签名校验）。两者鉴权与身份模型不同，故前缀不同。
+
+**「关键文件」启发式**：`code` 类型不逐文件全拉，只拉 README + 顶层目录结构 + 少量入口/清单文件（如 package.json/pyproject.toml 等）。具体选择启发式在 writing-plans 阶段定义并测（避免大 repo 全量拉爆配额，见 9 风险表）。
+
 **四类内容 → representation 映射**（保留关键结构，不压成散文）：
 
 | 内容类型 | 拉取 | representation 模板 |
