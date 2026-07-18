@@ -30,8 +30,9 @@ import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js
 
 export function registerAdminTemplateRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
   const tx = os.getDatabase();
-  const personaCoreService = PersonaCoreService.fromResolver(new SingleDbResolver(tx));
-  const templateService = new PersonaTemplateService(tx, personaCoreService);
+  const resolver = new SingleDbResolver(tx);
+  const personaCoreService = PersonaCoreService.fromResolver(resolver);
+  const templateService = PersonaTemplateService.fromResolver(resolver, personaCoreService);
 
   /* 启动期：刷新内置模板内容（升级时无需迁移） */
   templateService.syncBuiltins();

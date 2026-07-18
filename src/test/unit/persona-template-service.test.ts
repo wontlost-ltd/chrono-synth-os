@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
+import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   PersonaTemplateService,
@@ -29,7 +31,7 @@ describe('PersonaTemplateService', () => {
     os.start();
     const tx = os.getDatabase();
     const personaCoreService = PersonaCoreService.fromUnitOfWork(tx);
-    service = new PersonaTemplateService(tx, personaCoreService);
+    service = PersonaTemplateService.fromUnitOfWork(tx, personaCoreService);
     service.syncBuiltins();
 
     /* persona_core.owner_user_id 引用 users 表，instantiate 测试需要先建用户 */
@@ -196,5 +198,16 @@ describe('PersonaTemplateService', () => {
     assert.ok(csTemplate);
     const vars = extractTemplateVariables(csTemplate);
     assert.deepEqual(vars, ['escalation_role', 'refund_threshold']);
+  });
+
+  it('fromResolver：syncBuiltins 落 db + create/list per-tenant', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    const resolver = new SingleDbResolver(db);
+    const core = PersonaCoreService.fromResolver(resolver);
+    const svc = PersonaTemplateService.fromResolver(resolver, core);
+    svc.syncBuiltins();
+    const builtins = svc.list('t1').filter((t) => t.isBuiltIn);
+    assert.ok(builtins.length > 0, '内置模板可见');
   });
 });
