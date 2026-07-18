@@ -134,7 +134,7 @@ describe('计费 API 集成测试', () => {
       usageTracker.record(auth.tenantId, 'llm_tokens', 1200);
       usageTracker.record(auth.tenantId, 'simulation', 2);
 
-      const personaService = new PersonaCoreService(tx);
+      const personaService = PersonaCoreService.fromUnitOfWork(tx);
       const persona = personaService.createPersona({
         tenantId: auth.tenantId,
         ownerUserId: auth.userId,
@@ -231,7 +231,7 @@ describe('计费 API 集成测试', () => {
       };
 
       const db = os.getDatabase();
-      const personaService = new PersonaCoreService(db);
+      const personaService = PersonaCoreService.fromUnitOfWork(db);
       const persona = personaService.createPersona({
         tenantId: auth.tenantId,
         ownerUserId: auth.userId,

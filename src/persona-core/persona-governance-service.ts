@@ -64,7 +64,7 @@ import { generatePrefixedId } from '../utils/id-generator.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { clamp, round, safeJsonParse } from './persona-core-utils.js';
-import type { TransactionContext } from './persona-core-source.js';
+import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import type {
   AppealGovernanceCaseInput,
   ApplyGovernanceActionInput,
@@ -121,17 +121,6 @@ export function governanceActionFromRow(row: PcoreGovernanceActionRow): Governan
  * reference to the whole memory service.
  */
 export interface GovernanceMemoryHook {
-  insertMemory(input: {
-    tenantId: string;
-    personaId: string;
-    forkId?: string;
-    kind: PersonaMemory['kind'];
-    sensitivity?: PersonaMemorySensitivity;
-    summary: string;
-    content: Record<string, unknown>;
-    importance: number;
-    skipCognitiveProjection?: boolean;
-  }): PersonaMemory;
   /** 事务内变体：memory 写入用外层事务传入的同一 tx（跨子服务同事务铁律）。 */
   insertMemoryInTx(tx: TransactionContext, input: {
     tenantId: string;
@@ -158,10 +147,10 @@ export interface PersonaGovernanceContext {
    *  Kept on the facade because the new/legacy mapping is part of the
    *  persona model, not the governance model. */
   toLegacyStatus(status: PersonaCore['status']): Exclude<PersonaCore['status'], 'draft' | 'suspended' | 'dormant'>;
-  /** Persona-state writes used by applyGovernanceAction. Kept on the
-   *  facade because growth + reputation writes happen from many
-   *  domains. */
-  insertGrowthEvent(input: {
+  /** Persona-state writes used by applyGovernanceAction (事务内变体，收外层 tx)。
+   *  Kept on the facade because growth + reputation writes happen from
+   *  many domains. */
+  insertGrowthEventInTx(tx: TransactionContext, input: {
     tenantId: string;
     personaId: string;
     taskId?: string | null;
@@ -171,7 +160,8 @@ export interface PersonaGovernanceContext {
     trainingDelta: number;
     payload: Record<string, unknown>;
   }): void;
-  insertReputationHistory(
+  insertReputationHistoryInTx(
+    tx: TransactionContext,
     tenantId: string,
     personaId: string,
     from: number,
@@ -184,7 +174,8 @@ export interface PersonaGovernanceContext {
 
 export class PersonaGovernanceService {
   constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+    /* db 取源（双入口）：public 方法经 source.forTenant 解析 + 开事务→InTx；InTx 收外层 tx。 */
+    private readonly source: PersonaCoreSource,
     private readonly ctx: PersonaGovernanceContext,
   ) {}
 
@@ -192,7 +183,7 @@ export class PersonaGovernanceService {
 
   listGovernanceCases(tenantId: string, ownerUserId: string, personaId: string): GovernanceCase[] | null {
     if (!this.ctx.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return this.tx.queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })).map(governanceCaseFromRow);
+    return this.source.forTenant(tenantId).queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })).map(governanceCaseFromRow);
   }
 
   /**
@@ -202,7 +193,8 @@ export class PersonaGovernanceService {
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null {
     const persona = this.ctx.getPersonaById(input.tenantId, input.personaId);
     if (!persona) return null;
-    const caseId = this.tx.transaction(() => this.openGovernanceCaseInTx(this.tx, input));
+    const db = this.source.forTenant(input.tenantId);
+    const caseId = db.transaction(() => this.openGovernanceCaseInTx(db, input));
     return caseId ? this.getGovernanceCaseById(input.tenantId, caseId) : null;
   }
 
@@ -306,8 +298,9 @@ export class PersonaGovernanceService {
     const severityLevel = this.severityToLevel(governanceCase.severity);
     const reputationDelta = this.reputationDeltaForAction(input.actionType, severityLevel);
 
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateGovernanceAction({
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdCreateGovernanceAction({
         id: actionId,
         tenantId: input.tenantId,
         caseId: input.caseId,
@@ -318,14 +311,14 @@ export class PersonaGovernanceService {
         now,
       }));
 
-      this.tx.execute(pcoreCmdUpdateGovernanceCaseAction({
+      db.execute(pcoreCmdUpdateGovernanceCaseAction({
         tenantId: input.tenantId,
         caseId: input.caseId,
         status: caseStatus,
         resolvedAt: caseStatus === 'resolved' ? now : null,
       }));
 
-      this.tx.execute(pcoreCmdApplyGovernanceActionToPersona({
+      db.execute(pcoreCmdApplyGovernanceActionToPersona({
         tenantId: input.tenantId,
         personaId: governanceCase.personaId,
         reputationDelta,
@@ -334,7 +327,7 @@ export class PersonaGovernanceService {
         now,
       }));
 
-      this.insertGovernanceEvent({
+      this.insertGovernanceEventInTx(db, {
         tenantId: input.tenantId,
         personaId: governanceCase.personaId,
         eventType: this.governanceEventTypeForAction(input.actionType),
@@ -349,7 +342,7 @@ export class PersonaGovernanceService {
         actorUserId: input.actorUserId,
       });
 
-      this.ctx.memoryHook.insertMemory({
+      this.ctx.memoryHook.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: governanceCase.personaId,
         kind: 'governance',
@@ -364,7 +357,7 @@ export class PersonaGovernanceService {
       });
 
       if (reputationDelta !== 0) {
-        this.ctx.insertGrowthEvent({
+        this.ctx.insertGrowthEventInTx(db, {
           tenantId: input.tenantId,
           personaId: governanceCase.personaId,
           eventType: 'governance',
@@ -377,7 +370,8 @@ export class PersonaGovernanceService {
           },
         });
 
-        this.ctx.insertReputationHistory(
+        this.ctx.insertReputationHistoryInTx(
+          db,
           input.tenantId,
           governanceCase.personaId,
           persona.reputation,
@@ -386,7 +380,7 @@ export class PersonaGovernanceService {
         );
       }
 
-      publishObservabilityEvent(this.tx, {
+      publishObservabilityEvent(db, {
         tenantId: input.tenantId,
         topic: OBSERVABILITY_TOPIC,
         eventType: 'governance.action_applied',
@@ -402,7 +396,7 @@ export class PersonaGovernanceService {
         },
       });
 
-      recordBusinessAuditLog(this.tx, {
+      recordBusinessAuditLog(db, {
         tenantId: input.tenantId,
         actorType: 'user',
         actorId: input.actorUserId,
@@ -438,15 +432,16 @@ export class PersonaGovernanceService {
     if (!persona || persona.ownerUserId !== input.actorUserId) return null;
 
     const now = Date.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdAppealGovernanceCase({
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdAppealGovernanceCase({
         tenantId: input.tenantId,
         caseId: input.caseId,
         appealJson: JSON.stringify(input.details ?? {}),
         now,
       }));
 
-      this.insertGovernanceEvent({
+      this.insertGovernanceEventInTx(db, {
         tenantId: input.tenantId,
         personaId: governanceCase.personaId,
         eventType: 'review',
@@ -494,29 +489,16 @@ export class PersonaGovernanceService {
     }));
   }
 
-  /** @deprecated 提交 2 移除——改调 insertGovernanceEventInTx(tx, ...)。 */
-  insertGovernanceEvent(input: {
-    tenantId: string;
-    personaId: string;
-    eventType: PersonaGovernanceEvent['eventType'];
-    severity: number;
-    summary: string;
-    payload: Record<string, unknown>;
-    actorUserId: string | null;
-  }): void {
-    this.insertGovernanceEventInTx(this.tx, input);
-  }
-
   /** @internal — used by disputeTask in core to look up the case it
    *  just opened. */
   getGovernanceCaseById(tenantId: string, caseId: string): GovernanceCase | null {
-    const row = this.tx.queryOne(pcoreQueryGovernanceCaseById({ tenantId, caseId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryGovernanceCaseById({ tenantId, caseId }));
     return row ? governanceCaseFromRow(row) : null;
   }
 
   /** @internal */
   getGovernanceActionById(tenantId: string, actionId: string): GovernanceAction | null {
-    const row = this.tx.queryOne(pcoreQueryGovernanceActionById({ tenantId, actionId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryGovernanceActionById({ tenantId, actionId }));
     return row ? governanceActionFromRow(row) : null;
   }
 

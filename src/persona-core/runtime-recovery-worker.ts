@@ -1,6 +1,7 @@
 import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
 import { PersonaCoreService } from './persona-core-service.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 
 const LAYER = 'RuntimeRecoveryWorker';
 
@@ -84,7 +85,9 @@ export class RuntimeRecoveryWorker {
   }
 
   private flushInternal(): RuntimeRecoveryResult {
-    const service = new PersonaCoreService(this.db);
+    /* Task 1：单库经 SingleDbResolver 保编译，行为等价现状。
+     * Task 2：worker 改传真 resolver（allShardDbs），recoverTimedOut 真 fan-out。 */
+    const service = PersonaCoreService.fromResolver(new SingleDbResolver(this.db));
     const result = service.recoverTimedOutRuntimeSessions({
       now: Date.now(),
       sessionTimeoutMs: this.options.sessionTimeoutMs,

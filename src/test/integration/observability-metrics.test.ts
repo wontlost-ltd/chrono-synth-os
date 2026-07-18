@@ -33,7 +33,7 @@ describe('Observability Metrics 集成测试', () => {
     });
     os.start();
     app = await createApp({ os, config });
-    service = new PersonaCoreService(os.getDatabase());
+    service = PersonaCoreService.fromUnitOfWork(os.getDatabase());
     worker = new ObservabilityWorker(os.getDatabase(), logger, { batchSize: 50 });
 
     const now = Date.now();

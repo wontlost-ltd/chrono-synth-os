@@ -97,7 +97,7 @@ export class MemoryFacade {
     this.sharedDb = os.getDatabase();
     const sharedTx = this.sharedDb;
     const encryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
-    this.personaCoreService = new PersonaCoreService(sharedTx, encryption);
+    this.personaCoreService = PersonaCoreService.fromResolver(new SingleDbResolver(sharedTx), encryption);
     this.tokenBudget = config ? TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(this.sharedDb)) : undefined;
     this.costTracker = config ? CostTracker.fromResolver(new SingleDbResolver(this.sharedDb)) : undefined;
     this.quotaManager = config ? QuotaManager.fromResolver(new SingleDbResolver(sharedTx)) : undefined;

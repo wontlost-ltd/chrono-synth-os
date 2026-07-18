@@ -14,7 +14,7 @@ describe('RuntimeRecoveryWorker', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    service = new PersonaCoreService(db);
+    service = PersonaCoreService.fromUnitOfWork(db);
     logger = new SilentLogger();
 
     const now = Date.now();

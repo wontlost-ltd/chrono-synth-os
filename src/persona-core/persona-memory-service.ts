@@ -43,7 +43,7 @@ import {
 import { PersonaCognitiveMemoryGraph } from './persona-cognitive-memory.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { realClock, type Clock } from '../utils/clock.js';
-import type { TransactionContext } from './persona-core-source.js';
+import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import type {
   AddPersonaMemoryInput,
   PersonaCognitiveMemoryKind,
@@ -93,7 +93,9 @@ export class PersonaMemoryService {
    * truth here so future additions on the facade can't drift from
    * what the sub-service uses. */
   constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+    /* db 取源（双入口）：public 读方法经 source.forTenant(tenantId) 解析 shard db；
+     * 写路径全走 InTx 变体，由 facade 事务闭包传入同一 tx（不在此重新解析，防裂脑）。 */
+    private readonly source: PersonaCoreSource,
     private readonly ctx: PersonaMemoryContext,
     private readonly staticEncryption?: FieldEncryption,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
@@ -112,7 +114,8 @@ export class PersonaMemoryService {
     if (!persona || this.ctx.isTerminalStatus(persona.status)) return null;
     if (input.forkId && !this.ctx.forkBelongsToPersona(input.tenantId, input.personaId, input.forkId)) return null;
 
-    return this.insertMemoryInTx(this.tx, {
+    const db = this.source.forTenant(input.tenantId);
+    return db.transaction(() => this.insertMemoryInTx(db, {
       tenantId: input.tenantId,
       personaId: input.personaId,
       forkId: input.forkId,
@@ -121,7 +124,7 @@ export class PersonaMemoryService {
       summary: input.summary,
       content: input.content ?? {},
       importance: clamp(input.importance ?? 0.5, 0, 1),
-    });
+    }));
   }
 
   listPersonaMemories(
@@ -138,7 +141,7 @@ export class PersonaMemoryService {
     if (!persona) return null;
 
     const limit = Math.max(1, Math.min(100, options?.limit ?? 20));
-    const rows = this.tx.queryMany(pcoreQueryPersonaMemories({
+    const rows = this.source.forTenant(tenantId).queryMany(pcoreQueryPersonaMemories({
       tenantId,
       personaId,
       kind: options?.kind,
@@ -183,9 +186,10 @@ export class PersonaMemoryService {
     const persona = this.ctx.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
-    const state = this.getCognitive(this.tx, tenantId).buildState(tenantId, personaId);
-    const kindRows = this.tx.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId }));
-    const relationRows = this.tx.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId }));
+    const db = this.source.forTenant(tenantId);
+    const state = this.getCognitive(db, tenantId).buildState(tenantId, personaId);
+    const kindRows = db.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId }));
+    const relationRows = db.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId }));
 
     const memoryKindCounts: Record<PersonaCognitiveMemoryKind, number> = {
       episodic: 0,
@@ -214,23 +218,25 @@ export class PersonaMemoryService {
     const persona = this.ctx.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
+    const db = this.source.forTenant(tenantId);
     const limit = Math.max(1, Math.min(50, input.limit ?? 12));
-    const nodeRows = this.tx.queryMany(pcoreQueryMemoryNodeIds({
+    const nodeRows = db.queryMany(pcoreQueryMemoryNodeIds({
       tenantId,
       personaId,
       memoryId: input.memoryId,
       kind: input.kind,
       limit,
     }));
+    const cognitive = this.getCognitive(db, tenantId);
     const nodes = nodeRows
-      .map((row) => this.getCognitive(this.tx, tenantId).getMemory(tenantId, personaId, row.id))
+      .map((row) => cognitive.getMemory(tenantId, personaId, row.id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
     if (nodes.length === 0) {
       return { nodes: [], edges: [] };
     }
 
-    const edges = this.tx.queryMany(pcoreQueryMemoryEdges({
+    const edges = db.queryMany(pcoreQueryMemoryEdges({
       tenantId,
       personaId,
       nodeIds: nodes.map((node) => node.id),
@@ -337,36 +343,6 @@ export class PersonaMemoryService {
       valence: 0.1,
       salience: clamp(0.35 + input.confidence * 0.55, 0.2, 1),
     });
-  }
-
-  /* ── 过渡包装（提交 1）：旧 this.tx 绑定入口，委托 InTx 变体。提交 2 由 facade
-   *    改调 InTx 变体后移除。 ──────────────────────────────────────── */
-
-  /** @deprecated 提交 2 移除——改调 insertMemoryInTx(tx, ...)。 */
-  insertMemory(input: {
-    tenantId: string;
-    personaId: string;
-    forkId?: string;
-    kind: PersonaMemory['kind'];
-    sensitivity?: PersonaMemorySensitivity;
-    summary: string;
-    content: Record<string, unknown>;
-    importance: number;
-    skipCognitiveProjection?: boolean;
-  }): PersonaMemory {
-    return this.insertMemoryInTx(this.tx, input);
-  }
-
-  /** @deprecated 提交 2 移除——改调 projectKnowledgeItemInTx(tx, ...)。 */
-  projectKnowledgeItem(input: {
-    tenantId: string;
-    personaId: string;
-    knowledgeItemId: string;
-    title: string;
-    content: string;
-    confidence: number;
-  }): void {
-    this.projectKnowledgeItemInTx(this.tx, input);
   }
 
   /* ── Private helpers ────────────────────────────────────────── */

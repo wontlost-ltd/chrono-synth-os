@@ -31,7 +31,7 @@ function setup(): Fixture {
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(ownerUserId, 'owner@example.com', 'hash', 'member', tenantId, now, now);
 
-  const service = new PersonaCoreService(db);
+  const service = PersonaCoreService.fromUnitOfWork(db);
   const persona = service.createPersona({
     tenantId,
     ownerUserId,

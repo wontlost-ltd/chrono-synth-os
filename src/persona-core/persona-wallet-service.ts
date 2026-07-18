@@ -25,7 +25,6 @@
  * The remaining marketplace work follows the same pattern.
  */
 
-import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { FieldEncryption } from '../storage/encryption.js';
 import {
   pcoreCmdCreateWalletPayoutRequest,
@@ -48,7 +47,7 @@ import {
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
 import { fromMinor, toMinor } from './persona-core-utils.js';
-import type { TransactionContext } from './persona-core-source.js';
+import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import type {
   PersonaWallet,
   RequestWalletPayoutInput,
@@ -151,7 +150,8 @@ export class PersonaWalletService {
    * (resolver wins over static) before reading those columns.
    */
   constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+    /* db 取源（双入口）：public 读方法经 source.forTenant 解析；写路径走 InTx 变体收外层 tx。 */
+    private readonly source: PersonaCoreSource,
     private readonly ctx: PersonaWalletContext,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     _staticEncryption?: FieldEncryption,
@@ -163,12 +163,12 @@ export class PersonaWalletService {
 
   getWallet(tenantId: string, ownerUserId: string, personaId: string): PersonaWallet | null {
     if (!this.ctx.personaExists(tenantId, ownerUserId, personaId)) return null;
-    const row = this.tx.queryOne(pcoreQueryWalletByPersona({ tenantId, personaId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryWalletByPersona({ tenantId, personaId }));
     return row ? walletFromRow(row) : null;
   }
 
   getWalletByIdForOwner(tenantId: string, ownerUserId: string, walletId: string): PersonaWallet | null {
-    const row = this.tx.queryOne(pcoreQueryWalletByIdForOwner({ tenantId, walletId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryWalletByIdForOwner({ tenantId, walletId }));
     if (!row || row.owner_user_id !== ownerUserId) return null;
     return walletFromRow(row);
   }
@@ -176,7 +176,7 @@ export class PersonaWalletService {
   listWalletTransactions(tenantId: string, ownerUserId: string, walletId: string): WalletTransaction[] | null {
     const wallet = this.getWalletByIdForOwner(tenantId, ownerUserId, walletId);
     if (!wallet) return null;
-    return this.tx.queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })).map(walletTransactionFromRow);
+    return this.source.forTenant(tenantId).queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })).map(walletTransactionFromRow);
   }
 
   requestWalletPayout(input: RequestWalletPayoutInput): WalletPayoutRequest | null {
@@ -189,31 +189,33 @@ export class PersonaWalletService {
     const now = Date.now();
     const payoutId = generatePrefixedId('wpr');
     const nextBalanceMinor = toMinor(wallet.balance) - amountMinor;
+    const currency = wallet.currency;
 
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateWalletPayoutRequest({
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdCreateWalletPayoutRequest({
         id: payoutId,
         tenantId: input.tenantId,
         walletId: input.walletId,
         amountMinor,
-        currency: wallet.currency,
+        currency,
         requestedByUserId: input.ownerUserId,
         now,
       }));
 
-      this.tx.execute(pcoreCmdUpdateWalletBalance({
+      db.execute(pcoreCmdUpdateWalletBalance({
         tenantId: input.tenantId,
         walletId: input.walletId,
         balance: fromMinor(nextBalanceMinor),
         now,
       }));
 
-      this.insertWalletTransaction({
+      this.insertWalletTransactionInTx(db, {
         tenantId: input.tenantId,
         walletId: input.walletId,
         transactionType: 'owner_payout',
         amountMinor: -amountMinor,
-        currency: wallet.currency,
+        currency,
         referenceType: 'wallet_payout_request',
         referenceId: payoutId,
         actorType: 'human', /* 提现由 owner 经 HTTP 发起，已 owner 校验（ADR-0048 D2） */
@@ -291,20 +293,6 @@ export class PersonaWalletService {
     };
   }
 
-  /** @deprecated 提交 2 移除——改调 insertWalletTransactionInTx(tx, ...)。 */
-  insertWalletTransaction(input: {
-    tenantId: string;
-    walletId: string;
-    transactionType: WalletTransactionType;
-    amountMinor: number;
-    currency: string;
-    referenceType?: string | null;
-    referenceId?: string | null;
-    actorType?: WalletActorType;
-  }): WalletTransaction {
-    return this.insertWalletTransactionInTx(this.tx, input);
-  }
-
   /**
    * @internal — call only from PersonaCoreService or other sibling
    * sub-services. Look up wallet by its owning persona — used by
@@ -312,7 +300,7 @@ export class PersonaWalletService {
    * check; caller must enforce authorization.
    */
   getWalletByPersonaId(tenantId: string, personaId: string): PersonaWallet | null {
-    const row = this.tx.queryOne(pcoreQueryWalletByPersonaId({ tenantId, personaId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryWalletByPersonaId({ tenantId, personaId }));
     return row ? walletFromRow(row) : null;
   }
 
@@ -321,7 +309,7 @@ export class PersonaWalletService {
    * path. External callers should not assume this stays public.
    */
   getWalletPayoutRequestById(tenantId: string, payoutId: string): WalletPayoutRequest | null {
-    const row = this.tx.queryOne(pcoreQueryWalletPayoutRequestById({ tenantId, payoutId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryWalletPayoutRequestById({ tenantId, payoutId }));
     return row ? walletPayoutRequestFromRow(row) : null;
   }
 
@@ -331,7 +319,7 @@ export class PersonaWalletService {
    * settlement path is extracted into a marketplace sub-service.
    */
   getWalletSettlementByAssignmentId(tenantId: string, assignmentId: string): TaskWalletSettlement | null {
-    const row = this.tx.queryOne(pcoreQueryWalletSettlementByAssignmentId({ tenantId, assignmentId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryWalletSettlementByAssignmentId({ tenantId, assignmentId }));
     return row ? walletSettlementFromRow(row) : null;
   }
 }

@@ -16,7 +16,7 @@ describe('PersonaCoreService', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    service = new PersonaCoreService(db);
+    service = PersonaCoreService.fromUnitOfWork(db);
 
     const now = Date.now();
     db.prepare<void>(
@@ -342,7 +342,7 @@ describe('PersonaCoreService', () => {
       `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
        VALUES (?, ?, 'h', 'member', ?, ?, ?)`,
     ).run('det-owner', 'det@example.com', 'tenant_test', fixed, fixed);
-    const detService = new PersonaCoreService(detDb, undefined, 60_000, undefined, new TestClock(fixed));
+    const detService = PersonaCoreService.fromUnitOfWork(detDb, undefined, 60_000, undefined, new TestClock(fixed));
 
     const persona = detService.createPersona({
       tenantId: 'tenant_test',
@@ -365,7 +365,7 @@ describe('PersonaCoreService', () => {
     const fixed = Date.parse('2023-11-15T08:30:00.000Z'); // 固定一天
     const detDb = createMemoryDatabase();
     runDslSqliteMigrations(detDb);
-    const detService = new PersonaCoreService(detDb, undefined, 60_000, undefined, new TestClock(fixed));
+    const detService = PersonaCoreService.fromUnitOfWork(detDb, undefined, 60_000, undefined, new TestClock(fixed));
 
     /* 不传 metricDate → 走 currentMetricDate() 默认参数；必须等于注入时钟对应的 UTC 日期 */
     const result = detService.materializeDailyAnalytics('tenant_test');
@@ -477,7 +477,7 @@ describe('PersonaCoreService', () => {
       masterKey: randomBytes(32).toString('base64'),
       keyRotationIntervalDays: 90,
     });
-    const encryptedService = new PersonaCoreService(encDb, encryption);
+    const encryptedService = PersonaCoreService.fromUnitOfWork(encDb, encryption);
 
     const now = Date.now();
     encDb.prepare<void>(

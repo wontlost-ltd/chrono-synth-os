@@ -43,7 +43,7 @@ describe('Autonomous earning E2E (ADR-0048, real pipeline)', () => {
       .run('u_pub', 'p@e.com', 'h', 'member', TENANT, now, now);
     ownerId = 'u_worker';
 
-    core = new PersonaCoreService(db);
+    core = PersonaCoreService.fromUnitOfWork(db);
     const worker = core.createPersona({ tenantId: TENANT, ownerUserId: ownerId, displayName: 'Worker', profile: { mission: 'research' } });
     workerPersonaId = worker.id;
 

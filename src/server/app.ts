@@ -441,7 +441,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
    * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动）
    * P1-D 注入 UsageTracker + BillingOutbox 上报 bulk_knowledge_import_item */
-  const bulkImportPersonaCoreService = new PersonaCoreService(tx);
+  const bulkImportPersonaCoreService = PersonaCoreService.fromResolver(new SingleDbResolver(tx));
   const bulkImportTemplateService = new PersonaTemplateService(tx, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
   const p1dUsageTracker = P1dUsageTracker.fromResolver(new SingleDbResolver(tx));

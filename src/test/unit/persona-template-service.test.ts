@@ -28,7 +28,7 @@ describe('PersonaTemplateService', () => {
     os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
     os.start();
     const tx = os.getDatabase();
-    const personaCoreService = new PersonaCoreService(tx);
+    const personaCoreService = PersonaCoreService.fromUnitOfWork(tx);
     service = new PersonaTemplateService(tx, personaCoreService);
     service.syncBuiltins();
 

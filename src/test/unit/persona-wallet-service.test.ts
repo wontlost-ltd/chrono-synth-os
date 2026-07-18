@@ -48,7 +48,7 @@ function setup(): Fixture {
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(ownerUserId, 'owner@example.com', 'hash', 'member', tenantId, now, now);
 
-  const service = new PersonaCoreService(db);
+  const service = PersonaCoreService.fromUnitOfWork(db);
   const persona = service.createPersona({
     tenantId,
     ownerUserId,
@@ -63,7 +63,7 @@ function setup(): Fixture {
       return d !== null;
     },
   };
-  const walletService = new PersonaWalletService(db, ctx);
+  const walletService = new PersonaWalletService({ forTenant: () => db, allDbs: () => [db] }, ctx);
 
   return { db, service, walletService, personaId: persona.id, walletId, tenantId, ownerUserId };
 }
@@ -98,7 +98,7 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
   });
 
   it('insertWalletTransaction writes a journal entry visible via list', () => {
-    fx.walletService.insertWalletTransaction({
+    fx.walletService.insertWalletTransactionInTx(fx.db, {
       tenantId: fx.tenantId,
       walletId: fx.walletId,
       transactionType: 'task_payment',
