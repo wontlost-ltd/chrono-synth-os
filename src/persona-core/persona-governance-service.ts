@@ -64,6 +64,7 @@ import { generatePrefixedId } from '../utils/id-generator.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { clamp, round, safeJsonParse } from './persona-core-utils.js';
+import type { TransactionContext } from './persona-core-source.js';
 import type {
   AppealGovernanceCaseInput,
   ApplyGovernanceActionInput,
@@ -131,6 +132,18 @@ export interface GovernanceMemoryHook {
     importance: number;
     skipCognitiveProjection?: boolean;
   }): PersonaMemory;
+  /** 事务内变体：memory 写入用外层事务传入的同一 tx（跨子服务同事务铁律）。 */
+  insertMemoryInTx(tx: TransactionContext, input: {
+    tenantId: string;
+    personaId: string;
+    forkId?: string;
+    kind: PersonaMemory['kind'];
+    sensitivity?: PersonaMemorySensitivity;
+    summary: string;
+    content: Record<string, unknown>;
+    importance: number;
+    skipCognitiveProjection?: boolean;
+  }): PersonaMemory;
 }
 
 export interface PersonaGovernanceContext {
@@ -182,7 +195,22 @@ export class PersonaGovernanceService {
     return this.tx.queryMany(pcoreQueryGovernanceCasesByPersona({ tenantId, personaId })).map(governanceCaseFromRow);
   }
 
+  /**
+   * 双身份方法 #1（public 入口）：解析租户 + 开事务 → 调 InTx。
+   * facade.openGovernanceCase 直接委托；marketplace.disputeTask 改调 openGovernanceCaseInTx
+   * 纳入自己的外层事务（原子化，见 disputeTask）。 */
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null {
+    const persona = this.ctx.getPersonaById(input.tenantId, input.personaId);
+    if (!persona) return null;
+    const caseId = this.tx.transaction(() => this.openGovernanceCaseInTx(this.tx, input));
+    return caseId ? this.getGovernanceCaseById(input.tenantId, caseId) : null;
+  }
+
+  /**
+   * 双身份方法 #1（事务内 primitive）：显式收 tx，禁止解析 source / 开事务。
+   * 返回新建 caseId（null=persona 不存在）；返回值组装（getGovernanceCaseById）由 public 入口
+   * 在事务外做，避免在 tx 里做与写无关的读。 */
+  openGovernanceCaseInTx(tx: TransactionContext, input: OpenGovernanceCaseInput): string | null {
     const persona = this.ctx.getPersonaById(input.tenantId, input.personaId);
     if (!persona) return null;
 
@@ -190,78 +218,78 @@ export class PersonaGovernanceService {
     const caseId = generatePrefixedId('gcase');
     const details = input.details ?? {};
 
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateGovernanceCase({
-        id: caseId,
-        tenantId: input.tenantId,
+    tx.execute(pcoreCmdCreateGovernanceCase({
+      id: caseId,
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      taskId: input.taskId ?? null,
+      triggerType: input.triggerType,
+      severity: input.severity,
+      detailsJson: JSON.stringify(details),
+      now,
+    }));
+
+    this.insertGovernanceEventInTx(tx, {
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      eventType: 'review',
+      severity: this.severityToLevel(input.severity),
+      summary: `治理案件开启: ${input.triggerType}`,
+      payload: {
+        caseId,
+        taskId: input.taskId ?? null,
+        ...details,
+      },
+      actorUserId: input.actorUserId,
+    });
+
+    this.ctx.memoryHook.insertMemoryInTx(tx, {
+      tenantId: input.tenantId,
+      personaId: input.personaId,
+      kind: 'governance',
+      summary: `治理案件开启: ${input.triggerType}`,
+      content: {
+        caseId,
+        severity: input.severity,
+        ...details,
+      },
+      importance: clamp(0.5 + this.severityToLevel(input.severity) * 0.08, 0, 1),
+    });
+
+    /* tx 是收窄的 TransactionContext（无 transaction，编译期禁嵌套）；运行时它就是原 db，
+     * 这两个 helper 只用 execute/queryOne/queryMany，故按 SyncWriteUnitOfWork 传入是安全的。 */
+    publishObservabilityEvent(tx as SyncWriteUnitOfWork, {
+      tenantId: input.tenantId,
+      topic: OBSERVABILITY_TOPIC,
+      eventType: 'governance.case_opened',
+      partitionKey: caseId,
+      payload: {
+        caseId,
         personaId: input.personaId,
         taskId: input.taskId ?? null,
         triggerType: input.triggerType,
         severity: input.severity,
-        detailsJson: JSON.stringify(details),
-        now,
-      }));
-
-      this.insertGovernanceEvent({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        eventType: 'review',
-        severity: this.severityToLevel(input.severity),
-        summary: `治理案件开启: ${input.triggerType}`,
-        payload: {
-          caseId,
-          taskId: input.taskId ?? null,
-          ...details,
-        },
-        actorUserId: input.actorUserId,
-      });
-
-      this.ctx.memoryHook.insertMemory({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        kind: 'governance',
-        summary: `治理案件开启: ${input.triggerType}`,
-        content: {
-          caseId,
-          severity: input.severity,
-          ...details,
-        },
-        importance: clamp(0.5 + this.severityToLevel(input.severity) * 0.08, 0, 1),
-      });
-
-      publishObservabilityEvent(this.tx, {
-        tenantId: input.tenantId,
-        topic: OBSERVABILITY_TOPIC,
-        eventType: 'governance.case_opened',
-        partitionKey: caseId,
-        payload: {
-          caseId,
-          personaId: input.personaId,
-          taskId: input.taskId ?? null,
-          triggerType: input.triggerType,
-          severity: input.severity,
-          updatedAt: now,
-        },
-      });
-
-      recordBusinessAuditLog(this.tx, {
-        tenantId: input.tenantId,
-        actorType: 'user',
-        actorId: input.actorUserId,
-        actionType: 'governance.case.opened',
-        targetType: 'governance_case',
-        targetId: caseId,
-        createdAt: now,
-        payload: {
-          personaId: input.personaId,
-          taskId: input.taskId ?? null,
-          triggerType: input.triggerType,
-          severity: input.severity,
-        },
-      });
+        updatedAt: now,
+      },
     });
 
-    return this.getGovernanceCaseById(input.tenantId, caseId);
+    recordBusinessAuditLog(tx as SyncWriteUnitOfWork, {
+      tenantId: input.tenantId,
+      actorType: 'user',
+      actorId: input.actorUserId,
+      actionType: 'governance.case.opened',
+      targetType: 'governance_case',
+      targetId: caseId,
+      createdAt: now,
+      payload: {
+        personaId: input.personaId,
+        taskId: input.taskId ?? null,
+        triggerType: input.triggerType,
+        severity: input.severity,
+      },
+    });
+
+    return caseId;
   }
 
   applyGovernanceAction(input: ApplyGovernanceActionInput): { governanceCase: GovernanceCase; action: GovernanceAction; personaStatus: PersonaCore['status'] } | null {
@@ -443,7 +471,7 @@ export class PersonaGovernanceService {
    * / submitTaskResult / acceptSubmittedTask / disputeTask in the
    * core file. Once those move to their respective sub-services, this
    * becomes private. */
-  insertGovernanceEvent(input: {
+  insertGovernanceEventInTx(tx: TransactionContext, input: {
     tenantId: string;
     personaId: string;
     eventType: PersonaGovernanceEvent['eventType'];
@@ -453,7 +481,7 @@ export class PersonaGovernanceService {
     actorUserId: string | null;
   }): void {
     const now = Date.now();
-    this.tx.execute(pcoreCmdInsertGovernanceEvent({
+    tx.execute(pcoreCmdInsertGovernanceEvent({
       id: generatePrefixedId('pgov'),
       tenantId: input.tenantId,
       personaId: input.personaId,
@@ -464,6 +492,19 @@ export class PersonaGovernanceService {
       actorUserId: input.actorUserId,
       now,
     }));
+  }
+
+  /** @deprecated 提交 2 移除——改调 insertGovernanceEventInTx(tx, ...)。 */
+  insertGovernanceEvent(input: {
+    tenantId: string;
+    personaId: string;
+    eventType: PersonaGovernanceEvent['eventType'];
+    severity: number;
+    summary: string;
+    payload: Record<string, unknown>;
+    actorUserId: string | null;
+  }): void {
+    this.insertGovernanceEventInTx(this.tx, input);
   }
 
   /** @internal — used by disputeTask in core to look up the case it

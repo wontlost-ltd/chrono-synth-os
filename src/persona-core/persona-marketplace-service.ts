@@ -94,6 +94,7 @@ import { generatePrefixedId } from '../utils/id-generator.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { clamp, fromMinor, round, safeJsonParse, toMinor } from './persona-core-utils.js';
+import type { TransactionContext } from './persona-core-source.js';
 import {
   ACTIVE_RUNTIME_STATES,
   computeRuntimeTimeoutAt,
@@ -244,7 +245,18 @@ export function taskResultFromRow(row: PcoreTaskResultRow): TaskResult {
 export interface MarketplaceWalletHook {
   getWalletByPersonaId(tenantId: string, personaId: string): PersonaWallet | null;
   getWalletSettlementByAssignmentId(tenantId: string, assignmentId: string): TaskWalletSettlement | null;
+  /** @deprecated 提交 2 移除——改调 insertWalletTransactionInTx。 */
   insertWalletTransaction(input: {
+    tenantId: string;
+    walletId: string;
+    transactionType: WalletTransactionType;
+    amountMinor: number;
+    currency: string;
+    referenceType?: string | null;
+    referenceId?: string | null;
+  }): WalletTransaction;
+  /** 事务内变体：钱包 journal 写入用外层事务传入的同一 tx。 */
+  insertWalletTransactionInTx(tx: TransactionContext, input: {
     tenantId: string;
     walletId: string;
     transactionType: WalletTransactionType;
@@ -256,7 +268,20 @@ export interface MarketplaceWalletHook {
 }
 
 export interface MarketplaceMemoryHook {
+  /** @deprecated 提交 2 移除——改调 insertMemoryInTx。 */
   insertMemory(input: {
+    tenantId: string;
+    personaId: string;
+    forkId?: string;
+    kind: PersonaMemory['kind'];
+    sensitivity?: PersonaMemorySensitivity;
+    summary: string;
+    content: Record<string, unknown>;
+    importance: number;
+    skipCognitiveProjection?: boolean;
+  }): PersonaMemory;
+  /** 事务内变体：memory 写入用外层事务传入的同一 tx。 */
+  insertMemoryInTx(tx: TransactionContext, input: {
     tenantId: string;
     personaId: string;
     forkId?: string;
@@ -270,6 +295,7 @@ export interface MarketplaceMemoryHook {
 }
 
 export interface MarketplaceGovernanceHook {
+  /** @deprecated 提交 2 移除——改调 insertGovernanceEventInTx。 */
   insertGovernanceEvent(input: {
     tenantId: string;
     personaId: string;
@@ -279,7 +305,20 @@ export interface MarketplaceGovernanceHook {
     payload: Record<string, unknown>;
     actorUserId: string | null;
   }): void;
+  /** 事务内变体：治理事件写入用外层事务传入的同一 tx。 */
+  insertGovernanceEventInTx(tx: TransactionContext, input: {
+    tenantId: string;
+    personaId: string;
+    eventType: PersonaGovernanceEvent['eventType'];
+    severity: number;
+    summary: string;
+    payload: Record<string, unknown>;
+    actorUserId: string | null;
+  }): void;
+  /** disputeTask 保持两阶段时序调此 public 版（零回归）。 */
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null;
+  /** 双身份方法 #1 的事务内变体（契约完整）：把开案纳入调用者外层事务。返回新建 caseId。 */
+  openGovernanceCaseInTx(tx: TransactionContext, input: OpenGovernanceCaseInput): string | null;
   getGovernanceCaseById(tenantId: string, caseId: string): GovernanceCase | null;
 }
 

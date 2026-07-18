@@ -48,6 +48,7 @@ import {
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
 import { fromMinor, toMinor } from './persona-core-utils.js';
+import type { TransactionContext } from './persona-core-source.js';
 import type {
   PersonaWallet,
   RequestWalletPayoutInput,
@@ -240,7 +241,7 @@ export class PersonaWalletService {
    * Insert a wallet transaction journal entry. The amount can be
    * negative (debit) — caller owns sign convention.
    */
-  insertWalletTransaction(input: {
+  insertWalletTransactionInTx(tx: TransactionContext, input: {
     tenantId: string;
     walletId: string;
     transactionType: WalletTransactionType;
@@ -266,7 +267,7 @@ export class PersonaWalletService {
     }
     const now = Date.now();
     const id = generatePrefixedId('wtx');
-    this.tx.execute(pcoreCmdInsertWalletTransaction({
+    tx.execute(pcoreCmdInsertWalletTransaction({
       id,
       tenantId: input.tenantId,
       walletId: input.walletId,
@@ -288,6 +289,20 @@ export class PersonaWalletService {
       referenceId: input.referenceId ?? null,
       createdAt: now,
     };
+  }
+
+  /** @deprecated 提交 2 移除——改调 insertWalletTransactionInTx(tx, ...)。 */
+  insertWalletTransaction(input: {
+    tenantId: string;
+    walletId: string;
+    transactionType: WalletTransactionType;
+    amountMinor: number;
+    currency: string;
+    referenceType?: string | null;
+    referenceId?: string | null;
+    actorType?: WalletActorType;
+  }): WalletTransaction {
+    return this.insertWalletTransactionInTx(this.tx, input);
   }
 
   /**

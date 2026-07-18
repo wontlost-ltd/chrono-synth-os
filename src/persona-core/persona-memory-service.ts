@@ -43,6 +43,7 @@ import {
 import { PersonaCognitiveMemoryGraph } from './persona-cognitive-memory.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { realClock, type Clock } from '../utils/clock.js';
+import type { TransactionContext } from './persona-core-source.js';
 import type {
   AddPersonaMemoryInput,
   PersonaCognitiveMemoryKind,
@@ -111,7 +112,7 @@ export class PersonaMemoryService {
     if (!persona || this.ctx.isTerminalStatus(persona.status)) return null;
     if (input.forkId && !this.ctx.forkBelongsToPersona(input.tenantId, input.personaId, input.forkId)) return null;
 
-    return this.insertMemory({
+    return this.insertMemoryInTx(this.tx, {
       tenantId: input.tenantId,
       personaId: input.personaId,
       forkId: input.forkId,
@@ -182,7 +183,7 @@ export class PersonaMemoryService {
     const persona = this.ctx.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
-    const state = this.getCognitive(tenantId).buildState(tenantId, personaId);
+    const state = this.getCognitive(this.tx, tenantId).buildState(tenantId, personaId);
     const kindRows = this.tx.queryMany(pcoreQueryMemoryKindCounts({ tenantId, personaId }));
     const relationRows = this.tx.queryMany(pcoreQueryMemoryRelationCounts({ tenantId, personaId }));
 
@@ -222,7 +223,7 @@ export class PersonaMemoryService {
       limit,
     }));
     const nodes = nodeRows
-      .map((row) => this.getCognitive(tenantId).getMemory(tenantId, personaId, row.id))
+      .map((row) => this.getCognitive(this.tx, tenantId).getMemory(tenantId, personaId, row.id))
       .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
     if (nodes.length === 0) {
@@ -252,8 +253,11 @@ export class PersonaMemoryService {
 
   /** Insert a memory row + optionally project into the cognitive
    *  graph. `skipCognitiveProjection` is used by `addKnowledge` where
-   *  the caller does its own knowledge-item projection. */
-  insertMemory(input: {
+   *  the caller does its own knowledge-item projection.
+   *
+   *  事务内 primitive：显式收 `tx`，禁止解析 source / 开事务。调用者必须已在外层
+   *  facade 事务闭包内并传入那个同一 tx（跨子服务同事务铁律）。 */
+  insertMemoryInTx(tx: TransactionContext, input: {
     tenantId: string;
     personaId: string;
     forkId?: string;
@@ -273,7 +277,7 @@ export class PersonaMemoryService {
     const storedSummary = isEncrypted ? this.encryptString(input.summary, input.tenantId) : input.summary;
     const storedContent = JSON.stringify(input.content);
     const storedContentJson = isEncrypted ? this.encryptString(storedContent, input.tenantId) : storedContent;
-    this.tx.execute(pcoreCmdInsertMemory({
+    tx.execute(pcoreCmdInsertMemory({
       id: memoryId,
       tenantId: input.tenantId,
       personaId: input.personaId,
@@ -305,7 +309,7 @@ export class PersonaMemoryService {
     };
 
     if (!input.skipCognitiveProjection) {
-      this.projectEventMemory(memory);
+      this.projectEventMemory(tx, memory);
     }
 
     return memory;
@@ -313,8 +317,10 @@ export class PersonaMemoryService {
 
   /** Project a knowledge item into the cognitive graph as a semantic
    *  memory. Used by `PersonaCoreService.addKnowledge` after it
-   *  writes the knowledge row + growth event. */
-  projectKnowledgeItem(input: {
+   *  writes the knowledge row + growth event.
+   *
+   *  事务内 primitive：认知投影写入用外层事务传入的同一 tx（否则裂脑落错连接）。 */
+  projectKnowledgeItemInTx(tx: TransactionContext, input: {
     tenantId: string;
     personaId: string;
     knowledgeItemId: string;
@@ -322,7 +328,7 @@ export class PersonaMemoryService {
     content: string;
     confidence: number;
   }): void {
-    this.getCognitive(input.tenantId).projectMemory({
+    this.getCognitive(tx, input.tenantId).projectMemory({
       tenantId: input.tenantId,
       personaId: input.personaId,
       knowledgeItemId: input.knowledgeItemId,
@@ -331,6 +337,36 @@ export class PersonaMemoryService {
       valence: 0.1,
       salience: clamp(0.35 + input.confidence * 0.55, 0.2, 1),
     });
+  }
+
+  /* ── 过渡包装（提交 1）：旧 this.tx 绑定入口，委托 InTx 变体。提交 2 由 facade
+   *    改调 InTx 变体后移除。 ──────────────────────────────────────── */
+
+  /** @deprecated 提交 2 移除——改调 insertMemoryInTx(tx, ...)。 */
+  insertMemory(input: {
+    tenantId: string;
+    personaId: string;
+    forkId?: string;
+    kind: PersonaMemory['kind'];
+    sensitivity?: PersonaMemorySensitivity;
+    summary: string;
+    content: Record<string, unknown>;
+    importance: number;
+    skipCognitiveProjection?: boolean;
+  }): PersonaMemory {
+    return this.insertMemoryInTx(this.tx, input);
+  }
+
+  /** @deprecated 提交 2 移除——改调 projectKnowledgeItemInTx(tx, ...)。 */
+  projectKnowledgeItem(input: {
+    tenantId: string;
+    personaId: string;
+    knowledgeItemId: string;
+    title: string;
+    content: string;
+    confidence: number;
+  }): void {
+    this.projectKnowledgeItemInTx(this.tx, input);
   }
 
   /* ── Private helpers ────────────────────────────────────────── */
@@ -344,12 +380,16 @@ export class PersonaMemoryService {
       : (this.staticEncryption?.isEnabled ? this.staticEncryption : undefined);
   }
 
-  private getCognitive(tenantId: string): PersonaCognitiveMemoryGraph {
-    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId), this.clock);
+  private getCognitive(tx: TransactionContext, tenantId: string): PersonaCognitiveMemoryGraph {
+    /* tx 是收窄的 TransactionContext（编译期禁嵌套）；运行时它就是原 db。认知内核在
+     * 事务内路径只调 projectMemory（不自开事务），只读路径（buildState）才自开事务且
+     * 必在顶层（getPersonaGraphSummary/queryPersonaGraph 非 facade 事务内）。故按
+     * SyncWriteUnitOfWork 构造是安全的——不会触发嵌套事务。 */
+    return new PersonaCognitiveMemoryGraph(tx as SyncWriteUnitOfWork, undefined, this.getEncryption(tenantId), this.clock);
   }
 
-  private projectEventMemory(memory: PersonaMemory): void {
-    this.getCognitive(memory.tenantId).projectMemory({
+  private projectEventMemory(tx: TransactionContext, memory: PersonaMemory): void {
+    this.getCognitive(tx, memory.tenantId).projectMemory({
       tenantId: memory.tenantId,
       personaId: memory.personaId,
       forkId: memory.forkId,
