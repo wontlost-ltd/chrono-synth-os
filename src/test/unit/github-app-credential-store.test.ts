@@ -76,6 +76,25 @@ describe('GitHub App 凭据存储', () => {
     assert.equal(cnt, 1, '覆盖更新，不多行');
   });
 
+  it('getApp 跨租户隔离：同 DB 两租户各存各的凭据，各读回自己的（byTenant 必带 WHERE tenant_id）', () => {
+    /* 安全不变量（app-cred 方向，与反查方向对称）：github_app_credentials 是 per-tenant 单例，
+     * getApp 的 byTenant 查询**必须**带 WHERE tenant_id 过滤——否则 B 会读到 A 的私钥凭据（跨租户泄漏）。
+     * 本用例在同一 DB 建两租户各一条 app-cred 行，若 byTenant 去掉 tenant_id 过滤（取任意首行），
+     * B 就会读到 A 的 'appA'，断言必然失败。 */
+    new GithubAppCredentialStore(db, enc, 'tenant_A').storeApp('appA', PRIVATE_KEY_PEM, WEBHOOK_SECRET, null, 'ua', 1000);
+    new GithubAppCredentialStore(db, enc, 'tenant_B').storeApp('appB', PRIVATE_KEY_PEM, WEBHOOK_SECRET, null, 'ub', 2000);
+
+    /* B 读到 B 自己的（不是 A 的）。 */
+    const appB = new GithubAppCredentialStore(db, enc, 'tenant_B').getApp();
+    assert.ok(appB, 'B 应读到自己的凭据');
+    assert.equal(appB!.appId, 'appB', 'B 读到自己的 appB（byTenant 不受污染，绝非 A 的 appA）');
+
+    /* 反向：A 读到 A 自己的（不是 B 的）。 */
+    const appA = new GithubAppCredentialStore(db, enc, 'tenant_A').getApp();
+    assert.ok(appA, 'A 应读到自己的凭据');
+    assert.equal(appA!.appId, 'appA', 'A 读到自己的 appA（byTenant 不受污染，绝非 B 的 appB）');
+  });
+
   it('resolveTenantByInstallation：命中唯一行（反查未知 tenant）', () => {
     const store = new GithubAppCredentialStore(db, enc, TENANT);
     store.upsertInstallation('inst_42', 'github.com', 'acme-org', '["acme/repo"]', 1000);
