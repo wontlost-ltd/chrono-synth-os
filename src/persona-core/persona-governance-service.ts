@@ -188,8 +188,9 @@ export class PersonaGovernanceService {
 
   /**
    * 双身份方法 #1（public 入口）：解析租户 + 开事务 → 调 InTx。
-   * facade.openGovernanceCase 直接委托；marketplace.disputeTask 改调 openGovernanceCaseInTx
-   * 纳入自己的外层事务（原子化，见 disputeTask）。 */
+   * facade.openGovernanceCase 直接委托。marketplace.disputeTask 现仍在自身事务【前】调本 public 版
+   * （两阶段、非原子——既有语义，本片零回归不改）。openGovernanceCaseInTx 变体供未来把案件创建
+   * 纳入 disputeTask 外层事务原子化时用，当前仅为 InTx 契约完整存在、未被 disputeTask 接入。 */
   openGovernanceCase(input: OpenGovernanceCaseInput): GovernanceCase | null {
     const persona = this.ctx.getPersonaById(input.tenantId, input.personaId);
     if (!persona) return null;

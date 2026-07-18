@@ -1,8 +1,10 @@
 /**
- * 单元测试：persona-core-service 双入口（Phase 2 批次 5 验收）
+ * 单元测试：persona-core-service 双入口（租户分片 Phase 0 验收）
  *
- * 该 service 含 23 处 db.transaction，迁移为 runAtomic（IDatabase 路径走 db.transaction，
- * UoW 路径内联执行交由外层事务处理）。审计/可观测调用在 UoW 模式下静默跳过。
+ * 该 service（+4 子服务）含 23 处跨子服务事务，双入口化为 fromResolver/fromUnitOfWork：
+ * public 方法入口 `const db = source.forTenant(tenantId); db.transaction(()=>xxxInTx(db,...))`，
+ * InTx primitive 收 TransactionContext（不暴露 transaction，编译期禁嵌套）贯穿子服务/hook/认知投影/audit。
+ * 审计/可观测调用在两种模式下均执行（不跳过）。fromUnitOfWork 的 forTenant 忽略 tenantId 恒返固定 tx。
  */
 
 import { describe, it } from 'node:test';
