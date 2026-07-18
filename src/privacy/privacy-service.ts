@@ -112,6 +112,9 @@ const TENANT_TABLES = [
   'platform_dlq_events',
   'avatar_autorun_runlog', 'avatar_autorun_config', 'knowledge_sources',
   'audit_log',
+  /* GitHub 集成地基（Plan 1 Task 1）：github_app_credentials 含加密的 App 私钥/webhook secret（密文列，
+     导出即密文非明文）；github_installations 是 installation→tenant 映射元数据。两表均随租户导出/擦除 */
+  'github_app_credentials', 'github_installations',
 ] as const;
 
 /** 需要子查询关联的表 */
