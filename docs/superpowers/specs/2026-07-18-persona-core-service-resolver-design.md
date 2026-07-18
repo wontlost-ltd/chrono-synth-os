@@ -130,7 +130,15 @@ marketplace 层遍历 `allShardDbs()`，每 shard 各自跑 `pcoreQueryTimedOutR
 ## 验收标准
 
 - `npm run typecheck` exit 0（权威无残留含别名）；`npm run build` 成功。
-- 探针全绿（5 类，尤其「跨子服务事务同 db」）+ 变异证明（forTenant 固定→分流红；子服务用旧 this.tx→跨子服务落不同 shard 红）。
+- 探针全绿（**10 类**，尤其「跨子服务事务同 db」+「原子回滚故障注入」）+ 变异证明（forTenant 固定→分流红；子服务用旧 this.tx / getCognitive/projectKnowledgeItem 用旧 tx→跨子服务落不同 shard 或认知投影裂脑红；InTx 内调 transaction→嵌套红）。
 - 全量 unit fail=0（零回归铁证）。
 - `npm run check:db-access` exit 0。
-- 交叉审查（生成者≠审查者）：Codex 审 spec（重点审跨子服务事务边界方案、子服务传 tx 的颗粒度、recoverTimedOut fail-fast vs 隔离、级联复杂度是否可控）。
+- 交叉审查（生成者≠审查者）：Codex 审 spec 两轮（78 退回→采纳 6 项→92 通过）。
+
+## Plan 交接注意（Codex 92 通过时列的 5 项进 plan 事项）
+
+1. **嵌套事务类型层约束**：`InTx` 方法收窄接口 `type TransactionContext = Pick<SyncWriteUnitOfWork, 'queryOne'|'queryMany'|'execute'>`（不暴露 `transaction`）——运行时仍传原 db 对象，但实现代码**编译期**无法调 `tx.transaction()`（把「禁嵌套」从架构约定升级为结构性禁止）。
+2. **disputeTask 原子语义增强（已亲验现状）**：当前 `disputeTask`（marketplace:1164）**先独立调 `openGovernanceCase`（自开事务提交案件），再 `this.tx.transaction()` 更新 marketplace 状态**——两个独立事务，中间失败留孤儿案件。新设计把 `openGovernanceCaseInTx(tx)` 移进 marketplace 外层事务（案件创建 + 治理事件 + memory + assignment/result/task 更新同一原子边界）。**这是有意的失败语义增强**，plan 显式记录 + 补「外层失败全回滚」测试。
+3. **worker 适配清单**：`RuntimeRecoveryResult` 加 shardErrors、`flushInternal()` shard error 日志、现有 counter-shape 测试适配。
+4. **迁移核验**：`ensureAuditLogColumns` 移除前核验列已在迁移（已知 v040 audit 扩展列 / v073 hash-chain 列，大概率无需新增）；若缺列补迁移是安全移除运行期 DDL 的必要前置，可接受。
+5. **调用矩阵**：plan 先产出完整调用矩阵（44 方法 + hooks × 公共入口/facade 事务内调/子服务事务内调/自开事务 → 目标 public|InTx|只读），防深层 tx 漏改。设计层已列必查深层点（getCognitive/projectKnowledgeItem/audit/context callback/hooks），无需穷举 44 方法。
