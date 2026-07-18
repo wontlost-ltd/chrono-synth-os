@@ -6,13 +6,13 @@
 
 ## 背景与问题
 
-PersonaTemplateService（`src/enterprise/persona-template-service.ts`）管理 persona 模板：CRUD（list/get/create/update/delete）+ `syncBuiltins`（启动期刷内置模板）+ `instantiate`（从模板建 persona）。构造 `(tx: SyncWriteUnitOfWork, personaCoreService: PersonaCoreService)`——**级联依赖已双入口化的 PersonaCoreService**。3 生产构造点全裸 root db。
+PersonaTemplateService（`src/enterprise/persona-template-service.ts`）管理 persona 模板：CRUD（list/get/create/update/delete）+ `syncBuiltins`（启动期刷内置模板）+ `instantiate`（从模板建 persona）。构造 `(tx: SyncWriteUnitOfWork, personaCoreService: PersonaCoreService)`——**级联依赖已双入口化的 PersonaCoreService**。2 生产 + 1 测试构造点全裸 root db。
 
-**比 persona 块第一片（PersonaCoreService）轻一个量级**（已核实）：单类、无 4 子服务级联、CRUD 全单条写（无跨子服务事务）。
+**比 persona 块第一片（PersonaCoreService）轻一个量级**（已核实）：单类、无 4 子服务级联、无跨子服务事务（list/get/create 单条；update/delete 先读后写但仍无外层事务，既有 TOCTOU 保留）。
 
 ## 本片范围
 
-**只做**：PersonaTemplateService 双入口化 + syncBuiltins fan-out + instantiate 级联协调 + 3 构造点迁移 + 探针。
+**只做**：PersonaTemplateService 双入口化 + syncBuiltins fan-out + instantiate 级联协调 + 2 生产 + 1 测试构造点迁移 + 探针。
 
 **不做**：app.ts 穿真 ShardRouter；default 路径统一。
 
@@ -92,7 +92,7 @@ const templates = PersonaTemplateService.fromResolver(resolver, core);  // 传�
 ## 红线（不变量）
 
 1. **零回归**：单库（SingleDbResolver）+ UoW 模式 db 副作用逐字等价现状（含 instantiate 非原子=既有语义，不趁机加外层事务）；全量 unit fail=0。
-2. **CRUD 经 forTenant**（单条写无需事务）；**syncBuiltins 经 allDbs fan-out**（每 shard 一份）；**instantiate 的模板/audit 经 forTenant**、persona 委托 personaCoreService。
+2. **CRUD 经 forTenant**（list/get/create 单条无需事务；update/delete 先读后写，入口解析一次 db、get+execute 同 db，既有 TOCTOU 保留不加事务）；**syncBuiltins 经 allDbs fan-out**（每 shard 一份）；**instantiate 的模板/audit 经 forTenant**、persona 委托 personaCoreService。
 3. **级联同 resolver（强制组合装配）**：两生产构造点先建单一 resolver 变量、再传给 core + template（禁两边分别 new resolver）——两个真 ShardRouter 不共享连接池缓存会落不同 db 实例。update/delete 的 get+execute 也用同一入口解析的 db。
 4. **syncBuiltins 失败则抛 + 部署可用性**：逐 shard 尝试聚合 errors（含 shard 身份），任一失败最终抛（启动 seed 语义）；启动硬失败须配部署自动重试/告警；升级半成功靠 upsert 幂等重跑收敛。**已知限制**：删 builtin seed 单纯 upsert 不清旧（后续另设计，登记）。
 5. **UoW 模式 forTenant 忽略 tenantId 恒返 tx**。
@@ -104,7 +104,13 @@ const templates = PersonaTemplateService.fromResolver(resolver, core);  // 传�
 ## 验收标准
 
 - `npm run typecheck` exit 0；`npm run build` 成功。
-- 探针全绿（6 类，尤其 syncBuiltins 每 shard 一份 + instantiate 级联同 shard）+ 变异（template/core 不同 resolver→级联落错 shard 红）。
+- 探针全绿（8 类，尤其 syncBuiltins 每 shard 一份 + instantiate 级联同 shard + 重跑收敛）+ 变异（template/core 不同 resolver→级联落错 shard 红）。
+
+## Plan 交接注意（Codex 92 通过时的 2 细节）
+
+1. **shardErrors 身份用 fan-out index，非真 shardId**：`allShardDbs()` 只返 db 无真实 shardId——syncBuiltins 的 errors 用稳定 fan-out 索引（`String(i)`，同 BillingOutbox/recoverTimedOut）作可定位标签，别在实现假设能取 shardId。
+2. **update/delete/instantiate 用 private `getFromDb(db, tenantId, templateId)` 兑现「解析一次」**：public `get()` 与 update/delete/instantiate 共用该 db-bound helper——update/delete 入口解析一次 db，内部走 `getFromDb(db,...)` 而非再调会重新解析的 public `this.get()`（重复解析同 resolver 下虽得同 db，但与「解析一次」承诺不符，且多一次 resolver 调用）。
+
 - 全量 unit fail=0。
 - `npm run check:db-access` exit 0。
 - 交叉审查（生成者≠审查者）：Codex 审 spec（重点：syncBuiltins fan-out 每 shard 一份的正确性 + 升级同步语义、instantiate 级联同 resolver 不裂脑的保证、syncBuiltins 失败则抛 vs 隔离的取舍、CRUD 无事务是否真安全）。
