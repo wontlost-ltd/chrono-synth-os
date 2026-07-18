@@ -867,7 +867,14 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(tx), config);
     const FLUSH_INTERVAL_MS = 60_000;
     const flushTimer = setInterval(() => {
-      void billingOutbox.flush().catch((err) => {
+      void billingOutbox.flush().then((result) => {
+        /* shardErrors 在 flush 正常 resolve 时返回；逐 shard 警告日志
+           注：meterShardFlushErrors 计数已由 flush 的 catch 块负责，定时器只读日志不再累加（防双计） */
+        for (const e of result.shardErrors) {
+          deps.os.getLogger().warn('Billing', `计量发件箱 shard ${e.shard} flush 失败: ${e.error}`);
+        }
+      }).catch((err) => {
+        /* 防非隔离的意外抛（flush 本身抛，不是 shardErrors） */
         deps.os.getLogger().warn('Billing', `计量发件箱刷新失败: ${err instanceof Error ? err.message : String(err)}`);
       });
     }, FLUSH_INTERVAL_MS);
