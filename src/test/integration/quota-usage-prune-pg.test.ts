@@ -26,7 +26,7 @@ describe('quota_usage prune on Postgres', { skip: !TEST_URL }, () => {
     const iso = await createIsolatedPgSchema('quota', TEST_URL!, { max: 3 });
     db = iso.db;
     cleanup = iso.cleanup;
-    qm = new QuotaManager(db);
+    qm = QuotaManager.fromUnitOfWork(db);
   });
 
   after(async () => { if (cleanup) await cleanup(); });
@@ -37,8 +37,8 @@ describe('quota_usage prune on Postgres', { skip: !TEST_URL }, () => {
     qm.recordUsage('t1', 'decisions', 1, now - 30 * DAY);
     qm.recordUsage('t1', 'decisions', 1, now - 1 * DAY);
     /* cutoff = now-7d；当前 1d 窗口 = now-(now%1d)=now（now 是 1d 整数倍）→ 近窗口(now-1d) 也 < 当前但 ≥ cutoff，保留。 */
-    const deleted = qm.pruneUsageBefore(now, now - 7 * DAY, 100);
-    assert.equal(deleted, 1, '只删 30d 前旧窗口');
+    const { totalDeleted } = qm.pruneUsageBefore(now, now - 7 * DAY, 100);
+    assert.equal(totalDeleted, 1, '只删 30d 前旧窗口');
     const rows = db.prepare<{ c: string }>("SELECT COUNT(*) AS c FROM quota_usage WHERE resource = 'decisions'").get();
     assert.equal(Number(rows!.c), 1);
   });
@@ -47,8 +47,8 @@ describe('quota_usage prune on Postgres', { skip: !TEST_URL }, () => {
     const now = 100 * DAY;
     qm.setLimit('t1', 'big', 5, 30 * DAY);
     qm.consumeQuota('t1', 'big', 5, now);  /* 当前 30d 窗口起点 = 90d */
-    const deleted = qm.pruneUsageBefore(now, now - 7 * DAY, 100);
-    assert.equal(deleted, 0, '当前长窗口虽早于 cutoff 仍不删');
+    const { totalDeleted } = qm.pruneUsageBefore(now, now - 7 * DAY, 100);
+    assert.equal(totalDeleted, 0, '当前长窗口虽早于 cutoff 仍不删');
     assert.equal(qm.checkQuota('t1', 'big', 1, now), false, '当前窗口用量未被清零');
   });
 });

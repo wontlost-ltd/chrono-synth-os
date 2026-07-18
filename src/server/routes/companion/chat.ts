@@ -23,6 +23,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
+import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
 import { QuotaManager } from '../../../multi-tenant/quota-manager.js';
@@ -80,7 +81,7 @@ export function registerCompanionChatRoutes(
   config?: AppConfig,
 ): void {
   const sharedDb = db ?? os.getDatabase();
-  const quotaManager = new QuotaManager(sharedDb);
+  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
   /* 离线回应器：无 matcher（回退保守子串匹配——已足够匹配基线敏感主题的 never_discuss 自检）。 */
   const responder = new OfflineConversationResponder();
   /* 对话记忆开关（ADR-0055）：缺省（无 config）默认开，与 schema 默认一致。 */

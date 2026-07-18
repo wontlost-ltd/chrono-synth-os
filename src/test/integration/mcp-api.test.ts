@@ -49,7 +49,7 @@ describe('MCP API 集成测试', () => {
     tenantId = regBody.data.tenantId;
 
     /* 创建 persona */
-    const personaCoreService = new PersonaCoreService(os.getDatabase());
+    const personaCoreService = PersonaCoreService.fromUnitOfWork(os.getDatabase());
     const persona = personaCoreService.createPersona({
       tenantId,
       ownerUserId: userId,

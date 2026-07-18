@@ -145,7 +145,7 @@ describe('可视化与隐私 API 集成测试', () => {
           report_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run('recon_privacy_export', 'default', 1, 0, 0, 0, 0, 0, JSON.stringify({ mismatchedSettlementIds: [] }), now);
-      const personaService = new PersonaCoreService(db);
+      const personaService = PersonaCoreService.fromUnitOfWork(db);
       const persona = personaService.createPersona({
         tenantId: 'default',
         ownerUserId: 'user_privacy_export',
@@ -278,7 +278,7 @@ describe('可视化与隐私 API 集成测试', () => {
       try {
         const db = encryptedOs.getDatabase();
         const encryption = new FieldEncryption(encryptedConfig.encryption);
-        const personaService = new PersonaCoreService(db, encryption);
+        const personaService = PersonaCoreService.fromUnitOfWork(db, encryption);
         const now = Date.now();
         db.prepare<void>(
           `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
@@ -400,7 +400,7 @@ describe('可视化与隐私 API 集成测试', () => {
           report_json, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run('recon_privacy_delete', 'default', 1, 1, 1, 4, 3, 0, JSON.stringify({ mismatchedSettlementIds: ['ws_1'] }), now);
-      const personaService = new PersonaCoreService(db);
+      const personaService = PersonaCoreService.fromUnitOfWork(db);
       const persona = personaService.createPersona({
         tenantId: 'default',
         ownerUserId: 'user_privacy_delete',

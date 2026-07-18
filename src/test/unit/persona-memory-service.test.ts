@@ -51,7 +51,7 @@ function setup(): Fixture {
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(ownerUserId, 'owner@example.com', 'hash', 'member', tenantId, now, now);
 
-  const service = new PersonaCoreService(db);
+  const service = PersonaCoreService.fromUnitOfWork(db);
   const persona = service.createPersona({
     tenantId,
     ownerUserId,
@@ -69,7 +69,7 @@ function setup(): Fixture {
     isTerminalStatus: (status) => status === 'deceased' || status === 'transferred',
     forkBelongsToPersona: () => true,
   };
-  const memoryService = new PersonaMemoryService(db, ctx);
+  const memoryService = new PersonaMemoryService({ forTenant: () => db, allDbs: () => [db] }, ctx);
 
   return { db, service, memoryService, personaId: persona.id, tenantId, ownerUserId };
 }
@@ -263,14 +263,14 @@ describe('PersonaMemoryService (Step 16 extraction)', () => {
      * enabled, else static", so when the resolver is undefined we
      * fall through to static and hit the throwing path on read. */
     const throwingMemoryService = new PersonaMemoryService(
-      fx.db,
+      { forTenant: () => fx.db, allDbs: () => [fx.db] },
       ctx,
       throwingEnc as unknown as import('../../storage/encryption.js').FieldEncryption,
     );
 
     /* Write through the throwing service so we get a row with
      * isEncrypted=1. The encrypt call works; only decrypt throws. */
-    throwingMemoryService.insertMemory({
+    throwingMemoryService.insertMemoryInTx(fx.db, {
       tenantId: fx.tenantId,
       personaId: fx.personaId,
       kind: 'interaction',

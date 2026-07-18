@@ -8,6 +8,7 @@ import { UsageTracker } from '../../billing/usage-tracker.js';
 import { QuotaExceededError } from '../../errors/index.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 
 describe('ModelRouter (Mock Provider)', () => {
   const router = new ModelRouter({
@@ -133,7 +134,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('预算充足时正常调用', async () => {
-      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 }, db);
+      const tokenBudget = TokenBudget.fromUnitOfWork({ monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 }, db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -147,7 +148,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('预算不足时抛出 QuotaExceededError', async () => {
-      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 10, dailyTokenLimit: 10, alertThreshold: 0.8 }, db);
+      const tokenBudget = TokenBudget.fromUnitOfWork({ monthlyTokenLimit: 10, dailyTokenLimit: 10, alertThreshold: 0.8 }, db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -164,7 +165,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('embed 预算不足时抛出 QuotaExceededError', async () => {
-      const tokenBudget = new TokenBudget({ monthlyTokenLimit: 1, dailyTokenLimit: 1, alertThreshold: 0.8 }, db);
+      const tokenBudget = TokenBudget.fromUnitOfWork({ monthlyTokenLimit: 1, dailyTokenLimit: 1, alertThreshold: 0.8 }, db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -178,6 +179,17 @@ describe('ModelRouter (Mock Provider)', () => {
         (err: unknown) => err instanceof QuotaExceededError,
       );
     });
+
+    it('TokenBudget.fromResolver：getSummary 按 tenantId 读对应 db', () => {
+      const tb = TokenBudget.fromResolver(
+        { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },
+        new SingleDbResolver(db),
+      );
+      const sum = tb.getSummary('tX');
+      assert.ok(sum, 'getSummary 返回结构');
+      assert.equal(sum.daily.used, 0);
+      assert.equal(sum.monthly.limit, 1_000_000);
+    });
   });
 
   describe('CostTracker 集成', () => {
@@ -189,7 +201,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('chat 后 CostTracker 写入 llm_usage 记录', async () => {
-      const costTracker = new CostTracker(db);
+      const costTracker = CostTracker.fromUnitOfWork(db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -204,6 +216,13 @@ describe('ModelRouter (Mock Provider)', () => {
       const summary = costTracker.getMonthlySummary('tenant-1');
       assert.equal(summary.totalCalls, 1);
     });
+
+    it('CostTracker.fromResolver：record 落对应 db 且可读回', () => {
+      const ct = CostTracker.fromResolver(new SingleDbResolver(db));
+      ct.record('tX', 'openai', 'gpt-x', 10, 20);
+      const sum = ct.getMonthlySummary('tX');
+      assert.ok(sum.totalTokens > 0, 'record 落库、getMonthlySummary 读回');
+    });
   });
 
   describe('QuotaManager 集成', () => {
@@ -215,7 +234,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额充足时正常调用', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100_000, 3_600_000);
 
       const r = new ModelRouter({
@@ -231,7 +250,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额耗尽时 chat 抛出 QuotaExceededError', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100, 3_600_000);
 
       const r = new ModelRouter({
@@ -250,7 +269,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('llm_tokens 配额耗尽时 embed 抛出 QuotaExceededError', async () => {
-      const quotaManager = new QuotaManager(db);
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 1, 3_600_000);
 
       const r = new ModelRouter({
@@ -289,7 +308,7 @@ describe('ModelRouter (Mock Provider)', () => {
     });
 
     it('chat 后 UsageTracker 记录 llm_tokens 用量', async () => {
-      const usageTracker = new UsageTracker(db);
+      const usageTracker = UsageTracker.fromUnitOfWork(db);
       const r = new ModelRouter({
         provider: 'mock',
         model: 'mock',
@@ -302,6 +321,12 @@ describe('ModelRouter (Mock Provider)', () => {
       await r.chat([{ role: 'user', content: '普通消息' }]);
       const summary = usageTracker.getSummary('tenant-1');
       assert.equal(summary.llm_tokens ?? 0, 0);
+    });
+
+    it('UsageTracker.fromResolver：record 落对应 db 且可读回', () => {
+      const ut = UsageTracker.fromResolver(new SingleDbResolver(db));
+      ut.record('tX', 'sim', 3);
+      assert.equal(ut.getUsage('tX', 'sim'), 3);
     });
   });
 });

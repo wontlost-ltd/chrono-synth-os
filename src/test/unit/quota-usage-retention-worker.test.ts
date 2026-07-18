@@ -19,7 +19,7 @@ function countUsage(db: IDatabase): number {
 function setup() {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
-  const qm = new QuotaManager(db);
+  const qm = QuotaManager.fromUnitOfWork(db);
   const worker = new QuotaUsageRetentionWorker(qm, new SilentLogger(), {
     intervalMs: 60_000,
     retentionMs: 7 * 24 * 60 * 60 * 1000,

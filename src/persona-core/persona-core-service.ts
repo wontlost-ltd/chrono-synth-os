@@ -59,10 +59,12 @@ import {
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
-import { ensureAuditLogColumns, recordBusinessAuditLog } from '../audit/audit-log-store.js';
+import { recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { realClock, type Clock } from '../utils/clock.js';
 import { PersonaCognitiveMemoryGraph } from './persona-cognitive-memory.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
+import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 /* Shared utilities extracted in the Step 16 split. */
 import {
   clamp,
@@ -334,8 +336,16 @@ export class PersonaCoreService {
    */
   private readonly marketplaceService: PersonaMarketplaceService;
 
-  constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+  /**
+   * 私有构造器（双入口化）：只收 source（不再构造期绑单一 tx），配合 fromResolver/fromUnitOfWork。
+   * source 化后 facade 与 4 子服务共享同一个 source 实例——per-tenant 方法入口解析一次 db 向下传，
+   * 跨子服务事务共用同一物理连接同一事务（不裂脑）。
+   *
+   * ⚠️ 原构造期副作用 `ensureAuditLogColumns(tx)` 已移除（spec 机制 5 / 红线 6d）：schema 列归迁移
+   * 系统（DDL 不在 resolver/service 层按 shard fan-out）。审计扩展列已在迁移 v040/v073 中（Task 3 核验）。
+   */
+  private constructor(
+    private readonly source: PersonaCoreSource,
     encryption?: FieldEncryption,
     runtimeSessionTimeoutMs = 60_000,
     private readonly encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
@@ -351,7 +361,6 @@ export class PersonaCoreService {
     registerCoreSelfExecutors();
     this.encryption = encryption?.isEnabled ? encryption : undefined;
     this.runtimeSessionTimeoutMs = runtimeSessionTimeoutMs;
-    ensureAuditLogColumns(tx);
     /* Context bag for the memory service. Bound to `this` so the
      * sub-service can call into facade-owned lifecycle guards
      * (getPersonaDetail / isTerminalStatus / forkBelongsToPersona)
@@ -364,7 +373,7 @@ export class PersonaCoreService {
         this.forkBelongsToPersona(tenantId, personaId, forkId),
     };
     this.memoryService = new PersonaMemoryService(
-      tx,
+      this.source,
       memoryContext,
       this.encryption,
       this.encryptionResolver,
@@ -379,7 +388,7 @@ export class PersonaCoreService {
         this.personaExists(tenantId, ownerUserId, personaId),
     };
     this.walletService = new PersonaWalletService(
-      tx,
+      this.source,
       walletContext,
       this.encryption,
       this.encryptionResolver,
@@ -387,19 +396,19 @@ export class PersonaCoreService {
     /* Governance sub-service context. Wires the lookups + side-effects
      * the governance domain needs but doesn't own (persona lookup,
      * persona-state writes, memory hook). The memoryHook passes
-     * through to `this.memoryService.insertMemory` so the governance
+     * through to `this.memoryService.insertMemoryInTx` so the governance
      * service can write into the audit memory trail without taking a
      * direct dependency on PersonaMemoryService. */
     const governanceContext: PersonaGovernanceContext = {
       personaExists: (t, o, p) => this.personaExists(t, o, p),
       getPersonaById: (t, p) => this.getPersonaById(t, p),
       toLegacyStatus: (status) => this.toLegacyStatus(status),
-      insertGrowthEvent: (input) => this.insertGrowthEvent(input),
-      insertReputationHistory: (t, p, from, to, reason) =>
-        this.insertReputationHistory(t, p, from, to, reason),
+      insertGrowthEventInTx: (tx, input) => this.insertGrowthEventInTx(tx, input),
+      insertReputationHistoryInTx: (tx, t, p, from, to, reason) =>
+        this.insertReputationHistoryInTx(tx, t, p, from, to, reason),
       memoryHook: this.memoryService,
     };
-    this.governanceService = new PersonaGovernanceService(tx, governanceContext);
+    this.governanceService = new PersonaGovernanceService(this.source, governanceContext);
     /* Marketplace sub-service context. The marketplace cluster
      * reaches into wallet (settlement + journal), memory (audit
      * trail), and governance (reward events on high-quality
@@ -412,18 +421,54 @@ export class PersonaCoreService {
       personaExists: (t, o, p) => this.personaExists(t, o, p),
       forkBelongsToPersona: (t, p, f) => this.forkBelongsToPersona(t, p, f),
       isTerminalStatus: (status) => this.isTerminalStatus(status),
-      insertGrowthEvent: (input) => this.insertGrowthEvent(input),
-      insertReputationHistory: (t, p, from, to, reason) =>
-        this.insertReputationHistory(t, p, from, to, reason),
+      insertGrowthEventInTx: (tx, input) => this.insertGrowthEventInTx(tx, input),
+      insertReputationHistoryInTx: (tx, t, p, from, to, reason) =>
+        this.insertReputationHistoryInTx(tx, t, p, from, to, reason),
       walletHook: this.walletService,
       memoryHook: this.memoryService,
       governanceHook: this.governanceService,
     };
     this.marketplaceService = new PersonaMarketplaceService(
-      tx,
+      this.source,
       marketplaceContext,
       this.runtimeSessionTimeoutMs,
     );
+  }
+
+  /**
+   * resolver 模式：per-tenant 经 resolver.dbForTenant(tenantId) 选 shard db；cross-tenant
+   * （recoverTimedOut）经 allShardDbs() fan-out。用于 route 注册期等未绑事务的长期服务。
+   */
+  static fromResolver(
+    resolver: TenantDbResolver,
+    encryption?: FieldEncryption,
+    runtimeSessionTimeoutMs = 60_000,
+    encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
+    clock: Clock = realClock,
+  ): PersonaCoreService {
+    const source: PersonaCoreSource = {
+      forTenant: (tenantId) => resolver.dbForTenant(tenantId),
+      allDbs: () => resolver.allShardDbs(),
+    };
+    return new PersonaCoreService(source, encryption, runtimeSessionTimeoutMs, encryptionResolver, clock);
+  }
+
+  /**
+   * bound-UoW 模式：forTenant 忽略 tenantId 恒返该事务，allDbs()=[tx]（结构上不脱离事务）。
+   * 用于 bulkImport / 已绑事务的调用链。
+   */
+  static fromUnitOfWork(
+    tx: SyncWriteUnitOfWork,
+    encryption?: FieldEncryption,
+    runtimeSessionTimeoutMs = 60_000,
+    encryptionResolver?: (tenantId: string) => FieldEncryption | undefined,
+    clock: Clock = realClock,
+  ): PersonaCoreService {
+    const source: PersonaCoreSource = {
+      forTenant: () => tx,
+      allDbs: () => [tx],
+    };
+    return new PersonaCoreService(source, encryption, runtimeSessionTimeoutMs, encryptionResolver, clock);
   }
 
   private getEncryption(tenantId: string): FieldEncryption | undefined {
@@ -431,11 +476,16 @@ export class PersonaCoreService {
     return resolved?.isEnabled ? resolved : this.encryption;
   }
 
-  private getCognitive(tenantId: string): PersonaCognitiveMemoryGraph {
-    return new PersonaCognitiveMemoryGraph(this.tx, undefined, this.getEncryption(tenantId), this.clock);
+  /** 认知内核构造（深层 tx 捕获点 D1）：收显式 tx，不再用构造期绑定。
+   *  只读路径（getOperatingState）传 forTenant 解析的 db；写路径传外层事务 tx。 */
+  private getCognitive(tx: TransactionContext, tenantId: string): PersonaCognitiveMemoryGraph {
+    /* 见 PersonaMemoryService.getCognitive 同款说明：tx 收窄禁嵌套，运行时是原 db；
+     * 事务内只调 projectMemory（不自开事务），只读 buildState 只在顶层调用。 */
+    return new PersonaCognitiveMemoryGraph(tx as SyncWriteUnitOfWork, undefined, this.getEncryption(tenantId), this.clock);
   }
 
-  private recordBusinessAudit(input: {
+  /** 审计写（深层 tx 捕获点 D2）：收显式 tx，事务内写审计日志用外层同一 tx。 */
+  private recordBusinessAuditInTx(tx: TransactionContext, input: {
     tenantId: string;
     actorId: string;
     actionType: string;
@@ -444,7 +494,7 @@ export class PersonaCoreService {
     payload?: Record<string, unknown>;
     createdAt?: number;
   }): void {
-    recordBusinessAuditLog(this.tx, {
+    recordBusinessAuditLog(tx as SyncWriteUnitOfWork, {
       tenantId: input.tenantId,
       actorType: 'user',
       actorId: input.actorId,
@@ -456,8 +506,8 @@ export class PersonaCoreService {
     });
   }
 
-  private publishObservability(event: Parameters<typeof publishObservabilityEvent>[1]): void {
-    publishObservabilityEvent(this.tx, event);
+  private publishObservabilityInTx(tx: TransactionContext, event: Parameters<typeof publishObservabilityEvent>[1]): void {
+    publishObservabilityEvent(tx as SyncWriteUnitOfWork, event);
   }
 
   createPersona(input: CreatePersonaCoreInput): PersonaCoreDetail {
@@ -469,8 +519,9 @@ export class PersonaCoreService {
     const visibility = input.visibility ?? 'private';
     const initialReputation = 50;
 
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreatePersona({
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdCreatePersona({
         id: personaId,
         tenantId: input.tenantId,
         ownerUserId: input.ownerUserId,
@@ -481,7 +532,7 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.tx.execute(pcoreCmdCreateWallet({
+      db.execute(pcoreCmdCreateWallet({
         id: walletId,
         tenantId: input.tenantId,
         personaId,
@@ -494,7 +545,7 @@ export class PersonaCoreService {
         const confidence = clamp(item.confidence ?? 0.7, 0, 1);
         const tagsJson = JSON.stringify(item.tags ?? []);
 
-        this.tx.execute(pcoreCmdCreateKnowledgeItem({
+        db.execute(pcoreCmdCreateKnowledgeItem({
           id: knowledgeId,
           tenantId: input.tenantId,
           personaId,
@@ -506,7 +557,7 @@ export class PersonaCoreService {
           now,
         }));
 
-        this.memoryService.insertMemory({
+        this.memoryService.insertMemoryInTx(db, {
           tenantId: input.tenantId,
           personaId,
           kind: 'knowledge',
@@ -516,7 +567,7 @@ export class PersonaCoreService {
           skipCognitiveProjection: true,
         });
 
-        this.memoryService.projectKnowledgeItem({
+        this.memoryService.projectKnowledgeItemInTx(db, {
           tenantId: input.tenantId,
           personaId,
           knowledgeItemId: knowledgeId,
@@ -526,7 +577,7 @@ export class PersonaCoreService {
         });
       }
 
-      this.recordBusinessAudit({
+      this.recordBusinessAuditInTx(db, {
         tenantId: input.tenantId,
         actorId: input.ownerUserId,
         actionType: 'persona.create',
@@ -545,7 +596,7 @@ export class PersonaCoreService {
   }
 
   listPersonas(tenantId: string, ownerUserId: string): PersonaCoreSummary[] {
-    const rows = this.tx.queryMany(pcoreQuerySummariesByOwner({ tenantId, ownerUserId }));
+    const rows = this.source.forTenant(tenantId).queryMany(pcoreQuerySummariesByOwner({ tenantId, ownerUserId }));
 
     return rows.map((row) => ({
       ...personaFromRow(row),
@@ -570,21 +621,22 @@ export class PersonaCoreService {
   }
 
   getPersonaDetail(tenantId: string, ownerUserId: string, personaId: string): PersonaCoreDetail | null {
-    const base = this.tx.queryOne(pcoreQuerySummaryByOwner({ tenantId, ownerUserId, personaId }));
+    const db = this.source.forTenant(tenantId);
+    const base = db.queryOne(pcoreQuerySummaryByOwner({ tenantId, ownerUserId, personaId }));
 
     if (!base) return null;
 
-    const forks = this.tx.queryMany(pcoreQueryForksByPersona({ tenantId, personaId })).map(forkFromRow);
+    const forks = db.queryMany(pcoreQueryForksByPersona({ tenantId, personaId })).map(forkFromRow);
 
-    const recentMemories = this.tx.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })).map((row) => this.memoryService.memoryFromRow(row));
+    const recentMemories = db.queryMany(pcoreQueryRecentMemories({ tenantId, personaId })).map((row) => this.memoryService.memoryFromRow(row));
 
-    const knowledgeItems = this.tx.queryMany(pcoreQueryRecentKnowledge({ tenantId, personaId })).map(knowledgeFromRow);
+    const knowledgeItems = db.queryMany(pcoreQueryRecentKnowledge({ tenantId, personaId })).map(knowledgeFromRow);
 
-    const growthEvents = this.tx.queryMany(pcoreQueryRecentGrowthEvents({ tenantId, personaId })).map(growthEventFromRow);
+    const growthEvents = db.queryMany(pcoreQueryRecentGrowthEvents({ tenantId, personaId })).map(growthEventFromRow);
 
-    const governanceEvents = this.tx.queryMany(pcoreQueryRecentGovernanceEvents({ tenantId, personaId })).map(governanceEventFromRow);
+    const governanceEvents = db.queryMany(pcoreQueryRecentGovernanceEvents({ tenantId, personaId })).map(governanceEventFromRow);
 
-    const marketplaceTasks = this.tx.queryMany(pcoreQueryRecentMarketplaceTasks({ tenantId, ownerUserId, personaId })).map(taskFromRow);
+    const marketplaceTasks = db.queryMany(pcoreQueryRecentMarketplaceTasks({ tenantId, ownerUserId, personaId })).map(taskFromRow);
 
     return {
       ...personaFromRow(base),
@@ -620,7 +672,7 @@ export class PersonaCoreService {
 
     return {
       persona,
-      cognitive: this.getCognitive(tenantId).buildState(tenantId, personaId),
+      cognitive: this.getCognitive(this.source.forTenant(tenantId), tenantId).buildState(tenantId, personaId),
     };
   }
 
@@ -630,10 +682,11 @@ export class PersonaCoreService {
     if (persona.status === 'active') return persona;
 
     const now = this.clock.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdActivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdActivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
-      this.memoryService.insertMemory({
+      this.memoryService.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -652,10 +705,11 @@ export class PersonaCoreService {
     if (persona.status === 'dormant') return persona;
 
     const now = this.clock.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdDeactivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdDeactivatePersona({ tenantId: input.tenantId, personaId: input.personaId, now }));
 
-      this.memoryService.insertMemory({
+      this.memoryService.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -674,7 +728,8 @@ export class PersonaCoreService {
     if (input.toOwnerUserId === input.ownerUserId) return null;
     if (!this.userExists(input.tenantId, input.toOwnerUserId)) return null;
 
-    const pending = this.tx.queryOne(pcoreQueryPendingTransfer({
+    const db = this.source.forTenant(input.tenantId);
+    const pending = db.queryOne(pcoreQueryPendingTransfer({
       tenantId: input.tenantId,
       personaId: input.personaId,
     }));
@@ -682,8 +737,8 @@ export class PersonaCoreService {
 
     const now = this.clock.now();
     const transferId = generatePrefixedId('ptransfer');
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateTransfer({
+    db.transaction(() => {
+      db.execute(pcoreCmdCreateTransfer({
         id: transferId,
         tenantId: input.tenantId,
         personaId: input.personaId,
@@ -693,7 +748,7 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.memoryService.insertMemory({
+      this.memoryService.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -706,7 +761,7 @@ export class PersonaCoreService {
         importance: 0.6,
       });
 
-      this.recordBusinessAudit({
+      this.recordBusinessAuditInTx(db, {
         tenantId: input.tenantId,
         actorId: input.ownerUserId,
         actionType: 'persona.transfer.requested',
@@ -727,7 +782,8 @@ export class PersonaCoreService {
   }
 
   approveTransfer(input: ApprovePersonaTransferInput): { transfer: PersonaTransfer; persona: PersonaCoreDetail } | null {
-    const transfer = this.tx.queryOne(pcoreQueryTransferByPersonaId({
+    const db = this.source.forTenant(input.tenantId);
+    const transfer = db.queryOne(pcoreQueryTransferByPersonaId({
       tenantId: input.tenantId,
       personaId: input.personaId,
       transferId: input.transferId,
@@ -737,19 +793,19 @@ export class PersonaCoreService {
     }
 
     const now = this.clock.now();
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdApproveTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
+    db.transaction(() => {
+      db.execute(pcoreCmdApproveTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
-      this.tx.execute(pcoreCmdTransferPersonaOwner({
+      db.execute(pcoreCmdTransferPersonaOwner({
         tenantId: input.tenantId,
         personaId: input.personaId,
         ownerUserId: input.approverUserId,
         now,
       }));
 
-      this.tx.execute(pcoreCmdCompleteTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
+      db.execute(pcoreCmdCompleteTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
-      this.governanceService.insertGovernanceEvent({
+      this.governanceService.insertGovernanceEventInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         eventType: 'transfer',
@@ -762,7 +818,7 @@ export class PersonaCoreService {
         actorUserId: input.approverUserId,
       });
 
-      this.memoryService.insertMemory({
+      this.memoryService.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -776,7 +832,7 @@ export class PersonaCoreService {
         importance: 0.8,
       });
 
-      this.recordBusinessAudit({
+      this.recordBusinessAuditInTx(db, {
         tenantId: input.tenantId,
         actorId: input.approverUserId,
         actionType: 'persona.transfer',
@@ -792,7 +848,7 @@ export class PersonaCoreService {
       });
     });
 
-    const completedTransfer = this.tx.queryOne(pcoreQueryTransferById({
+    const completedTransfer = db.queryOne(pcoreQueryTransferById({
       tenantId: input.tenantId,
       transferId: input.transferId,
     }));
@@ -806,15 +862,16 @@ export class PersonaCoreService {
 
   listTransfers(tenantId: string, requesterUserId: string, personaId: string): PersonaTransfer[] | null {
     if (!this.canAccessTransferHistory(tenantId, requesterUserId, personaId)) return null;
-    return this.tx.queryMany(pcoreQueryTransfersByPersona({ tenantId, personaId })).map(transferFromRow);
+    return this.source.forTenant(tenantId).queryMany(pcoreQueryTransfersByPersona({ tenantId, personaId })).map(transferFromRow);
   }
 
   getReputationSummary(tenantId: string, ownerUserId: string, personaId: string): PersonaReputationSummary | null {
     const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
-    const successfulTasks = this.tx.queryOne(pcoreQueryCompletedTaskCount({ tenantId, personaId }))?.count ?? 0;
-    const governancePenalties = this.tx.queryOne(pcoreQueryGovernancePenaltyCount({ tenantId, personaId }))?.count ?? 0;
+    const db = this.source.forTenant(tenantId);
+    const successfulTasks = db.queryOne(pcoreQueryCompletedTaskCount({ tenantId, personaId }))?.count ?? 0;
+    const governancePenalties = db.queryOne(pcoreQueryGovernancePenaltyCount({ tenantId, personaId }))?.count ?? 0;
 
     return {
       personaId,
@@ -829,7 +886,7 @@ export class PersonaCoreService {
 
   listReputationHistory(tenantId: string, ownerUserId: string, personaId: string): PersonaReputationHistoryEntry[] | null {
     if (!this.personaExists(tenantId, ownerUserId, personaId)) return null;
-    return this.tx.queryMany(pcoreQueryReputationHistory({ tenantId, personaId })).map(reputationHistoryFromRow);
+    return this.source.forTenant(tenantId).queryMany(pcoreQueryReputationHistory({ tenantId, personaId })).map(reputationHistoryFromRow);
   }
 
   listTopPersonas(
@@ -837,7 +894,7 @@ export class PersonaCoreService {
     options?: { category?: MarketplaceTask['category']; limit?: number },
   ): PersonaRankingEntry[] {
     const limit = Math.max(1, Math.min(50, options?.limit ?? 10));
-    const personas = this.tx.queryMany(pcoreQueryActivePersonasForRanking(tenantId));
+    const personas = this.source.forTenant(tenantId).queryMany(pcoreQueryActivePersonasForRanking(tenantId));
 
     return personas
       .map((row) => {
@@ -859,9 +916,10 @@ export class PersonaCoreService {
     const persona = this.getPersonaDetail(tenantId, ownerUserId, personaId);
     if (!persona) return null;
 
-    const tasksCompleted = this.tx.queryOne(pcoreQueryCompletedTaskCount({ tenantId, personaId }))?.count ?? 0;
-    const memoryCount = this.tx.queryOne(pcoreQueryMemoryCount({ tenantId, personaId }))?.count ?? 0;
-    const governanceEvents = this.tx.queryOne(pcoreQueryGovernanceEventCount({ tenantId, personaId }))?.count ?? 0;
+    const db = this.source.forTenant(tenantId);
+    const tasksCompleted = db.queryOne(pcoreQueryCompletedTaskCount({ tenantId, personaId }))?.count ?? 0;
+    const memoryCount = db.queryOne(pcoreQueryMemoryCount({ tenantId, personaId }))?.count ?? 0;
+    const governanceEvents = db.queryOne(pcoreQueryGovernanceEventCount({ tenantId, personaId }))?.count ?? 0;
 
     return {
       personaId,
@@ -876,7 +934,7 @@ export class PersonaCoreService {
   }
 
   getMarketplaceAnalytics(tenantId: string): MarketplaceAnalytics {
-    const row = this.tx.queryOne(pcoreQueryMarketplaceAnalytics(tenantId));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryMarketplaceAnalytics(tenantId));
 
     return {
       openTasks: Number(row?.open_tasks ?? 0),
@@ -888,27 +946,28 @@ export class PersonaCoreService {
 
   materializeDailyAnalytics(tenantId: string, metricDate = this.currentMetricDate()): DailyAnalyticsMaterialization {
     const { startMs, endMs } = this.metricDateRange(metricDate);
-    const personas = this.tx.queryMany(pcoreQueryDailyPersonas(tenantId));
+    const db = this.source.forTenant(tenantId);
+    const personas = db.queryMany(pcoreQueryDailyPersonas(tenantId));
 
     /*
      * 消 N+1（P2-b）：原先每 persona 2 次 SQL（1+2N）。改为整租户 2 次批量查询（按 persona 分组），
      * 内存建索引后逐个查表。租户 1000 个活跃 persona 时从 ~2001 次往返降为 3 次。
      */
     const completedByPersona = new Map<string, number>();
-    for (const r of this.tx.queryMany(pcoreQueryDailyCompletedTaskCountByPersona({ tenantId, startMs, endMs }))) {
+    for (const r of db.queryMany(pcoreQueryDailyCompletedTaskCountByPersona({ tenantId, startMs, endMs }))) {
       completedByPersona.set(r.persona_id, Number(r.count));
     }
     const revenueByPersona = new Map<string, number>();
-    for (const r of this.tx.queryMany(pcoreQueryDailyPersonaRevenueByPersona({ tenantId, startMs, endMs }))) {
+    for (const r of db.queryMany(pcoreQueryDailyPersonaRevenueByPersona({ tenantId, startMs, endMs }))) {
       revenueByPersona.set(r.persona_id, Number(r.total ?? 0));
     }
 
-    this.tx.transaction(() => {
+    db.transaction(() => {
       for (const persona of personas) {
         const completedTasks = completedByPersona.get(persona.id) ?? 0;
         const revenue = revenueByPersona.get(persona.id) ?? 0;
 
-        this.tx.execute(pcoreCmdUpsertPersonaDailyMetric({
+        db.execute(pcoreCmdUpsertPersonaDailyMetric({
           tenantId,
           personaId: persona.id,
           metricDate,
@@ -919,9 +978,9 @@ export class PersonaCoreService {
         }));
       }
 
-      const dailyMarketplace = this.tx.queryOne(pcoreQueryDailyMarketplaceAnalytics({ tenantId, startMs, endMs }));
+      const dailyMarketplace = db.queryOne(pcoreQueryDailyMarketplaceAnalytics({ tenantId, startMs, endMs }));
 
-      this.tx.execute(pcoreCmdUpsertMarketplaceDailyMetric({
+      db.execute(pcoreCmdUpsertMarketplaceDailyMetric({
         tenantId,
         metricDate,
         openTasks: Number(dailyMarketplace?.open_tasks ?? 0),
@@ -954,7 +1013,7 @@ export class PersonaCoreService {
   }
 
   getEconomyAnalytics(tenantId: string): EconomyAnalytics {
-    const row = this.tx.queryOne(pcoreQueryEconomyAnalytics(tenantId));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryEconomyAnalytics(tenantId));
 
     return {
       grossRevenueMinor: Number(row?.gross_revenue_minor ?? 0),
@@ -973,7 +1032,10 @@ export class PersonaCoreService {
 
     const now = this.clock.now();
     const forkId = generatePrefixedId('pfork');
-    this.tx.execute(pcoreCmdCreateFork({
+    /* 零回归（调用矩阵补充发现 #1）：createFork 现状无 tx.transaction 包裹（既有原子性缺口），
+     * 双入口化仅换 db 取源，保持两条写各自 auto-commit 的现状——不趁机补事务。 */
+    const db = this.source.forTenant(input.tenantId);
+    db.execute(pcoreCmdCreateFork({
       id: forkId,
       tenantId: input.tenantId,
       personaId: input.personaId,
@@ -984,7 +1046,7 @@ export class PersonaCoreService {
       now,
     }));
 
-    this.memoryService.insertMemory({
+    this.memoryService.insertMemoryInTx(db, {
       tenantId: input.tenantId,
       personaId: input.personaId,
       kind: 'governance',
@@ -1057,8 +1119,9 @@ export class PersonaCoreService {
     const reputationDelta = round(confidence * 0.4);
     const currentReputation = persona.reputation;
 
-    this.tx.transaction(() => {
-      this.tx.execute(pcoreCmdCreateKnowledgeItem({
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      db.execute(pcoreCmdCreateKnowledgeItem({
         id: knowledgeId,
         tenantId: input.tenantId,
         personaId: input.personaId,
@@ -1071,7 +1134,7 @@ export class PersonaCoreService {
         fingerprint: input.fingerprint ?? null,
       }));
 
-      this.memoryService.insertMemory({
+      this.memoryService.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'knowledge',
@@ -1081,7 +1144,7 @@ export class PersonaCoreService {
         skipCognitiveProjection: true,
       });
 
-      this.memoryService.projectKnowledgeItem({
+      this.memoryService.projectKnowledgeItemInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         knowledgeItemId: knowledgeId,
@@ -1090,7 +1153,7 @@ export class PersonaCoreService {
         confidence,
       });
 
-      this.insertGrowthEvent({
+      this.insertGrowthEventInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         eventType: 'knowledge_sync',
@@ -1100,7 +1163,7 @@ export class PersonaCoreService {
         payload: { title: input.title, source: input.source ?? 'manual' },
       });
 
-      this.tx.execute(pcoreCmdUpdatePersonaKnowledgeSync({
+      db.execute(pcoreCmdUpdatePersonaKnowledgeSync({
         tenantId: input.tenantId,
         personaId: input.personaId,
         growthDelta,
@@ -1108,7 +1171,8 @@ export class PersonaCoreService {
         now,
       }));
 
-      this.insertReputationHistory(
+      this.insertReputationHistoryInTx(
+        db,
         input.tenantId,
         input.personaId,
         currentReputation,
@@ -1154,8 +1218,9 @@ export class PersonaCoreService {
         break;
     }
 
-    this.tx.transaction(() => {
-      this.governanceService.insertGovernanceEvent({
+    const db = this.source.forTenant(input.tenantId);
+    db.transaction(() => {
+      this.governanceService.insertGovernanceEventInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         eventType: input.eventType,
@@ -1165,7 +1230,7 @@ export class PersonaCoreService {
         actorUserId: input.ownerUserId,
       });
 
-      this.memoryService.insertMemory({
+      this.memoryService.insertMemoryInTx(db, {
         tenantId: input.tenantId,
         personaId: input.personaId,
         kind: 'governance',
@@ -1179,7 +1244,7 @@ export class PersonaCoreService {
       });
 
       if (growthDelta !== 0 || reputationDelta !== 0) {
-        this.insertGrowthEvent({
+        this.insertGrowthEventInTx(db, {
           tenantId: input.tenantId,
           personaId: input.personaId,
           eventType: 'governance',
@@ -1194,7 +1259,7 @@ export class PersonaCoreService {
         });
       }
 
-      this.tx.execute(pcoreCmdApplyGovernanceEvent({
+      db.execute(pcoreCmdApplyGovernanceEvent({
         tenantId: input.tenantId,
         personaId: input.personaId,
         reputationDelta,
@@ -1205,7 +1270,8 @@ export class PersonaCoreService {
       }));
 
       if (reputationDelta !== 0) {
-        this.insertReputationHistory(
+        this.insertReputationHistoryInTx(
+          db,
           input.tenantId,
           input.personaId,
           persona.reputation,
@@ -1397,7 +1463,7 @@ export class PersonaCoreService {
     sessionTimeoutMs: number;
     maxRetries: number;
     limit?: number;
-  }): { scanned: number; recovered: number; timedOut: number } {
+  }): { scanned: number; recovered: number; timedOut: number; shardErrors: { shard: string; error: string }[] } {
     return this.marketplaceService.recoverTimedOutRuntimeSessions(input);
   }
 
@@ -1442,11 +1508,11 @@ export class PersonaCoreService {
    * 路由层用于在用户直接发起的操作（如开治理案）前做所有权鉴权，防越权。
    */
   personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean {
-    return Boolean(this.tx.queryOne(pcoreQueryPersonaExists({ tenantId, ownerUserId, personaId })));
+    return Boolean(this.source.forTenant(tenantId).queryOne(pcoreQueryPersonaExists({ tenantId, ownerUserId, personaId })));
   }
 
   private forkBelongsToPersona(tenantId: string, personaId: string, forkId: string): boolean {
-    return Boolean(this.tx.queryOne(pcoreQueryForkExists({ tenantId, personaId, forkId })));
+    return Boolean(this.source.forTenant(tenantId).queryOne(pcoreQueryForkExists({ tenantId, personaId, forkId })));
   }
 
   /* Marketplace privates (getMarketplaceTask / getTaskAssignmentById /
@@ -1461,7 +1527,7 @@ export class PersonaCoreService {
    * `this.governanceService.getGovernanceCaseById(...)`. */
 
   private getPersonaById(tenantId: string, personaId: string): PersonaCore | null {
-    const row = this.tx.queryOne(pcoreQueryPersonaById({ tenantId, personaId }));
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryPersonaById({ tenantId, personaId }));
     return row ? personaFromRow(row as PersonaCoreRow) : null;
   }
 
@@ -1472,16 +1538,16 @@ export class PersonaCoreService {
    * read+write paths remain single-sourced. */
 
   private getTransferById(tenantId: string, transferId: string): PersonaTransferRow | null {
-    return this.tx.queryOne(pcoreQueryTransferById({ tenantId, transferId })) as PersonaTransferRow | null;
+    return this.source.forTenant(tenantId).queryOne(pcoreQueryTransferById({ tenantId, transferId })) as PersonaTransferRow | null;
   }
 
   private canAccessTransferHistory(tenantId: string, userId: string, personaId: string): boolean {
     if (this.personaExists(tenantId, userId, personaId)) return true;
-    return Boolean(this.tx.queryOne(pcoreQueryTransferAccess({ tenantId, userId, personaId })));
+    return Boolean(this.source.forTenant(tenantId).queryOne(pcoreQueryTransferAccess({ tenantId, userId, personaId })));
   }
 
   private userExists(tenantId: string, userId: string): boolean {
-    return Boolean(this.tx.queryOne(pcoreQueryUserExists({ tenantId, userId })));
+    return Boolean(this.source.forTenant(tenantId).queryOne(pcoreQueryUserExists({ tenantId, userId })));
   }
 
   private isTerminalStatus(status: PersonaCore['status']): boolean {
@@ -1504,14 +1570,15 @@ export class PersonaCoreService {
     }
   }
 
-  private insertReputationHistory(
+  private insertReputationHistoryInTx(
+    tx: TransactionContext,
     tenantId: string,
     personaId: string,
     oldScore: number,
     newScore: number,
     reason: string,
   ): void {
-    this.tx.execute(pcoreCmdInsertReputationHistory({
+    tx.execute(pcoreCmdInsertReputationHistory({
       id: generatePrefixedId('rep'),
       tenantId,
       personaId,
@@ -1527,9 +1594,10 @@ export class PersonaCoreService {
     personaId: string,
     category?: MarketplaceTask['category'],
   ): { completedTasks: number; avgQuality: number; responseSpeed: number } {
+    const db = this.source.forTenant(tenantId);
     const row = category
-      ? this.tx.queryOne(pcoreQueryRankingTaskStats({ tenantId, personaId, category }))
-      : this.tx.queryOne(pcoreQueryRankingTaskStatsUncategorized({ tenantId, personaId }));
+      ? db.queryOne(pcoreQueryRankingTaskStats({ tenantId, personaId, category }))
+      : db.queryOne(pcoreQueryRankingTaskStatsUncategorized({ tenantId, personaId }));
 
     const avgHours = Number((row as { avg_hours?: number | null } | null)?.avg_hours ?? 24);
     const responseSpeed = clamp(1 - avgHours / 72, 0.2, 1);
@@ -1590,7 +1658,7 @@ export class PersonaCoreService {
    * `this.governanceService.severityToLevel(...)`. */
 
   private resolveLastActiveAt(tenantId: string, personaId: string, fallback: number): number {
-    const row = this.tx.queryOne(pcoreQueryLastActiveAt({ tenantId, personaId })) as {
+    const row = this.source.forTenant(tenantId).queryOne(pcoreQueryLastActiveAt({ tenantId, personaId })) as {
       wallet_value: number | null;
       memory_value: number | null;
       task_value: number | null;
@@ -1608,7 +1676,7 @@ export class PersonaCoreService {
    * delegates via `this.memoryService.{insertMemory,projectKnowledgeItem,
    * memoryFromRow}` so the SQL write path stays single-sourced. */
 
-  private insertGrowthEvent(input: {
+  private insertGrowthEventInTx(tx: TransactionContext, input: {
     tenantId: string;
     personaId: string;
     taskId?: string | null;
@@ -1619,7 +1687,7 @@ export class PersonaCoreService {
     payload: Record<string, unknown>;
   }): void {
     const now = this.clock.now();
-    this.tx.execute(pcoreCmdInsertGrowthEvent({
+    tx.execute(pcoreCmdInsertGrowthEvent({
       id: generatePrefixedId('pgrow'),
       tenantId: input.tenantId,
       personaId: input.personaId,
@@ -1632,7 +1700,7 @@ export class PersonaCoreService {
       now,
     }));
 
-    this.publishObservability({
+    this.publishObservabilityInTx(tx, {
       tenantId: input.tenantId,
       topic: OBSERVABILITY_TOPIC,
       eventType: 'persona.growth_recorded',

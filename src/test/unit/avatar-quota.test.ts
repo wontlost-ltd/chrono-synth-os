@@ -116,7 +116,7 @@ describe('QuotaManager 执行器注册', () => {
   it('setLimit 和 checkQuota 通过 data plane 契约工作', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = QuotaManager.fromUnitOfWork(db);
 
     quota.setLimit('tenant-a', 'api_calls', 100, 60_000);
     assert.equal(quota.checkQuota('tenant-a', 'api_calls', 1), true);
@@ -126,7 +126,7 @@ describe('QuotaManager 执行器注册', () => {
   it('consumeQuota 原子消费与上限检查', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = QuotaManager.fromUnitOfWork(db);
     const now = 120_000;
 
     quota.setLimit('tenant-a', 'tokens', 10, 60_000);
@@ -139,7 +139,7 @@ describe('QuotaManager 执行器注册', () => {
   it('窗口滚动后配额重置', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = QuotaManager.fromUnitOfWork(db);
     const windowMs = 60_000;
 
     quota.setLimit('tenant-a', 'tokens', 5, windowMs);
@@ -157,7 +157,7 @@ describe('QuotaManager 执行器注册', () => {
   it('clearLimit 允许无限消费', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    const quota = new QuotaManager(db);
+    const quota = QuotaManager.fromUnitOfWork(db);
 
     quota.setLimit('tenant-a', 'api_calls', 1, 60_000);
     quota.clearLimit('tenant-a', 'api_calls');

@@ -25,19 +25,22 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run('u_owner', 'o@e.com', 'h', 'member', 'default', now, now);
     /* 通过完整服务创建 persona（连带创建钱包） */
-    const core = new PersonaCoreService(db);
+    const core = PersonaCoreService.fromUnitOfWork(db);
     const persona = core.createPersona({
       tenantId: 'default', ownerUserId: 'u_owner', displayName: 'Earner',
       profile: { mission: 'work' },
     });
     walletId = persona.wallet.id;
-    /* 直接持有 wallet service（同一 db），context 桩 */
-    wallet = new PersonaWalletService(db, { personaExists: () => true });
+    /* 直接持有 wallet service（同一 db 经 SingleDbResolver source），context 桩 */
+    wallet = new PersonaWalletService(
+      { forTenant: () => db, allDbs: () => [db] },
+      { personaExists: () => true },
+    );
   });
 
   it('autonomous debit（负 amount）被拒（铁律生效）', () => {
     assert.throws(
-      () => wallet.insertWalletTransaction({
+      () => wallet.insertWalletTransactionInTx(db, {
         tenantId: 'default', walletId, transactionType: 'owner_payout',
         amountMinor: -500, currency: 'CRED', actorType: 'autonomous',
       }),
@@ -46,7 +49,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
   });
 
   it('autonomous credit（赚）允许', () => {
-    const tx = wallet.insertWalletTransaction({
+    const tx = wallet.insertWalletTransactionInTx(db, {
       tenantId: 'default', walletId, transactionType: 'task_payment',
       amountMinor: 500, currency: 'CRED', actorType: 'autonomous',
     });
@@ -54,7 +57,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
   });
 
   it('human debit（人类确认提现）允许', () => {
-    const tx = wallet.insertWalletTransaction({
+    const tx = wallet.insertWalletTransactionInTx(db, {
       tenantId: 'default', walletId, transactionType: 'owner_payout',
       amountMinor: -300, currency: 'CRED', actorType: 'human',
     });
@@ -62,7 +65,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
   });
 
   it('system debit（结算扣平台费）允许', () => {
-    const tx = wallet.insertWalletTransaction({
+    const tx = wallet.insertWalletTransactionInTx(db, {
       tenantId: 'default', walletId, transactionType: 'platform_fee',
       amountMinor: -50, currency: 'CRED', actorType: 'system',
     });
@@ -71,7 +74,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
 
   it('默认 actor=system：未指定时按 system 处理（settlement 兼容）', () => {
     /* 不传 actorType，负 amount（platform_fee 结算）应允许 */
-    const tx = wallet.insertWalletTransaction({
+    const tx = wallet.insertWalletTransactionInTx(db, {
       tenantId: 'default', walletId, transactionType: 'platform_fee',
       amountMinor: -25, currency: 'CRED',
     });
@@ -82,7 +85,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
 
   it('owner_payout 正数（应是 debit 却当 credit 入账）被拒——即便 system actor', () => {
     assert.throws(
-      () => wallet.insertWalletTransaction({
+      () => wallet.insertWalletTransactionInTx(db, {
         tenantId: 'default', walletId, transactionType: 'owner_payout',
         amountMinor: 500, currency: 'CRED', actorType: 'system',
       }),
@@ -92,7 +95,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
 
   it('task_payment 负数（应是 credit 却当 debit）被拒', () => {
     assert.throws(
-      () => wallet.insertWalletTransaction({
+      () => wallet.insertWalletTransactionInTx(db, {
         tenantId: 'default', walletId, transactionType: 'task_payment',
         amountMinor: -500, currency: 'CRED', actorType: 'human',
       }),
@@ -102,7 +105,7 @@ describe('Wallet credit-only guard enforced on real write path (ADR-0048 D2)', (
 
   it('persona_reserve 正数（应是 debit）被拒——修正后矩阵生效', () => {
     assert.throws(
-      () => wallet.insertWalletTransaction({
+      () => wallet.insertWalletTransactionInTx(db, {
         tenantId: 'default', walletId, transactionType: 'persona_reserve',
         amountMinor: 360, currency: 'CRED', actorType: 'system',
       }),

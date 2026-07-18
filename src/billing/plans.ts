@@ -55,7 +55,7 @@ export function getPlanLimits(planId: string): PlanLimits {
  *  -1 表示无限制 → clearLimit；> 0 → setLimit；0 不写入（保留旧值，避免误清）
  */
 export function syncPlanToQuota(tx: SyncWriteUnitOfWork, tenantId: string, planId: string): void {
-  const qm = new QuotaManager(tx);
+  const qm = QuotaManager.fromUnitOfWork(tx);
   const limits = getPlanLimits(planId);
   const monthMs = 30 * 24 * 60 * 60 * 1000;
 

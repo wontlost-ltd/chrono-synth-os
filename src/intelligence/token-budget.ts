@@ -1,6 +1,16 @@
 /**
  * Token 预算管理器 — 薄适配器
  * 预算计算委托 kernel 纯函数，DB/Date 操作留在此层
+ *
+ * 双入口（租户分片 Phase 0，套用 CostTracker/QuotaManager 模式）：
+ *   - fromResolver：未绑事务的长期服务（route 注册期）。per-tenant 经
+ *     resolver.dbForTenant(tenantId) 选 db。
+ *   - fromUnitOfWork：已进事务的调用链（测试 / 内存 db 单库语境）。所有操作固定用该事务，
+ *     不重新解析 db（否则脱离事务）。
+ * 因 IDatabase extends SyncWriteUnitOfWork，两模式内部统一到 SyncWriteUnitOfWork 接口，无适配层。
+ *
+ * TokenBudget 是纯读服务：checkBudget/checkAlert/getSummary 经 getUsage 读库；
+ * recordUsage 只写内存 cache，不碰 source（红线：纯内存方法不伪路由）。
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
@@ -13,8 +23,8 @@ import {
   type TokenBudgetConfig,
   type UsageSnapshot,
 } from '@chrono/kernel';
-import type { IDatabase } from '../storage/database.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 
 export type { TokenBudgetConfig };
 
@@ -27,19 +37,35 @@ interface UsageCache {
   cacheMonth: string;
 }
 
+/** 内部 db 取源：resolver 模式按 tenantId 解析；UoW 模式固定 tx。 */
+interface MeterSource {
+  forTenant(tenantId: string): SyncWriteUnitOfWork;
+}
+
 export class TokenBudget {
-  private readonly config: TokenBudgetConfig;
-  private readonly tx: SyncWriteUnitOfWork | null;
   private readonly cache = new Map<string, UsageCache>();
 
-  constructor(config?: Partial<TokenBudgetConfig>, db?: IDatabase) {
-    this.config = { ...DEFAULT_TOKEN_BUDGET_CONFIG, ...config };
-    if (db) {
-      registerCoreSelfExecutors();
-      this.tx = db;
-    } else {
-      this.tx = null;
-    }
+  private constructor(
+    private readonly config: TokenBudgetConfig,
+    private readonly source: MeterSource,
+  ) {
+    registerCoreSelfExecutors();
+  }
+
+  /** resolver 模式：per-tenant→dbForTenant。用于 route 等未绑事务的长期服务。 */
+  static fromResolver(config: Partial<TokenBudgetConfig> | undefined, resolver: TenantDbResolver): TokenBudget {
+    return new TokenBudget(
+      { ...DEFAULT_TOKEN_BUDGET_CONFIG, ...config },
+      { forTenant: (t) => resolver.dbForTenant(t) },
+    );
+  }
+
+  /** bound-UoW 模式：固定用该事务，不重新解析 db。 */
+  static fromUnitOfWork(config: Partial<TokenBudgetConfig> | undefined, tx: SyncWriteUnitOfWork): TokenBudget {
+    return new TokenBudget(
+      { ...DEFAULT_TOKEN_BUDGET_CONFIG, ...config },
+      { forTenant: () => tx },
+    );
   }
 
   private getToday(): string {
@@ -59,19 +85,15 @@ export class TokenBudget {
       return { dailyUsed: cached.dailyUsed, monthlyUsed: cached.monthlyUsed };
     }
 
-    let dailyUsed = 0;
-    let monthlyUsed = 0;
+    const tx = this.source.forTenant(tenantId);
+    const dayStart = new Date(today + 'T00:00:00Z').getTime();
+    const monthStart = new Date(month + '-01T00:00:00Z').getTime();
 
-    if (this.tx) {
-      const dayStart = new Date(today + 'T00:00:00Z').getTime();
-      const monthStart = new Date(month + '-01T00:00:00Z').getTime();
+    const monthRow = tx.queryOne(llmQueryPeriodTotal({ tenantId, sinceMs: monthStart }));
+    const monthlyUsed = monthRow?.total ?? 0;
 
-      const monthRow = this.tx.queryOne(llmQueryPeriodTotal({ tenantId, sinceMs: monthStart }));
-      monthlyUsed = monthRow?.total ?? 0;
-
-      const dayRow = this.tx.queryOne(llmQueryPeriodTotal({ tenantId, sinceMs: dayStart }));
-      dailyUsed = dayRow?.total ?? 0;
-    }
+    const dayRow = tx.queryOne(llmQueryPeriodTotal({ tenantId, sinceMs: dayStart }));
+    const dailyUsed = dayRow?.total ?? 0;
 
     this.cache.set(tenantId, { dailyUsed, monthlyUsed, cacheDay: today, cacheMonth: month });
     if (this.cache.size > MAX_CACHE_ENTRIES) {

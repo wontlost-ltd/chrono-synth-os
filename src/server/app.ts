@@ -19,6 +19,7 @@ import type { FieldCrypto } from '@chrono/data-plane';
 import { loadConfig, intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerA11yHeaders } from './plugins/a11y-headers.js';
 import { registerRequestId } from './plugins/request-id.js';
@@ -278,7 +279,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const services = buildAppServices(db, config, deps.logger);
   const tenantFactory = new TenantOSFactory(
-    db,
+    new SingleDbResolver(db),
     deps.os.getClock(),
     deps.os.getLogger(),
     /* 透传给所有租户 OS：①ADR-0054 主动性配置（红线 3）；②ADR-0048 动态成长预算开关。 */
@@ -380,7 +381,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     const autorunStore = new AvatarAutorunStore(queueDb);
     const knowledgeStore = new KnowledgeSourceStore(queueTx);
     const avatarService = new AvatarService(queueTx);
-    const quotaManager = new QuotaManager(queueTx);
+    const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(queueTx));
     const knowledgeRegistry = new KnowledgeSourceRegistry();
     knowledgeRegistry.register('manual', new ManualKnowledgeSource());
     knowledgeRegistry.register('rss', new RssKnowledgeSource());
@@ -440,11 +441,12 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
    * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动）
    * P1-D 注入 UsageTracker + BillingOutbox 上报 bulk_knowledge_import_item */
-  const bulkImportPersonaCoreService = new PersonaCoreService(tx);
-  const bulkImportTemplateService = new PersonaTemplateService(tx, bulkImportPersonaCoreService);
+  const bulkImportResolver = new SingleDbResolver(tx);
+  const bulkImportPersonaCoreService = PersonaCoreService.fromResolver(bulkImportResolver);
+  const bulkImportTemplateService = PersonaTemplateService.fromResolver(bulkImportResolver, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
-  const p1dUsageTracker = new P1dUsageTracker(tx);
-  const p1dBillingOutbox = config.stripe.enabled ? new P1dBillingOutbox(tx, config) : undefined;
+  const p1dUsageTracker = P1dUsageTracker.fromResolver(new SingleDbResolver(tx));
+  const p1dBillingOutbox = config.stripe.enabled ? P1dBillingOutbox.fromResolver(new SingleDbResolver(tx), config) : undefined;
   const stripeCustomerLookup = (tenantId: string): string | null => {
     try {
       const row = db.prepare<{ stripe_customer_id: string | null }>(
@@ -488,9 +490,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     temperature: config.intelligence.temperature,
   });
   const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
-  const conversationTokenBudget = new ConversationTokenBudget(config.intelligence.budget, db);
-  const conversationCostTracker = new ConversationCostTracker(db);
-  const conversationQuotaManager = new QuotaManager(tx);
+  const conversationTokenBudget = ConversationTokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(db));
+  const conversationCostTracker = ConversationCostTracker.fromResolver(new SingleDbResolver(db));
+  const conversationQuotaManager = QuotaManager.fromResolver(new SingleDbResolver(tx));
   const conversationCircuitBreaker = new ConversationCircuitBreaker({
     failureThreshold: 5,
     halfOpenMaxRequests: 1,
@@ -863,10 +865,17 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
   if (config.stripe.enabled) {
-    const billingOutbox = new BillingOutbox(tx, config);
+    const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(tx), config);
     const FLUSH_INTERVAL_MS = 60_000;
     const flushTimer = setInterval(() => {
-      void billingOutbox.flush().catch((err) => {
+      void billingOutbox.flush().then((result) => {
+        /* shardErrors 在 flush 正常 resolve 时返回；逐 shard 警告日志
+           注：meterShardFlushErrors 计数已由 flush 的 catch 块负责，定时器只读日志不再累加（防双计） */
+        for (const e of result.shardErrors) {
+          deps.os.getLogger().warn('Billing', `计量发件箱 shard ${e.shard} flush 失败: ${e.error}`);
+        }
+      }).catch((err) => {
+        /* 防非隔离的意外抛（flush 本身抛，不是 shardErrors） */
         deps.os.getLogger().warn('Billing', `计量发件箱刷新失败: ${err instanceof Error ? err.message : String(err)}`);
       });
     }, FLUSH_INTERVAL_MS);

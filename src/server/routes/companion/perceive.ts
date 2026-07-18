@@ -18,6 +18,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
+import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
@@ -49,7 +50,7 @@ export function registerCompanionPerceiveRoutes(
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   /* 感知配额（防 BYOK LLM teacher 被刷爆——LlmPerceptionProvider 每次 perceive 调 LLM 有成本）。
    * 复用现有 QuotaManager：未设 perception 限额的租户默认无限（consumeQuota 返回 true）。 */
-  const quotaManager = new QuotaManager(sharedDb);
+  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;

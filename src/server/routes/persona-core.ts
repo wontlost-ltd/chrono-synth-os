@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, NotFoundError, StateError, ValidationError, ErrorCode } from '../../errors/index.js';
@@ -345,8 +346,8 @@ export function registerPersonaCoreRoutes(
 ): void {
   const tx = db;
   const profileService = config ? new TenantEnterpriseProfileService(tx, config) : undefined;
-  const service = new PersonaCoreService(
-    tx,
+  const service = PersonaCoreService.fromResolver(
+    new SingleDbResolver(tx),
     profileService?.getTenantEncryption('default'),
     config?.runtime.recovery.sessionTimeoutMs,
     profileService ? (tenantId) => profileService.getTenantEncryption(tenantId) : undefined,

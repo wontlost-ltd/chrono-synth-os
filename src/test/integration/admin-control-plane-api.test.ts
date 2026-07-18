@@ -46,7 +46,7 @@ describe('Admin Control Plane API 集成测试', () => {
       tenantId: string;
     };
 
-    const personaService = new PersonaCoreService(os.getDatabase());
+    const personaService = PersonaCoreService.fromUnitOfWork(os.getDatabase());
     const persona = personaService.createPersona({
       tenantId: auth.tenantId,
       ownerUserId: auth.userId,

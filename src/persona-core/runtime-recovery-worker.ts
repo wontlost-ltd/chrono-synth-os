@@ -1,6 +1,7 @@
 import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
 import { PersonaCoreService } from './persona-core-service.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 
 const LAYER = 'RuntimeRecoveryWorker';
 
@@ -15,6 +16,8 @@ export interface RuntimeRecoveryResult {
   scanned: number;
   recovered: number;
   timedOut: number;
+  /** 逐 shard 隔离：某 shard 恢复时抛错记录到此处（不影响其余 shard），worker 据此告警。 */
+  shardErrors: { shard: string; error: string }[];
 }
 
 const DEFAULT_OPTIONS: RuntimeRecoveryWorkerOptions = {
@@ -84,7 +87,11 @@ export class RuntimeRecoveryWorker {
   }
 
   private flushInternal(): RuntimeRecoveryResult {
-    const service = new PersonaCoreService(this.db);
+    /* worker 当前构造器仍收单一 IDatabase（app.ts 传根 db）：经 SingleDbResolver 包一层，
+     * allDbs()=[this.db]——单库下 fan-out 遍历一次，行为等价现状。
+     * recoverTimedOutRuntimeSessions 本身已真 fan-out（marketplace 层遍历 source.allDbs()），
+     * 多 shard 场景由调用方传入真正的多-shard resolver 时自动生效，此处零改动即可复用。 */
+    const service = PersonaCoreService.fromResolver(new SingleDbResolver(this.db));
     const result = service.recoverTimedOutRuntimeSessions({
       now: Date.now(),
       sessionTimeoutMs: this.options.sessionTimeoutMs,
@@ -96,6 +103,13 @@ export class RuntimeRecoveryWorker {
       this.logger.warn(
         LAYER,
         `runtime recovery 处理完成（scanned=${result.scanned}, recovered=${result.recovered}, timedOut=${result.timedOut}）`,
+      );
+    }
+    /* 逐 shard 隔离：坏 shard 不拖累其余 shard，但须告警暴露（否则静默丢失恢复能力）。 */
+    for (const shardError of result.shardErrors) {
+      this.logger.warn(
+        LAYER,
+        `runtime recovery shard ${shardError.shard} 恢复失败（不影响其余 shard）: ${shardError.error}`,
       );
     }
     return result;

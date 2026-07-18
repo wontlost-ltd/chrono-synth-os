@@ -56,7 +56,7 @@ describe('ConversationService 计费上报', () => {
        VALUES (?, ?, 'pw', 'admin', ?, 1000, 1000)`,
     ).run(TEST_USER_ID, `${TEST_USER_ID}@x.com`, TEST_TENANT_ID);
 
-    personaCoreService = new PersonaCoreService(db);
+    personaCoreService = PersonaCoreService.fromUnitOfWork(db);
     const persona = personaCoreService.createPersona({
       tenantId: TEST_TENANT_ID,
       ownerUserId: TEST_USER_ID,
@@ -68,7 +68,7 @@ describe('ConversationService 计费上报', () => {
     });
     personaId = persona.id;
 
-    usageTracker = new UsageTracker(db);
+    usageTracker = UsageTracker.fromUnitOfWork(db);
     billingOutbox = new StubBillingOutbox();
     llm = new StubLLM();
 

@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { LifeSimulationService } from '../../simulation/life-simulation-service.js';
 import type { LifeSimulationConfig } from '../../types/life-simulation.js';
 import type { IDatabase } from '../../storage/database.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
@@ -36,9 +37,9 @@ export function registerLifeSimulationRoutes(
     throw new Error('生产环境禁止同步模拟。请设置 queue.enabled=true 启用异步任务队列以避免 CPU 反压。');
   }
   const optTx = options?.db ? options.db : undefined;
-  const quotaManager = optTx ? new QuotaManager(optTx) : undefined;
-  const usageTracker = optTx ? new UsageTracker(optTx) : undefined;
-  const billingOutbox = optTx && options?.config ? new BillingOutbox(optTx, options.config) : undefined;
+  const quotaManager = optTx ? QuotaManager.fromResolver(new SingleDbResolver(optTx)) : undefined;
+  const usageTracker = optTx ? UsageTracker.fromResolver(new SingleDbResolver(optTx)) : undefined;
+  const billingOutbox = optTx && options?.config ? BillingOutbox.fromResolver(new SingleDbResolver(optTx), options.config) : undefined;
   const subscriptionQuery = optTx ? new SubscriptionQueryService(optTx) : undefined;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */

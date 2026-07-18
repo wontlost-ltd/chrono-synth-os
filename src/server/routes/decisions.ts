@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
@@ -63,13 +64,13 @@ export function registerDecisionRoutes(
 ): void {
   const sharedDb = db ?? os.getDatabase();
   const sharedTx = sharedDb;
-  const tokenBudget = new TokenBudget(config.intelligence.budget, sharedDb);
-  const costTracker = new CostTracker(sharedDb);
+  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(sharedDb));
+  const costTracker = CostTracker.fromResolver(new SingleDbResolver(sharedDb));
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = tryByokEncryption(config.encryption);
-  const usageTracker = new UsageTracker(sharedTx);
-  const quotaManager = new QuotaManager(sharedTx);
-  const billingOutbox = new BillingOutbox(sharedTx, config);
+  const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
+  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
+  const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(sharedTx), config);
 
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);

@@ -2,6 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { MetricsQueryService } from '../../observability/metrics-query-service.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
@@ -21,7 +22,7 @@ describe('MetricsQueryService.getPopulationDiversity（平台人群多样性 sur
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     /* 出生扰动开启：每租户按 tenantId 派生确定性差异，群体应有多样性。 */
-    factory = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+    factory = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), {
       personalityBirthMagnitude: 0.15,
     });
     metrics = new MetricsQueryService(db);

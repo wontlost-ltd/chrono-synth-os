@@ -17,6 +17,7 @@ import {
   ptplCmdUpsertBuiltin, ptplCmdInsert, ptplCmdUpdate, ptplCmdDelete,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
 import type { PersonaCoreDetail } from '../persona-core/types.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
@@ -91,43 +92,97 @@ export class BuiltInTemplateImmutableError extends Error {
   }
 }
 
+/**
+ * 内部 db 取源：resolver 模式按 tenantId 解析对应 shard；UoW 模式固定该事务。
+ * 与 PersonaCoreSource 同构（分片地基 Phase 0 双入口范式），facade 与共享的
+ * PersonaCoreService 传同一 resolver 才能保证 instantiate 级联落同一 shard。
+ */
+interface TemplateSource {
+  /** per-tenant 操作取 db（单库 / UoW 模式恒返同一 db）。 */
+  forTenant(tenantId: string): SyncWriteUnitOfWork;
+  /** cross-tenant fan-out 的所有 shard db（UoW 模式返 [tx]）。syncBuiltins 用。 */
+  allDbs(): SyncWriteUnitOfWork[];
+}
+
 export class PersonaTemplateService {
-  constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+  /**
+   * 私有构造器（双入口化）：只收 source，配合 fromResolver/fromUnitOfWork。
+   * source 化后 CRUD/syncBuiltins/instantiate 按需解析 db，而非构造期绑单一 tx。
+   */
+  private constructor(
+    private readonly source: TemplateSource,
     private readonly personaCoreService: PersonaCoreService,
   ) {
     registerCoreSelfExecutors();
   }
 
-  /** 启动期：把内置模板内容刷新到 DB（INSERT OR REPLACE） */
+  /**
+   * resolver 模式：per-tenant 经 resolver.dbForTenant(tenantId) 选 shard db；
+   * cross-tenant（syncBuiltins）经 allShardDbs() fan-out。
+   */
+  static fromResolver(resolver: TenantDbResolver, personaCoreService: PersonaCoreService): PersonaTemplateService {
+    return new PersonaTemplateService(
+      { forTenant: (tenantId) => resolver.dbForTenant(tenantId), allDbs: () => resolver.allShardDbs() },
+      personaCoreService,
+    );
+  }
+
+  /**
+   * bound-UoW 模式：forTenant 忽略 tenantId 恒返该事务，allDbs()=[tx]（结构上不脱离事务）。
+   */
+  static fromUnitOfWork(tx: SyncWriteUnitOfWork, personaCoreService: PersonaCoreService): PersonaTemplateService {
+    return new PersonaTemplateService({ forTenant: () => tx, allDbs: () => [tx] }, personaCoreService);
+  }
+
+  /** db-bound 读 helper（public get + update/delete/instantiate 共用，兑现「解析一次」）。 */
+  private getFromDb(db: SyncWriteUnitOfWork, tenantId: string, templateId: string): PersonaTemplate | null {
+    const row = db.queryOne(ptplQueryById({ templateId, tenantId, builtinTenantId: BUILTIN_TENANT_ID }));
+    return row ? rowToTemplate(row) : null;
+  }
+
+  /** 启动期：把内置模板内容刷新到 DB（INSERT OR REPLACE）。
+   *  cross-tenant fan-out：每 shard 一份（list/get 单-SQL `OR '__builtin__'` 要求内置模板
+   *  与租户模板同 shard）。逐 shard 尝试聚合 errors（启动 seed 语义，任一失败则抛，非静默隔离）。 */
   syncBuiltins(): void {
     const now = Date.now();
-    for (const seed of BUILTIN_TEMPLATE_SEEDS) {
-      this.tx.execute(ptplCmdUpsertBuiltin({
-        id: seed.id,
-        tenantId: seed.tenantId,
-        category: seed.category,
-        label: seed.label,
-        description: seed.description,
-        defaultValuesJson: JSON.stringify(seed.defaultValues),
-        defaultNarrative: seed.defaultNarrative,
-        behaviorBoundariesJson: JSON.stringify(seed.behaviorBoundaries),
-        requiredKnowledgeCategoriesJson: JSON.stringify(seed.requiredKnowledgeCategories),
-        now,
-      }));
+    const errors: { shard: string; error: string }[] = [];
+    const dbs = this.source.allDbs();
+    for (let i = 0; i < dbs.length; i++) {
+      try {
+        for (const seed of BUILTIN_TEMPLATE_SEEDS) {
+          dbs[i]!.execute(ptplCmdUpsertBuiltin({
+            id: seed.id,
+            tenantId: seed.tenantId,
+            category: seed.category,
+            label: seed.label,
+            description: seed.description,
+            defaultValuesJson: JSON.stringify(seed.defaultValues),
+            defaultNarrative: seed.defaultNarrative,
+            behaviorBoundariesJson: JSON.stringify(seed.behaviorBoundaries),
+            requiredKnowledgeCategoriesJson: JSON.stringify(seed.requiredKnowledgeCategories),
+            now,
+          }));
+        }
+      } catch (err) {
+        errors.push({ shard: String(i), error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(
+        `syncBuiltins 部分 shard 失败（启动 seed 须全成功）: ${errors.map((e) => `shard ${e.shard}: ${e.error}`).join('; ')}`,
+      );
     }
   }
 
   /** 列出当前租户可见的所有模板（内置 + 自定义） */
   list(tenantId: string): PersonaTemplate[] {
-    const rows = this.tx.queryMany(ptplQueryList({ tenantId, builtinTenantId: BUILTIN_TENANT_ID }));
+    const rows = this.source.forTenant(tenantId).queryMany(ptplQueryList({ tenantId, builtinTenantId: BUILTIN_TENANT_ID }));
     return rows.map(rowToTemplate);
   }
 
   /** 读取单个模板（必须属于调用者或内置） */
   get(tenantId: string, templateId: string): PersonaTemplate | null {
-    const row = this.tx.queryOne(ptplQueryById({ templateId, tenantId, builtinTenantId: BUILTIN_TENANT_ID }));
-    return row ? rowToTemplate(row) : null;
+    return this.getFromDb(this.source.forTenant(tenantId), tenantId, templateId);
   }
 
   /** 创建自定义模板 */
@@ -152,7 +207,7 @@ export class PersonaTemplateService {
       updatedAt: now,
     };
 
-    this.tx.execute(ptplCmdInsert({
+    this.source.forTenant(tenantId).execute(ptplCmdInsert({
       id: template.id,
       tenantId: template.tenantId,
       category: template.category,
@@ -171,7 +226,8 @@ export class PersonaTemplateService {
 
   /** 更新自定义模板（拒绝内置） */
   update(tenantId: string, templateId: string, input: PatchTemplateInput): PersonaTemplate {
-    const existing = this.get(tenantId, templateId);
+    const db = this.source.forTenant(tenantId);
+    const existing = this.getFromDb(db, tenantId, templateId);
     if (!existing) throw new PersonaTemplateNotFoundError(templateId);
     if (existing.isBuiltIn) throw new BuiltInTemplateImmutableError(templateId);
 
@@ -186,7 +242,7 @@ export class PersonaTemplateService {
       updatedAt: Date.now(),
     };
 
-    this.tx.execute(ptplCmdUpdate({
+    db.execute(ptplCmdUpdate({
       id: next.id,
       tenantId,
       label: next.label,
@@ -203,16 +259,18 @@ export class PersonaTemplateService {
 
   /** 删除自定义模板（拒绝内置） */
   delete(tenantId: string, templateId: string): void {
-    const existing = this.get(tenantId, templateId);
+    const db = this.source.forTenant(tenantId);
+    const existing = this.getFromDb(db, tenantId, templateId);
     if (!existing) throw new PersonaTemplateNotFoundError(templateId);
     if (existing.isBuiltIn) throw new BuiltInTemplateImmutableError(templateId);
 
-    this.tx.execute(ptplCmdDelete({ templateId, tenantId }));
+    db.execute(ptplCmdDelete({ templateId, tenantId }));
   }
 
   /** 从模板实例化一个 persona_core */
   instantiate(input: InstantiateTemplateInput): InstantiateTemplateResult {
-    const template = this.get(input.tenantId, input.templateId);
+    const db = this.source.forTenant(input.tenantId);
+    const template = this.getFromDb(db, input.tenantId, input.templateId);
     if (!template) throw new PersonaTemplateNotFoundError(input.templateId);
 
     const vars = input.templateVariables ?? {};
@@ -256,7 +314,7 @@ export class PersonaTemplateService {
       initialKnowledge,
     });
 
-    recordBusinessAuditLog(this.tx, {
+    recordBusinessAuditLog(db, {
       tenantId: input.tenantId,
       actorType: 'user',
       actorId: input.ownerUserId,

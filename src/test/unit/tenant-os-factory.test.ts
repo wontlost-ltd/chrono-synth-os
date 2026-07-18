@@ -5,6 +5,7 @@ import { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import type { IDatabase } from '../../storage/database.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { ProactiveMessageStore } from '../../storage/proactive-message-store.js';
 import { personalityDiversity } from '@chrono/kernel';
 
@@ -15,7 +16,7 @@ describe('TenantOSFactory', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    factory = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), { maxCachedTenants: 3 });
+    factory = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), { maxCachedTenants: 3 });
   });
 
   it('创建并缓存租户 OS 实例', () => {
@@ -73,7 +74,7 @@ describe('TenantOSFactory', () => {
   it('主动性配置透传到租户 OS（ADR-0054 生产可达关闭/红线 3）', () => {
     /* 配 proactivity.enabled=false → 该工厂创建的租户 OS 主动性应关闭：
      * 触发显著信号后不产生主动消息。 */
-    const off = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+    const off = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), {
       proactivity: { enabled: false },
     });
     const os = off.getTenantOS('tenant-quiet');
@@ -102,7 +103,7 @@ describe('TenantOSFactory', () => {
       /* seed=tenantId + FNV-1a 确定性 PRNG → 同租户在干净 DB 上恒得同扰动。 */
       const styleA1 = factory.getTenantOS('tenant-x').core.decisionStyle.get();
 
-      const factory2 = new TenantOSFactory(db2(), new TestClock(1000), new SilentLogger());
+      const factory2 = new TenantOSFactory(new SingleDbResolver(db2()), new TestClock(1000), new SilentLogger());
       const styleA2 = factory2.getTenantOS('tenant-x').core.decisionStyle.get();
 
       assert.equal(styleA1.riskAppetite, styleA2.riskAppetite, '同租户 riskAppetite 应可复现');
@@ -111,7 +112,7 @@ describe('TenantOSFactory', () => {
     });
 
     it('magnitude=0 关闭扰动 → 出生同质（diversityScore=0，旧行为）', () => {
-      const off = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+      const off = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), {
         personalityBirthMagnitude: 0,
       });
       const styles = ['t1', 't2', 't3'].map((t) => off.getTenantOS(t).core.decisionStyle.get());
@@ -145,7 +146,7 @@ describe('TenantOSFactory', () => {
     for (const [label, writeState] of legacyStateCases) {
       it(`现有租户只有 ${label} 但无 decision_style row → 重载不被首次出生扰动`, () => {
         /* magnitude=0 工厂出生（不写 decision_style row）→ 写入该类核心状态 → 制造「有核心状态无 row」态。 */
-        const seedFree = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+        const seedFree = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), {
           personalityBirthMagnitude: 0,
         });
         const os = seedFree.getTenantOS('tenant-legacy');
@@ -155,7 +156,7 @@ describe('TenantOSFactory', () => {
         seedFree.evict('tenant-legacy');
 
         /* 用**开启扰动**的工厂重新加载同租户（模拟升级后首次经新工厂加载）。 */
-        const upgraded = new TenantOSFactory(db, new TestClock(1000), new SilentLogger(), {
+        const upgraded = new TenantOSFactory(new SingleDbResolver(db), new TestClock(1000), new SilentLogger(), {
           personalityBirthMagnitude: 0.15,
         });
         const after = upgraded.getTenantOS('tenant-legacy').core.decisionStyle.get();

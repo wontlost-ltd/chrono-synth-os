@@ -13,6 +13,7 @@ import {
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { reportUsage } from './stripe-client.js';
 import { realClock, type Clock } from '../utils/clock.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 
 const MAX_ATTEMPTS = 5;
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
@@ -25,9 +26,22 @@ const STALE_PROCESSING_MS = 5 * 60 * 1000;
  */
 let fallbackSeqCounter = 0;
 
+/** 发件箱底层 db 来源契约：per-tenant 路由 vs 跨租户 fan-out。 */
+interface OutboxSource {
+  forTenant(tenantId: string): SyncWriteUnitOfWork;
+  allDbs(): SyncWriteUnitOfWork[];
+}
+
+/** flush 结果：逐 shard 隔离——某 shard 抛错不拖累其他 shard，记录到 shardErrors。 */
+export interface FlushResult {
+  processed: number;
+  failed: number;
+  shardErrors: { shard: string; error: string }[];
+}
+
 export class BillingOutbox {
-  constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+  private constructor(
+    private readonly source: OutboxSource,
     private readonly config: AppConfig,
     /*
      * 时钟抽象（确定性）：入队/认领/标记时间戳须可注入以便测试复现。默认 realClock。
@@ -35,6 +49,20 @@ export class BillingOutbox {
     private readonly clock: Clock = realClock,
   ) {
     registerCoreSelfExecutors();
+  }
+
+  /** 分片入口：enqueue 按 tenantId 路由到对应 shard db；flush/pendingCount/failedCount 对所有 shard fan-out。 */
+  static fromResolver(resolver: TenantDbResolver, config: AppConfig, clock: Clock = realClock): BillingOutbox {
+    return new BillingOutbox(
+      { forTenant: (t) => resolver.dbForTenant(t), allDbs: () => resolver.allShardDbs() },
+      config,
+      clock,
+    );
+  }
+
+  /** 单库入口（现状兼容）：所有方法都作用于同一个 UnitOfWork，等价现状零回归。 */
+  static fromUnitOfWork(tx: SyncWriteUnitOfWork, config: AppConfig, clock: Clock = realClock): BillingOutbox {
+    return new BillingOutbox({ forTenant: () => tx, allDbs: () => [tx] }, config, clock);
   }
 
   /**
@@ -52,36 +80,61 @@ export class BillingOutbox {
     const idempotencyKey = sourceId !== undefined && sourceId.length > 0
       ? `${tenantId}:${eventName}:${sourceId}`
       : `${tenantId}:${eventName}:${this.clock.now()}:${fallbackSeqCounter++}`;
-    const result = this.tx.execute(boutboxCmdEnqueue({
+    const result = this.source.forTenant(tenantId).execute(boutboxCmdEnqueue({
       tenantId, customerId, eventName, quantity, idempotencyKey, now: this.clock.now(),
     }));
     /* rowsAffected=0 → ON CONFLICT DO NOTHING 命中，重复事件被去重 */
     return result.rowsAffected > 0;
   }
 
-  /** 处理待发送的计量事件（批量，适合定时调用） */
-  async flush(batchSize = 50): Promise<{ processed: number; failed: number }> {
-    /* 回收卡在 processing 超过阈值的行（崩溃恢复） */
-    this.tx.execute(boutboxCmdRequeueStale(this.clock.now() - STALE_PROCESSING_MS));
+  /**
+   * 处理待发送的计量事件（批量，适合定时调用）。跨所有 shard 顺序 fan-out：逐 shard 隔离
+   * try/catch——某 shard 抛错只记入 shardErrors，不 rethrow、不影响其余 shard 继续处理。
+   */
+  async flush(batchSize = 50): Promise<FlushResult> {
+    let processed = 0;
+    let failed = 0;
+    const shardErrors: { shard: string; error: string }[] = [];
+    const dbs = this.source.allDbs();
 
-    const rows = [...this.tx.queryMany(boutboxQueryPending(MAX_ATTEMPTS, batchSize))];
+    for (let i = 0; i < dbs.length; i++) {
+      try {
+        const r = await this.flushOneDb(dbs[i]!, batchSize);
+        processed += r.processed;
+        failed += r.failed;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        shardErrors.push({ shard: String(i), error: errMsg });
+        billingMetrics.meterShardFlushErrors++;
+      }
+    }
+
+    return { processed, failed, shardErrors };
+  }
+
+  /** 单-db flush（原 flush 逻辑，this.tx 换成参数 db）。内部逐行 try/catch 不变。 */
+  private async flushOneDb(db: SyncWriteUnitOfWork, batchSize: number): Promise<{ processed: number; failed: number }> {
+    /* 回收卡在 processing 超过阈值的行（崩溃恢复） */
+    db.execute(boutboxCmdRequeueStale(this.clock.now() - STALE_PROCESSING_MS));
+
+    const rows = [...db.queryMany(boutboxQueryPending(MAX_ATTEMPTS, batchSize))];
 
     let processed = 0;
     let failed = 0;
 
     for (const row of rows) {
       /* 乐观锁：标记为 processing 并记录认领时间 */
-      const result = this.tx.execute(boutboxCmdClaim(row.id, this.clock.now()));
+      const result = db.execute(boutboxCmdClaim(row.id, this.clock.now()));
       if (result.rowsAffected === 0) continue;
 
       try {
         await reportUsage(this.config, row.customer_id, row.event_name, row.quantity, row.idempotency_key);
-        this.tx.execute(boutboxCmdMarkSent(row.id, this.clock.now()));
+        db.execute(boutboxCmdMarkSent(row.id, this.clock.now()));
         processed++;
         billingMetrics.meterEventsProcessed++;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        this.tx.execute(boutboxCmdMarkFailed(row.id, errMsg, MAX_ATTEMPTS));
+        db.execute(boutboxCmdMarkFailed(row.id, errMsg, MAX_ATTEMPTS));
         failed++;
         if (row.attempts + 1 >= MAX_ATTEMPTS) {
           billingMetrics.meterEventsFailed++;
@@ -92,14 +145,20 @@ export class BillingOutbox {
     return { processed, failed };
   }
 
-  /** 获取待处理数量 */
+  /** 获取待处理数量（跨所有 shard 求和） */
   pendingCount(): number {
-    return Number(this.tx.queryOne(boutboxQueryPendingCount())?.count ?? 0);
+    return this.source.allDbs().reduce(
+      (sum, db) => sum + Number(db.queryOne(boutboxQueryPendingCount())?.count ?? 0),
+      0,
+    );
   }
 
-  /** 获取失败数量 */
+  /** 获取失败数量（跨所有 shard 求和） */
   failedCount(): number {
-    return Number(this.tx.queryOne(boutboxQueryFailedCount())?.count ?? 0);
+    return this.source.allDbs().reduce(
+      (sum, db) => sum + Number(db.queryOne(boutboxQueryFailedCount())?.count ?? 0),
+      0,
+    );
   }
 }
 
@@ -108,4 +167,6 @@ export const billingMetrics = {
   meterEventsEnqueued: 0,
   meterEventsProcessed: 0,
   meterEventsFailed: 0,
+  /* shard 整体 flush 失败计数（可告警，防坏 shard 静默欠账） */
+  meterShardFlushErrors: 0,
 };

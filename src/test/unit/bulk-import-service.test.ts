@@ -45,7 +45,7 @@ describe('BulkImportService', () => {
        VALUES (?, ?, 'pw', 'admin', ?, 1000, 1000)`,
     ).run(TEST_USER_ID, `${TEST_USER_ID}@test.com`, TEST_TENANT_ID);
 
-    personaCoreService = new PersonaCoreService(db);
+    personaCoreService = PersonaCoreService.fromUnitOfWork(db);
     const persona = personaCoreService.createPersona({
       tenantId: TEST_TENANT_ID,
       ownerUserId: TEST_USER_ID,
