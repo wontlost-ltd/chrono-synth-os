@@ -326,9 +326,9 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
 
   it('recoverTimedOutRuntimeSessions returns the counter shape worker callers expect', () => {
     /* Even with no timed-out sessions, the contract is:
-     * { scanned: number, recovered: number, timedOut: number }
-     * The runtime-recovery worker reads all three fields, so the
-     * shape must stay locked in across the Step 16d extraction. */
+     * { scanned: number, recovered: number, timedOut: number, shardErrors: {shard,error}[] }
+     * The runtime-recovery worker reads all four fields, so the
+     * shape must stay locked in across the cross-tenant fan-out (#3 Task 2). */
     const result = fx.service.recoverTimedOutRuntimeSessions({
       now: Date.now(),
       sessionTimeoutMs: 60_000,
@@ -338,8 +338,10 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     assert.equal(typeof result.scanned, 'number');
     assert.equal(typeof result.recovered, 'number');
     assert.equal(typeof result.timedOut, 'number');
-    /* No sessions exist → all counters 0. */
+    assert.ok(Array.isArray(result.shardErrors));
+    /* No sessions exist → all counters 0, single healthy shard → no shardErrors. */
     assert.equal(result.scanned, 0);
+    assert.deepEqual(result.shardErrors, []);
   });
 
   it('publishTask + getMarketplaceTaskById are byte-equal across the facade pass-through', () => {

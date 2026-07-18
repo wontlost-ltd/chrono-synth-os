@@ -1463,7 +1463,7 @@ export class PersonaCoreService {
     sessionTimeoutMs: number;
     maxRetries: number;
     limit?: number;
-  }): { scanned: number; recovered: number; timedOut: number } {
+  }): { scanned: number; recovered: number; timedOut: number; shardErrors: { shard: string; error: string }[] } {
     return this.marketplaceService.recoverTimedOutRuntimeSessions(input);
   }
 

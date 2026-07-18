@@ -806,15 +806,42 @@ export class PersonaMarketplaceService {
 
   /**
    * cross-tenant fan-out（无 tenantId，全表跨租户扫 runtime_sessions）。
-   * ⚠️ Task 1 仅 source 化保编译：暂用 allDbs()[0]（单库/UoW 模式即唯一 db），行为等价现状。
-   * Task 2 改真 fan-out：遍历 source.allDbs() 逐 shard 隔离执行 + 聚合 shardErrors（见 spec 机制 6）。 */
+   * 遍历 source.allDbs() 逐 shard 隔离执行（见 spec 机制 6）：某 shard 抛错只记入 shardErrors，
+   * 不 rethrow、不拖累其余 shard——目标是恢复卡死运行态 session，一个坏 shard 不该阻止健康 shard
+   * 恢复（同 BillingOutbox flush 的隔离形状，与 QuotaManager prune 的 fail-fast 区分）。
+   * 单库/UoW 模式下 allDbs()=[db]，行为等价现状（一个 shard、shardErrors 空）。 */
   recoverTimedOutRuntimeSessions(input: {
     now: number;
     sessionTimeoutMs: number;
     maxRetries: number;
     limit?: number;
-  }): { scanned: number; recovered: number; timedOut: number } {
-    const db = this.source.allDbs()[0]!;
+  }): { scanned: number; recovered: number; timedOut: number; shardErrors: { shard: string; error: string }[] } {
+    let scanned = 0;
+    let recovered = 0;
+    let timedOut = 0;
+    const shardErrors: { shard: string; error: string }[] = [];
+    const dbs = this.source.allDbs();
+
+    for (let i = 0; i < dbs.length; i++) {
+      try {
+        const r = this.recoverTimedOutRuntimeSessionsOnDb(dbs[i]!, input);
+        scanned += r.scanned;
+        recovered += r.recovered;
+        timedOut += r.timedOut;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        shardErrors.push({ shard: String(i), error: errMsg });
+      }
+    }
+
+    return { scanned, recovered, timedOut, shardErrors };
+  }
+
+  /** 单-db 恢复（原 recoverTimedOutRuntimeSessions 逻辑提取，this.source.allDbs()[0] 换成参数 db）。 */
+  private recoverTimedOutRuntimeSessionsOnDb(
+    db: SyncWriteUnitOfWork,
+    input: { now: number; sessionTimeoutMs: number; maxRetries: number; limit?: number },
+  ): { scanned: number; recovered: number; timedOut: number } {
     const rows = db.queryMany(pcoreQueryTimedOutRuntimeSessions({
       now: input.now,
       limit: input.limit ?? 100,
