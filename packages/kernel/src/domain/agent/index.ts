@@ -5,3 +5,4 @@ export * from './tool-permission-queries.js';
 export * from './mcp-protocol-types.js';
 export * from './user-oauth-types.js';
 export * from './user-oauth-queries.js';
+export * from './github-app-types.js';
