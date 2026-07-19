@@ -53,6 +53,7 @@ import { registerCompanionPerceiveStreamRoutes } from './routes/companion/percei
 import { registerCompanionEnvironmentRoutes } from './routes/companion/environment.js';
 import { registerCompanionChatRoutes } from './routes/companion/chat.js';
 import { registerCompanionLearnGithubRoutes } from './routes/companion/learn-github.js';
+import { registerCompanionDraftGithubRoutes } from './routes/companion/draft-github-reply.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -764,6 +765,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
   registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
   registerCompanionLearnGithubRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionDraftGithubRoutes(app, deps.os, tenantFactory, db, config);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);
