@@ -26,11 +26,13 @@ import type {
   GithubReplyDraftRow,
   GithubReplyDraftKeyParams, GithubDraftInsertParams,
   GithubDraftListByPersonaParams, GithubDraftUpdateStatusParams,
+  GithubDraftClaimForPublishParams, GithubDraftMarkPublishedParams,
   GithubWebhookEventClaimParams,
 } from '@chrono/kernel';
 import {
   GITHUB_REPLY_DRAFT_CMD_INSERT, GITHUB_REPLY_DRAFT_QUERY_BY_ID,
   GITHUB_REPLY_DRAFT_QUERY_BY_PERSONA, GITHUB_REPLY_DRAFT_CMD_UPDATE_STATUS,
+  GITHUB_REPLY_DRAFT_CMD_CLAIM_FOR_PUBLISH, GITHUB_REPLY_DRAFT_CMD_MARK_PUBLISHED,
   GITHUB_WEBHOOK_EVENT_CMD_CLAIM,
 } from '@chrono/kernel';
 
@@ -65,6 +67,41 @@ export function registerGithubDraftExecutors(): void {
        WHERE tenant_id = ? AND persona_id = ? AND id = ? AND status = 'drafted'`,
     ).run(
       p.status, p.now, p.tenantId, p.personaId, p.id,
+    );
+    return { rowsAffected: result.changes };
+  });
+
+  /**
+   * 原子 CAS 占位发布：approved → published。**UPDATE ... SET status='published', published_at=?,
+   * updated_at=? WHERE tenant_id=? AND persona_id=? AND id=? AND status='approved'**——
+   * `WHERE status='approved'` 是原子占位关键：只有 approved 能被 claim 成 published，且 UPDATE 原子，
+   * 同一草稿并发/重复调用只有一次 rowsAffected=1，之后都是 0（已 published/未批准/不存在）。
+   * store 层先据此判 rowsAffected，==1 才读回该行返回（含 draft_body / repo / target_* 供发布），否则 undefined。
+   * 绝非 check-then-act（先 SELECT 再 UPDATE 在并发下会重复占位/重复发布——禁止）。三键定位防跨人格抢发。
+   */
+  registerCommand<GithubDraftClaimForPublishParams>(GITHUB_REPLY_DRAFT_CMD_CLAIM_FOR_PUBLISH, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE github_reply_drafts
+         SET status = 'published', published_at = ?, updated_at = ?
+       WHERE tenant_id = ? AND persona_id = ? AND id = ? AND status = 'approved'`,
+    ).run(
+      p.now, p.now, p.tenantId, p.personaId, p.id,
+    );
+    return { rowsAffected: result.changes };
+  });
+
+  /**
+   * 发布成功后回填 github_ref（GitHub 侧 comment/review id），更新 updated_at。三键定位
+   * (tenant, persona, id)——防跨租户/跨人格回填他人草稿。不校验 status（claimForPublish 已原子占位为
+   * published，本步只补 ref；跨人格 / 不存在时 WHERE 不匹配，rowsAffected=0 无副作用）。
+   */
+  registerCommand<GithubDraftMarkPublishedParams>(GITHUB_REPLY_DRAFT_CMD_MARK_PUBLISHED, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE github_reply_drafts
+         SET github_ref = ?, updated_at = ?
+       WHERE tenant_id = ? AND persona_id = ? AND id = ?`,
+    ).run(
+      p.githubRef, p.now, p.tenantId, p.personaId, p.id,
     );
     return { rowsAffected: result.changes };
   });

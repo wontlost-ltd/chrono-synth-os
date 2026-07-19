@@ -31,7 +31,8 @@ import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js
 import type { IDatabase } from '../../../storage/database.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
-import { AuthorizationError, ValidationError, ErrorCode } from '../../../errors/index.js';
+import { AuthorizationError, ValidationError, StateError, ErrorCode } from '../../../errors/index.js';
+import type { ToolInvocationPipeline } from '../../../agent/tool-invocation-pipeline.js';
 import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
 import { GithubAppCredentialStore } from '../../../storage/github-app-credential-store.js';
 import { GithubDraftStore } from '../../../storage/github-draft-store.js';
@@ -65,6 +66,15 @@ const DraftIdParamSchema = z.object({
 });
 
 /**
+ * 发布请求体：confirmationToken 可选。
+ *   - 省略（首次）：探测——经 pipeline 触发 highRisk confirmation gate，返回 pending + tokenId，**不发**。
+ *   - 携带（二次）：人工带 token 确认真发（不可降级人工审批门的「人在环」的那一步）。
+ */
+const PublishDraftBodySchema = z.object({
+  confirmationToken: z.string().trim().min(1).optional(),
+});
+
+/**
  * draft-github-reply 端点可注入依赖（测试用；生产不传，走真实装配）。
  *   - readPort：给定则跳过 App 凭据 / installation / auth 装配，直接用它（E2E 喂固定 issue/PR）。
  * 注意：起草段**无** LLM/provider 注入——起草零-LLM，本就没有 LLM 通道可注入。
@@ -82,6 +92,12 @@ export function registerCompanionDraftGithubRoutes(
   _db?: IDatabase,
   config?: AppConfig,
   injected?: DraftGithubInjected,
+  /**
+   * 发布段依赖：ToolInvocationPipeline（Plan 4 Task 5）。publish 端点经它调 github 写工具
+   * （highRisk 恒真 → 强制 confirmation gate = 不可降级人工审批门）。app.ts 组合根传入共享 pipeline
+   * （已注册 github.comment/github.review 写工具）。未传（老调用/仅起草段）时 publish 端点报「未启用」。
+   */
+  pipeline?: ToolInvocationPipeline,
 ): void {
   /* GithubAppCredentialStore 强制启用的 FieldEncryption（私钥/webhook secret 拒绝明文落库）；
    * 加密未启用时无凭据 store 可用——凭据装配路径会明确报「未连接」。 */
@@ -280,4 +296,141 @@ export function registerCompanionDraftGithubRoutes(
     }
     return { data: { id: params.id, status: 'rejected' } };
   });
+
+  /* POST /api/v1/companion/me/github-drafts/:id/publish
+   * ——「把一条 approved 草稿真发到 GitHub」（Plan 4 发布段核心：不可降级人工审批门 + 原子防重复）。
+   *
+   * 三条铁律在此落地：
+   *   ① **不可降级人工审批门**：真发**必须**经 ToolInvocationPipeline 调 github 写工具（highRisk 恒真）。
+   *      首次（无 confirmationToken）只**探测**——不 claim、不发，pipeline 返 pending_confirmation +
+   *      confirmationTokenId，端点原样返回；人工带 token 二次确认才真发。发布权不因任何参数降级。
+   *   ② **原子防重复**：真发前 store.claimForPublish 原子 CAS approved→published（`WHERE status='approved'`）。
+   *      同一草稿的真实 GitHub 写**至多发生一次**——重复发第二次 claim 返 undefined → 4xx。
+   *   ③ **零-LLM**：发布是网络动作，草稿正文 Plan 3 起草时已确定；本端点不改草稿正文、不调 LLM。
+   *
+   * **claim 时机（本 plan 难点）**：先 pipeline 探测确认（无 token 返 pending，**不 claim**——避免 pending
+   * 态误标 published）；带 token 二次调用时才 claimForPublish 原子占位（紧邻 invoke 之前）+ invoke 真发 +
+   * markPublished。
+   *
+   * **补偿语义（带 token 且 pipeline 仍失败）**：claimForPublish 已把 status 占位 published、但
+   * markPublished 未跑（github_ref 仍 NULL）——即 `status='published' 且 github_ref=NULL` = 「已原子占位
+   * 但未确认真发」。此时 token 已被 pipeline 一次性消费（consume 先于真写），GitHub 侧是否已写**无法从本地
+   * 确定**，故**不自动回滚也不重发**（宁可漏发人工补，不可重发）——记 warn 日志，返回错误，人工可据
+   * `published + github_ref=NULL` 查证后手工处理。核心不变量「至多一次真发尝试」由原子 claim 保证。
+   */
+  app.post('/api/v1/companion/me/github-drafts/:id/publish', async (request, reply) => {
+    assertCompanionAccess(request);
+    setPrivateNoStore(reply);
+    if (!pipeline) {
+      /* 组合根未接入 pipeline（仅起草段）——发布能力未启用，明确报错而非静默不发。 */
+      throw new StateError('发布能力未启用（未接入工具调用流水线）');
+    }
+    const params = DraftIdParamSchema.parse(request.params);
+    const body = PublishDraftBodySchema.parse(request.body ?? {});
+    const tenantOS = getOS(request);
+    const store = draftStore(tenantOS, request.tenantId);
+
+    /* 发布经内部动作调用 pipeline；invokerId 固定（externalUserId/sessionId 随之稳定）——探测与真发两次
+     * 调用的 confirmation 上下文一致，token 才能验过（token 绑定 tenant/persona/session/externalUser +
+     * arguments input-hash）。 */
+    const invokerId = `companion-publish:${COMPANION_PERSONA_ID}`;
+
+    if (!body.confirmationToken) {
+      /* ── 首次（无 token）：只读探测，绝不 claim、绝不发 ──
+       * 先确认草稿存在且是 approved（未批准/不存在 → 4xx；不因探测把它推进 published）。 */
+      const draft = store.getDraft(COMPANION_PERSONA_ID, params.id);
+      if (!draft) {
+        throw new ValidationError('草稿不存在——无法发布');
+      }
+      if (draft.status !== 'approved') {
+        throw new ValidationError(`草稿状态为「${draft.status}」，只有 approved 草稿可发布`);
+      }
+      const call = buildPublishInvocation(draft.target_type, draft.repo, draft.target_number, draft.draft_body);
+      /* 经 pipeline 探测：highRisk 恒真 → 必走 confirmation gate → 返 pending_confirmation + tokenId。 */
+      const decision = await pipeline.invoke({
+        tenantId: request.tenantId, personaId: COMPANION_PERSONA_ID, toolId: call.toolId,
+        invokerType: 'internal', invokerId, invokerUserId: null, arguments: call.arguments,
+      });
+      if (decision.ok) {
+        /* 恒 highRisk 且无 token 理论不会直接执行；真到这一步（配置异常）说明审批门被绕过——拒。 */
+        throw new StateError('审批门异常：高风险发布在无人工确认下被执行，已拒绝');
+      }
+      if (decision.status === 'pending_confirmation') {
+        /* 不可降级门：草稿仍 approved、GitHub 未写。返回 tokenId 供人工二次确认。 */
+        return { data: { status: 'pending_confirmation', confirmationTokenId: decision.confirmationTokenId } };
+      }
+      /* 授权/权限/配额/断路器等被拒 → 明确 4xx（未连接/未授权发布）。 */
+      throw new ValidationError(`无法发布：${decision.reason}`);
+    }
+
+    /* ── 二次（带 token）：真发 ──
+     * 原子占位（approved→published）紧邻 invoke 之前——undefined = 未批准/已发布/不存在/跨人格 → 4xx。
+     * 这是**原子防重复**核心：重复发同一草稿，第二次 claim 恒 undefined，真实 GitHub 写至多一次。 */
+    const now = tenantOS.getClock().now();
+    const claimed = store.claimForPublish(COMPANION_PERSONA_ID, params.id, now);
+    if (!claimed) {
+      throw new ValidationError('草稿不存在、未批准或已发布——无法发布（原子防重复）');
+    }
+
+    const call = buildPublishInvocation(claimed.target_type, claimed.repo, claimed.target_number, claimed.draft_body);
+    const decision = await pipeline.invoke({
+      tenantId: request.tenantId, personaId: COMPANION_PERSONA_ID, toolId: call.toolId,
+      invokerType: 'internal', invokerId, invokerUserId: null,
+      arguments: call.arguments, confirmationToken: body.confirmationToken,
+    });
+
+    if (!decision.ok) {
+      /* 补偿：claim 已占位 published、markPublished 未跑（github_ref 仍 NULL）。token 已被消费、
+       * GitHub 侧是否已写无法从本地确定 → 不回滚不重发，记日志，人工据 published+github_ref=NULL 查证。 */
+      tenantOS.getLogger().warn(
+        'CompanionPublish',
+        `发布占位后 pipeline 未确认真发（draft=${params.id} status=${decision.status} reason=${decision.reason}）——`
+          + '草稿已占位 published 但 github_ref=NULL（未确认），需人工核对 GitHub 侧是否已写',
+      );
+      throw new StateError(`发布未确认：${decision.reason}（草稿已占位、github_ref 待人工核对）`);
+    }
+
+    /* 真发成功：从工具结果取 GitHub 侧 comment/review id 作 githubRef，回填 markPublished。 */
+    const published = extractPublishResult(decision.result.content);
+    store.markPublished(COMPANION_PERSONA_ID, params.id, published.githubRef, tenantOS.getClock().now());
+    return { data: { status: 'published', githubRef: published.githubRef, htmlUrl: published.htmlUrl } };
+  });
+}
+
+/**
+ * 据草稿 target_type 决定 github 写工具与参数：
+ *   - issue → 'github.comment'，arguments={ repo, issueNumber, body }
+ *   - pull  → 'github.review'， arguments={ repo, prNumber,  body }
+ * 其它取值（迁移 CHECK 钉死 issue/pull，理论不达）→ 抛 4xx 防御。
+ * body 用草稿正文（Plan 3 已确定）——本段不改内容（零-LLM）。
+ */
+function buildPublishInvocation(
+  targetType: string, repo: string, targetNumber: number, draftBody: string,
+): { toolId: string; arguments: Record<string, unknown> } {
+  if (targetType === 'issue') {
+    return { toolId: 'github.comment', arguments: { repo, issueNumber: targetNumber, body: draftBody } };
+  }
+  if (targetType === 'pull') {
+    return { toolId: 'github.review', arguments: { repo, prNumber: targetNumber, body: draftBody } };
+  }
+  throw new ValidationError(`不支持的草稿目标类型「${targetType}」——无法发布`);
+}
+
+/**
+ * 从 pipeline 工具结果里取 GitHub 写返回（写工具 wrapJson 成 { id, htmlUrl } 的 json content）。
+ * githubRef 用 GitHub 侧 comment/review id 的字符串形式（审计 + 去重佐证，回填 github_ref）。
+ * 结果结构异常（无 json / 无 id）→ 抛 StateError（真发已发生，但本地拿不到引用——异常路径记为发布未确认）。
+ */
+function extractPublishResult(
+  content: readonly import('../../../agent/tool-adapter.js').ToolContent[],
+): { githubRef: string; htmlUrl: string } {
+  const json = content.find((c): c is { type: 'json'; json: unknown } => c.type === 'json')?.json;
+  const obj = (json ?? {}) as { id?: unknown; htmlUrl?: unknown };
+  if (obj.id === undefined || obj.id === null) {
+    throw new StateError('发布结果缺少 GitHub 引用 id——无法回填 github_ref');
+  }
+  return {
+    githubRef: String(obj.id),
+    htmlUrl: typeof obj.htmlUrl === 'string' ? obj.htmlUrl : '',
+  };
 }

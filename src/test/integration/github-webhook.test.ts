@@ -35,6 +35,7 @@ import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
+import { createApp } from '../../server/index.js';
 import { loadConfig } from '../../config/schema.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
@@ -222,5 +223,116 @@ describe('GitHub webhook 接收器（HMAC 验签 + 反查 fail-closed + 幂等 +
     assert.equal(draftCount(), before, '非 opened 事件不起草：草稿零增长');
 
     await app.close();
+  });
+});
+
+/**
+ * jwt 豁免精确性测试（GitHub 集成 Plan 3 遗留 Low → Plan 4 结构守护）。
+ *
+ * `isPublicPath`（src/server/plugins/jwt-auth.ts）对 GitHub webhook 的豁免是**精确等值匹配**：
+ *   `path === '/api/v1/integrations/github/webhook'`
+ * ——只有这个确切路径无 JWT（由 HMAC-SHA256 签名 + 反查租户 fail-closed 保护），
+ * `/api/v1/integrations/github/` 前缀下的**其它任何路径仍需鉴权**。
+ *
+ * 风险：若未来有人图省事把豁免改成 `path.startsWith('/api/v1/integrations/github')`（宽前缀），
+ * 就会把该前缀下的 highRisk 发布相关端点一并变成免鉴权公网可打——静默暴露发布通道。
+ * 本测试用 jwt.enabled=true + auth（API-Key）禁用的配置，让 jwt-auth 的 isPublicPath 成为
+ * **唯一鉴权门**，据此断言：
+ *   ① webhook 前缀下的非 webhook 路径（foobar / publish）无 token → 401（证豁免非前缀）；
+ *   ② 恰好的 webhook 路径无 token → 非 401（证豁免真实存在且生效，本测试不是恒 401 的重言）。
+ *
+ * 若豁免被误改宽成 startsWith 前缀，① 的 foobar/publish 用例会立即变红——正是变异守。
+ * 401 断言模式照 api.test.ts:897（无 token 打受保护路径断言 401）。
+ */
+describe('jwt 豁免精确性：仅确切 webhook 路径免鉴权，前缀下其它路径仍需 401', () => {
+  let os: ChronoSynthOS;
+  let app: FastifyInstance;
+
+  /* jwt 启用 + auth（API-Key）保持默认禁用 → jwt-auth 的 isPublicPath 是唯一鉴权门：
+   * 非公共路径 + 无 Bearer + auth 未启用 → 401 AUTH_REQUIRED（jwt-auth.ts onRequest）。
+   * 同时启用凭据加密：让确切 webhook 路径通过 jwt-auth 后能真正进入路由逻辑（否则路由
+   * 在「本机未启用凭据加密」处 fail-closed 返 401 AUTH_INVALID_TOKEN，虽非鉴权层 401 但
+   * 会模糊对比守的语义）。启用后确切 webhook 无 installation.id → 路由返 400，与鉴权层 401
+   * 泾渭分明。 */
+  const authConfig = loadConfig({
+    rateLimit: { max: 10000, timeWindowMs: 60_000 },
+    websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    jwt: { enabled: true, secret: 'jwt-exempt-precision-secret-at-least-32-chars', issuer: 'test' },
+    encryption: {
+      enabled: true,
+      masterKey: randomBytes(32).toString('base64'),
+      defaultKeyRef: 'master',
+      keyring: {},
+      keyRotationIntervalDays: 90,
+    },
+  });
+
+  beforeEach(async () => {
+    os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os.start();
+    app = await createApp({ os, config: authConfig });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    os.close();
+  });
+
+  it('github 前缀下的非 webhook 路径无 token → 401（豁免是精确匹配，非宽前缀）', async () => {
+    /* 若 isPublicPath 被误改成 startsWith('/api/v1/integrations/github')，下面两条会变成
+     * 被豁免（非 401）→ 用例变红。这就是防「宽前缀静默暴露发布端点」的变异守。 */
+    for (const path of [
+      '/api/v1/integrations/github/foobar',
+      '/api/v1/integrations/github/publish',
+      '/api/v1/integrations/github', // 前缀本身（无尾随 /webhook）也不得豁免
+    ]) {
+      const res = await app.inject({ method: 'GET', url: path });
+      assert.equal(
+        res.statusCode,
+        401,
+        `${path} 不是确切的 webhook 路径，无 token 必须 401（豁免须精确匹配非前缀），实际 ${res.statusCode}`,
+      );
+      assert.equal(
+        JSON.parse(res.body).code,
+        'AUTH_REQUIRED',
+        `${path} 应由 jwt-auth 因缺 Bearer 拒绝（AUTH_REQUIRED）`,
+      );
+    }
+  });
+
+  it('恰好的 webhook 路径无 token → 通过 jwt-auth（非鉴权层 401，证本测试非恒 401 重言）', async () => {
+    /* 对比守：确切的 webhook 路径确实被 jwt-auth 豁免——请求通过鉴权层进入路由逻辑，
+     * 路由因 payload 缺 installation.id 返 400（VALIDATION），而**不是**鉴权层的
+     * 401 AUTH_REQUIRED。这保证「前缀下非 webhook → 401」不是「整段前缀都 401」的假象：
+     * 豁免真实存在，且只对这一个确切路径生效。
+     *
+     * 断言用「非 AUTH_REQUIRED」而非「非 401」——因为路由自身的 HMAC/凭据 fail-closed
+     * 也可能返 401（AUTH_INVALID_TOKEN），那是路由级安全拒绝、不是鉴权层豁免失效。
+     * 我们只需证明：这条不是被 jwt-auth 以「缺 Bearer」挡下的。 */
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/integrations/github/webhook',
+      headers: { 'content-type': 'application/json' },
+      payload: '{}',
+    });
+    const code = (() => {
+      try {
+        return (JSON.parse(res.body) as { code?: string }).code;
+      } catch {
+        return undefined;
+      }
+    })();
+    assert.notEqual(
+      code,
+      'AUTH_REQUIRED',
+      `确切 webhook 路径应被 jwt-auth 豁免（进入路由，而非鉴权层以缺 Bearer 拒绝），` +
+        `实际 status=${res.statusCode} code=${code} body=${res.body.slice(0, 200)}`,
+    );
+    /* 加固：确切 webhook 通过鉴权后，缺 installation.id 的空 payload 应得路由级 400。 */
+    assert.equal(
+      res.statusCode,
+      400,
+      `确切 webhook 路径应进入路由并因缺 installation.id 返 400，实际 ${res.statusCode}（body=${res.body.slice(0, 160)}）`,
+    );
   });
 });

@@ -164,4 +164,25 @@ describe('schema-dsl SQLite migration parity', () => {
     );
     assert.deepEqual(dumpSqliteSchema(newDb), dumpSqliteSchema(oldDb));
   });
+
+  // v122 重建 github_reply_drafts（RENAME→重建表）时必须保住 lookup 索引——独立于 legacy fixture 的守护。
+  // 变异发现的真 bug：漏 DROP INDEX 时 RENAME 让同名索引随 _old 走，CREATE INDEX IF NOT EXISTS 静默 no-op，
+  // DROP _old 连带删掉唯一那份索引 → live 表零 lookup 索引。fixture 逐字抄自同段 buggy 序列同样丢索引，
+  // parity 的 DSL==legacy deepEqual 仍通过（fixture 对此 case 非独立 oracle），故这里直接 introspect DSL 迁移
+  // 后的 live schema 断言索引存活，不依赖 fixture。回归时（又丢索引）此断言应变红。
+  it('keeps idx_github_reply_drafts_lookup alive after DSL migrations rebuild github_reply_drafts', () => {
+    const db = new Database(':memory:');
+    opened.push(db);
+    runDslSqliteMigrations(db);
+
+    const indexes = db
+      .prepare<SqliteIndexRow>(`PRAGMA index_list(${quoteSqliteIdentifier('github_reply_drafts')})`)
+      .all();
+    const indexNames = indexes.map(index => index.name);
+
+    assert.ok(
+      indexNames.includes('idx_github_reply_drafts_lookup'),
+      `expected idx_github_reply_drafts_lookup on live github_reply_drafts after v122 rebuild, got: ${indexNames.join(', ') || '(none)'}`,
+    );
+  });
 });

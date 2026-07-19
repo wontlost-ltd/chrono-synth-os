@@ -20,7 +20,8 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   githubDraftInsert, githubDraftQueryById, githubDraftListByPersona,
-  githubDraftUpdateStatus, githubWebhookEventClaim,
+  githubDraftUpdateStatus, githubDraftClaimForPublish, githubDraftMarkPublished,
+  githubWebhookEventClaim,
 } from '@chrono/kernel';
 import type { GithubReplyDraftRow } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from './executors/index.js';
@@ -83,6 +84,37 @@ export class GithubDraftStore {
       tenantId: this.tenantId, personaId, id, status, now,
     }));
     return result.rowsAffected === 1;
+  }
+
+  /**
+   * 原子占位发布：把 approved 草稿 CAS 成 published（防重复发布核心）。执行器
+   * **UPDATE ... SET status='published', published_at=now WHERE ... AND status='approved'**——
+   * `WHERE status='approved'` 保证只有 approved 能被 claim 成 published，且 UPDATE 是原子的：
+   * 同一草稿并发/重复调用只有一次 rowsAffected=1，之后都是 0（已 published）。**先 UPDATE 占位再读回**
+   * （非先 SELECT 再 UPDATE 的 check-then-act）。rowsAffected===1 才读回该行（含 draft_body / repo /
+   * target_type / target_number 供发布）返回；rowsAffected===0（未批准 / 已发布 / 不存在 / 跨人格）返
+   * undefined。三键定位——防跨租户/跨人格抢发他人草稿。
+   */
+  claimForPublish(personaId: string, id: string, now: number): GithubReplyDraftRow | undefined {
+    const result = this.tx.execute(githubDraftClaimForPublish({
+      tenantId: this.tenantId, personaId, id, now,
+    }));
+    if (result.rowsAffected !== 1) {
+      return undefined;
+    }
+    /* 占位成功才读回：此刻该行 status 已是 published，含发布所需字段。 */
+    return this.getDraft(personaId, id);
+  }
+
+  /**
+   * 发布成功后回填 github_ref（GitHub 侧 comment/review id，审计+去重佐证）。执行器
+   * **UPDATE ... SET github_ref=? WHERE tenant_id=? AND persona_id=? AND id=?**——三键定位，
+   * 防跨租户/跨人格回填他人草稿。不校验 status（claimForPublish 已原子占位为 published）。
+   */
+  markPublished(personaId: string, id: string, githubRef: string, now: number): void {
+    this.tx.execute(githubDraftMarkPublished({
+      tenantId: this.tenantId, personaId, id, githubRef, now,
+    }));
   }
 
   /**
