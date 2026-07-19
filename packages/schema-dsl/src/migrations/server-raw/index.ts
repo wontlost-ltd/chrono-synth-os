@@ -13,6 +13,7 @@ import { v088_distilled_artifacts_perception_source } from './v088.js';
 import { v106_persona_id_core_isolation } from './v106.js';
 import { v107_persona_character_pk } from './v107.js';
 import { v119_github_integration } from './v119.js';
+import { v120_github_learn_state } from './v120.js';
 
 export { v007_tenant_id } from './v007.js';
 export { v027_identities_avatars_backfill } from './v027.js';
@@ -28,6 +29,7 @@ export { v088_distilled_artifacts_perception_source } from './v088.js';
 export { v106_persona_id_core_isolation } from './v106.js';
 export { v107_persona_character_pk } from './v107.js';
 export { v119_github_integration } from './v119.js';
+export { v120_github_learn_state } from './v120.js';
 
 export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v007_tenant_id,
@@ -43,6 +45,7 @@ export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v106_persona_id_core_isolation,
   v107_persona_character_pk,
   v119_github_integration,
+  v120_github_learn_state,
 ];
 
 export const DISABLED_MIGRATIONS: readonly RawMigration[] = [

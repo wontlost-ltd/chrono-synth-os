@@ -1277,6 +1277,16 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS github_installations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    installation_id TEXT NOT NULL,\n    github_host TEXT NOT NULL,\n    account TEXT,\n    repos TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_installations_host_iid ON github_installations (github_host, installation_id)"
     ]
+  },
+  {
+    "version": "v120",
+    "description": "GitHub learning foundation: github_learn_state (incremental sync cursors) + github_ingest_digests (ingest idempotency ledger)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_learn_state (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL CHECK (resource_type IN ('code', 'issues', 'pulls', 'commits')),\n    cursor TEXT,\n    cursor_advanced_at INTEGER,\n    last_synced_at INTEGER,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_learn_state_key ON github_learn_state (tenant_id, persona_id, repo, resource_type)",
+      "CREATE TABLE IF NOT EXISTS github_ingest_digests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL,\n    content_sha TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('claimed', 'ingested')),\n    claimed_at INTEGER,\n    ingested_at INTEGER\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_ingest_digests_key ON github_ingest_digests (tenant_id, persona_id, repo, resource_type, content_sha)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2524,6 +2534,16 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS github_app_credentials (\n    tenant_id TEXT PRIMARY KEY,\n    app_id TEXT NOT NULL,\n    private_key_encrypted TEXT NOT NULL,\n    webhook_secret_encrypted TEXT NOT NULL,\n    ghe_base_url TEXT,\n    created_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
       "CREATE TABLE IF NOT EXISTS github_installations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    installation_id TEXT NOT NULL,\n    github_host TEXT NOT NULL,\n    account TEXT,\n    repos TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_installations_host_iid ON github_installations (github_host, installation_id)"
+    ]
+  },
+  {
+    "version": "v122",
+    "description": "GitHub learning foundation: github_learn_state (incremental sync cursors) + github_ingest_digests (ingest idempotency ledger)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_learn_state (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL CHECK (resource_type IN ('code', 'issues', 'pulls', 'commits')),\n    cursor TEXT,\n    cursor_advanced_at BIGINT,\n    last_synced_at BIGINT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_learn_state_key ON github_learn_state (tenant_id, persona_id, repo, resource_type)",
+      "CREATE TABLE IF NOT EXISTS github_ingest_digests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL,\n    content_sha TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('claimed', 'ingested')),\n    claimed_at BIGINT,\n    ingested_at BIGINT\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_ingest_digests_key ON github_ingest_digests (tenant_id, persona_id, repo, resource_type, content_sha)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
