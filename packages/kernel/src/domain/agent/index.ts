@@ -7,3 +7,4 @@ export * from './user-oauth-types.js';
 export * from './user-oauth-queries.js';
 export * from './github-app-types.js';
 export * from './github-learn-types.js';
+export * from './github-draft-types.js';
