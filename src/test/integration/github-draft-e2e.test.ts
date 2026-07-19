@@ -241,6 +241,68 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
     await app.close();
   });
 
+  it('绝不发布（行为不变量）：draft → approve → reject 全程对 api.github.com 零对外写请求（fetch-spy 守）', async () => {
+    /*
+     * 本 plan 核心安全命题「绝不发布」的**行为层**断言（补类型/结构守之外的运行时守）：
+     * 无论起草、审批、驳回，端点/store/composer 都**不应**发起任何对 GitHub 的写请求（POST/PATCH/PUT）。
+     * 结构守（无 WritePort）证的是「发不出」；本用例用 fetch-spy 证「运行时确实没发」——
+     * 若 Plan 4 误把真实发布 fetch 接进 approve/reject 分支（回归本 plan 铁律），本用例立即变红。
+     *
+     * spy 抓的是**对 api.github.com（含 GHE host）的写方法**：注入的 fakeReadPort 不走网络（起草只读也是 mock），
+     * 所以正常路径下对 github.com 的写请求恒为零；一旦有额外对外写（如注入的发布 fetch）就会被记录。
+     */
+    const originalFetch = globalThis.fetch;
+    const githubWriteCalls: Array<{ url: string; method: string }> = [];
+    /* monkey-patch globalThis.fetch：记录每次调用（url + method），对 api.github.com 的写方法单独归档。
+     * 不实际发出请求——返回一个最小的 2xx Response，避免误触真网络 / 让被测代码继续跑。 */
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      const isGithubHost = /(^|\/\/|\.)api\.github\.com(\/|$|:)/i.test(url) || /github\.com/i.test(url);
+      const isWrite = method === 'POST' || method === 'PATCH' || method === 'PUT';
+      if (isGithubHost && isWrite) {
+        githubWriteCalls.push({ url, method });
+      }
+      return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof globalThis.fetch;
+
+    try {
+      os.core.addMemory('semantic', '我听到：重试要带指数退避 + 抖动，避免惊群', 0, 0.6);
+      const readPort = fakeReadPort({
+        listIssues: async (): Promise<GitHubIssue[]> => [
+          { number: 11, title: '重试风暴', body: '大量客户端同时重试导致惊群，重试该加退避', updatedAt: '2026-06-01T00:00:00Z' },
+        ],
+      });
+      const app = await mountDraftGithub(os, { readPort });
+
+      /* 起草：只读 + 本地存草稿，不该有任何对外写。 */
+      const draft = await postDraft(app, { repo: REPO, targetType: 'issue', targetNumber: 11 });
+      assert.equal(draft.status, 200, `起草应 200，实际 ${draft.status}`);
+      const draftId = draft.body.draftId;
+
+      /* approve：只改本地状态，不该触发任何 GitHub 写（本 plan 无 WritePort；Plan 4 才发布）。 */
+      const approveRes = await app.inject({ method: 'POST', url: `/api/v1/companion/me/github-drafts/${draftId}/approve` });
+      assert.equal(approveRes.statusCode, 200, `approve 应 200，实际 ${approveRes.statusCode}：${approveRes.body}`);
+
+      /* 再起草一条走 reject 路径——reject 同样只改本地状态，不该有对外写。 */
+      const draft2 = await postDraft(app, { repo: REPO, targetType: 'issue', targetNumber: 11 });
+      assert.equal(draft2.status, 200);
+      const rejectRes = await app.inject({ method: 'POST', url: `/api/v1/companion/me/github-drafts/${draft2.body.draftId}/reject` });
+      assert.equal(rejectRes.statusCode, 200, `reject 应 200，实际 ${rejectRes.statusCode}：${rejectRes.body}`);
+
+      /* 行为不变量：draft/approve/reject 全程对 api.github.com 的写请求（POST/PATCH/PUT）**零次**。 */
+      assert.equal(
+        githubWriteCalls.length, 0,
+        `绝不发布铁律被破坏：检测到 ${githubWriteCalls.length} 次对 GitHub 的对外写请求 → ${JSON.stringify(githubWriteCalls)}`,
+      );
+
+      await app.close();
+    } finally {
+      /* 务必还原全局 fetch（无论断言/接口是否抛错），不污染其他用例与真实装配路径。 */
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('issue 号不存在 → 4xx（list+find 未命中）', async () => {
     /* ReadPort 列表里只有 42 号，请求 999 号 → find 未命中 → 明确 4xx。 */
     const readPort = fakeReadPort({
