@@ -819,7 +819,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
   registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
   registerCompanionLearnGithubRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionDraftGithubRoutes(app, deps.os, tenantFactory, db, config);
+  /* Plan 4：draft-github-reply 端点含 publish（发布经 pipeline highRisk = 不可降级人工审批门）。
+   * 传入共享 toolInvocationPipeline（已注册 github.comment/github.review 写工具）。 */
+  registerCompanionDraftGithubRoutes(app, deps.os, tenantFactory, db, config, undefined, toolInvocationPipeline);
   /* GitHub webhook 接收器（可选系统入站入口，非用户动作 → 前缀 integrations/github）：
    * GitHub 发 issue/PR opened → HMAC 验签 + 反查租户 + 幂等 → 零-LLM 起草停 drafted（绝不发布）。 */
   registerGithubWebhookRoutes(app, deps.os, tenantFactory, db, config);
