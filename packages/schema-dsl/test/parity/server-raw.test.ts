@@ -26,7 +26,9 @@ describe('server-raw coverage', () => {
     /* v123 = v121_github_reply_drafts（pg-aliased v123，GitHub 反馈起草段地基：建 github_reply_drafts 回复
      * 草稿账本 + github_webhook_events webhook 幂等账本（复合主键 (tenant_id, delivery_id)），纯建表 DDL；
      * 两表含 tenant_id 纳入隔离/GDPR 清单）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123']);
+    /* v124 = v122_github_draft_published（pg-aliased v124，GitHub 反馈发布段地基：github_reply_drafts status
+     * CHECK 加 published 终态 + published_at/github_ref 审计列，PG 原地 ALTER / SQLite 重建表）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124']);
   });
 
   it('covers disabled raw migrations', () => {

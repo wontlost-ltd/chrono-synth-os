@@ -15,6 +15,7 @@ import { v107_persona_character_pk } from './v107.js';
 import { v119_github_integration } from './v119.js';
 import { v120_github_learn_state } from './v120.js';
 import { v121_github_reply_drafts } from './v121.js';
+import { v122_github_draft_published } from './v122.js';
 
 export { v007_tenant_id } from './v007.js';
 export { v027_identities_avatars_backfill } from './v027.js';
@@ -32,6 +33,7 @@ export { v107_persona_character_pk } from './v107.js';
 export { v119_github_integration } from './v119.js';
 export { v120_github_learn_state } from './v120.js';
 export { v121_github_reply_drafts } from './v121.js';
+export { v122_github_draft_published } from './v122.js';
 
 export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v007_tenant_id,
@@ -49,6 +51,7 @@ export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v119_github_integration,
   v120_github_learn_state,
   v121_github_reply_drafts,
+  v122_github_draft_published,
 ];
 
 export const DISABLED_MIGRATIONS: readonly RawMigration[] = [
