@@ -118,6 +118,9 @@ const TENANT_TABLES = [
   /* GitHub 学习段地基（Plan 2 Task 1）：github_learn_state 是增量同步游标账本；github_ingest_digests 是
      摄入幂等账本（content_sha 指纹）。两表均含 tenant_id，须随租户导出/擦除 */
   'github_learn_state', 'github_ingest_digests',
+  /* GitHub 反馈起草段地基（Plan 3 Task 1）：github_reply_drafts 是回复草稿账本（起草停 drafted 待审批）；
+     github_webhook_events 是 webhook 幂等账本（复合主键 tenant_id+delivery_id）。两表均含 tenant_id，须随租户导出/擦除 */
+  'github_reply_drafts', 'github_webhook_events',
 ] as const;
 
 /** 需要子查询关联的表 */

@@ -20,9 +20,13 @@ describe('server-raw coverage', () => {
      * 主键改 + executor 改 ON CONFLICT(tenant_id,persona_id) 延后到 K2 原子落，K1 完全向后兼容）。 */
     /* v121 = v119_github_integration（pg-aliased v121，GitHub 集成地基：建 github_app_credentials +
      * github_installations 两表，纯建表 DDL 无 DML；两表含 tenant_id 纳入隔离/GDPR 清单）。 */
-    /* v122 = v120_github_learn_state（pg-aliased v122，GitHub 学习段：建 github_learn_state 游标 +
-     * github_ingest_digests 摄入幂等账本；Plan 2 注册了迁移但漏更新本覆盖列表，此处补齐与 RAW_MIGRATIONS 一致）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122']);
+    /* v122 = v120_github_learn_state（pg-aliased v122，GitHub 学习段地基：建 github_learn_state 增量同步
+     * 游标账本 + github_ingest_digests 摄入幂等账本，纯建表 DDL；两表含 tenant_id 纳入隔离/GDPR 清单。
+     * Plan 2 加入 RAW_MIGRATIONS 时漏更新本覆盖列表——已补齐，与实际一致）。 */
+    /* v123 = v121_github_reply_drafts（pg-aliased v123，GitHub 反馈起草段地基：建 github_reply_drafts 回复
+     * 草稿账本 + github_webhook_events webhook 幂等账本（复合主键 (tenant_id, delivery_id)），纯建表 DDL；
+     * 两表含 tenant_id 纳入隔离/GDPR 清单）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123']);
   });
 
   it('covers disabled raw migrations', () => {

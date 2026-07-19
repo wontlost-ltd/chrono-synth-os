@@ -1287,6 +1287,15 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS github_ingest_digests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL,\n    content_sha TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('claimed', 'ingested')),\n    claimed_at INTEGER,\n    ingested_at INTEGER\n  )",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_ingest_digests_key ON github_ingest_digests (tenant_id, persona_id, repo, resource_type, content_sha)"
     ]
+  },
+  {
+    "version": "v121",
+    "description": "GitHub feedback drafting foundation: github_reply_drafts (reply drafts halted at drafted for approval) + github_webhook_events (webhook idempotency, composite PK)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_reply_drafts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    target_type TEXT NOT NULL CHECK (target_type IN ('issue', 'pull')),\n    target_number INTEGER NOT NULL,\n    draft_body TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('drafted', 'approved', 'rejected')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
+      "CREATE TABLE IF NOT EXISTS github_webhook_events (\n    delivery_id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL,\n    event_type TEXT NOT NULL,\n    processed_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, delivery_id)\n  )"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2544,6 +2553,15 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_learn_state_key ON github_learn_state (tenant_id, persona_id, repo, resource_type)",
       "CREATE TABLE IF NOT EXISTS github_ingest_digests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL,\n    content_sha TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('claimed', 'ingested')),\n    claimed_at BIGINT,\n    ingested_at BIGINT\n  )",
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_ingest_digests_key ON github_ingest_digests (tenant_id, persona_id, repo, resource_type, content_sha)"
+    ]
+  },
+  {
+    "version": "v123",
+    "description": "GitHub feedback drafting foundation: github_reply_drafts (reply drafts halted at drafted for approval) + github_webhook_events (webhook idempotency, composite PK)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_reply_drafts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    target_type TEXT NOT NULL CHECK (target_type IN ('issue', 'pull')),\n    target_number INTEGER NOT NULL,\n    draft_body TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('drafted', 'approved', 'rejected')),\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
+      "CREATE TABLE IF NOT EXISTS github_webhook_events (\n    delivery_id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL,\n    event_type TEXT NOT NULL,\n    processed_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, delivery_id)\n  )"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
