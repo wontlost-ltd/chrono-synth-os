@@ -1,6 +1,6 @@
 # 多数字人协同分析框架设计
 
-> 状态：第 3 轮修订 + 3.1 校正（采纳 Codex 76/100 8 项 → Codex 再审 86/100 又退 2 项，均核验真实代码后修）。待 Codex 确认 → 用户审阅 → writing-plans。
+> 状态：**已过 Codex 独立复审**（58 退→76 退→86 退→**94/100 通过「达到通过线」**，每轮均核验真实代码后修）。待用户审阅 → writing-plans。
 > 日期：2026-07-20
 > 关联 ADR：0047（零-LLM 内核 / LLM-as-teacher）、0056（per-persona 内核）、0055（数字员工组织 / 策略辅助）。
 
@@ -11,7 +11,7 @@
 
 > **第 3 轮修订（采纳 Codex 76/100 定稿级退回 8 项，逐项核验真实代码）**：
 > 1. **boundaries 来源**：不在 core（`CoreRhythmLayer.getState()`/compilePersonaState 只 L0-L4 无 boundaries）——照 `conversation-service.ts:600-610` 从 `getPersonaDetail().profile.behaviorBoundaries` 取，由 service 注入 analyzer（§5.1/§5.3）。
-> 2. **删「rules 驱动排序」**：核验 `structural-scorer.ts` 公式 + `compilePersonaState` 只取 L0-L4 不注入 RuleStore——**相对排序实际只由 L1 值（alignmentScore）驱动**，constraints（源恒空 violations）/rules（根本没接）两说都错，全文改正；若要 rules 真参与列为 kernel 独立 wiring（范围外）（§2/§3）。
+> 2. **删「rules 驱动排序」**：核验 `structural-scorer.ts` 公式 + `compilePersonaState` 只取 L0-L4 不注入 RuleStore → rules inert；此项结论**经第 3.1 轮再校正**（见下：rule-engine.ts:196 还有第二套 `decisionCase.constraints` 会生效）——**最终结论以 §2/§3/§5.1 与第 3.1 轮说明为准**：排序 = L1 alignmentScore +（若传的）decisionCase.constraints；首版不传 constraints → 只 L1 驱动。
 > 3. **keyPoints 只来自 grounded 证据**：不含 alternatives（同组候选跨 persona 必重合造伪话题），只从 evidence.excerpt tokenize（§5.1）。
 > 4. **PersonaPerspective 加结构化 evidence**：`{ memoryId, excerpt, relevance, association }[]`，供 keyPoints 提取 + evidenceBrief 可追溯（§5.1）。
 > 5. **status 统一判据**：只两态，门槛 = grounded 视角数 G；G===0→insufficient_grounding、G≥1→analyzed，「多数不足」经 groundingNote 表达（不用 status 兼表）（§5.2）。
