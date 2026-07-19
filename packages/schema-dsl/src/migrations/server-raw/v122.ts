@@ -15,10 +15,14 @@ import type { RawMigration } from '../../types.js';
  * 其余列 / PRIMARY KEY (id) / 唯一约束 / idx_github_reply_drafts_lookup 索引均不变。
  *
  * 手法与 v107 单例表重建同款：SQLite 不能 ALTER CHECK 约束，故重建表——
- *   RENAME github_reply_drafts → _old（索引随表迁到 _old）；CREATE 新表（新 CHECK + 两新列）；
- *   INSERT SELECT 回填旧数据（旧行 status 都是 drafted/approved/rejected，全落在新 CHECK 集内，
- *   两新列回填 NULL）；重建 idx_github_reply_drafts_lookup（旧索引随 _old 一并 DROP 掉需重建）；
- *   DROP _old。PG 走原地 ALTER：DROP CONSTRAINT + ADD CONSTRAINT（新 CHECK）+ 两次 ADD COLUMN。
+ *   RENAME github_reply_drafts → _old（同名索引 idx_github_reply_drafts_lookup 随表迁到 _old，
+ *   但索引名在库内全局唯一，仍占用该名字）；DROP INDEX IF EXISTS idx_github_reply_drafts_lookup
+ *   先删掉随 _old 挪来的旧索引（否则后面 CREATE INDEX IF NOT EXISTS 因同名索引已存在而静默 no-op，
+ *   新表建不出索引，DROP _old 时连带删掉唯一那份索引 → live 表零 lookup 索引）；
+ *   CREATE 新表（新 CHECK + 两新列）；INSERT SELECT 回填旧数据（旧行 status 都是
+ *   drafted/approved/rejected，全落在新 CHECK 集内，两新列回填 NULL）；CREATE INDEX 重建
+ *   idx_github_reply_drafts_lookup（此时旧同名索引已删，IF NOT EXISTS 会真建出）；DROP _old。
+ *   PG 走原地 ALTER：DROP CONSTRAINT + ADD CONSTRAINT（新 CHECK）+ 两次 ADD COLUMN（索引原地保留不动）。
  *
  * 时间戳列：Postgres 用 BIGINT（毫秒 epoch），SQLite 无 BIGINT 用 INTEGER（同为 64 位整数语义）。
  *
@@ -44,6 +48,9 @@ export const v122_github_draft_published: RawMigration = defineRaw({
     /* SQLite 不能改 CHECK 约束，重建 github_reply_drafts（新 status CHECK 含 published + 加两新列）。
      * safe:if-table-exists 守卫 legacy 部分预建路径（某些迁移路径下表可能未由前序迁移建出）。 */
     `/* safe:if-table-exists:github_reply_drafts */ ALTER TABLE github_reply_drafts RENAME TO github_reply_drafts_old`,
+    /* RENAME 后同名索引随 _old 挪走但仍占用全局索引名，先 DROP 掉，否则下面 CREATE INDEX IF NOT EXISTS
+     * 会因同名索引已存在而静默 no-op，新表建不出索引，DROP _old 时连带删掉唯一那份索引。 */
+    `/* safe:if-table-exists:github_reply_drafts_old */ DROP INDEX IF EXISTS idx_github_reply_drafts_lookup`,
     `/* safe:if-table-exists:github_reply_drafts_old */ CREATE TABLE IF NOT EXISTS github_reply_drafts (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL,

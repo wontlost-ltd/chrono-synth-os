@@ -1302,6 +1302,7 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "description": "GitHub feedback publishing foundation: github_reply_drafts status CHECK adds published + published_at/github_ref audit columns",
     "sql": [
       "/* safe:if-table-exists:github_reply_drafts */ ALTER TABLE github_reply_drafts RENAME TO github_reply_drafts_old",
+      "/* safe:if-table-exists:github_reply_drafts_old */ DROP INDEX IF EXISTS idx_github_reply_drafts_lookup",
       "/* safe:if-table-exists:github_reply_drafts_old */ CREATE TABLE IF NOT EXISTS github_reply_drafts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    target_type TEXT NOT NULL CHECK (target_type IN ('issue', 'pull')),\n    target_number INTEGER NOT NULL,\n    draft_body TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('drafted', 'approved', 'rejected', 'published')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    published_at INTEGER,\n    github_ref TEXT\n  )",
       "/* safe:if-table-exists:github_reply_drafts_old */ INSERT OR IGNORE INTO github_reply_drafts (id, tenant_id, persona_id, repo, target_type, target_number, draft_body, status, created_at, updated_at)\n     SELECT id, tenant_id, persona_id, repo, target_type, target_number, draft_body, status, created_at, updated_at FROM github_reply_drafts_old",
       "/* safe:if-table-exists:github_reply_drafts_old */ CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
