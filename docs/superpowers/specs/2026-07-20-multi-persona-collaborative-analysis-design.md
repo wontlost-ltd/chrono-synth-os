@@ -10,7 +10,7 @@
 
 ## 2. 架构（可插拔多模式框架，首切「多视角汇聚」）
 
-**核心洞察**：四段分析基元**全已存在且零-LLM**（检索 / 决策打分 / 组织成文 / 关联）。本能力的新增部分只是**「对多个 persona 各跑一遍 + 汇聚多视角」的编排薄壳**，不引入任何运行时 LLM。
+**核心洞察**：单 persona 分析的**三段基元全已存在且零-LLM**（检索 / 决策打分 / 组织成文；关联 association 是检索的一部分）。本能力的新增部分只是**「对多个 persona 各跑一遍 + 汇聚多视角」的编排薄壳**，不引入任何运行时 LLM。
 
 ```
 ① 发起：分析问题 question（+ 可选候选方案 alternatives[]）+ 参与的 persona 列表
@@ -51,7 +51,7 @@ Node.js + TypeScript。复用（全零-LLM 现成基元）：
 
 ## 5. 组件设计
 
-### 5.1 `PersonaPerspectiveAnalyzer`（单 persona 分析，复用四段基元）
+### 5.1 `PersonaPerspectiveAnalyzer`（单 persona 分析，复用三段基元）
 
 **文件（新建）**：`src/collaboration/persona-perspective-analyzer.ts`
 
@@ -69,7 +69,7 @@ export interface PersonaPerspective {
   rankedAlternatives?: readonly { alternative: string; score: number; rank: number }[];  // 带 alternatives 时的决策引擎排序
 }
 export class PersonaPerspectiveAnalyzer {
-  constructor(deps: { retriever; distiller?; decisionEngine; responder; core });  // 注入既有基元
+  constructor(deps: { retriever; decisionEngine; responder; core });  // 注入既有三段基元（无 distiller——分析不做 distill，distill 属学习期）
   analyze(personaId: string, req: AnalysisRequest): PersonaPerspective;  // 全零-LLM 同步/确定性
 }
 ```
@@ -97,7 +97,7 @@ export interface CollaborativeReport {
   groundingNote: string;                               // 能力边界/积累充分性说明（约束 3/5）
 }
 ```
-- **consensus/divergence 判定（确定性）**：跨 persona 的 keyPoints 做关键词重叠（复用 co_occurrence 那套重叠系数思路，memory `companion-associative-memory` 记的重叠系数非 Jaccard）；重叠 ≥ 阈值的点 = 共识（记 supportedBy）；仅 1 个 persona 提 = 该 persona 独特视角（记 divergences）；带 alternatives 时排序相反（A 排第一 vs B 排末位）= 显式分歧。
+- **consensus/divergence 判定（确定性）**：跨 persona 的 keyPoints 做关键词重叠（复用 co_occurrence 那套重叠系数思路，memory `companion-associative-memory` 记的重叠系数非 Jaccard）；重叠 ≥ 阈值的点 = 共识（记 supportedBy）；仅 1 个 persona 提 = 该 persona 独特视角（记 divergences）；带 alternatives 时排序相反（A 排第一 vs B 排末位）= 显式分歧。**具体阈值 + keyPoints 提取的关键词启发式在 writing-plans/Task 定义并测**（spec 层给判据：重叠系数、非 Jaccard、样板前缀剥离——照 companion-associative-memory 既有做法）。
 - **synthesis（确定性拼装，非 LLM）**：先列共识点（多视角支撑=强信号），再列关键分歧（供人工权衡），末尾按 persona 一致性/价值对齐度排序综合——纯模板拼装，不生成新观点。
 - **groundingNote**：若 ≥ 半数 persona 是 honest_offline → 明确「参与者对此问题积累不足，以下多为一般性视角」；否则标注「基于 N 位数字人各自学习积累」。
 
@@ -137,7 +137,7 @@ export class CollaborativeAnalysisService {
 
 ## 8. 分片（供 writing-plans）
 
-- **Plan 1**：`PersonaPerspectiveAnalyzer`（单 persona 复用四段基元）——最核心、可独立验（一个 persona 就能测）。
+- **Plan 1**：`PersonaPerspectiveAnalyzer`（单 persona 复用三段基元）——最核心、可独立验（一个 persona 就能测）。
 - **Plan 2**：`CollaborationMode` 接口 + `MultiPerspectiveAggregation`（汇聚：共识/分歧/synthesis/groundingNote）。
 - **Plan 3**：`CollaborativeAnalysisService` 编排（多 persona 经 tenant-os-factory）+ `/collaboration/analyze` 端点 + E2E（多视角真不同 + 汇聚 + 隔离 + 零-LLM）。
 
