@@ -20,7 +20,9 @@ describe('server-raw coverage', () => {
      * 主键改 + executor 改 ON CONFLICT(tenant_id,persona_id) 延后到 K2 原子落，K1 完全向后兼容）。 */
     /* v121 = v119_github_integration（pg-aliased v121，GitHub 集成地基：建 github_app_credentials +
      * github_installations 两表，纯建表 DDL 无 DML；两表含 tenant_id 纳入隔离/GDPR 清单）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121']);
+    /* v122 = v120_github_learn_state（pg-aliased v122，GitHub 学习段：建 github_learn_state 游标 +
+     * github_ingest_digests 摄入幂等账本；Plan 2 注册了迁移但漏更新本覆盖列表，此处补齐与 RAW_MIGRATIONS 一致）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122']);
   });
 
   it('covers disabled raw migrations', () => {
