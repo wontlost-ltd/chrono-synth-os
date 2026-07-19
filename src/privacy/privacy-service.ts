@@ -115,6 +115,9 @@ const TENANT_TABLES = [
   /* GitHub 集成地基（Plan 1 Task 1）：github_app_credentials 含加密的 App 私钥/webhook secret（密文列，
      导出即密文非明文）；github_installations 是 installation→tenant 映射元数据。两表均随租户导出/擦除 */
   'github_app_credentials', 'github_installations',
+  /* GitHub 学习段地基（Plan 2 Task 1）：github_learn_state 是增量同步游标账本；github_ingest_digests 是
+     摄入幂等账本（content_sha 指纹）。两表均含 tenant_id，须随租户导出/擦除 */
+  'github_learn_state', 'github_ingest_digests',
 ] as const;
 
 /** 需要子查询关联的表 */

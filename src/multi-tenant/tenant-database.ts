@@ -94,6 +94,8 @@ const TENANT_TABLES = new Set([
   'audit_chain_anchors', 'audit_chain_anchor_failures', 'api_keys', 'kms_key_audit',
   /* GitHub 集成地基（Plan 1 Task 1）：App 凭据（密文，tenant_id PK 单例）+ installation→tenant 映射，须自动租户隔离 */
   'github_app_credentials', 'github_installations',
+  /* GitHub 学习段地基（Plan 2 Task 1）：增量同步游标账本 + 摄入幂等账本，均含 tenant_id，须自动租户隔离 */
+  'github_learn_state', 'github_ingest_digests',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */
