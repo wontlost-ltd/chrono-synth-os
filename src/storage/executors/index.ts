@@ -67,6 +67,7 @@ import { registerPersonaGovernanceExecutors } from './persona-governance-executo
 import { registerProactiveMessageExecutors } from './proactive-message-executors.js';
 import { registerNotificationPreferenceExecutors } from './notification-preference-executors.js';
 import { registerGithubAppExecutors } from './github-app-executors.js';
+import { registerGithubLearnExecutors } from './github-learn-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -108,6 +109,7 @@ import {
   PROACTIVE_MESSAGE_QUERY_LIST,
   NOTIF_PREF_QUERY_BY_USER,
   GITHUB_APPCRED_QUERY_BY_TENANT,
+  GITHUB_LEARN_STATE_QUERY,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -181,6 +183,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(PROACTIVE_MESSAGE_QUERY_LIST)) registerProactiveMessageExecutors();
   if (!resolveQueryExecutor(NOTIF_PREF_QUERY_BY_USER)) registerNotificationPreferenceExecutors();
   if (!resolveQueryExecutor(GITHUB_APPCRED_QUERY_BY_TENANT)) registerGithubAppExecutors();
+  if (!resolveQueryExecutor(GITHUB_LEARN_STATE_QUERY)) registerGithubLearnExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
