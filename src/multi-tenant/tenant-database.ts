@@ -96,6 +96,8 @@ const TENANT_TABLES = new Set([
   'github_app_credentials', 'github_installations',
   /* GitHub 学习段地基（Plan 2 Task 1）：增量同步游标账本 + 摄入幂等账本，均含 tenant_id，须自动租户隔离 */
   'github_learn_state', 'github_ingest_digests',
+  /* GitHub 反馈起草段地基（Plan 3 Task 1）：回复草稿账本 + webhook 幂等账本（复合主键 tenant_id+delivery_id），均含 tenant_id，须自动租户隔离 */
+  'github_reply_drafts', 'github_webhook_events',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */
