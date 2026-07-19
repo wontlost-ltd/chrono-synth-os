@@ -149,6 +149,83 @@ describe('GitHub 反馈起草段 storage（GithubDraftStore）', () => {
     });
   });
 
+  describe('claimForPublish 原子 CAS（approved → published 占位，防重复发布——核心）', () => {
+    it('approved 草稿首次 claimForPublish 返回该行(含 body/repo/target)且状态转 published；再 claimForPublish 同 id 返 undefined（已 published，防重复发布）', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      const id = store.createDraft(PERSONA, REPO, 'issue', 42, '感谢反馈，我们会跟进。', 1000);
+      assert.equal(store.setStatus(PERSONA, id, 'approved', 2000), true, '先人工批准');
+
+      /* 首次 claim：原子占位 approved→published，返回该行（含发布所需字段）。 */
+      const claimed = store.claimForPublish(PERSONA, id, 3000);
+      assert.ok(claimed, '首次 claimForPublish 应返回该行');
+      assert.equal(claimed.id, id);
+      assert.equal(claimed.status, 'published', '占位后状态即为 published');
+      assert.equal(claimed.published_at, 3000, 'published_at 回填为 now');
+      assert.equal(claimed.draft_body, '感谢反馈，我们会跟进。', '返回行含 draft_body（发布用）');
+      assert.equal(claimed.repo, REPO, '返回行含 repo');
+      assert.equal(claimed.target_type, 'issue', '返回行含 target_type');
+      assert.equal(claimed.target_number, 42, '返回行含 target_number');
+      assert.equal(store.getDraft(PERSONA, id)?.status, 'published', 'DB 侧状态已 published');
+
+      /* 二次 claim 同 id：已 published，WHERE status='approved' 拦截，rowsAffected=0 → undefined（防重复发布）。 */
+      const again = store.claimForPublish(PERSONA, id, 4000);
+      assert.equal(again, undefined, '再 claimForPublish 同 id 返 undefined（已 published，防重复发布核心）');
+      assert.equal(store.getDraft(PERSONA, id)?.published_at, 3000, '二次 claim 未覆盖首次 published_at');
+    });
+
+    it('drafted 状态 claimForPublish → undefined（只 approved 可发布）', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      const id = store.createDraft(PERSONA, REPO, 'issue', 1, '未批准的草稿', 1000);
+      assert.equal(store.claimForPublish(PERSONA, id, 2000), undefined, 'drafted 未批准不可发布');
+      assert.equal(store.getDraft(PERSONA, id)?.status, 'drafted', '状态未被推进');
+    });
+
+    it('rejected 状态 claimForPublish → undefined（驳回的草稿不可发布）', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      const id = store.createDraft(PERSONA, REPO, 'issue', 2, '被驳回的草稿', 1000);
+      assert.equal(store.setStatus(PERSONA, id, 'rejected', 2000), true);
+      assert.equal(store.claimForPublish(PERSONA, id, 3000), undefined, 'rejected 不可发布');
+      assert.equal(store.getDraft(PERSONA, id)?.status, 'rejected', '状态保持 rejected');
+    });
+
+    it('claimForPublish 不存在的 id 返 undefined', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      assert.equal(store.claimForPublish(PERSONA, 'no-such-id', 2000), undefined);
+    });
+
+    it('跨人格隔离：B persona claimForPublish A 的 approved 草稿 → undefined，A 的草稿未被 B 抢发', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      const id = store.createDraft('persona_A', REPO, 'issue', 1, 'A 的草稿', 1000);
+      store.setStatus('persona_A', id, 'approved', 2000);
+      assert.equal(store.claimForPublish('persona_B', id, 3000), undefined, 'B 抢发不到 A 的草稿');
+      assert.equal(store.getDraft('persona_A', id)?.status, 'approved', 'A 的草稿仍是 approved 未被 B 占位');
+    });
+  });
+
+  describe('markPublished（回填 github_ref）', () => {
+    it('claimForPublish 占位后 markPublished 回填 github_ref（getDraft 读回确认）', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      const id = store.createDraft(PERSONA, REPO, 'issue', 42, '回复正文', 1000);
+      store.setStatus(PERSONA, id, 'approved', 2000);
+      store.claimForPublish(PERSONA, id, 3000);
+
+      store.markPublished(PERSONA, id, 'IC_kwDOABCD123', 3500);
+      const row = store.getDraft(PERSONA, id);
+      assert.equal(row?.github_ref, 'IC_kwDOABCD123', 'github_ref 已回填');
+      assert.equal(row?.status, 'published', '状态仍是 published');
+      assert.equal(row?.published_at, 3000, 'published_at 保持 claim 时刻');
+    });
+
+    it('markPublished 跨人格隔离：B persona 回填不到 A 的草稿 github_ref', () => {
+      const store = new GithubDraftStore(db, TENANT);
+      const id = store.createDraft('persona_A', REPO, 'issue', 1, 'A 的草稿', 1000);
+      store.setStatus('persona_A', id, 'approved', 2000);
+      store.claimForPublish('persona_A', id, 3000);
+      store.markPublished('persona_B', id, 'wrong-ref', 3500);
+      assert.equal(store.getDraft('persona_A', id)?.github_ref, null, 'B 回填不到 A 草稿的 github_ref');
+    });
+  });
+
   describe('claimWebhookEvent（原子去重——INSERT ON CONFLICT (tenant_id, delivery_id) DO NOTHING）', () => {
     it('同一 delivery_id：首次 claim 返 true，二次同 delivery_id 返 false（幂等去重）', () => {
       const store = new GithubDraftStore(db, TENANT);

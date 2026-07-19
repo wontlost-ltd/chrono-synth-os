@@ -183,9 +183,12 @@ describe('github-draft-types kernel 契约', () => {
         status: 'drafted',
         created_at: 1,
         updated_at: 2,
+        /* Plan 4 Task 1 迁移 v122 加的两审计列（可空，未发布为 NULL）。 */
+        published_at: null,
+        github_ref: null,
       };
       assert.deepEqual(Object.keys(row).sort(), [
-        'created_at', 'draft_body', 'id', 'persona_id', 'repo',
+        'created_at', 'draft_body', 'github_ref', 'id', 'persona_id', 'published_at', 'repo',
         'status', 'target_number', 'target_type', 'tenant_id', 'updated_at',
       ]);
     });

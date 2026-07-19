@@ -34,6 +34,8 @@ export const GITHUB_REPLY_DRAFT_CMD_INSERT = 'githubReplyDraft.insert' as const;
 export const GITHUB_REPLY_DRAFT_QUERY_BY_ID = 'githubReplyDraft.byId' as const;
 export const GITHUB_REPLY_DRAFT_QUERY_BY_PERSONA = 'githubReplyDraft.byPersona' as const;
 export const GITHUB_REPLY_DRAFT_CMD_UPDATE_STATUS = 'githubReplyDraft.updateStatus' as const;
+export const GITHUB_REPLY_DRAFT_CMD_CLAIM_FOR_PUBLISH = 'githubReplyDraft.claimForPublish' as const;
+export const GITHUB_REPLY_DRAFT_CMD_MARK_PUBLISHED = 'githubReplyDraft.markPublished' as const;
 
 export const GITHUB_WEBHOOK_EVENT_CMD_CLAIM = 'githubWebhookEvent.claim' as const;
 
@@ -50,10 +52,14 @@ export interface GithubReplyDraftRow {
   readonly target_number: number;
   /** 起草的回复正文。 */
   readonly draft_body: string;
-  /** 审批状态：drafted（起草待审）→ approved（人工批准）/ rejected（人工驳回）（迁移 CHECK 钉死取值）。 */
+  /** 审批状态：drafted（起草待审）→ approved（人工批准）/ rejected（人工驳回）→ published（发布成功终态）（迁移 CHECK 钉死取值）。 */
   readonly status: string;
   readonly created_at: number;
   readonly updated_at: number;
+  /** 发布时间戳（毫秒 epoch）；未发布的草稿为 NULL（Plan 4 Task 1 迁移 v122 加）。 */
+  readonly published_at: number | null;
+  /** 发布后 GitHub 侧 comment/review id（审计佐证 + 去重佐证）；未发布为 NULL（Plan 4 Task 1 迁移 v122 加）。 */
+  readonly github_ref: string | null;
 }
 
 export interface GithubWebhookEventRow {
@@ -106,6 +112,20 @@ export interface GithubDraftUpdateStatusParams extends GithubReplyDraftKeyParams
   now: number;
 }
 
+/** claimForPublish 三键定位 + 占位时间戳（回填 published_at）。 */
+export interface GithubDraftClaimForPublishParams extends GithubReplyDraftKeyParams {
+  /** 占位时间戳（毫秒 epoch），落 published_at + updated_at。 */
+  now: number;
+}
+
+/** markPublished 三键定位 + 回填 GitHub 侧引用。 */
+export interface GithubDraftMarkPublishedParams extends GithubReplyDraftKeyParams {
+  /** 发布后 GitHub 侧 comment/review id。 */
+  githubRef: string;
+  /** 回填时间戳（毫秒 epoch），落 updated_at。 */
+  now: number;
+}
+
 export interface GithubWebhookEventClaimParams {
   tenantId: string;
   /** GitHub 投递指纹（X-GitHub-Delivery）。 */
@@ -146,6 +166,27 @@ export function githubDraftListByPersona(params: GithubDraftListByPersonaParams)
  */
 export function githubDraftUpdateStatus(params: GithubDraftUpdateStatusParams): Command<GithubDraftUpdateStatusParams> {
   return { kind: GITHUB_REPLY_DRAFT_CMD_UPDATE_STATUS, params };
+}
+
+/**
+ * 原子 CAS 占位发布：approved → published（发布成功终态）。执行器
+ * **UPDATE ... SET status='published', published_at=now WHERE ... AND status='approved'**——
+ * `WHERE status='approved'` 是原子占位关键：只有 approved 能被 claim 成 published，且 UPDATE 是
+ * 原子的，同一草稿并发/重复调用只有一次 rowsAffected=1，之后都是 0（已 published）。**先 UPDATE
+ * 占位再读回**（非先 SELECT 再 UPDATE 的 check-then-act）——防重复发布靠这个 CAS。三键定位
+ * (tenant, persona, id)——防跨租户/跨人格抢发他人草稿。store 层据受影响行数判返行 / undefined。
+ */
+export function githubDraftClaimForPublish(params: GithubDraftClaimForPublishParams): Command<GithubDraftClaimForPublishParams> {
+  return { kind: GITHUB_REPLY_DRAFT_CMD_CLAIM_FOR_PUBLISH, params };
+}
+
+/**
+ * 发布成功后回填 github_ref（GitHub 侧 comment/review id，审计+去重佐证），并更新 updated_at。
+ * 三键定位 (tenant, persona, id)——防跨租户/跨人格回填他人草稿。不校验 status（claimForPublish 已
+ * 原子占位为 published，本步只补 ref）。
+ */
+export function githubDraftMarkPublished(params: GithubDraftMarkPublishedParams): Command<GithubDraftMarkPublishedParams> {
+  return { kind: GITHUB_REPLY_DRAFT_CMD_MARK_PUBLISHED, params };
 }
 
 /* ── webhook 幂等账本工厂 ── */
