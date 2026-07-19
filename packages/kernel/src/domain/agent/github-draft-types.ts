@@ -85,6 +85,11 @@ export interface GithubDraftInsertParams {
   /** 起草的回复正文。 */
   draftBody: string;
   now: number;
+  /**
+   * 草稿主键。可选——调用方（store）显式生成并传入以便建后即知 id 供返回（ExecResult 只回 rowsAffected，
+   * 不回自生成 id）；省略时由执行器自生成（randomUUID）。故省略此项时 params 恰为七键（Task 2 契约）。
+   */
+  id?: string;
   /* status 不入参——首插由执行器钉死 drafted（起草即停铁律）。 */
 }
 
