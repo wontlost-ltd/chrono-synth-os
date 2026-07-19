@@ -1,8 +1,13 @@
 # 多数字人协同分析框架设计
 
-> 状态：第 3 轮修订（采纳 Codex 复审 76/100「定稿级退回」8 项，全部核验真实代码后修）。待 Codex 第 3 轮确认 → 用户审阅 → writing-plans。
+> 状态：第 3 轮修订 + 3.1 校正（采纳 Codex 76/100 8 项 → Codex 再审 86/100 又退 2 项，均核验真实代码后修）。待 Codex 确认 → 用户审阅 → writing-plans。
 > 日期：2026-07-20
 > 关联 ADR：0047（零-LLM 内核 / LLM-as-teacher）、0056（per-persona 内核）、0055（数字员工组织 / 策略辅助）。
+
+> **第 3.1 轮校正（采纳 Codex 86/100 再审的 2 项定稿修正 + 2 项非阻塞注意）**——第 3 轮的 2 处仍不准，核验代码后修：
+> - **排序归因再校正**：第 3 轮说「constraints 没接」**仍不全对**。`rule-engine.ts:196` 有**第二套** `computeConstraintPenalty(alternative, decisionCase.constraints)`（与 structural-scorer 那套 anchors×violations 不同函数），**若传 `decisionCase.constraints` 会逐候选扣分改排序**。正确结论：排序由 **L1 alignmentScore + （若传）decisionCase.constraints** 驱动；rules 确认 inert（`compilePersonaState` 无 rules 字段，`persona.rules` undefined）。**首版设计选择：DecisionCase 不传 constraints → 排序只由 L1 驱动**（是设计选择，非代码唯一可能）。
+> - **错误码不可区分 NotFound/Forbidden**：`getPersonaDetail` 对 {不存在/他 owner/跨租户} **统一 null**（不可区分）；且返回 Forbidden 会**泄露跨租户存在性**。改为**统一拒 `PersonaUnavailable`（等价 404）**，不区分、不泄露。
+> - 非阻塞：① 显式 `isAssociation ?? false → evidence.association`；② `readonly BehaviorBoundary[]` 传 responder 可变参前复制/统一 readonly。
 
 > **第 3 轮修订（采纳 Codex 76/100 定稿级退回 8 项，逐项核验真实代码）**：
 > 1. **boundaries 来源**：不在 core（`CoreRhythmLayer.getState()`/compilePersonaState 只 L0-L4 无 boundaries）——照 `conversation-service.ts:600-610` 从 `getPersonaDetail().profile.behaviorBoundaries` 取，由 service 注入 analyzer（§5.1/§5.3）。
@@ -17,7 +22,14 @@
 > **第 2 轮修订（采纳 Codex 独立复审）**——核验真实代码后修正初版基于探针摘要的臆造/夸大：
 > ① **契约错配**：`OfflineResponse` 只有 `{content, kind, ...}`，**无 groundedCount**、**不消费 rankedOptions**；`OfflineResponderInput.boundaries` **必填**。初版说「responder 组织检索+打分成意见」不成立——responder 不消费决策排序，groundedCount 须 analyzer 自算。
 > ② **零-LLM 不闭合**：`ConversationKnowledgeRetriever` 注入 embedding provider 会 `provider.embed()`——**非天然零-LLM**。首版**只用 `retrieveMemoriesDeterministic`**（纯关键词+图遍历），类型层禁 embedding provider。
-> ③ **卖点夸大**：rule-engine 现状**所有候选 `riskScore=0.5` 固定 + `violations:[]`**。核验 `structural-scorer.ts` 打分公式 `overallScore = alignmentScore(L1) − constraintPenalty(anchors×violations) − stylePenalty(riskScore×L2) + cognitiveBias(riskScore×L3)`：violations 恒空 → **constraintPenalty 恒 0（L0 不参与）**；riskScore 恒 0.5 → **stylePenalty/cognitiveBias 对每个候选同值 → 对相对排序无差别（整体平移不改次序）**；**唯一随候选变化的是 `alignmentScore`（L1 值关键词与候选文本匹配）**——故 **相对排序实际只由 L1 值驱动**。且 `compilePersonaState(core)` 只取 L0-L4，**从不注入 RuleStore/rules**（`decision-engine.ts:15` 只 import compilePersonaState）——初版及第 2 轮说「排序来自 L1 + constraints + rules」**两处都错**（constraints 源于恒空的 violations；rules 根本没接进 evaluateAutonomous）。卖点收窄为「**各 persona 检索自己学的不同记忆 → 不同 grounded 证据；L1 值不同→可能不同排序**」。若要 L0/L2/L3/rules 真参与排序，须先改 kernel rule-engine（本 spec 范围外，列为独立 wiring）。
+> ③ **卖点收窄（第 3 轮再校正——采纳 Codex：rule-engine 有第二套 constraints 路径）**：核验 `rule-engine.ts:evaluateDecisionCase` 完整打分链：每候选 `structural.overallScore`（来自 `structural-scorer.ts` 公式 `alignmentScore(L1) − constraintPenalty(anchors×violations) − stylePenalty(riskScore×L2) + cognitiveBias(riskScore×L3)`）**再减** `computeConstraintPenalty(alternative, decisionCase.constraints)`（`rule-engine.ts:196`，**第二套 constraints，与 structural-scorer 那套 anchors×violations 是不同函数**）**再经** `applyRuleAdjustment(..., persona.rules)`（`rule-engine.ts:198`）。逐字段判定：
+> - **L0**：`violations:[]` 恒空（`rule-engine.ts:183/189`）→ structural constraintPenalty 恒 0 → **不参与**。
+> - **L2/L3**：`riskScore=0.5` 恒定 → stylePenalty/cognitiveBias 对**同一 persona 的每个候选同值** → **只整体平移、不改相对次序**。
+> - **rules**：`persona.rules` 来自 `compilePersonaState(core)` 返回的 `PersonaOSState`（`persona-state.ts:14-24` 只 L0-L4，**无 rules 字段**）；`RuleEnginePersonaState.rules` 是**可选**（`rule-engine.ts:30`），运行时为 `undefined` → `applyRuleAdjustment` **inert（不生效）**。
+> - **L1 alignmentScore**：与候选文本关键词匹配，**逐候选变化 → 改排序**。
+> - **`decisionCase.constraints`**：`computeConstraintPenalty` **确实生效**（`rule-engine.ts:109-117`：非空即逐候选扣分）——**若本能力构造 DecisionCase 时传了 constraints，也会改排序**。
+> 
+> **故正确结论**：相对排序由 **① L1 alignmentScore ② （若传）decisionCase.constraints** 两者驱动；L0/L2/L3/rules 现状均不改相对次序。**本能力首版决定：构造 DecisionCase 时 `constraints` 留空**（候选仅 alternatives 文本，无额外硬约束）→ 首版排序**只由 L1 驱动**（这是「首版设计选择」不是「代码只能这样」）。若将来传 constraints，须在 spec/文档同步说明排序多一维。初版及第 2 轮「排序来自 L1 + constraints + rules」的错在：把 structural 那套恒 0 的 constraint 当成生效、且漏了 rule-engine 第二套真生效的 constraints、又把 rules 说成生效——**三处措辞都不准**，本轮全部校正。若要 L0/L2/L3/rules 真参与，须先改 kernel rule-engine（本 spec 范围外，列为独立 wiring）。
 > ④ **命名夸大**：关键词重叠只能做「**共同话题**」不能证「观点共识」（支持 vs 反对关键词高度重合却是分歧）；确定性拼装只能出「**证据摘要/decision brief**」不能称「综合建议」（不产生新综合观点）。全文改名。
 > ⑤ **归因错误**：persona 内核解析是 `TenantOSFactory.getTenantOS(tenantId).getCore(personaId)`（factory 无 persona 参数）。
 > ⑥ **补边界**：boundary_block/escalate kinds、单/零/未知/跨租户/重复 persona、全 honest_offline→`insufficient_grounding`、honest_offline 排除出话题计算、`requiresHumanApproval` 入数据契约。
@@ -36,10 +48,11 @@
    · retrieveMemoriesDeterministic（**仅此**，纯关键词+图遍历零-LLM；不用会调 embedding 的 ConversationKnowledgeRetriever）
        —— 检索该 persona 学到的相关记忆（各 persona 学的不同→检索不同=差异化主要来源）
    · （带 alternatives 时）AutonomousDecisionEngine.evaluateAutonomous（该 persona 的 core）
-       —— 给候选打分排序。**诚实**：现状 violations=[] 使 constraintPenalty 恒 0（L0 不参与）、riskScore=0.5 使
-          stylePenalty/cognitiveBias 对每候选同值（L2/L3 对相对次序无差别）、compilePersonaState 不注入 rules；
-          **相对排序实际只由 L1 值关键词（alignmentScore）驱动**——故不同 persona 若 L1 值不同→可能不同排序。
-          （若要 L0/L2/L3/rules 真参与须先改 kernel rule-engine，本 spec 范围外。）
+       —— 给候选打分排序。**诚实**：现状 violations=[]→structural constraintPenalty 恒 0（L0 不参与）、riskScore=0.5→
+          stylePenalty/cognitiveBias 对每候选同值（L2/L3 对相对次序无差别）、compilePersonaState 不注入 rules（inert）；
+          逐候选变化的是 ① L1 alignmentScore ② decisionCase.constraints（rule-engine.ts:196 第二套 constraints，若传则生效）。
+          **首版设计选择：构造 DecisionCase 时不传 constraints** → **相对排序只由 L1 值关键词（alignmentScore）驱动**——
+          故不同 persona 若 L1 值不同→可能不同排序。（若要 L0/L2/L3/rules 真参与须先改 kernel rule-engine，范围外。）
    · OfflineConversationResponder.respond({ narrative, boundaries, userInput:question, relevantKnowledge })
        —— 把 narrative + 检索到的记忆组织成 grounded 视角文本。**responder 不消费打分**；rankedAlternatives 由 analyzer
           单独从 evaluateAutonomous 结果映射进 PersonaPerspective（与 opinion 文本并列，不混入）。
@@ -55,7 +68,7 @@
 
 Node.js + TypeScript。复用（现成基元）：
 - **检索（仅零-LLM 路径）**：`src/conversation/deterministic-memory-retrieval.ts`（`retrieveMemoriesDeterministic`——纯关键词+图遍历，无 embedding/无 provider）。**不用** `ConversationKnowledgeRetriever`（它注入 embedding provider 会 `provider.embed()`，非零-LLM）。可用其导出的 `tokenize` 做 keyPoints 提取（纯函数）。
-- `src/intelligence/decision-engine.ts`（`AutonomousDecisionEngine.evaluateAutonomous`——ADR-0047 F8 窄接口，只确定性不触发 LLM，已核实无 growth 分支；`evaluateAutonomous(decisionCase, options?): DecisionResult`）。**诚实**：kernel `rule-engine.ts` 现状 `riskScore=0.5` 固定 + `violations:[]`；`structural-scorer.ts` 公式里 constraintPenalty(=anchors×violations) 恒 0、stylePenalty/cognitiveBias(=×riskScore) 对每候选同值→只平移不改次序；**唯一随候选变化的 alignmentScore 由 L1 值驱动**。且 `compilePersonaState(core)`（decision-engine.ts:15 import）只取 L0-L4，**不注入 RuleStore/rules**——**相对排序实际只由 L1 值关键词驱动**（非「L1 + constraints + rules」）。
+- `src/intelligence/decision-engine.ts`（`AutonomousDecisionEngine.evaluateAutonomous`——ADR-0047 F8 窄接口，只确定性不触发 LLM，已核实无 growth 分支；`evaluateAutonomous(decisionCase, options?): DecisionResult`）。**诚实（打分链逐字段核验）**：`evaluateAutonomous`→`ruleEngine.evaluate(decisionCase, compilePersonaState(core))`。kernel `rule-engine.ts:evaluateDecisionCase` 对每候选：`structural.overallScore`（`structural-scorer.ts`：alignmentScore(L1) − 恒 0 的 anchors×violations penalty − riskScore=0.5 固定的 stylePenalty/cognitiveBias）**再减** `computeConstraintPenalty(alternative, decisionCase.constraints)`（`rule-engine.ts:196`，第二套 constraints）**再经** `applyRuleAdjustment(..., persona.rules)`（`:198`）。因 violations=[] → L0 不参与；riskScore 固定 → L2/L3 每候选同值不改次序；`compilePersonaState` 返回 `PersonaOSState` 只 L0-L4（`persona-state.ts:14-24` 无 rules）→ `persona.rules` undefined → applyRuleAdjustment inert。**逐候选变化的是 L1 alignmentScore 与（若传的）decisionCase.constraints**。**本能力首版构造 DecisionCase 时不传 constraints → 排序只由 L1 驱动**（首版设计选择，非代码唯一可能；见 §2/§5.1）。
 - `src/conversation/offline-conversation-responder.ts`（`OfflineConversationResponder.respond(input): OfflineResponse`——input `boundaries` 必填；返回 `{content, kind}`，**无 groundedCount**）。
 - **persona 内核解析**：`TenantOSFactory.getTenantOS(tenantId)`（`src/multi-tenant/tenant-os-factory.ts`，只 tenant 参数）→ `.getCore(personaId)`（`src/chrono-synth-os.ts`，ADR-0056 per-persona core 按需建+缓存）。
 - 参照 `src/workforce/strategy-advisory-service.ts`（同款「确定性多 lens 重排 + `requiresHumanApproval:true`」输出形态范式）。
@@ -101,9 +114,9 @@ export class PersonaPerspectiveAnalyzer {
   analyze(personaId: string, req: AnalysisRequest): PersonaPerspective;  // 全零-LLM 同步/确定性
 }
 ```
-- 检索：`retrieveMemoriesDeterministic(question, personaMemories, edgesFor, params, contentFor)` → relevantKnowledge → 映射 evidence（memoryId/excerpt/relevance/association）。**只此路径**（不注入 embedding provider）。
-- 打分（带 alternatives）：构造 `DecisionCase`（alternatives 作候选）→ `evaluateAutonomous` → rankedOptions 映射 rankedAlternatives。
-- 组织：`responder.respond({ narrative, boundaries, userInput: question, relevantKnowledge })` → `{content, kind}` → opinion=content、kind 原样透传（含 boundary kinds）。**responder 不接 rankedAlternatives**——排序另存。
+- 检索：`retrieveMemoriesDeterministic(question, personaMemories, edgesFor, params, contentFor)` → `RelevantKnowledge[]`（`conversation-types.ts:24-32`：`{id, title, content, relevance, isAssociation?}`）→ **显式映射** evidence：`memoryId=k.id`、`excerpt=k.content`（截片段）、`relevance=k.relevance`、`association = k.isAssociation ?? false`（Codex 非阻塞注意点：显式落 `isAssociation → association`，缺省当 false）。**只此路径**（不注入 embedding provider）。
+- 打分（带 alternatives）：构造 `DecisionCase`（alternatives 作候选，**`constraints` 首版留空**——留空则排序只由 L1 alignmentScore 驱动；若传 constraints 会多一维扣分，见 §2/§3）→ `evaluateAutonomous` → rankedOptions 映射 rankedAlternatives。
+- 组织：`responder.respond({ narrative, boundaries, userInput: question, relevantKnowledge })` → `{content, kind}` → opinion=content、kind 原样透传（含 boundary kinds）。**responder 不接 rankedAlternatives**——排序另存。**类型注意（Codex 非阻塞）**：analyzer 构造参数 `boundaries: readonly BehaviorBoundary[]`，若 `OfflineResponderInput.boundaries` 是可变 `BehaviorBoundary[]`，传入前复制（`[...boundaries]`）或统一为 readonly，避免只读→可变的类型不匹配。
 - retrievedCount：检索并喂进 responder 的条数（responder 内部会按 relevance 再过滤+限量，故不叫 grounded/actual，命名如实）。
 - keyPoints：**仅从 evidence.excerpt** 用 `tokenize` 提取 + 剥样板前缀（照 memory `companion-associative-memory`）。**不含 alternatives**（Codex 复审：同组候选跨 persona 必重合→伪话题；排序分歧已由 rankingDivergences 独立表达）。honest_offline/boundary perspective **不产 keyPoints**（不进汇总话题计算）。
 
@@ -149,7 +162,7 @@ export class CollaborativeAnalysisService {
   analyze(tenantId: string, ownerUserId: string, personaIds: readonly string[], req: AnalysisRequest): CollaborativeReport;
 }
 ```
-- **入参校验（先做，fail-closed）**：personaIds 空 → 拒（ValidationError）；重复 → 去重（保序）。**每个 personaId 必须先经 `personaCoreService.getPersonaDetail(tenantId, ownerUserId, personaId)` 校验存在 + 归属**——因为 `getCore(personaId)` 对**任意字符串**都会新建一个空 core（`chrono-synth-os.ts:446` 无校验），未知/跨租户 personaId 若直接 getCore 会静默产出「空内核视角」而非报错。getPersonaDetail 查不到（不存在 / 不属该 owner / 跨租户）→ **拒**（NotFound/Forbidden），绝不跳过静默。
+- **入参校验（先做，fail-closed）**：personaIds 空 → 拒（ValidationError）；重复 → 去重（保序）。**每个 personaId 必须先经 `personaCoreService.getPersonaDetail(tenantId, ownerUserId, personaId)` 校验存在 + 归属**——因为 `getCore(personaId)` 对**任意字符串**都会新建一个空 core（`chrono-synth-os.ts:446` 无校验），未知/跨租户 personaId 若直接 getCore 会静默产出「空内核视角」而非报错。**错误码（采纳 Codex 第 3 轮）**：`getPersonaDetail` 对 {不存在 / 属他 owner / 属他租户} **统一返回 `null`**（`persona-core-service.ts:627` `!base → null`；查询按 tenantId+ownerUserId 过滤）——**无法也不应区分 NotFound 与 Forbidden**：若对跨租户返回 Forbidden 会**泄露该 persona 在别处存在**（跨租户存在性泄露）。故任一 personaId `getPersonaDetail===null` → **统一拒为 `PersonaUnavailable`（等价 404，不透露它是否在别处存在）**，绝不跳过静默、绝不返回可区分的 Forbidden。**拒绝须发生在 `getCore` 之前**（先全量校验通过再解析 core，避免为无效 persona 建空 core）。
 - **boundaries 来源（修正）**：`boundaries` **不在 core**（`CoreRhythmLayer.getState()` 无 boundaries；compilePersonaState 只 L0-L4）——照 `conversation-service.ts:600-610` 的真实路径，从 `getPersonaDetail(...).profile.behaviorBoundaries` 取（`filter(isValidBoundary)`），注入 analyzer 的 `boundaries` 构造参数。
 - **persona 解析（修正路径）**：校验通过后 `const os = factory.getTenantOS(tenantId)`（factory 只 tenant 参数）→ 对每个 personaId：`const core = os.getCore(personaId)`（ADR-0056 per-persona core）→ 从 core 拿 memories/edges/decisionStyle/L0-L3/narrative（boundaries 来自上面的 getPersonaDetail，非 core）→ 构造 `PersonaPerspectiveAnalyzer`（retriever 绑其 memory store、decisionEngine 绑其 core、responder 得其 narrative + 注入 boundaries）→ `analyze`。
 - **单 persona 由本层降级（不在端点判）**：personaIds 长度 1 时正常执行、产单视角报告（mode 天然出空 commonTopics/rankingDivergences + groundingNote 说明），**不**在端点做「单 persona 走别的路」的特判——降级语义收敛在 service/mode 一处（Codex 复审）。
@@ -169,13 +182,14 @@ export class CollaborativeAnalysisService {
 
 ## 7. 可验证性
 
-- **多视角真不同（收窄到可验的）**：seed 两个 persona 学**不同内容** → 同问题分析 → 断言两 opinion 不同、keyPoints 不同、evidence 的 memoryId 集不相交（**差异化主要来自各自检索到不同记忆**——这是可靠的）。**排序差异**：构造两 persona **L1 值不同**（非仅原型标签、非 rules——现状 rules 不参与排序，见 §2/§3）→ 断言 rankedAlternatives 次序不同；**不断言「仅靠 explorer/guardian 原型标签就产生不同排序」**、**不断言 L0/L2/L3/rules 驱动排序**（现状恒空 violations + 固定 riskScore + 不注入 rules，见约束/§2 诚实说明）。
+- **多视角真不同（收窄到可验的）**：seed 两个 persona 学**不同内容** → 同问题分析 → 断言两 opinion 不同、keyPoints 不同、evidence 的 memoryId 集不相交（**差异化主要来自各自检索到不同记忆**——这是可靠的）。**排序差异**：构造两 persona **L1 值不同**（非仅原型标签、非 rules——现状 rules inert，见 §2/§3），且 **DecisionCase 不传 constraints**（首版）→ 断言 rankedAlternatives 次序不同（由 L1 alignmentScore 驱动）；**不断言「仅靠 explorer/guardian 原型标签就产生不同排序」**、**不断言 L0/L2/L3/rules 驱动排序**（现状恒空 violations + 固定 riskScore + rules inert，见约束/§2 诚实说明）。
 - **零-LLM**：整条 analyze 不注入 LLM provider 也能跑（纯确定性，retriever 类型层无 embedding provider）；同输入同输出（无 Date.now/random）。
 - **共同话题正确**：构造两 knowledge_grounded persona keyPoints 重叠同一话题 → 断言进 commonTopics + raisedBy 含两者；honest_offline persona 的套话 → **不**进 commonTopics。
 - **排序分歧**：带 alternatives，两 persona 把同一候选排到相反位 → 断言进 rankingDivergences。
 - **grounded 诚实（统一判据 G=grounded 视角数）**：无相关记忆 persona → honest_offline 且不产 keyPoints/evidence；**G===0**（无任一 grounded）→ status=insufficient_grounding、commonTopics/rankingDivergences 空；**G≥1 但 < 半数** → status=analyzed 且 groundingNote 标「仅 G 个视角有据」；**G≥1 即 analyzed**（有一个有据就不整体判失败）。
 - **per-persona 隔离**：A 的记忆（memoryId）不出现在 B 的 perspective.evidence（B 只用自己 `os.getCore(B)` 的 memory store 检索）。
-- **入参校验**：未知 personaId → service 拒（NotFound，getPersonaDetail 查不到）**而非**静默产空内核视角；跨租户 personaId（属别的 tenant/owner）→ 拒（Forbidden）；空 personaIds → ValidationError；重复 → 去重。
+- **入参校验**：未知 / 属他 owner / 跨租户 personaId → service **统一拒为 `PersonaUnavailable`**（getPersonaDetail 返回 null，不可区分且区分会泄露跨租户存在性）**而非**静默产空内核视角；断言拒绝发生在 getCore 之前（未为无效 persona 建 core——可断言 `listPersonaCores()` 不含被拒 persona）；空 personaIds → ValidationError；重复 → 去重。
+- **evidence 映射**：`isAssociation===true` 的记忆 → evidence.association=true；缺省 → false。
 - **单 persona 降级在 service**：personaIds 长度 1 → 正常产单视角报告（commonTopics/rankingDivergences 空 + groundingNote 说明），断言**端点未特判**（service 层处理）。
 - **CollaborationMode 可插拔**：mode 注入式，换 mock mode 断言编排壳不变。
 - **boundary 透传**：persona 触边界（boundaries 来自 getPersonaDetail().profile.behaviorBoundaries）→ kind=boundary_block/escalate 原样进 perspective（不丢边界语义、不产 keyPoints、不进话题计算）。
