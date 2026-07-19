@@ -287,6 +287,58 @@ describe('ChronoCompanion GitHub 发布 E2E（approved → pipeline highRisk →
     await app.close();
   });
 
+  it('CAS 独立守卫（双有效 token）→ 第二个有效 token 真发路径被原子 CAS 单独挡下（WritePort 恰 1 次）', async () => {
+    /* ── 专测 CAS 隔离守卫，而非 token 门兜底 ──
+     * 上一条「重复 publish 已 published 草稿」用例的第二次写，是被 **token 门** 兜底挡下的：
+     * 已 published 草稿重探（status≠approved）在探测阶段 4xx 拿不到新 token，随后只能用 **伪造/失效**
+     * token 去撞真发路径——token 门先失败，CAS 从没被独立验证过（把端点 CAS 去掉，那条用例仍全绿）。
+     *
+     * 本用例把 CAS 单独隔离出来验证：对**同一条 approved 草稿探测两次**，各签发一个**独立有效**
+     * token A、B（探测不 claim，草稿始终 approved，两 token 绑同一 args-hash、均未消费、均未过期）。
+     * 带 A 真发成功（approved→published）；再带 **仍有效、未消费** 的 B 走真发路径——此时 **token 门
+     * 挡不住**（B consume 本会通过），因 `claimForPublish` 紧邻在 `pipeline.invoke` 之前，草稿已
+     * published、CAS `WHERE status='approved'` 返 undefined → 4xx，真发路径在触达 pipeline/token/写侧
+     * **之前**就被斩断。故此路的**唯一防线是 CAS**——WritePort 只应被调恰好 1 次（不是 2 次）。 */
+    const spy = makeWritePortSpy();
+    const app = await mount(os, makePipeline(os, spy));
+    const id = seedDraft(os, 'issue', 42, 'approved');
+
+    /* 两次无 token 探测：草稿仍 approved，各签发一个独立有效 token（探测不 claim、不发）。 */
+    const probeA = await publish(app, id);
+    assert.equal(probeA.body.status, 'pending_confirmation', '第一次探测应返 pending + tokenA');
+    const tokenA = probeA.body.confirmationTokenId!;
+    const probeB = await publish(app, id);
+    assert.equal(probeB.body.status, 'pending_confirmation', '第二次探测应返 pending + tokenB');
+    const tokenB = probeB.body.confirmationTokenId!;
+
+    /* 两 token 确为**独立**签发（不同 id），且探测阶段 GitHub 零写、草稿仍 approved（未被误占位）。 */
+    assert.notEqual(tokenA, tokenB, '两次探测应签发两个独立 token（非同一 token）');
+    assert.equal(spy.calls(), 0, '两次探测阶段 WritePort 零调用（探测不发）');
+    assert.equal(readDraft(os, id)?.status, 'approved', '两次探测后草稿仍 approved（探测不 claim）');
+
+    /* 带 token A 真发：claimForPublish CAS approved→published 成功 → 真发（spy +1）。 */
+    const withA = await publish(app, id, tokenA);
+    assert.equal(withA.status, 200, `带 token A 应真发 200，实际 ${withA.status}：${withA.raw}`);
+    assert.equal(withA.body.status, 'published', '带 token A 真发 → published');
+    assert.equal(spy.calls(), 1, '带 token A 真发恰调 WritePort 一次');
+    assert.equal(readDraft(os, id)?.status, 'published', 'token A 真发后草稿终态 published');
+
+    /* 带**仍有效**的 token B 走真发路径：token 门本会通过（B 未消费/未过期/args 匹配），
+     * 但 claimForPublish 先跑——草稿已 published、CAS 返 undefined → 4xx。CAS 是此路唯一防线。 */
+    const withB = await publish(app, id, tokenB);
+    assert.ok(
+      withB.status >= 400 && withB.status < 500,
+      `双有效 token 攻击：第二个有效 token B 应被 CAS 单独挡下（4xx），实际 ${withB.status}：${withB.raw}`,
+    );
+
+    /* CAS 独立守卫核心断言：真实 GitHub 写**恰好 1 次**（不是 2 次）——第二个有效 token 未穿透。 */
+    assert.equal(spy.calls(), 1, 'CAS 独立守卫：双有效 token 下真实 GitHub 写恰好一次（非两次）');
+    assert.equal(readDraft(os, id)?.status, 'published', '双有效 token 后草稿终态仍 published（不重复写）');
+    assert.equal(readDraft(os, id)?.github_ref, '98765', 'github_ref 仍是 token A 那次发布的 id（未被 token B 覆盖）');
+
+    await app.close();
+  });
+
   it('无凭据/未授权 → 4xx（未 grant github 写工具 → pipeline denied_authorization）', async () => {
     /* 新起一个未授权的 OS（beforeEach 的 grant 不生效——这里自建纯净 OS）。 */
     const bare = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
