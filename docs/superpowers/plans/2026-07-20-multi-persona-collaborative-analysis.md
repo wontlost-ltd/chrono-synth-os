@@ -22,6 +22,12 @@
 7. **未知/跨租户 persona fail-closed**：`getCore(personaId)` 对任意字符串新建空 core 无校验（`chrono-synth-os.ts:446`）——必须先 `getPersonaDetail(tenantId, ownerUserId, personaId)` 校验存在+归属，返回 null（不存在/他 owner/跨租户，不可区分）→ 统一抛 `NotFoundError(..., ErrorCode.NOT_FOUND_PERSONA)`（照 `earning.ts:40` 先例，映射 404，不区分 NotFound/Forbidden，防跨租户存在性泄露），拒绝发生在 getCore 之前。
 8. **确定性**：同输入同输出——不得用 `Date.now()`/`Math.random()`（如需时钟走注入的 clock）。
 9. **中文注释**（项目规范）；SOLID/DRY；函数缩进 ≤3 层。
+10. **测试位置与运行惯例（覆盖各 task 里的 Test 路径/Run 命令——已核实仓库真实惯例）**：
+    - **所有测试文件放 `src/test/unit/`（扁平，无子目录）**，命名 `collaboration-<topic>.test.ts`（如 `collaboration-key-points.test.ts` / `collaboration-analyzer.test.ts` / `collaboration-aggregation.test.ts` / `collaboration-service.test.ts` / `collaboration-no-op-embedding-index.test.ts`；route 测试放 `src/test/integration/collaboration-route.test.ts`）。**不要 co-located**（`src/collaboration/*.test.ts` 不会被 `test:unit`/`test:integration` 的 `dist/test/**` glob 捡到——全仓 395 个测试无一 co-located）。
+    - **测试 import 被测源码用相对路径**（如 `../../collaboration/key-points.js`）。
+    - **快跑单文件（TDD 红/绿迭代）**：`npx tsx --test src/test/unit/collaboration-<topic>.test.ts`（tsx 已装，直接跑 src 免 build，快）。各 task 里写的 `npx tsx --test <path>` 一律换成 `src/test/unit/...` 真实路径。
+    - **最终确认走真实惯例**（收尾 test:golden 会做）：`npm run build` 后 `node --test --test-force-exit dist/test/unit/collaboration-*.test.js`（route 走 `dist/test/integration/`）——与 `test:unit`/`test:integration` 同源，保证 golden 门捡得到。
+    - 被测**源码**仍在 `src/collaboration/` / `src/server/routes/` / `src/conversation/`（只有测试文件挪到 `src/test/`）。
 
 ---
 
