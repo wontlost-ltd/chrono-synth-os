@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PersonaPerspectiveAnalyzer } from '../../collaboration/persona-perspective-analyzer.js';
 import type { RelevantKnowledge } from '../../conversation/conversation-types.js';
+import type { AutonomousDecisionEngine } from '../../intelligence/decision-engine.js';
 
 /** 极简 fake：把注入的检索/决策/组织三基元替换为可控桩，聚焦 analyzer 的映射与门控逻辑。 */
 function makeAnalyzer(opts: {
@@ -11,7 +12,7 @@ function makeAnalyzer(opts: {
 }) {
   return new PersonaPerspectiveAnalyzer({
     retrieve: () => opts.knowledge,                                   // 注入检索桩
-    decisionEngine: { evaluateAutonomous: () => ({ caseId: 'c', recommendedAlternative: opts.ranked?.[0]?.alternative ?? '', rankedOptions: opts.ranked ?? [], simulatedAt: 0 }) },
+    decisionEngine: { evaluateAutonomous: () => ({ caseId: 'c', recommendedAlternative: opts.ranked?.[0]?.alternative ?? '', rankedOptions: opts.ranked ?? [], simulatedAt: 0 }) } as unknown as AutonomousDecisionEngine,
     responder: { respond: () => ({ content: 'op', kind: opts.kind ?? 'knowledge_grounded' }) } as any,
     narrative: 'n',
     boundaries: [],

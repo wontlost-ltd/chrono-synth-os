@@ -163,6 +163,7 @@ test('零-LLM：构造链无 LLMProvider，带 alternatives 真走 DecisionEngin
   const r2 = service.analyze('t1', 'user_1', [id], req);
   assert.equal(r1.perspectives[0].kind, 'knowledge_grounded');
   assert.equal(r1.perspectives[0].rankedAlternatives?.length, 2);
+  assert.equal(r1.question, '投资 预算够吗');   // question 端到端回显（pin 输入透传）
   assert.deepEqual(r1, r2);
 });
 
