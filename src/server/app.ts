@@ -183,6 +183,9 @@ import { InMemoryEmbeddingIndex } from '../intelligence/embedding-index-memory.j
 import { PersonaEarningService } from '../intelligence/persona-earning-service.js';
 import { registerEarningRoutes } from './routes/earning.js';
 import { registerToolAutoAuthorizationRoutes } from './routes/tool-auto-authorization.js';
+import { registerCollaborationAnalyzeRoutes } from './routes/collaboration-analyze.js';
+import { CollaborativeAnalysisService } from '../collaboration/collaborative-analysis-service.js';
+import { MultiPerspectiveAggregation } from '../collaboration/modes/multi-perspective-aggregation.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -775,6 +778,16 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     personaCore: bulkImportPersonaCoreService,
     db,
   });
+  /* 多数字人协同分析端点：逐 persona 经各自内核跑确定性三段基元（检索/决策/组织）→ 汇聚成参考报告。
+   * service 内部自建 per-persona DecisionEngine（NoOpEmbeddingIndex + llm=undefined），组合根不传 LLM/embedding，
+   * 运行时零-LLM 是结构性保证；fail-closed persona 校验 + per-persona 隔离全在 service。 */
+  const collaborativeAnalysisService = new CollaborativeAnalysisService({
+    factory: tenantFactory,
+    personaCoreService: bulkImportPersonaCoreService,
+    mode: new MultiPerspectiveAggregation(),
+    config,
+  });
+  registerCollaborationAnalyzeRoutes(app, collaborativeAnalysisService);
   /* ADR-0060 T7：工具自动授权运营端点（owner-only）——触发据资格自动授权 + 待审批请求列表/决议。
    * 治理白名单本身经既有 governance/policy 端点配（toolAutoAuthWhitelist 字段）；本路由只做运营。 */
   registerToolAutoAuthorizationRoutes(app, {
