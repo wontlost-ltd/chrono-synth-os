@@ -1268,6 +1268,46 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "/* safe:add-column:life_simulations:owner_user_id */ ALTER TABLE life_simulations ADD COLUMN owner_user_id TEXT"
     ]
+  },
+  {
+    "version": "v119",
+    "description": "GitHub integration foundation: github_app_credentials + github_installations tables",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_app_credentials (\n    tenant_id TEXT PRIMARY KEY,\n    app_id TEXT NOT NULL,\n    private_key_encrypted TEXT NOT NULL,\n    webhook_secret_encrypted TEXT NOT NULL,\n    ghe_base_url TEXT,\n    created_by TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS github_installations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    installation_id TEXT NOT NULL,\n    github_host TEXT NOT NULL,\n    account TEXT,\n    repos TEXT,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_installations_host_iid ON github_installations (github_host, installation_id)"
+    ]
+  },
+  {
+    "version": "v120",
+    "description": "GitHub learning foundation: github_learn_state (incremental sync cursors) + github_ingest_digests (ingest idempotency ledger)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_learn_state (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL CHECK (resource_type IN ('code', 'issues', 'pulls', 'commits')),\n    cursor TEXT,\n    cursor_advanced_at INTEGER,\n    last_synced_at INTEGER,\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_learn_state_key ON github_learn_state (tenant_id, persona_id, repo, resource_type)",
+      "CREATE TABLE IF NOT EXISTS github_ingest_digests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL,\n    content_sha TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('claimed', 'ingested')),\n    claimed_at INTEGER,\n    ingested_at INTEGER\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_ingest_digests_key ON github_ingest_digests (tenant_id, persona_id, repo, resource_type, content_sha)"
+    ]
+  },
+  {
+    "version": "v121",
+    "description": "GitHub feedback drafting foundation: github_reply_drafts (reply drafts halted at drafted for approval) + github_webhook_events (webhook idempotency, composite PK)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_reply_drafts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    target_type TEXT NOT NULL CHECK (target_type IN ('issue', 'pull')),\n    target_number INTEGER NOT NULL,\n    draft_body TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('drafted', 'approved', 'rejected')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
+      "CREATE TABLE IF NOT EXISTS github_webhook_events (\n    delivery_id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL,\n    event_type TEXT NOT NULL,\n    processed_at INTEGER NOT NULL,\n    PRIMARY KEY (tenant_id, delivery_id)\n  )"
+    ]
+  },
+  {
+    "version": "v122",
+    "description": "GitHub feedback publishing foundation: github_reply_drafts status CHECK adds published + published_at/github_ref audit columns",
+    "sql": [
+      "/* safe:if-table-exists:github_reply_drafts */ ALTER TABLE github_reply_drafts RENAME TO github_reply_drafts_old",
+      "/* safe:if-table-exists:github_reply_drafts_old */ DROP INDEX IF EXISTS idx_github_reply_drafts_lookup",
+      "/* safe:if-table-exists:github_reply_drafts_old */ CREATE TABLE IF NOT EXISTS github_reply_drafts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    target_type TEXT NOT NULL CHECK (target_type IN ('issue', 'pull')),\n    target_number INTEGER NOT NULL,\n    draft_body TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('drafted', 'approved', 'rejected', 'published')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    published_at INTEGER,\n    github_ref TEXT\n  )",
+      "/* safe:if-table-exists:github_reply_drafts_old */ INSERT OR IGNORE INTO github_reply_drafts (id, tenant_id, persona_id, repo, target_type, target_number, draft_body, status, created_at, updated_at)\n     SELECT id, tenant_id, persona_id, repo, target_type, target_number, draft_body, status, created_at, updated_at FROM github_reply_drafts_old",
+      "/* safe:if-table-exists:github_reply_drafts_old */ CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
+      "/* safe:if-table-exists:github_reply_drafts_old */ DROP TABLE IF EXISTS github_reply_drafts_old"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2506,6 +2546,44 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "安全: life_simulations 补 owner_user_id 列（模拟归属权，owner-only 分享鉴权基础）",
     "sql": [
       "ALTER TABLE life_simulations ADD COLUMN IF NOT EXISTS owner_user_id TEXT"
+    ]
+  },
+  {
+    "version": "v121",
+    "description": "GitHub integration foundation: github_app_credentials + github_installations tables",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_app_credentials (\n    tenant_id TEXT PRIMARY KEY,\n    app_id TEXT NOT NULL,\n    private_key_encrypted TEXT NOT NULL,\n    webhook_secret_encrypted TEXT NOT NULL,\n    ghe_base_url TEXT,\n    created_by TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE TABLE IF NOT EXISTS github_installations (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    installation_id TEXT NOT NULL,\n    github_host TEXT NOT NULL,\n    account TEXT,\n    repos TEXT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_installations_host_iid ON github_installations (github_host, installation_id)"
+    ]
+  },
+  {
+    "version": "v122",
+    "description": "GitHub learning foundation: github_learn_state (incremental sync cursors) + github_ingest_digests (ingest idempotency ledger)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_learn_state (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL CHECK (resource_type IN ('code', 'issues', 'pulls', 'commits')),\n    cursor TEXT,\n    cursor_advanced_at BIGINT,\n    last_synced_at BIGINT,\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_learn_state_key ON github_learn_state (tenant_id, persona_id, repo, resource_type)",
+      "CREATE TABLE IF NOT EXISTS github_ingest_digests (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    resource_type TEXT NOT NULL,\n    content_sha TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('claimed', 'ingested')),\n    claimed_at BIGINT,\n    ingested_at BIGINT\n  )",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_github_ingest_digests_key ON github_ingest_digests (tenant_id, persona_id, repo, resource_type, content_sha)"
+    ]
+  },
+  {
+    "version": "v123",
+    "description": "GitHub feedback drafting foundation: github_reply_drafts (reply drafts halted at drafted for approval) + github_webhook_events (webhook idempotency, composite PK)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS github_reply_drafts (\n    id TEXT PRIMARY KEY,\n    tenant_id TEXT NOT NULL,\n    persona_id TEXT NOT NULL,\n    repo TEXT NOT NULL,\n    target_type TEXT NOT NULL CHECK (target_type IN ('issue', 'pull')),\n    target_number INTEGER NOT NULL,\n    draft_body TEXT NOT NULL,\n    status TEXT NOT NULL CHECK (status IN ('drafted', 'approved', 'rejected')),\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
+      "CREATE TABLE IF NOT EXISTS github_webhook_events (\n    delivery_id TEXT NOT NULL,\n    tenant_id TEXT NOT NULL,\n    event_type TEXT NOT NULL,\n    processed_at BIGINT NOT NULL,\n    PRIMARY KEY (tenant_id, delivery_id)\n  )"
+    ]
+  },
+  {
+    "version": "v124",
+    "description": "GitHub feedback publishing foundation: github_reply_drafts status CHECK adds published + published_at/github_ref audit columns",
+    "sql": [
+      "ALTER TABLE github_reply_drafts DROP CONSTRAINT IF EXISTS github_reply_drafts_status_check",
+      "ALTER TABLE github_reply_drafts ADD CONSTRAINT github_reply_drafts_status_check CHECK (status IN ('drafted', 'approved', 'rejected', 'published'))",
+      "ALTER TABLE github_reply_drafts ADD COLUMN IF NOT EXISTS published_at BIGINT",
+      "ALTER TABLE github_reply_drafts ADD COLUMN IF NOT EXISTS github_ref TEXT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

@@ -552,9 +552,10 @@ describe('MCP API 集成测试', () => {
     assert.equal(json.to, 'someone@example.com');
   });
 
-  /* ── tools/list 返回 9 个内置工具（5 内部 + 3 外部 + ADR-0048 marketplace）─── */
+  /* ── tools/list 返回 11 个内置工具（5 内部 + 3 外部 + ADR-0048 marketplace
+   *    + GitHub 集成 Plan 4 两个 highRisk 写工具 github.comment / github.review）─── */
 
-  it('tools/list 返回 9 个内置工具', async () => {
+  it('tools/list 返回 11 个内置工具', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/mcp',
@@ -567,6 +568,8 @@ describe('MCP API 集成测试', () => {
       'calendar',
       'decision.record',
       'email.send',
+      'github.comment',
+      'github.review',
       'knowledge.query',
       'marketplace.act',
       'memory.add',
@@ -581,6 +584,12 @@ describe('MCP API 集成测试', () => {
     assert.equal(email.highRisk, true);
     const webSearch = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'web_search');
     assert.equal(webSearch.highRisk, false);
+    /* GitHub 集成 Plan 4：两个对外写工具经 MCP 也必须标 highRisk（恒真、不因参数降级）——
+     * MCP 面上同样受不可降级人工审批门约束，与 publish 端点一致。 */
+    const ghComment = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'github.comment');
+    assert.equal(ghComment.highRisk, true);
+    const ghReview = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'github.review');
+    assert.equal(ghReview.highRisk, true);
     /* ADR-0048：marketplace 工具不静态标 highRisk（风险分级在 EarningPolicy +
      * ToolPermission，否则自主低风险 apply 会被 confirmation 永久卡死） */
     const marketplace = body.result.tools.find((t: { name: string; highRisk: boolean }) => t.name === 'marketplace.act');

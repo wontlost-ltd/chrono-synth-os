@@ -52,6 +52,9 @@ import { registerCompanionPerceiveRoutes } from './routes/companion/perceive.js'
 import { registerCompanionPerceiveStreamRoutes } from './routes/companion/perceive-stream.js';
 import { registerCompanionEnvironmentRoutes } from './routes/companion/environment.js';
 import { registerCompanionChatRoutes } from './routes/companion/chat.js';
+import { registerCompanionLearnGithubRoutes } from './routes/companion/learn-github.js';
+import { registerCompanionDraftGithubRoutes } from './routes/companion/draft-github-reply.js';
+import { registerGithubWebhookRoutes } from './routes/github-webhook.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -93,6 +96,18 @@ import { MarketplaceTool } from '../agent/tools/marketplace-tool.js';
 import { WebSearchTool } from '../agent/tools/web-search-tool.js';
 import { CalendarTool } from '../agent/tools/calendar-tool.js';
 import { EmailTool } from '../agent/tools/email-tool.js';
+import { GithubCommentTool } from '../agent/tools/github-comment-tool.js';
+import { GithubReviewTool } from '../agent/tools/github-review-tool.js';
+/* GitHubWritePort 组合根：本文件 + 上面两个 github 写工具是 WritePort 的唯一 import 者
+ * （Task 6 架构测试锁死）。WritePort 是整个集成里唯一能写 GitHub 的模块。 */
+import {
+  GitHubWritePortImpl,
+  type GitHubWritePort,
+} from '../integrations/github/github-write-port.js';
+import { GitHubAuthManager } from '../integrations/github/github-auth-manager.js';
+import { GithubAppCredentialStore } from '../storage/github-app-credential-store.js';
+import { githubInstallListByTenant } from '@chrono/kernel';
+import { StateError } from '../errors/index.js';
 import { ChronoMcpServer } from '../mcp/chrono-mcp-server.js';
 import { UserOauthTokenService, IdentityEncryption, type TokenEncryption } from '../agent/user-oauth-token-service.js';
 import { GoogleOauthFlow } from '../agent/oauth-google-flow.js';
@@ -168,6 +183,9 @@ import { InMemoryEmbeddingIndex } from '../intelligence/embedding-index-memory.j
 import { PersonaEarningService } from '../intelligence/persona-earning-service.js';
 import { registerEarningRoutes } from './routes/earning.js';
 import { registerToolAutoAuthorizationRoutes } from './routes/tool-auto-authorization.js';
+import { registerCollaborationAnalyzeRoutes } from './routes/collaboration-analyze.js';
+import { CollaborativeAnalysisService } from '../collaboration/collaborative-analysis-service.js';
+import { MultiPerspectiveAggregation } from '../collaboration/modes/multi-perspective-aggregation.js';
 import type { SqlValue } from '../storage/database.js';
 
 export interface CreateAppDeps {
@@ -603,6 +621,47 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     dryRun: config.agent.email.dryRun,
     maxAttachmentBytes: config.agent.email.maxAttachmentBytes,
   }, deps.os.getLogger()));
+  /* Plan 4：github 写工具（highRisk 对外写；pipeline 强制 confirmation gate = 不可降级
+   * 人工审批门）。WritePort 是 per-tenant 装配（App 凭据 → installation token，照
+   * learn-github 的 assembleReadPort），故注入按 ctx.tenantId 解析的 resolver。
+   * 本组合根 + 这两个工具是 WritePort 的唯一持有者（Task 6 架构测试锁死）。 */
+  const resolveGithubWritePort = (tenantId: string): GitHubWritePort => {
+    /* 与 companion 路由同款：'default' 或无租户工厂时用根 OS，否则取租户 OS。 */
+    const tenantOS = (tenantFactory && tenantId && tenantId !== 'default')
+      ? tenantFactory.getTenantOS(tenantId)
+      : deps.os;
+    /* 凭据加密未启用则无凭据 store 可用——明确报「未连接」（与 read 侧对称）。 */
+    if (!config.encryption.enabled) {
+      throw new StateError('尚未连接 GitHub（本机未启用凭据加密，无法读取 GitHub App 凭据）');
+    }
+    const credEncryption = tryByokEncryption(config.encryption);
+    if (!credEncryption) {
+      throw new StateError('尚未连接 GitHub（凭据加密不可用）');
+    }
+    const credStore = new GithubAppCredentialStore(tenantOS.getDatabase(), credEncryption, tenantId);
+    const appCred = credStore.getApp();
+    if (!appCred) {
+      throw new StateError('尚未连接 GitHub——请先安装并连接 GitHub App 再发布');
+    }
+    /* 取本租户最近一个 installation（首版策略；listByTenant 按 created_at DESC）。 */
+    const installation = tenantOS.getDatabase().queryMany(githubInstallListByTenant(tenantId))[0];
+    if (!installation) {
+      throw new StateError('已配置 GitHub App 但尚无 installation——请在 GitHub 上安装 App 后再试');
+    }
+    const auth = new GitHubAuthManager({
+      getApp: () => ({ appId: appCred.appId, privateKeyPem: appCred.privateKeyPem, gheBaseUrl: appCred.gheBaseUrl }),
+      installationId: installation.installation_id,
+      now: () => tenantOS.getClock().now(),
+    });
+    /* GHE 自托管：写端点走企业 API base，并把企业 host 放进 SSRF allowlist；公有云走默认。 */
+    if (appCred.gheBaseUrl) {
+      const host = new URL(appCred.gheBaseUrl).hostname;
+      return new GitHubWritePortImpl(auth, { apiBase: appCred.gheBaseUrl, hostAllowlist: [host] });
+    }
+    return new GitHubWritePortImpl(auth);
+  };
+  toolRegistry.register(new GithubCommentTool(resolveGithubWritePort));
+  toolRegistry.register(new GithubReviewTool(resolveGithubWritePort));
   toolRegistry.freeze();
 
   const toolInvocationPipeline = new ToolInvocationPipeline({
@@ -719,6 +778,16 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     personaCore: bulkImportPersonaCoreService,
     db,
   });
+  /* 多数字人协同分析端点：逐 persona 经各自内核跑确定性三段基元（检索/决策/组织）→ 汇聚成参考报告。
+   * service 内部自建 per-persona DecisionEngine（NoOpEmbeddingIndex + llm=undefined），组合根不传 LLM/embedding，
+   * 运行时零-LLM 是结构性保证；fail-closed persona 校验 + per-persona 隔离全在 service。 */
+  const collaborativeAnalysisService = new CollaborativeAnalysisService({
+    factory: tenantFactory,
+    personaCoreService: bulkImportPersonaCoreService,
+    mode: new MultiPerspectiveAggregation(),
+    config,
+  });
+  registerCollaborationAnalyzeRoutes(app, collaborativeAnalysisService);
   /* ADR-0060 T7：工具自动授权运营端点（owner-only）——触发据资格自动授权 + 待审批请求列表/决议。
    * 治理白名单本身经既有 governance/policy 端点配（toolAutoAuthWhitelist 字段）；本路由只做运营。 */
   registerToolAutoAuthorizationRoutes(app, {
@@ -762,6 +831,13 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerCompanionPerceiveStreamRoutes(app, deps.os, tenantFactory, db, config);
   registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
   registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionLearnGithubRoutes(app, deps.os, tenantFactory, db, config);
+  /* Plan 4：draft-github-reply 端点含 publish（发布经 pipeline highRisk = 不可降级人工审批门）。
+   * 传入共享 toolInvocationPipeline（已注册 github.comment/github.review 写工具）。 */
+  registerCompanionDraftGithubRoutes(app, deps.os, tenantFactory, db, config, undefined, toolInvocationPipeline);
+  /* GitHub webhook 接收器（可选系统入站入口，非用户动作 → 前缀 integrations/github）：
+   * GitHub 发 issue/PR opened → HMAC 验签 + 反查租户 + 幂等 → 零-LLM 起草停 drafted（绝不发布）。 */
+  registerGithubWebhookRoutes(app, deps.os, tenantFactory, db, config);
   registerPersonaRoutes(app, deps.os, tenantFactory);
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);

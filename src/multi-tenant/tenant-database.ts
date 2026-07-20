@@ -92,6 +92,12 @@ const TENANT_TABLES = new Set([
   'tool_invocations', 'user_oauth_tokens', 'events_user_journey', 'core_values_snapshot',
   'compliance_evidence', 'legal_holds', 'break_glass_jti_consumptions',
   'audit_chain_anchors', 'audit_chain_anchor_failures', 'api_keys', 'kms_key_audit',
+  /* GitHub 集成地基（Plan 1 Task 1）：App 凭据（密文，tenant_id PK 单例）+ installation→tenant 映射，须自动租户隔离 */
+  'github_app_credentials', 'github_installations',
+  /* GitHub 学习段地基（Plan 2 Task 1）：增量同步游标账本 + 摄入幂等账本，均含 tenant_id，须自动租户隔离 */
+  'github_learn_state', 'github_ingest_digests',
+  /* GitHub 反馈起草段地基（Plan 3 Task 1）：回复草稿账本 + webhook 幂等账本（复合主键 tenant_id+delivery_id），均含 tenant_id，须自动租户隔离 */
+  'github_reply_drafts', 'github_webhook_events',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */
