@@ -1,5 +1,6 @@
 # 多数字人协同分析框架 Implementation Plan
 
+> **状态：已过 Codex 独立复审**（plan 68 退→82 退→**96 通过「达到通过线，可交 subagent 实现」**，每轮核验真实代码后修）。spec 亦已过（94）。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development（推荐）or superpowers:executing-plans 逐 task 实现。步骤用 checkbox（`- [ ]`）追踪。
 
 **Goal:** 让多个数字人（各自独立学习背景 + 价值内核）就同一问题各自基于自己学到的记忆给出 grounded 视角（+ 对给定候选方案的可审计排序），再确定性汇聚成一份带「共同话题 / 排序分歧 / 各视角证据摘要」的参考报告——全程运行时零-LLM。
