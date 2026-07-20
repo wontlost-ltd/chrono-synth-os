@@ -38,8 +38,6 @@ export class CollaborativeAnalysisService {
     if (unique.length === 0) throw new ValidationError('personaIds 不能为空', ErrorCode.VALIDATION_REQUIRED);
 
     const os = this.deps.factory.getTenantOS(tenantId);
-    const clock = os.getClock();
-    const logger = os.getLogger();
     /* 零-LLM：构造链无 LLMProvider（autonomous 决策不查询它）。全 persona 共用一个空索引即可。 */
     const noOpIndex = new NoOpEmbeddingIndex();
 
@@ -54,22 +52,22 @@ export class CollaborativeAnalysisService {
     });
 
     const perspectives = profiles.map(({ personaId, detail }) =>
-      this.analyzeOne(os, clock, logger, noOpIndex, personaId, detail, req),
+      this.analyzeOne(os, noOpIndex, personaId, detail, req),
     );
 
     return this.deps.mode.aggregate(question, perspectives);
   }
 
-  /** 单 persona：解析各自内核 → 装配确定性零-LLM 三段基元 → 分析。 */
+  /** 单 persona：解析各自内核 → 装配确定性零-LLM 三段基元 → 分析。clock/logger 从 os 派生，无须外部传入。 */
   private analyzeOne(
     os: ReturnType<TenantOSFactory['getTenantOS']>,
-    clock: ReturnType<ReturnType<TenantOSFactory['getTenantOS']>['getClock']>,
-    logger: ReturnType<ReturnType<TenantOSFactory['getTenantOS']>['getLogger']>,
     noOpIndex: NoOpEmbeddingIndex,
     personaId: string,
     detail: { profile?: Record<string, unknown> },
     req: AnalysisRequest,
   ) {
+    const clock = os.getClock();
+    const logger = os.getLogger();
     const core = os.getCore(personaId);
     /* narrative + boundaries 同源 profile（照 conversation-service.ts:604-610 真实取法）。 */
     const profile = (detail.profile ?? {}) as Record<string, unknown>;

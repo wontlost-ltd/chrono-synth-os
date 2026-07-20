@@ -22,7 +22,7 @@ import { loadConfig } from '../../config/schema.js';
  * seedMemory 把记忆写进对应 persona 的认知内核（getCore(真 id).addMemory），确保
  * retrieveMemoriesDeterministic 命得中、evidence 非空——堵「空集假绿」。
  */
-function setup() {
+function setup(overrideConfig?: (config: ReturnType<typeof loadConfig>) => void) {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
   const clock = new TestClock(1000);
@@ -30,6 +30,7 @@ function setup() {
   const factory = new TenantOSFactory(new SingleDbResolver(db), clock, logger);
   const personaCoreService = PersonaCoreService.fromUnitOfWork(db);
   const config = loadConfig();
+  overrideConfig?.(config);
   const service = new CollaborativeAnalysisService({
     factory,
     personaCoreService,
@@ -74,25 +75,35 @@ function setup() {
   const idOf = (tenantId: string, ownerUserId: string, alias: string): string =>
     aliasToId.get(`${tenantId}:${ownerUserId}:${alias}`) ?? alias;
 
-  return { service, seedPersona, seedMemory, idOf };
+  /* 暴露 os，供测试断言「未为被拒 persona 建 core」（fail-closed 顺序防假绿，见下方 M-1 测试）。 */
+  const os = factory.getTenantOS('t1');
+
+  return { service, seedPersona, seedMemory, idOf, os };
 }
 
 test('未知 personaId → NotFoundError NOT_FOUND_PERSONA（不静默产空核）', () => {
-  const { service } = setup();
+  const { service, os } = setup();
   assert.throws(
     () => service.analyze('t1', 'user_1', ['does-not-exist'], { question: 'q' }),
     (e: unknown) => e instanceof NotFoundError && /不存在或调用者非 owner/.test((e as Error).message),
   );
+  /* fail-closed 顺序防假绿：校验须先于 getCore，被拒 persona 绝不应留下已建的核实例。
+   * 若校验被挪到 getCore 之后，这里会因 listPersonaCores 含 'does-not-exist' 而失败。 */
+  assert.ok(!os.listPersonaCores().includes('does-not-exist'));
 });
 
 test('跨 owner persona：owner=user_2 请求 user_1 的 persona → NotFoundError（不泄露存在性）', () => {
-  const { service, seedMemory, idOf } = setup();
-  seedMemory('t1', 'user_1', 'pa', '投资 预算');
-  const realId = idOf('t1', 'user_1', 'pa');
+  /* 注意：用 seedPersona（非 seedMemory）——seedMemory 会先 getCore() 建核作种子写入，
+   * 若用它，realId 的核在 analyze() 调用前就已存在，下面「未建核」断言会对正确实现也失败。
+   * seedPersona 只建 persona 行，不触碰核，核的建立时机完全由 analyze() 内部决定。 */
+  const { service, seedPersona, os } = setup();
+  const realId = seedPersona('t1', 'user_1', 'pa');
   assert.throws(
     () => service.analyze('t1', 'user_2', [realId], { question: 'q' }),
     (e: unknown) => e instanceof NotFoundError,
   );
+  /* 被拒（跨 owner）persona 不应被建核——即便它在本租户是真实存在的 id。 */
+  assert.ok(!os.listPersonaCores().includes(realId));
 });
 
 test('per-persona 隔离：两 persona 均 grounded、evidence 非空、memoryId 集不相交、A 内容不入 B', () => {
@@ -125,6 +136,22 @@ test('多视角真不同：两 persona 学不同内容 → 均 grounded、keyPoi
   const aIds = new Set(va.evidence.map((e) => e.memoryId));
   assert.ok(!vb.evidence.some((e) => aIds.has(e.memoryId)));
   assert.notDeepEqual([...va.keyPoints].sort(), [...vb.keyPoints].sort());
+});
+
+test('always-enabled RuleEngine：租户 config 关了 ruleEngine 仍强制 enabled，不受 config 影响', () => {
+  /* 真实回归形态：忘了强制 enabled + 租户 config 关了 ruleEngine。默认 loadConfig() 的
+   * ruleEngine.enabled 本就是 true，「去掉 override」在默认配置下等价无操作、测不出问题；
+   * 这里手工把 config.ruleEngine.enabled 改成 false，才能让「强制 enabled:true」这行代码
+   * 真正被测试需要——若实现漏了 override，autonomous 决策会因 ruleEngine disabled 而抛错。 */
+  const { service, seedMemory, idOf } = setup((config) => {
+    config.ruleEngine.enabled = false;
+  });
+  seedMemory('t1', 'user_1', 'pa', '投资 预算 约束');
+  const id = idOf('t1', 'user_1', 'pa');
+  const req = { question: '投资 预算够吗', alternatives: ['继续投资', '暂缓投资'] };
+  const r = service.analyze('t1', 'user_1', [id], req);
+  assert.equal(r.perspectives[0].kind, 'knowledge_grounded');
+  assert.equal(r.perspectives[0].rankedAlternatives?.length, 2);
 });
 
 test('零-LLM：构造链无 LLMProvider，带 alternatives 真走 DecisionEngine + 确定性', () => {
