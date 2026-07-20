@@ -24,7 +24,7 @@ export function extractKeyPoints(evidence: readonly PerspectiveEvidence[]): stri
   for (const e of evidence) {
     for (const tok of tokenize(stripBoilerplate(e.excerpt))) {
       if (tok.length <= 1) continue;          // 单字噪音
-      if (STOPWORDS.has(tok) || BOILERPLATE.has(tok)) continue;
+      if (STOPWORDS.has(tok)) continue;
       seen.add(tok);
     }
   }

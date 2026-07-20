@@ -18,8 +18,10 @@ test('extractKeyPoints 空证据 → 空', () => {
   assert.deepEqual(extractKeyPoints([]), []);
 });
 
-test('extractKeyPoints 剥样板前缀（据我记得/我认为 等不进 keyPoints）', () => {
-  const points = extractKeyPoints([ev('据我记得 客户 很 重视 交付速度')]);
-  assert.ok(!points.includes('据我记得'));
-  assert.ok(points.includes('客户') || points.includes('交付速度') || points.includes('交付'));
+test('extractKeyPoints 剥样板前缀（样板词的 n-gram 碎片不进 keyPoints）', () => {
+  const points = extractKeyPoints([ev('据我记得 客户 重视 交付速度')]);
+  // 剥掉「据我记得」前缀后，其 n-gram 碎片不应出现（若不剥会有「据我」「我记」「记得」等）
+  assert.ok(!points.includes('据我') && !points.includes('我记') && !points.includes('记得'));
+  assert.ok(!points.includes('据我记') && !points.includes('我记得'));
+  assert.ok(points.includes('客户')); // 真实内容词仍在
 });
