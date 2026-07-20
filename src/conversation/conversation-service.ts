@@ -38,6 +38,7 @@ import { ConfirmationTokenStore } from './confirmation-token-store.js';
 import { ConversationAuditPublisher } from './audit-publisher.js';
 import { calibrateConfidence } from './confidence-calibrator.js';
 import { redactPii } from './pii-redactor.js';
+import { isValidBoundary } from './boundary-utils.js';
 import {
   toConversationResponse,
   type ConversationHistoryEntry,
@@ -753,15 +754,6 @@ function actionTypeFor(guardAction: GuardAction, shouldEscalate: boolean): strin
   if (guardAction) return `persona_conversation.message.${guardAction}`;
   if (shouldEscalate) return 'persona_conversation.message.escalate';
   return 'persona_conversation.message';
-}
-
-function isValidBoundary(value: unknown): value is BehaviorBoundary {
-  if (!value || typeof value !== 'object') return false;
-  const v = value as Record<string, unknown>;
-  return (
-    (v.rule === 'never_discuss' || v.rule === 'always_escalate' || v.rule === 'require_confirmation') &&
-    typeof v.topic === 'string' && v.topic.length > 0
-  );
 }
 
 function isTransientError(err: unknown): boolean {
