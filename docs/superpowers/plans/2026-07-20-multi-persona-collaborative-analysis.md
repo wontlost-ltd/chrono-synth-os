@@ -688,7 +688,7 @@ import assert from 'node:assert/strict';
 import { CollaborativeAnalysisService } from './collaborative-analysis-service.js';
 import { MultiPerspectiveAggregation } from './modes/multi-perspective-aggregation.js';
 import { NotFoundError } from '../errors/index.js';
-// 复用既有测试夹具建租户 OS + persona core（照 persona-core-service.test.ts / chat.test.ts 的建库+seed 惯例）。
+// 复用既有测试夹具建租户 OS + persona core（照 src/test/unit/persona-core-service.test.ts + src/test/integration/persona-core-isolation-k1.test.ts 的建库+seed 惯例）。
 // 实现者：用与既有集成测试同款 in-memory sqlite + TenantOSFactory + PersonaCoreService 装配。
 
 test('未知/他 owner personaId → NotFoundError NOT_FOUND_PERSONA（不静默产空核）', async () => {
@@ -739,13 +739,16 @@ test('多视角真不同：两 persona 学不同内容 → 两边 grounded、key
   assert.notDeepEqual([...va.keyPoints].sort(), [...vb.keyPoints].sort());  // keyPoints 真不同
 });
 
-test('零-LLM：构造链无 LLMProvider（NoOpEmbeddingIndex + llm=undefined）也能跑 + 同输入同输出', async () => {
+test('零-LLM：构造链无 LLMProvider（NoOpEmbeddingIndex + llm=undefined），带 alternatives 真走 DecisionEngine + 确定性', async () => {
   const { service, seedMemory } = await setup();  // setup 全程不配任何 LLM provider
   seedMemory('t1', 'user_1', 'pa', '投资 预算 约束');
-  const r1 = service.analyze('t1', 'user_1', ['pa'], { question: '投资 预算够吗' });
-  const r2 = service.analyze('t1', 'user_1', ['pa'], { question: '投资 预算够吗' });
-  assert.equal(r1.perspectives[0].kind, 'knowledge_grounded');  // 真跑出 grounded（非空假绿）
-  assert.deepEqual(r1, r2);                                     // 确定性
+  // 带 alternatives → analyzer 调 evaluateAutonomous → RuleEngine（真走决策路径，证零-LLM 下决策也跑得通）
+  const req = { question: '投资 预算够吗', alternatives: ['继续投资', '暂缓投资'] };
+  const r1 = service.analyze('t1', 'user_1', ['pa'], req);
+  const r2 = service.analyze('t1', 'user_1', ['pa'], req);
+  assert.equal(r1.perspectives[0].kind, 'knowledge_grounded');       // 真跑出 grounded（非空假绿）
+  assert.equal(r1.perspectives[0].rankedAlternatives?.length, 2);    // DecisionEngine→evaluateAutonomous 真执行
+  assert.deepEqual(r1, r2);                                          // 确定性（无 Date/random）
 });
 
 test('单 persona：正常产报告，commonTopics/rankingDivergences 空', async () => {
@@ -767,7 +770,7 @@ test('空 personaIds → 校验错；空 question → 校验错；重复去重',
 
 // setup()/seedMemory() 由实现者按既有集成测试夹具装配（in-memory sqlite + TenantOSFactory + PersonaCoreService）。
 ```
-> 实现者注：`setup()` 与 `seedMemory()` 沿用既有集成测试建库/建 persona/写记忆惯例（参考 `src/persona-core/persona-core-service.test.ts` 与 companion `chat.test.ts` 如何 seed persona core 与 memories）。**必须真建两 persona 各写不同记忆并各含共同主题词**（如「投资」），否则查询命不中、evidence 为空、隔离/多视角断言假绿——上面的测试已强制断言 `kind==='knowledge_grounded'` + `evidence.length>0` 堵这个假绿。`setup()` 装配 `CollaborativeAnalysisService` 时**只传 `{factory, personaCoreService, mode: new MultiPerspectiveAggregation(), config}`，不传任何 LLM provider**——service 内部用 `NoOpEmbeddingIndex` + `llm=undefined`，构造链无 LLMProvider，零-LLM 是结构性保证（不再需要 llmStub 计数验证，因为根本没有 LLM 依赖可调）。
+> 实现者注：`setup()` 与 `seedMemory()` 沿用既有集成测试建库/建 persona/写记忆惯例（参考 `src/test/unit/persona-core-service.test.ts` 与 `src/test/integration/persona-core-isolation-k1.test.ts` 如何 seed persona core 与 memories）。**必须真建两 persona 各写不同记忆并各含共同主题词**（如「投资」），否则查询命不中、evidence 为空、隔离/多视角断言假绿——上面的测试已强制断言 `kind==='knowledge_grounded'` + `evidence.length>0` 堵这个假绿。`setup()` 装配 `CollaborativeAnalysisService` 时**只传 `{factory, personaCoreService, mode: new MultiPerspectiveAggregation(), config}`，不传任何 LLM provider**——service 内部用 `NoOpEmbeddingIndex` + `llm=undefined`，构造链无 LLMProvider，零-LLM 是结构性保证（不再需要 llmStub 计数验证，因为根本没有 LLM 依赖可调）。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -793,7 +796,7 @@ import { RuleEngine } from '../intelligence/rule-engine.js';
 import { RetrievalService } from '../intelligence/retrieval-service.js';
 import { NoOpEmbeddingIndex } from './no-op-embedding-index.js';   // Task 5 Step 0 新建（零-LLM 结构保证）
 import { isValidBoundary } from '../conversation/boundary-utils.js';   // 推荐：提取到共享模块（见上）
-import { NotFoundError, ErrorCode } from '../errors/index.js';   // 已核实：earning.ts:40 同款用法
+import { NotFoundError, ValidationError, ErrorCode } from '../errors/index.js';   // 已核实：errors.ts:91 ValidationError + ErrorCode.NOT_FOUND_PERSONA/VALIDATION_REQUIRED；earning.ts:40 同款用法
 
 export interface CollaborativeAnalysisDeps {
   readonly factory: TenantOSFactory;
@@ -807,9 +810,9 @@ export class CollaborativeAnalysisService {
 
   analyze(tenantId: string, ownerUserId: string, personaIds: readonly string[], req: AnalysisRequest): CollaborativeReport {
     const question = req.question?.trim();
-    if (!question) throw new NotFoundError('question 不能为空', ErrorCode.VALIDATION_ERROR);  // 实现者用真实 ValidationError/ErrorCode
+    if (!question) throw new ValidationError('question 不能为空', ErrorCode.VALIDATION_REQUIRED);
     const unique = [...new Set(personaIds)];
-    if (unique.length === 0) throw new NotFoundError('personaIds 不能为空', ErrorCode.VALIDATION_ERROR);
+    if (unique.length === 0) throw new ValidationError('personaIds 不能为空', ErrorCode.VALIDATION_REQUIRED);
     const os = this.deps.factory.getTenantOS(tenantId);
     const clock = os.getClock();
     const logger = os.getLogger();
@@ -831,9 +834,10 @@ export class CollaborativeAnalysisService {
       const boundaries: BehaviorBoundary[] = Array.isArray(profile.behaviorBoundaries)
         ? (profile.behaviorBoundaries as BehaviorBoundary[]).filter(isValidBoundary)
         : [];
-      const ruleEngine = this.deps.config.ruleEngine.enabled
-        ? new RuleEngine(clock, this.deps.config.ruleEngine, logger)
-        : undefined;
+      /* 必须 always-enabled RuleEngine：autonomous 无 ruleEngine 抛错（decision-engine.ts:114），
+       * disabled ruleEngine 的 evaluate 也抛「Rule engine disabled」（rule-engine.ts:42）。
+       * collaboration 的决策是确定性零-LLM 一等主路径，无理由随 tenant config 关掉 → 强制 enabled:true。 */
+      const ruleEngine = new RuleEngine(clock, { ...this.deps.config.ruleEngine, enabled: true }, logger);
       /* llm=undefined + noOpIndex → 构造链零 LLMProvider（结构性零-LLM，约束 1）。 */
       const decisionEngine = new DecisionEngine(
         core, new RetrievalService(core.memories, noOpIndex), undefined /* llm */, clock, logger,
@@ -853,12 +857,7 @@ export class CollaborativeAnalysisService {
   }
 }
 ```
-> 实现者注：① `ValidationError` / `RuleEngine` / `RetrievalService` / `AppConfig` 的真实导出路径以仓库为准（`decisions.ts:127-129` 是同款装配参考）；② `RetrievalService` 第二参 embeddingIndex 若非可选，传既有测试用的最简替身或 `os` 已有实例——但**绝不注入会触发 embed 的真索引到 autonomous 路径**（autonomous 不读它）；③ `detail.profile.behaviorBoundaries` 的真实字段名/过滤器（`isValidBoundary`）照 `conversation-service.ts:600-610`。
-
-- [ ] **Step 4: 运行 service 测试确认通过**
-
-Run: `npx tsx --test src/collaboration/collaborative-analysis-service.test.ts`
-Expected: PASS（6 测试）
+> 实现者注：`RuleEngine`/`RetrievalService`/`DecisionEngine`/`AppConfig` 装配以 `app.ts:679`（earning autonomous）为参考；`detail.profile.{narrative,behaviorBoundaries}` 字段+`isValidBoundary` 照 `conversation-service.ts:604-610`。
 
 - [ ] **Step 4: 运行 service 测试确认通过**
 
@@ -898,7 +897,7 @@ git commit -m "feat(collab): CollaborativeAnalysisService 编排（隔离/校验
 // src/server/routes/collaboration.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-// 用既有 app/server 测试夹具（照 decisions.test.ts / companion route 测试如何 build app + 发 JWT + inject）。
+// 用既有 app/server 测试夹具（照 src/test/integration/persona-core-api.test.ts 等 route 集成测试如何 build app + 发 JWT + inject）。
 
 test('未认证 → 401', async () => {
   const { app } = await buildTestApp();
@@ -936,7 +935,7 @@ test('成功 → 200，信封 {data: CollaborativeReport}，requiresHumanApprova
   assert.equal(body.data.modeId, 'multi_perspective');
 });
 ```
-> 实现者注：`buildTestApp()` / `userToken` / `apiKeyToken` / `seedPersonaWithMemory()` 照既有 route 测试夹具（如 `src/server/routes/decisions.test.ts`、companion route 测试）如何 build 真实 fastify app、签发不同主体 JWT、seed persona——**必须真发 HTTP inject**，非直接调 service（HTTP 层的鉴权门/schema/错误映射只有走 inject 才被验证）。
+> 实现者注：`buildTestApp()` / `userToken` / `apiKeyToken` / `seedPersonaWithMemory()` 照既有 route 集成测试夹具（如 `src/test/integration/persona-core-api.test.ts`）如何 build 真实 fastify app、签发不同主体 JWT、seed persona——**必须真发 HTTP inject**，非直接调 service（HTTP 层的鉴权门/schema/错误映射只有走 inject 才被验证）。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -952,7 +951,7 @@ Expected: FAIL（路由未注册 / 未定义）
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { CollaborativeAnalysisService } from '../../collaboration/collaborative-analysis-service.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
-import type { JwtPayload } from '../../auth/types.js';   // 实现者核实真实类型路径
+import type { JwtPayload } from '../../types/auth.js';   // 已核实：types/auth.ts:10（earning.ts:16 同款）
 
 /** 复用 companion 访问门（照 chat.ts:118）：拒 API-key / service 主体。 */
 function assertUserSession(request: FastifyRequest): void {
@@ -1034,4 +1033,4 @@ Expected: EXIT 0（typecheck→build→unit+integration→contract→packages→
 - `isValidBoundary` 局部于 `conversation-service.ts:758` → Task 5 Step 0b 提取到 `boundary-utils.ts` 共享（避免耦合整个 conversation-service）。
 - commonTopics 首版 = 同规范化 keyPoint token 被 ≥2 grounded persona 提及（规则=代码=测试一致，不写「重叠系数」）。
 
-**仍以仓库为准的次要点**（给了参考文件，实现者对齐即可）：`EmbeddingIndex` 接口完整成员（`embedding-index.ts:27`）、`AppConfig`/`AuthorizationError`/`JwtPayload` 导出路径、fastify body-schema 与 route 测试夹具惯例（`decisions.test.ts` / companion route 测试）。
+**仍以仓库为准的次要点**（给了参考文件，实现者对齐即可）：`EmbeddingIndex` 接口完整成员（`embedding-index.ts:27`）、`AppConfig`/`AuthorizationError` 导出路径、fastify body-schema 写法、route 测试夹具惯例（`src/test/integration/persona-core-api.test.ts`）。已核实定死的：`JwtPayload`=`types/auth.ts:10`、`ValidationError`/`ErrorCode.{VALIDATION_REQUIRED,NOT_FOUND_PERSONA}`=`errors.ts`、always-enabled RuleEngine、`app.ts:679` autonomous 装配范式。
