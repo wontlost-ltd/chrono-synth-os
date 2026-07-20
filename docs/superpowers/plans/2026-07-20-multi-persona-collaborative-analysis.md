@@ -18,7 +18,7 @@
 4. **排序归因诚实**：现状排序只由 L1 alignmentScore 驱动（L0 violations=[] 恒空、L2/L3 riskScore=0.5 固定不改相对次序、rules inert）；**首版构造 DecisionCase 时 `constraints` 留空** → 排序只由 L1 驱动（设计选择）。不得夸「L0-L3/rules/原型标签驱动排序」。
 5. **诚实降级命名**：产出「共同话题 commonTopics」非「共识」、「证据摘要 evidenceBrief」非「综合建议」。专业度 = 各 persona 学习期蒸馏深度，非现场推理。
 6. **人工性质**：`requiresHumanApproval: true` 入数据契约（报告是参考，含动作须人工采纳）。
-7. **未知/跨租户 persona fail-closed**：`getCore(personaId)` 对任意字符串新建空 core 无校验（`chrono-synth-os.ts:446`）——必须先 `getPersonaDetail(tenantId, ownerUserId, personaId)` 校验存在+归属，返回 null（不存在/他 owner/跨租户，不可区分）→ 统一拒 `PersonaUnavailable`（不区分 NotFound/Forbidden，防跨租户存在性泄露），拒绝发生在 getCore 之前。
+7. **未知/跨租户 persona fail-closed**：`getCore(personaId)` 对任意字符串新建空 core 无校验（`chrono-synth-os.ts:446`）——必须先 `getPersonaDetail(tenantId, ownerUserId, personaId)` 校验存在+归属，返回 null（不存在/他 owner/跨租户，不可区分）→ 统一抛 `NotFoundError(..., ErrorCode.NOT_FOUND_PERSONA)`（照 `earning.ts:40` 先例，映射 404，不区分 NotFound/Forbidden，防跨租户存在性泄露），拒绝发生在 getCore 之前。
 8. **确定性**：同输入同输出——不得用 `Date.now()`/`Math.random()`（如需时钟走注入的 clock）。
 9. **中文注释**（项目规范）；SOLID/DRY；函数缩进 ≤3 层。
 
@@ -42,11 +42,12 @@
 
 **Files:**
 - Create: `src/collaboration/collaboration-types.ts`
-- Test: 无（纯类型；由后续 task 的实现测试间接覆盖——类型错编译期即挂）
+- Test: 无（**纯类型文件，无运行时行为，故无 red→green TDD 循环**——这是唯一的例外 task；正确性由 `tsc --noEmit`（Step 2）+ 后续 task 消费这些类型时编译期强制。Codex 复审 #「Task 1 无失败测试」：类型定义没有可断言的运行时行为，强造空跑测试才是 grader-gaming；此处诚实标注例外）。
 
 **Interfaces:**
-- Consumes: `BehaviorBoundary`（`src/conversation/offline-conversation-responder.ts` 导出）、`OfflineResponseKind`（同）。
+- Consumes: 无（本 task 纯类型；`kind` 联合字面量直接内联，不 import `OfflineResponseKind`——避免耦合，且它是字面量子集）。
 - Produces: `AnalysisRequest` / `PerspectiveEvidence` / `PersonaPerspective` / `CollaborationMode` / `CollaborativeReport` 供 Task 2/3/4/5 import。
+> **注（Codex 复审 #2）**：`BehaviorBoundary` **定义并导出在 `src/enterprise/persona-template-catalog.ts:23`**（`offline-conversation-responder.ts` 只 import 不 re-export）——Task 3/5 需要时从 `persona-template-catalog.js` import，**不是** responder。本 Task 1 类型不引用 BehaviorBoundary。
 
 - [ ] **Step 1: 写类型文件**
 
@@ -127,15 +128,16 @@ git commit -m "feat(collab): 协同分析共享数据契约类型"
 
 ---
 
-## Task 2: 导出 `tokenize` + keyPoints 提取工具
+## Task 2: keyPoints 提取工具（复用已导出的 `tokenize`）
+
+> **修正（Codex 复审 #1）**：`tokenize` **已在 `conversation-knowledge-retriever.ts:185` 定义并导出**（`deterministic-memory-retrieval.ts:18` 只是 import 它）——**无需也不能给 deterministic 文件加 export**。直接从 `conversation-knowledge-retriever.js` import。
 
 **Files:**
-- Modify: `src/conversation/deterministic-memory-retrieval.ts`（给内部 `tokenize` 加 `export`）
 - Create: `src/collaboration/key-points.ts`（从 evidence.excerpt 提 keyPoints）
 - Test: `src/collaboration/key-points.test.ts`
 
 **Interfaces:**
-- Consumes: `tokenize`（本 task 导出）、`PerspectiveEvidence`（Task 1）。
+- Consumes: `tokenize`（**已导出** `src/conversation/conversation-knowledge-retriever.ts:185`）、`PerspectiveEvidence`（Task 1）。
 - Produces: `extractKeyPoints(evidence: readonly PerspectiveEvidence[]): string[]` 供 Task 3 analyzer 用；`stripBoilerplate(text: string): string`（剥样板前缀，照 memory `companion-associative-memory`）。
 
 - [ ] **Step 1: 写 key-points 失败测试**
@@ -174,26 +176,13 @@ test('extractKeyPoints 剥样板前缀（据我记得/我认为 等不进 keyPoi
 Run: `npx tsx --test src/collaboration/key-points.test.ts`
 Expected: FAIL（`extractKeyPoints` 未定义 / 模块不存在）
 
-- [ ] **Step 3: 给 `tokenize` 加 export**
-
-在 `src/conversation/deterministic-memory-retrieval.ts` 找到 `function tokenize(`（约 line 94 之下的定义处），在其定义前加 `export`：
-
-```typescript
-// 改前：function tokenize(...)
-// 改后：
-export function tokenize(text: string): string[] {  // 保持原签名与实现不变，只加 export
-  // ...原实现不动...
-}
-```
-（若 `tokenize` 是 `const tokenize = ...` 形式，则改为 `export const tokenize = ...`；只加导出，不改逻辑。）
-
-- [ ] **Step 4: 写 key-points 实现**
+- [ ] **Step 3: 写 key-points 实现（从已导出的 tokenize import）**
 
 ```typescript
 // src/collaboration/key-points.ts
 /** 从 grounded 证据 excerpt 提取 keyPoints（确定性、零-LLM）：tokenize + 剥样板前缀 + 去重 + 稳定排序。
  * 约束：只从 evidence.excerpt 提，不从 opinion/alternatives（spec §5.1 / 约束 3/4）。 */
-import { tokenize } from '../conversation/deterministic-memory-retrieval.js';
+import { tokenize } from '../conversation/conversation-knowledge-retriever.js';  // 已导出（:185）；不改该文件
 import type { PerspectiveEvidence } from './collaboration-types.js';
 
 /** 样板前缀词（离线套话/记忆引导语），不作为话题信号。照 memory companion-associative-memory。 */
@@ -225,21 +214,16 @@ export function extractKeyPoints(evidence: readonly PerspectiveEvidence[]): stri
 ```
 > 注：`STOPWORDS`/`BOILERPLATE` 是首版启发式，实现者可按测试预期调整词表；核心不变式是「只从 excerpt 提 + 去重 + 稳定排序 + 不含样板」。
 
-- [ ] **Step 5: 运行测试确认通过**
+- [ ] **Step 4: 运行测试确认通过**
 
 Run: `npx tsx --test src/collaboration/key-points.test.ts`
 Expected: PASS（3 测试）
 
-- [ ] **Step 6: 回归确认 tokenize 导出未破坏检索**
-
-Run: `npx tsx --test src/conversation/deterministic-memory-retrieval.test.ts`
-Expected: PASS（若存在该测试文件；只加了 export，逻辑未变）
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**（只新增文件，未改任何既有文件）
 
 ```bash
-git add src/conversation/deterministic-memory-retrieval.ts src/collaboration/key-points.ts src/collaboration/key-points.test.ts
-git commit -m "feat(collab): 导出 tokenize + keyPoints 从 grounded 证据提取（去样板/去重/稳定序）"
+git add src/collaboration/key-points.ts src/collaboration/key-points.test.ts
+git commit -m "feat(collab): keyPoints 从 grounded 证据提取（复用已导出 tokenize，去样板/去重/稳定序）"
 ```
 
 ---
@@ -344,7 +328,8 @@ Expected: FAIL（`PersonaPerspectiveAnalyzer` 未定义）
  * 检索/决策/组织三依赖注入，便于测试用桩替换、也让类型层禁 embedding provider（零-LLM 闭合）。 */
 import type { RelevantKnowledge } from '../conversation/conversation-types.js';
 import type { AutonomousDecisionEngine } from '../intelligence/decision-engine.js';
-import type { OfflineConversationResponder, BehaviorBoundary } from '../conversation/offline-conversation-responder.js';
+import type { OfflineConversationResponder } from '../conversation/offline-conversation-responder.js';
+import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';   // 修正：真实定义处（:23），非 responder
 import type { AnalysisRequest, PersonaPerspective, PerspectiveEvidence } from './collaboration-types.js';
 import { extractKeyPoints } from './key-points.js';
 
@@ -400,7 +385,7 @@ export class PersonaPerspectiveAnalyzer {
   }
 }
 ```
-> 注：若 `BehaviorBoundary` 未从 `offline-conversation-responder.ts` 导出，实现者从其真实导出模块 import（Task 前置已核实该文件用 `BehaviorBoundary[]`；若类型来自 `conversation-types.ts` 则从那里 import）。
+> 注：`BehaviorBoundary` 从 `src/enterprise/persona-template-catalog.ts`（真实定义+导出处 :23）import；`OfflineResponderInput.boundaries` 是可变 `BehaviorBoundary[]`（responder line 51），故 `respond` 调用处 spread `[...boundaries]`（readonly→可变）。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -433,7 +418,7 @@ git commit -m "feat(collab): PersonaPerspectiveAnalyzer 单 persona 三段零-LL
 - Produces: `class MultiPerspectiveAggregation implements CollaborationMode`（`modeId='multi_perspective'`）。
 
 **判定规则（spec §5.2，全确定性）：**
-- **commonTopics**：只对 `kind==='knowledge_grounded'` 的 perspective 的 `keyPoints` 做关键词重叠（honest_offline/boundary 排除）。用**重叠系数**（`|A∩B| / min(|A|,|B|)`，非 Jaccard——照 memory `companion-associative-memory`）；某 topic 被 ≥2 个 grounded persona 提到即入 commonTopics（首版：`raisedBy` = 提到该 topic 的 personaId 列表，长度 ≥2）。稳定排序（topic 字典序）。
+- **commonTopics（首版定义——Codex 复审 #3 校正：规则=代码=测试三者一致）**：只对 `kind==='knowledge_grounded'` 的 perspective 的 `keyPoints`（已是规范化 token，Task 2 tokenize 产）计数（honest_offline/boundary 排除）；**同一 keyPoint token 被 ≥2 个 grounded persona 提到即入 commonTopics**，`raisedBy` = 提到者 personaId 列表（长度 ≥2）。稳定排序（topic 字典序）。**首版不做集合重叠系数/阈值**（keyPoints 已是规范化 token，按 token 相等分组即「共同关注同一话题词」，足够诚实且可测）——不写「重叠系数」字样，避免规则与实现不符。（重叠系数是后续增强，若加须同补阈值测试。）
 - **rankingDivergences**：只在带 `rankedAlternatives` 的 perspective 间——同一 alternative 被 ≥2 persona 排到**不同 rank** 即入。列每候选各 persona 的 `{personaId, rank}`。稳定排序（alternative 字典序）。
 - **status/groundingNote**：G = grounded 视角数。`G===0` → `insufficient_grounding` + commonTopics/rankingDivergences 空 + groundingNote「参与者对此问题均无相关积累」；`G≥1` → `analyzed`，`G<半数` → groundingNote 追加「多数参与者积累不足，仅 G 个视角有依据」，否则「基于 N 位数字人各自学习积累（G 个视角有据）」。
 - **evidenceBrief**：纯模板拼装——列共同话题 + 排序分歧 + 各 grounded persona 的证据引用（memoryId+excerpt 截断）。不产新观点。
@@ -632,27 +617,69 @@ git commit -m "feat(collab): MultiPerspectiveAggregation 确定性汇聚（共�
 
 ---
 
-## Task 5: `CollaborativeAnalysisService` 编排 + 端点 + E2E
+## Task 5: `CollaborativeAnalysisService` 编排 + service E2E
+
+> **拆分（Codex 复审 #7）**：原 Task 5 同时含 service + HTTP route + 组合根，范围过大无法独立 review。拆为 **Task 5（service + 真实隔离/零-LLM/校验测试）** + **Task 6（NoOpEmbeddingIndex 已在此 Step 0、boundary-utils、route、组合根、HTTP 测试）**。
 
 **Files:**
+- Create: `src/collaboration/no-op-embedding-index.ts`（+ test）——零-LLM 结构保证
+- Create: `src/conversation/boundary-utils.ts`（提取 `isValidBoundary`，供 conversation-service + collaboration 共享）
+- Modify: `src/conversation/conversation-service.ts`（改为从 `boundary-utils.js` import `isValidBoundary`，删本地定义——纯搬迁，行为不变）
 - Create: `src/collaboration/collaborative-analysis-service.ts`
-- Create: `src/server/routes/collaboration.ts`
-- Modify: `src/server/app.ts`（注册路由，仿既有 `registerXxxRoutes` 惯例）
-- Test: `src/collaboration/collaborative-analysis-service.test.ts`（编排 + 校验 + 隔离 + E2E）
+- Test: `src/collaboration/collaborative-analysis-service.test.ts`（编排 + 校验 + 隔离 + 零-LLM E2E）
 
 **Interfaces:**
-- Consumes: `TenantOSFactory`（`getTenantOS(tenantId)` → `getCore(personaId)`）、`PersonaCoreService`（`getPersonaDetail(tenantId, ownerUserId, personaId)`）、`CollaborationMode`（Task 4）、`PersonaPerspectiveAnalyzer`（Task 3）、`RuleEngine` + `DecisionEngine`（`src/intelligence/`）、`OfflineConversationResponder`、`RetrievalService`。
-- Produces: `class CollaborativeAnalysisService`，`analyze(tenantId, ownerUserId, personaIds, req): CollaborativeReport`。
+- Consumes: `TenantOSFactory`（`getTenantOS(tenantId)` → `getCore(personaId)`）、`PersonaCoreService`（`getPersonaDetail(tenantId, ownerUserId, personaId)`）、`CollaborationMode`（Task 4）、`PersonaPerspectiveAnalyzer`（Task 3）、`RuleEngine` + `DecisionEngine` + `RetrievalService`（`src/intelligence/`）、`OfflineConversationResponder`、`NotFoundError`/`ErrorCode`（`errors/index`）、`BehaviorBoundary`（`enterprise/persona-template-catalog`）、`isValidBoundary`（`conversation/boundary-utils`）。
+- Produces: `class CollaborativeAnalysisService`，`analyze(tenantId, ownerUserId, personaIds, req): CollaborativeReport`；`class NoOpEmbeddingIndex implements EmbeddingIndex`。
 
 **真实契约（Global Constraint 7）：**
-- 校验先行：`personaIds` 空 → `ValidationError`；去重保序；每个 personaId 先 `getPersonaDetail(tenantId, ownerUserId, personaId)`，返回 `null` → 抛 `PersonaUnavailable`（不区分 NotFound/Forbidden）**在 getCore 之前**。
-- boundaries：从 `getPersonaDetail(...).profile.behaviorBoundaries`（`filter(isValidBoundary)`，照 `conversation-service.ts:600-610`）。
-- **决策引擎经注入的工厂拿（关键设计——照 earning 先例，让 zero-LLM 特性代码不 import LLMProvider）**：`DecisionEngine` 的 ctor 硬性要求 `RetrievalService`（→ 要 `EmbeddingIndex` → 要 `LLMProvider`），即使 autonomous 路径**永不调** `this.retrieval`（`decision-engine.ts:140` `this.retrieval.getContext` 只在 growth）。为不把 LLM 管线拖进本 zero-LLM 特性，**service 不自己 new DecisionEngine**，而是接收一个注入的工厂 `decisionEngineFor: (core: CoreRhythmLayer) => AutonomousDecisionEngine`——LLM/embedding 装配全留在组合根 `app.ts`（照 `PersonaEarningService` 用注入的 `decisionEngine: AutonomousDecisionEngine` 先例，`app.ts:679`）。**app.ts 里工厂内部**：`(core) => new DecisionEngine(core, new RetrievalService(core.memories, earningEmbeddingIndex 或同款 InMemoryEmbeddingIndex), llmRouter, clock, logger, simConfig, new RuleEngine(...))`（embeddingIndex/llmRouter「仅为构造满足、autonomous 路径不查询」，注释照 `app.ts:674-675`）。service 只经 `AutonomousDecisionEngine` 窄接口调 `evaluateAutonomous`（约束 1 类型层保证不退回 LLM）。
-- 每 persona 造 analyzer：`const core = os.getCore(personaId)`；`retrieve = (q) => retrieveMemoriesDeterministic(q, core.memories.getAllMemories(), (id) => core.memories.getEdgesFor(id), undefined)`；`decisionEngine = this.deps.decisionEngineFor(core)`；`responder = new OfflineConversationResponder()`；**`narrative` 来自 `profile.narrative`（不是 `core.narrative.get()`）**——照 `conversation-service.ts:606` 真实取法：`typeof profile.narrative === 'string' ? profile.narrative : ''`（与 boundaries 同源 profile，一处 getPersonaDetail 全取）。
-- **isValidBoundary（已核实）**：`isValidBoundary` 是 `conversation-service.ts` 的**局部函数未导出**。实现二选一：① 从 `conversation-service.ts` 导出它复用；② 在 collaboration 内写等价的最简 `isValidBoundary`（校验 `rule ∈ {never_discuss, always_escalate, ...}` + 必要字段）。推荐 ① 复用，避免逻辑二份。boundaries 取法照 `conversation-service.ts:608-610`：`Array.isArray(profile.behaviorBoundaries) ? (profile.behaviorBoundaries as BehaviorBoundary[]).filter(isValidBoundary) : []`。
-- 单 persona：正常执行（mode 天然出空 commonTopics/divergences）；不在端点特判。
+- 校验先行：`personaIds` 空 → 校验错；`question` 空 → 校验错；去重保序；每个 personaId 先 `getPersonaDetail(tenantId, ownerUserId, personaId)`，返回 `null` → 抛 `NotFoundError(..., ErrorCode.NOT_FOUND_PERSONA)`（不区分 NotFound/Forbidden）**在 getCore 之前**。
+- boundaries：从 `getPersonaDetail(...).profile.behaviorBoundaries`（`filter(isValidBoundary)`，照 `conversation-service.ts:604-610`）。
+- **决策引擎 service 自建（Codex 复审 #5/#6 校正——用 no-op EmbeddingIndex + llm=undefined，最直接且结构性零-LLM）**：`DecisionEngine` ctor 的 `llm` 参数**是可选的**（`decision-engine.ts:67` `llm: LLMProvider | undefined`）；`RetrievalService(memories, embeddingIndex)` 的 `embeddingIndex` 必填但 **autonomous 路径永不调 `this.retrieval`**（`decision-engine.ts:140` getContext 只在 growth）。故最简装配 = **传一个 `NoOpEmbeddingIndex`（search 返 `[]`、indexMemory 返 `false`，零 LLM，Task 5 Step 0 新建）+ `llm: undefined`**——这样**构造链里没有任何 LLMProvider**，零-LLM 是结构性保证（非「不调就行」）。service 自建 DecisionEngine（不需注入工厂），只经 `AutonomousDecisionEngine` 窄接口调 `evaluateAutonomous`（约束 1 类型层保证不退回 growth/LLM）。
+- 每 persona 造 analyzer：`const core = os.getCore(personaId)`；`retrieve = (q) => retrieveMemoriesDeterministic(q, core.memories.getAllMemories(), (id) => core.memories.getEdgesFor(id), undefined)`；`decisionEngine = new DecisionEngine(core, new RetrievalService(core.memories, noOpIndex), undefined /*llm*/, clock, logger, simConfig, ruleEngine)`；`responder = new OfflineConversationResponder()`；**`narrative` 来自 `profile.narrative`（不是 `core.narrative.get()`）**——照 `conversation-service.ts:606` 真实取法：`typeof profile.narrative === 'string' ? profile.narrative : ''`（与 boundaries 同源 profile，一处 getPersonaDetail 全取）。
+- **isValidBoundary（已核实 `conversation-service.ts:758` 局部未导出）**：实现二选一：① 从 `conversation-service.ts` 加 `export` 复用；② **推荐**——把 `isValidBoundary` + `BehaviorBoundary` 相关校验提取到轻量共享模块（如 `src/conversation/boundary-utils.ts`），conversation-service 与 collaboration 都 import（Codex 建议：避免 collaboration import 整个 conversation-service 造成模块耦合）。boundaries 取法照 `conversation-service.ts:608-610`。
+- **错误码（Codex 复审 #6）**：persona 校验失败**不用自定义 `Error`**（会被全局 handler 当未知 500）——**复用 `NotFoundError(msg, ErrorCode.NOT_FOUND_PERSONA)`**（照 `earning.ts:40` 先例 `assertOwner`），映射 404，且「不存在或非 owner」统一措辞天然不区分 NotFound/Forbidden、不泄露跨租户存在性（正是约束 7 要的）。删除计划里自定义的 `PersonaUnavailableError`。
+- 单 persona：正常执行（mode 天然出空 commonTopics/divergences）；不特判。
 
-- [ ] **Step 1: 写失败测试（隔离 + 校验 + E2E，用真 TenantOSFactory + 内存 DB）**
+- [ ] **Step 0a: 建 `NoOpEmbeddingIndex`（零-LLM 结构保证）+ 其失败测试**
+
+```typescript
+// src/collaboration/no-op-embedding-index.ts
+/** 空实现 EmbeddingIndex：search 恒空、indexMemory 恒 false，无任何 LLM/embedding 调用。
+ * 用于 autonomous 决策路径（永不查询 embedding，decision-engine.ts:140 只在 growth 用），
+ * 让 DecisionEngine 构造链完全不含 LLMProvider——零-LLM 是结构性保证（约束 1）。 */
+import type { EmbeddingIndex, EmbeddingMatch } from '../intelligence/embedding-index.js';
+
+export class NoOpEmbeddingIndex implements EmbeddingIndex {
+  async indexMemory(_memoryId: string, _text: string): Promise<boolean> { return false; }
+  search(_queryEmbedding: readonly number[], _topK: number): EmbeddingMatch[] { return []; }
+  readonly cacheSize = 0;
+  readonly partitionCount = 0;
+}
+```
+```typescript
+// src/collaboration/no-op-embedding-index.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { NoOpEmbeddingIndex } from './no-op-embedding-index.js';
+
+test('NoOpEmbeddingIndex：search 恒空、indexMemory 恒 false、无 LLM 依赖', async () => {
+  const idx = new NoOpEmbeddingIndex();
+  assert.deepEqual(idx.search([0.1, 0.2], 5), []);
+  assert.equal(await idx.indexMemory('m', 'x'), false);
+  assert.equal(idx.cacheSize, 0);
+});
+```
+Run: `npx tsx --test src/collaboration/no-op-embedding-index.test.ts`（先红后绿）
+> 实现者注：`EmbeddingIndex` 接口方法以 `src/intelligence/embedding-index.ts:27` 为准（若还有别的成员，NoOp 补齐最简空实现）；`EmbeddingMatch` 从同文件 import。
+
+- [ ] **Step 0b: 提取 `isValidBoundary` 到 `boundary-utils.ts`（避免 collaboration 耦合整个 conversation-service）**
+
+把 `conversation-service.ts:758` 的局部 `isValidBoundary`（及它依赖的 `BehaviorBoundary` 校验逻辑）**搬**到新文件 `src/conversation/boundary-utils.ts` 并 `export`；`conversation-service.ts` 改为从 `boundary-utils.js` import（删本地定义）。纯搬迁，行为不变。
+Run（回归 conversation-service 未破坏）：`npx tsx --test src/conversation/conversation-service.test.ts`
+Expected: PASS（只搬函数位置，逻辑不变）
+
+- [ ] **Step 1: 写 service 失败测试（隔离 + 校验 + 零-LLM E2E，用真 TenantOSFactory + 内存 DB）**
 
 ```typescript
 // src/collaboration/collaborative-analysis-service.test.ts
@@ -660,42 +687,65 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CollaborativeAnalysisService } from './collaborative-analysis-service.js';
 import { MultiPerspectiveAggregation } from './modes/multi-perspective-aggregation.js';
+import { NotFoundError } from '../errors/index.js';
 // 复用既有测试夹具建租户 OS + persona core（照 persona-core-service.test.ts / chat.test.ts 的建库+seed 惯例）。
 // 实现者：用与既有集成测试同款 in-memory sqlite + TenantOSFactory + PersonaCoreService 装配。
 
-test('未知 personaId → PersonaUnavailable（不静默产空核）', async () => {
+test('未知/他 owner personaId → NotFoundError NOT_FOUND_PERSONA（不静默产空核）', async () => {
   const { service } = await setup();
-  await assert.rejects(
-    () => Promise.resolve(service.analyze('t1', 'user_1', ['does-not-exist'], { question: 'q' })),
-    /PersonaUnavailable|不可用|不存在/,
+  assert.throws(
+    () => service.analyze('t1', 'user_1', ['does-not-exist'], { question: 'q' }),
+    (e: unknown) => e instanceof NotFoundError && /不存在或调用者非 owner/.test((e as Error).message),
   );
 });
 
-test('per-persona 隔离：A 学的记忆不出现在 B 的 evidence', async () => {
+test('跨租户/他 owner persona：owner=user_2 请求 user_1 的 persona → NotFoundError（不泄露存在性）', async () => {
   const { service, seedMemory } = await setup();
-  seedMemory('t1', 'user_1', 'pa', '甲学到的独有内容 关键词ALPHA');
-  seedMemory('t1', 'user_1', 'pb', '乙学到的独有内容 关键词BETA');
-  const report = service.analyze('t1', 'user_1', ['pa', 'pb'], { question: '关键词ALPHA' });
-  const pbView = report.perspectives.find((p) => p.personaId === 'pb')!;
-  assert.ok(!pbView.evidence.some((e) => e.excerpt.includes('ALPHA')));  // B 不含 A 的记忆
+  seedMemory('t1', 'user_1', 'pa', '投资 预算');   // 属 user_1
+  assert.throws(
+    () => service.analyze('t1', 'user_2', ['pa'], { question: 'q' }),   // user_2 借不到
+    (e: unknown) => e instanceof NotFoundError,
+  );
 });
 
-test('多视角真不同：两 persona 学不同内容 → opinion/keyPoints/evidence 不同', async () => {
+test('per-persona 隔离：两 persona 均 grounded、evidence 均非空、memoryId 集不相交、A 内容不入 B', async () => {
   const { service, seedMemory } = await setup();
-  seedMemory('t1', 'user_1', 'pa', '扩张 有利 市场');
-  seedMemory('t1', 'user_1', 'pb', '风险 收紧 谨慎');
-  const report = service.analyze('t1', 'user_1', ['pa', 'pb'], { question: '要不要扩张' });
+  // 查询用共同主题词「投资」，两边各含它 + 各自独有词，确保两边都命中（非空）才能真验隔离。
+  seedMemory('t1', 'user_1', 'pa', '投资 扩张 关键词ALPHA');
+  seedMemory('t1', 'user_1', 'pb', '投资 收紧 关键词BETA');
+  const report = service.analyze('t1', 'user_1', ['pa', 'pb'], { question: '投资 怎么看' });
   const [va, vb] = ['pa', 'pb'].map((id) => report.perspectives.find((p) => p.personaId === id)!);
+  assert.equal(va.kind, 'knowledge_grounded');           // 两边都真 grounded（非空集假绿）
+  assert.equal(vb.kind, 'knowledge_grounded');
+  assert.ok(va.evidence.length > 0 && vb.evidence.length > 0);  // 两边 evidence 非空
   const aIds = new Set(va.evidence.map((e) => e.memoryId));
-  assert.ok(!vb.evidence.some((e) => aIds.has(e.memoryId)));  // evidence memoryId 集不相交
+  const bIds = new Set(vb.evidence.map((e) => e.memoryId));
+  assert.ok([...aIds].every((id) => !bIds.has(id)));     // memoryId 集不相交（各自 seed）
+  assert.ok(!vb.evidence.some((e) => e.excerpt.includes('ALPHA')));  // A 独有内容不进 B
+  assert.ok(!va.evidence.some((e) => e.excerpt.includes('BETA')));   // B 独有内容不进 A
 });
 
-test('零-LLM：service 不注入任何 LLM provider 也能跑（纯确定性）+ 同输入同输出', async () => {
-  const { service, seedMemory } = await setup();  // setup 不配 llm
-  seedMemory('t1', 'user_1', 'pa', '预算 约束');
-  const r1 = service.analyze('t1', 'user_1', ['pa'], { question: '预算够吗' });
-  const r2 = service.analyze('t1', 'user_1', ['pa'], { question: '预算够吗' });
-  assert.deepEqual(r1, r2);
+test('多视角真不同：两 persona 学不同内容 → 两边 grounded、keyPoints 不同、evidence memoryId 不相交', async () => {
+  const { service, seedMemory } = await setup();
+  seedMemory('t1', 'user_1', 'pa', '投资 扩张 有利 市场');
+  seedMemory('t1', 'user_1', 'pb', '投资 风险 收紧 谨慎');
+  const report = service.analyze('t1', 'user_1', ['pa', 'pb'], { question: '投资 要不要扩张' });
+  const [va, vb] = ['pa', 'pb'].map((id) => report.perspectives.find((p) => p.personaId === id)!);
+  assert.equal(va.kind, 'knowledge_grounded');
+  assert.equal(vb.kind, 'knowledge_grounded');
+  assert.ok(va.evidence.length > 0 && vb.evidence.length > 0);
+  const aIds = new Set(va.evidence.map((e) => e.memoryId));
+  assert.ok(!vb.evidence.some((e) => aIds.has(e.memoryId)));       // memoryId 不相交
+  assert.notDeepEqual([...va.keyPoints].sort(), [...vb.keyPoints].sort());  // keyPoints 真不同
+});
+
+test('零-LLM：构造链无 LLMProvider（NoOpEmbeddingIndex + llm=undefined）也能跑 + 同输入同输出', async () => {
+  const { service, seedMemory } = await setup();  // setup 全程不配任何 LLM provider
+  seedMemory('t1', 'user_1', 'pa', '投资 预算 约束');
+  const r1 = service.analyze('t1', 'user_1', ['pa'], { question: '投资 预算够吗' });
+  const r2 = service.analyze('t1', 'user_1', ['pa'], { question: '投资 预算够吗' });
+  assert.equal(r1.perspectives[0].kind, 'knowledge_grounded');  // 真跑出 grounded（非空假绿）
+  assert.deepEqual(r1, r2);                                     // 确定性
 });
 
 test('单 persona：正常产报告，commonTopics/rankingDivergences 空', async () => {
@@ -706,17 +756,18 @@ test('单 persona：正常产报告，commonTopics/rankingDivergences 空', asyn
   assert.deepEqual(r.rankingDivergences, []);
 });
 
-test('空 personaIds → ValidationError；重复去重', async () => {
+test('空 personaIds → 校验错；空 question → 校验错；重复去重', async () => {
   const { service, seedMemory } = await setup();
-  seedMemory('t1', 'user_1', 'pa', '预算');
-  await assert.rejects(() => Promise.resolve(service.analyze('t1', 'user_1', [], { question: 'q' })), /Validation|空/);
-  const r = service.analyze('t1', 'user_1', ['pa', 'pa'], { question: '预算' });
+  seedMemory('t1', 'user_1', 'pa', '投资 预算');
+  assert.throws(() => service.analyze('t1', 'user_1', [], { question: 'q' }));       // 空 personaIds
+  assert.throws(() => service.analyze('t1', 'user_1', ['pa'], { question: '  ' }));  // 空 question
+  const r = service.analyze('t1', 'user_1', ['pa', 'pa'], { question: '投资 预算' });
   assert.equal(r.perspectives.length, 1);  // 去重
 });
 
-// setup()/seedMemory() 由实现者按既有集成测试夹具装配（in-memory sqlite + TenantOSFactory + PersonaCoreService + PersonaCoreService.create seed persona）。
+// setup()/seedMemory() 由实现者按既有集成测试夹具装配（in-memory sqlite + TenantOSFactory + PersonaCoreService）。
 ```
-> 实现者注：`setup()` 与 `seedMemory()` 沿用既有集成测试建库/建 persona/写记忆惯例（参考 `src/persona-core/persona-core-service.test.ts` 与 companion `chat.test.ts` 如何 seed persona core 与 memories）。必须真建两个 persona 并各写不同记忆，隔离断言才有意义。`setup()` 装配 `CollaborativeAnalysisService` 时的 `decisionEngineFor`：用真实工厂 `(core) => new DecisionEngine(core, new RetrievalService(core.memories, new InMemoryEmbeddingIndex(tx, clock, llmStub, embeddingModel)), llmStub, clock, logger, simConfig, ruleEngine)`——`llmStub` 是「零-LLM 测试」的关键：传一个**调用即抛错**的 LLM 桩（如 `{ complete: () => { throw new Error('零-LLM 测试禁止调 LLM') } }`），这样若 analyze 意外走了 growth/embed 路径测试立刻红（证零-LLM）；autonomous 路径不触达它 → 测试正常绿。
+> 实现者注：`setup()` 与 `seedMemory()` 沿用既有集成测试建库/建 persona/写记忆惯例（参考 `src/persona-core/persona-core-service.test.ts` 与 companion `chat.test.ts` 如何 seed persona core 与 memories）。**必须真建两 persona 各写不同记忆并各含共同主题词**（如「投资」），否则查询命不中、evidence 为空、隔离/多视角断言假绿——上面的测试已强制断言 `kind==='knowledge_grounded'` + `evidence.length>0` 堵这个假绿。`setup()` 装配 `CollaborativeAnalysisService` 时**只传 `{factory, personaCoreService, mode: new MultiPerspectiveAggregation(), config}`，不传任何 LLM provider**——service 内部用 `NoOpEmbeddingIndex` + `llm=undefined`，构造链无 LLMProvider，零-LLM 是结构性保证（不再需要 llmStub 计数验证，因为根本没有 LLM 依赖可调）。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -728,46 +779,47 @@ Expected: FAIL（`CollaborativeAnalysisService` 未定义）
 ```typescript
 // src/collaboration/collaborative-analysis-service.ts
 /** 编排：逐 persona 经 getTenantOS().getCore() 解析各自内核 → 单 persona 分析 → mode 汇聚（spec §5.3）。
- * fail-closed：未知/跨租户 persona 先经 getPersonaDetail 校验，拒 PersonaUnavailable（约束 7）。 */
+ * fail-closed：未知/跨租户 persona 先经 getPersonaDetail 校验，抛 NotFoundError NOT_FOUND_PERSONA（约束 7）。 */
 import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
-import type { CoreRhythmLayer } from '../core/core-rhythm-layer.js';
-import type { AutonomousDecisionEngine } from '../intelligence/decision-engine.js';
 import type { CollaborationMode, AnalysisRequest, CollaborativeReport } from './collaboration-types.js';
+import type { BehaviorBoundary } from '../enterprise/persona-template-catalog.js';   // 真实定义处 :23
+import type { AppConfig } from '../config/index.js';                                  // 实现者核实真实导出
 import { PersonaPerspectiveAnalyzer } from './persona-perspective-analyzer.js';
 import { retrieveMemoriesDeterministic } from '../conversation/deterministic-memory-retrieval.js';
-import { OfflineConversationResponder, type BehaviorBoundary } from '../conversation/offline-conversation-responder.js';
-import { isValidBoundary } from '../conversation/conversation-service.js';   // 复用（须先在该文件加 export）
-import { ValidationError } from '../errors/index.js';       // 已核实：src/errors/index.ts 导出
-
-/** persona 不存在/不属该 owner/跨租户（统一，不可区分，防跨租户存在性泄露）。 */
-export class PersonaUnavailableError extends Error {
-  constructor(personaId: string) { super(`persona 不可用: ${personaId}`); this.name = 'PersonaUnavailable'; }
-}
-
-/** 注入的 per-persona autonomous 决策引擎工厂。LLM/embedding 管线装配留在组合根（app.ts），
- * 使本 zero-LLM 特性代码不 import LLMProvider（照 PersonaEarningService 注入 decisionEngine 先例）。 */
-export type DecisionEngineFor = (core: CoreRhythmLayer) => AutonomousDecisionEngine;
+import { OfflineConversationResponder } from '../conversation/offline-conversation-responder.js';
+import { DecisionEngine } from '../intelligence/decision-engine.js';
+import { RuleEngine } from '../intelligence/rule-engine.js';
+import { RetrievalService } from '../intelligence/retrieval-service.js';
+import { NoOpEmbeddingIndex } from './no-op-embedding-index.js';   // Task 5 Step 0 新建（零-LLM 结构保证）
+import { isValidBoundary } from '../conversation/boundary-utils.js';   // 推荐：提取到共享模块（见上）
+import { NotFoundError, ErrorCode } from '../errors/index.js';   // 已核实：earning.ts:40 同款用法
 
 export interface CollaborativeAnalysisDeps {
   readonly factory: TenantOSFactory;
   readonly personaCoreService: PersonaCoreService;
   readonly mode: CollaborationMode;
-  readonly decisionEngineFor: DecisionEngineFor;
+  readonly config: AppConfig;   // 取 ruleEngine / intelligence.simulation 配置
 }
 
 export class CollaborativeAnalysisService {
   constructor(private readonly deps: CollaborativeAnalysisDeps) {}
 
   analyze(tenantId: string, ownerUserId: string, personaIds: readonly string[], req: AnalysisRequest): CollaborativeReport {
+    const question = req.question?.trim();
+    if (!question) throw new NotFoundError('question 不能为空', ErrorCode.VALIDATION_ERROR);  // 实现者用真实 ValidationError/ErrorCode
     const unique = [...new Set(personaIds)];
-    if (unique.length === 0) throw new ValidationError('personaIds 不能为空');
+    if (unique.length === 0) throw new NotFoundError('personaIds 不能为空', ErrorCode.VALIDATION_ERROR);
     const os = this.deps.factory.getTenantOS(tenantId);
+    const clock = os.getClock();
+    const logger = os.getLogger();
+    const noOpIndex = new NoOpEmbeddingIndex();   // 零-LLM：构造链无 LLMProvider（autonomous 不查询它）
 
-    /* 先全量校验存在+归属（fail-closed），再解析 core——避免为无效 persona 建空核（约束 7）。 */
+    /* 先全量校验存在+归属（fail-closed），再解析 core——避免为无效 persona 建空核（约束 7）。
+     * 统一 NotFoundError（照 earning.ts:40），不区分 NotFound/Forbidden，不泄露跨租户存在性。 */
     const profiles = unique.map((personaId) => {
       const detail = this.deps.personaCoreService.getPersonaDetail(tenantId, ownerUserId, personaId);
-      if (!detail) throw new PersonaUnavailableError(personaId);
+      if (!detail) throw new NotFoundError(`persona ${personaId} 不存在或调用者非 owner`, ErrorCode.NOT_FOUND_PERSONA);
       return { personaId, detail };
     });
 
@@ -779,9 +831,17 @@ export class CollaborativeAnalysisService {
       const boundaries: BehaviorBoundary[] = Array.isArray(profile.behaviorBoundaries)
         ? (profile.behaviorBoundaries as BehaviorBoundary[]).filter(isValidBoundary)
         : [];
+      const ruleEngine = this.deps.config.ruleEngine.enabled
+        ? new RuleEngine(clock, this.deps.config.ruleEngine, logger)
+        : undefined;
+      /* llm=undefined + noOpIndex → 构造链零 LLMProvider（结构性零-LLM，约束 1）。 */
+      const decisionEngine = new DecisionEngine(
+        core, new RetrievalService(core.memories, noOpIndex), undefined /* llm */, clock, logger,
+        this.deps.config.intelligence.simulation, ruleEngine,
+      );
       const analyzer = new PersonaPerspectiveAnalyzer({
         retrieve: (q) => retrieveMemoriesDeterministic(q, core.memories.getAllMemories(), (id) => core.memories.getEdgesFor(id), undefined),
-        decisionEngine: this.deps.decisionEngineFor(core),   // 注入工厂：LLM/embedding 装配在 app.ts，此处只用窄接口
+        decisionEngine,
         responder: new OfflineConversationResponder(),
         narrative,
         boundaries,
@@ -789,7 +849,7 @@ export class CollaborativeAnalysisService {
       return analyzer.analyze(personaId, req);
     });
 
-    return this.deps.mode.aggregate(req.question, perspectives);
+    return this.deps.mode.aggregate(question, perspectives);
   }
 }
 ```
@@ -800,48 +860,145 @@ export class CollaborativeAnalysisService {
 Run: `npx tsx --test src/collaboration/collaborative-analysis-service.test.ts`
 Expected: PASS（6 测试）
 
-- [ ] **Step 5: 写端点 `collaboration.ts`（仿既有 route 骨架）**
+- [ ] **Step 4: 运行 service 测试确认通过**
+
+Run: `npx tsx --test src/collaboration/collaborative-analysis-service.test.ts src/collaboration/no-op-embedding-index.test.ts`
+Expected: PASS（service 全部 + NoOp）
+
+- [ ] **Step 5: 编译 + Commit**
+
+Run: `npx tsc -p tsconfig.json --noEmit`（PASS）
+
+```bash
+git add src/collaboration/collaborative-analysis-service.ts src/collaboration/collaborative-analysis-service.test.ts src/collaboration/no-op-embedding-index.ts src/collaboration/no-op-embedding-index.test.ts src/conversation/boundary-utils.ts src/conversation/conversation-service.ts
+git commit -m "feat(collab): CollaborativeAnalysisService 编排（隔离/校验/结构性零-LLM）+ NoOpEmbeddingIndex + 提取 boundary-utils"
+```
+
+---
+
+## Task 6: HTTP 端点 `/collaboration/analyze` + 组合根注册 + route 测试
+
+**Files:**
+- Create: `src/server/routes/collaboration.ts`
+- Modify: `src/server/app.ts`（装配 service + 注册路由）
+- Test: `src/server/routes/collaboration.test.ts`（HTTP 层：鉴权门 + body 校验 + 404 映射 + 成功信封）
+
+**Interfaces:**
+- Consumes: `CollaborativeAnalysisService`（Task 5）、`MultiPerspectiveAggregation`（Task 4）、既有 fastify 注册/鉴权骨架（照 `decisions.ts` / companion route）。
+- Produces: `registerCollaborationRoutes(app, service)` + 已注册的 `POST /api/v1/collaboration/analyze`。
+
+**鉴权/身份（照既有 companion/decisions route 真实惯例）：**
+- 从鉴权上下文取 `tenantId` + `ownerUserId`（`request.user.sub`）；**必须复用既有「仅个人用户会话」访问门**（照 `chat.ts:118 assertCompanionAccess`：拒 `apikey:`/`role==='service'` 主体）——否则 API-key 主体可越权。
+- body schema：`question` 非空字符串、`personaIds` 非空字符串数组、`alternatives?` 字符串数组——用项目既有 fastify schema 校验方式。
+- 错误码映射走既有全局 error handler：`NotFoundError`→404、校验错→400（service 已抛 `NotFoundError`/校验错，端点不重复判）。
+
+- [ ] **Step 1: 写 route 失败测试（HTTP 层，用既有 app 测试夹具 inject）**
+
+```typescript
+// src/server/routes/collaboration.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+// 用既有 app/server 测试夹具（照 decisions.test.ts / companion route 测试如何 build app + 发 JWT + inject）。
+
+test('未认证 → 401', async () => {
+  const { app } = await buildTestApp();
+  const res = await app.inject({ method: 'POST', url: '/api/v1/collaboration/analyze', payload: { question: 'q', personaIds: ['pa'] } });
+  assert.equal(res.statusCode, 401);
+});
+
+test('API-key/service 主体 → 403（复用 companion 访问门）', async () => {
+  const { app, apiKeyToken } = await buildTestApp();
+  const res = await app.inject({ method: 'POST', url: '/api/v1/collaboration/analyze', headers: { authorization: `Bearer ${apiKeyToken}` }, payload: { question: 'q', personaIds: ['pa'] } });
+  assert.equal(res.statusCode, 403);
+});
+
+test('空 personaIds / 空 question → 400', async () => {
+  const { app, userToken } = await buildTestApp();
+  const bad1 = await app.inject({ method: 'POST', url: '/api/v1/collaboration/analyze', headers: { authorization: `Bearer ${userToken}` }, payload: { question: 'q', personaIds: [] } });
+  assert.equal(bad1.statusCode, 400);
+  const bad2 = await app.inject({ method: 'POST', url: '/api/v1/collaboration/analyze', headers: { authorization: `Bearer ${userToken}` }, payload: { question: '', personaIds: ['pa'] } });
+  assert.equal(bad2.statusCode, 400);
+});
+
+test('未知 persona → 404', async () => {
+  const { app, userToken } = await buildTestApp();
+  const res = await app.inject({ method: 'POST', url: '/api/v1/collaboration/analyze', headers: { authorization: `Bearer ${userToken}` }, payload: { question: 'q', personaIds: ['nope'] } });
+  assert.equal(res.statusCode, 404);
+});
+
+test('成功 → 200，信封 {data: CollaborativeReport}，requiresHumanApproval=true', async () => {
+  const { app, userToken, seedPersonaWithMemory } = await buildTestApp();
+  seedPersonaWithMemory('pa', '投资 预算 约束');
+  const res = await app.inject({ method: 'POST', url: '/api/v1/collaboration/analyze', headers: { authorization: `Bearer ${userToken}` }, payload: { question: '投资 预算够吗', personaIds: ['pa'] } });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.data.requiresHumanApproval, true);
+  assert.equal(body.data.modeId, 'multi_perspective');
+});
+```
+> 实现者注：`buildTestApp()` / `userToken` / `apiKeyToken` / `seedPersonaWithMemory()` 照既有 route 测试夹具（如 `src/server/routes/decisions.test.ts`、companion route 测试）如何 build 真实 fastify app、签发不同主体 JWT、seed persona——**必须真发 HTTP inject**，非直接调 service（HTTP 层的鉴权门/schema/错误映射只有走 inject 才被验证）。
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `npx tsx --test src/server/routes/collaboration.test.ts`
+Expected: FAIL（路由未注册 / 未定义）
+
+- [ ] **Step 3: 写端点 `collaboration.ts`**
 
 ```typescript
 // src/server/routes/collaboration.ts
 /** POST /api/v1/collaboration/analyze —— 多数字人协同分析（spec §5.4）。
- * 鉴权/租户从上下文取，校验/降级全在 service（端点只做 body schema + 传参）。 */
-import type { FastifyInstance } from 'fastify';
+ * 鉴权/租户从上下文取 + 复用 companion「仅个人用户会话」访问门；校验/降级全在 service。 */
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { CollaborativeAnalysisService } from '../../collaboration/collaborative-analysis-service.js';
-// 实现者：照既有 route（如 decisions.ts / companion）的注册签名、schema 校验、tenantId/ownerUserId 提取惯例。
+import { AuthorizationError, ErrorCode } from '../../errors/index.js';
+import type { JwtPayload } from '../../auth/types.js';   // 实现者核实真实类型路径
+
+/** 复用 companion 访问门（照 chat.ts:118）：拒 API-key / service 主体。 */
+function assertUserSession(request: FastifyRequest): void {
+  const user = request.user as JwtPayload | undefined;
+  if (user?.sub?.startsWith('apikey:') || user?.role === 'service') {
+    throw new AuthorizationError('协同分析仅支持个人用户会话', ErrorCode.AUTH_INSUFFICIENT_ROLE);
+  }
+}
+
+const bodySchema = {
+  type: 'object',
+  required: ['question', 'personaIds'],
+  properties: {
+    question: { type: 'string', minLength: 1 },
+    personaIds: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
+    alternatives: { type: 'array', items: { type: 'string' } },
+  },
+} as const;
 
 export function registerCollaborationRoutes(app: FastifyInstance, service: CollaborativeAnalysisService): void {
-  app.post('/api/v1/collaboration/analyze', async (request, reply) => {
-    const { question, alternatives, personaIds } = request.body as {
-      question: string; alternatives?: string[]; personaIds: string[];
-    };
-    const tenantId = request.tenantId;                    // 照既有 route 提取
-    const ownerUserId = (request.user as { sub: string }).sub;
+  app.post('/api/v1/collaboration/analyze', { schema: { body: bodySchema } }, async (request, reply) => {
+    assertUserSession(request);
+    const { question, alternatives, personaIds } = request.body as { question: string; alternatives?: string[]; personaIds: string[] };
+    const tenantId = request.tenantId;
+    const ownerUserId = (request.user as JwtPayload).sub;
     const report = service.analyze(tenantId, ownerUserId, personaIds, { question, alternatives });
-    return reply.send({ data: report });                  // 照既有信封惯例（单键 {data} 前端自动解包）
+    return reply.send({ data: report });   // 单键 {data} 信封（前端自动解包）
   });
 }
 ```
-> 实现者注：body schema 校验（question 非空字符串、personaIds 非空数组）用项目既有校验方式（fastify schema 或手动）；错误码映射（PersonaUnavailable→404、ValidationError→400）照既有 error handler 惯例。
+> 实现者注：`AuthorizationError`/`ErrorCode.AUTH_INSUFFICIENT_ROLE`/`JwtPayload`/fastify body schema 写法照真实仓库（`chat.ts` + 既有 route）；schema 校验失败由 fastify 映射 400，`AuthorizationError`→403、`NotFoundError`→404 由全局 handler。
 
-- [ ] **Step 6: 在 app.ts 注册路由**
+- [ ] **Step 4: 在 app.ts 装配 + 注册**
 
-在 `src/server/app.ts` 找到其他 `registerXxxRoutes(app, ...)` 集中注册处，仿照装配 `CollaborativeAnalysisService`：
-- `factory` = 已有 tenantFactory；`personaCoreService` = 已有实例；`mode = new MultiPerspectiveAggregation()`。
-- `decisionEngineFor` = `(core) => new DecisionEngine(core, new RetrievalService(core.memories, earningEmbeddingIndex /* 复用已有 InMemoryEmbeddingIndex，仅为构造满足、autonomous 不查询 */), conversationLlmRouter, deps.os.getClock(), deps.os.getLogger(), config.intelligence.simulation, new RuleEngine(deps.os.getClock(), config.ruleEngine, deps.os.getLogger()))`——**照 `app.ts:679` earning 先例同款构造**（复用同一 `earningEmbeddingIndex` 或新建一个 `InMemoryEmbeddingIndex`）。autonomous 路径不查询 embedding/不调 llmRouter，零 LLM 成立；`DecisionEngine` 实现 `AutonomousDecisionEngine` 结构兼容，工厂返回类型收窄为窄接口即可。
-- 注意：`earningEmbeddingIndex` 绑的是 `deps.os.core.memories`（default persona）；协同用的是 `core.memories`（per-persona）——故 `RetrievalService` 须**每 persona 新建**绑 `core.memories`（不能复用 earning 那个绑 default 的 RetrievalService 实例），但 `InMemoryEmbeddingIndex` 本身（autonomous 不查询）可复用或每次新建，均可。
-- 最后 `registerCollaborationRoutes(app, service)`。
+在 `src/server/app.ts` 集中注册处装配 `CollaborativeAnalysisService`：`{ factory: tenantFactory, personaCoreService: <既有实例>, mode: new MultiPerspectiveAggregation(), config }`，然后 `registerCollaborationRoutes(app, collaborativeAnalysisService)`。service 内部自建 per-persona DecisionEngine（NoOpEmbeddingIndex + llm=undefined），**app.ts 无需传 LLM/embedding**——组合根干净。
 
-- [ ] **Step 7: 编译 + service 测试 + 相关 route 测试全绿**
+- [ ] **Step 5: route 测试 + 全 collaboration 测试 + 编译全绿**
 
-Run: `npx tsc -p tsconfig.json --noEmit && npx tsx --test src/collaboration/*.test.ts src/collaboration/modes/*.test.ts`
-Expected: PASS（Task 2-5 全部）
+Run: `npx tsc -p tsconfig.json --noEmit && npx tsx --test src/collaboration/*.test.ts src/collaboration/modes/*.test.ts src/server/routes/collaboration.test.ts`
+Expected: PASS（Task 2-6 全部）
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/collaboration/collaborative-analysis-service.ts src/collaboration/collaborative-analysis-service.test.ts src/server/routes/collaboration.ts src/server/app.ts
-git commit -m "feat(collab): CollaborativeAnalysisService 编排 + /collaboration/analyze 端点 + E2E（隔离/校验/零-LLM）"
+git add src/server/routes/collaboration.ts src/server/routes/collaboration.test.ts src/server/app.ts
+git commit -m "feat(collab): /collaboration/analyze 端点（个人会话门/body 校验/404 映射）+ 组合根注册 + HTTP 测试"
 ```
 
 ---
@@ -860,10 +1017,21 @@ Expected: EXIT 0（typecheck→build→unit+integration→contract→packages→
 
 ## Self-Review（writing-plans 自检）
 
-**Spec 覆盖**：§5.1 analyzer→Task 3；§5.2 mode+aggregation→Task 4；§5.3 service→Task 5；§5.4 端点→Task 5；§6 不持久化（无迁移 task，正确）；§7 可验证性 8 条→分散在 Task 3/4/5 测试；共享类型→Task 1；tokenize/keyPoints→Task 2。全覆盖。
+**Spec 覆盖**：§5.1 analyzer→Task 3；§5.2 mode+aggregation→Task 4；§5.3 service→Task 5；§5.4 端点→Task 6；§6 不持久化（无迁移 task，正确）；§7 可验证性 8 条→分散在 Task 3/4/5/6 测试；共享类型→Task 1；keyPoints→Task 2。全覆盖。
 
-**Placeholder 扫描**：无 TBD/TODO；每个 code step 有完整代码；测试有真实断言。setup()/seedMemory() 明确标「照既有集成测试夹具装配」并给出参考文件（非占位，是复用既有惯例的合理委托）。
+**Task 拆分（6 task，Codex 复审 #7 采纳）**：Task 1 类型 → 2 keyPoints → 3 analyzer → 4 aggregation → **5 service（+NoOp+boundary-utils，真实隔离/零-LLM 测试）** → **6 route+组合根+HTTP 测试**。依赖顺序 1→2→3→4→5→6，每 task 独立可测/可 review。
+
+**Placeholder 扫描**：无 TBD/TODO；每个 code step 有完整代码；测试有真实断言且**堵了假绿**（隔离/多视角测试强制 `kind==='knowledge_grounded'` + `evidence.length>0`；route 测试真 HTTP inject 验鉴权门/schema/错误映射）。`setup()`/`buildTestApp()` 明确标「照既有集成测试夹具装配」并给参考文件（非占位，是复用既有惯例的合理委托）。
 
 **类型一致性**：`PersonaPerspective`（Task 1）字段贯穿 Task 3 产、Task 4 消；`retrievedCount`/`evidence`/`keyPoints`/`rankedAlternatives{alternative,score,rank}` 命名跨 task 一致；`evaluateAutonomous` 返回 `rankedOptions[{alternative,rank,overallScore}]`→映射 `{alternative,score,rank}` 一致；`CollaborationMode.aggregate(question, perspectives)` 签名 Task 4 实现与 Task 5 调用一致。
 
-**已知实现期待核实点**（非占位，是「以仓库为准」的诚实标注）：`ValidationError`/`RuleEngine`/`RetrievalService`/`AppConfig` 导出路径、`detail.profile.behaviorBoundaries` 字段名+`isValidBoundary` 过滤器、`RetrievalService` embeddingIndex 参数可选性、fastify route 注册与 error handler 惯例——均给了参考文件（`decisions.ts:127-129`、`conversation-service.ts:600-610`、`chat.ts:144-152`），实现者照真实签名对齐。
+**已核实的真实契约（Codex 复审 1-7 全采纳，均对真实代码验证）**：
+- `tokenize` 已导出于 `conversation-knowledge-retriever.ts:185`（非 deterministic 文件）→ Task 2 直接 import，不改任何文件。
+- `BehaviorBoundary` 定义+导出于 `enterprise/persona-template-catalog.ts:23`（非 responder）→ Task 3/5 从此 import。
+- `DecisionEngine.llm` 参数可选（`decision-engine.ts:67` `LLMProvider | undefined`）+ autonomous 不调 `this.retrieval`（`:140` 只 growth）→ 用 `NoOpEmbeddingIndex`（Task 5 Step 0a）+ `llm=undefined` = 构造链零 LLMProvider（结构性零-LLM）。
+- persona 校验失败用 `NotFoundError(..., ErrorCode.NOT_FOUND_PERSONA)`（`earning.ts:40` 先例）→ 映射 404，统一不区分 NotFound/Forbidden 天然不泄露跨租户存在性；**不用自定义 Error**（会成 500）。
+- narrative/boundaries 同源 `getPersonaDetail().profile.{narrative,behaviorBoundaries}`（`conversation-service.ts:604-610`），非 core。
+- `isValidBoundary` 局部于 `conversation-service.ts:758` → Task 5 Step 0b 提取到 `boundary-utils.ts` 共享（避免耦合整个 conversation-service）。
+- commonTopics 首版 = 同规范化 keyPoint token 被 ≥2 grounded persona 提及（规则=代码=测试一致，不写「重叠系数」）。
+
+**仍以仓库为准的次要点**（给了参考文件，实现者对齐即可）：`EmbeddingIndex` 接口完整成员（`embedding-index.ts:27`）、`AppConfig`/`AuthorizationError`/`JwtPayload` 导出路径、fastify body-schema 与 route 测试夹具惯例（`decisions.test.ts` / companion route 测试）。

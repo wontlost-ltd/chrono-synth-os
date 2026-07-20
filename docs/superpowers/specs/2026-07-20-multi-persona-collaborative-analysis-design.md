@@ -141,7 +141,7 @@ export interface CollaborativeReport {
   requiresHumanApproval: true;                          // 报告是参考，含动作须人工采纳（约束 6，入数据契约非仅 prose）
 }
 ```
-- **commonTopics 判定（确定性）**：只对 `kind==='knowledge_grounded'` 的 perspective 的 keyPoints 做关键词重叠（honest_offline/boundary 排除）；重叠系数（非 Jaccard，照 memory `companion-associative-memory`）≥ 阈值 = 共同话题（记 raisedBy）。**诚实命名**：这是「共同**关注的话题**」，不是「观点共识」——关键词重叠证明不了立场一致（「支持扩投」vs「反对扩投」话题重合却对立）。具体阈值 + keyPoints 提取启发式在 writing-plans/Task 定义并测。
+- **commonTopics 判定（确定性，首版）**：只对 `kind==='knowledge_grounded'` 的 perspective 的 keyPoints（Task 2 tokenize 产的规范化 token）计数（honest_offline/boundary 排除）；**同一 keyPoint token 被 ≥2 个 grounded persona 提到即入共同话题**（记 raisedBy）。**诚实命名**：这是「共同**关注的话题**」，不是「观点共识」——关键词重叠证明不了立场一致（「支持扩投」vs「反对扩投」话题重合却对立）。首版按 token 相等分组（keyPoints 已规范化），**不做集合重叠系数/阈值**（那是后续增强，若加须同补阈值测试——保证规则=代码=测试一致）。
 - **rankingDivergences（带 alternatives 时的强信号）**：同一 alternative 被不同 persona 的 rankedAlternatives 排到不同位置——这是**可审计的结构化分歧信号**（比关键词可靠）。列出每候选各 persona 的 rank，相反排序（一个排首、一个排末）显式标注。
 - **evidenceBrief（确定性拼装，非 LLM，非新综合）**：模板拼装——列共同话题（多视角关注=值得注意）+ 排序分歧（供人工权衡）+ 各 persona 的 grounded 证据引用。**不生成新观点/新结论**，只是把已有证据结构化呈现供人工决策（Codex 复审要求：不称「综合建议」）。
 - **status / groundingNote（统一判据）**：唯一门槛 = **有几个 `kind==='knowledge_grounded'` 的 perspective**（下称 grounded 视角数 G；honest_offline/boundary 不计入）。
