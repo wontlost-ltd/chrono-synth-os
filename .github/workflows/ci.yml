@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           # No `cache: npm` — see commit fadcec4: setup-node npm caching is
@@ -56,7 +56,7 @@ jobs:
     needs: build-and-test
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           # No `cache: npm` — same rationale as build-and-test (see commit fadcec4).
@@ -103,7 +103,7 @@ jobs:
     needs: build-and-test
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
       - run: npm ci
@@ -197,7 +197,7 @@ jobs:
       CHRONO_DB_CONNECTION_STRING: postgres://test:test@localhost:5432/chrono_test
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: npm
