@@ -368,24 +368,31 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 ---
 
-## Task 3: 升级 inventory 到 semantic sink 级（Codex 第 7 轮粒度——非全 edge）
+## Task 3: inventory 升级 semantic-flow contract 级（Codex 第 9 轮——聚合契约 + 四态 disposition + reviewStatus）
 
-**Files:**
-- Modify: `src/storage/db-access-inventory.ts`
-- Test: `src/test/unit/db-access-inventory-completeness.test.ts`
+> Codex 裁决：628 unresolved-carrier 是 Phase 0 真实工作面（app.ts 组合根 204 + route 注册各 14 + OS 内部 layer），非 scanner bug。Plan 0 终态 = 全部 sink 登记 + 每条 unresolved 显式分类（`reviewStatus='classified'`）+ 有 disposition + proof-obligation，wiringStatus=`planned`；**不强求 unresolved=0**（那是 Plan 3 verified）。但**禁「scanner 不知→planned→绿」退化**：`unreviewed` 必须 0。
 
-**Interfaces:**
-- `DbAccessPoint` 加 `readonly disposition: DbAccessDisposition`（**必填**）+ `readonly wiringStatus: 'planned'|'wired'|'verified'`；id 用 edge 级格式（Task 2）。
+**Files:** Modify `src/storage/db-access-inventory.ts`；Test `src/test/unit/db-access-inventory-completeness.test.ts`
 
-- [ ] **Step 1: 写完整性失败测试**（每条目 disposition+wiringStatus 必填非空；已知 sink `app-services`/`task-queue`/`legal-hold-service`/`nudge-push-bridge`/`main-observability-worker`/`settlement-reconciliation-worker`/`dual-write-flush-worker`/`media-retention-worker`/`runtime-recovery-worker`/`auth-service` 都在册；buildAppServices 非 `explicit-per-request`；`known-limitation` disposition 的条目断言其 note 说明「不可能错-shard」的理由）
+**接口升级（Codex 第 9 轮状态模型）**：`DbAccessPoint` 拆多维：
+```typescript
+readonly provenanceStatus: 'resolved' | 'unresolved';   // scanner 是否机械证明来源
+readonly reviewStatus: 'classified';                     // Plan 0 是否已定性（Plan 0 全须 classified，禁 unreviewed）
+readonly disposition: 'requires-resolver-rewire' | 'resolved-boundary-unproven' | 'coordinator' | 'root-only' | 'terminal-escape' | 'resolver' | 'mixed-scope' | 'per-shard-worker' | 'known-limitation';
+readonly wiringStatus: 'planned' | 'wired' | 'verified'; // Plan 0 全 planned
+readonly proofObligation?: string;                        // resolved-boundary-unproven / requires-rewire 的后续证明义务
+readonly coveredEdgeIds: readonly string[];               // 该 flow contract 精确覆盖的 syntax edge id（精确覆盖非通配）
+readonly expectedCount: number;                           // 覆盖 edge 数（fingerprint，变则红）
+```
+**聚合规则（Codex：按 semantic flow contract 聚合，禁 owner::* 通配）**：一条 inventory 记录聚合多个同语义 syntax edge，但**必须列精确 `coveredEdgeIds` + `expectedCount`**——新增未覆盖 edge→红、count 变→红、**不因同属 `app.ts#createApp` 自动继承旧处置**。聚合键=file+owner+target+param+carrier 类型+disposition 类。
 
-- [ ] **Step 2: 运行确认失败**
+**628 unresolved 四态分类**：`requires-resolver-rewire`（app.ts 组合根/route 用 host db 造 carrier，Plan 1/2/3 必改）/ `resolved-boundary-unproven`（语义来自 getTenantOS/getCore 但 scanner 跨函数跟不到，proofObligation=「Plan 1-3 接线时补品牌/契约/2-shard 测试」）/ `root-only`·`coordinator`（确允许 host/协调库 scope）/ `terminal-escape`（跨模块/timer/container 逃逸）。
 
-- [ ] **Step 3: 升级 inventory**（`disposition` 必填 union（resolver/coordinator/mixed-scope/per-shard-worker/root-only/known-limitation）+ `wiringStatus`（Plan 0 全填 `planned`）+ 纠正 buildAppServices 为 longlived-root-capture + 逐成员拆条目 + 新增 §3-A0 #4-7 全部已知 sink，disposition 照 spec 定性：Auth=mixed-scope、跨租户 worker=per-shard-worker、buildAppServices 成员=resolver）
-
-- [ ] **Step 4: 运行确认通过**
-
-- [ ] **Step 5: Commit** — `feat(shard): inventory 升级 sink 级（disposition 必填+wiringStatus+登记全部已知 sink+纠正 buildAppServices)`
+- [ ] **Step 1: 跑 scanner dump 全 semantic sink + unresolved-carrier，按 owner-pattern 聚类分四态**（app.ts createApp / register*Routes / ChronoSynthOS 内部 layer / worker——每类审代表样本定 disposition）
+- [ ] **Step 2: 写完整性失败测试**（每条目 provenanceStatus/reviewStatus/disposition/wiringStatus 必填；reviewStatus 全 `classified`（无 unreviewed）；`resolved-boundary-unproven`/`requires-resolver-rewire` 有 proofObligation；每 flow contract 有 coveredEdgeIds+expectedCount；已知 sink（app-services/task-queue/legal-hold/nudge-push/main-observability-worker/settlement/dual-write-flush/media-retention/runtime-recovery/auth）在册）
+- [ ] **Step 3: 运行确认失败**
+- [ ] **Step 4: 升级 inventory**（按聚合契约登记全 sink + 628 unresolved 四态，coveredEdgeIds 精确、wiringStatus:planned）
+- [ ] **Step 5: 运行确认通过 + Commit** — `feat(shard): inventory 升级 semantic-flow contract（四态 disposition+reviewStatus+精确 coveredEdgeIds+proofObligation）`
 
 ---
 
@@ -396,13 +403,15 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 - Modify: `scripts/check-db-access-ratchet.mjs`（调 evaluateGate）
 - Test: `src/test/unit/db-sink-scanner.test.ts`
 
-**门契约（Codex 第 7+8 轮——含 carrier provenance）**：`evaluateGate` pass iff 五者全成立：
-1. **semantic sink 完整**：所有 A 接收点（直接 DB/UoW + carrier-param/field）+ 内部 store 直接 sink + terminal-escape 都有精确 inventory id + disposition + wiringStatus（`unregisteredSemanticSinks === []`）。
-2. **传播可归因**：每条非 terminal B edge ∈ {linked-to-sink, linked-to-resolved-carrier, ephemeral}（`unlinkedPropagationEdges === []`）。
-3. **无 unknown**：`unknownEdges === []`。
-4. **terminal-escape 有处置**：`terminalEscapesWithoutDisposition === []`。
-5. **carrier 来源已解析**：每个 carrier 传播来源 = 登记的 resolver/factory producer（getTenantOS/getCore），`unresolvedCarrierSources === []`（`new ChronoSynthOS()`/`new CognitiveMemoryGraph(hostDb)`/未知来源 → 红）。
-形式：`gate passes iff unknownEdges===[] && unregisteredSemanticSinks===[] && unlinkedPropagationEdges===[] && terminalEscapesWithoutDisposition===[] && unresolvedCarrierSources===[]`。**保留原 file 级 DB ratchet**（覆盖直接 query/execute/transaction 使用面）。carrier 内部 `.tx` paths 存证据不逐条登记；直接构造 carrier/store 的 db 来源仍走正常 sink 检查（不被 carrier 压缩吞掉）。
+**门契约（Codex 第 9 轮——两级门 planned/verified）**：`evaluateGate(edges, inventory, {requiredLevel})`。
+**Plan 0 = `planned` 级（inventory-complete）** pass iff：
+1. `unknownEdges === []`（无 unknown-boundary）。
+2. `unregisteredSemanticSinks === []`（所有 A 接收点 + 内部 store 直接 sink + terminal-escape 都登记）。
+3. `uncoveredPropagationEdges === []`（每条传播 edge ∈ {linked-to-sink, linked-to-resolved-carrier, ephemeral, 已登记 terminal-escape, **已审阅登记的 unresolved-carrier**}）。
+4. `unreviewedUnresolvedCarriers === []`（**关键——禁「scanner 不知→planned→绿」退化**：每条 unresolved-carrier 必须 reviewStatus=classified + 有 disposition + proofObligation）。
+5. `invalidInventoryGroups === []`（每 flow contract 的 coveredEdgeIds 精确覆盖、expectedCount fingerprint 匹配；新增未覆盖 edge / count 变 → 红；无 owner::* 通配）。
+**Plan 3 = `verified` 级（activation-ready，本 Plan 不跑，仅定义）**：危险 sink 全 `wiringStatus=verified`；`requires-resolver-rewire` 全完成；`resolved-boundary-unproven` 有等价强度证明（品牌/显式 resolver 契约/2-shard 隔离测试）；terminal-escape 全验证；unknown=0。
+**保留原 file 级 DB ratchet**（覆盖直接 query/execute/transaction）。carrier 内部 `.tx` 存证据不逐条登记；直接构造 carrier/store 的 db 来源仍走正常 sink 检查。
 
 - [ ] **Step 1: 写门测试**：`evaluateGate(scanProductionDbCapabilityEdges(), readInventoryIds())` 返回四类空集诊断结构；各类非空时含具体 id/file/kind 诊断。Program 健康门测（sentinel 缺→抛）。
 - [ ] **Step 2: 运行——预期先红，暴露真实 semantic sink + terminal-escape**：把 A 点 + terminal-escape 登进 inventory（Task 3 续补，wiringStatus:planned）；B 传播 edge 确认 linked-to-sink/ephemeral（linked 的 sinkId 指向已登记 A 点）→ 至绿。**红时补 inventory / 修 classifyPropagation 归因（若某 B edge 应 linked 却判 unknown 是归因 bug），绝不加白名单绕过。** unknown 若因扫描器漏归因→回 Task 2.5 修，非登记成 known-limitation。
