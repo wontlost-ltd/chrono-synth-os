@@ -35,6 +35,7 @@ import { loadConfig } from '../../config/schema.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { registerCompanionLearnGithubRoutes } from '../../server/routes/companion/learn-github.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { MockPerceptionProvider } from '../../perception/sources/mock-perception-provider.js';
 import type { PerceptionProvider } from '../../perception/perception-provider.js';
 import type {
@@ -70,7 +71,7 @@ async function mountLearnGithub(
     (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
     (req as { tenantId?: string }).tenantId = 'default';
   });
-  registerCompanionLearnGithubRoutes(local, os, undefined, undefined, undefined, injected);
+  registerCompanionLearnGithubRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), injected });
   await local.ready();
   return local;
 }

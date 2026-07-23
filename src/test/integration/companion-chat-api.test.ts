@@ -18,6 +18,7 @@ import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { CompanionChatResultV1Schema } from '@chrono/contracts';
 import { registerCompanionChatRoutes } from '../../server/routes/companion/chat.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { ResponseTemplateStore } from '../../storage/response-template-store.js';
 
@@ -37,7 +38,7 @@ async function localChatApp(os: ChronoSynthOS): Promise<FastifyInstance> {
     (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
     (req as { tenantId?: string }).tenantId = 'default';
   });
-  registerCompanionChatRoutes(local, os, undefined);
+  registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()) });
   await local.ready();
   return local;
 }
@@ -56,7 +57,7 @@ async function variabilityOffChatApp(os: ChronoSynthOS): Promise<FastifyInstance
     (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
     (req as { tenantId?: string }).tenantId = 'default';
   });
-  registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+  registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), config: offConfig });
   await local.ready();
   return local;
 }
@@ -391,7 +392,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       (req as { tenantId?: string }).tenantId = 'default';
     });
     const { registerCompanionChatRoutes } = await import('../../server/routes/companion/chat.js');
-    registerCompanionChatRoutes(local, os, undefined);
+    registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()) });
     await local.ready();
     const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你好' } });
     assert.equal(res.statusCode, 403, 'API-key/service 主体被拒');
@@ -775,7 +776,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
       (req as { tenantId?: string }).tenantId = 'default';
     });
-    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), config: offConfig });
     await local.ready();
     try {
       const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '你觉得 flat white 好喝吗' } });
@@ -875,7 +876,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
       (req as { tenantId?: string }).tenantId = 'default';
     });
-    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), config: offConfig });
     await local.ready();
     try {
       /* 关闭后连问多轮，脚注恒为原文（只有 1 种）。 */
@@ -934,7 +935,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
       (req as { tenantId?: string }).tenantId = 'default';
     });
-    registerCompanionChatRoutes(local, os, undefined, undefined, relOffConfig);
+    registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), config: relOffConfig });
     await local.ready();
     try {
       const notes = new Set<string>();
@@ -1043,7 +1044,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       (req as { user?: unknown }).user = { sub: 'user_1', planId: 'free', role: 'user' };
       (req as { tenantId?: string }).tenantId = 'default';
     });
-    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), config: offConfig });
     await local.ready();
     try {
       await local.inject({ method: 'POST', url: '/api/v1/companion/me/chat', payload: { message: '我最近迷上了清晨跑步' } });
@@ -1355,7 +1356,7 @@ describe('ChronoCompanion 对话 API 集成测试', () => {
       jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
       companion: { conversationMemoryEnabled: false },
     });
-    registerCompanionChatRoutes(local, os, undefined, undefined, offConfig);
+    registerCompanionChatRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), config: offConfig });
     await local.ready();
     try {
       const before = os.core.memories.getAllMemories().size;
