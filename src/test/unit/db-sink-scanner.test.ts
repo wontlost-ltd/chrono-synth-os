@@ -18,7 +18,10 @@ import {
   enumerateDbCapabilityEdges,
   collectUnregisteredEdges,
   classifyPropagation,
+  evaluateGate,
+  readInventory,
 } from '../../../scripts/db-sink-scanner.mjs';
+type InventoryContract = import('../../../scripts/db-sink-scanner.d.mts').InventoryContract;
 
 /**
  * 从 type-alias.ts 取某个 export 声明的**目标类型**：
@@ -415,4 +418,134 @@ test('④内部 store ctor 直接 sink 仍在 edge 集（CognitiveMemoryGraph.ct
     directStoreArg,
     'new CognitiveMemoryGraph(hostDb()) 的 hostDb 实参是直接 UoW sink（不被 carrier 压缩吞）',
   );
+});
+
+/* ============================================================================
+ * Task 3/4：semantic-flow contract 门（evaluateGate，planned 级）+ 变异自证。
+ *
+ * evaluateGate(productionEdges, inventory, {requiredLevel:'planned'}) 断言五条空集：
+ *   unknownEdges / unregisteredSemanticSinks / uncoveredPropagationEdges /
+ *   unreviewedUnresolvedCarriers / invalidInventoryGroups。
+ * Plan 0 只跑 planned 级；pass iff 五条全空。变异自证证明门真收紧（非空过）。
+ * ==========================================================================*/
+
+/** 当前 inventory（AST 解析）——所有门测试共享。 */
+let _inv: InventoryContract[] | undefined;
+function inventory(): InventoryContract[] {
+  if (!_inv) _inv = readInventory();
+  return _inv;
+}
+
+test('evaluateGate(planned)：当前 inventory 下五条诊断全空 → pass（Plan 0 门通过）', () => {
+  const r = evaluateGate(productionEdges(), inventory(), { requiredLevel: 'planned' });
+  assert.equal(r.unknownEdges.length, 0, `unknownEdges 非空：${JSON.stringify(r.unknownEdges.slice(0, 5))}`);
+  assert.equal(
+    r.unregisteredSemanticSinks.length,
+    0,
+    `unregisteredSemanticSinks 非空：${JSON.stringify(r.unregisteredSemanticSinks.slice(0, 5))}`,
+  );
+  assert.equal(
+    r.uncoveredPropagationEdges.length,
+    0,
+    `uncoveredPropagationEdges 非空：${JSON.stringify(r.uncoveredPropagationEdges.slice(0, 5))}`,
+  );
+  assert.equal(
+    r.unreviewedUnresolvedCarriers.length,
+    0,
+    `unreviewedUnresolvedCarriers 非空：${JSON.stringify(r.unreviewedUnresolvedCarriers.slice(0, 5))}`,
+  );
+  assert.equal(
+    r.invalidInventoryGroups.length,
+    0,
+    `invalidInventoryGroups 非空：${JSON.stringify(r.invalidInventoryGroups.slice(0, 5))}`,
+  );
+  assert.equal(r.pass, true, 'planned 门应通过');
+});
+
+test('门诊断结构：各类非空时含具体 id/file/kind（缺 inventory → 大量 unregistered/uncovered/unreviewed）', () => {
+  // 传空 inventory → 门应报出全部 storing sink + escape 未登记、传播未覆盖、unresolved 未审阅。
+  const r = evaluateGate(productionEdges(), [], { requiredLevel: 'planned' });
+  assert.equal(r.pass, false, '空 inventory 门必红');
+  assert.ok(r.unregisteredSemanticSinks.length > 0, '空 inventory 应报大量 unregisteredSemanticSinks');
+  assert.ok(r.unreviewedUnresolvedCarriers.length > 0, '空 inventory 应报大量 unreviewedUnresolvedCarriers');
+  // 诊断项含具体定位信息。
+  const s = r.unregisteredSemanticSinks[0];
+  assert.ok(s.id && s.file && s.kind, 'unregisteredSemanticSinks 项应含 id/file/kind');
+});
+
+test('变异自证①：从某 flow contract 删一个 coveredEdgeId → 该 edge uncovered/count 不匹配 → 门红', () => {
+  const inv = inventory();
+  // 找一个覆盖 ≥2 edge 的 flow contract（删一个后仍是合法数组）。
+  const victim = inv.find((c) => Array.isArray(c.coveredEdgeIds) && c.coveredEdgeIds.length >= 2);
+  assert.ok(victim, 'inventory 应有覆盖 ≥2 edge 的 flow contract 供变异');
+  const removed = victim!.coveredEdgeIds![0];
+  // 深拷贝 + 删一个 id（expectedCount 不变，制造 fingerprint 不匹配 + 该 edge uncovered）。
+  const mutated: InventoryContract[] = inv.map((c) =>
+    c === victim
+      ? { ...c, coveredEdgeIds: c.coveredEdgeIds!.filter((id) => id !== removed) }
+      : { ...c, coveredEdgeIds: c.coveredEdgeIds ? [...c.coveredEdgeIds] : undefined },
+  );
+  const r = evaluateGate(productionEdges(), mutated, { requiredLevel: 'planned' });
+  assert.equal(r.pass, false, '删一个 coveredEdgeId 后门必须红（证精确覆盖非通配）');
+  // 该 id 变 uncovered：出现在 unregistered 或 uncovered 或 unreviewed 之一；且 count 不匹配触发 invalidInventoryGroups。
+  const flaggedElsewhere =
+    r.unregisteredSemanticSinks.some((x) => x.id === removed) ||
+    r.uncoveredPropagationEdges.some((x) => x.id === removed) ||
+    r.unreviewedUnresolvedCarriers.some((x) => x.id === removed);
+  const countMismatch = r.invalidInventoryGroups.some((g) => g.id === victim!.id);
+  assert.ok(
+    flaggedElsewhere || countMismatch,
+    `删掉的 edge ${removed} 应因 uncovered 或 count 不匹配被门捕获（unregistered/uncovered/unreviewed=${flaggedElsewhere}, invalidGroup=${countMismatch}）`,
+  );
+});
+
+test('变异自证②：把某 unresolved-carrier 覆盖组 reviewStatus 改回 unreviewed → unreviewedUnresolvedCarriers 非空 → 门红', () => {
+  const edges = productionEdges();
+  const inv = inventory();
+  // 找一个覆盖 ≥1 条 unresolved-carrier edge 的 flow contract。
+  const propOf = new Map(edges.map((e) => [e.id, classifyPropagation(e, null, edges).propagation]));
+  const victim = inv.find(
+    (c) => Array.isArray(c.coveredEdgeIds) && c.coveredEdgeIds.some((id) => propOf.get(id) === 'unresolved-carrier'),
+  );
+  assert.ok(victim, 'inventory 应有覆盖 unresolved-carrier 的 flow contract 供变异');
+  // 深拷贝 + 把该组 reviewStatus 改回 unreviewed（模拟退化）。
+  const mutated: InventoryContract[] = inv.map((c) =>
+    c === victim
+      ? { ...c, reviewStatus: 'unreviewed' as const, coveredEdgeIds: [...c.coveredEdgeIds!] }
+      : { ...c, coveredEdgeIds: c.coveredEdgeIds ? [...c.coveredEdgeIds] : undefined },
+  );
+  const r = evaluateGate(edges, mutated, { requiredLevel: 'planned' });
+  assert.equal(r.pass, false, 'reviewStatus 退化为 unreviewed 后门必须红（禁「scanner 不知→planned→绿」）');
+  assert.ok(
+    r.unreviewedUnresolvedCarriers.length > 0,
+    'reviewStatus=unreviewed 的 unresolved-carrier 覆盖组应进 unreviewedUnresolvedCarriers',
+  );
+});
+
+test('变异自证③：把某 flow contract coveredEdgeId 改成 owner::* 通配 → invalidInventoryGroups 非空 → 门红', () => {
+  const inv = inventory();
+  const victim = inv.find((c) => Array.isArray(c.coveredEdgeIds) && c.coveredEdgeIds.length >= 1);
+  assert.ok(victim, 'inventory 应有 flow contract 供变异');
+  const mutated: InventoryContract[] = inv.map((c) =>
+    c === victim
+      ? { ...c, coveredEdgeIds: [`${c.file}#${'owner'}::*`, ...c.coveredEdgeIds!.slice(1)] }
+      : { ...c, coveredEdgeIds: c.coveredEdgeIds ? [...c.coveredEdgeIds] : undefined },
+  );
+  const r = evaluateGate(productionEdges(), mutated, { requiredLevel: 'planned' });
+  assert.equal(r.pass, false, '引入 owner::* 通配后门必须红（禁通配白名单）');
+  assert.ok(
+    r.invalidInventoryGroups.some((g) => g.id === victim!.id && g.problems.some((p) => p.includes('通配'))),
+    '通配 id 应被 invalidInventoryGroups 捕获',
+  );
+});
+
+test('readInventory：AST 解析出 flow contract（含 coveredEdgeIds + expectedCount）+ legacy 条目', () => {
+  const inv = inventory();
+  assert.ok(inv.length > 100, `readInventory 应解析出全部条目（实际=${inv.length}）`);
+  const flows = inv.filter((c) => Array.isArray(c.coveredEdgeIds));
+  assert.ok(flows.length > 50, `应解析出大量 flow contract（实际=${flows.length}）`);
+  // expectedCount 与 coveredEdgeIds 数一致（AST 解析正确）。
+  for (const c of flows.slice(0, 20)) {
+    assert.equal(c.expectedCount, c.coveredEdgeIds!.length, `${c.id} expectedCount 解析不一致`);
+  }
 });
