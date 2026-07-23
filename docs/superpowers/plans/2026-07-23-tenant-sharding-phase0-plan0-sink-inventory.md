@@ -1,6 +1,6 @@
 # 分片 Phase 0 · Plan 0：DB-capability edge 扫描器 + sink 盘点 + 放开门 Implementation Plan
 
-> 状态：第 7 轮修订（**实现 Task 1-3 后暴露粒度设计问题 → Codex 裁决**：7701 syntax edge 不可作人工 inventory；改为「**登记 semantic sink（A1-A4 接收点 + 无法证明落到 A 的 terminal-B-escape）**，全量 edge 留机器证据图，门断言每条传播 edge=linked-to-sink/ephemeral/terminal-escape 之一且 unknown=0」；修扫描器 findDbCapabilityPaths 过度触发（只递归数据属性，跳方法/原型面 → 消 1269 unknown + 1356 return 噪音））。前 6 轮：Codex 52→78→87→84→88→95。
+> 状态：第 8 轮修订（实现中 Codex 又裁决 carrier 压缩：81% edge 是 OS-facade 传递展开→压成一条 carrier sink+resolved provenance 验来源非按类型放行；加 Task 2.6）。前轮 spec Codex 96、Plan 0 Codex 95。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 
 **Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 DB-capability 扫描器（保留全量 edge 作机器证据图）+ 升级 `db-access-inventory.ts` 到 **semantic sink 级**，使「每个 semantic sink 有明确处置 + 每条传播 edge 可归因（linked-to-sink / ephemeral / terminal-escape）+ 无 unknown」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical 解析失败/Program 不健康/递归预算超限/无法归因的 edge → 退出非零），也绝不「漏扫却报绿」。**
@@ -344,6 +344,30 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 ---
 
+## Task 2.6: capability-carrier 压缩 + resolved provenance（Codex 第 8 轮裁决）
+
+> Task 2.5 后仍 11067 edge，实测 **8976 条（81%）是 OS-facade 传递展开**（`tenantOS.core.values.tx`…）：`findDbCapabilityPaths` 对类型为 `ChronoSynthOS`/`TenantOS`/`CoreRhythmLayer`/store 类的参数递归展开内部每个 `.tx`。**Codex 裁决：压缩成一条 carrier sink 对，但不能按类型名当「安全 opaque」**——这些 facade 可被 `new ChronoSynthOS({db:hostDb})` 直接构造、store 可被 `new RetrievalService(new CognitiveMemoryGraph(hostDb))` 单独拎出，按类型放行会漏真错-shard。
+
+**Files:** Modify `scripts/db-sink-scanner.mjs` + `.d.mts`；Test `src/test/unit/db-sink-scanner.test.ts`；Create `db-sink-fixtures/carrier-{safe,unsafe}.ts`
+
+**关键（Codex 第 8 轮）**：
+- **carrier 识别（结构可证明，非名字/目录）**：类型满足 ① 有稳定命名声明 ② 本身不可赋 UoW ③ 其 field/ctor 参/property 最终含已枚举的 capability sink（内部 UoW）——则是 `capability-carrier`。一个 carrier 参数/字段 → **一条 `carrier-param`/`carrier-field` semantic sink**（param=carrier 标识符如 `tenantOS`），内部 `.tx` paths 存 `edge.capabilityPaths` 作证据元数据，**不逐 path 产人工 edge**。
+- **内部 store 直接 sink 仍保留**：`CognitiveMemoryGraph.ctor::tx`/`NarrativeStore.ctor::tx`/`CoreRhythmLayer.ctor::db`/`ChronoSynthOS config::db` 仍是独立 semantic sink（它们决定 carrier 怎么拿到 db，不可隐藏）。
+- **provenance 验证（carrier 传播 edge 的关键，不能只看类型放行）**：carrier 被传给函数/存字段时，`classifyPropagation` 追其**来源**：
+  - 来源 = `TenantOSFactory.getTenantOS(tid)` / `os.getCore(pid)`（resolver 入口，producer-manifest 登记）→ `linked-to-resolved-carrier`（安全）。
+  - 来源 = `new ChronoSynthOS(...)` / `new CognitiveMemoryGraph(hostDb)` / `deps.os` / 未知函数返回 → `unresolved-carrier`（**门红**，不自动放行）。
+  - **producer-manifest**（Plan 0 不改生产类型故不用 nominal brand，用 manifest + 有限 provenance 跟踪）：登记 `{producer:'TenantOSFactory.getTenantOS', produces:'tenant-resolved-os'}` + `{producer:'ChronoSynthOS.getCore', produces:'tenant-persona-core'}`；scanner 跟踪 `getTenantOS(tid)→alias→.core→getCore(pid)→下游实参` 有限链，无法证明来源 → unresolved（红）。
+- **fixture 正反**：`carrier-safe.ts`（`factory.getTenantOS(tid)` 传下游 → linked-to-resolved-carrier）+ `carrier-unsafe.ts`（`new ChronoSynthOS()` / `new CognitiveMemoryGraph(hostDb)` 传下游 → unresolved-carrier 红）。
+
+- [ ] **Step 1: 写失败测试**：① production carrier-param edge 数 << 8976（facade `.tx` 展开压成 carrier sink，内部 paths 进 capabilityPaths 元数据）；② carrier-safe fixture → linked-to-resolved-carrier；③ carrier-unsafe（new 直构）→ unresolved-carrier（门应视为红/未归因）；④ 内部 store ctor（CognitiveMemoryGraph.ctor::tx）仍在 edge 集。
+- [ ] **Step 2: 运行确认失败**
+- [ ] **Step 3: 实现 carrier 压缩 + producer-manifest provenance + classifyPropagation 扩 linked-to-resolved-carrier/unresolved-carrier**
+- [ ] **Step 4: 运行确认通过**（edge 总数大降 + carrier 归因 + 内部 store sink 保留）
+- [ ] **变异自证**：① 关掉 carrier 压缩 → edge 数暴涨回 ~11067；② 把 unsafe（new 直构）误判 resolved → carrier-unsafe 测试红（证 provenance 真验来源非按类型放行）。还原复绿。
+- [ ] **Step 5: Commit** — `fix(shard): capability-carrier 压缩(facade→一条 sink)+resolved provenance(来源须 factory/getCore 非 new 直构)`
+
+---
+
 ## Task 3: 升级 inventory 到 semantic sink 级（Codex 第 7 轮粒度——非全 edge）
 
 **Files:**
@@ -372,12 +396,13 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 - Modify: `scripts/check-db-access-ratchet.mjs`（调 evaluateGate）
 - Test: `src/test/unit/db-sink-scanner.test.ts`
 
-**门契约（Codex 第 7 轮四条——非「全 edge 已登记」）**：`evaluateGate` pass iff 四者全成立：
-1. **semantic sink 完整**：所有 A1-A4 sink declaration + 所有 terminal-B-escape sink 都有精确 inventory id + disposition + wiringStatus（`unregisteredSemanticSinks === []`）。
-2. **传播可归因**：每条非 terminal B edge ∈ {linked-to-sink（终点是已登记 sink）, ephemeral（机械证明）}（`unlinkedPropagationEdges === []`）。
-3. **无 unknown**：`unknownEdges === []`（解析失败/预算超限/callee 不明未升级 escape 任一非空 → 红）。
+**门契约（Codex 第 7+8 轮——含 carrier provenance）**：`evaluateGate` pass iff 五者全成立：
+1. **semantic sink 完整**：所有 A 接收点（直接 DB/UoW + carrier-param/field）+ 内部 store 直接 sink + terminal-escape 都有精确 inventory id + disposition + wiringStatus（`unregisteredSemanticSinks === []`）。
+2. **传播可归因**：每条非 terminal B edge ∈ {linked-to-sink, linked-to-resolved-carrier, ephemeral}（`unlinkedPropagationEdges === []`）。
+3. **无 unknown**：`unknownEdges === []`。
 4. **terminal-escape 有处置**：`terminalEscapesWithoutDisposition === []`。
-形式：`gate passes iff unknownEdges===[] && unregisteredSemanticSinks===[] && unlinkedPropagationEdges===[] && terminalEscapesWithoutDisposition===[]`。**保留原 file 级 DB ratchet**（覆盖直接 query/execute/transaction 使用面作补充网）。
+5. **carrier 来源已解析**：每个 carrier 传播来源 = 登记的 resolver/factory producer（getTenantOS/getCore），`unresolvedCarrierSources === []`（`new ChronoSynthOS()`/`new CognitiveMemoryGraph(hostDb)`/未知来源 → 红）。
+形式：`gate passes iff unknownEdges===[] && unregisteredSemanticSinks===[] && unlinkedPropagationEdges===[] && terminalEscapesWithoutDisposition===[] && unresolvedCarrierSources===[]`。**保留原 file 级 DB ratchet**（覆盖直接 query/execute/transaction 使用面）。carrier 内部 `.tx` paths 存证据不逐条登记；直接构造 carrier/store 的 db 来源仍走正常 sink 检查（不被 carrier 压缩吞掉）。
 
 - [ ] **Step 1: 写门测试**：`evaluateGate(scanProductionDbCapabilityEdges(), readInventoryIds())` 返回四类空集诊断结构；各类非空时含具体 id/file/kind 诊断。Program 健康门测（sentinel 缺→抛）。
 - [ ] **Step 2: 运行——预期先红，暴露真实 semantic sink + terminal-escape**：把 A 点 + terminal-escape 登进 inventory（Task 3 续补，wiringStatus:planned）；B 传播 edge 确认 linked-to-sink/ephemeral（linked 的 sinkId 指向已登记 A 点）→ 至绿。**红时补 inventory / 修 classifyPropagation 归因（若某 B edge 应 linked 却判 unknown 是归因 bug），绝不加白名单绕过。** unknown 若因扫描器漏归因→回 Task 2.5 修，非登记成 known-limitation。
