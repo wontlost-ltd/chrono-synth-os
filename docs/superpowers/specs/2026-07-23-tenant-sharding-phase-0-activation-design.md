@@ -1,6 +1,6 @@
 # 租户分片 Phase 0 全量激活设计
 
-> 状态：第 2 轮修订（采纳 Codex 独立复审 58/100 退回——初版「低风险 7 文件」被推翻，恢复为高风险组合根/生命周期重构 + sink 级盘点前置）。待 Codex 再审 → 用户审阅 → writing-plans。
+> 状态：第 3 轮修订（Codex 58 退→78 退，采纳两轮全部真实代码漏点——恢复为高风险组合根/生命周期重构 + AST sink 盘点 + mixed-scope Auth + 独立入口 + NudgePushBridge）。待 Codex 再审 → 用户审阅 → writing-plans。
 > 日期：2026-07-23
 > 关联：分片设计总览 `2026-07-17-tenant-sharding-design.md`（Phase 0 契约在此定）；`shard-router-design.md`（引擎设计）；规模化缺口 #3；PR #314（子服务双入口化，已合入 main）。
 > 范围：`src/server/app.ts`（组合根装配 resolver）、7 个 `sharedDb` 直用文件、`src/server/routes/metrics.ts` + `src/observability/`（fan-out）、`src/storage/factory.ts`（放开 fail-closed）、`src/config/schema.ts`（shard map 校验）、`src/storage/db-access-inventory.ts`（接线完成后重分类）。
@@ -25,13 +25,28 @@
 
 ## 3. 三块范围（A / B / C）
 
-### A0. 前置：sink 级盘点（Codex 退回核心——放开前必须完成）
+### A0. 前置：AST-based sink 级盘点（Codex 退回核心——放开前必须完成，第 2 轮扩宽）
 
-file 级 ratchet 挡不住构造器注入 sink。**先把 inventory 从 file 级升级为 constructor-injected DB-sink 级盘点**，再动接线——否则「无遗漏」不可证。
+file 级 ratchet 挡不住构造器注入 sink。**先把 inventory 从 file 级升级为 source→sink 级盘点**，再动接线——否则「无遗漏」不可证。
 
-- **新增 sink 级契约**：枚举每个「构造期接 `IDatabase`/`SyncWriteUnitOfWork` 且内部跑 `WHERE tenant_id=?`（或按 tenantId 语义读写）的类」——不只 `os.getDatabase()`/`sharedDb` 文本，而是**数据流 source→sink**。至少覆盖：`buildAppServices` 的全 ~15 成员（逐个定性：真 per-request 无状态？还是长期 host-db sink？）、`TaskQueue` 及 `app.ts:399-401` 注入 queueDb 的 store、`LegalHoldService` 及经 PrivacyService 注入 root db 的间接 sink。
-- **升级 ratchet**：`check-db-access-ratchet.mjs` 从「文件是否在 inventory」加一条断言——inventory 每个 `tenant-isolated`/`longlived-root-capture` sink 标注其 db 来源（resolver / coordinator / 已下沉），且新增未标注 sink → 红。（AST 级完整覆盖是后续；本 Phase 至少把三类已知 sink 纳入显式清单 + 逐项验收。）
-- **产物**：更新后的 `db-access-inventory.ts`（sink 级，纠正 `buildAppServices` 错分类）+ 每个 sink 的处置结论（resolver 化 / coordinator / per-shard worker / known-limitation）。**这是 Plan 1 的第一步，不是文档，是可执行清单 + ratchet 加固。**
+**⚠️ sink 定义必须够宽（Codex 第 2 轮：constructor-param regex 会漏）**：反向扫描证明 db sink 藏在多种形态里，正则枚举必漏。故 sink source 覆盖**全部**这些注入形态：
+- 构造器直接参 `IDatabase`/`SyncWriteUnitOfWork`（含别名/结构兼容类型）；
+- **deps/options 对象里的 db**（如 `NudgePushBridgeDeps.db`——`nudge-push-bridge.ts:75` 按事件 tenantId 用固定 host db 建 MobileDeviceService/NotificationPreferenceStore → 非 home 租户静默漏推）；
+- route 注册函数参数里的 db（`registerXxxRoutes(app, db, ...)`）；
+- 闭包捕获的 db / timer / event listener / worker 捕获的 db；
+- 工厂/容器间接创建的 store/service 内部 db。
+
+**放开门必须是可审计的 AST 机制（Codex：sink-ratchet 承诺与「AST 非目标」不兼容——本 Phase 收敛为「AST 枚举 + 显式清单」，只把「自动数据流推断」列为后续）**：
+- Plan 0 写一个 **TS AST 扫描器**：① 枚举所有 `IDatabase`/`SyncWriteUnitOfWork` 类型的字段/参数/含它们的 deps 类型；② 枚举所有传 db/UoW 实参的构造调用、函数调用、对象属性注入点；③ 每个 source→sink edge 必须对应 inventory 一个稳定 ID（未对应 → 红）；④ 给扫描器本身配**变异 fixture**（故意新增：直接参 db、`deps.db`、闭包捕获、route 参 db）——证明每种都会使 ratchet 变红。这才是「隔离铁律不可破」的自动放开门，人工清单不够。
+- **产物**：AST 扫描器 + 更新后的 `db-access-inventory.ts`（source→sink 级，纠正 `buildAppServices` 错分类）+ 每个 sink 的处置结论（resolver 化 / coordinator / per-shard worker / **mixed-scope 见下** / known-limitation）。**这是 Plan 0，不是文档，是可执行扫描器 + 清单。**
+
+**已知必纳入的 sink（反向扫描已证实，Plan 0 起点）**：
+1. `buildAppServices` ~15 成员（`app-services.ts`）——**全是启动期构造一次长期复用的 DB 服务**（Codex 核实：无一是真 per-request 无状态；`MockPushService` 不碰 db 除外）。判据 = 「是否长期持有 db 能力」而非「业务对象有无可变状态」。
+2. `TaskQueue`（`task-queue.ts:75`）+ `AvatarAutorunStore`/`KnowledgeSourceStore`/`AvatarService`（`app.ts:399-401`）。
+3. `LegalHoldService`（`legal-hold-service.ts:82`，经 PrivacyService 注入）。
+4. **`NudgePushBridge`**（`app.ts:328` 注入 host db，`nudge-push-bridge.ts:67/75` 按事件 tenantId 用固定 db）。
+5. **`main-observability-worker.ts` 独立入口**（见 §5.1）。
+6. **`AuthService` mixed-scope**（见 §4.1）。
 
 ### A. 注入链统一：一个 resolver 穿全链
 
@@ -79,7 +94,7 @@ const resolver: TenantDbResolver = buildResolver(config, hostDb, deps.os);
 ### C. 放开 fail-closed + 真 2-shard 验收
 
 - **放开门槛（收紧——Codex 退回）**：不是「7 文件 + ratchet 绿」。必须：① A0 sink 级盘点完成，`buildAppServices` 全成员、TaskQueue/worker、LegalHold 等间接 sink **逐项有处置结论且已下沉**；② sink 级 ratchet 绿（每 sink 标注 db 来源，无未标注）；③ 真 2-shard 集成测试全过（含 legal-hold 语义反转专项、TaskQueue per-shard）；④ default=home 同实例契约测试过。**任一未完成 → 保持 fail-closed 不放开**（约束 1：宁可不放开也不带漏洞放开）。
-- **createDatabase 与 resolver 建立的边界**：`createDatabase` 仍只建**单个 host db**（home shard 的物理库 + 跑迁移）；多 shard 的其余 shard 由 `ShardRouter.buildDb` + `initialize()` 建+迁移。guard 从「拒非空 shards」改为「非空 shards 时要求 app.ts 已装配 ShardRouter」——即把运行时约束从 createDatabase 上移到组合根装配完整性。
+- **createDatabase 与 resolver 边界（每入口显式放开——Codex #2 独立 worker 会绕过 app.ts）**：`createDatabase` 的 fail-closed guard **保留不删**（因 `main-observability-worker.ts` 等独立入口直接调它、绕过 app.ts）。放开是**每入口显式**的：入口装配好 resolver（seed 完整 + sink 全下沉）后，由该入口显式旁路 guard（如传 `{ shardingActivated: true }` 标记），而非全局删 guard。任何未显式装配 resolver 的入口在非空 shards 下仍拒启动。`createDatabase` 仍只建单个 host db；其余 shard 由 `ShardRouter.buildDb` + `initialize()` 建+迁移。
 - 真 2-shard PG 验收（集成测试，见 §7）。
 
 ## 4. default 租户不变量（关键，采纳「host os 即 home shard」）
@@ -95,6 +110,18 @@ const resolver: TenantDbResolver = buildResolver(config, hostDb, deps.os);
 
 如此 default（裸 os）与 factory（`resolver.dbForTenant('default')`）两路径**证实指向同一实例**，无需碰 23 处热路径。
 
+### 4.1 mixed-scope 服务（Auth/SSO/OIDC——Codex 第 2 轮，不能简单二选一）
+
+`AuthService`（`auth-service.ts`）**同时含平台级定位 + 租户级写**，`dbForTenant` / `coordinatorDb` 二选一都错：
+- `authQueryUserByEmail(email)`（`:66/:104` login/register）——**无 tenantId 的全局查**（用户在哪个租户还没解析出来）。
+- register：`:74` 才生成新 tenantId → `:76` 建 user、`:90` 建 subscription、`:94` 写 quota、`:96` 建 identity——**租户级写**。
+
+**Plan 0 新增 `mixed-scope` 处置类**，Auth/SSO/OIDC 入口明确切分：
+- **coordinator identity directory**：email→(tenantId, shardId) 的全局映射表放**协调库**（login/register 前的全局定位查它）。哪些表属 directory（users 的 email 索引 / user→tenant 映射）Plan 0 定。
+- **tenantId 解析后转 tenant shard**：subscription/quota/identity 等租户级写 → `resolver.dbForTenant(tenantId)`。
+- **新租户 shard 确定时机**：register 生成 tenantId 后立即按哈希定 shardId，写入 coordinator directory。
+- **跨边界失败补偿（不 2PC）**：register 跨 coordinator（directory）+ tenant shard（初始化）——须定义「user 已建但租户初始化失败」的半完成态处理（幂等重试 / 补偿删除 / 标记 pending），Plan 定并测。这是本 Phase 唯一真跨库写序列，必须显式设计而非「resolver 化带过」。
+
 ## 5. 跨租户 fan-out（metrics + global-worker）
 
 分片后单 shard 只见本 shard 租户，跨租户聚合静默错。改 scatter-gather：
@@ -104,6 +131,14 @@ const resolver: TenantDbResolver = buildResolver(config, hostDb, deps.os);
   - rollup SUM / tenant usage COUNT：各 shard SUM/COUNT → 相加。**`getTenantUsage` 现有 `limit=200`（`metrics-query-service.ts:116`）**：各 shard 独立 limit 后拼接 ≠ 全局 top-200 → 须**全局排序 merge 后截断**（各 shard 拉 top-200 → 合并排序 → 取全局 200），Task 定义并测。
 - `global-worker` + `TaskQueue`（见 §3-B TaskQueue 归属决策）：改 per-shard 各跑一遍（`for (const db of resolver.allShardDbs())`）。
 - **单库下 `allShardDbs()` 返 `[db]`**，fan-out 退化为单库查询，零回归。
+
+### 5.1 独立入口 `main-observability-worker.ts`（Codex 第 2 轮——绕过 app.ts 装配）
+
+`main-observability-worker.ts:21` **直接 `createDatabase(config)`**、经 `ObservabilityPipelineService`（构造期固定 db）跑 outbox 扫描/rollup——**不经 `createApp`/`buildResolver`**。若只把 fail-closed guard 从 `createDatabase` 上移到 app.ts 装配，这个入口在非空 shards 下会**绕过新约束、只处理 host/home shard**（其他 shard 的 observability outbox 永不被扫）。**故 fail-closed guard 不能只在 app.ts——必须在每个建 db 的入口守**。Plan 3 三选一（定并测）：
+- **① 独立进程也建 resolver + 每 shard 建 pipeline/worker**（推荐：observability 是 per-shard 数据，各 shard 各扫各的 outbox）；
+- ② observability outbox 迁到协调库（所有 shard 写同一 outbox）——但违「outbox 随 shard」局部性，且增协调库写压；
+- ③ Phase 0 多 shard 下明确**拒绝启动**该独立入口（降级：暂不支持多 shard observability worker，记 known-limitation）。
+- 加独立入口的 2-shard 启动/处理/关闭测试。**关键**：`createDatabase` 的 fail-closed guard 保留（不删），仅在「入口已正确装配 resolver」时才由该入口显式放开——即放开是**每入口显式**的，不是全局删 guard。
 
 ## 6. 配置契约（`config/schema.ts`——已存在，纠正 spec 与真实形状不一致）
 
@@ -127,7 +162,12 @@ homeShardId: z.string().optional(),
 - **单库零回归**：`shards` 空时全链行为与现状 `assert.deepEqual` 等价（SingleDbResolver 路径）——**现有全套测试仍绿**是硬门。
 - **legal-hold 语义反转专项（关键，Codex #4）**：租户在 shard-1 放 legal hold → `eraseData` 该租户 → 断言 hold **真拦住**擦除（回归形态：错-shard 查不到 hold → 误擦；此测试须在「LegalHold 未接 resolver」的变异下变红）。
 - **TaskQueue per-shard**：租户 A（shard-0）/B（shard-1）各 enqueue → 断言各自任务落各自 shard，worker 遍历 allShardDbs 都能取到、不串。
-- **sink 级 ratchet 完整性**：`check-db-access-ratchet.mjs` 绿——每个 sink 标注 db 来源（resolver/coordinator/已下沉），新增未标注 sink → 红（升级后的 sink 级断言，非 file 级）。
+- **AST sink 扫描器 + 变异 fixture**：扫描器对每种注入形态（直接参 db、`deps.db`、route 参 db、闭包捕获）配变异 fixture，故意新增 → ratchet 变红；每 source→sink edge 对应 inventory 稳定 ID，未对应 → 红。
+- **NudgePushBridge 推送**：租户在 shard-1，nudge 事件 → 断言 bridge 用 `dbForTenant('shard-1 租户')` 查到 user/device/pref 并投递（回归形态：用固定 host db 查不到 → 静默漏推，此测试须在「bridge 未接 resolver」变异下变红）。
+- **独立 observability worker（§5.1）**：2-shard 下断言选定方案生效（① 各 shard outbox 都被扫；或 ③ 拒启动）——不静默只扫 host shard。
+- **Auth mixed-scope（§4.1）**：register 新租户 → 断言 email directory 落 coordinator、租户级 subscription/quota/identity 落该租户 shard；login 全局 email 定位命中 directory；**register 中租户初始化失败 → 断言补偿语义（无「user 已建租户半初始化」的孤儿态）**。
+- **router close ownership**：断言 seeded home db 恰由 OS 关一次、其余 shard 恰由 router 关一次（无双 close/泄漏）；initialize 中途失败只关 owned 不关 seed。
+- **sink 级 ratchet 完整性**：`check-db-access-ratchet.mjs` 绿——每个 sink 标注 db 来源（resolver/coordinator/mixed-scope/已下沉），新增未标注 sink → 红。
 - **default=home 同实例**：断言 `resolver.dbForTenant('default')` 与 host `os.getDatabase()` 是**同一实例引用**（`===`），非 connStr 相等。
 - **单库零回归**：`shards` 空时全链行为与现状 `assert.deepEqual` 等价——**现有全套测试仍绿**是硬门。
 - **fail-closed 放开后仍守**：`shards` 非空但装配不完整（未 seed home db / sink 未全下沉）→ 仍拒启动。
@@ -144,10 +184,10 @@ homeShardId: z.string().optional(),
 
 ## 9. 分片（供 writing-plans——比初版大，诚实分 4 plan）
 
-- **Plan 0（A0 sink 级盘点，前置）**：升级 `db-access-inventory.ts` 到 constructor-injected sink 级（纠正 `buildAppServices` 错分类，逐个成员定性）+ 登记 TaskQueue/AvatarAutorunStore/KnowledgeSourceStore/LegalHoldService 等 sink + 每 sink 处置结论 + 升级 ratchet 到 sink 级断言。**纯盘点 + ratchet，不改运行逻辑**。是后续放开的完整性前提。
-- **Plan 1（A 注入链统一）**：`buildResolver`（config `{connectionString}` 形状 → ShardRouter flat + seed hostDb 同实例）+ app.ts 装配唯一 resolver + route 签名加 `resolver` 参 + 替换 7 处 `new SingleDbResolver(sharedDb)` + **`buildAppServices` 改接 resolver（长期服务成员按 Plan 0 定性各自 resolver/coordinator 化）** + 计量子服务经 resolver。fail-closed 仍挡，单库零回归 + default=home 同实例断言。
-- **Plan 2（B route 内直用 + 间接 sink + fan-out）**：7 个 `sharedDb` 文件 route 内直用 → `dbForTenant`（含 memory-facade:221）；**LegalHoldService 经 resolver 下沉（+ 语义反转专项测试）**；metrics fan-out（population diversity 采样边界 + tenant usage 全局 top-200 merge）；global-worker per-shard。仍 fail-closed 挡。
-- **Plan 3（TaskQueue shard 归属 + C 放开 + 2-shard 验收）**：TaskQueue 按 §3-B 决策（推荐每 shard 一队列+worker）+ 同款 store；config schema 校验；fail-closed guard 上移到装配完整性（seed 完整 + sink 全下沉才放开）；真 2-shard 集成测试全套（隔离/default 同实例/子服务/fan-out/legal-hold 语义/TaskQueue per-shard）；放开生产多库。
+- **Plan 0（A0 AST sink 盘点，前置）**：TS AST 扫描器（覆盖直接参/deps.db/route 参/闭包 4 形态 + 变异 fixture）+ 升级 `db-access-inventory.ts` 到 source→sink 级（纠正 `buildAppServices` 错分类、逐成员定性、新增 NudgePushBridge/独立 worker/mixed-scope Auth）+ 每 sink 处置结论 + ratchet sink 级断言。**纯盘点 + 扫描器，不改运行逻辑**。放开完整性前提。
+- **Plan 1（A 注入链统一 + buildAppServices + mixed-scope 地基）**：`buildResolver`（config `{connectionString}`→ShardRouter flat + seed hostDb 同实例 + close ownership）+ app.ts 装配唯一 resolver + route 签名加 `resolver` 参 + 替换 7 处 `new SingleDbResolver` + **`buildAppServices` 改接 resolver（成员按 Plan 0 定性）** + **Auth mixed-scope：coordinator identity directory + tenantId 解析后转 shard + register 跨边界补偿** + 计量子服务经 resolver。fail-closed 仍挡，单库零回归 + default=home 同实例 + close ownership 断言。
+- **Plan 2（B route 内直用 + 间接 sink + fan-out）**：7 个 `sharedDb` 文件 route 内直用 → `dbForTenant`（含 memory-facade:221）；**LegalHoldService + NudgePushBridge 经 resolver 下沉（各 + 语义/漏推专项测试）**；metrics fan-out（diversity 采样 + tenant usage 全局 top-200 merge）；global-worker per-shard。仍 fail-closed 挡。
+- **Plan 3（TaskQueue + 独立 worker + C 放开 + 2-shard 验收）**：TaskQueue 按 §3-B（每 shard 一队列+worker）+ 同款 store；**独立 observability worker 入口按 §5.1 决策**；config schema 校验；**fail-closed guard 每入口显式放开（不全局删，各入口装配完 resolver 才放）**；真 2-shard 集成测试全套（隔离/default 同实例/子服务/fan-out/legal-hold 语义/NudgePush 漏推/TaskQueue per-shard/Auth mixed-scope/独立 worker）；放开生产多库。
 
 ## 10. 非目标（YAGNI）
 
