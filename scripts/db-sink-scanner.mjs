@@ -234,9 +234,23 @@ export function findDbCapabilityPaths(type, checker, uowType, ctx = {}) {
   const state = { nodes: 0 };
   const active = new Set();
   const memo = ctx.memo ?? new Map();
-  const rel = resolveCapabilitySuffixes(type, checker, uowType, active, state, memo, 0, ctx);
-  // 顶层：相对后缀即完整 path（前缀为空）。
-  return rel.map((r) => (r.unknown ? { unknown: true, context: formatUnknownContext(r, [], ctx) } : { path: r.path }));
+  /* carrierAware（Task 2.6）：默认开——遇 capability-carrier 类型（ChronoSynthOS/CoreRhythmLayer/
+   * store 类等 facade：有稳定命名、自身不可赋 UoW、内部对象图携带 .tx sink）**压成一条 carrier 结果**，
+   * 不逐 `.core.X.tx` 展开。carrierMemo 缓存 carrier 判定 + 其内部证据 paths（跨 boundary 复用）。
+   * carrierAware:false 时退化为原始逐属性展开——供 isCapabilityCarrier 内部算证据 paths（防自递归）。 */
+  const carrierAware = ctx.carrierAware !== false;
+  const carrierMemo = ctx.carrierMemo ?? new Map();
+  const rel = resolveCapabilitySuffixes(type, checker, uowType, active, state, memo, 0, {
+    ...ctx,
+    carrierAware,
+    carrierMemo,
+  });
+  // 顶层：相对后缀即完整 path（前缀为空）。carrier 结果携带 carrier/capabilityPaths 元数据透传。
+  return rel.map((r) => {
+    if (r.unknown) return { unknown: true, context: formatUnknownContext(r, [], ctx) };
+    if (r.carrier) return { path: r.path, carrier: r.carrier, capabilityPaths: r.capabilityPaths };
+    return { path: r.path };
+  });
 }
 
 /**
@@ -277,6 +291,14 @@ function resolveCapabilitySuffixes(type, checker, uowType, active, state, memo, 
           resolveCapabilitySuffixes(elementType, checker, uowType, active, state, memo, depth + 1, ctx),
           ['[]'],
         );
+      } else if (ctx.carrierAware && isCapabilityCarrier(type, checker, uowType, ctx)) {
+        /* capability-carrier 压缩（Task 2.6）：type 是 facade/store（稳定命名、自身不可赋 UoW、
+         * 内部对象图携带 .tx sink、是 class 或有方法面的服务对象）→ **压成一条** carrier 结果，
+         * 内部 .tx 证据 paths 存 capabilityPaths，**不逐 path 递归展开**（消 os.core.X.tx 展开爆炸）。
+         * 注意：直接 UoW 参数（如 new Store(hostDb) 的 hostDb）在上面 isDbCapabilityType 分支已命中
+         * path=[]，永不进此分支——内部 store 直接 sink 不被吞。 */
+        const evidence = carrierEvidencePaths(type, checker, uowType, ctx);
+        rel.push({ path: [], carrier: carrierName(type, checker), capabilityPaths: evidence });
       } else if (!isOpaqueLeafType(type, checker)) {
         // object 数据属性：逐**数据属性**（跳方法/原型面 + 跳 node_modules 库声明属性）
         // 以相对前缀 [propName] 展开。
@@ -309,11 +331,14 @@ function resolveCapabilitySuffixes(type, checker, uowType, active, state, memo, 
   return rel;
 }
 
-/** 把子结果补上相对前缀后并入 rel（path 前缀 / unknown 的 deepest 前缀）。 */
+/** 把子结果补上相对前缀后并入 rel（path 前缀 / unknown 的 deepest 前缀 / carrier 元数据透传）。 */
 function appendWithPrefix(rel, sub, prefix) {
   for (const r of sub) {
     if (r.unknown) {
       rel.push({ unknown: true, deepest: [...prefix, r.deepest].join('.'), origin: r.origin });
+    } else if (r.carrier) {
+      // carrier 结果（嵌套 carrier 属性，如 deps.store）：补前缀，透传 carrier/capabilityPaths 元数据。
+      rel.push({ path: [...prefix, ...r.path], carrier: r.carrier, capabilityPaths: r.capabilityPaths });
     } else {
       rel.push({ path: [...prefix, ...r.path] });
     }
@@ -324,6 +349,192 @@ function appendWithPrefix(rel, sub, prefix) {
 function formatUnknownContext(r, prefix, ctx) {
   const deepest = [...prefix, r.deepest].filter(Boolean).join('.') || '<root>';
   return `${ctx.file ?? '?'}: capability 递归预算超限 @ ${deepest}${r.origin ? ` (声明来源 ${r.origin})` : ''}`;
+}
+
+/* ============================================================================
+ * Task 2.6：capability-carrier 识别（结构可证明，非名字/目录白名单）。
+ *
+ * carrier = 携带 per-tenant db 能力的 facade / 服务对象（ChronoSynthOS/CoreRhythmLayer/store 类）。
+ * 满足**全部**结构条件才算 carrier（Codex 第 8 轮）：
+ *   ① 有稳定命名声明（named class / interface / type-alias 的 symbol，非匿名 object literal）。
+ *   ② 本身**不可**赋 UoW（isDbCapabilityType=false——否则它就是直接 db，不是 carrier）。
+ *   ③ 其数据属性图**最终**含已枚举的 capability sink（内部 .tx，raw 展开非空）。
+ *   ④ 是 **class 实例类型** 或 **有方法面的服务对象**（behavior-bearing facade/store，
+ *      而非纯数据 deps/options 记录）——把 `{ db: IDatabase }` 这种纯数据 bag（deps-prop /
+ *      wrapped options / pair）与 ValueStore/CoreRhythmLayer/ChronoSynthOS 之类服务对象区分开。
+ *
+ * ④ 是把「压缩」限定在真正的 facade/服务对象上、不误伤 deps 契约的**可证明**判据：
+ *   - class 实例类型（symbol.flags & Class）——所有 store/facade（ValueStore/CognitiveMemoryGraph/
+ *     CoreRhythmLayer/ChronoSynthOS）都是 class。
+ *   - 或有方法成员（有非数据属性的成员）——覆盖以 interface 描述的服务契约。
+ *   纯数据记录（FixtureDeps `{ db }`、options `{ db }`、pair `{ primary, replica }`）无方法、非
+ *   class → 不是 carrier → 照常逐属性展开（deps-prop / options.db / primary·replica 不变）。
+ * ========================================================================== */
+
+/** carrier 判定 memo：Map<Type, boolean>（跨 boundary 复用，避免对同一 facade 重复判定）。 */
+function isCapabilityCarrier(type, checker, uowType, ctx) {
+  if (!type) return false;
+  const memoized = ctx.carrierMemo?.get(type);
+  if (memoized !== undefined) return memoized;
+  const result = computeIsCarrier(type, checker, uowType, ctx);
+  ctx.carrierMemo?.set(type, result);
+  return result;
+}
+
+/** carrier 判定实体（四条结构条件全满足）。 */
+function computeIsCarrier(type, checker, uowType, ctx) {
+  // ② 自身可赋 UoW → 是直接 db，不是 carrier（直接 sink，绝不压缩）。
+  if (isDbCapabilityType(type, checker, uowType)) return false;
+  // union/intersection/array 不作为 carrier 整体压缩（由分量/element 各自判定）。
+  if (type.isUnion?.() || type.isIntersection?.()) return false;
+  if (getArrayLikeElementType(type, checker)) return false;
+  // primitive / 标准库容器 / 纯函数对象 → 非 carrier。
+  if (isOpaqueLeafType(type, checker)) return false;
+
+  const sym = type.getSymbol?.() ?? type.aliasSymbol;
+  // ① 稳定命名声明：具名 class / interface / type-alias 的 symbol（匿名 object literal 无——
+  //    其 symbol 名为 '__type' / 缺失）。app/kernel 源码声明（非 node_modules 库类型）。
+  if (!hasStableNamedDeclaration(sym)) return false;
+
+  // ④ class 实例类型 或 有方法面（behavior-bearing 服务对象），排除纯数据 deps/options 记录。
+  const isClass = !!(sym.flags & ts.SymbolFlags.Class);
+  const hasMethod = checker.getPropertiesOfType(type).some((p) => !isDataProperty(p, checker));
+  if (!isClass && !hasMethod) return false;
+
+  // ③ 内部数据属性图最终含 capability sink（raw 展开非空——carrierAware:false 防自递归）。
+  const raw = carrierRawSuffixes(type, checker, uowType, ctx);
+  return raw.some((r) => !r.unknown);
+}
+
+/** symbol 是否有稳定命名声明（具名 class / interface / type-alias，且声明在 app/kernel 源码而非库）。 */
+function hasStableNamedDeclaration(sym) {
+  if (!sym || !sym.name || sym.name === '__type' || sym.name === '__object') return false;
+  const decls = sym.declarations ?? (sym.valueDeclaration ? [sym.valueDeclaration] : []);
+  if (decls.length === 0) return false;
+  return decls.some((d) => {
+    const named =
+      ts.isClassDeclaration(d) ||
+      ts.isClassExpression(d) ||
+      ts.isInterfaceDeclaration(d) ||
+      ts.isTypeAliasDeclaration(d);
+    if (!named) return false;
+    // 只认 app/kernel 源码声明——库类型（node_modules）的内部结构不作为 app 的 carrier。
+    const sf = d.getSourceFile?.();
+    return sf ? !sf.fileName.includes('/node_modules/') : false;
+  });
+}
+
+/** carrier 的内部证据 paths（相对后缀，如 ['tx'] / ['core','memories','tx']）——供 edge.capabilityPaths。 */
+function carrierEvidencePaths(type, checker, uowType, ctx) {
+  const raw = carrierRawSuffixes(type, checker, uowType, ctx);
+  return raw
+    .filter((r) => !r.unknown)
+    .map((r) => r.path.join('.'))
+    .filter((p, i, arr) => arr.indexOf(p) === i) // 去重
+    .sort();
+}
+
+/** carrier 内部结构的 raw 展开（carrierAware:false → 不再触发 carrier 短路，得到真实 .tx 证据 paths）。 */
+function carrierRawSuffixes(type, checker, uowType, ctx) {
+  // 独立 state/active/memo：raw 展开与外层 carrierAware 展开互不污染（carrierAware:false 关短路）。
+  const rawResults = findDbCapabilityPaths(type, checker, uowType, {
+    file: ctx.file,
+    carrierAware: false,
+  });
+  return rawResults.map((r) => (r.unknown ? { unknown: true } : { path: r.path }));
+}
+
+/** carrier 类型的显示名（诊断 / edge 元数据用）。 */
+function carrierName(type, checker) {
+  const sym = type.getSymbol?.() ?? type.aliasSymbol;
+  if (sym && sym.name && sym.name !== '__type') return sym.name;
+  return typeName(type, checker);
+}
+
+/* ============================================================================
+ * Task 2.6：resolved provenance —— carrier 来源归因（有限跟踪，非按类型放行）。
+ *
+ * Plan 0 不改生产类型（不能加 nominal brand），故用 **producer-manifest + 有限 AST provenance 跟踪**：
+ * carrier 只有**从登记的 resolver 入口解析出来**才安全（getTenantOS 按租户、getCore 按人格），
+ * `new` 直构 / deps.os / 未知函数返回 都是 unresolved（门红）。绝不按类型名当安全 opaque 放行。
+ * ========================================================================== */
+
+/**
+ * producer-manifest：登记「产出已解析 carrier」的 resolver 入口方法名（Codex 第 8 轮）。
+ * 命中这些方法调用 → carrier 已按租户/人格解析 → resolved。
+ *  - getTenantOS：TenantOSFactory.getTenantOS(tid) → tenant-resolved-os。
+ *  - getCore：ChronoSynthOS.getCore(pid) → tenant-persona-core。
+ */
+const PRODUCER_MANIFEST = [
+  { producer: 'getTenantOS', produces: 'tenant-resolved-os' },
+  { producer: 'getCore', produces: 'tenant-persona-core' },
+];
+const RESOLVER_METHOD_NAMES = new Set(PRODUCER_MANIFEST.map((m) => m.producer));
+
+/**
+ * 有限 provenance 跟踪：回溯一个 carrier 实参的来源，判 resolved / unresolved。
+ *
+ * 支持链（Codex 第 8 轮：getTenantOS(tid) → local alias → .core → getCore(pid) → 下游实参）：
+ *  - 实参是 resolver 调用（`factory.getTenantOS(tid)` / `os.getCore(pid)`）→ resolved。
+ *  - 实参是 local const alias（`const os = <resolver 调用>`）→ 解 alias 后判 resolved。
+ *  - alias 的 initializer 是 `<resolved-alias>.core` 之类属性访问，其 receiver resolved → resolved。
+ *  - 实参是 `new X(...)` / `deps.os` / 参数 / 未知函数返回 → **unresolved**（门红）。
+ *
+ * 跟不到 resolver 入口（保守）→ unresolved（不为降数放宽；漏报如实保留门红，报告列出）。
+ *
+ * @returns {{ resolved: boolean, reason: string, produces?: string }}
+ */
+function traceCarrierProvenance(argNode, checker, rel, depth = 0) {
+  if (!argNode || depth > 8) return { resolved: false, reason: '来源跟踪深度超限或空节点' };
+  const expr = ts.isParenthesizedExpression(argNode) || ts.isAsExpression(argNode) || ts.isNonNullExpression(argNode)
+    ? argNode.expression
+    : argNode;
+
+  // ① 直接是 resolver 调用：factory.getTenantOS(tid) / os.getCore(pid)。
+  if (ts.isCallExpression(expr)) {
+    const callee = expr.expression;
+    const name = ts.isPropertyAccessExpression(callee)
+      ? callee.name.text
+      : ts.isIdentifier(callee)
+        ? callee.text
+        : undefined;
+    if (name && RESOLVER_METHOD_NAMES.has(name)) {
+      const produces = PRODUCER_MANIFEST.find((m) => m.producer === name)?.produces;
+      // getCore 的 receiver 也须 resolved（os.getCore：os 本身来自 getTenantOS）；getTenantOS 的
+      // receiver 是 factory（producer 本身），无需再回溯。
+      if (name === 'getCore' && ts.isPropertyAccessExpression(callee)) {
+        const recv = traceCarrierProvenance(callee.expression, checker, rel, depth + 1);
+        if (!recv.resolved) return { resolved: false, reason: `getCore receiver 未解析（${recv.reason}）` };
+      }
+      return { resolved: true, reason: `来源=resolver 入口 ${name}()`, produces };
+    }
+    // 其它函数调用返回 → 未知，unresolved。
+    return { resolved: false, reason: `来源=未知函数返回 ${name ?? '<call>'}()` };
+  }
+
+  // ② new 直构 → unresolved（关键：new ChronoSynthOS / new CognitiveMemoryGraph 绝不按类型放行）。
+  if (ts.isNewExpression(expr)) {
+    const cname = ts.isIdentifier(expr.expression) ? expr.expression.text : '<new>';
+    return { resolved: false, reason: `来源=new ${cname}（直接构造，未经 resolver）` };
+  }
+
+  // ③ 属性访问：<recv>.core / deps.os —— receiver resolved 则 resolved（.core 是 resolved-os 的字段）。
+  if (ts.isPropertyAccessExpression(expr)) {
+    return traceCarrierProvenance(expr.expression, checker, rel, depth + 1);
+  }
+
+  // ④ 标识符：解析其声明的 initializer（local const alias），继续回溯。
+  if (ts.isIdentifier(expr)) {
+    const sym = safeSymbol(checker, expr, rel);
+    const decl = sym && (sym.valueDeclaration ?? sym.declarations?.[0]);
+    if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
+      return traceCarrierProvenance(decl.initializer, checker, rel, depth + 1);
+    }
+    // 参数 / 字段 / import / 无 initializer 的绑定 → 无法证明来自 resolver → unresolved。
+    return { resolved: false, reason: `来源=标识符 ${expr.text}（非 resolver 别名：参数/字段/import/未知）` };
+  }
+
+  return { resolved: false, reason: `来源=不支持的表达式形态 ${ts.SyntaxKind[expr.kind]}` };
 }
 
 /** 类型名（诊断用）。 */
@@ -491,12 +702,17 @@ export function enumerateDbCapabilityEdges(program, checker, uowType, opts = {})
   return edges;
 }
 
-/** 压制/去重后 push 一条 edge（id = <file>#<owner>::<kind>::<target>::<param>）。 */
-function pushEdge(edges, seen, rel, owner, kind, target, param) {
+/** 压制/去重后 push 一条 edge（id = <file>#<owner>::<kind>::<target>::<param>）。
+ * carrierPaths（Task 2.6，仅 carrier-* kind 带）：carrier 内部 .tx 证据 paths，作元数据不逐条产 edge。
+ * carrierProvenance（Task 2.6，仅 carrier-arg 带）：实参来源归因（'resolved'|'unresolved' + reason）。 */
+function pushEdge(edges, seen, rel, owner, kind, target, param, carrierPaths, carrierProvenance) {
   const id = `${rel}#${owner}::${kind}::${target}::${param}`;
   if (seen.has(id)) return;
   seen.add(id);
-  edges.push({ id, file: rel, owner, kind, target, param });
+  const edge = { id, file: rel, owner, kind, target, param };
+  if (carrierPaths && carrierPaths.length > 0) edge.capabilityPaths = carrierPaths;
+  if (carrierProvenance) edge.carrierProvenance = carrierProvenance;
+  edges.push(edge);
 }
 
 /** unknown-boundary edge（三态③）：有 DB 能力但不可分类/预算超限 → 门红。 */
@@ -650,7 +866,8 @@ function handleParameterAcceptance(param, checker, uowType, rel, edges, seen, ct
   if (paths.length === 0) return;
   const kind = paramAcceptanceKind(fn, checker);
   const { owner, target } = describeFunctionOwnerTarget(fn, checker);
-  emitPathsAsEdges(paths, param.name.text, edges, seen, rel, owner, kind, target, ctx);
+  // carrierKind='carrier-param'：facade/store 类型的参数压成一条 carrier-param sink（Task 2.6）。
+  emitPathsAsEdges(paths, param.name.text, edges, seen, rel, owner, kind, target, ctx, 'carrier-param');
 }
 
 /** A3：class 字段（PropertyDeclaration，有无 initializer 都算）。 */
@@ -660,7 +877,8 @@ function handlePropertyAcceptance(prop, kind, checker, uowType, rel, edges, seen
   const paths = findDbCapabilityPaths(type, checker, uowType, ctx);
   if (paths.length === 0) return;
   const cls = findEnclosingClassName(prop) ?? '<anonymous>';
-  emitPathsAsEdges(paths, prop.name.text, edges, seen, rel, cls, kind, cls, ctx);
+  // carrierKind='carrier-field'：字段类型是 facade/store 时压成一条 carrier-field sink（Task 2.6）。
+  emitPathsAsEdges(paths, prop.name.text, edges, seen, rel, cls, kind, cls, ctx, 'carrier-field');
 }
 
 /** A4：具名 deps 契约（interface / type-alias）。
@@ -684,6 +902,11 @@ function handleDepsContractAcceptance(node, checker, uowType, rel, edges, seen, 
     }
     // top-level path 即 deps 契约里的属性路径（无 path 段则整体即 DB，退化为 owner 自身）。
     const param = p.path.length ? p.path.join('.') : owner;
+    if (p.carrier) {
+      // deps 契约里持 facade/store 的属性 → 压成一条 carrier-field sink（Task 2.6）。
+      pushEdge(edges, seen, rel, owner, 'carrier-field', owner, param, p.capabilityPaths);
+      continue;
+    }
     pushEdge(edges, seen, rel, owner, 'deps-prop', owner, param);
   }
 }
@@ -694,7 +917,7 @@ function handleExportAssignment(node, checker, uowType, rel, edges, seen, ctx) {
   const paths = findDbCapabilityPaths(type, checker, uowType, ctx);
   if (paths.length === 0) return;
   const param = ts.isIdentifier(node.expression) ? node.expression.text : 'default';
-  emitPathsAsEdges(paths, param, edges, seen, rel, '<module>', 'module-export', 'default', ctx);
+  emitPathsAsEdges(paths, param, edges, seen, rel, '<module>', 'module-export', 'default', ctx, 'carrier-arg');
 }
 
 /** B8：export { db2 } / export { db as default }。 */
@@ -705,7 +928,7 @@ function handleExportDeclaration(node, checker, uowType, rel, edges, seen, ctx) 
     const type = safeTypeAtLocation(checker, local, rel);
     const paths = findDbCapabilityPaths(type, checker, uowType, ctx);
     if (paths.length === 0) continue;
-    emitPathsAsEdges(paths, local.text, edges, seen, rel, '<module>', 'module-export', 'named', ctx);
+    emitPathsAsEdges(paths, local.text, edges, seen, rel, '<module>', 'module-export', 'named', ctx, 'carrier-arg');
   }
 }
 
@@ -740,7 +963,39 @@ function handleCallOrNew(node, checker, uowType, rel, edges, seen, ctx, consumed
     const paths = findDbCapabilityPaths(paramType, checker, uowType, ctx);
     if (paths.length === 0) continue;
     consumed.add(arg); // 该实参被 call/new 边界消费，aggregate/decl-init 不再重复计。
-    emitPathsAsEdges(paths, paramName, edges, seen, rel, owner, kind, calleeName, ctx);
+    /* carrierKind='carrier-arg'：把 facade/store carrier 传给函数/ctor → 压成一条 carrier-arg
+     * 传播 edge（provenance 据实参来源判 linked-to-resolved-carrier / unresolved-carrier，Task 2.6）。
+     * carrier-arg 记实参标识符（provenance 据此回溯来源）——覆盖 emitPathsAsEdges 默认 param。 */
+    emitCarrierAwareCall(paths, paramName, arg, checker, edges, seen, rel, owner, kind, calleeName, ctx);
+  }
+}
+
+/** B2 carrier-arg 专用发射：carrier 结果记**实参标识符**（供 provenance 回溯来源），非参数名。 */
+function emitCarrierAwareCall(paths, paramName, arg, checker, edges, seen, rel, owner, kind, calleeName, ctx) {
+  for (const p of paths) {
+    if (p.unknown) {
+      pushUnknown(edges, seen, rel, owner, calleeName, paramName, p.context);
+      continue;
+    }
+    if (p.carrier) {
+      // param = 实参标识符（如 `os`）+ carrier 内部子路径——provenance 据实参标识符回溯定义。
+      const argName = ts.isIdentifier(arg) ? arg.text : paramName;
+      const param = p.path.length ? `${argName}.${p.path.join('.')}` : argName;
+      /* provenance 有限跟踪（Task 2.6）：回溯实参来源——getTenantOS/getCore=resolved（安全），
+       * new 直构/deps/未知=unresolved（门红）。跟踪在此 emit 时做（有 AST），结论存 edge.carrierProvenance
+       * 供 classifyPropagation 据以判 linked-to-resolved-carrier / unresolved-carrier。 */
+      const provenance = traceCarrierProvenance(arg, checker, rel);
+      pushEdge(edges, seen, rel, owner, 'carrier-arg', calleeName, param, p.capabilityPaths, provenance);
+      continue;
+    }
+    const param = paramName
+      ? p.path.length
+        ? `${paramName}.${p.path.join('.')}`
+        : paramName
+      : p.path.length
+        ? p.path.join('.')
+        : '<value>';
+    pushEdge(edges, seen, rel, owner, kind, calleeName, param);
   }
 }
 
@@ -755,7 +1010,7 @@ function handleReturnYield(node, checker, uowType, rel, edges, seen, ctx, consum
   const owner = describeEnclosingOwner(node, checker);
   // 直接命中（return db）→ param=标识符名；内部路径（return {db}）→ param=path。
   const baseName = ts.isIdentifier(expr) ? expr.text : undefined;
-  emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, 'return', 'return', ctx);
+  emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, 'return', 'return', ctx, 'carrier-arg');
 }
 
 /** B3：assignment（= / ||= / &&= / ??=），含 this.db = ...。 */
@@ -768,7 +1023,7 @@ function handleAssignment(node, checker, uowType, rel, edges, seen, ctx, consume
   const owner = describeEnclosingOwner(node, checker);
   const target = node.left.getText(node.getSourceFile());
   const baseName = ts.isIdentifier(rhs) ? rhs.text : undefined;
-  emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, 'assignment', target, ctx);
+  emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, 'assignment', target, ctx, 'carrier-arg');
 }
 
 /** B4：aggregate wrapping（object/array literal，未被更具体边界消费时）。 */
@@ -785,7 +1040,7 @@ function handleAggregate(node, checker, uowType, rel, edges, seen, ctx, consumed
     pushEdge(edges, seen, rel, owner, 'aggregate-wrapping', target, `...${spread}`);
     return;
   }
-  emitPathsAsEdges(paths, undefined, edges, seen, rel, owner, 'aggregate-wrapping', target, ctx);
+  emitPathsAsEdges(paths, undefined, edges, seen, rel, owner, 'aggregate-wrapping', target, ctx, 'carrier-arg');
 }
 
 /** object/array literal 里携带 DB 能力的 spread 源标识符名（如 {...deps} → 'deps'）。 */
@@ -811,13 +1066,14 @@ function handleDeclInitializer(node, checker, uowType, rel, edges, seen, ctx, co
   const owner = describeEnclosingOwner(node, checker);
   const target = ts.isIdentifier(node.name) ? node.name.text : 'binding';
   const baseName = ts.isIdentifier(init) ? init.text : undefined;
-  emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, 'decl-init', target, ctx);
+  emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, 'decl-init', target, ctx, 'carrier-arg');
 }
 
 /* ---------------------------------------------------------------------------
  * 辅助：把 CapabilityPath[] 落成 edge（三态②/③）。
  * ------------------------------------------------------------------------ */
-function emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, kind, target, ctx) {
+function emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, kind, target, ctx, carrierKind) {
+  void ctx;
   for (const p of paths) {
     if (p.unknown) {
       pushUnknown(edges, seen, rel, owner, target, baseName ?? '<expr>', p.context);
@@ -829,6 +1085,13 @@ function emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, kind, target
       param = p.path.length ? `${baseName}.${p.path.join('.')}` : baseName;
     } else {
       param = p.path.length ? p.path.join('.') : '<value>';
+    }
+    if (p.carrier) {
+      /* carrier 压缩结果（Task 2.6）：压成一条 carrier-* sink，内部 .tx 证据 paths 存 capabilityPaths，
+       * **不逐 path 产 edge**。carrierKind 由 boundary 指定（acceptance→carrier-param/carrier-field，
+       * transfer→carrier-arg）；缺省回退 param（安全默认，不静默丢 sink）。 */
+      pushEdge(edges, seen, rel, owner, carrierKind ?? `carrier-${kind}`, target, param, p.capabilityPaths);
+      continue;
     }
     pushEdge(edges, seen, rel, owner, kind, target, param);
   }
@@ -1039,6 +1302,8 @@ const STORING_ACCEPTANCE_KINDS = new Set(['ctor-param', 'deps-prop', 'field-decl
 const EPHEMERAL_ACCEPTANCE_KINDS = new Set(['fn-param', 'route-param']);
 /** 转移边界里天然逃逸的 kind（跨作用域/生命周期存活）→ terminal-escape。 */
 const ESCAPE_KINDS = new Set(['module-export', 'capture', 'collection-write', 'return', 'aggregate-wrapping']);
+/** carrier 接收 A 点（facade/store 压缩后的 sink declaration，Task 2.6）——本身即 sink，非传播。 */
+const CARRIER_ACCEPTANCE_KINDS = new Set(['carrier-param', 'carrier-field']);
 
 /**
  * 机器归因一条传播 edge（B 类）的处置（Task 2.5 二）。
@@ -1060,6 +1325,23 @@ const ESCAPE_KINDS = new Set(['module-export', 'capture', 'collection-write', 'r
 export function classifyPropagation(edge, checker, allEdges) {
   void checker; // 归因用 edge 结构 + allEdges 定位；checker 保留供后续更精细的 symbol 解析。
   if (!edge) return { propagation: 'unknown', reason: 'edge 为空' };
+
+  // carrier 接收 A 点（carrier-param/carrier-field）：本身即 sink declaration（facade/store 压缩产物），
+  // 与其它 A 接收点一致处理（视为已在册 sink 的存储型终点）。
+  if (CARRIER_ACCEPTANCE_KINDS.has(edge.kind)) {
+    return { propagation: 'linked-to-sink', sinkId: edge.id, reason: 'edge 本身即 carrier 接收 A 点（facade/store 压缩 sink）' };
+  }
+
+  // carrier-arg（传播 edge，Task 2.6）：据 emit 时跟踪的 provenance 判——
+  //  - resolved（来源=getTenantOS/getCore resolver 入口）→ linked-to-resolved-carrier（安全）。
+  //  - unresolved（new 直构 / deps / 未知来源）→ unresolved-carrier（**门红**，绝不按类型放行）。
+  if (edge.kind === 'carrier-arg') {
+    const prov = edge.carrierProvenance;
+    if (prov?.resolved) {
+      return { propagation: 'linked-to-resolved-carrier', reason: prov.reason, produces: prov.produces };
+    }
+    return { propagation: 'unresolved-carrier', reason: prov?.reason ?? 'carrier 来源未跟踪到 resolver 入口' };
+  }
 
   // A 接收 edge 本身是 sink declaration，不是传播——调用方（Task 4 门）只对 B 传播 edge 调本函数；
   // 若误传 A edge，按其存储性给出一致判定（存储型视为已在册 sink 的终点）。
