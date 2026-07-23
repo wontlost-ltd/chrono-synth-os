@@ -12,7 +12,7 @@ import type { JwtPayload } from '../types/auth.js';
 import { ErrorCode, StateError, AuthenticationError } from '../errors/index.js';
 import { createCustomer } from '../billing/stripe-client.js';
 import { syncPlanToQuota } from '../billing/plans.js';
-import { IdentityService } from './identity-service.js';
+import { IdentityWriter } from './identity-service.js';
 import {
   authQueryUserByEmail, authQueryUserById, authQueryRefreshToken,
   authCmdCreateUser, authCmdCreateSubscription,
@@ -93,8 +93,9 @@ export class AuthService {
 
     syncPlanToQuota(this.tx, tenantId, 'free');
 
-    const identityService = new IdentityService(this.tx);
-    identityService.create(userId, tenantId, email.split('@')[0]);
+    /* 分片 Plan 1b：注册的租户级身份写经 tenant-bound IdentityWriter(tenantId, tx) seam
+     * （Auth 是 Plan 1c mixed-scope；tenantId 由 register 流程本地生成，非裸 new IdentityService(tx)）。 */
+    new IdentityWriter(tenantId, this.tx).create(userId, email.split('@')[0]);
 
     const tokens = await this.generateTokenPair(app, userId, tenantId, 'admin');
     return { userId, email, tenantId, ...tokens };

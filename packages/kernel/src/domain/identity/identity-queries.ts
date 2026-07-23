@@ -6,8 +6,10 @@ import type { Query, Command } from '../../ports/query.js';
 
 /* ── Query Kinds ── */
 
-export const IDENT_QUERY_BY_USER = 'identity.byUser' as const;
-export const IDENT_QUERY_BY_ID = 'identity.byId' as const;
+/** 按 (tenant_id, user_id) 查身份——分片双重约束的租户 predicate（Plan 1b）。 */
+export const IDENT_QUERY_BY_TENANT_AND_USER = 'identity.byTenantAndUser' as const;
+/** 按 (tenant_id, id) 查身份——update 后回读须带 tenant predicate。 */
+export const IDENT_QUERY_BY_TENANT_AND_ID = 'identity.byTenantAndId' as const;
 export const IDENT_QUERY_BY_TENANT = 'identity.byTenant' as const;
 
 /* ── Command Kinds ── */
@@ -46,19 +48,33 @@ export interface IdentCreateDefaultAvatarParams {
 
 export interface IdentUpdateParams {
   identityId: string;
+  /** 租户约束：UPDATE 固定 `WHERE id=? AND tenant_id=?`（identities 有 tenant_id 列，非 EXISTS）。 */
+  tenantId: string;
   displayName?: string;
   bio?: string;
   now: number;
 }
 
-/* ── Query 工厂 ── */
-
-export function identQueryByUser(userId: string): Query<IdentityRow | null, string> {
-  return { kind: IDENT_QUERY_BY_USER, params: userId };
+/** 按 (tenant_id, user_id) 查身份的参数。 */
+export interface IdentByTenantAndUserParams {
+  tenantId: string;
+  userId: string;
 }
 
-export function identQueryById(identityId: string): Query<IdentityRow | null, string> {
-  return { kind: IDENT_QUERY_BY_ID, params: identityId };
+/** 按 (tenant_id, id) 查身份的参数。 */
+export interface IdentByTenantAndIdParams {
+  tenantId: string;
+  identityId: string;
+}
+
+/* ── Query 工厂 ── */
+
+export function identQueryByTenantAndUser(tenantId: string, userId: string): Query<IdentityRow | null, IdentByTenantAndUserParams> {
+  return { kind: IDENT_QUERY_BY_TENANT_AND_USER, params: { tenantId, userId } };
+}
+
+export function identQueryByTenantAndId(tenantId: string, identityId: string): Query<IdentityRow | null, IdentByTenantAndIdParams> {
+  return { kind: IDENT_QUERY_BY_TENANT_AND_ID, params: { tenantId, identityId } };
 }
 
 export function identQueryByTenant(tenantId: string): Query<IdentityRow, string> {

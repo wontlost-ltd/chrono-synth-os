@@ -14,6 +14,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { JwtPayload } from '../../types/auth.js';
@@ -28,9 +29,10 @@ import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index
 import { CreateAvatarSchema, UpdateAvatarSchema } from '../schemas/api-schemas.js';
 import { currentGlobalSeq } from '../plugins/websocket.js';
 
-export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
+export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, resolver: TenantDbResolver, tenantFactory?: TenantOSFactory): void {
   const tx = db;
-  const identityService = new IdentityService(tx);
+  /* 分片 Plan 1b：IdentityService 经共享 resolver 按 tenantId 路由（AvatarService 仍 tx——归 Task 2）。 */
+  const identityService = new IdentityService(resolver);
   const avatarService = new AvatarService(tx);
   const snapshotService = new AvatarSnapshotService(tx, app.log);
 
@@ -40,7 +42,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   }
 
   function requireIdentity(user: JwtPayload) {
-    const identity = identityService.getByUser(user.sub);
+    const identity = identityService.getByUser(user.tenantId, user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     return identity;
   }

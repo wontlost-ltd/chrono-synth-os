@@ -4,6 +4,7 @@ import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/inde
 import type { IDatabase } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 
 describe('AvatarService', () => {
   let db: IDatabase;
@@ -14,9 +15,9 @@ describe('AvatarService', () => {
   beforeEach(() => {
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    identityService = new IdentityService(db);
+    identityService = new IdentityService(new SingleDbResolver(db));
     avatarService = new AvatarService(db);
-    const identity = identityService.create('user_1', 'tenant_1', '测试用户');
+    const identity = identityService.create('tenant_1', 'user_1', '测试用户');
     identityId = identity.id;
   });
 

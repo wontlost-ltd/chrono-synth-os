@@ -16,7 +16,7 @@ export function registerIdentityRoutes(app: FastifyInstance, services: AppServic
   /* GET /api/v1/identity */
   app.get('/api/v1/identity', async (request) => {
     const user = request.user as JwtPayload;
-    const identity = identityService.getByUser(user.sub);
+    const identity = identityService.getByUser(user.tenantId, user.sub);
     if (!identity) {
       throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     }
@@ -27,11 +27,11 @@ export function registerIdentityRoutes(app: FastifyInstance, services: AppServic
   app.patch('/api/v1/identity', async (request) => {
     const user = request.user as JwtPayload;
     const body = UpdateIdentitySchema.parse(request.body);
-    const identity = identityService.getByUser(user.sub);
+    const identity = identityService.getByUser(user.tenantId, user.sub);
     if (!identity) {
       throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     }
-    const updated = identityService.update(identity.id, body);
+    const updated = identityService.update(user.tenantId, identity.id, body);
     /* API 契约：update 在并发删除等场景可能返回 null，须抛 404 而非返回 {data:null}+200 */
     if (!updated) {
       throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);

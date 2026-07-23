@@ -10,6 +10,7 @@ import { AvatarAutorunStore } from '../../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../../storage/knowledge-source-store.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 
 describe('AvatarAutorunStore', () => {
   let db: IDatabase;
@@ -22,9 +23,9 @@ describe('AvatarAutorunStore', () => {
     store = new AvatarAutorunStore(db);
 
     /* 创建 identity + avatar 满足外键约束 */
-    const identityService = new IdentityService(db);
+    const identityService = new IdentityService(new SingleDbResolver(db));
     const avatarService = new AvatarService(db);
-    const identity = identityService.create('user_1', 'tenant_1', '测试用户');
+    const identity = identityService.create('tenant_1', 'user_1', '测试用户');
     const avatar = avatarService.create(identity.id, { label: '测试分身', kind: 'work' });
     avatarId = avatar.id;
   });
