@@ -1,6 +1,6 @@
 # 分片 Phase 0 · Plan 0：DB-capability edge 扫描器 + sink 盘点 + 放开门 Implementation Plan
 
-> 状态：第 2 轮修订（采纳 Codex Plan 复审 52/100 退回——scanner 假完整/edge ID owner 级/canonical type 解析错/形态漏扫等 10 项，全核验真实代码）。
+> 状态：第 3 轮修订（Codex Plan 复审 52→78 退，采纳两轮全部——canonical 上界=SyncWriteUnitOfWork 非 IDatabase / unknown-boundary 定 8 类 taxonomy / fixture deepEqual+单删 mutation / Program 健康 diagnostics + .d.mts）。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 
 **Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 **edge 级** DB-capability 扫描器 + 升级 `db-access-inventory.ts` 到 sink 级，使「每条持有 DB 能力的 source→sink edge 都有明确处置 + 接线状态」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical type 解析失败/遇未知语法边界/Program 不健康 → 退出非零），也绝不「漏扫却报绿」。**
@@ -30,6 +30,7 @@
 ## File Structure
 
 - `scripts/db-sink-scanner.mjs` — 三层 API 扫描器（核心）。
+- `scripts/db-sink-scanner.d.mts` — 扫描器的类型声明（供 `tsx`/strict TS 测试 import 时有声明，避免 `npm run typecheck` 无声明模块错误，Codex #4）。
 - `src/storage/db-access-inventory.ts` — 升级 sink 级（`disposition` 必填 + `wiringStatus` + 纠正 buildAppServices + 登记已知 sink）。
 - `scripts/check-db-access-ratchet.mjs` — 改调 `scanProductionDbCapabilityEdges` + `collectUnregisteredEdges`。
 - `src/test/support/db-sink-fixtures/{ctor-param,deps-prop,route-param,capture,factory-indirect,type-alias}.ts` — 6 类变异 fixture。
@@ -41,16 +42,18 @@
 ## Task 1: 类型判定内核 + canonical type fail-closed + Program 健康门
 
 **Files:**
-- Create: `scripts/db-sink-scanner.mjs`（`resolveCanonicalDbTypes` + `isDbCapabilityType` + `buildProgram` + 健康断言）
-- Test: `src/test/unit/db-sink-scanner.test.ts`（纯类型判定 + fail-closed）
+- Create: `scripts/db-sink-scanner.mjs`（`buildProgram` + `resolveCanonicalUowType` + `isDbCapabilityType` + 健康断言）
+- Create: `scripts/db-sink-scanner.d.mts`（导出上述函数签名 + `Edge` 类型，供 TS 测试 import 有声明）
+- Create: `src/test/support/db-sink-fixtures/tsconfig.sentinel-missing.json`（只 include 无 sentinel 的文件，测 Program 健康 fail-closed）
+- Test: `src/test/unit/db-sink-scanner.test.ts`（纯类型判定 + fail-closed + Program 健康）
 
 **Interfaces:**
 - Produces: `buildProgram(tsconfigPath) → { program, checker, uowType }`（含 canonical `SyncWriteUnitOfWork` type，解析失败抛）；`isDbCapabilityType(type, checker, uowType) → boolean`（逐 union 分量 assignableTo）。
 
-**关键真实契约（已核实）**：
-- canonical type 来自 **`.d.ts`**：`tsconfig.src.json`（`rootDir:src` + kernel 是 `references` 项）→ `SyncWriteUnitOfWork` 解析到 `packages/kernel/dist/ports/sync-unit-of-work.d.ts`（**不是** `src/.ts`，该 .d.ts 已存在）。`IDatabase` 在 `src/storage/database.ts:27` `extends SyncWriteUnitOfWork`。
-- 解析路径：从 `src/storage/database.ts` 的 `IDatabase` export symbol 出发（`checker.getExportsOfModule` 或找该文件 InterfaceDeclaration），`getAliasedSymbol` 解 alias，取其类型；`SyncWriteUnitOfWork` 从 `IDatabase` 的 heritage 或直接从 kernel module export 解析。
-- `isTypeAssignableTo(t, uowType)` 判结构兼容——但对 `IDatabase | undefined` 不直接返 true，须 `type.isUnion() ? type.types.some(...) : isTypeAssignableTo(...)`。
+**关键真实契约（已核实——canonical 上界必须是 `SyncWriteUnitOfWork` 非 `IDatabase`，Codex 退回 #1）**：
+- **capability 上界 = `SyncWriteUnitOfWork`**（`packages/kernel/src/ports/sync-unit-of-work.ts:15`，`extends SyncReadUnitOfWork`——成员仅 `queryOne/queryMany/execute/transaction`）。`IDatabase`（`database.ts:27` extends UoW，**额外**要求 `dialect/exec/prepare/transactionRollback/close`）是**更严**的子集——若用 IDatabase 作上界，任何只持 `SyncWriteUnitOfWork` 的长期 service/closure（如 `fromUnitOfWork(tx)` 传的 tx）会被**漏扫**。故 `isTypeAssignableTo(t, uowType)` 的 `uowType` **必须**是 `SyncWriteUnitOfWork` 的 type（不是 IDatabase）。`IDatabase` 只作额外分类标签，不作检测上界。
+- canonical 解析（fail-closed）：tsconfig.src.json（kernel 是 `references` 项）→ `SyncWriteUnitOfWork` 解析到 `packages/kernel/dist/ports/sync-unit-of-work.d.ts`（已存在）。**从 `src/storage/database.ts` 的 `IDatabase` interface 的 heritage clause（`extends SyncWriteUnitOfWork`）取其基类型 symbol → `getAliasedSymbol` 解 alias → 取 `SyncWriteUnitOfWork` 的 type**；或直接从 kernel module export 找 `SyncWriteUnitOfWork` export symbol。解析不到 → 抛（fail-closed）。**无「实现者确认用哪个」的开放决策——就是 SyncWriteUnitOfWork。**
+- `isTypeAssignableTo(t, uowType)`：`IDatabase|undefined` 不直接返 true → `type.isUnion() ? type.types.some(...) : isTypeAssignableTo(...)`（逐分量）。
 
 - [ ] **Step 1: 写纯类型判定 fixture + 失败测试**
 
@@ -61,7 +64,9 @@
 import type { IDatabase } from '../../../storage/database.js';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 export type DbAlias = IDatabase;                          // 别名
-export interface StructuralDb { prepare: IDatabase['prepare']; execute: IDatabase['execute']; transaction: IDatabase['transaction']; transactionRollback: IDatabase['transactionRollback']; queryOne: IDatabase['queryOne']; queryMany: IDatabase['queryMany']; close: IDatabase['close']; }  // 结构兼容（不 extends）
+// 结构兼容：只含 SyncWriteUnitOfWork 的 4 个方法（queryOne/queryMany/execute/transaction），
+// 不 extends、不含 IDatabase 的 dialect/exec/prepare/close——必须判 true（证上界是 UoW 非 IDatabase）。
+export interface StructuralUow { queryOne: SyncWriteUnitOfWork['queryOne']; queryMany: SyncWriteUnitOfWork['queryMany']; execute: SyncWriteUnitOfWork['execute']; transaction: SyncWriteUnitOfWork['transaction']; }
 export function optionalDb(db?: IDatabase): void { void db; }         // union | undefined
 export function genericDb<T extends SyncWriteUnitOfWork>(tx: T): void { void tx; }  // generic 约束
 export interface NotDb { foo: string; }                   // negative control
@@ -77,17 +82,24 @@ test('canonical DB/UoW type 解析成功（否则 fail-closed）', () => {
   assert.ok(uowType, 'canonical SyncWriteUnitOfWork 未解析——扫描器应 fail-closed 而非空扫');
 });
 
-test('类型判定：canonical/alias/结构兼容/union/generic 都判 DB 能力；negative 不判', () => {
+test('类型判定：canonical/alias/结构兼容(纯UoW)/union/generic 都判 DB 能力；negative 不判', () => {
   const { program, checker, uowType } = buildProgram('tsconfig.src.json');
-  // 从 type-alias.ts 取各样本的类型（实现者按 AST 定位对应节点）
-  const probe = (symbolName) => /* 取该 export 的类型 */ null;
-  assert.equal(isDbCapabilityType(probe('DbAlias'), checker, uowType), true);
-  assert.equal(isDbCapabilityType(probe('StructuralDb'), checker, uowType), true);   // 结构兼容（禁 getBaseTypes fallback 才能过）
-  assert.equal(isDbCapabilityType(probe('NotDb'), checker, uowType), false);         // negative
+  const probe = (symbolName) => /* 取该 export 的类型（实现者按 AST 定位）*/ null;
+  assert.equal(isDbCapabilityType(probe('DbAlias'), checker, uowType), true);         // 别名
+  assert.equal(isDbCapabilityType(probe('StructuralUow'), checker, uowType), true);   // 纯 UoW 4 方法结构兼容（证上界=UoW 非 IDatabase——若上界错用 IDatabase 此断言红）
+  assert.equal(isDbCapabilityType(probe('optionalDb'), checker, uowType), true);      // union IDatabase|undefined（逐分量）
+  assert.equal(isDbCapabilityType(probe('genericDb'), checker, uowType), true);       // generic T extends UoW（getBaseConstraintOfType）
+  assert.equal(isDbCapabilityType(probe('NotDb'), checker, uowType), false);          // negative control
 });
 
-test('fail-closed：canonical type 解析失败 → buildProgram 抛（不返回空 uowType）', () => {
+test('fail-closed：tsconfig 不存在 → buildProgram 抛（不返回空 uowType）', () => {
   assert.throws(() => buildProgram('tsconfig.does-not-exist.json'));
+});
+
+test('fail-closed：Program 建出但 sentinel 缺（传只含无关文件的 tsconfig）→ 抛，不空扫报绿', () => {
+  // 实现者：造一个临时 tsconfig 只 include 一个无 sentinel 的文件，断言 buildProgram 抛「sentinel 缺失」
+  //（证「Program 存在但范围不对」也 fail-closed，非只测 tsconfig 不存在）
+  assert.throws(() => buildProgram('src/test/support/db-sink-fixtures/tsconfig.sentinel-missing.json'), /sentinel 缺失/);
 });
 ```
 
@@ -112,27 +124,46 @@ export function buildProgram(tsconfigPath = 'tsconfig.src.json') {
   });
   if (!parsed || parsed.fileNames.length === 0) throw new Error('Program root files 为空——fail-closed');
   const program = ts.createProgram(parsed.fileNames, parsed.options);
+  /* Program 健康（fail-closed，Codex #4）：config/options/syntactic 致命 diagnostic 或 sentinel 缺 → 抛，
+   * 防「Program 建出来了但源码解析残缺/canonical 类型不可信」时静默空扫报绿。 */
+  const fatal = [
+    ...program.getConfigFileParsingDiagnostics(),
+    ...program.getOptionsDiagnostics(),
+    ...program.getGlobalDiagnostics(),
+    ...program.getSyntacticDiagnostics(),  // 语法错=源码没被正确解析→类型不可信
+  ].filter((d) => d.category === ts.DiagnosticCategory.Error);
+  if (fatal.length > 0) throw new Error(`Program 致命 diagnostic ${fatal.length} 条——fail-closed: ${ts.flattenDiagnosticMessageText(fatal[0].messageText, '\n')}`);
   const checker = program.getTypeChecker();
-  /* Program 健康：sentinel 生产入口必须在 Program（tsconfig 路径错→sentinel 缺→fail-closed，防空扫假绿）。 */
+  /* sentinel 生产入口必须在 Program（tsconfig 路径错→sentinel 缺→fail-closed）。 */
   const roots = new Set(program.getSourceFiles().map((sf) => relative(ROOT, sf.fileName)));
-  for (const s of SENTINELS) if (![...roots].some((r) => r === s)) throw new Error(`sentinel 缺失 ${s}——Program 范围不对，fail-closed`);
+  for (const s of SENTINELS) if (!roots.has(s)) throw new Error(`sentinel 缺失 ${s}——Program 范围不对，fail-closed`);
+  // 注：不校验全库 semantic diagnostics（跨包类型噪音多）——只 config/options/syntactic 致命项 + canonical 解析 + sentinel。
   /* canonical UoW type：从 database.ts 的 IDatabase 解析（extends SyncWriteUnitOfWork）。 */
   const uowType = resolveCanonicalUowType(program, checker);
   if (!uowType) throw new Error('canonical SyncWriteUnitOfWork 未解析——fail-closed（绝不空扫报绿）');
   return { program, checker, uowType, parsed };
 }
 
+/** 解析 canonical SyncWriteUnitOfWork 的 type（capability 上界——非 IDatabase！IDatabase 更严会漏纯 UoW sink）。
+ * 从 IDatabase 的 heritage `extends SyncWriteUnitOfWork` 取基类型 symbol，getAliasedSymbol 解 alias。 */
 function resolveCanonicalUowType(program, checker) {
   const dbFile = program.getSourceFiles().find((sf) => relative(ROOT, sf.fileName) === 'src/storage/database.ts');
   if (!dbFile) return undefined;
-  let uow;
+  let uowType;
   ts.forEachChild(dbFile, (node) => {
-    if (ts.isInterfaceDeclaration(node) && node.name.text === 'IDatabase') {
-      const t = checker.getTypeAtLocation(node);
-      uow = t;  // IDatabase 本身即 DB 能力上界（extends UoW）；判定用 assignableTo(t, IDatabase-or-UoW)
+    if (ts.isInterfaceDeclaration(node) && node.name.text === 'IDatabase' && node.heritageClauses) {
+      for (const h of node.heritageClauses) {
+        for (const t of h.types) {
+          const sym = checker.getSymbolAtLocation(t.expression);
+          const target = sym && sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
+          if (target && target.name === 'SyncWriteUnitOfWork') {
+            uowType = checker.getDeclaredTypeOfSymbol(target);  // canonical UoW type（.d.ts）
+          }
+        }
+      }
     }
   });
-  return uow;
+  return uowType;  // 未解析 → undefined → buildProgram 抛（fail-closed）
 }
 
 /** 逐 union 分量 assignableTo（IDatabase|undefined 不直接过）；禁 getBaseTypes fallback。 */
@@ -147,11 +178,13 @@ export function isDbCapabilityType(type, checker, uowType) {
   try { return checker.isTypeAssignableTo(type, uowType); } catch { return false; }
 }
 ```
-> 实现者注：`resolveCanonicalUowType` 若 IDatabase 定位不到 → 返回 undefined → buildProgram 抛（fail-closed）。`isTypeAssignableTo(type, uowType)` 用 IDatabase 作上界（比 UoW 更严，避免把只读 UoW 也算——但 spec 要 UoW 也算 DB 能力，故 uowType 取 IDatabase 的 apparent/或单独解析 SyncWriteUnitOfWork；实现者确认用哪个作上界并在测试固定：结构兼容 `StructuralDb`（含 UoW 全方法）须判 true）。`probe` 取节点类型照 TS AST（找 export 声明 → getTypeAtLocation）。
+> 实现者注：`resolveCanonicalUowType` 定位不到 SyncWriteUnitOfWork → undefined → buildProgram 抛（fail-closed）。**上界固定为 `SyncWriteUnitOfWork`（非 IDatabase）**——`StructuralUow`（仅 4 个 UoW 方法）须判 true 是这个选择的验收锚（用 IDatabase 作上界此断言会红）。`getDeclaredTypeOfSymbol` 取 interface symbol 的声明类型。`probe` 取节点类型照 TS AST（找 export 声明 → `getTypeAtLocation`）。若 `isTypeAssignableTo(structuralUow, uowType)` 因 TS 结构判定细节返 false，实现者改用 `checker.getPropertiesOfType(uowType).every(p => getPropertyOfType(candidate, p.name))` 的成员覆盖判定——核心不变量：**只持 UoW 4 方法的类型必须判 DB 能力**。
 
 - [ ] **Step 4: 运行确认通过** — 3 测试（canonical 解析 / 类型判定含结构兼容+negative / fail-closed 抛）
 
-- [ ] **Step 5: Commit** — `git add scripts/db-sink-scanner.mjs src/test/support/db-sink-fixtures/type-alias.ts src/test/unit/db-sink-scanner.test.ts && git commit -m "feat(shard): DB-capability 类型判定内核（canonical fail-closed + 结构兼容/union/generic + Program sentinel 门)"`（结尾 Co-Authored-By）
+- [ ] **Step 4b: 写 `scripts/db-sink-scanner.d.mts`**（`export function buildProgram(p?: string): { program: import('typescript').Program; checker: import('typescript').TypeChecker; uowType: import('typescript').Type }; export function isDbCapabilityType(...): boolean;` + `Edge` 类型——Task 2 补 enumerate/collect/scanProduction 签名）。确认 `npm run typecheck` 对 test import scanner 无「无声明模块」错。
+
+- [ ] **Step 5: Commit** — `git add scripts/db-sink-scanner.mjs scripts/db-sink-scanner.d.mts src/test/support/db-sink-fixtures/ src/test/unit/db-sink-scanner.test.ts && git commit -m "feat(shard): DB-capability 类型判定内核（canonical=SyncWriteUnitOfWork fail-closed + 结构兼容/union/generic + Program 健康门)"`（结尾 Co-Authored-By）
 
 ---
 
@@ -170,47 +203,61 @@ export function isDbCapabilityType(type, checker, uowType) {
 - **capture（#4）**：不只 Identifier——对 `PropertyAccessExpression`（`this.db`/`this.deps.db`/`opts.db`）、`ElementAccessExpression`、`BindingElement`（解构）、`ShorthandPropertyAssignment`、`AsExpression`/括号 整体调 `getTypeAtLocation` 判 DB 能力；capture 须验引用声明在**当前函数作用域外**（否则是本地 param 非捕获）。
 - **factory-indirect（#5）**：不只直接 DB 实参——`new Service({db})`（对象字面量属性）、`new Service(options)`（options.db: IDatabase）、`return {db}`、`arr.push(db)`、`map.set(k, db)`。做法：看**被调目标参数类型**是否含 DB capability（`checker.getResolvedSignature` 取参数类型），对象字面量则把属性映射到 target property。
 - **inferred（#6）**：`private readonly db = os.getDatabase()`（无 `node.type`）——对 declaration/name/initializer 调 `getTypeAtLocation`，**不要求 `node.type` 存在**。
-- **未知边界 fail-closed（#6）**：遇到「表达式类型含 DB capability 但落在枚举器未覆盖的语法 kind」→ 记为 `unknown-boundary` edge 并使门红（宁可误报也不漏）。
+- **未知边界 fail-closed——先定可穷举的 boundary taxonomy（Codex 退回 #2，否则 unknown-boundary 不是真 fail-closed）**：枚举器**不是**「遍历所有 DB-typed 表达式」（那会海量误报普通 identifier/括号/property-access），而是先定义**有限的 capability-transfer boundary 全集**——只在这些边界节点判 DB capability + 分类：
+  1. declaration initializer（`const x = <db-expr>`）
+  2. constructor/function/callback argument（调用实参）
+  3. assignment（`x.db = <db-expr>` / `this.db = ...`）
+  4. property / object-literal wrapping（`{ db: <db-expr> }`）
+  5. return / yield（`return { db }` / `return db`）
+  6. collection / container write（`arr.push(db)` / `map.set(k, db)`）
+  7. field / property initialization（class field `db = ...`）
+  8. closure / timer / event / worker registration capture（闭包引用外层 db 绑定）
+  
+  遍历到**每个** boundary 节点：其转移的值类型含 DB capability → 产 **known classified edge**（归 6 kind 之一）**或** `unknown-boundary` edge（含 capability 但不落任何已知 kind 分类）。`unknown-boundary` 非空 → 门红。**分母 = boundary taxonomy（有限可遍历），非「所有语法 kind」**——这样「第 7 类语法」若是新 boundary 形态，会在遍历该 boundary 时因无法归 6 kind 而变 unknown-boundary（红），而非静默不访问。boundary taxonomy 本身若不全（漏了某种转移语法），是 Plan 0 终审 + 未来增强的边界——spec §10 已列「跨函数污点」为后续。
 
 - [ ] **Step 1: 写 5 个 fixture（各一形态最小样本）+ 表驱动 pin 测试**
 
 ```typescript
-// 表驱动逐文件断言（Codex #3）
-const FIXTURE_TABLE = [
-  ['ctor-param.ts', 'ctor-param'], ['deps-prop.ts', 'deps-prop'], ['route-param.ts', 'route-param'],
-  ['capture.ts', 'capture'], ['factory-indirect.ts', 'factory-indirect'],
-];
-for (const [file, kind] of FIXTURE_TABLE) {
-  test(`fixture ${file} 产 ${kind} edge + edge id 含 target/param`, () => {
+// 表驱动逐文件 deepEqual 完整期望集（Codex #3——非 some(kind)，防占位 target/param + 漏 edge）。
+// 每个 fixture 的期望 edge 全集（owner/kind/target/param/id）由实现者按 fixture 内容固定填全。
+const FIXTURE_EXPECT = {
+  'ctor-param.ts':       [{ owner: 'CtorParamFixture', kind: 'ctor-param', target: 'CtorParamFixture', param: 'db' }],
+  'deps-prop.ts':        [{ owner: 'FixtureDeps', kind: 'deps-prop', target: 'FixtureDeps', param: 'db' }],
+  'route-param.ts':      [{ owner: 'registerFixtureRoutes', kind: 'route-param', target: 'registerFixtureRoutes', param: 'db' }],
+  'capture.ts':          [{ owner: 'makeTimer', kind: 'capture', target: 'makeTimer', param: 'db' }],
+  'factory-indirect.ts': [ // ≥2 不同 target 证 edge 级不合并
+    { owner: 'FactoryFixture', kind: 'factory-indirect', target: 'ServiceA', param: 'db' },
+    { owner: 'FactoryFixture', kind: 'factory-indirect', target: 'ServiceB', param: 'db' },
+  ],
+};
+for (const [file, expected] of Object.entries(FIXTURE_EXPECT)) {
+  test(`fixture ${file}：产出的 edge 全集精确匹配（deepEqual，非 some）`, () => {
     const { program, checker, uowType } = buildProgram('tsconfig.src.json');
-    const edges = enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: true })
-      .filter((e) => e.file.includes(`db-sink-fixtures/${file}`));
-    assert.ok(edges.some((e) => e.kind === kind), `${file} 未产 ${kind} edge`);
-    assert.ok(edges.every((e) => e.id.split('::').length >= 4), 'edge id 非 edge 级（缺 target/param 段）');
-  });
-  test(`fixture ${file} 删登记 → 进 unregistered`, () => {
-    const { program, checker, uowType } = buildProgram('tsconfig.src.json');
-    const edges = enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: true });
-    const unreg = collectUnregisteredEdges(edges, /* 空 inventory */ new Set());
-    assert.ok(unreg.some((e) => e.file.includes(`db-sink-fixtures/${file}`)));
+    const got = enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: true })
+      .filter((e) => e.file.includes(`db-sink-fixtures/${file}`))
+      .map((e) => ({ owner: e.owner, kind: e.kind, target: e.target, param: e.param }))
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    assert.deepEqual(got, [...expected].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
   });
 }
-test('回归：同一 owner 内新增第二个 sink 不被 owner 合并吞掉', () => {
-  // capture.ts 里放两个不同 target 的 sink → 断言 2 条独立 edge（非合并 1 条）
+test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregistered 恰为该 edge，其余仍登记', () => {
   const { program, checker, uowType } = buildProgram('tsconfig.src.json');
   const edges = enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: true })
-    .filter((e) => e.file.includes('db-sink-fixtures/factory-indirect'));
-  const targets = new Set(edges.map((e) => e.target));
-  assert.ok(targets.size >= 2, '同 owner 多 target 被错误合并');   // fixture 放两个 new X(db)/new Y(db)
+    .filter((e) => e.file.includes('db-sink-fixtures'));
+  const allIds = new Set(edges.map((e) => e.id));
+  const victim = edges.find((e) => e.file.includes('deps-prop')).id;
+  allIds.delete(victim);                                    // 只删一个
+  const unreg = collectUnregisteredEdges(edges, allIds);
+  assert.deepEqual(unreg.map((e) => e.id), [victim]);       // 恰好只有被删那条未登记
 });
 ```
-（fixture 样本略——每个含该形态；factory-indirect.ts 放 ≥2 个不同 `new X(db)` 证 edge 级。）
+> fixture 样本（实现者建全 5 个；关键：`factory-indirect.ts` 放 `new ServiceA(db)` + `new ServiceB(db)` 两不同 target 证 edge 级不合并；`capture.ts` 用 `this.db`/闭包证 property-access capture）。`FIXTURE_EXPECT` 的 id 段实现者补全（含完整 `<file>#<owner>::<kind>::<target>::<param>`），deepEqual 精确到 owner/kind/target/param。
 
 - [ ] **Step 2: 运行确认失败**（enumerate 未实现）
 
-- [ ] **Step 3: 写 `enumerateDbCapabilityEdges`（全形态 + edge 级 id + 未知边界 fail-closed）**
+- [ ] **Step 3: 写 `enumerateDbCapabilityEdges`（遍历 8 类 boundary taxonomy + edge 级 id + 未知边界 fail-closed）**
 
-（按上「关键」逐条实现：visit 参数/属性用 `getTypeAtLocation` 不要求 node.type；PropertyAccess/ElementAccess/BindingElement 整体判；new/call 用 `getResolvedSignature` 看目标参类型含 DB capability，对象字面量映射属性；capture 验作用域外；未知语法边界含 DB capability → `unknown-boundary` edge。id = `${rel}#${owner}::${kind}::${target}::${param}`。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。）
+按上「关键」的 **8 类 boundary taxonomy** 遍历：对每个 boundary 节点（declaration initializer / call·ctor argument / assignment / object-wrapping / return·yield / collection write / field init / closure·timer·worker capture）取其转移值类型 `getTypeAtLocation`（不要求 node.type），`isDbCapabilityType` 判——含 capability 则归 6 kind 之一产 known edge，否则产 `unknown-boundary` edge（使门红）。new/call 用 `getResolvedSignature` 看目标参类型含 capability，对象字面量映射属性到 target property；capture 验引用声明在函数作用域外（`checker.getSymbolAtLocation` + declaration 位置）。id = `${rel}#${owner}::${kind}::${target}::${param}`。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。
 
 - [ ] **Step 4: 运行确认通过**（6 类逐文件 pin + edge 级 + 合并回归全绿）
 
