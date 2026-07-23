@@ -17,6 +17,7 @@ import {
   isDbCapabilityType,
   enumerateDbCapabilityEdges,
   collectUnregisteredEdges,
+  classifyPropagation,
 } from '../../../scripts/db-sink-scanner.mjs';
 
 /**
@@ -69,15 +70,27 @@ function builtProgram(): ReturnType<typeof buildProgram> {
   if (!_built) _built = buildProgram('tsconfig.src.json');
   return _built;
 }
-let _fixtureEdges: import('../../../scripts/db-sink-scanner.d.mts').Edge[] | undefined;
-function fixtureEdges(): import('../../../scripts/db-sink-scanner.d.mts').Edge[] {
-  if (!_fixtureEdges) {
+type Edge = import('../../../scripts/db-sink-scanner.d.mts').Edge;
+
+/** includeTests:true 的全量 edge（含 fixture + src/test）——只枚举一次，供 fixture / classify 复用。 */
+let _allEdges: Edge[] | undefined;
+function allEdges(): Edge[] {
+  if (!_allEdges) {
     const { program, checker, uowType } = builtProgram();
-    _fixtureEdges = enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: true }).filter((e) =>
-      e.file.includes('db-sink-fixtures'),
-    );
+    _allEdges = enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: true });
   }
-  return _fixtureEdges;
+  return _allEdges;
+}
+function fixtureEdges(): Edge[] {
+  return allEdges().filter((e) => e.file.includes('db-sink-fixtures'));
+}
+
+/**
+ * production scope（includeTests:false）的全量 edge——从 allEdges 过滤掉 src/test/** 复用，
+ * 避免第二次 ~17s 枚举。语义与 scanProductionDbCapabilityEdges 一致（同一 Program，仅 scope 过滤）。
+ */
+function productionEdges(): Edge[] {
+  return allEdges().filter((e) => !e.file.startsWith('src/test/'));
 }
 
 test('canonical DB/UoW type 解析成功（否则 fail-closed）', () => {
@@ -222,4 +235,64 @@ test('单-ID-删除 mutation：从完整集合删一个指定 id → unregistere
 test('fixture 全集无 unknown-boundary edge（所有形态都可归 kind，否则门红）', () => {
   const unknown = fixtureEdges().filter((e) => e.kind === 'unknown-boundary');
   assert.deepEqual(unknown, [], `fixture 不应有 unknown-boundary：${JSON.stringify(unknown)}`);
+});
+
+/* ============================================================================
+ * Task 2.5：修扫描器过度触发（收窄数据属性递归，消 unknown 误报）+ edge 归因分类。
+ *
+ * 背景：Task 2 对 production 产 7701 edge，含 1269 unknown-boundary 误报——findDbCapabilityPaths
+ * 递归**方法/原型面/库类型**（string.length / Buffer.subarray / zod 内部）→ 对 AppConfig/app
+ * 等大类型预算爆。收窄后只递归**数据属性**，unknown 应清零。
+ * ==========================================================================*/
+
+test('①收窄后 production unknown-boundary 清零（否则门红——不为清零放宽，残留如实保留）', () => {
+  const unknown = productionEdges().filter((e) => e.kind === 'unknown-boundary');
+  assert.deepEqual(
+    unknown.map((e) => `${e.file} | ${e.owner} | ${e.context ?? ''}`),
+    [],
+    `收窄数据属性递归后 production 不应再有 unknown-boundary 误报（残留即门红）`,
+  );
+});
+
+test('②方法面 fixture（return rows / 返回含方法的 service 对象 / 标量+标准库容器）不产任何伪 edge', () => {
+  const ms = allEdges().filter((e) => e.file.includes('db-sink-fixtures/method-surface.ts'));
+  assert.deepEqual(
+    ms.map((e) => ({ owner: e.owner, kind: e.kind, target: e.target, param: e.param })),
+    [],
+    `方法面/原型面/标准库容器不承载 per-tenant 数据存储，收窄后不应产 edge（含 unknown）：${JSON.stringify(ms)}`,
+  );
+});
+
+test('③classifyPropagation：new ClassifyService(db) → linked-to-sink 且 sinkId 指向 ClassifyService ctor', () => {
+  const { checker } = builtProgram();
+  const linked = allEdges().find(
+    (e) => e.file.includes('db-sink-fixtures/classify.ts') && e.owner === 'makeService' && e.target === 'ClassifyService',
+  );
+  assert.ok(linked, 'classify.ts 应有 new ClassifyService(db) 的 factory-indirect edge');
+  const result = classifyPropagation(linked, checker, allEdges());
+  assert.equal(result.propagation, 'linked-to-sink', 'new ClassifyService(db) 应归 linked-to-sink');
+  assert.ok(
+    typeof result.sinkId === 'string' && result.sinkId.includes('ClassifyService') && result.sinkId.includes('ctor-param'),
+    `sinkId 应指向 ClassifyService 的 ctor-param A 点，实际=${result.sinkId}`,
+  );
+});
+
+test('③classifyPropagation：export default escapingDb → terminal-escape（离开模块边界）', () => {
+  const { checker } = builtProgram();
+  const exported = allEdges().find(
+    (e) => e.file.includes('db-sink-fixtures/classify.ts') && e.kind === 'module-export',
+  );
+  assert.ok(exported, 'classify.ts 应有 export default 的 module-export edge');
+  const result = classifyPropagation(exported, checker, allEdges());
+  assert.equal(result.propagation, 'terminal-escape', 'module-export 应归 terminal-escape（跨模块生命周期）');
+});
+
+test('③classifyPropagation：ephemeralUse 里 db 同步转给本地纯函数 useOnce → ephemeral（不逃逸）', () => {
+  const { checker } = builtProgram();
+  const eph = allEdges().find(
+    (e) => e.file.includes('db-sink-fixtures/classify.ts') && e.owner === 'ephemeralUse' && e.target === 'useOnce',
+  );
+  assert.ok(eph, 'classify.ts 应有 ephemeralUse → useOnce 的同步转移 edge');
+  const result = classifyPropagation(eph, checker, allEdges());
+  assert.equal(result.propagation, 'ephemeral', 'db 只同步传给本地 per-request 纯函数、不逃逸 → ephemeral');
 });
