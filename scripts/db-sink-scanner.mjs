@@ -187,92 +187,251 @@ export function isDbCapabilityType(type, checker, uowType) {
 const CAPABILITY_MAX_DEPTH = 12;
 const CAPABILITY_MAX_NODES = 4000;
 
+/** 标准库「不透明」容器/内建类型名——不可能作为数据属性承载 per-tenant db，不展开其原型方法面。 */
+const OPAQUE_BUILTIN_NAMES = new Set([
+  'Date', 'RegExp', 'Error', 'Promise', 'Map', 'Set', 'WeakMap', 'WeakSet',
+  'ArrayBuffer', 'SharedArrayBuffer', 'DataView', 'Buffer', 'URL', 'URLSearchParams',
+  'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+  'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
+]);
+
 /**
  * 递归查某类型携带 DB 能力的**完整属性路径**（Codex 第 3 轮 #2 的「含 DB 能力」正式谓词）。
  *
  * 整体类型不可赋 UoW（如 `{ db: IDatabase }`、`IDatabase[]`）时，isDbCapabilityType 不够，
- * 需递归其属性 / union·intersection 分量 / tuple·array element，记完整 property path。
+ * 需递归其**数据属性** / union·intersection 分量 / tuple·array element，记完整 property path。
+ *
+ * **收窄（Task 2.5）——只递归数据属性，跳「方法/原型面」**：
+ *   - 跳方法符号（SymbolFlags.Method / 全部声明是 method·signature·accessor）——方法签名结构上
+ *     不承载 per-tenant 数据存储，展开它只会钻进参数/原型面导致预算爆（1269 unknown 误报根因）。
+ *   - primitive（string/number/boolean/…）与标准库容器（Array/Map/Set/Buffer/Date/…）原型不展开
+ *     （不钻 string.length.toString、Buffer.subarray、Map.set 之类）。
+ *   - array/tuple 直接取 element type，不遍历其 map/filter/set 方法面。
+ *   - 函数对象表面（callable-only：有 call/construct 签名且无自有数据属性）不展开。
+ *   收窄只跳「结构上不可能承载 per-tenant 数据存储的表面」——**数据属性（含嵌套 db）仍全递归**，
+ *   不牺牲完整性；不按 AppConfig/Options 之类**名字**白名单剪枝（按可证明的声明类别剪）。
+ *
+ * **memoize + active-stack（cycle guard）**（Codex 第 7 轮）：
+ *   - memo（Map<Type, 相对 capability 后缀 paths>）：同一 type 只完整展开一次，之后以**相对**
+ *     后缀 + 当前父 path 前缀 re-emit——同类型不同父路径下仍产不同完整 path（不漏）。
+ *   - active-set（当前递归栈）：仅防**真环**（`A.self: A`）；兄弟属性重复同一 type 仍展开
+ *     （`{ primary: IDatabase; replica: IDatabase }` 的两条 path 都出——memo 命中 replica 时以
+ *     相对后缀 `[]` + 前缀 `replica` re-emit，不会像全局 visited 那样漏第二条）。
  *
  * 返回 CapabilityPath[]：
  *   - `{ path: [] }`：type 本身即 DB 能力（直接命中）。
  *   - `{ path: ['db'] }` / `{ path: ['options', 'db'] }`：内部路径命中。
  *   - `{ unknown: true, context }`：预算超限——由调用点产 unknown-boundary edge（门红）。
  *
- * **visited = 当前递归栈 active-set**（进入 type 前加入、退出该分支后移除），**非全局**：
- * 全局会漏 `{ primary: IDatabase; replica: IDatabase }` 的第二条 path（IDatabase 首访后被
- * 全局标记 → replica 被跳过）。active-set 仅防真环，允许同一 type 经不同父路径重复展开。
- *
  * @param {import('typescript').Type} type
  * @param {import('typescript').TypeChecker} checker
  * @param {import('typescript').Type} uowType
- * @param {{ node?: import('typescript').Node, file?: string }} [ctx] 供异常/unknown-boundary 带上下文。
+ * @param {{ node?: import('typescript').Node, file?: string, memo?: Map<import('typescript').Type, any[]> }} [ctx]
+ *   memo 可跨 boundary 复用（enumerate 传入）；缺省则本次调用内新建。
  * @returns {Array<{ path: string[] } | { unknown: true, context: string }>}
  */
 export function findDbCapabilityPaths(type, checker, uowType, ctx = {}) {
   const state = { nodes: 0 };
   const active = new Set();
-  const out = [];
-  recurseCapability(type, [], checker, uowType, active, state, out, 0, ctx);
-  return out;
+  const memo = ctx.memo ?? new Map();
+  const rel = resolveCapabilitySuffixes(type, checker, uowType, active, state, memo, 0, ctx);
+  // 顶层：相对后缀即完整 path（前缀为空）。
+  return rel.map((r) => (r.unknown ? { unknown: true, context: formatUnknownContext(r, [], ctx) } : { path: r.path }));
 }
 
 /**
- * findDbCapabilityPaths 的递归内核。
+ * 计算某 type 的**相对** capability 后缀集（相对该 type 为根）。memoize 的最小单元。
  *
- * 关键顺序（Codex 第 4 轮 #4 的 active-stack 语义）：
- *   1. 先判环 / 预算超限。
- *   2. **把当前 type 加入 active 集**（在判 isDbCapabilityType 之前——这样容器 type 在
- *      其属性递归期间处于 active，退出该分支后移除，允许兄弟属性重新展开同一 type）。
- *   3. isDbCapabilityType(type) → 命中即 push { path }，不再深入（DB 能力是叶子）。
- *   4. 否则递归 union/intersection 分量、object 属性、tuple/array element。
- *   5. **finally 从 active 移除**（active-set 语义；改成不移除即退化为全局 visited）。
+ * 返回相对结果数组，每项：
+ *   - `{ path: [...] }`：相对后缀（`[]` = type 自身即 DB 能力）。
+ *   - `{ unknown: true, deepest, origin }`：该 type 子图内预算超限（相对，re-emit 时补前缀）。
  */
-function recurseCapability(type, path, checker, uowType, active, state, out, depth, ctx) {
-  if (!type) return;
+function resolveCapabilitySuffixes(type, checker, uowType, active, state, memo, depth, ctx) {
+  if (!type) return [];
+  // 预算超限：记 root type + 最深相对 path + 声明来源（Codex 第 7 轮要求）。
   if (depth > CAPABILITY_MAX_DEPTH || state.nodes > CAPABILITY_MAX_NODES) {
-    out.push({ unknown: true, context: `${ctx.file ?? '?'}: capability 递归预算超限 @ ${path.join('.') || '<root>'}` });
-    return;
+    return [{ unknown: true, deepest: typeName(type, checker), origin: declOrigin(type) }];
   }
-  if (active.has(type)) return; // 真环：当前栈已在展开此 type，跳过（防无限递归）。
+  if (active.has(type)) return []; // 真环：当前栈正在展开此 type，跳过（防无限递归）。
+  if (memo.has(type)) return memo.get(type); // 已完整展开过：直接复用相对后缀（不同父路径由调用点补前缀）。
+
   state.nodes += 1;
   active.add(type);
+  /** @type {any[]} */
+  const rel = [];
   try {
     // 叶子：type 本身即 DB 能力（含 union/intersection/generic——isDbCapabilityType 内处理）。
     if (isDbCapabilityType(type, checker, uowType)) {
-      out.push({ path: [...path] });
-      return;
-    }
-    // union/intersection 分量：逐分量以**相同** path 前缀展开。
-    if (type.isUnion?.() || type.isIntersection?.()) {
+      rel.push({ path: [] });
+    } else if (type.isUnion?.() || type.isIntersection?.()) {
+      // union/intersection 分量：逐分量以**相同**（空）相对前缀展开。
       for (const t of type.types) {
-        recurseCapability(t, path, checker, uowType, active, state, out, depth + 1, ctx);
+        appendWithPrefix(rel, resolveCapabilitySuffixes(t, checker, uowType, active, state, memo, depth + 1, ctx), []);
       }
-      return;
-    }
-    // tuple / array element：`IDatabase[]` / `[IDatabase, X]` → path 加 '[]'。
-    const elementType = getArrayLikeElementType(type, checker);
-    if (elementType) {
-      recurseCapability(elementType, [...path, '[]'], checker, uowType, active, state, out, depth + 1, ctx);
-      return;
-    }
-    // object 属性：逐属性以 path+[propName] 展开（如 options.db、primary、replica）。
-    const props = checker.getPropertiesOfType(type);
-    for (const prop of props) {
-      const decl = prop.valueDeclaration ?? prop.declarations?.[0];
-      const propType = decl
-        ? checker.getTypeOfSymbolAtLocation(prop, decl)
-        : checker.getDeclaredTypeOfSymbol(prop);
-      recurseCapability(propType, [...path, prop.name], checker, uowType, active, state, out, depth + 1, ctx);
+    } else {
+      const elementType = getArrayLikeElementType(type, checker);
+      if (elementType) {
+        // array/tuple：直接取 element type（不遍历其 map/filter/set 方法面），相对前缀 '[]'。
+        appendWithPrefix(
+          rel,
+          resolveCapabilitySuffixes(elementType, checker, uowType, active, state, memo, depth + 1, ctx),
+          ['[]'],
+        );
+      } else if (!isOpaqueLeafType(type, checker)) {
+        // object 数据属性：逐**数据属性**（跳方法/原型面 + 跳 node_modules 库声明属性）
+        // 以相对前缀 [propName] 展开。
+        for (const prop of checker.getPropertiesOfType(type)) {
+          if (!isDataProperty(prop, checker)) continue; // 跳方法/访问器/函数对象表面。
+          if (isLibraryDeclaredProperty(prop)) continue; // 跳 node_modules 库定义的属性（见下）。
+          const decl = prop.valueDeclaration ?? prop.declarations?.[0];
+          const propType = decl
+            ? checker.getTypeOfSymbolAtLocation(prop, decl)
+            : checker.getDeclaredTypeOfSymbol(prop);
+          appendWithPrefix(
+            rel,
+            resolveCapabilitySuffixes(propType, checker, uowType, active, state, memo, depth + 1, ctx),
+            [prop.name],
+          );
+        }
+      }
+      // isOpaqueLeafType（primitive / 标准库容器 / 函数对象表面）→ 不展开，rel 保持空。
     }
   } catch (err) {
     // fail-closed：checker 抛异常 → 带 context 重抛（绝不吞成「无能力」空扫报绿）。
     throw new Error(
-      `findDbCapabilityPaths 异常 @ ${ctx.file ?? '?'} path=${path.join('.') || '<root>'}: ${err instanceof Error ? err.message : String(err)}`,
+      `findDbCapabilityPaths 异常 @ ${ctx.file ?? '?'} type=${typeName(type, checker)}: ${err instanceof Error ? err.message : String(err)}`,
       { cause: err },
     );
   } finally {
-    active.delete(type); // active-set 语义：退出本分支移除（改成注释掉此行即变全局 visited）。
+    active.delete(type); // active-set 语义：退出本分支移除（改成注释掉即退化为全局 visited）。
   }
+  memo.set(type, rel); // 完整展开后写 memo（post-order：绝不写入 mid-recursion 的部分结果）。
+  return rel;
+}
+
+/** 把子结果补上相对前缀后并入 rel（path 前缀 / unknown 的 deepest 前缀）。 */
+function appendWithPrefix(rel, sub, prefix) {
+  for (const r of sub) {
+    if (r.unknown) {
+      rel.push({ unknown: true, deepest: [...prefix, r.deepest].join('.'), origin: r.origin });
+    } else {
+      rel.push({ path: [...prefix, ...r.path] });
+    }
+  }
+}
+
+/** 预算超限 unknown 的诊断上下文（含最深 path + 声明来源，Codex 第 7 轮）。 */
+function formatUnknownContext(r, prefix, ctx) {
+  const deepest = [...prefix, r.deepest].filter(Boolean).join('.') || '<root>';
+  return `${ctx.file ?? '?'}: capability 递归预算超限 @ ${deepest}${r.origin ? ` (声明来源 ${r.origin})` : ''}`;
+}
+
+/** 类型名（诊断用）。 */
+function typeName(type, checker) {
+  try {
+    return checker.typeToString(type);
+  } catch {
+    return '<type>';
+  }
+}
+
+/** 类型的声明来源（文件:符号名，诊断用）。 */
+function declOrigin(type) {
+  const sym = type.aliasSymbol ?? type.getSymbol?.();
+  const decl = sym && (sym.valueDeclaration ?? sym.declarations?.[0]);
+  if (!decl) return undefined;
+  const sf = decl.getSourceFile?.();
+  return sf ? `${relative(ROOT, sf.fileName)}#${sym.name}` : sym.name;
+}
+
+/**
+ * 是否**数据属性**（可承载 per-tenant db 存储），而非方法/原型面。
+ *
+ * 跳过（返 false）：
+ *   - 方法符号（SymbolFlags.Method / GetAccessor / SetAccessor）——方法/访问器面不承载数据存储。
+ *   - 全部声明都是 method / signature / accessor（无任何 PropertySignature/PropertyDeclaration/
+ *     PropertyAssignment/parameter property/binding/变量）的符号。
+ * 保留（返 true）：数据属性（property signature/declaration/assignment、parameter property、变量等）。
+ */
+function isDataProperty(prop, checker) {
+  void checker;
+  const methodish = ts.SymbolFlags.Method | ts.SymbolFlags.GetAccessor | ts.SymbolFlags.SetAccessor;
+  if (prop.flags & methodish) return false;
+  const decls = prop.declarations ?? (prop.valueDeclaration ? [prop.valueDeclaration] : []);
+  if (decls.length === 0) return true; // 无声明信息（映射/合成属性）→ 保守当数据属性（不漏）。
+  // 若**存在**任一数据属性声明 → 是数据属性；否则（全是 method/signature/accessor）→ 跳过。
+  return decls.some(
+    (d) =>
+      ts.isPropertySignature(d) ||
+      ts.isPropertyDeclaration(d) ||
+      ts.isPropertyAssignment(d) ||
+      ts.isShorthandPropertyAssignment(d) ||
+      (ts.isParameter(d) && d.parent && ts.isConstructorDeclaration(d.parent)) ||
+      ts.isBindingElement(d) ||
+      ts.isVariableDeclaration(d),
+  );
+}
+
+/**
+ * 属性是否由 **node_modules 库类型**声明（而非 app/kernel 源码）——不递归其子图。
+ *
+ * 可证明的结构剪枝（非名字白名单）：app 的 per-tenant db 能力（IDatabase / SyncWriteUnitOfWork）
+ * 定义在 app/kernel **源码**里；一个库类型（zod schema 的 `def`/`_zod`/`checks`、Stripe 对象的
+ * `account`/`company`、Fastify 的 request 面…）的属性子图**不可能**冒出 app 自己的 db sink——
+ * 因为要出现 `xxx: IDatabase` 属性必须由 app 源码声明。库内部深递归图（zod 是自引用递归类型，
+ * 每次泛型实例化是新 Type，active-stack 抓不到环）正是收窄后残留预算超限的根因。
+ *
+ * 完整性守恒：`Array<IDatabase>` / tuple 由 getArrayLikeElementType 在此判定**之前**取 element
+ * type（不受影响）；app 自己声明的 `{ db: IDatabase }` 属性其声明在 src/ 或 packages/ → 不跳。
+ * 仅跳「属性声明位于 node_modules」的库内部结构。
+ */
+function isLibraryDeclaredProperty(prop) {
+  const decls = prop.declarations ?? (prop.valueDeclaration ? [prop.valueDeclaration] : []);
+  if (decls.length === 0) return false; // 无声明信息（合成/映射属性）→ 不跳（保守，不漏 app 侧）。
+  // 只有当**所有**声明都在 node_modules 时才跳（任一在 app 源码声明 → 保留递归，不漏）。
+  return decls.every((d) => {
+    const sf = d.getSourceFile?.();
+    return sf ? sf.fileName.includes('/node_modules/') : false;
+  });
+}
+
+/**
+ * 是否「不透明叶子」——不展开其属性面：
+ *   - primitive（string/number/boolean/bigint/symbol/enum/literal/void/null/undefined/never/any/unknown）。
+ *   - 标准库不透明容器（Date/RegExp/Map/Set/Buffer/typed-array/Promise/… by symbol name）。
+ *   - 函数对象表面（callable-only：有 call/construct 签名且无自有**数据**属性）。
+ * 这些结构上不可能作为数据属性承载 per-tenant db，展开只会钻进原型/参数面导致预算爆。
+ */
+function isOpaqueLeafType(type, checker) {
+  const f = type.flags;
+  const primitive =
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.ESSymbolLike |
+    ts.TypeFlags.EnumLike |
+    ts.TypeFlags.Void |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Undefined |
+    ts.TypeFlags.Never |
+    ts.TypeFlags.Any |
+    ts.TypeFlags.Unknown;
+  if (f & primitive) return true;
+
+  // 标准库不透明容器（by symbol name）。
+  const sym = type.getSymbol?.() ?? type.aliasSymbol;
+  if (sym && OPAQUE_BUILTIN_NAMES.has(sym.name)) return true;
+
+  // 函数对象表面：有 call/construct 签名，且无自有**数据**属性 → 纯函数对象，不展开。
+  const hasSignatures =
+    (checker.getSignaturesOfType?.(type, ts.SignatureKind.Call)?.length ?? 0) > 0 ||
+    (checker.getSignaturesOfType?.(type, ts.SignatureKind.Construct)?.length ?? 0) > 0;
+  if (hasSignatures) {
+    const dataProps = checker.getPropertiesOfType(type).filter((p) => isDataProperty(p, checker));
+    if (dataProps.length === 0) return true; // callable-only → 函数对象表面，不展开。
+  }
+  return false;
 }
 
 /** array / ReadonlyArray / tuple 的 element type（无则 undefined）。用于 tuple·array element 递归。 */
@@ -312,6 +471,9 @@ export function enumerateDbCapabilityEdges(program, checker, uowType, opts = {})
   const { includeTests = false } = opts;
   const edges = [];
   const seen = new Set(); // 去重：完全相同 id 只留一条（edge 级，不按 owner 合并）。
+  /* capability 后缀 memo：跨 boundary/文件共享（同一 Program 内 Type 稳定），同类型只完整展开
+   * 一次——大幅削减 AppConfig/app 之类大类型的重复递归节点数（Task 2.5 消 unknown 的关键之一）。 */
+  const memo = new Map();
 
   for (const sf of program.getSourceFiles()) {
     if (sf.isDeclarationFile) continue; // .d.ts 契约不产 edge。
@@ -320,7 +482,7 @@ export function enumerateDbCapabilityEdges(program, checker, uowType, opts = {})
     const isTest = rel.startsWith('src/test/');
     if (isTest && !includeTests) continue;
 
-    const ctx = { file: rel };
+    const ctx = { file: rel, memo };
     // 先算 capture（B7）：收集被嵌套闭包捕获的外层绑定 symbol → 供 acceptance 压制。
     const captured = collectCaptures(sf, checker, uowType, rel, edges, seen, ctx);
     // 再遍历 acceptance（A1-A4）+ 其余 transfer（B1-B6, B8）。
@@ -486,7 +648,7 @@ function handleParameterAcceptance(param, checker, uowType, rel, edges, seen, ct
   const type = safeTypeAtLocation(checker, param, rel);
   const paths = findDbCapabilityPaths(type, checker, uowType, ctx);
   if (paths.length === 0) return;
-  const kind = paramAcceptanceKind(fn);
+  const kind = paramAcceptanceKind(fn, checker);
   const { owner, target } = describeFunctionOwnerTarget(fn, checker);
   emitPathsAsEdges(paths, param.name.text, edges, seen, rel, owner, kind, target, ctx);
 }
@@ -676,11 +838,40 @@ function emitPathsAsEdges(paths, baseName, edges, seen, rel, owner, kind, target
  * 辅助：owner / target / kind 推导。
  * ------------------------------------------------------------------------ */
 
-/** A1/A2 参数的 kind：ctor→ctor-param / FunctionDeclaration→route-param / 其余→fn-param。 */
-function paramAcceptanceKind(fn) {
+/**
+ * A1/A2 参数的 kind：
+ *   - constructor → ctor-param。
+ *   - route registration 函数（经识别）→ route-param。
+ *   - 其余 function-like（含普通 FunctionDeclaration / FunctionExpression / Arrow / method / 访问器）→ fn-param。
+ *
+ * **收窄（Task 2.5）**：原实现把**所有** FunctionDeclaration 的 db 参一律标 route-param（过宽——
+ * 生产 172 个 owner 里只有 53 个是真路由注册，其余 119 是 DB 辅助函数如 ensureMigrationTable/
+ * getAppliedVersions）。现只有经 `isRouteRegistrationFn` 识别的函数标 route-param，其余降为 fn-param。
+ */
+function paramAcceptanceKind(fn, checker) {
   if (ts.isConstructorDeclaration(fn)) return 'ctor-param';
-  if (ts.isFunctionDeclaration(fn)) return 'route-param';
-  return 'fn-param'; // FunctionExpression / ArrowFunction / Method / accessor / 签名。
+  if (ts.isFunctionDeclaration(fn) && isRouteRegistrationFn(fn, checker)) return 'route-param';
+  return 'fn-param'; // 普通函数 / FunctionExpression / ArrowFunction / Method / accessor / 签名。
+}
+
+/**
+ * 是否 route registration 函数（route-param 收窄判据）：
+ *   - 函数名匹配 `/^register.*Routes$/`（项目约定的路由注册命名），或
+ *   - 参数里含 Fastify 实例类型（类型名匹配 /Fastify.*Instance/，如 FastifyInstance）。
+ * 两条都是可证明的结构信号（命名约定 + 参数类型），非按业务名字白名单。
+ */
+function isRouteRegistrationFn(fn, checker) {
+  if (fn.name && ts.isIdentifier(fn.name) && /^register.*Routes$/.test(fn.name.text)) return true;
+  for (const p of fn.parameters) {
+    let t;
+    try {
+      t = checker.getTypeAtLocation(p);
+    } catch {
+      continue; // 参数类型解析失败不影响其它参数判定（route 识别是分类细化，非 fail-closed 点）。
+    }
+    if (t && /Fastify\w*Instance/.test(checker.typeToString(t))) return true;
+  }
+  return false;
 }
 
 /** function-like 的 owner / target 名。 */
@@ -838,4 +1029,104 @@ function safeSymbol(checker, node, rel) {
  */
 export function collectUnregisteredEdges(edges, inventoryIds) {
   return edges.filter((e) => !inventoryIds.has(e.id));
+}
+
+/** A 接收/存储边界（sink declaration）的 kind 集——传播 edge 的「终点」应落在这些点上。 */
+const ACCEPTANCE_KINDS = new Set(['ctor-param', 'deps-prop', 'field-decl', 'fn-param', 'route-param']);
+/** **存储型** A 点（持有能力跨调用存活）——终点是这些点 → linked-to-sink。 */
+const STORING_ACCEPTANCE_KINDS = new Set(['ctor-param', 'deps-prop', 'field-decl']);
+/** **非存储型** A 点（per-request 函数参数，同步用后即弃）——终点是这些点 → ephemeral。 */
+const EPHEMERAL_ACCEPTANCE_KINDS = new Set(['fn-param', 'route-param']);
+/** 转移边界里天然逃逸的 kind（跨作用域/生命周期存活）→ terminal-escape。 */
+const ESCAPE_KINDS = new Set(['module-export', 'capture', 'collection-write', 'return', 'aggregate-wrapping']);
+
+/**
+ * 机器归因一条传播 edge（B 类）的处置（Task 2.5 二）。
+ *
+ *  - linked-to-sink：能机械定位终点=已扫描的**存储型** A 点（`new Service(db)` → Service.ctor(db)
+ *    是 ctor-param；`h.db = db` → Holder 的 field-decl）。带 sinkId 指向该 A 点 edge id。
+ *  - ephemeral：终点是**非存储型** A 点——db 只同步传给明确的 per-request 函数（fn-param），
+ *    该函数不 return/不存字段/不注册 callback/不写容器（机械证明不逃逸）。
+ *  - terminal-escape：能力可能跨调用/作用域/生命周期存活——module export / 闭包·timer·worker
+ *    capture / container write / 逃逸未知调用方的 return / aggregate 包裹逃逸 / 动态 assignment /
+ *    传给外部·无法定位 A 点的 call。必须升级为 semantic sink 登记。
+ *  - unknown：解析失败 / 无法归入上述任一 → 门红（不静默放宽）。
+ *
+ * @param {import('./db-sink-scanner.d.mts').Edge} edge 待归因的传播 edge。
+ * @param {import('typescript').TypeChecker} checker
+ * @param {import('./db-sink-scanner.d.mts').Edge[]} allEdges 全量 edge——用于 linked-to-sink 时定位终点 A 点。
+ * @returns {import('./db-sink-scanner.d.mts').PropagationResult}
+ */
+export function classifyPropagation(edge, checker, allEdges) {
+  void checker; // 归因用 edge 结构 + allEdges 定位；checker 保留供后续更精细的 symbol 解析。
+  if (!edge) return { propagation: 'unknown', reason: 'edge 为空' };
+
+  // A 接收 edge 本身是 sink declaration，不是传播——调用方（Task 4 门）只对 B 传播 edge 调本函数；
+  // 若误传 A edge，按其存储性给出一致判定（存储型视为已在册 sink 的终点）。
+  if (ACCEPTANCE_KINDS.has(edge.kind)) {
+    return STORING_ACCEPTANCE_KINDS.has(edge.kind)
+      ? { propagation: 'linked-to-sink', sinkId: edge.id, reason: 'edge 本身即存储型 A 接收点' }
+      : { propagation: 'ephemeral', reason: 'edge 本身即 per-request 非存储 A 接收点' };
+  }
+
+  // 天然逃逸的转移边界（跨作用域/生命周期）→ terminal-escape。
+  if (ESCAPE_KINDS.has(edge.kind)) {
+    return { propagation: 'terminal-escape', reason: `${edge.kind} 跨作用域/生命周期存活` };
+  }
+
+  // assignment：this.X = db 落到字段（field-decl A 点）→ linked-to-sink；否则动态赋值 → terminal-escape。
+  if (edge.kind === 'assignment') {
+    const fieldSink = findAcceptanceSink(edge, allEdges, STORING_ACCEPTANCE_KINDS);
+    if (fieldSink) return { propagation: 'linked-to-sink', sinkId: fieldSink.id, reason: 'assignment 落到存储字段' };
+    return { propagation: 'terminal-escape', reason: 'assignment 目标非可定位存储字段（动态/逃逸）' };
+  }
+
+  // factory-indirect（new/call 实参）/ decl-init：机械定位终点 A 点。
+  if (edge.kind === 'factory-indirect' || edge.kind === 'decl-init') {
+    const stored = findAcceptanceSink(edge, allEdges, STORING_ACCEPTANCE_KINDS);
+    if (stored) return { propagation: 'linked-to-sink', sinkId: stored.id, reason: '终点是存储型 A 接收点' };
+    const perReq = findAcceptanceSink(edge, allEdges, EPHEMERAL_ACCEPTANCE_KINDS);
+    if (perReq) return { propagation: 'ephemeral', reason: '终点是 per-request 非存储函数参数（同步用后即弃）' };
+    // 无法定位任何本 Program 内 A 点（外部/ambient/动态 callee）→ 逃逸到未知边界。
+    return { propagation: 'terminal-escape', reason: `无法定位终点 A 点（外部/动态 callee ${edge.target}）` };
+  }
+
+  return { propagation: 'unknown', reason: `未识别的传播 kind: ${edge.kind}` };
+}
+
+/**
+ * 机械定位一条传播 edge 的「终点 A 接收点」：target（callee 名 / 赋值左值）匹配某 A edge 的
+ * owner 或 target，且该 A edge 的 kind ∈ wantKinds。返回首个匹配（供 sinkId），无则 undefined。
+ *
+ * 说明：单文件内按名字机械匹配已满足「定位到已扫描 A 点」；跨文件/重名的更精细 symbol 解析
+ * 留待 Task 4 门按需增强（本函数只做机械定位，不做污点跨文件推断）。
+ */
+function findAcceptanceSink(edge, allEdges, wantKinds) {
+  const targetName = normalizeTargetName(edge.target);
+  for (const a of allEdges) {
+    if (!wantKinds.has(a.kind)) continue;
+    // A edge 的 owner/target 是类名 / 函数名 / 类.成员——callee 名匹配其一即定位到该 A 点。
+    if (a.owner === targetName || a.target === targetName || normalizeTargetName(a.target) === targetName) {
+      return a;
+    }
+  }
+  return undefined;
+}
+
+/** 归一化 target 名：assignment 左值 `this.db` → `db`（取末段），callee 名原样。 */
+function normalizeTargetName(target) {
+  if (!target) return target;
+  const seg = target.split('.').pop();
+  return seg ?? target;
+}
+
+/**
+ * 唯一应用 production scope 的入口：建 Program（tsconfig.src.json）+ 健康门 +
+ * 枚举全量 edge（`includeTests: false`，排除 src/test/**）。供主门 check:db-access 调。
+ *
+ * @returns {import('./db-sink-scanner.d.mts').Edge[]} production surface 的全量 DB-capability edge。
+ */
+export function scanProductionDbCapabilityEdges() {
+  const { program, checker, uowType } = buildProgram('tsconfig.src.json');
+  return enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: false });
 }
