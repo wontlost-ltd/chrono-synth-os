@@ -38,13 +38,16 @@ test('inventory 非空', () => {
   assert.ok(DB_ACCESS_INVENTORY.length > 0, 'inventory 不应为空');
 });
 
-test('每条目 disposition 必填非空（union 六值之一）', () => {
+test('每条目 disposition 必填非空（union 九值之一——Codex 第 9 轮四态扩展）', () => {
   const allowed = new Set([
-    'resolver',
+    'requires-resolver-rewire',
+    'resolved-boundary-unproven',
     'coordinator',
+    'root-only',
+    'terminal-escape',
+    'resolver',
     'mixed-scope',
     'per-shard-worker',
-    'root-only',
     'known-limitation',
   ]);
   for (const point of DB_ACCESS_INVENTORY) {
@@ -54,7 +57,7 @@ test('每条目 disposition 必填非空（union 六值之一）', () => {
     );
     assert.ok(
       allowed.has(point.disposition),
-      `${point.id} disposition="${point.disposition}" 不在允许的六值集合内`,
+      `${point.id} disposition="${point.disposition}" 不在允许的九值集合内`,
     );
   }
 });
@@ -141,4 +144,84 @@ test('main-observability-worker 独立入口定性为 per-shard-worker（spec §
   for (const point of matches) {
     assert.equal(point.disposition, 'per-shard-worker', `${point.id} 应定性为 per-shard-worker`);
   }
+});
+
+/* ============================================================================
+ * Task 3 semantic-flow contract 层专项（Codex 第 9 轮聚合契约）。
+ *
+ * flow contract = 带 coveredEdgeIds 的条目（edge 级主门用）；legacy 条目无 coveredEdgeIds
+ * （file 级 ratchet 补充网，不参与这些校验）。
+ * ==========================================================================*/
+
+/** 是否 semantic-flow contract（带 coveredEdgeIds）。 */
+function isFlowContract(p: DbAccessPoint): boolean {
+  return Array.isArray(p.coveredEdgeIds);
+}
+
+test('存在 semantic-flow contract 条目（Task 3 升级已落地，非只剩 legacy）', () => {
+  const flows = DB_ACCESS_INVENTORY.filter(isFlowContract);
+  assert.ok(flows.length > 50, `应有大量 flow contract（实际=${flows.length}），证 Task 3 升级已落地`);
+});
+
+test('每条目 provenanceStatus + reviewStatus 必填（多维状态模型）', () => {
+  const prov = new Set(['resolved', 'unresolved']);
+  const review = new Set(['classified', 'unreviewed']);
+  for (const point of DB_ACCESS_INVENTORY) {
+    assert.ok(prov.has(point.provenanceStatus), `${point.id} provenanceStatus="${point.provenanceStatus}" 非法`);
+    assert.ok(review.has(point.reviewStatus), `${point.id} reviewStatus="${point.reviewStatus}" 非法`);
+  }
+});
+
+test('禁「scanner 不知→planned→绿」退化：全表 reviewStatus 必须 classified（无 unreviewed）', () => {
+  const unreviewed = DB_ACCESS_INVENTORY.filter((p) => p.reviewStatus !== 'classified');
+  assert.deepEqual(
+    unreviewed.map((p) => p.id),
+    [],
+    'Plan 0 全须 classified；任何 unreviewed 即门 condition ④ 会红（禁退化）',
+  );
+});
+
+test('flow contract：expectedCount 精确 === coveredEdgeIds 数（fingerprint，禁通配）', () => {
+  for (const point of DB_ACCESS_INVENTORY.filter(isFlowContract)) {
+    const ids = point.coveredEdgeIds!;
+    assert.equal(
+      point.expectedCount,
+      ids.length,
+      `${point.id} expectedCount=${point.expectedCount} ≠ coveredEdgeIds 数 ${ids.length}`,
+    );
+    // 禁 owner::* 通配。
+    const wildcard = ids.filter((cid) => cid.includes('*'));
+    assert.deepEqual(wildcard, [], `${point.id} coveredEdgeIds 含通配（禁）: ${wildcard.join(', ')}`);
+    // coveredEdgeIds 应是 edge 级 id（含 ::），非 legacy file 级 id。
+    for (const cid of ids) {
+      assert.ok(cid.includes('::'), `${point.id} coveredEdgeId 非 edge 级 id: ${cid}`);
+    }
+  }
+});
+
+test('coveredEdgeIds 全表无重复覆盖（一条 edge 至多被一个 flow contract 覆盖）', () => {
+  const seen = new Map<string, string>();
+  for (const point of DB_ACCESS_INVENTORY.filter(isFlowContract)) {
+    for (const cid of point.coveredEdgeIds!) {
+      const prev = seen.get(cid);
+      assert.ok(!prev, `edge id ${cid} 被多个 flow contract 覆盖: ${prev} + ${point.id}`);
+      seen.set(cid, point.id);
+    }
+  }
+});
+
+test('四态处置（requires-resolver-rewire / resolved-boundary-unproven）必有 proofObligation', () => {
+  const needsProof = new Set(['requires-resolver-rewire', 'resolved-boundary-unproven', 'terminal-escape']);
+  for (const point of DB_ACCESS_INVENTORY.filter((p) => needsProof.has(p.disposition))) {
+    assert.ok(
+      typeof point.proofObligation === 'string' && point.proofObligation.trim().length > 0,
+      `${point.id} disposition=${point.disposition} 须有 proofObligation（后续证明义务）`,
+    );
+  }
+});
+
+test('四态覆盖：inventory 含 requires-resolver-rewire + resolved-boundary-unproven（628 unresolved 工作面）', () => {
+  const dispositions = new Set(DB_ACCESS_INVENTORY.map((p) => p.disposition));
+  assert.ok(dispositions.has('requires-resolver-rewire'), 'inventory 应含 requires-resolver-rewire（组合根/路由用 host db 造 carrier）');
+  assert.ok(dispositions.has('resolved-boundary-unproven'), 'inventory 应含 resolved-boundary-unproven（OS 内核内部 layer 互传）');
 });

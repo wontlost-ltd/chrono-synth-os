@@ -144,7 +144,7 @@ export interface PropagationResult {
  */
 export declare function classifyPropagation(
   edge: Edge,
-  checker: TypeChecker,
+  checker: TypeChecker | null,
   allEdges: Edge[],
 ): PropagationResult;
 
@@ -153,3 +153,78 @@ export declare function classifyPropagation(
  * + 枚举全量 edge。供主门 check:db-access 调。
  */
 export declare function scanProductionDbCapabilityEdges(): Edge[];
+
+/* ============================================================================
+ * Task 3/4：semantic-flow contract 门 + inventory 解析类型。
+ * ==========================================================================*/
+
+/** disposition 九值（Codex 第 9 轮四态 + 原五值）。 */
+export type DbAccessDisposition =
+  | 'requires-resolver-rewire'
+  | 'resolved-boundary-unproven'
+  | 'coordinator'
+  | 'root-only'
+  | 'terminal-escape'
+  | 'resolver'
+  | 'mixed-scope'
+  | 'per-shard-worker'
+  | 'known-limitation';
+
+/**
+ * readInventory 解析出的一条 inventory 记录（semantic-flow contract 或 legacy file 级）。
+ *  - flow contract：带 coveredEdgeIds + expectedCount（精确覆盖，禁通配）。
+ *  - legacy file 级：无 coveredEdgeIds（file 级 ratchet 补充网，不参与 edge 门）。
+ */
+export interface InventoryContract {
+  id: string;
+  file?: string;
+  category?: string;
+  disposition?: DbAccessDisposition;
+  wiringStatus?: 'planned' | 'wired' | 'verified';
+  /** scanner 是否机械证明来源。 */
+  provenanceStatus?: 'resolved' | 'unresolved';
+  /** Plan 0 全须 'classified'（禁 'unreviewed' 退化）。 */
+  reviewStatus?: 'classified' | 'unreviewed';
+  /** requires-resolver-rewire / resolved-boundary-unproven / unresolved-carrier 覆盖组的后续证明义务。 */
+  proofObligation?: string;
+  /** 精确覆盖的 syntax edge id（禁 owner::* 通配）。 */
+  coveredEdgeIds?: string[];
+  /** 覆盖 edge 数 fingerprint（须 === coveredEdgeIds.length，变则门红）。 */
+  expectedCount?: number;
+  note?: string;
+}
+
+/** evaluateGate 的诊断结果（五条空集 iff pass）。 */
+export interface GateResult {
+  requiredLevel: 'planned' | 'verified';
+  pass: boolean;
+  /** ① 有 DB 能力但不可分类/预算超限（unknown-boundary）。 */
+  unknownEdges: Array<{ id: string; file: string; context?: string }>;
+  /** ② storing 接收 A 点 + terminal-escape 未登记。 */
+  unregisteredSemanticSinks: Array<{ id: string; file: string; owner: string; kind: string }>;
+  /** ③ 传播 edge 未归入允许集（linked/resolved/ephemeral/已登记 escape·unresolved）。 */
+  uncoveredPropagationEdges: Array<{ id: string; file: string; kind: string; propagation: string }>;
+  /** ④ unresolved-carrier 未审阅登记（禁「scanner 不知→planned→绿」退化）。 */
+  unreviewedUnresolvedCarriers: Array<{ id: string; file: string; reason: string }>;
+  /** ⑤ flow contract 覆盖校验失败（通配/count 不匹配/stale id/重复覆盖）。 */
+  invalidInventoryGroups: Array<{ id: string; problems: string[] }>;
+}
+
+/**
+ * 两级 semantic-flow contract 门（Codex 第 9 轮）。Plan 0 只跑 'planned' 级；
+ * pass iff 五条诊断全空。'verified' 级（Plan 3）本 Plan 仅定义不跑。
+ */
+export declare function evaluateGate(
+  edges: Edge[],
+  inventory: InventoryContract[],
+  opts?: { requiredLevel?: 'planned' | 'verified' },
+): GateResult;
+
+/**
+ * 用 TS AST 解析 src/storage/db-access-inventory.ts 的 DB_ACCESS_INVENTORY 数组
+ * （.mjs 不能 import .ts；AST 解析比正则健壮）。
+ */
+export declare function readInventory(inventoryPath?: string): InventoryContract[];
+
+/** 把 GateResult 渲染成人类可读诊断（门脚本红时列出）。 */
+export declare function formatGateDiagnostics(r: GateResult): string;
