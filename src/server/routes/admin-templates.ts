@@ -10,10 +10,9 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import {
   PersonaTemplateService,
   PersonaTemplateNotFoundError,
@@ -28,9 +27,14 @@ import {
 import { requireRole } from '../plugins/rbac.js';
 import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 
-export function registerAdminTemplateRoutes(app: FastifyInstance, os: ChronoSynthOS): void {
-  const tx = os.getDatabase();
-  const resolver = new SingleDbResolver(tx);
+/** 岗位模板管理路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface AdminTemplateRoutesDeps {
+  /** 共享 TenantDbResolver（组合根唯一实例；PersonaCoreService/PersonaTemplateService 经它路由 shard）。 */
+  resolver: TenantDbResolver;
+}
+
+export function registerAdminTemplateRoutes(app: FastifyInstance, deps: AdminTemplateRoutesDeps): void {
+  const { resolver } = deps;
   const personaCoreService = PersonaCoreService.fromResolver(resolver);
   const templateService = PersonaTemplateService.fromResolver(resolver, personaCoreService);
 

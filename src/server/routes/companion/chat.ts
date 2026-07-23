@@ -23,7 +23,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
-import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
 import { QuotaManager } from '../../../multi-tenant/quota-manager.js';
@@ -73,15 +73,21 @@ const SELF_INTRO_VALUE_LIMIT = 3;
 /* companion 基线安全边界（never_discuss）已抽到 ../../../conversation/companion-boundaries.js
  * （chat / 主动 nudge 共用同一份，避免漂移）。 */
 
-export function registerCompanionChatRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  tenantFactory: TenantOSFactory | undefined,
-  db?: IDatabase,
-  config?: AppConfig,
-): void {
-  const sharedDb = db ?? os.getDatabase();
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
+/** Companion 对话路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface CompanionChatRoutesDeps {
+  os: ChronoSynthOS;
+  tenantFactory: TenantOSFactory | undefined;
+  /** 共享 TenantDbResolver（组合根唯一实例；quotaManager 经它按 tenantId 路由 shard）。 */
+  resolver: TenantDbResolver;
+  /** 直查用 host db（Plan 2 下沉）；缺省回退 os.getDatabase()。 */
+  db?: IDatabase;
+  config?: AppConfig;
+}
+
+export function registerCompanionChatRoutes(app: FastifyInstance, deps: CompanionChatRoutesDeps): void {
+  const { os, tenantFactory, resolver, config } = deps;
+  const sharedDb = deps.db ?? os.getDatabase();
+  const quotaManager = QuotaManager.fromResolver(resolver);
   /* 离线回应器：无 matcher（回退保守子串匹配——已足够匹配基线敏感主题的 never_discuss 自检）。 */
   const responder = new OfflineConversationResponder();
   /* 对话记忆开关（ADR-0055）：缺省（无 config）默认开，与 schema 默认一致。 */

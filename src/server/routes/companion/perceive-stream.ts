@@ -20,7 +20,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
-import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -54,21 +54,27 @@ function send(socket: MinimalSocket, frame: PerceiveStreamServerFrame): void {
   try { socket.send(JSON.stringify(frame)); } catch { /* 发送失败（连接已断）无害，忽略 */ }
 }
 
-export function registerCompanionPerceiveStreamRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  tenantFactory: TenantOSFactory | undefined,
-  db?: IDatabase,
-  config?: AppConfig,
+/** Companion 流式感知路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface CompanionPerceiveStreamRoutesDeps {
+  os: ChronoSynthOS;
+  tenantFactory: TenantOSFactory | undefined;
+  /** 共享 TenantDbResolver（组合根唯一实例；quotaManager 经它路由 shard）。 */
+  resolver: TenantDbResolver;
+  /** 直查用 host db（Plan 2）；缺省回退 os.getDatabase()。 */
+  db?: IDatabase;
+  config?: AppConfig;
   /** 测试注入 provider（给定则所有租户用它）。 */
-  injectedProvider?: PerceptionProvider,
-): void {
+  injectedProvider?: PerceptionProvider;
+}
+
+export function registerCompanionPerceiveStreamRoutes(app: FastifyInstance, deps: CompanionPerceiveStreamRoutesDeps): void {
+  const { os, tenantFactory, resolver, config, injectedProvider } = deps;
   /* WS 插件关闭时不注册此流式入口（它依赖 @fastify/websocket；否则 { websocket: true } 无意义）。 */
   if (config && !config.websocket.enabled) return;
 
-  const sharedDb = db ?? os.getDatabase();
+  const sharedDb = deps.db ?? os.getDatabase();
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
+  const quotaManager = QuotaManager.fromResolver(resolver);
 
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);

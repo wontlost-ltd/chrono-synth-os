@@ -6,13 +6,21 @@
 import type { FastifyInstance } from 'fastify';
 import type { TaskQueue } from '../../queue/task-queue.js';
 import type { TaskWorker } from '../../queue/task-worker.js';
-import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { TaskQueryService } from '../../queue/task-query-service.js';
 
-export function registerTaskRoutes(app: FastifyInstance, queue: TaskQueue, worker?: TaskWorker, db?: IDatabase): void {
-  const personaCoreService = db ? PersonaCoreService.fromResolver(new SingleDbResolver(db)) : null;
+/** 任务路由依赖（分片 Phase 0 · Plan 1：resolver 必填，PersonaCoreService 经它路由 shard）。 */
+export interface TaskRoutesDeps {
+  queue: TaskQueue;
+  worker?: TaskWorker;
+  /** 共享 TenantDbResolver（组合根唯一实例）。 */
+  resolver: TenantDbResolver;
+}
+
+export function registerTaskRoutes(app: FastifyInstance, deps: TaskRoutesDeps): void {
+  const { queue, worker, resolver } = deps;
+  const personaCoreService = PersonaCoreService.fromResolver(resolver);
   const service = new TaskQueryService(queue, worker, personaCoreService);
 
   /* GET /api/v1/tasks/:taskId — 查询异步任务状态 */

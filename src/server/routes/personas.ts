@@ -7,7 +7,7 @@ import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { PersonaVersion, SimulationResult } from '../../types/index.js';
 import { NotFoundError, ErrorCode } from '../../errors/index.js';
 import { ForkPersonaSchema, SimulatePersonaSchema, UpdatePersonaStatusSchema } from '../schemas/api-schemas.js';
@@ -29,8 +29,17 @@ function serializeResult(r: SimulationResult): Record<string, unknown> {
   };
 }
 
-export function registerPersonaRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
-  const personaCoreService = PersonaCoreService.fromResolver(new SingleDbResolver(os.getDatabase()));
+/** 人格路由依赖（分片 Phase 0 · Plan 1：resolver 必填，PersonaCoreService 经它路由 shard）。 */
+export interface PersonaRoutesDeps {
+  os: ChronoSynthOS;
+  /** 共享 TenantDbResolver（组合根唯一实例）。 */
+  resolver: TenantDbResolver;
+  tenantFactory?: TenantOSFactory;
+}
+
+export function registerPersonaRoutes(app: FastifyInstance, deps: PersonaRoutesDeps): void {
+  const { os, resolver, tenantFactory } = deps;
+  const personaCoreService = PersonaCoreService.fromResolver(resolver);
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
