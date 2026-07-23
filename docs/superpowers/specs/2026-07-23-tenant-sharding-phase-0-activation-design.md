@@ -1,6 +1,6 @@
 # 租户分片 Phase 0 全量激活设计
 
-> 状态：第 4 轮修订（Codex 58→78→86 退，采纳三轮全部真实代码漏点——高风险组合根/生命周期重构 + AST(TypeChecker) sink 门 + Auth PENDING→ACTIVE 状态机 + 全局 worker/timer fan-out（含 MediaRetention GDPR）+ typed runtime bundle 放开）。待 Codex 再审 → 用户审阅 → writing-plans。
+> 状态：第 5 轮修订（Codex 58→78→86→89 退，采纳四轮全部真实代码漏点——高风险组合根/生命周期重构 + AST(TypeChecker) sink 门 + Auth PENDING→ACTIVE 状态机[Phase 0 不自动取消] + 全局 worker/timer fan-out[含 MediaRetention GDPR] + typed runtime bundle 唯一 owner）。待 Codex 再审 → 用户审阅 → writing-plans。
 > 日期：2026-07-23
 > 关联：分片设计总览 `2026-07-17-tenant-sharding-design.md`（Phase 0 契约在此定）；`shard-router-design.md`（引擎设计）；规模化缺口 #3；PR #314（子服务双入口化，已合入 main）。
 > 范围：`src/server/app.ts`（组合根装配 resolver）、7 个 `sharedDb` 直用文件、`src/server/routes/metrics.ts` + `src/observability/`（fan-out）、`src/storage/factory.ts`（放开 fail-closed）、`src/config/schema.ts`（shard map 校验）、`src/storage/db-access-inventory.ts`（接线完成后重分类）。
@@ -112,7 +112,7 @@ const resolver: TenantDbResolver = buildResolver(config, hostDb, deps.os);
 
 **⚠️ 可执行契约（采纳 Codex #4——connStr 字符串相同 ≠ 同实例）**：`ShardRouter` 的 per-connStr 缓存只去重**它自己 `buildDb` 建的**实例；hostDb 在 router 外由 `createDatabase` 建，即使 home connStr 字符串相同，router 空缓存仍会 `buildDb` 建**第二个**实例（两个池指同库=竞态/双 close）。且 `deps.db` 可绕过 `createDatabase`（`app.ts:294`），config connStr 比较也证明不了注入的 db 对应该 DSN。故不变量必须是**注入式而非比较式**：
 - **`ShardRouter` 加 `seedDbs?: Record<connStr, IDatabase>` 构造参**（或 `homeDb: IDatabase`）：`buildResolver` 把已建的 `hostDb` 显式 seed 进 router 的 `byConnStr`（键 = home shard connStr），使 `dbForTenant('default')`/home shard 命中缓存直接返 hostDb **同一实例**——不再另建。
-- **关闭 ownership 显式化**：hostDb 由谁 close（os vs router）单点定；seed 进来的 db 标记为「外部拥有，router 不 close」，避免双 close。
+- **关闭 ownership**：见 §5.3——runtime bundle 是所有物理 db（含 seeded host）唯一 owner；多 shard 下 OS 对注入 db non-owning。
 - **多 shard 下拒绝无法验证 identity 的 `deps.db` 注入**：`shards` 非空 + 传了 `deps.db` 但无法确认它就是 home shard db → 启动拒（fail-closed）。
 
 如此 default（裸 os）与 factory（`resolver.dbForTenant('default')`）两路径**证实指向同一实例**，无需碰 23 处热路径。
@@ -132,8 +132,8 @@ const resolver: TenantDbResolver = buildResolver(config, hostDb, deps.os);
   3. **CAS 激活**：tenant shard 提交成功后，coordinator `PENDING → ACTIVE` CAS。
   4. **只有 ACTIVE 可用**：login/refresh/SSO/OIDC 只认 `ACTIVE` directory 项（`PENDING` 视作未完成）。
   5. **失败重试幂等**：tenant shard 成功但 CAS/响应丢失 → 重试只做幂等确认（认 operationId），**绝不重新生成 tenantId**。
-  6. **PENDING 超时由恢复 worker 核对**：worker 查 tenant shard 实际状态 → 已初始化则补 ACTIVE、未初始化则取消；**不盲删**（tenant shard 已成功但 CAS 丢时盲删会留不可定位的真实租户数据）。
-  7. **明确并发/超时/崩溃**：并发 register（email 唯一约束挡）、客户端超时重试（幂等）、进程在每步崩溃（下次恢复 worker 收敛）都有确定结果。
+  6. **PENDING 超时恢复——Phase 0 绝不自动取消（Codex 第 4 轮竞态修复）**：存在合法竞态——tenant shard 初始化事务已开始未提交时，恢复 worker 查不到数据、若此时取消 PENDING，随后事务提交 → coordinator 无 directory → **不可定位的真实租户数据**（`operationId` 幂等救不了，这是取消缺 fencing 而非重复初始化）。故 Phase 0 恢复 worker **只做**：① shard 已初始化 → CAS 补 ACTIVE；② shard 未初始化 → **保留 PENDING + 重试/告警，绝不自动取消**（取向：宁可残留不可用 reservation，也不留不可定位租户）。自动取消延后到有 lease/fencing（PENDING 带 leaseEpoch/leaseUntil + 初始化者 CAS 拿 lease + 恢复只在 lease 过期后处理 + 取消带 epoch CAS）——本 Phase 非目标。
+  7. **明确并发/超时/崩溃**：并发 register（email 唯一约束挡）、客户端超时重试（幂等）、进程在每步崩溃（下次恢复 worker 收敛，未初始化只保留不取消）都有确定结果。
 - 这是本 Phase 唯一真跨库写序列，**状态机在 spec 定死**（非「Plan 决定」）；Plan 实现 + 测 register 每步崩溃后的收敛。
 
 ## 5. 跨租户 fan-out（metrics + global-worker）
@@ -173,7 +173,11 @@ export function createShardedDatabaseRuntime(config: AppConfig): { hostDb: IData
 ```
 - 多 shard 入口（app.ts / main-observability-worker.ts）**必须**走 `createShardedDatabaseRuntime` 拿 resolver——「放开」由**类型 + 构造路径**保证（拿到 bundle = resolver 一定已装配好），不是布尔开关。
 - 未分片入口继续走默认 fail-closed 的 `createDatabase(config)`（`shards` 空正常；`shards` 非空仍拒——逼迫多 shard 走 bundle 路径）。
-- close ownership 收进 bundle 的 `close()`：seeded host db 由谁关单点定（bundle 或 os，二选一并测），router 只关它 own 的 shard。
+- **close ownership 定死（Codex 第 4 轮——不留二选一，否则 main.ts 有 OS + 独立 worker 无 OS 会双关/泄漏）**：**runtime bundle 是所有物理 db 的唯一 owner**。
+  - `runtime.close()` 幂等关闭 router-owned shards + seeded host db（各恰一次）。
+  - **多 shard 模式下 `ChronoSynthOS` 对注入的 db 是 non-owning**——`os.close()`/`os.stop()` 只停 OS 逻辑，**不关物理 db**（避免与 bundle 双关）。这是对现状 `chrono-synth-os.ts:755` os.close 关 db 的行为修改（多 shard 分支）：注入 db 标记 non-owning。
+  - 入口关闭顺序：主入口 `app.close → os.stop（non-owning）→ runtime.close`；独立 worker `pipeline.stop → runtime.close`。
+  - 测试覆盖：主入口正常关 / 独立 worker 关 / initialize 中途失败 / createApp 启动中途失败 / 重复 close 幂等 / **每个物理 db 恰好 close 一次**。
 
 ## 6. 配置契约（`config/schema.ts`——已存在，纠正 spec 与真实形状不一致）
 
@@ -202,7 +206,8 @@ homeShardId: z.string().optional(),
 - **独立 observability worker（§5.1）**：2-shard 下断言选定方案生效（① 各 shard outbox 都被扫；或 ③ 拒启动）——不静默只扫 host shard。
 - **Auth mixed-scope 状态机（§4.1）**：register → 断言 coordinator PENDING reservation（operationId/tenantId/shardId）+ tenant shard 幂等初始化 + CAS PENDING→ACTIVE；login/refresh 只认 ACTIVE；**register 每步崩溃收敛**：CAS 前崩→重试幂等确认不重生 tenantId；tenant shard 成功但 CAS 丢→恢复 worker 核对后补 ACTIVE（不盲删）；并发 register 同 email→唯一约束挡。
 - **全局 worker/timer per-shard（§5.2）**：MediaRetention（GDPR）在 shard-1 有过期媒体 → 断言 fan-out 后被擦除（回归形态：只扫 home shard → shard-1 媒体永不擦 = GDPR 缺失，变异下变红）；Settlement/DualWriteFlush 类同。
-- **router close ownership**：断言 seeded home db 恰由 OS 关一次、其余 shard 恰由 router 关一次（无双 close/泄漏）；initialize 中途失败只关 owned 不关 seed。
+- **runtime bundle close ownership（§5.3）**：断言每个物理 db（seeded host + owned shards）恰 close 一次；OS non-owning（`os.stop()` 不关物理 db）；主入口/独立 worker/initialize 中途失败/createApp 启动失败/重复 close 各测；无双 close/泄漏。
+- **Auth PENDING 不自动取消竞态（§4.1.6）**：模拟「恢复 worker 扫描」与「tenant shard 初始化未提交」并发 → 断言恢复 worker **不取消** PENDING（保留 + 告警），随后 init 提交 → 断言最终收敛 ACTIVE（无孤儿）。这是 register 每步崩溃测试外新增的并发-未提交测试。
 - **sink 级 ratchet 完整性**：`check-db-access-ratchet.mjs` 绿——每个 sink 标注 db 来源（resolver/coordinator/mixed-scope/已下沉），新增未标注 sink → 红。
 - **default=home 同实例**：断言 `resolver.dbForTenant('default')` 与 host `os.getDatabase()` 是**同一实例引用**（`===`），非 connStr 相等。
 - **单库零回归**：`shards` 空时全链行为与现状 `assert.deepEqual` 等价——**现有全套测试仍绿**是硬门。
@@ -220,7 +225,7 @@ homeShardId: z.string().optional(),
 
 ## 9. 分片（供 writing-plans——比初版大，诚实分 4 plan）
 
-- **Plan 0（A0 AST sink 盘点，前置）**：TS AST 扫描器（覆盖直接参/deps.db/route 参/闭包 4 形态 + 变异 fixture）+ 升级 `db-access-inventory.ts` 到 source→sink 级（纠正 `buildAppServices` 错分类、逐成员定性、新增 NudgePushBridge/独立 worker/mixed-scope Auth）+ 每 sink 处置结论 + ratchet sink 级断言。**纯盘点 + 扫描器，不改运行逻辑**。放开完整性前提。
+- **Plan 0（A0 AST sink 盘点，前置）**：TS 类型驱动扫描器（`Program+TypeChecker`，覆盖 6 类形态：直接参/deps.db/route 参/闭包·timer·worker 捕获/factory·container 间接/deps 类型别名·结构兼容 + 各变异 fixture）+ 升级 `db-access-inventory.ts` 到 source→sink 级（纠正 `buildAppServices` 错分类、逐成员定性、新增 NudgePushBridge/独立 worker/mixed-scope Auth）+ 每 sink 处置结论 + ratchet sink 级断言。**纯盘点 + 扫描器，不改运行逻辑**。放开完整性前提。
 - **Plan 1（A 注入链统一 + buildAppServices + mixed-scope 地基）**：`buildResolver`（config `{connectionString}`→ShardRouter flat + seed hostDb 同实例 + close ownership）+ app.ts 装配唯一 resolver + route 签名加 `resolver` 参 + 替换 7 处 `new SingleDbResolver` + **`buildAppServices` 改接 resolver（成员按 Plan 0 定性）** + **Auth mixed-scope：coordinator identity directory + tenantId 解析后转 shard + register 跨边界补偿** + 计量子服务经 resolver。fail-closed 仍挡，单库零回归 + default=home 同实例 + close ownership 断言。
 - **Plan 2（B route 内直用 + 间接 sink + 全局 worker/timer fan-out + metrics fan-out）**：7 个 `sharedDb` 文件 route 内直用 → `dbForTenant`（含 memory-facade:221）；**LegalHoldService + NudgePushBridge 经 resolver 下沉（各 + 语义/漏推专项测试）**；**§5.2 全局 worker/timer（Settlement/DualWriteFlush/MediaRetention·GDPR/RuntimeRecovery/retention·BillingOutbox timer）改 per-shard fan-out（各 + per-shard 处置测试）**；metrics fan-out（diversity 采样 + tenant usage 全局 top-200 merge）。仍 fail-closed 挡。
 - **Plan 3（typed runtime bundle + TaskQueue + 独立 worker + C 放开 + 2-shard 验收）**：`createShardedDatabaseRuntime`（§5.3 固定时序 + close ownership）；TaskQueue 按 §3-B（每 shard 一队列+worker）+ 同款 store；**独立 observability worker 入口按 §5.1 决策走 bundle**；config schema 校验；**fail-closed 放开 = 走 bundle 拿 resolver（类型保证，非布尔）**；真 2-shard 集成测试全套（隔离/default 同实例/子服务/metrics+worker fan-out/legal-hold 语义/NudgePush 漏推/MediaRetention GDPR/TaskQueue per-shard/Auth register 每步崩溃收敛/独立 worker/close ownership）；放开生产多库。
