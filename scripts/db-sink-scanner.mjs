@@ -16,6 +16,7 @@
  * 也绝不「漏扫却报绿」。
  */
 import ts from 'typescript';
+import { readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1411,4 +1412,232 @@ function normalizeTargetName(target) {
 export function scanProductionDbCapabilityEdges() {
   const { program, checker, uowType } = buildProgram('tsconfig.src.json');
   return enumerateDbCapabilityEdges(program, checker, uowType, { includeTests: false });
+}
+
+/* ============================================================================
+ * Task 3/4：semantic-flow contract 门（evaluateGate）+ inventory 解析（readInventory）。
+ *
+ * Codex 第 9 轮裁决——两级门 planned/verified：
+ *   - Plan 0 只跑 `planned` 级（inventory-complete）：全 sink 登记 + 每 unresolved-carrier 已审阅
+ *     （reviewStatus=classified + disposition + proofObligation）+ 每 flow contract 精确覆盖。
+ *   - `verified` 级（Plan 3，本 Plan 仅定义不跑）：危险 sink 全 wired/verified 等。
+ *
+ * 核心不变量：门宁可红（列诊断退出非零），绝不「scanner 不知 → planned → 绿」退化。
+ * ==========================================================================*/
+
+/** STORING（长期持有 db 能力）接收 A 点 kind——本身即必须登记的 semantic sink。 */
+const GATE_STORING_KINDS = new Set(['ctor-param', 'deps-prop', 'field-decl', 'carrier-param', 'carrier-field']);
+/** 传播 edge 无需登记即视为「已覆盖」的归因态（机械证明安全）。 */
+const AUTO_COVERED_PROPAGATION = new Set(['linked-to-sink', 'linked-to-resolved-carrier', 'ephemeral']);
+
+/**
+ * 两级 semantic-flow contract 门（Codex 第 9 轮）。
+ *
+ * @param {import('./db-sink-scanner.d.mts').Edge[]} edges 全量 production edge（scanProductionDbCapabilityEdges 产出）。
+ * @param {import('./db-sink-scanner.d.mts').InventoryContract[]} inventory 已解析的 inventory flow contract（readInventory 产出）。
+ * @param {{ requiredLevel?: 'planned' | 'verified' }} [opts] Plan 0 只传 'planned'。
+ * @returns {import('./db-sink-scanner.d.mts').GateResult}
+ */
+export function evaluateGate(edges, inventory, opts = {}) {
+  const requiredLevel = opts.requiredLevel ?? 'planned';
+
+  /* 每条 edge 的机器归因（classifyPropagation 不用 checker——归因据 edge 结构 + carrierProvenance）。 */
+  const propagationOf = new Map();
+  for (const e of edges) {
+    propagationOf.set(e.id, classifyPropagation(e, null, edges).propagation);
+  }
+
+  /* inventory 覆盖索引：coveredEdgeId → 覆盖它的 contract（并记重复覆盖以供 condition 5 报错）。 */
+  const coverEntryOf = new Map();
+  const duplicateCoverIds = new Set();
+  for (const c of inventory) {
+    for (const cid of c.coveredEdgeIds ?? []) {
+      if (coverEntryOf.has(cid)) duplicateCoverIds.add(cid);
+      else coverEntryOf.set(cid, c);
+    }
+  }
+  const covered = new Set(coverEntryOf.keys());
+  const realEdgeIds = new Set(edges.map((e) => e.id));
+
+  /* ---- ① unknownEdges：unknown-boundary（有 DB 能力但不可分类/预算超限）。 ---- */
+  const unknownEdges = edges
+    .filter((e) => e.kind === 'unknown-boundary')
+    .map((e) => ({ id: e.id, file: e.file, context: e.context }));
+
+  /* ---- ② unregisteredSemanticSinks：storing 接收 A 点 + terminal-escape 未登记。 ---- */
+  const unregisteredSemanticSinks = edges
+    .filter((e) => {
+      const isStoringSink = GATE_STORING_KINDS.has(e.kind);
+      const isEscape = propagationOf.get(e.id) === 'terminal-escape';
+      return (isStoringSink || isEscape) && !covered.has(e.id);
+    })
+    .map((e) => ({ id: e.id, file: e.file, owner: e.owner, kind: e.kind }));
+
+  /* ---- ③ uncoveredPropagationEdges：传播 edge 未归入允许集。 ----
+   * 传播 edge = 非 storing 接收 A 点（storing sink 由 condition ② 管登记）。
+   * 允许 = auto-covered（linked/resolved/ephemeral）或（terminal-escape/unresolved-carrier 已登记）。 */
+  const uncoveredPropagationEdges = edges
+    .filter((e) => {
+      if (GATE_STORING_KINDS.has(e.kind)) return false; // storing sink 不在传播域（condition ② 管）。
+      const p = propagationOf.get(e.id);
+      if (AUTO_COVERED_PROPAGATION.has(p)) return false; // 机械证明安全，无需登记。
+      if ((p === 'terminal-escape' || p === 'unresolved-carrier') && covered.has(e.id)) return false; // 已登记。
+      return true; // 其余（未登记 escape/unresolved-carrier、unknown 归因）→ 未覆盖。
+    })
+    .map((e) => ({ id: e.id, file: e.file, kind: e.kind, propagation: propagationOf.get(e.id) }));
+
+  /* ---- ④ unreviewedUnresolvedCarriers（禁「scanner 不知→planned→绿」退化）：----
+   * 每条 unresolved-carrier 须 covered 且其 contract reviewStatus=classified + disposition + proofObligation。 */
+  const unreviewedUnresolvedCarriers = [];
+  for (const e of edges) {
+    if (propagationOf.get(e.id) !== 'unresolved-carrier') continue;
+    const c = coverEntryOf.get(e.id);
+    const reviewed =
+      c &&
+      c.reviewStatus === 'classified' &&
+      typeof c.disposition === 'string' &&
+      c.disposition.length > 0 &&
+      typeof c.proofObligation === 'string' &&
+      c.proofObligation.trim().length > 0;
+    if (!reviewed) {
+      unreviewedUnresolvedCarriers.push({
+        id: e.id,
+        file: e.file,
+        reason: !c
+          ? '未登记'
+          : c.reviewStatus !== 'classified'
+            ? `reviewStatus=${c.reviewStatus}（非 classified）`
+            : !c.proofObligation
+              ? '缺 proofObligation'
+              : '缺 disposition',
+      });
+    }
+  }
+
+  /* ---- ⑤ invalidInventoryGroups：flow contract 精确覆盖校验（禁通配 + count fingerprint）。 ---- */
+  const invalidInventoryGroups = [];
+  for (const c of inventory) {
+    if (!c.coveredEdgeIds) continue; // legacy file 级条目（无 coveredEdgeIds）——补充网，不参与 edge 门。
+    const ids = c.coveredEdgeIds;
+    const problems = [];
+    // 禁通配。
+    const wildcard = ids.filter((cid) => cid.includes('*'));
+    if (wildcard.length > 0) problems.push(`含通配 id: ${wildcard.join(', ')}`);
+    // expectedCount fingerprint 匹配。
+    if (typeof c.expectedCount !== 'number' || c.expectedCount !== ids.length) {
+      problems.push(`expectedCount=${c.expectedCount} ≠ coveredEdgeIds 数 ${ids.length}`);
+    }
+    // 每个 coveredEdgeId 须是真实存在的 edge（stale id → 红）。
+    const stale = ids.filter((cid) => !realEdgeIds.has(cid));
+    if (stale.length > 0) problems.push(`${stale.length} 个 stale coveredEdgeId（edge 已不存在）: ${stale.slice(0, 3).join(', ')}`);
+    // 跨 contract 重复覆盖。
+    const dup = ids.filter((cid) => duplicateCoverIds.has(cid));
+    if (dup.length > 0) problems.push(`${dup.length} 个 id 被多个 contract 重复覆盖: ${dup.slice(0, 3).join(', ')}`);
+    if (problems.length > 0) invalidInventoryGroups.push({ id: c.id, problems });
+  }
+
+  const pass =
+    unknownEdges.length === 0 &&
+    unregisteredSemanticSinks.length === 0 &&
+    uncoveredPropagationEdges.length === 0 &&
+    unreviewedUnresolvedCarriers.length === 0 &&
+    invalidInventoryGroups.length === 0;
+
+  return {
+    requiredLevel,
+    pass,
+    unknownEdges,
+    unregisteredSemanticSinks,
+    uncoveredPropagationEdges,
+    unreviewedUnresolvedCarriers,
+    invalidInventoryGroups,
+  };
+}
+
+/**
+ * 解析 src/storage/db-access-inventory.ts 的 DB_ACCESS_INVENTORY 数组（.mjs 不能 import .ts，
+ * 用 TS AST 解析——比正则健壮，精确取每条 contract 的 id/coveredEdgeIds/expectedCount/
+ * reviewStatus/disposition/proofObligation）。
+ *
+ * @param {string} [inventoryPath] 相对仓库根路径（默认 src/storage/db-access-inventory.ts）。
+ * @returns {import('./db-sink-scanner.d.mts').InventoryContract[]}
+ */
+export function readInventory(inventoryPath = 'src/storage/db-access-inventory.ts') {
+  const abs = join(ROOT, inventoryPath);
+  const text = readFileSync(abs, 'utf-8');
+  const sf = ts.createSourceFile(abs, text, ts.ScriptTarget.Latest, /*setParentNodes*/ true);
+
+  /** @type {import('./db-sink-scanner.d.mts').InventoryContract[]} */
+  const contracts = [];
+  let arrayLiteral;
+  const findArray = (node) => {
+    if (arrayLiteral) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'DB_ACCESS_INVENTORY' &&
+      node.initializer
+    ) {
+      // initializer 可能是 `[...] as const` / `[...] satisfies X` / 直接数组。
+      let init = node.initializer;
+      while (init && (ts.isAsExpression(init) || ts.isSatisfiesExpression?.(init))) init = init.expression;
+      if (init && ts.isArrayLiteralExpression(init)) arrayLiteral = init;
+    }
+    ts.forEachChild(node, findArray);
+  };
+  ts.forEachChild(sf, findArray);
+  if (!arrayLiteral) throw new Error(`readInventory：未找到 DB_ACCESS_INVENTORY 数组字面量 @ ${inventoryPath}`);
+
+  const strLit = (n) => (n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) ? n.text : undefined);
+
+  for (const el of arrayLiteral.elements) {
+    if (!ts.isObjectLiteralExpression(el)) continue;
+    /** @type {any} */
+    const entry = {};
+    for (const prop of el.properties) {
+      if (!ts.isPropertyAssignment(prop) || !ts.isIdentifier(prop.name)) continue;
+      const key = prop.name.text;
+      const val = prop.initializer;
+      if (key === 'coveredEdgeIds' && ts.isArrayLiteralExpression(val)) {
+        entry.coveredEdgeIds = val.elements.map((e) => strLit(e)).filter((s) => typeof s === 'string');
+      } else if (key === 'expectedCount' && ts.isNumericLiteral(val)) {
+        entry.expectedCount = Number(val.text);
+      } else if (
+        key === 'id' ||
+        key === 'file' ||
+        key === 'category' ||
+        key === 'disposition' ||
+        key === 'wiringStatus' ||
+        key === 'provenanceStatus' ||
+        key === 'reviewStatus' ||
+        key === 'proofObligation' ||
+        key === 'note'
+      ) {
+        entry[key] = strLit(val);
+      }
+    }
+    if (entry.id) contracts.push(entry);
+  }
+  return contracts;
+}
+
+/**
+ * 把 GateResult 渲染成人类可读诊断（供门脚本红时列出）。
+ * @param {import('./db-sink-scanner.d.mts').GateResult} r
+ * @returns {string}
+ */
+export function formatGateDiagnostics(r) {
+  const lines = [];
+  const section = (label, arr, fmt) => {
+    if (arr.length === 0) return;
+    lines.push(`\n  ✗ ${label}（${arr.length} 条）：`);
+    for (const x of arr.slice(0, 25)) lines.push(`     - ${fmt(x)}`);
+    if (arr.length > 25) lines.push(`     …（另 ${arr.length - 25} 条，略）`);
+  };
+  section('unknownEdges（有 DB 能力但不可分类/预算超限）', r.unknownEdges, (x) => `${x.id} | ${x.context ?? ''}`);
+  section('unregisteredSemanticSinks（storing 接收点/terminal-escape 未登记）', r.unregisteredSemanticSinks, (x) => `${x.id} [${x.kind}]`);
+  section('uncoveredPropagationEdges（传播 edge 未归入允许集）', r.uncoveredPropagationEdges, (x) => `${x.id} [${x.propagation}]`);
+  section('unreviewedUnresolvedCarriers（unresolved-carrier 未审阅登记）', r.unreviewedUnresolvedCarriers, (x) => `${x.id} | ${x.reason}`);
+  section('invalidInventoryGroups（flow contract 覆盖校验失败）', r.invalidInventoryGroups, (x) => `${x.id} | ${x.problems.join('；')}`);
+  return lines.join('\n');
 }
