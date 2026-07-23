@@ -14,6 +14,7 @@ import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { CompanionPerceiveResultV1Schema, CompanionMeV1Schema } from '@chrono/contracts';
 import { registerCompanionPerceiveRoutes } from '../../server/routes/companion/perceive.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { MockPerceptionProvider } from '../../perception/sources/mock-perception-provider.js';
 import type { PerceptionProvider } from '../../perception/perception-provider.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
@@ -104,7 +105,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
     });
 
     /* injectedProvider 是第 6 参（db/config 省略，用注入 provider）。 */
-    registerCompanionPerceiveRoutes(local, os, undefined, undefined, undefined, scripted);
+    registerCompanionPerceiveRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), injectedProvider: scripted });
     await local.ready();
     const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: 'x' } });
     assert.equal(res.statusCode, 200, res.body);
@@ -125,7 +126,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
       (req as { tenantId?: string }).tenantId = 'default';
     });
     const throwing: PerceptionProvider = { name: 'throwing', kind: 'teacher', analyze: async () => { throw new Error('teacher down'); } };
-    registerCompanionPerceiveRoutes(local, os, undefined, undefined, undefined, throwing);
+    registerCompanionPerceiveRoutes(local, { os, tenantFactory: undefined, resolver: new SingleDbResolver(os.getDatabase()), injectedProvider: throwing });
     await local.ready();
     const res = await local.inject({ method: 'POST', url: '/api/v1/companion/me/perceive', payload: { modality: 'audio', representation: 'x' } });
     /* 安全降级：老师挂了不抛主流程，200 + 空记忆。 */
@@ -266,7 +267,7 @@ describe('ChronoCompanion 感知 API 集成测试', () => {
       kind: 'teacher',
       analyze: async (input) => { analyzeCalls++; return new MockPerceptionProvider().analyze(input); },
     };
-    registerCompanionPerceiveRoutes(local, os2, undefined, undefined, undefined, counting);
+    registerCompanionPerceiveRoutes(local, { os: os2, tenantFactory: undefined, resolver: new SingleDbResolver(os2.getDatabase()), injectedProvider: counting });
     await local.ready();
     QuotaManager.fromUnitOfWork(os2.getDatabase()).setLimit('default', 'perception', 1, 60_000);
 

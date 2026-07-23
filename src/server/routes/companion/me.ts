@@ -14,7 +14,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
-import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, NotFoundError, QuotaExceededError, ValidationError, ErrorCode } from '../../../errors/index.js';
@@ -192,13 +192,19 @@ function storeLearnedReference(os: ChronoSynthOS, topic: string, material: strin
 
 /* ── 路由注册 ──────────────────────────────────────────────────── */
 
-export function registerCompanionRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  tenantFactory: TenantOSFactory | undefined,
-  db: IDatabase,
-  config: AppConfig,
-): void {
+/** Companion me 路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface CompanionRoutesDeps {
+  os: ChronoSynthOS;
+  tenantFactory: TenantOSFactory | undefined;
+  /** 共享 TenantDbResolver（组合根唯一实例；reflect/learnTopic 配额经它路由 shard）。 */
+  resolver: TenantDbResolver;
+  /** 直查用 host db（Plan 2）。 */
+  db: IDatabase;
+  config: AppConfig;
+}
+
+export function registerCompanionRoutes(app: FastifyInstance, deps: CompanionRoutesDeps): void {
+  const { os, tenantFactory, resolver, db, config } = deps;
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
     if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
@@ -342,7 +348,7 @@ export function registerCompanionRoutes(
   /* BYOK 解析 per-tenant LLM key（缺失回退全局 config）——reflect 的「反思老师」。 */
   const reflectLlmEncryption = tryByokEncryption(config.encryption);
   /* 反思配额：与 perceive 同套路（route 级 per-feature 配额，防 BYOK/平台 key 被刷爆）。 */
-  const reflectQuota = QuotaManager.fromResolver(new SingleDbResolver(db));
+  const reflectQuota = QuotaManager.fromResolver(resolver);
 
   /* POST /api/v1/companion/me/reflect —「自主学习」：让数字人反思已学记忆，自己内化成长。
    * ADR-0047 growth 档：LLM 当老师反思最近高显著记忆 + 叙事 → 产成长候选（value_shift/memory_edge/
@@ -452,7 +458,7 @@ export function registerCompanionRoutes(
    * 记忆。之后 chat 就能**零-LLM**据这些记忆答该主题。LLM 只在此摄取阶段被调（两次：产知识 + 抽事实），
    * 绝不进 runtime。无 LLM 老师（provider 无 key/非 ollama）→ 明确报错引导去配（不静默确定性回退——
    * 「学主题」离开真老师无意义，不同于 perceive 有确定性 mock 兜底）。 */
-  const learnTopicQuota = QuotaManager.fromResolver(new SingleDbResolver(db));
+  const learnTopicQuota = QuotaManager.fromResolver(resolver);
   app.post('/api/v1/companion/me/learn-topic', async (request, reply) => {
     assertCompanionAccess(request);
     setPrivateNoStore(reply);

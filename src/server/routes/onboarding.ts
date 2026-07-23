@@ -11,7 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { NotFoundError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { OnboardingService } from '../../onboarding/onboarding-service.js';
@@ -59,22 +59,27 @@ interface OnboardingSessionRow {
   updated_at: number;
 }
 
-export function registerOnboardingRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  config: AppConfig,
-  db?: IDatabase,
-  tenantFactory?: TenantOSFactory,
-): void {
-  const sharedDb = db ?? os.getDatabase();
-  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(sharedDb));
-  const costTracker = CostTracker.fromResolver(new SingleDbResolver(sharedDb));
-  const sharedTx = sharedDb;
+/** 引导路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface OnboardingRoutesDeps {
+  os: ChronoSynthOS;
+  config: AppConfig;
+  /** 共享 TenantDbResolver（组合根唯一实例）。 */
+  resolver: TenantDbResolver;
+  /** 直查用 host db（Plan 2 下沉）；缺省回退 os.getDatabase()。 */
+  db?: IDatabase;
+  tenantFactory?: TenantOSFactory;
+}
+
+export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingRoutesDeps): void {
+  const { os, config, resolver, tenantFactory } = deps;
+  const sharedDb = deps.db ?? os.getDatabase();
+  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, resolver);
+  const costTracker = CostTracker.fromResolver(resolver);
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = tryByokEncryption(config.encryption);
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
-  const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
-  const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(sharedTx), config);
+  const quotaManager = QuotaManager.fromResolver(resolver);
+  const usageTracker = UsageTracker.fromResolver(resolver);
+  const billingOutbox = BillingOutbox.fromResolver(resolver, config);
   const questionnaire = new QuestionnaireEngine();
 
   function getOS(tenantId: string): ChronoSynthOS {

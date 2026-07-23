@@ -19,7 +19,8 @@ import type { FieldCrypto } from '@chrono/data-plane';
 import { loadConfig, intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
-import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
+import { buildResolver, assertShardingActivationAllowed } from '../storage/build-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerA11yHeaders } from './plugins/a11y-headers.js';
 import { registerRequestId } from './plugins/request-id.js';
@@ -197,10 +198,20 @@ export interface CreateAppDeps {
   /** 异步 UnitOfWorkFactory（P0-1 过渡）：新服务优先使用，旧服务继续使用 db */
   uowFactory?: UnitOfWorkFactory;
   fieldCrypto?: FieldCrypto;
+  /** 分片 Phase 0 · Plan 1 测试 seam：注入共享 TenantDbResolver（如 FakeMultiShardResolver）验注入链分流；
+   * 未传时由 buildResolver(config, hostDb) 建单库 SingleDbResolver。注入 fake 仍先过 config guard（不解除 fail-closed）。 */
+  resolver?: TenantDbResolver;
+  /** 分片 Phase 0 · Plan 1 测试 seam：在真实 route/factory 注入边界回调采集实际传出的 resolver（identity spy）。 */
+  captureResolvers?: (resolver: TenantDbResolver, site: string) => void;
 }
 
 export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const config = deps.config ?? loadConfig();
+
+  /* 分片 Phase 0 · Plan 1（约束 2）：放开门单一真源，在**任何插件/hook/worker/timer/route 注册副作用之前**
+   * 校验——config.db.shards 非空即抛 MultiShardRuntimeNotReadyError。deps.resolver 测试 seam 绕不过此门
+   * （防注入 fake 后半初始化产生副作用再抛）。生产仍 fail-closed 挡多库。 */
+  assertShardingActivationAllowed(config);
 
   /* SQLite 多副本安全检查 */
   if (config.db.driver === 'sqlite' && process.env.REPLICA_COUNT && Number(process.env.REPLICA_COUNT) > 1) {
@@ -293,11 +304,20 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* 多租户 OS 工厂 */
   const db = deps.db ?? deps.os.getDatabase();
   const tx = db;
+  /* 分片 Phase 0 · Plan 1：组合根建**唯一一个** TenantDbResolver 穿全链——单库=SingleDbResolver(db)（零回归），
+   * 多库=buildResolver 直接 throw（本 Plan 不激活）。测试可经 deps.resolver 注入 FakeMultiShardResolver 验分流。
+   * 全链（factory + 各 route 子服务）共享此实例；机械门保证 app.ts/routes 内无内联 SingleDbResolver 构造。 */
+  const resolver: TenantDbResolver = deps.resolver ?? buildResolver(config, db);
+  /** identity spy：在真实注入边界采集实际传出的 resolver（测试验「全链同一实例」）。 */
+  const captureResolver = (site: string): TenantDbResolver => {
+    deps.captureResolvers?.(resolver, site);
+    return resolver;
+  };
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const services = buildAppServices(db, config, deps.logger);
   const tenantFactory = new TenantOSFactory(
-    new SingleDbResolver(db),
+    captureResolver('tenant-os-factory'),
     deps.os.getClock(),
     deps.os.getLogger(),
     /* 透传给所有租户 OS：①ADR-0054 主动性配置（红线 3）；②ADR-0048 动态成长预算开关。 */
@@ -386,7 +406,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       config.queue.maxConcurrent,
       config.queue.maxRetries,
     );
-    registerTaskRoutes(app, queue, worker, queueDb);
+    registerTaskRoutes(app, { queue, worker, resolver: captureResolver('tasks') });
     worker.register('life_simulation', async (task, _signal) => {
       let payload: { simulationId: string };
       try { payload = JSON.parse(task.payload) as { simulationId: string }; }
@@ -399,7 +419,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     const autorunStore = new AvatarAutorunStore(queueDb);
     const knowledgeStore = new KnowledgeSourceStore(queueTx);
     const avatarService = new AvatarService(queueTx);
-    const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(queueTx));
+    const quotaManager = QuotaManager.fromResolver(resolver);
     const knowledgeRegistry = new KnowledgeSourceRegistry();
     knowledgeRegistry.register('manual', new ManualKnowledgeSource());
     knowledgeRegistry.register('rss', new RssKnowledgeSource());
@@ -459,12 +479,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
    * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动）
    * P1-D 注入 UsageTracker + BillingOutbox 上报 bulk_knowledge_import_item */
-  const bulkImportResolver = new SingleDbResolver(tx);
-  const bulkImportPersonaCoreService = PersonaCoreService.fromResolver(bulkImportResolver);
-  const bulkImportTemplateService = PersonaTemplateService.fromResolver(bulkImportResolver, bulkImportPersonaCoreService);
+  const bulkImportPersonaCoreService = PersonaCoreService.fromResolver(resolver);
+  const bulkImportTemplateService = PersonaTemplateService.fromResolver(resolver, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
-  const p1dUsageTracker = P1dUsageTracker.fromResolver(new SingleDbResolver(tx));
-  const p1dBillingOutbox = config.stripe.enabled ? P1dBillingOutbox.fromResolver(new SingleDbResolver(tx), config) : undefined;
+  const p1dUsageTracker = P1dUsageTracker.fromResolver(resolver);
+  const p1dBillingOutbox = config.stripe.enabled ? P1dBillingOutbox.fromResolver(resolver, config) : undefined;
   const stripeCustomerLookup = (tenantId: string): string | null => {
     try {
       const row = db.prepare<{ stripe_customer_id: string | null }>(
@@ -508,9 +527,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     temperature: config.intelligence.temperature,
   });
   const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
-  const conversationTokenBudget = ConversationTokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(db));
-  const conversationCostTracker = ConversationCostTracker.fromResolver(new SingleDbResolver(db));
-  const conversationQuotaManager = QuotaManager.fromResolver(new SingleDbResolver(tx));
+  const conversationTokenBudget = ConversationTokenBudget.fromResolver(config.intelligence.budget, resolver);
+  const conversationCostTracker = ConversationCostTracker.fromResolver(resolver);
+  const conversationQuotaManager = QuotaManager.fromResolver(resolver);
   const conversationCircuitBreaker = new ConversationCircuitBreaker({
     failureThreshold: 5,
     halfOpenMaxRequests: 1,
@@ -760,7 +779,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     });
   };
   /* ③ 人格与成长 */
-  registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
+  registerPersonaCoreRoutes(app, { resolver: captureResolver('persona-core'), db, config, onTaskCompleted: onMarketplaceTaskCompleted });
   registerConversationRoutes(app, {
     conversation: conversationService,
     personaCore: bulkImportPersonaCoreService,
@@ -826,19 +845,19 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
-  registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveStreamRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-me'), db, config });
+  registerCompanionPerceiveRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-perceive'), db, config });
+  registerCompanionPerceiveStreamRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-perceive-stream'), db, config });
   registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
-  registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionLearnGithubRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionChatRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-chat'), db, config });
+  registerCompanionLearnGithubRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-learn-github'), db, config });
   /* Plan 4：draft-github-reply 端点含 publish（发布经 pipeline highRisk = 不可降级人工审批门）。
    * 传入共享 toolInvocationPipeline（已注册 github.comment/github.review 写工具）。 */
   registerCompanionDraftGithubRoutes(app, deps.os, tenantFactory, db, config, undefined, toolInvocationPipeline);
   /* GitHub webhook 接收器（可选系统入站入口，非用户动作 → 前缀 integrations/github）：
    * GitHub 发 issue/PR opened → HMAC 验签 + 反查租户 + 幂等 → 零-LLM 起草停 drafted（绝不发布）。 */
   registerGithubWebhookRoutes(app, deps.os, tenantFactory, db, config);
-  registerPersonaRoutes(app, deps.os, tenantFactory);
+  registerPersonaRoutes(app, { os: deps.os, resolver: captureResolver('personas'), tenantFactory });
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);
   /* ⑤ 治理与审计 */
@@ -848,13 +867,13 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerAnalyticsRoutes(app, db);
   registerDashboardRoutes(app, db);
   registerPosRoutes(app, deps.os, tenantFactory);
-  registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
-  registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
+  registerDecisionRoutes(app, { os: deps.os, config, resolver: captureResolver('decisions'), db, tenantFactory });
+  registerOnboardingRoutes(app, { os: deps.os, config, resolver: captureResolver('onboarding'), db, tenantFactory });
   registerOnboardingV2Routes(app, config, db, services.organization);
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory, config);
   /* ⑥ 人生模拟（ADR-0047 确定性离线决策引擎载体；前端已降位，非首屏） */
-  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { resolver: captureResolver('life-simulations'), queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
   registerOidcRoutes(app, db, config);
@@ -862,7 +881,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerCollaborationRoutes(app, services);
   registerApiKeyRoutes(app, services);
   registerAdminConfigRoutes(app, db, config);
-  registerAdminTemplateRoutes(app, deps.os);
+  registerAdminTemplateRoutes(app, { resolver: captureResolver('admin-templates') });
   registerBulkKnowledgeImportRoutes(app, {
     bulkImport: bulkImportService,
     personaCore: bulkImportPersonaCoreService,
@@ -941,7 +960,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
   if (config.stripe.enabled) {
-    const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(tx), config);
+    const billingOutbox = BillingOutbox.fromResolver(resolver, config);
     const FLUSH_INTERVAL_MS = 60_000;
     const flushTimer = setInterval(() => {
       void billingOutbox.flush().then((result) => {

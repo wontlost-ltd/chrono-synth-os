@@ -30,7 +30,7 @@ import { z } from 'zod';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
-import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, QuotaExceededError, ValidationError, ErrorCode } from '../../../errors/index.js';
@@ -70,23 +70,28 @@ export interface LearnGithubInjected {
   provider?: PerceptionProvider;
 }
 
-export function registerCompanionLearnGithubRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  tenantFactory: TenantOSFactory | undefined,
-  /** BYOK 选 provider + 装配 credential store 需要 db + config；测试可省略并用 injected。 */
-  db?: IDatabase,
-  config?: AppConfig,
-  injected?: LearnGithubInjected,
-): void {
-  const sharedDb = db ?? os.getDatabase();
+/** Companion GitHub 学习路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface CompanionLearnGithubRoutesDeps {
+  os: ChronoSynthOS;
+  tenantFactory: TenantOSFactory | undefined;
+  /** 共享 TenantDbResolver（组合根唯一实例；quotaManager 经它路由 shard）。 */
+  resolver: TenantDbResolver;
+  /** BYOK 选 provider + 装配 credential store 需要 db + config；直查用 host db（Plan 2）；缺省回退 os.getDatabase()。 */
+  db?: IDatabase;
+  config?: AppConfig;
+  injected?: LearnGithubInjected;
+}
+
+export function registerCompanionLearnGithubRoutes(app: FastifyInstance, deps: CompanionLearnGithubRoutesDeps): void {
+  const { os, tenantFactory, resolver, config, injected } = deps;
+  const sharedDb = deps.db ?? os.getDatabase();
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）——感官老师用。 */
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   /* GithubAppCredentialStore 强制启用的 FieldEncryption（私钥/webhook secret 拒绝明文落库）；
    * 加密未启用时无凭据 store 可用——凭据装配路径会明确报「未连接」。 */
   const credEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   /* 学习配额（与 perception 同口径——每次经感官老师 perceive 有成本；未设限额默认无限）。 */
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
+  const quotaManager = QuotaManager.fromResolver(resolver);
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
