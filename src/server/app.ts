@@ -315,7 +315,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   };
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
-  const services = buildAppServices(db, config, deps.logger);
+  const services = buildAppServices(db, config, captureResolver('app-services'), deps.logger);
   const tenantFactory = new TenantOSFactory(
     captureResolver('tenant-os-factory'),
     deps.os.getClock(),
@@ -902,7 +902,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   });
   registerMobileRoutes(app, services);
   registerIdentityRoutes(app, services);
-  registerAvatarRoutes(app, db, deps.os, tenantFactory);
+  registerAvatarRoutes(app, db, deps.os, captureResolver('avatars'), tenantFactory);
   registerKnowledgeSourceRoutes(app, services);
   registerSseRoutes(app, deps.os, config);
   registerFeatureFlagRoutes(app, deps.os, config);

@@ -8,7 +8,7 @@ import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { UserRole } from '../types/auth.js';
 import { AuthenticationError, ErrorCode } from '../errors/index.js';
 import { syncPlanToQuota } from '../billing/plans.js';
-import { IdentityService } from './identity-service.js';
+import { IdentityWriter } from './identity-service.js';
 import {
   authQueryUserBriefByEmail, authQuerySubExists,
   authQueryUserCountByTenant,
@@ -25,11 +25,19 @@ export interface SsoUserResult {
 }
 
 export class SsoUserService {
-  private readonly identityService: IdentityService;
-
+  /**
+   * 分片 Plan 1b：SSO 用户创建是 Plan 1c mixed-scope（先平台级定位 tenant，再租户级写）。
+   * 本 Task 只把它对身份写的依赖接到 tenant-bound `IdentityWriter(tenantId, tx)` seam——
+   * tenantId 由 OIDC/SSO 流程各自定位（expectedTenantId / 新分配的 tenantId），非裸 `new IdentityService(tx)`。
+   * 多-shard resolver 定位（coordinator）归 Plan 1c，本 Task 不 `new SingleDbResolver(tx)` 回退。
+   */
   constructor(private readonly tx: SyncWriteUnitOfWork) {
     registerCoreSelfExecutors();
-    this.identityService = new IdentityService(tx);
+  }
+
+  /** 以已定位的 tenantId 现造 tenant-bound 身份写内核（tenantId+tx 同一构造绑定）。 */
+  private identityWriter(tenantId: string): IdentityWriter {
+    return new IdentityWriter(tenantId, this.tx);
   }
 
   /**
@@ -92,13 +100,13 @@ export class SsoUserService {
   /** 确保 tenant 有订阅和用户有身份（幂等，可在事务外调用） */
   private ensureTenantBootstrap(tenantId: string, userId: string, email: string): void {
     this.ensureSubscription(tenantId);
-    this.identityService.ensureForUser(userId, tenantId, email.split('@')[0]);
+    this.identityWriter(tenantId).ensureForUser(userId, email.split('@')[0]);
   }
 
   /** 在事务内创建订阅+身份（用于新用户注册） */
   private bootstrapTenant(tenantId: string, userId: string, email: string): void {
     this.ensureSubscription(tenantId);
-    this.identityService.ensureForUser(userId, tenantId, email.split('@')[0]);
+    this.identityWriter(tenantId).ensureForUser(userId, email.split('@')[0]);
   }
 
   private ensureSubscription(tenantId: string): void {

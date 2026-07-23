@@ -8,6 +8,7 @@ import { createMemoryDatabase } from '../../storage/database.js';
 import { runDslSqliteMigrations } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { CollaborationService } from '../../identity/collaboration-service.js';
 import { UserProfileService } from '../../identity/user-profile-service.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
@@ -30,13 +31,13 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_a', 'a@x.com');
-      const fromDb = new IdentityService(db);
-      const ident = fromDb.create('user_a', 'default', 'A');
+      const fromDb = new IdentityService(new SingleDbResolver(db));
+      const ident = fromDb.create('default', 'user_a', 'A');
       assert.ok(ident.id);
 
       seedUser(db, 'user_b', 'b@x.com');
-      const fromUow = new IdentityService(db);
-      const ident2 = fromUow.create('user_b', 'default', 'B');
+      const fromUow = new IdentityService(new SingleDbResolver(db));
+      const ident2 = fromUow.create('default', 'user_b', 'B');
       assert.ok(ident2.id);
 
       const list = fromUow.listByTenant('default');
@@ -49,7 +50,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_av', 'av@x.com');
-      const ident = new IdentityService(db).create('user_av', 'default', 'Av');
+      const ident = new IdentityService(new SingleDbResolver(db)).create('default', 'user_av', 'Av');
 
       const fromDb = new AvatarService(db);
       const fromUow = new AvatarService(db);
@@ -63,7 +64,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_da', 'da@x.com');
-      const ident = new IdentityService(db).create('user_da', 'default', 'DA');
+      const ident = new IdentityService(new SingleDbResolver(db)).create('default', 'user_da', 'DA');
       const avatarSvc = new AvatarService(db);
       const av1 = avatarSvc.create(ident.id, { label: 'A1' });
 

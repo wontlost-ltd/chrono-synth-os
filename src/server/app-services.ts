@@ -7,6 +7,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../config/schema.js';
 import type { Logger } from '../utils/logger.js';
 import { AuthService } from '../identity/auth-service.js';
@@ -50,6 +51,11 @@ export interface AppServices {
 export function buildAppServices(
   db: IDatabase,
   appConfig: AppConfig,
+  /**
+   * 分片 Phase 0 · Plan 1b：组合根穿进的唯一共享 `TenantDbResolver`。
+   * tenant-scoped 服务据此按 tenantId 解析 shard（本 Task 只 IdentityService 接线，其余成员逐 Task 迁移）。
+   */
+  resolver: TenantDbResolver,
   logger?: Logger,
 ): AppServices {
   const pushService = new MockPushService(logger);
@@ -58,7 +64,7 @@ export function buildAppServices(
   return {
     db,
     auth: new AuthService(tx, appConfig),
-    identity: new IdentityService(tx),
+    identity: new IdentityService(resolver),
     avatar: new AvatarService(tx),
     collaboration: new CollaborationService(tx),
     mobileDevice: new MobileDeviceService(tx),

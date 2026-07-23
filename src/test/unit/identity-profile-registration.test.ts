@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  IDENT_QUERY_BY_USER, IDENT_QUERY_BY_ID, IDENT_QUERY_BY_TENANT,
+  IDENT_QUERY_BY_TENANT_AND_USER, IDENT_QUERY_BY_TENANT_AND_ID, IDENT_QUERY_BY_TENANT,
   IDENT_CMD_CREATE, IDENT_CMD_CREATE_DEFAULT_AVATAR, IDENT_CMD_UPDATE,
   UPROF_QUERY_BY_ID, UPROF_QUERY_BY_EMAIL_EXCLUDE, UPROF_QUERY_FULL_BY_ID,
   UPROF_CMD_UPDATE_EMAIL, UPROF_CMD_UPDATE_PASSWORD,
@@ -28,8 +28,8 @@ describe('IdentityService 执行器注册', () => {
   it('全部 Identity query/command 执行器注册完整', () => {
     registerCoreSelfExecutors();
 
-    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_USER));
-    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_ID));
+    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_TENANT_AND_USER));
+    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_TENANT_AND_ID));
     assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_TENANT));
     assert.ok(resolveCommandExecutor(IDENT_CMD_CREATE));
     assert.ok(resolveCommandExecutor(IDENT_CMD_CREATE_DEFAULT_AVATAR));
