@@ -33,7 +33,7 @@
 - `scripts/db-sink-scanner.d.mts` — 扫描器的类型声明（供 `tsx`/strict TS 测试 import 时有声明，避免 `npm run typecheck` 无声明模块错误，Codex #4）。
 - `src/storage/db-access-inventory.ts` — 升级 sink 级（`disposition` 必填 + `wiringStatus` + 纠正 buildAppServices + 登记已知 sink）。
 - `scripts/check-db-access-ratchet.mjs` — 改调 `scanProductionDbCapabilityEdges` + `collectUnregisteredEdges`。
-- `src/test/support/db-sink-fixtures/{type-alias,ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl}.ts` — 变异 fixture（覆盖 A1-A4 接收 + B1-B8 转移各形态）。
+- `src/test/support/db-sink-fixtures/{type-alias,ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl,function-like}.ts` — 变异 fixture（覆盖 A1-A4 接收 + B1-B8 转移各形态）。
 - `src/test/unit/db-sink-scanner.test.ts` — 纯类型判定单元测 + 全 FIXTURE_EXPECT 逐文件 deepEqual pin + Program 健康/sentinel + fail-closed 测。
 - `src/test/unit/db-access-inventory-completeness.test.ts` — inventory 每条目 disposition+wiringStatus + 已知 sink 在册 + buildAppServices 纠正。
 
@@ -197,7 +197,7 @@ export function isDbCapabilityType(type, checker, uowType) {
 
 **Files:**
 - Modify: `scripts/db-sink-scanner.mjs`（`enumerateDbCapabilityEdges`——参/属性/deps-prop/route-param/capture/factory-indirect/对象包装 + edge 级 id + 未知边界 fail-closed）
-- Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl}.ts`（wrapped=options.db/return{db}/{...deps}；export-transfer=export default db + export{db2}；pair=双 IDatabase 属性证 active-stack visited；sink-decl=无 initializer 的 ctor 参属性+字段）
+- Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl,function-like}.ts`（wrapped=options.db/return{db}/{...deps}；export-transfer=export default db + export{db2}；pair=双 IDatabase 属性证 active-stack visited；sink-decl=无 initializer 的 ctor 参属性+字段）
 - Test: `src/test/unit/db-sink-scanner.test.ts`（全 FIXTURE_EXPECT 逐文件逐 edge deepEqual pin + owner 合并回归 + active-stack 双 path）
 
 **Interfaces:**
@@ -272,6 +272,11 @@ const FIXTURE_EXPECT = {
     { owner: 'SinkService', kind: 'ctor-param', target: 'SinkService', param: 'db' },              // constructor(private readonly db: IDatabase)
     { owner: 'SinkStore', kind: 'field-decl', target: 'SinkStore', param: 'db' },                  // private db: IDatabase（无 initializer）
   ],
+  // FunctionExpression + setter（Codex 第6轮建议：显式 pin 防实现者手列节点漏掉，验 ts.isFunctionLike 真覆盖）
+  'function-like.ts': [
+    { owner: 'fnExpr', kind: 'fn-param', target: 'fnExpr', param: 'db' },                          // const fnExpr = function(db: IDatabase){}
+    { owner: 'DbHolder.database', kind: 'fn-param', target: 'set database', param: 'db' },         // set database(db: IDatabase)
+  ],
 };
 for (const [file, expected] of Object.entries(FIXTURE_EXPECT)) {
   test(`fixture ${file}：产出的 edge 全集精确匹配（deepEqual，非 some）`, () => {
@@ -300,7 +305,7 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 - [ ] **Step 3: 写 `enumerateDbCapabilityEdges`（遍历 A1-A4 + B1-B8 boundary taxonomy + `findDbCapabilityPaths` + edge 级 id + 未知边界 fail-closed）**
 
-遍历上「关键」的**接收边界 A1-A4（ctor/method 参数、parameter property、PropertyDeclaration、PropertySignature——无 initializer 也算）** + **转移边界 B1-B8（decl init / call·ctor arg / assignment 含 `||=`&`&&=`&`??=` / aggregate wrapping 含 spread / return·yield / collection write / capture / module·export 含 `ExportDeclaration`）**。每个 boundary 取其类型 `getTypeAtLocation`（不要求 node.type），用 **`findDbCapabilityPaths`**（非仅 `isDbCapabilityType`——要抓 `options.db` 这种包裹）判携带能力 → 归对应 kind 产 known edge，否则 `unknown-boundary` edge（门红）。new/call 用 `getResolvedSignature` 取目标参类型跑 findDbCapabilityPaths；capture 验引用声明在函数作用域外。id = `${rel}#${owner}::${kind}::${target}::${param}`（param 可含 property path 如 `options.db`）。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。**任何 checker/API 异常带 context 重抛（fail-closed），绝不吞成「非 DB」。**
+遍历上「关键」的**接收边界 A1-A4（ctor/method 参数、parameter property、PropertyDeclaration、PropertySignature——无 initializer 也算）** + **转移边界 B1-B8（decl init / call·ctor arg / assignment 含 `||=`&`&&=`&`??=` / aggregate wrapping 含 spread / return·yield / collection write / capture / module·export 含 `ExportDeclaration`）**。每个 boundary 取其类型 `getTypeAtLocation`（不要求 node.type），用 **`findDbCapabilityPaths`**（非仅 `isDbCapabilityType`——要抓 `options.db` 这种包裹）**三态**判：① 空（无能力路径）→ 跳过；② 有能力可归 kind → known edge；③ 有能力不可分类/预算超限 → `unknown-boundary` edge（门红）。new/call 用 `getResolvedSignature` 取目标参类型跑 findDbCapabilityPaths；capture 验引用声明在函数作用域外。id = `${rel}#${owner}::${kind}::${target}::${param}`（param 可含 property path 如 `options.db`）。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。**任何 checker/API 异常带 context 重抛（fail-closed），绝不吞成「非 DB」。**
 
 - [ ] **Step 4: 运行确认通过**（全 FIXTURE_EXPECT 逐文件 deepEqual pin + edge 级 + 合并回归 + active-stack 双 path 全绿）
 
