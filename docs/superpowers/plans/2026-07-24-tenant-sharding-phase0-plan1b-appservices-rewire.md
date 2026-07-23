@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-1. **隔离双重约束（+ 诚实边界，Codex #3）**：per-tenant 方法 = `dbForTenant(tenantId)`（选 shard）+ SQL tenant predicate（有 tenant_id 列直加，无列的经 JOIN identities/EXISTS 父归属）。**predicate 只防同 shard 内跨租户读改删**；错-resolver-映射（写对了 tenant_id 但落错 shard）由 ShardRouter 映射测试保证，本 predicate 管不了——故测试拆**两独立 mutation**：① `dbForTenant` 换 home DB → 2-shard 测红（证选对 shard）；② 删 tenant predicate + A/B 用相同业务 ID 共享物理 db → 测红（证 predicate 防同库跨租户）。
+1. **隔离双重约束（+ 诚实边界，Codex #3）**：per-tenant 方法 = `dbForTenant(tenantId)`（选 shard）+ SQL tenant predicate（有 tenant_id 列直加，无列的经 JOIN identities/EXISTS 父归属）。**predicate 只防同 shard 内跨租户读改删**；错-resolver-映射（写对了 tenant_id 但落错 shard）由 ShardRouter 映射测试保证，本 predicate 管不了——故测试拆**两独立 mutation**（Codex 第 2 轮 #4 钉法）：① `dbForTenant` 换 home DB（测试选**真映射到非 home** 的租户 B）→ 2-shard 测红（证选对 shard）；② 删 tenant predicate + **共享物理 db 只种 B 的业务键、用 A 查/改/删**（非同主键 insert——会撞唯一约束）→ 测红（证 predicate 防同库跨租户）。
 2. **单库零回归**：`resolver.dbForTenant(t)` 单库返同一 db；加 tenant predicate 后单库查询结果不变（本就同租户）。现有全测试绿是硬门。
 3. **验收门 = Plan 0 AST edge 门为主（Codex #「rg 不可靠」）**：`check:db-access`（Plan 0 evaluateGate）是主门——rewire 后 tenant-scoped service 的 carrier edge disposition→resolver、provenance→resolved、wiringStatus→wired（2-shard 测覆盖→verified）；例外逐 edge inventory 分类。`rg --glob '!src/test/**' 'new (...)Service\('` 仅机械辅助（它看不出传的是 resolver 还是 db，故非主门）。构造点须含 `TenantEnterpriseProfileService`/`MobileDeviceFacade`/`DeviceAvatarService`/`AvatarAutorunFacade` 等容器外点。
 4. **删 `AppServices.db`**：裸 host db 字段是错-shard 逃生口——删；RBAC preHandler（organizations.ts）改用 resolver。删未用 carrier（route 各自构造的 avatar/config 等死成员）。
