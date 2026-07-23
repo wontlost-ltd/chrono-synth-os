@@ -1,6 +1,6 @@
 # 分片 Phase 0 · Plan 0：DB-capability edge 扫描器 + sink 盘点 + 放开门 Implementation Plan
 
-> 状态：第 4 轮修订（Codex Plan 复审 52→78→87 退，采纳三轮全部——canonical=SyncWriteUnitOfWork / 9 类 boundary taxonomy 绑 SyntaxKind（含 export/spread）/ findDbCapabilityPaths 递归识别包裹能力 / isDbCapabilityType 不吞异常 fail-closed / fixture deepEqual+单删 / probe 取参数类型）。
+> 状态：第 5 轮修订（Codex Plan 复审 52→78→87→84 退，采纳四轮全部——A1-A4 接收边界(无 initializer sink decl)+B1-B8 转移边界绑 SyntaxKind(含 ExportDeclaration/spread/复合赋值) / findDbCapabilityPaths active-stack visited / Task 2 Step 3 同步新算法 / pair+sink-decl fixture）。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 
 **Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 **edge 级** DB-capability 扫描器 + 升级 `db-access-inventory.ts` 到 sink 级，使「每条持有 DB 能力的 source→sink edge 都有明确处置 + 接线状态」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical type 解析失败/遇未知语法边界/Program 不健康 → 退出非零），也绝不「漏扫却报绿」。**
@@ -197,7 +197,7 @@ export function isDbCapabilityType(type, checker, uowType) {
 
 **Files:**
 - Modify: `scripts/db-sink-scanner.mjs`（`enumerateDbCapabilityEdges`——参/属性/deps-prop/route-param/capture/factory-indirect/对象包装 + edge 级 id + 未知边界 fail-closed）
-- Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer}.ts`（wrapped=options.db/return{db}/{...deps}；export-transfer=export default db）
+- Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl}.ts`（wrapped=options.db/return{db}/{...deps}；export-transfer=export default db + export{db2}；pair=双 IDatabase 属性证 active-stack visited；sink-decl=无 initializer 的 ctor 参属性+字段）
 - Test: `src/test/unit/db-sink-scanner.test.ts`（6 类逐文件逐 edge pin + owner 合并回归）
 
 **Interfaces:**
@@ -206,20 +206,30 @@ export function isDbCapabilityType(type, checker, uowType) {
 **关键（Codex 退回逐条）**：
 - **edge 级 ID（#1）**：同一 owner 内 `new RuntimeRecoveryWorker(db)` / `new NudgePushBridge({db})` / `registerXxxRoutes(app, db)` 是 3 条不同 edge（不同 target/param），id 各异，**禁 byId owner 合并**。回归测试：同函数加第二个 sink → unregistered 非空。
 - **capture（#4）**：不只 Identifier——对 `PropertyAccessExpression`（`this.db`/`this.deps.db`/`opts.db`）、`ElementAccessExpression`、`BindingElement`（解构）、`ShorthandPropertyAssignment`、`AsExpression`/括号 整体调 `getTypeAtLocation` 判 DB 能力；capture 须验引用声明在**当前函数作用域外**（否则是本地 param 非捕获）。
-- **factory-indirect / wrapped capability（#5 + Codex 第 3 轮 #2——需正式「含 DB 能力」谓词）**：`new Service({db})` / `new Service(options)`（options.db 是 UoW，整体 options 类型**不**可赋 UoW）/ `return {db}` / `{ ...deps }` / `[db]` / `arr.push(db)`。整体表达式类型不可赋 UoW，故 `isDbCapabilityType` 不够——加正式谓词 **`findDbCapabilityPaths(type, checker, uowType): CapabilityPath[]`**：递归查类型的属性/union·intersection 分量/tuple·array element/对象 spread 结果，记完整 property path（如 `options.db`、`deps.nested.db`）；**带 visited-type/symbol 集防循环 + 深度/节点预算，超预算 → 产 `unknown-boundary`（不返「无能力」）**。boundary 遍历用它判「转移的值是否携带 DB 能力（含包裹）」。
+- **factory-indirect / wrapped capability（#5 + Codex 第 3 轮 #2——需正式「含 DB 能力」谓词）**：`new Service({db})` / `new Service(options)`（options.db 是 UoW，整体 options 类型**不**可赋 UoW）/ `return {db}` / `{ ...deps }` / `[db]` / `arr.push(db)`。整体表达式类型不可赋 UoW，故 `isDbCapabilityType` 不够——加正式谓词 **`findDbCapabilityPaths(type, checker, uowType): CapabilityPath[]`**：递归查类型的属性/union·intersection 分量/tuple·array element/对象 spread 结果，记完整 property path（如 `options.db`、`deps.nested.db`）。
+- **visited 语义 = 当前递归栈 active-set（仅防真环），退出分支时移除**（Codex 第 4 轮 #4——**不是全局 visited**：全局会漏 `{ primary: IDatabase; replica: IDatabase }` 的第二条 path，因 IDatabase 首次访问后被全局标记）。或等价用 memoize `type→相对 capability 后缀 paths`（不同父路径下重新加前缀）。
+- **深度/节点预算超限 → 产 `unknown-boundary` edge（带 boundary/file/property-path context）**，非返「无能力」/无上下文布尔。
+- 递归遇 checker 异常 → 带 context 重抛（fail-closed，不吞成空）。
 - **inferred（#6）**：`private readonly db = os.getDatabase()`（无 `node.type`）——对 declaration/name/initializer 调 `getTypeAtLocation`，**不要求 `node.type` 存在**。
-- **未知边界 fail-closed——boundary taxonomy 每类绑定具体 `SyntaxKind` 集（Codex 退回 #2 + 第 3 轮 #3，否则漏 export/spread/param-default）**：枚举器**不是**「遍历所有 DB-typed 表达式」，而是遍历**有限的 capability-transfer boundary 全集**，每类绑死 SyntaxKind：
-  1. **declaration/param/binding initializer** — `VariableDeclaration.initializer`、`Parameter.initializer`（`function f(x = db)`）、`BindingElement.initializer`（`const {x = db} = opts`）
-  2. **call / ctor argument** — `CallExpression.arguments`、`NewExpression.arguments`
-  3. **assignment** — `BinaryExpression`（`=` operator，含 `this.db = ...`）
-  4. **aggregate wrapping** — `ObjectLiteralExpression`（`PropertyAssignment` + `ShorthandPropertyAssignment` + `SpreadAssignment`）、`ArrayLiteralExpression`（`SpreadElement`）
-  5. **return / yield** — `ReturnStatement`、`YieldExpression`
-  6. **collection / container write** — `arr.push(db)` / `map.set(k, db)`（CallExpression 上 method 名匹配 + 实参含能力，归此类）
-  7. **field / property initialization** — `PropertyDeclaration.initializer`
-  8. **closure / timer / event / worker capture** — 函数体内引用作用域外 DB 绑定（`Identifier`/`PropertyAccessExpression` resolve 到外层声明）
-  9. **module/export transfer** — `ExportAssignment`（`export default db` / `export = db`）
+- **fail-closed boundary taxonomy——两大组：capability 接收/存储 + capability 转移，每类绑 `SyntaxKind`（Codex 多轮：#2 定分母 / 第 3 轮 export·spread / 第 4 轮**接收边界+named export+visited**）**。枚举器遍历有限 boundary 全集，每 boundary 用 `findDbCapabilityPaths` 判携带 DB 能力：
   
-  遍历到**每个** boundary：用 `findDbCapabilityPaths` 判其转移值是否携带 DB 能力（含包裹）→ 携带则归 6 kind 之一产 **known edge**，或产 `unknown-boundary` edge（携带能力但不落任何已知 kind）。`unknown-boundary` 非空 → 门红。**分母 = 上述 9 类 boundary + 各自 SyntaxKind 集**（有限可遍历）——遇到 taxonomy 外的转移语法且携带能力 → unknown-boundary 红（非静默漏）。**要求：Plan 0 实现时若发现任何 production 里的同步 capability-transfer 语法不在此 9 类，必须补进 taxonomy（不是留给未来）**；spec §10 的「后续」只指跨函数污点推断，不含同步转移边界。
+  **A. capability 接收/存储边界（sink declaration——最典型 sink，无 initializer 也算，Codex 第 4 轮 #2）**：
+  - A1 **ctor/method/function 参数** — `ConstructorDeclaration.parameters`、`MethodDeclaration`/`FunctionDeclaration`/箭头 参数（类型含 UoW 路径即 edge，无论有无 default）
+  - A2 **parameter property** — `constructor(private readonly db: IDatabase)`（Parameter 带修饰符）
+  - A3 **class 字段** — `PropertyDeclaration`（有无 initializer 都算）
+  - A4 **interface/type 属性** — `PropertySignature`（deps 类型的 db 属性）
+  
+  **B. capability 转移边界**：
+  - B1 **declaration/param/binding initializer** — `VariableDeclaration.initializer`、`Parameter.initializer`、`BindingElement.initializer`
+  - B2 **call/ctor argument** — `CallExpression.arguments`、`NewExpression.arguments`
+  - B3 **assignment** — `BinaryExpression` operator ∈ {`=`, `||=`, `&&=`, `??=`}（含 `this.db = ...`）
+  - B4 **aggregate wrapping** — `ObjectLiteralExpression`（`PropertyAssignment`/`ShorthandPropertyAssignment`/`SpreadAssignment`）、`ArrayLiteralExpression`（`SpreadElement`/element）
+  - B5 **return/yield** — `ReturnStatement`、`YieldExpression`
+  - B6 **collection/container write** — `arr.push(db)`/`map.set(k, db)`（CallExpression method 名匹配 + 实参携带能力）
+  - B7 **closure/timer/event/worker capture** — 函数体内引用作用域外 DB 绑定（`Identifier`/`PropertyAccessExpression` resolve 到外层声明）
+  - B8 **module/export transfer** — `ExportAssignment`（`export default db`/`export = db`）+ `ExportDeclaration`/`NamedExports`/`ExportSpecifier`（`export { db }`/`export { db as default }`）
+  
+  遍历每个 boundary：携带能力 → 归对应 kind 产 **known edge**，或产 `unknown-boundary` edge（携带能力但不落任何 kind）。`unknown-boundary` 非空 → 门红。**分母 = A1-A4 + B1-B8 各自 SyntaxKind 集**（有限可遍历）。**Plan 0 实现时发现任何 production 同步 capability-transfer/acceptance 语法不在此表 → 必须补进 taxonomy（非留后续）**；spec §10「后续」只指跨函数污点推断，不含同步边界。
 
 - [ ] **Step 1: 写 5 个 fixture（各一形态最小样本）+ 表驱动 pin 测试**
 
@@ -241,9 +251,20 @@ const FIXTURE_EXPECT = {
     { owner: 'wrapReturn', kind: 'return', target: 'return', param: 'db' },                        // return { db }
     { owner: 'wrapSpread', kind: 'aggregate-wrapping', target: 'object', param: '...deps' },       // { ...deps }（deps 含 db）
   ],
-  // module/export transfer（Codex 第3轮 #3 第 9 类）
+  // module/export transfer（第 9 类；含 ExportAssignment + NamedExports）
   'export-transfer.ts': [
     { owner: '<module>', kind: 'module-export', target: 'default', param: 'db' },                  // export default db
+    { owner: '<module>', kind: 'module-export', target: 'named', param: 'db2' },                   // export { db2 }
+  ],
+  // 双能力属性（Codex 第4轮 #4）：pin active-stack visited——两条 path 都要出，全局 visited 会漏第二条
+  'pair.ts': [
+    { owner: 'Pair', kind: 'deps-prop', target: 'Pair', param: 'primary' },
+    { owner: 'Pair', kind: 'deps-prop', target: 'Pair', param: 'replica' },
+  ],
+  // 无 initializer 的 sink declaration（Codex 第4轮 #2）：ctor 参数属性 + 无初始化字段
+  'sink-decl.ts': [
+    { owner: 'SinkService', kind: 'ctor-param', target: 'SinkService', param: 'db' },              // constructor(private readonly db: IDatabase)
+    { owner: 'SinkStore', kind: 'field-decl', target: 'SinkStore', param: 'db' },                  // private db: IDatabase（无 initializer）
   ],
 };
 for (const [file, expected] of Object.entries(FIXTURE_EXPECT)) {
@@ -271,9 +292,9 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 - [ ] **Step 2: 运行确认失败**（enumerate 未实现）
 
-- [ ] **Step 3: 写 `enumerateDbCapabilityEdges`（遍历 8 类 boundary taxonomy + edge 级 id + 未知边界 fail-closed）**
+- [ ] **Step 3: 写 `enumerateDbCapabilityEdges`（遍历 A1-A4 + B1-B8 boundary taxonomy + `findDbCapabilityPaths` + edge 级 id + 未知边界 fail-closed）**
 
-按上「关键」的 **8 类 boundary taxonomy** 遍历：对每个 boundary 节点（declaration initializer / call·ctor argument / assignment / object-wrapping / return·yield / collection write / field init / closure·timer·worker capture）取其转移值类型 `getTypeAtLocation`（不要求 node.type），`isDbCapabilityType` 判——含 capability 则归 6 kind 之一产 known edge，否则产 `unknown-boundary` edge（使门红）。new/call 用 `getResolvedSignature` 看目标参类型含 capability，对象字面量映射属性到 target property；capture 验引用声明在函数作用域外（`checker.getSymbolAtLocation` + declaration 位置）。id = `${rel}#${owner}::${kind}::${target}::${param}`。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。
+遍历上「关键」的**接收边界 A1-A4（ctor/method 参数、parameter property、PropertyDeclaration、PropertySignature——无 initializer 也算）** + **转移边界 B1-B8（decl init / call·ctor arg / assignment 含 `||=`&`&&=`&`??=` / aggregate wrapping 含 spread / return·yield / collection write / capture / module·export 含 `ExportDeclaration`）**。每个 boundary 取其类型 `getTypeAtLocation`（不要求 node.type），用 **`findDbCapabilityPaths`**（非仅 `isDbCapabilityType`——要抓 `options.db` 这种包裹）判携带能力 → 归对应 kind 产 known edge，否则 `unknown-boundary` edge（门红）。new/call 用 `getResolvedSignature` 取目标参类型跑 findDbCapabilityPaths；capture 验引用声明在函数作用域外。id = `${rel}#${owner}::${kind}::${target}::${param}`（param 可含 property path 如 `options.db`）。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。**任何 checker/API 异常带 context 重抛（fail-closed），绝不吞成「非 DB」。**
 
 - [ ] **Step 4: 运行确认通过**（6 类逐文件 pin + edge 级 + 合并回归全绿）
 
