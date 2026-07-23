@@ -461,16 +461,122 @@ function carrierName(type, checker) {
  * ========================================================================== */
 
 /**
- * producer-manifest：登记「产出已解析 carrier」的 resolver 入口方法名（Codex 第 8 轮）。
- * 命中这些方法调用 → carrier 已按租户/人格解析 → resolved。
- *  - getTenantOS：TenantOSFactory.getTenantOS(tid) → tenant-resolved-os。
- *  - getCore：ChronoSynthOS.getCore(pid) → tenant-persona-core。
+ * producer-manifest：登记「产出已解析 carrier」的 resolver 入口（Plan 0 终审 Important 收紧）。
+ *
+ * **从「方法名」升级为「(声明文件, enclosing 类型, 方法名)」三元组精确匹配**：只按名字匹配会把
+ * 同名本地函数（如 src/server/routes/avatars.ts 的本地 `getTenantOS`——default 分支 `return os`
+ * 返回未按租户路由的 root os）误判 resolved（安全），漏掉真·错-shard 隐患。收紧后须校验 callee
+ * 真实符号解析到的**声明**恰是 TenantOSFactory.getTenantOS / ChronoSynthOS.getCore。
+ *
+ *  - getTenantOS：TenantOSFactory.getTenantOS(tid)（src/multi-tenant/tenant-os-factory.ts）→ tenant-resolved-os。
+ *  - getCore：ChronoSynthOS.getCore(pid)（src/chrono-synth-os.ts）→ tenant-persona-core。
  */
 const PRODUCER_MANIFEST = [
-  { producer: 'getTenantOS', produces: 'tenant-resolved-os' },
-  { producer: 'getCore', produces: 'tenant-persona-core' },
+  {
+    declFile: 'src/multi-tenant/tenant-os-factory.ts',
+    enclosingType: 'TenantOSFactory',
+    method: 'getTenantOS',
+    produces: 'tenant-resolved-os',
+  },
+  {
+    declFile: 'src/chrono-synth-os.ts',
+    enclosingType: 'ChronoSynthOS',
+    method: 'getCore',
+    produces: 'tenant-persona-core',
+  },
 ];
-const RESOLVER_METHOD_NAMES = new Set(PRODUCER_MANIFEST.map((m) => m.producer));
+/** producer 方法名集合（先按名字快速筛，再对命中项做符号级三元组校验）。 */
+const RESOLVER_METHOD_NAMES = new Set(PRODUCER_MANIFEST.map((m) => m.method));
+
+/**
+ * 符号级 resolver 匹配：解析 callExpr 的 callee 真实声明，校验其 **(声明文件, enclosing 类型, 方法名)**
+ * 恰为 PRODUCER_MANIFEST 某一条——名字匹配但符号解析到别的声明（如 avatars.ts 本地 getTenantOS）
+ * → **不命中**（保守 fail-closed，保持 unresolved）。
+ *
+ * 解析优先级（皆解 alias）：
+ *   ① checker.getResolvedSignature(callExpr).declaration —— 方法/函数声明（对方法最稳，
+ *      与 handleCallOrNew 取参数一致的权威解析）。
+ *   ② 回退 checker.getSymbolAtLocation(callee).declarations —— 签名解析不到时的兜底。
+ * 取到声明后核实：声明所在源文件（相对仓库根）+ enclosing class/interface 名 + 方法名三者全等。
+ *
+ * @returns {{ produces: string } | undefined} 命中的 manifest 条目（含 produces），不命中 → undefined。
+ */
+function resolveProducerEntry(callExpr, checker) {
+  if (!checker) return undefined; // 无 checker → 无法符号校验 → 保守不命中（unresolved）。
+  const declarations = collectCalleeDeclarations(callExpr, checker);
+  for (const decl of declarations) {
+    const sf = decl.getSourceFile?.();
+    if (!sf) continue;
+    const declFile = relative(ROOT, sf.fileName);
+    const method = declarationMethodName(decl);
+    const enclosingType = enclosingTypeName(decl);
+    const entry = PRODUCER_MANIFEST.find(
+      (m) => m.declFile === declFile && m.enclosingType === enclosingType && m.method === method,
+    );
+    if (entry) return entry;
+  }
+  return undefined;
+}
+
+/** 收集 callExpr callee 的候选声明（resolvedSignature.declaration 优先，getSymbolAtLocation 兜底；皆解 alias）。 */
+function collectCalleeDeclarations(callExpr, checker) {
+  /** @type {import('typescript').Declaration[]} */
+  const decls = [];
+  let sig;
+  try {
+    sig = checker.getResolvedSignature(callExpr);
+  } catch {
+    sig = undefined; // 签名解析失败 → 退到 symbol 兜底（不 fail-closed：provenance 收紧宁保守判 unresolved）。
+  }
+  if (sig?.declaration) decls.push(sig.declaration);
+
+  const callee = callExpr.expression;
+  let sym;
+  try {
+    sym = checker.getSymbolAtLocation(callee);
+  } catch {
+    sym = undefined;
+  }
+  if (sym && sym.flags & ts.SymbolFlags.Alias) {
+    try {
+      sym = checker.getAliasedSymbol(sym);
+    } catch {
+      /* 解 alias 失败 → 用原 symbol 声明。 */
+    }
+  }
+  if (sym) {
+    for (const d of sym.declarations ?? (sym.valueDeclaration ? [sym.valueDeclaration] : [])) {
+      if (!decls.includes(d)) decls.push(d);
+    }
+  }
+  return decls;
+}
+
+/** 声明的方法/函数名（MethodDeclaration / MethodSignature / FunctionDeclaration 的 name）。 */
+function declarationMethodName(decl) {
+  if (
+    (ts.isMethodDeclaration(decl) ||
+      ts.isMethodSignature(decl) ||
+      ts.isFunctionDeclaration(decl)) &&
+    decl.name &&
+    ts.isIdentifier(decl.name)
+  ) {
+    return decl.name.text;
+  }
+  return undefined;
+}
+
+/** 声明所在的 enclosing class / interface 名（方法必须挂在具名类型上；顶层函数 → undefined）。 */
+function enclosingTypeName(decl) {
+  let cur = decl.parent;
+  while (cur) {
+    if (ts.isClassDeclaration(cur) || ts.isClassExpression(cur) || ts.isInterfaceDeclaration(cur)) {
+      return cur.name && ts.isIdentifier(cur.name) ? cur.name.text : undefined;
+    }
+    cur = cur.parent;
+  }
+  return undefined;
+}
 
 /**
  * 有限 provenance 跟踪：回溯一个 carrier 实参的来源，判 resolved / unresolved。
@@ -499,15 +605,29 @@ function traceCarrierProvenance(argNode, checker, rel, depth = 0) {
       : ts.isIdentifier(callee)
         ? callee.text
         : undefined;
+    // 先按名字快速筛，再做**符号级三元组校验**（消除同名本地函数误判 resolved 的乐观归因点）：
+    // 名字匹配但 callee 符号解析到别的声明（如 avatars.ts 本地 getTenantOS）→ resolveProducerEntry
+    // 返回 undefined → 落到下方 unresolved（保守 fail-closed）。
     if (name && RESOLVER_METHOD_NAMES.has(name)) {
-      const produces = PRODUCER_MANIFEST.find((m) => m.producer === name)?.produces;
-      // getCore 的 receiver 也须 resolved（os.getCore：os 本身来自 getTenantOS）；getTenantOS 的
-      // receiver 是 factory（producer 本身），无需再回溯。
-      if (name === 'getCore' && ts.isPropertyAccessExpression(callee)) {
-        const recv = traceCarrierProvenance(callee.expression, checker, rel, depth + 1);
-        if (!recv.resolved) return { resolved: false, reason: `getCore receiver 未解析（${recv.reason}）` };
+      const entry = resolveProducerEntry(expr, checker);
+      if (entry) {
+        // getCore 的 receiver 也须 resolved（os.getCore：os 本身来自 getTenantOS）；getTenantOS 的
+        // receiver 是 factory（producer 本身），无需再回溯。
+        if (entry.method === 'getCore' && ts.isPropertyAccessExpression(callee)) {
+          const recv = traceCarrierProvenance(callee.expression, checker, rel, depth + 1);
+          if (!recv.resolved) return { resolved: false, reason: `getCore receiver 未解析（${recv.reason}）` };
+        }
+        return {
+          resolved: true,
+          reason: `来源=resolver 入口 ${entry.enclosingType}.${entry.method}()`,
+          produces: entry.produces,
+        };
       }
-      return { resolved: true, reason: `来源=resolver 入口 ${name}()`, produces };
+      // 名字命中但符号未解析到登记的 resolver 声明（同名本地函数遮蔽 / 其它类型的同名方法）→ unresolved。
+      return {
+        resolved: false,
+        reason: `来源=同名非 resolver 调用 ${name}()（符号未解析到登记的 resolver 入口）`,
+      };
     }
     // 其它函数调用返回 → 未知，unresolved。
     return { resolved: false, reason: `来源=未知函数返回 ${name ?? '<call>'}()` };

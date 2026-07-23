@@ -421,6 +421,86 @@ test('④内部 store ctor 直接 sink 仍在 edge 集（CognitiveMemoryGraph.ct
 });
 
 /* ============================================================================
+ * Plan 0 终审 Important 修复：provenance 符号级校验（消唯一乐观归因点）。
+ *
+ * traceCarrierProvenance 原按**方法名字符串**判 resolver 入口（getTenantOS/getCore），未校验
+ * callee 真实符号是否解析到 TenantOSFactory.getTenantOS / ChronoSynthOS.getCore。收紧成
+ * **(声明文件, enclosing 类型, 方法名) 三元组符号级校验**后：
+ *  ⑤ 同名本地函数（carrier-local-shadow.ts 的本地 getTenantOS，default 分支 return root os）
+ *     的下游 carrier-arg 判 unresolved-carrier（非 resolved）——符号解析到本文件 FunctionDeclaration。
+ *  ⑥ 真 factory.getTenantOS / os.getCore（carrier-safe.ts）仍判 linked-to-resolved-carrier
+ *     （符号真解析到 TenantOSFactory / ChronoSynthOS）——收紧不误伤真 resolver。
+ *  ⑦ production：avatars.ts 本地 getTenantOS 下游（handleProjection → compilePersonaState(core)）
+ *     从 resolved 收紧为 unresolved-carrier（真实生产证据）。
+ * ==========================================================================*/
+
+test('⑤符号级：同名本地 getTenantOS（default return root os）下游 → unresolved-carrier（非按名字放行）', () => {
+  const { checker } = builtProgram();
+  const edges = allEdges();
+  const shadow = edges.find(
+    (e) =>
+      e.file.includes('db-sink-fixtures/carrier-local-shadow.ts') &&
+      e.owner === 'shadowedLocalGetTenantOS' &&
+      e.target === 'useCore',
+  );
+  assert.ok(shadow, 'carrier-local-shadow.ts 应有 shadowedLocalGetTenantOS → useCore(core) 的 carrier 传播 edge');
+  const r = classifyPropagation(shadow, checker, edges);
+  assert.equal(
+    r.propagation,
+    'unresolved-carrier',
+    `core 来自**本地同名** getTenantOS（非 TenantOSFactory.getTenantOS，default 返回 root os）→ ` +
+      `符号级校验应判 unresolved-carrier（门红），实际=${r.propagation}（${r.reason ?? ''}）`,
+  );
+});
+
+test('⑥符号级：真 factory.getTenantOS / os.getCore（carrier-safe）仍判 linked-to-resolved-carrier（不误伤）', () => {
+  const { checker } = builtProgram();
+  const edges = allEdges();
+  const safeOs = edges.find(
+    (e) => e.file.includes('db-sink-fixtures/carrier-safe.ts') && e.owner === 'safeOsFromFactory' && e.target === 'useOs',
+  );
+  assert.ok(safeOs, 'carrier-safe.ts 应有 safeOsFromFactory → useOs(os)');
+  assert.equal(
+    classifyPropagation(safeOs, checker, edges).propagation,
+    'linked-to-resolved-carrier',
+    '真 TenantOSFactory.getTenantOS 符号解析命中 → 仍 resolved（符号级不误伤真 resolver）',
+  );
+  const safeCore = edges.find(
+    (e) =>
+      e.file.includes('db-sink-fixtures/carrier-safe.ts') && e.owner === 'safeCoreFromGetCore' && e.target === 'useCore',
+  );
+  assert.ok(safeCore, 'carrier-safe.ts 应有 safeCoreFromGetCore → useCore(core)');
+  assert.equal(
+    classifyPropagation(safeCore, checker, edges).propagation,
+    'linked-to-resolved-carrier',
+    '真 ChronoSynthOS.getCore 符号解析命中 → 仍 resolved',
+  );
+});
+
+test('⑦production 证据：avatars.ts 本地 getTenantOS 下游 compilePersonaState(core) 收紧为 unresolved-carrier', () => {
+  const edges = productionEdges();
+  const avatarCoreArgs = edges.filter(
+    (e) =>
+      e.file.includes('server/routes/avatars.ts') &&
+      e.kind === 'carrier-arg' &&
+      e.target === 'compilePersonaState' &&
+      e.param === 'core',
+  );
+  assert.ok(
+    avatarCoreArgs.length > 0,
+    'avatars.ts 应有 compilePersonaState(tenantOS.core) 的 carrier-arg edge（本地 getTenantOS 下游）',
+  );
+  for (const e of avatarCoreArgs) {
+    assert.equal(
+      e.carrierProvenance?.resolved,
+      false,
+      `avatars.ts 本地 getTenantOS 下游 core 来源须收紧为 unresolved（provenance.resolved=false），` +
+        `实际 provenance=${JSON.stringify(e.carrierProvenance)}`,
+    );
+  }
+});
+
+/* ============================================================================
  * Task 3/4：semantic-flow contract 门（evaluateGate，planned 级）+ 变异自证。
  *
  * evaluateGate(productionEdges, inventory, {requiredLevel:'planned'}) 断言五条空集：
