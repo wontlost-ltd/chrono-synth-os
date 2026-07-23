@@ -92,3 +92,37 @@ export declare function enumerateDbCapabilityEdges(
  * 纯比较：edge id 不在 inventory 集合中 → 未登记（无路径过滤）。
  */
 export declare function collectUnregisteredEdges(edges: Edge[], inventoryIds: Set<string>): Edge[];
+
+/**
+ * 一条传播 edge 的机器归因结果（Task 2.5）。
+ *  - linked-to-sink：能机械定位终点=已扫描的 A 接收点（sinkId 指向该 A 点 edge id）。
+ *  - ephemeral：机械证明能力不逃逸（仅同步传给明确 per-request 函数，不 return/存/注册/写容器）。
+ *  - terminal-escape：能力可能跨调用/作用域/生命周期存活（module export / 闭包·timer·worker
+ *    capture / 动态 assignment / container write / 逃逸未知调用方 return / 传外部·any·动态 call）——
+ *    须升级为 semantic sink 登记。
+ *  - unknown：解析失败 / 预算超限 / callee 不明且未升级 escape → 门红。
+ */
+export interface PropagationResult {
+  propagation: 'linked-to-sink' | 'ephemeral' | 'terminal-escape' | 'unknown';
+  /** 仅 linked-to-sink 带：终点 A 接收点的 semantic sink id。 */
+  sinkId?: string;
+  /** 归因依据（诊断用，便于门红时定位为何某 edge 判某态）。 */
+  reason?: string;
+}
+
+/**
+ * 机器归因一条传播 edge（B 类）的处置：linked-to-sink / ephemeral / terminal-escape / unknown。
+ * 只对 B 传播 edge 有意义；A 接收 edge（sink declaration 本身）传入时按 terminal-escape 之外的
+ * 语义处理由调用方决定。allEdges 用于 linked-to-sink 时定位终点 A 点。
+ */
+export declare function classifyPropagation(
+  edge: Edge,
+  checker: TypeChecker,
+  allEdges: Edge[],
+): PropagationResult;
+
+/**
+ * 唯一应用 production scope（排除 src/test/**）的入口——建 Program（tsconfig.src.json）+ 健康门
+ * + 枚举全量 edge。供主门 check:db-access 调。
+ */
+export declare function scanProductionDbCapabilityEdges(): Edge[];
