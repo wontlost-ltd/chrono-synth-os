@@ -296,3 +296,123 @@ test('③classifyPropagation：ephemeralUse 里 db 同步转给本地纯函数 u
   const result = classifyPropagation(eph, checker, allEdges());
   assert.equal(result.propagation, 'ephemeral', 'db 只同步传给本地 per-request 纯函数、不逃逸 → ephemeral');
 });
+
+/* ============================================================================
+ * Task 2.6：capability-carrier 压缩 + resolved provenance（Codex 第 8 轮裁决）。
+ *
+ * 背景：Task 2.5 后仍 11067 production edge，其中 81% 是 OS-facade 传递展开
+ * （`os.core.memories.tx`…）——findDbCapabilityPaths 对类型为 ChronoSynthOS / CoreRhythmLayer /
+ * store 类的参数递归展开内部每个 .tx。Codex 裁决：压成一条 carrier sink（内部 paths 存
+ * capabilityPaths 元数据），但**不能按类型名当安全 opaque 放行**——carrier 可被 new 直接构造/
+ * store 可被单独拎出传宿主 db，安全性靠 provenance 追来源（factory.getTenantOS/os.getCore=安全，
+ * new 直构/deps/未知=unresolved 门红）。
+ * ==========================================================================*/
+
+/** 存储型 carrier sink 的 kind（一条 carrier 对，内部 .tx paths 进 edge.capabilityPaths）。 */
+const CARRIER_KINDS = new Set(['carrier-param', 'carrier-field', 'carrier-arg']);
+
+test('①carrier 压缩：production carrier sink edge 数 << 8976（facade .tx 展开压成 carrier sink）', () => {
+  const prod = productionEdges();
+  // 深 path（>=2 段点，如 os.core.memories.tx）是 facade 展开的指纹——压缩后应基本消失。
+  const deepFacade = prod.filter((e) => (e.param.match(/\./g) ?? []).length >= 2);
+  assert.ok(
+    deepFacade.length < 200,
+    `facade .tx deep 展开应被压成 carrier sink（残留 deep-path=${deepFacade.length}，样本：${JSON.stringify(
+      deepFacade.slice(0, 8).map((e) => `${e.owner}::${e.kind}::${e.param}`),
+    )}）`,
+  );
+  // 压缩后总 edge 数应从 11067 大降到低千级（真 sink ~955 + carrier sinks）。
+  assert.ok(
+    prod.length < 4000,
+    `carrier 压缩后 production 总 edge 数应大降到低千级（实际=${prod.length}，基线 11067）`,
+  );
+  // carrier sink 确实产出（facade/store 参数/字段压成 carrier-param/carrier-field）。
+  const carriers = prod.filter((e) => CARRIER_KINDS.has(e.kind));
+  assert.ok(carriers.length > 0, 'production 应产出 carrier-param/carrier-field sink（facade 压缩产物）');
+  // carrier sink 带 capabilityPaths 证据元数据（内部 .tx paths），不逐 path 产 edge。
+  const withEvidence = carriers.filter((e) => Array.isArray(e.capabilityPaths) && e.capabilityPaths.length > 0);
+  assert.ok(
+    withEvidence.length > 0,
+    'carrier sink 应带 capabilityPaths 证据元数据（内部 .tx paths 存于此而非逐条产 edge）',
+  );
+});
+
+test('①chat.ts 的 os:ChronoSynthOS 参数压成一条 carrier-param（不再逐 .core.X.tx 炸 171+ edge）', () => {
+  const chat = productionEdges().filter((e) => e.file.includes('companion/chat.ts'));
+  // 压缩前 chat.ts 有 580 edge（含 171 fn-param + 58 route-param 的 os.core.X.tx 展开）。
+  // 压缩后 os 参数只产 carrier sink，deep-path .tx 展开消失。
+  const deepChat = chat.filter((e) => /\.core\.|\.memories\.|\.values\.|\.narrative\./.test(e.param));
+  assert.deepEqual(
+    deepChat.map((e) => `${e.owner}::${e.kind}::${e.param}`),
+    [],
+    'chat.ts 的 os facade .core.X.tx 展开应被压成 carrier sink（残留即压缩未生效）',
+  );
+});
+
+test('②carrier-safe fixture：factory.getTenantOS(tid) 传下游 → linked-to-resolved-carrier', () => {
+  const { checker } = builtProgram();
+  const edges = allEdges();
+  // os 来自 getTenantOS → useOs(os) 的 carrier 传播 edge。
+  const safeOs = edges.find(
+    (e) => e.file.includes('db-sink-fixtures/carrier-safe.ts') && e.owner === 'safeOsFromFactory' && e.target === 'useOs',
+  );
+  assert.ok(safeOs, 'carrier-safe.ts 应有 safeOsFromFactory → useOs(os) 的 carrier 传播 edge');
+  const r1 = classifyPropagation(safeOs, checker, edges);
+  assert.equal(
+    r1.propagation,
+    'linked-to-resolved-carrier',
+    `os 来自 getTenantOS（resolver 入口）→ 应归 linked-to-resolved-carrier，实际=${r1.propagation}（${r1.reason ?? ''}）`,
+  );
+  // core 来自 os.getCore（os 又来自 getTenantOS）→ useCore(core) 也应 resolved。
+  const safeCore = edges.find(
+    (e) => e.file.includes('db-sink-fixtures/carrier-safe.ts') && e.owner === 'safeCoreFromGetCore' && e.target === 'useCore',
+  );
+  assert.ok(safeCore, 'carrier-safe.ts 应有 safeCoreFromGetCore → useCore(core) 的 carrier 传播 edge');
+  const r2 = classifyPropagation(safeCore, checker, edges);
+  assert.equal(
+    r2.propagation,
+    'linked-to-resolved-carrier',
+    `core 来自 os.getCore（persona resolver）→ 应归 linked-to-resolved-carrier，实际=${r2.propagation}（${r2.reason ?? ''}）`,
+  );
+});
+
+test('③carrier-unsafe fixture：new ChronoSynthOS() 直构传下游 → unresolved-carrier（门红，非按类型放行）', () => {
+  const { checker } = builtProgram();
+  const edges = allEdges();
+  const unsafeOs = edges.find(
+    (e) => e.file.includes('db-sink-fixtures/carrier-unsafe.ts') && e.owner === 'unsafeOsFromNew' && e.target === 'useOs',
+  );
+  assert.ok(unsafeOs, 'carrier-unsafe.ts 应有 unsafeOsFromNew → useOs(os) 的 carrier 传播 edge');
+  const r = classifyPropagation(unsafeOs, checker, edges);
+  assert.equal(
+    r.propagation,
+    'unresolved-carrier',
+    `os 由 new ChronoSynthOS 直构（未经 resolver）→ 应归 unresolved-carrier（门红），实际=${r.propagation}（${r.reason ?? ''}）`,
+  );
+});
+
+test('④内部 store ctor 直接 sink 仍在 edge 集（CognitiveMemoryGraph.ctor::tx 未被 carrier 压缩吞）', () => {
+  const edges = allEdges();
+  // CognitiveMemoryGraph 自身的 ctor 参数 tx: SyncWriteUnitOfWork 是直接 UoW（path=[]）——
+  // 是内部 store 直接 sink，绝不能因 carrier 压缩被隐藏。owner=CognitiveMemoryGraph，param 含 tx。
+  const storeSink = edges.filter(
+    (e) => e.owner === 'CognitiveMemoryGraph' && e.param === 'tx' && !CARRIER_KINDS.has(e.kind),
+  );
+  assert.ok(
+    storeSink.length > 0,
+    `CognitiveMemoryGraph 的 ctor 参数 tx 直接 sink 必须保留（内部 store 直接 sink），实际=${JSON.stringify(
+      edges.filter((e) => e.owner === 'CognitiveMemoryGraph').map((e) => `${e.kind}::${e.param}`),
+    )}`,
+  );
+  // 且 new CognitiveMemoryGraph(hostDb()) 的实参是直接 UoW sink（非 carrier 压缩）——db 来源 hostDb（未解析）。
+  const directStoreArg = edges.find(
+    (e) =>
+      e.file.includes('db-sink-fixtures/carrier-unsafe.ts') &&
+      e.target === 'CognitiveMemoryGraph' &&
+      !CARRIER_KINDS.has(e.kind),
+  );
+  assert.ok(
+    directStoreArg,
+    'new CognitiveMemoryGraph(hostDb()) 的 hostDb 实参是直接 UoW sink（不被 carrier 压缩吞）',
+  );
+});

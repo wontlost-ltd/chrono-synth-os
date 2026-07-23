@@ -36,10 +36,12 @@ export declare function isDbCapabilityType(
  * DB-capability edge —— source→sink 的一条边（Task 2 起产出）。
  * id = `<file>#<owner>::<kind>::<target>::<param>`，edge 级（非 owner 级）。
  *
- * kind 取值（A 接收 + B 转移 taxonomy + unknown-boundary 兜底）：
+ * kind 取值（A 接收 + B 转移 taxonomy + carrier 压缩 + unknown-boundary 兜底）：
  *  - 接收：'ctor-param' | 'route-param' | 'fn-param' | 'field-decl' | 'deps-prop'
+ *  - carrier 接收（Task 2.6）：'carrier-param' | 'carrier-field'（facade/store 压缩 sink）
  *  - 转移：'capture' | 'factory-indirect' | 'collection-write' | 'return'
  *          | 'aggregate-wrapping' | 'assignment' | 'decl-init' | 'module-export'
+ *  - carrier 转移（Task 2.6）：'carrier-arg'（把 facade/store carrier 传给函数/ctor）
  *  - 兜底：'unknown-boundary'（有 DB 能力但不可分类 / 预算超限 → 门红）
  */
 export interface Edge {
@@ -51,6 +53,18 @@ export interface Edge {
   param: string;
   /** 仅 unknown-boundary edge 带：诊断上下文（file + property-path + 超限原因）。 */
   context?: string;
+  /**
+   * 仅 carrier-* edge 带（Task 2.6）：carrier 内部携带的 DB 能力 property paths（如 ['tx'] /
+   * ['core.memories.tx', 'core.values.tx']）。作**证据元数据**存于此，不逐 path 产 edge——
+   * 一个 facade/store 参数/字段压成一条 carrier sink，内部 .tx 展开进这里而非炸成几十条 edge。
+   */
+  capabilityPaths?: string[];
+  /**
+   * 仅 carrier-arg edge 带（Task 2.6）：carrier 实参的来源归因（有限 provenance 跟踪结果）。
+   *  - resolved=true：来源是登记的 resolver 入口（getTenantOS/getCore）→ 安全。
+   *  - resolved=false：new 直构 / deps / 未知来源 → 门红（绝不按类型名放行）。
+   */
+  carrierProvenance?: { resolved: boolean; reason: string; produces?: string };
 }
 
 /**
@@ -60,7 +74,8 @@ export interface Edge {
  *  - `{ unknown: true, context }`：递归预算超限——调用点应产 unknown-boundary edge。
  */
 export type CapabilityPath =
-  | { path: string[]; unknown?: undefined }
+  | { path: string[]; unknown?: undefined; carrier?: undefined }
+  | { path: string[]; carrier: string; capabilityPaths: string[]; unknown?: undefined }
   | { unknown: true; context: string };
 
 /**
@@ -94,18 +109,30 @@ export declare function enumerateDbCapabilityEdges(
 export declare function collectUnregisteredEdges(edges: Edge[], inventoryIds: Set<string>): Edge[];
 
 /**
- * 一条传播 edge 的机器归因结果（Task 2.5）。
+ * 一条传播 edge 的机器归因结果（Task 2.5 + Task 2.6 carrier 态）。
  *  - linked-to-sink：能机械定位终点=已扫描的 A 接收点（sinkId 指向该 A 点 edge id）。
  *  - ephemeral：机械证明能力不逃逸（仅同步传给明确 per-request 函数，不 return/存/注册/写容器）。
  *  - terminal-escape：能力可能跨调用/作用域/生命周期存活（module export / 闭包·timer·worker
  *    capture / 动态 assignment / container write / 逃逸未知调用方 return / 传外部·any·动态 call）——
  *    须升级为 semantic sink 登记。
+ *  - linked-to-resolved-carrier（Task 2.6）：carrier-arg 且来源=登记的 resolver 入口
+ *    （getTenantOS/getCore）——carrier 已按租户/人格解析，安全。
+ *  - unresolved-carrier（Task 2.6）：carrier-arg 但来源=new 直构 / deps / 未知——**门红**
+ *    （绝不按类型名放行；这是真·错-shard 隐患）。
  *  - unknown：解析失败 / 预算超限 / callee 不明且未升级 escape → 门红。
  */
 export interface PropagationResult {
-  propagation: 'linked-to-sink' | 'ephemeral' | 'terminal-escape' | 'unknown';
+  propagation:
+    | 'linked-to-sink'
+    | 'ephemeral'
+    | 'terminal-escape'
+    | 'linked-to-resolved-carrier'
+    | 'unresolved-carrier'
+    | 'unknown';
   /** 仅 linked-to-sink 带：终点 A 接收点的 semantic sink id。 */
   sinkId?: string;
+  /** 仅 linked-to-resolved-carrier 带：producer-manifest 登记的产物类型（tenant-resolved-os 等）。 */
+  produces?: string;
   /** 归因依据（诊断用，便于门红时定位为何某 edge 判某态）。 */
   reason?: string;
 }
