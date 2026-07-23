@@ -1,6 +1,6 @@
 # 分片 Phase 0 · Plan 0：DB-capability edge 扫描器 + sink 盘点 + 放开门 Implementation Plan
 
-> 状态：第 3 轮修订（Codex Plan 复审 52→78 退，采纳两轮全部——canonical 上界=SyncWriteUnitOfWork 非 IDatabase / unknown-boundary 定 8 类 taxonomy / fixture deepEqual+单删 mutation / Program 健康 diagnostics + .d.mts）。
+> 状态：第 4 轮修订（Codex Plan 复审 52→78→87 退，采纳三轮全部——canonical=SyncWriteUnitOfWork / 9 类 boundary taxonomy 绑 SyntaxKind（含 export/spread）/ findDbCapabilityPaths 递归识别包裹能力 / isDbCapabilityType 不吞异常 fail-closed / fixture deepEqual+单删 / probe 取参数类型）。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 
 **Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 **edge 级** DB-capability 扫描器 + 升级 `db-access-inventory.ts` 到 sink 级，使「每条持有 DB 能力的 source→sink edge 都有明确处置 + 接线状态」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical type 解析失败/遇未知语法边界/Program 不健康 → 退出非零），也绝不「漏扫却报绿」。**
@@ -84,12 +84,14 @@ test('canonical DB/UoW type 解析成功（否则 fail-closed）', () => {
 
 test('类型判定：canonical/alias/结构兼容(纯UoW)/union/generic 都判 DB 能力；negative 不判', () => {
   const { program, checker, uowType } = buildProgram('tsconfig.src.json');
-  const probe = (symbolName) => /* 取该 export 的类型（实现者按 AST 定位）*/ null;
-  assert.equal(isDbCapabilityType(probe('DbAlias'), checker, uowType), true);         // 别名
-  assert.equal(isDbCapabilityType(probe('StructuralUow'), checker, uowType), true);   // 纯 UoW 4 方法结构兼容（证上界=UoW 非 IDatabase——若上界错用 IDatabase 此断言红）
-  assert.equal(isDbCapabilityType(probe('optionalDb'), checker, uowType), true);      // union IDatabase|undefined（逐分量）
-  assert.equal(isDbCapabilityType(probe('genericDb'), checker, uowType), true);       // generic T extends UoW（getBaseConstraintOfType）
-  assert.equal(isDbCapabilityType(probe('NotDb'), checker, uowType), false);          // negative control
+  // probeType：取 type-alias.ts 里某声明的**目标类型**——类型别名取其别名类型；
+  // 函数取**指定参数**的类型（optionalDb 取 db 参、genericDb 取 tx 参），非函数整体类型（Codex 第3轮 #4）。
+  const probeType = (declName, paramName) => /* 实现者：AST 定位该 export 声明；若给 paramName 则取该参数节点 getTypeAtLocation */ null;
+  assert.equal(isDbCapabilityType(probeType('DbAlias'), checker, uowType), true);            // 别名类型
+  assert.equal(isDbCapabilityType(probeType('StructuralUow'), checker, uowType), true);      // 纯 UoW 4 方法（证上界=UoW 非 IDatabase）
+  assert.equal(isDbCapabilityType(probeType('optionalDb', 'db'), checker, uowType), true);   // db 参类型 IDatabase|undefined（逐分量）
+  assert.equal(isDbCapabilityType(probeType('genericDb', 'tx'), checker, uowType), true);    // tx 参类型 T extends UoW（getBaseConstraintOfType）
+  assert.equal(isDbCapabilityType(probeType('NotDb'), checker, uowType), false);             // negative control
 });
 
 test('fail-closed：tsconfig 不存在 → buildProgram 抛（不返回空 uowType）', () => {
@@ -174,9 +176,12 @@ export function isDbCapabilityType(type, checker, uowType) {
   // generic 约束：T extends SyncWriteUnitOfWork → 取 constraint
   const constraint = type.isTypeParameter?.() ? checker.getBaseConstraintOfType(type) : undefined;
   if (constraint && isDbCapabilityType(constraint, checker, uowType)) return true;
-  // 结构兼容：能赋给 uowType（IDatabase）即 DB 能力。undefined/null/primitive 不能赋 → false。
-  try { return checker.isTypeAssignableTo(type, uowType); } catch { return false; }
+  // 结构兼容：能赋给 uowType（SyncWriteUnitOfWork）即 DB 能力。undefined/null/primitive 不能赋 → false。
+  // ⚠️ 绝不 try/catch→return false（Codex #1：吞异常=静默漏扫假绿）。checker 抛异常 → 带 context 重抛 → 扫描器退出非零（fail-closed）。
+  return checker.isTypeAssignableTo(type, uowType);
 }
+// isDbCapabilityType 的任何调用点若担心 checker 抛，须在**顶层** catch 后**重抛带 node/file context**（fail-closed），
+// 绝不在此吞成 false。getResolvedSignature/getTypeAtLocation/getBaseConstraintOfType 同理——异常→重抛，非默认「非 DB」。
 ```
 > 实现者注：`resolveCanonicalUowType` 定位不到 SyncWriteUnitOfWork → undefined → buildProgram 抛（fail-closed）。**上界固定为 `SyncWriteUnitOfWork`（非 IDatabase）**——`StructuralUow`（仅 4 个 UoW 方法）须判 true 是这个选择的验收锚（用 IDatabase 作上界此断言会红）。`getDeclaredTypeOfSymbol` 取 interface symbol 的声明类型。`probe` 取节点类型照 TS AST（找 export 声明 → `getTypeAtLocation`）。若 `isTypeAssignableTo(structuralUow, uowType)` 因 TS 结构判定细节返 false，实现者改用 `checker.getPropertiesOfType(uowType).every(p => getPropertyOfType(candidate, p.name))` 的成员覆盖判定——核心不变量：**只持 UoW 4 方法的类型必须判 DB 能力**。
 
@@ -192,7 +197,7 @@ export function isDbCapabilityType(type, checker, uowType) {
 
 **Files:**
 - Modify: `scripts/db-sink-scanner.mjs`（`enumerateDbCapabilityEdges`——参/属性/deps-prop/route-param/capture/factory-indirect/对象包装 + edge 级 id + 未知边界 fail-closed）
-- Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect}.ts`
+- Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer}.ts`（wrapped=options.db/return{db}/{...deps}；export-transfer=export default db）
 - Test: `src/test/unit/db-sink-scanner.test.ts`（6 类逐文件逐 edge pin + owner 合并回归）
 
 **Interfaces:**
@@ -201,19 +206,20 @@ export function isDbCapabilityType(type, checker, uowType) {
 **关键（Codex 退回逐条）**：
 - **edge 级 ID（#1）**：同一 owner 内 `new RuntimeRecoveryWorker(db)` / `new NudgePushBridge({db})` / `registerXxxRoutes(app, db)` 是 3 条不同 edge（不同 target/param），id 各异，**禁 byId owner 合并**。回归测试：同函数加第二个 sink → unregistered 非空。
 - **capture（#4）**：不只 Identifier——对 `PropertyAccessExpression`（`this.db`/`this.deps.db`/`opts.db`）、`ElementAccessExpression`、`BindingElement`（解构）、`ShorthandPropertyAssignment`、`AsExpression`/括号 整体调 `getTypeAtLocation` 判 DB 能力；capture 须验引用声明在**当前函数作用域外**（否则是本地 param 非捕获）。
-- **factory-indirect（#5）**：不只直接 DB 实参——`new Service({db})`（对象字面量属性）、`new Service(options)`（options.db: IDatabase）、`return {db}`、`arr.push(db)`、`map.set(k, db)`。做法：看**被调目标参数类型**是否含 DB capability（`checker.getResolvedSignature` 取参数类型），对象字面量则把属性映射到 target property。
+- **factory-indirect / wrapped capability（#5 + Codex 第 3 轮 #2——需正式「含 DB 能力」谓词）**：`new Service({db})` / `new Service(options)`（options.db 是 UoW，整体 options 类型**不**可赋 UoW）/ `return {db}` / `{ ...deps }` / `[db]` / `arr.push(db)`。整体表达式类型不可赋 UoW，故 `isDbCapabilityType` 不够——加正式谓词 **`findDbCapabilityPaths(type, checker, uowType): CapabilityPath[]`**：递归查类型的属性/union·intersection 分量/tuple·array element/对象 spread 结果，记完整 property path（如 `options.db`、`deps.nested.db`）；**带 visited-type/symbol 集防循环 + 深度/节点预算，超预算 → 产 `unknown-boundary`（不返「无能力」）**。boundary 遍历用它判「转移的值是否携带 DB 能力（含包裹）」。
 - **inferred（#6）**：`private readonly db = os.getDatabase()`（无 `node.type`）——对 declaration/name/initializer 调 `getTypeAtLocation`，**不要求 `node.type` 存在**。
-- **未知边界 fail-closed——先定可穷举的 boundary taxonomy（Codex 退回 #2，否则 unknown-boundary 不是真 fail-closed）**：枚举器**不是**「遍历所有 DB-typed 表达式」（那会海量误报普通 identifier/括号/property-access），而是先定义**有限的 capability-transfer boundary 全集**——只在这些边界节点判 DB capability + 分类：
-  1. declaration initializer（`const x = <db-expr>`）
-  2. constructor/function/callback argument（调用实参）
-  3. assignment（`x.db = <db-expr>` / `this.db = ...`）
-  4. property / object-literal wrapping（`{ db: <db-expr> }`）
-  5. return / yield（`return { db }` / `return db`）
-  6. collection / container write（`arr.push(db)` / `map.set(k, db)`）
-  7. field / property initialization（class field `db = ...`）
-  8. closure / timer / event / worker registration capture（闭包引用外层 db 绑定）
+- **未知边界 fail-closed——boundary taxonomy 每类绑定具体 `SyntaxKind` 集（Codex 退回 #2 + 第 3 轮 #3，否则漏 export/spread/param-default）**：枚举器**不是**「遍历所有 DB-typed 表达式」，而是遍历**有限的 capability-transfer boundary 全集**，每类绑死 SyntaxKind：
+  1. **declaration/param/binding initializer** — `VariableDeclaration.initializer`、`Parameter.initializer`（`function f(x = db)`）、`BindingElement.initializer`（`const {x = db} = opts`）
+  2. **call / ctor argument** — `CallExpression.arguments`、`NewExpression.arguments`
+  3. **assignment** — `BinaryExpression`（`=` operator，含 `this.db = ...`）
+  4. **aggregate wrapping** — `ObjectLiteralExpression`（`PropertyAssignment` + `ShorthandPropertyAssignment` + `SpreadAssignment`）、`ArrayLiteralExpression`（`SpreadElement`）
+  5. **return / yield** — `ReturnStatement`、`YieldExpression`
+  6. **collection / container write** — `arr.push(db)` / `map.set(k, db)`（CallExpression 上 method 名匹配 + 实参含能力，归此类）
+  7. **field / property initialization** — `PropertyDeclaration.initializer`
+  8. **closure / timer / event / worker capture** — 函数体内引用作用域外 DB 绑定（`Identifier`/`PropertyAccessExpression` resolve 到外层声明）
+  9. **module/export transfer** — `ExportAssignment`（`export default db` / `export = db`）
   
-  遍历到**每个** boundary 节点：其转移的值类型含 DB capability → 产 **known classified edge**（归 6 kind 之一）**或** `unknown-boundary` edge（含 capability 但不落任何已知 kind 分类）。`unknown-boundary` 非空 → 门红。**分母 = boundary taxonomy（有限可遍历），非「所有语法 kind」**——这样「第 7 类语法」若是新 boundary 形态，会在遍历该 boundary 时因无法归 6 kind 而变 unknown-boundary（红），而非静默不访问。boundary taxonomy 本身若不全（漏了某种转移语法），是 Plan 0 终审 + 未来增强的边界——spec §10 已列「跨函数污点」为后续。
+  遍历到**每个** boundary：用 `findDbCapabilityPaths` 判其转移值是否携带 DB 能力（含包裹）→ 携带则归 6 kind 之一产 **known edge**，或产 `unknown-boundary` edge（携带能力但不落任何已知 kind）。`unknown-boundary` 非空 → 门红。**分母 = 上述 9 类 boundary + 各自 SyntaxKind 集**（有限可遍历）——遇到 taxonomy 外的转移语法且携带能力 → unknown-boundary 红（非静默漏）。**要求：Plan 0 实现时若发现任何 production 里的同步 capability-transfer 语法不在此 9 类，必须补进 taxonomy（不是留给未来）**；spec §10 的「后续」只指跨函数污点推断，不含同步转移边界。
 
 - [ ] **Step 1: 写 5 个 fixture（各一形态最小样本）+ 表驱动 pin 测试**
 
@@ -228,6 +234,16 @@ const FIXTURE_EXPECT = {
   'factory-indirect.ts': [ // ≥2 不同 target 证 edge 级不合并
     { owner: 'FactoryFixture', kind: 'factory-indirect', target: 'ServiceA', param: 'db' },
     { owner: 'FactoryFixture', kind: 'factory-indirect', target: 'ServiceB', param: 'db' },
+  ],
+  // wrapped capability（Codex 第3轮 #2）：整体类型不可赋 UoW，靠 findDbCapabilityPaths 递归识别
+  'wrapped.ts': [
+    { owner: 'wrapOptions', kind: 'factory-indirect', target: 'Service', param: 'options.db' },   // new Service(options)，options.db 是 UoW
+    { owner: 'wrapReturn', kind: 'return', target: 'return', param: 'db' },                        // return { db }
+    { owner: 'wrapSpread', kind: 'aggregate-wrapping', target: 'object', param: '...deps' },       // { ...deps }（deps 含 db）
+  ],
+  // module/export transfer（Codex 第3轮 #3 第 9 类）
+  'export-transfer.ts': [
+    { owner: '<module>', kind: 'module-export', target: 'default', param: 'db' },                  // export default db
   ],
 };
 for (const [file, expected] of Object.entries(FIXTURE_EXPECT)) {
