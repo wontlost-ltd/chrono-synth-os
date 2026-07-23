@@ -33,7 +33,7 @@
 
 ---
 
-## Task 1: `buildResolver` — config → 单/多库 resolver（多库仍 fail-closed 挡生产）
+## Task 1: `buildResolver`（单库 SingleDbResolver / 多库 throw）+ `assertShardingActivationAllowed` 单一真源
 
 **Files:**
 - Create: `src/storage/build-resolver.ts`
@@ -92,24 +92,28 @@ import type { TenantDbResolver } from './tenant-db-resolver.js';
 import { SingleDbResolver } from './tenant-db-resolver.js';
 import { ShardRouter } from './shard-router.js';
 
-/** 多库尚未就绪（Plan 3 typed bundle 携 verified identity 构造）——Plan 1 buildResolver fail-closed。 */
+/** 多库尚未就绪（Plan 3 typed bundle 携 verified identity 构造）——fail-closed。 */
 export class MultiShardRuntimeNotReadyError extends Error {
-  constructor() { super('多库 runtime 未就绪（Plan 3 放开）——buildResolver 仅支持单库；多库须经 typed bundle'); }
+  constructor() { super('多库 runtime 未就绪（Plan 3 放开）——仅支持单库；多库须经 typed bundle'); }
+}
+
+/** 唯一放开门真源（Codex 第 3 轮 #1——createDatabase/buildResolver/createApp 都调它，删各自重复判断）。 */
+export function assertShardingActivationAllowed(config: AppConfig): void {
+  if (config.db.shards && Object.keys(config.db.shards).length > 0) {
+    throw new MultiShardRuntimeNotReadyError();
+  }
 }
 
 export function buildResolver(config: AppConfig, hostDb: IDatabase): TenantDbResolver {
-  const shards = config.db.shards;
-  if (!shards || Object.keys(shards).length === 0) {
-    return new SingleDbResolver(hostDb);   // 单库：三方法返同一 hostDb，零回归
-  }
-  // 多库：Plan 1 不构造 runtime（不伪装能安全建多库——须 verified identity seed，Plan 3 typed bundle 做）。fail-closed。
-  throw new MultiShardRuntimeNotReadyError();
+  assertShardingActivationAllowed(config);   // 多库 → throw（不构造 runtime）
+  return new SingleDbResolver(hostDb);        // 单库：三方法返同一 hostDb，零回归
 }
 ```
-> 注（Codex 第 2 轮裁决——buildResolver 多库直接 fail-closed，不构造 ShardRouter runtime）：
-> - Plan 1 buildResolver 只单库；多库 throw（`createDatabase` guard 本就挡多库，此处双重保险 + 诚实：不伪装能安全建多库 runtime）。
-> - **`ShardRouter.seedDbs`（borrowed/owned）作为独立能力单测**（Task 1b，供 Plan 3 复用，不由 buildResolver 接）：加 `seedDbs?: Record<connStr, IDatabase>`（构造预填 `byConnStr`，标记 borrowed）；close ownership 测：`close()` 不关 borrowed / owned 每个恰关一次 / `initialize()` 中途失败只关 owned 不关 seed / coordinator 与 home 共 seed 不重复关 / 幂等 / 非 home 未接 buildDb fail-closed。**同步改 `shard-router.ts:7` 「所有池唯一 owner」注释**（加 borrowed 例外）。
-> - verified physical identity（PG URL canonical / SQLite realpath / `:memory:` 实例级 token）是 Plan 3 typed bundle 的事——Plan 1 不做（`:memory:` 字符串相等证明不了同实例，Codex 核实）。
+> 注（Codex 第 3 轮 #1——单一 guard 真源，删漂移）：
+> - `assertShardingActivationAllowed` 是**唯一**放开门；`createDatabase()`（`factory.ts`）+ `createApp()` + `buildResolver()` **都调它**，**删 `factory.ts` 现有重复的多-shard 判断**（改调此函数）。三处逻辑不再漂移。**Task files 须含 `Modify: src/storage/factory.ts`**。
+> - `createApp()` 调 `assertShardingActivationAllowed(config)` 的位置**须在任何插件/hook/worker/timer/route 注册副作用之前**（否则带 shards 的 seam 调用先产生半初始化副作用再抛）。
+> - **`ShardRouter.seedDbs`（borrowed/owned）= 独立 Task 1b 单测**（供 Plan 3 复用，不由 buildResolver 接）：加 `seedDbs?: Record<connStr, IDatabase>`（预填 byConnStr 标 borrowed）；close 计数测（borrowed 不关/owned 恰一次/init 失败只关 owned/共 seed 不重复/幂等/非 home 未接 buildDb fail-closed）。改 `shard-router.ts:7` 「唯一 owner」注释加 borrowed 例外。
+> - verified physical identity（PG canonical/SQLite realpath/`:memory:` 实例 token）是 Plan 3 typed bundle 的事——Plan 1 不做。
 
 - [ ] **Step 4: 运行确认通过** — 2 测试
 
@@ -131,12 +135,13 @@ export function buildResolver(config: AppConfig, hostDb: IDatabase): TenantDbRes
 
 ---
 
-## Task 2: app.ts 建唯一 resolver + 穿进 factory + route 签名加 resolver 参
+## Task 2: app.ts 建唯一 resolver + 穿进 factory + route deps 对象（resolver 必填）+ 统一 guard
 
 **Files:**
-- Modify: `src/server/app.ts`（`buildResolver` 建 resolver + 穿 factory + 各 registerXxxRoutes 传 resolver）
-- Modify: 受影响 route（清单表所列 decisions/onboarding/companion/me/tasks/personas/admin-templates/life-simulations/persona-core 等）签名改 **deps 对象 resolver 必填** + 替换内联为 `deps.resolver`（无默认回退）
-- Test: `src/test/unit/injection-chain.test.ts`
+- Modify: `src/storage/factory.ts`（`createDatabase` 现有多-shard 判断改调 `assertShardingActivationAllowed`——删重复逻辑，Codex 第 3 轮 #1）
+- Modify: `src/server/app.ts`（`createApp` 副作用前调 `assertShardingActivationAllowed(config)` + `deps.resolver` seam + `buildResolver` 建 resolver + 穿 factory + 各 route 传 resolver）
+- Modify: 受影响 route（清单表：decisions/onboarding/companion·chat/perceive/perceive-stream/learn-github/me/tasks/personas/admin-templates/life-simulations/persona-core）签名改 **deps 对象 resolver 必填** + 替换内联为 `deps.resolver`（无默认回退）
+- Test: `src/test/unit/injection-chain.test.ts`（+ guard 单一真源测：createDatabase/buildResolver/createApp 三处对多库 config 抛同一 MultiShardRuntimeNotReadyError）
 
 **Interfaces:**
 - 每 `registerXxxRoutes(app, os, config, db, tenantFactory, resolver)`——`resolver` **必填**（无默认回退，Codex #1）；测试/直调显式传 `new SingleDbResolver(testDb)`。
@@ -153,7 +158,7 @@ export function buildResolver(config: AppConfig, hostDb: IDatabase): TenantDbRes
 | `core/memory-facade.ts` | `new SingleDbResolver(...)` | route 内 id-based UPDATE 直用（§5.2 具名点） | **Plan 2** |
 | `persona-core/runtime-recovery-worker.ts` | `new SingleDbResolver(os.getDatabase())` | worker per-shard fan-out | **Plan 2**（§5.2 worker） |
 > buildAppServices 成员构造（`app-services.ts` 用 root db，非上表内联 SingleDbResolver 而是裸 db 传 service ctor）= **Plan 1b**。route 内 `sharedDb.prepare(...WHERE tenant_id=?)` 直查 = **Plan 2**。
-> **机械门（收尾）**：`rg -n 'new SingleDbResolver' src/server/app.ts src/server/routes` → 只剩 `app.ts` 那**一个** buildResolver 内部（若 buildResolver 单库分支用它）+ 明确测试 helper，routes 内**零**（Plan 1 处置的都换成穿进 resolver；memory-facade/worker 是 Plan 2 但它们不在 routes 目录）。
+> **机械门（收尾，Codex 第 3 轮）**：`rg -n 'new SingleDbResolver' src/server/app.ts src/server/routes` → **零**（唯一构造在 `build-resolver.ts` 的单库分支，不在 app.ts/routes；app.ts 用 `buildResolver(config,db)`，routes 用 `deps.resolver`）。memory-facade/worker 是 Plan 2（不在 app.ts/routes 目录，不计此门）。
 
 - [ ] **Step 1: 写失败测试（resolver 穿透 + 单库零回归 + 子服务 per-tenant）**
 
@@ -166,29 +171,35 @@ import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js'
 // 走真实 route 注册，发 tenant A/B 请求，断言 route 内真实子服务写到 shard A/B。
 // 直接测 TokenBudget.fromResolver(fake) 不够（那只重证 shard-ready，metering-subservices 已证）。
 
-test('createApp 注入 fake resolver → decisions/onboarding/companion route 内子服务对 A/B 写各自 shard', async () => {
-  const fake = new FakeMultiShardResolver({ /* coordinator + shards{s0,s1} + tenantToShard{A:s0,B:s1} */ } as never);
-  const { app } = await buildTestApp({ resolver: fake });   // seam：createApp 未传时才 buildResolver(config,hostDb)
-  // 对 tenant A、B 各发一个会触发子服务计量的请求 → 断言 A 的行只在 shard0 db、B 只在 shard1（不串）
-  // 至少覆盖 decisions/onboarding/companion 各一条代表链（非直接构造子服务）
-});
+// 行为契约（Codex 第 3 轮 #2——具体 endpoint/表/正反 shard/cleanup，非注释占位）。
+// 代表链：TASK_ROUTES = [{ name:'decisions', method:'POST', url:'/api/v1/decisions', body:{...最小触发决策模拟}, subservice:'TokenBudget', table:'token_usage', column:'tenant_id' }, { onboarding... }, { companion... }]
+// —— 实现者按各 route 真实 handler 定 endpoint/body/前置（认证 header、seed persona 等），选**必然触发某 fromResolver 子服务写**的最稳定 route；
+//    若某 route 需复杂 LLM 前置难稳定触发，换该文件里更易触发子服务写的 endpoint（仍须真经 createApp→route→handler→fromResolver 子服务，非直接 new）。
+for (const rt of TASK_ROUTES) {
+  test(`注入链行为验[${rt.name}]：A→shard0/B→shard1，A 的行只在 shard0、shard1 无（正反断言）`, async () => {
+    const s0 = new SqliteDatabase(':memory:'); const s1 = new SqliteDatabase(':memory:'); const coord = new SqliteDatabase(':memory:');
+    // 三库各跑迁移（照既有集成测试建库惯例）；A→s0, B→s1
+    const fake = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { A: 's0', B: 's1' } });
+    const { app } = await buildTestApp({ resolver: fake });   // config.db.shards 空 + 注入 fake（不解除 config guard）
+    await app.inject({ method: rt.method, url: rt.url, headers: authFor('A'), payload: rt.body });
+    await app.inject({ method: rt.method, url: rt.url, headers: authFor('B'), payload: rt.body });
+    // 正断言：A 触发的 subservice 行落 s0；反断言：s1 无 A 的行、s0 无 B 的行（子服务经共享 resolver 按 tenantId 路由）
+    assert.ok(s0.prepare(`SELECT 1 FROM ${rt.table} WHERE ${rt.column}='A'`).get());
+    assert.equal(s1.prepare(`SELECT 1 FROM ${rt.table} WHERE ${rt.column}='A'`).get(), undefined);
+    assert.ok(s1.prepare(`SELECT 1 FROM ${rt.table} WHERE ${rt.column}='B'`).get());
+    await app.close(); s0.close(); s1.close(); coord.close();
+  });
+}
 
-test('同一 resolver 实例穿透：真两租户请求经 route 子服务写各自 shard（行为验，非仅 param spy）', async () => {
-  const fake = new FakeMultiShardResolver({ /* coordinator + s0/s1 + A:s0,B:s1 */ } as never);
-  const { app } = await buildTestApp({ resolver: fake });
-  // 明确 endpoint + 认证/tenant 前置：对 A 发触发 TokenBudget/Quota/Usage 写的请求 → 断言记录只在 shard0 db；B→shard1
-  // （行为测试为主；identity spy 可作补充，但不代替——Codex 第 2 轮）
-});
-
-test('createApp seam 不解除 config guard：config.db.shards 非空 + 注入 fake resolver → 仍拒启动', async () => {
+test('createApp seam 不解除 config guard：config.db.shards 非空 + 注入 fake resolver → 在建 worker/timer 副作用前抛', async () => {
   const fake = new FakeMultiShardResolver({} as never);
   await assert.rejects(
     () => buildTestApp({ config: /* 含非空 shards */ multiShardConfig, resolver: fake }),
-    /拒绝启动|MultiShardRuntimeNotReady|activation/,
-  );  // 证 deps.resolver 绕不过 assertShardingActivationAllowed
+    /MultiShardRuntimeNotReady|拒绝启动|activation/,
+  );  // assertShardingActivationAllowed 在任何插件/hook/worker/timer/route 注册前调，deps.resolver 绕不过
 });
 ```
-> 实现者注：核心是**真经 createApp→route→子服务链**验同一 resolver（非直接 new 子服务）。给 `createApp` 加 `deps.resolver` seam（生产未传时 `buildResolver(config, hostDb)`）。`buildTestApp` 用既有 route 集成测试夹具（照 `src/test/integration/persona-core-api.test.ts`）。若某 route 忘穿 resolver，此测试须能抓（identity 断言或 A/B 串 shard）。单库零回归靠 `test:golden` 全绿兜。
+> 实现者注：核心是**真经 createApp→route→handler→fromResolver 子服务链**（非直接 new 子服务/仅 param spy）。`createApp` 加 `deps.resolver` seam（生产未传时 `buildResolver(config, hostDb)`）+ `deps.resolver` 传进时仍先 `assertShardingActivationAllowed(config)`。`buildTestApp`/`authFor` 用既有 route 集成测试夹具（照 `src/test/integration/persona-core-api.test.ts` 如何 build app+签 JWT）。`TASK_ROUTES` 三条代表链的 endpoint/body/table 实现者按真实 handler 填全——**选必然触发子服务写的最稳定 route**；若忘穿 resolver 则 A/B 串 shard→测试红。identity spy 可作补充非代替。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -225,7 +236,7 @@ Expected: 可能红（内联 SingleDbResolver 换穿进 resolver 后 carrier pro
 
 **Spec 覆盖**：spec §3-A「注入链统一：一个 resolver 穿全链」→ Task 1（buildResolver）+ Task 2（穿 app.ts/factory/route）。§4 default=home seed 契约 → Task 1 ShardRouter seedDbs。**本 Plan 是 Plan 1 的 A 段基础切片**；buildAppServices 逐成员 rewire（spec §3-A buildAppServices）+ Auth mixed-scope（§4.1）是后续 Plan 1b/1c（本 Plan 只穿基础注入链，不含 ~15 buildAppServices 成员的逐个 rewire——那量大且独立可测，单列）。
 
-**Placeholder 扫描**：无 TBD；buildResolver/app.ts 改动有完整代码；测试委托既有 metering-subservices-sharding.test.ts / FakeMultiShardResolver 惯例（非占位，是复用现成 2-shard 脚手架）。
+**Placeholder 扫描**：buildResolver/assertShardingActivationAllowed 有完整代码；注入链行为测试 `TASK_ROUTES` 三代表链的 endpoint/body/table **需实现者按真实 handler 填全**（计划给了契约结构+选路由原则「必然触发子服务写的最稳定 route」+ 正反 shard 断言+cleanup，非纯注释占位——但 handler 具体前置由实现者对真实 route 落地，因各 route 认证/业务前置不同，计划无法预知）。`buildTestApp`/`authFor` 复用既有 `persona-core-api.test.ts` 夹具。
 
 **边界**：本 Plan 仍 fail-closed 挡多库生产（约束 2）——注入链就位但未放开，零风险。db-capability 门（Plan 0）会捕捉注入链改动对 inventory 的影响（约束 8），确保接线真做了而非漏。
 
