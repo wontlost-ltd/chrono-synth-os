@@ -1,5 +1,6 @@
 # 分片 Phase 0 · Plan 1b：buildAppServices tenant-scoped 服务 rewire Implementation Plan
 
+> 状态：**已过 Codex 独立复审**（68→77→86→**93 通过「可交 subagent 按 10 task SDD」**）。实现 3 非阻断：① `identities` 有 tenant_id，update 固定 `WHERE id=? AND tenant_id=?`（非 EXISTS/WHERE 二选一）② 收尾 rg 补 `--glob '!src/test/**'`，主门仍 Plan 0 AST gate ③ 每 task **两 mutation（非-home shard + 共享 db 跨租户）都过才标 `verified`，仅编译过最多 `wired`**。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 > 第 4 轮修订（采纳 Codex 86 退回 1 阻断+2 过渡接口）：Task 2-8 操作矩阵写出真实签名(非交实现者)+ScimTenantDirectory/UserEmailDirectoryService 过渡接口(单库暂 coordinatorDb,route 契约不变,edge planned)+裸 db「收敛审计」非「消除」措辞。前轮 68→77 退。
 > Codex 分类裁决（见 spec 关联）：15 个 buildAppServices 成员按「调用前是否已知 tenantId」分类——JWT 带 tenantId 故已认证路径不需 userId→shard directory，穿 tenantId 进方法 + `(tenantId, key)` 查即可。本 Plan 只做**纯 tenant-scoped** 那批；mixed-scope/coordinator（Auth/UserProfile-email/SCIM-createUser/API-key-hash）归 Plan 1c；ConfigService platform 单列。
