@@ -1,6 +1,6 @@
 # 租户分片 Phase 0 全量激活设计
 
-> 状态：第 5 轮修订（Codex 58→78→86→89 退，采纳四轮全部真实代码漏点——高风险组合根/生命周期重构 + AST(TypeChecker) sink 门 + Auth PENDING→ACTIVE 状态机[Phase 0 不自动取消] + 全局 worker/timer fan-out[含 MediaRetention GDPR] + typed runtime bundle 唯一 owner）。待 Codex 再审 → 用户审阅 → writing-plans。
+> 状态：**已过 Codex 独立复审**（58→78→86→89→**96/100 通过「达到通过线」**，五轮每轮核验真实代码后修）。待用户审阅 → writing-plans。
 > 日期：2026-07-23
 > 关联：分片设计总览 `2026-07-17-tenant-sharding-design.md`（Phase 0 契约在此定）；`shard-router-design.md`（引擎设计）；规模化缺口 #3；PR #314（子服务双入口化，已合入 main）。
 > 范围：`src/server/app.ts`（组合根装配 resolver）、7 个 `sharedDb` 直用文件、`src/server/routes/metrics.ts` + `src/observability/`（fan-out）、`src/storage/factory.ts`（放开 fail-closed）、`src/config/schema.ts`（shard map 校验）、`src/storage/db-access-inventory.ts`（接线完成后重分类）。
