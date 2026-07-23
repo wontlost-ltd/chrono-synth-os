@@ -37,9 +37,9 @@
 
 ---
 
-## Task 分解（按 service 分批——每 service 独立可测可 review）
+## Task 分解（按**依赖分组**，非机械单 service——Codex #「Avatar/Mobile 不是简单单 service」）
 
-> 每个 service 一个 task（rewire + 构造点更新 + 2-shard 行为测）。以 IdentityService 为**范式 task**详列；其余 service 同构（Task 结构相同，只换 service/方法/表/key）。
+> IdentityService 为**范式 task**（含 tenant-bound seam 详列）；其余按依赖分组（Avatar 组含 DeviceAvatar/Autorun/Identity-ownership；Mobile 组含 Facade/DeviceLookup；TenantEnterpriseProfile 先拆 ScimTenantDirectory）。每 task 结构同范式但**各列自己的操作矩阵 + query/executor 文件**（不「同构」带过——各 service 的表/predicate/JOIN 不同）。
 
 ## Task 1: `IdentityService` rewire + tenant-bound seam（范式 + 供 Plan 1c 复用）
 
