@@ -1,6 +1,6 @@
 # 分片 Phase 0 · Plan 0：DB-capability edge 扫描器 + sink 盘点 + 放开门 Implementation Plan
 
-> 状态：第 5 轮修订（Codex Plan 复审 52→78→87→84 退，采纳四轮全部——A1-A4 接收边界(无 initializer sink decl)+B1-B8 转移边界绑 SyntaxKind(含 ExportDeclaration/spread/复合赋值) / findDbCapabilityPaths active-stack visited / Task 2 Step 3 同步新算法 / pair+sink-decl fixture）。
+> 状态：第 6 轮修订（Codex Plan 复审 52→78→87→84→88 退，采纳五轮全部——A1 用 ts.isFunctionLike(含 FunctionExpression/setter) / A1·A2·B1 specificity precedence 去重 / unknown-boundary 三态(无能力→跳过) / 全口径统一 A1-A4+B1-B8）。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 
 **Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 **edge 级** DB-capability 扫描器 + 升级 `db-access-inventory.ts` 到 sink 级，使「每条持有 DB 能力的 source→sink edge 都有明确处置 + 接线状态」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical type 解析失败/遇未知语法边界/Program 不健康 → 退出非零），也绝不「漏扫却报绿」。**
@@ -20,7 +20,7 @@
 2. **fail-closed 优先**：canonical DB/UoW type 解析失败、Program 有致命 diagnostic、root file 为空、遇「含 DB capability 但未知语法边界」→ **扫描器退出非零**，绝不返回空/部分 edge 静默报绿。
 3. **edge 级 ID（非 owner 级）**：`id = <file>#<owner>::<kind>::<canonical-callee-or-target>::<param-or-prop>`——同一函数内不同 callee/target/param 是**不同** edge，禁按 owner 合并（Codex #1）。
 4. **类型驱动非名字**：用 `checker.getTypeAtLocation` + `isTypeAssignableTo(t, uowType)`（逐 union 分量）+ `getAliasedSymbol`，处理 alias/结构兼容/inferred/union·optional/intersection/generic 约束（Codex #4/#5/#6）。禁 `getBaseTypes` fallback（漏纯结构实现）。
-5. **每类形态逐文件逐 edge pin**（Codex #3）：表驱动，6 fixture 各自断言「产精确 kind 的 edge + edge id 含具体 target/param + 删登记后进 unregistered」。
+5. **每类形态逐文件逐 edge pin**（Codex #3）：表驱动，全部 fixture（A1-A4 接收 + B1-B8 转移）各自 deepEqual 完整期望集「产精确 kind 的 edge + edge id 含具体 target/param + 删登记后进 unregistered」。
 6. **disposition 必填 + wiringStatus 分离**（Codex #10）：`disposition`（目标处置）**必填**（非 optional）；另加 `wiringStatus: 'planned'|'wired'|'verified'`——Plan 0 允许 `planned`；放开 fail-closed（Plan 3）要求所有危险 edge `verified` 且 `known-limitation` 不用于可能错-shard 的 edge。
 7. **中文注释**；接进 `test:golden` 的 `check:db-access`；不改运行时行为故现有全测试零回归。
 8. **测试位置**：`src/test/unit/db-sink-scanner.test.ts`；fixture 放 `src/test/support/db-sink-fixtures/`（主门 production scope 排除 `src/test/`，fixture 测试用 `includeTests:true` 走同一内核）。
@@ -33,8 +33,8 @@
 - `scripts/db-sink-scanner.d.mts` — 扫描器的类型声明（供 `tsx`/strict TS 测试 import 时有声明，避免 `npm run typecheck` 无声明模块错误，Codex #4）。
 - `src/storage/db-access-inventory.ts` — 升级 sink 级（`disposition` 必填 + `wiringStatus` + 纠正 buildAppServices + 登记已知 sink）。
 - `scripts/check-db-access-ratchet.mjs` — 改调 `scanProductionDbCapabilityEdges` + `collectUnregisteredEdges`。
-- `src/test/support/db-sink-fixtures/{ctor-param,deps-prop,route-param,capture,factory-indirect,type-alias}.ts` — 6 类变异 fixture。
-- `src/test/unit/db-sink-scanner.test.ts` — 纯类型判定单元测 + 6 类逐文件 pin + Program 健康/sentinel + fail-closed 测。
+- `src/test/support/db-sink-fixtures/{type-alias,ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl}.ts` — 变异 fixture（覆盖 A1-A4 接收 + B1-B8 转移各形态）。
+- `src/test/unit/db-sink-scanner.test.ts` — 纯类型判定单元测 + 全 FIXTURE_EXPECT 逐文件 deepEqual pin + Program 健康/sentinel + fail-closed 测。
 - `src/test/unit/db-access-inventory-completeness.test.ts` — inventory 每条目 disposition+wiringStatus + 已知 sink 在册 + buildAppServices 纠正。
 
 ---
@@ -198,7 +198,7 @@ export function isDbCapabilityType(type, checker, uowType) {
 **Files:**
 - Modify: `scripts/db-sink-scanner.mjs`（`enumerateDbCapabilityEdges`——参/属性/deps-prop/route-param/capture/factory-indirect/对象包装 + edge 级 id + 未知边界 fail-closed）
 - Create: fixture `{ctor-param,deps-prop,route-param,capture,factory-indirect,wrapped,export-transfer,pair,sink-decl}.ts`（wrapped=options.db/return{db}/{...deps}；export-transfer=export default db + export{db2}；pair=双 IDatabase 属性证 active-stack visited；sink-decl=无 initializer 的 ctor 参属性+字段）
-- Test: `src/test/unit/db-sink-scanner.test.ts`（6 类逐文件逐 edge pin + owner 合并回归）
+- Test: `src/test/unit/db-sink-scanner.test.ts`（全 FIXTURE_EXPECT 逐文件逐 edge deepEqual pin + owner 合并回归 + active-stack 双 path）
 
 **Interfaces:**
 - Produces: `enumerateDbCapabilityEdges(program, checker, uowType, { includeTests }) → Edge[]`；`Edge = { id, file, owner, kind, target, param }`，`id = <file>#<owner>::<kind>::<target>::<param>`。
@@ -213,11 +213,17 @@ export function isDbCapabilityType(type, checker, uowType) {
 - **inferred（#6）**：`private readonly db = os.getDatabase()`（无 `node.type`）——对 declaration/name/initializer 调 `getTypeAtLocation`，**不要求 `node.type` 存在**。
 - **fail-closed boundary taxonomy——两大组：capability 接收/存储 + capability 转移，每类绑 `SyntaxKind`（Codex 多轮：#2 定分母 / 第 3 轮 export·spread / 第 4 轮**接收边界+named export+visited**）**。枚举器遍历有限 boundary 全集，每 boundary 用 `findDbCapabilityPaths` 判携带 DB 能力：
   
-  **A. capability 接收/存储边界（sink declaration——最典型 sink，无 initializer 也算，Codex 第 4 轮 #2）**：
-  - A1 **ctor/method/function 参数** — `ConstructorDeclaration.parameters`、`MethodDeclaration`/`FunctionDeclaration`/箭头 参数（类型含 UoW 路径即 edge，无论有无 default）
-  - A2 **parameter property** — `constructor(private readonly db: IDatabase)`（Parameter 带修饰符）
+  **A. capability 接收/存储边界（sink declaration——最典型 sink，无 initializer 也算）**：
+  - A1 **所有 function-like 参数** — 用 **`ts.isFunctionLike(node)`**（非手列，避免漏 `FunctionExpression`/`SetAccessorDeclaration`/`GetAccessor`）：覆盖 `ConstructorDeclaration`/`MethodDeclaration`/`FunctionDeclaration`/`FunctionExpression`/`ArrowFunction`/`SetAccessorDeclaration`。类型声明层的 callback 契约补 `MethodSignature`/`CallSignatureDeclaration`/`ConstructSignatureDeclaration`/`FunctionTypeNode` 的参数。
+  - A2 **parameter property** — `constructor(private readonly db: IDatabase)`（Parameter 带 accessibility/readonly 修饰符）
   - A3 **class 字段** — `PropertyDeclaration`（有无 initializer 都算）
   - A4 **interface/type 属性** — `PropertySignature`（deps 类型的 db 属性）
+  
+  **边界重叠 specificity precedence（Codex 第 5 轮 #2——否则 edge 基线随遍历顺序不定）**：一个语法位置命中多类时取**最具体**的一个 kind，不重复产 edge：
+  - parameter property（A2）**只归 A2**，不再归 A1（A2 是 A1 严格子集）。
+  - 参数带 default initializer（如 `constructor(db = hostDb)`）：sink 声明归 A1/A2；**B1 initializer 只在该 initializer 本身是独立需处置的 transfer（如 default 值是 `os.getDatabase()`）时另产**，且 fixture 精确断言。
+  - class field 带 initializer：声明归 A3；initializer 的 transfer 若独立需处置另产 B1，否则不重复。
+  - 规则：**sink declaration 采用最具体 kind；transfer（B1）只在独立处置时另产**——inventory 基线稳定、可 deepEqual。
   
   **B. capability 转移边界**：
   - B1 **declaration/param/binding initializer** — `VariableDeclaration.initializer`、`Parameter.initializer`、`BindingElement.initializer`
@@ -229,9 +235,9 @@ export function isDbCapabilityType(type, checker, uowType) {
   - B7 **closure/timer/event/worker capture** — 函数体内引用作用域外 DB 绑定（`Identifier`/`PropertyAccessExpression` resolve 到外层声明）
   - B8 **module/export transfer** — `ExportAssignment`（`export default db`/`export = db`）+ `ExportDeclaration`/`NamedExports`/`ExportSpecifier`（`export { db }`/`export { db as default }`）
   
-  遍历每个 boundary：携带能力 → 归对应 kind 产 **known edge**，或产 `unknown-boundary` edge（携带能力但不落任何 kind）。`unknown-boundary` 非空 → 门红。**分母 = A1-A4 + B1-B8 各自 SyntaxKind 集**（有限可遍历）。**Plan 0 实现时发现任何 production 同步 capability-transfer/acceptance 语法不在此表 → 必须补进 taxonomy（非留后续）**；spec §10「后续」只指跨函数污点推断，不含同步边界。
+  遍历每个 boundary，**三态**（Codex 第 5 轮——不携带能力的普通参数不产 unknown）：① `findDbCapabilityPaths` 空（无能力路径）→ **跳过**；② 有能力路径且可归某 kind → **known edge**；③ 有能力路径但无法归任何 kind / 预算超限 → **`unknown-boundary` edge**。`unknown-boundary` 非空 → 门红。**分母 = A1-A4 + B1-B8 各自 SyntaxKind 集**（有限可遍历）。**Plan 0 实现时发现任何 production 同步 capability-transfer/acceptance 语法不在此表 → 必须补进 taxonomy（非留后续）**；spec §10「后续」只指跨函数污点推断，不含同步边界。
 
-- [ ] **Step 1: 写 5 个 fixture（各一形态最小样本）+ 表驱动 pin 测试**
+- [ ] **Step 1: 写全部 fixture（A1-A4 接收 + B1-B8 转移各形态最小样本）+ 表驱动 deepEqual pin 测试**
 
 ```typescript
 // 表驱动逐文件 deepEqual 完整期望集（Codex #3——非 some(kind)，防占位 target/param + 漏 edge）。
@@ -288,7 +294,7 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
   assert.deepEqual(unreg.map((e) => e.id), [victim]);       // 恰好只有被删那条未登记
 });
 ```
-> fixture 样本（实现者建全 5 个；关键：`factory-indirect.ts` 放 `new ServiceA(db)` + `new ServiceB(db)` 两不同 target 证 edge 级不合并；`capture.ts` 用 `this.db`/闭包证 property-access capture）。`FIXTURE_EXPECT` 的 id 段实现者补全（含完整 `<file>#<owner>::<kind>::<target>::<param>`），deepEqual 精确到 owner/kind/target/param。
+> fixture 样本（实现者建全 FIXTURE_EXPECT 列出的全部；关键：`factory-indirect.ts` 放 `new ServiceA(db)` + `new ServiceB(db)` 两不同 target 证 edge 级不合并；`capture.ts` 用 `this.db`/闭包证 property-access capture）。`FIXTURE_EXPECT` 的 id 段实现者补全（含完整 `<file>#<owner>::<kind>::<target>::<param>`），deepEqual 精确到 owner/kind/target/param。
 
 - [ ] **Step 2: 运行确认失败**（enumerate 未实现）
 
@@ -296,7 +302,7 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 遍历上「关键」的**接收边界 A1-A4（ctor/method 参数、parameter property、PropertyDeclaration、PropertySignature——无 initializer 也算）** + **转移边界 B1-B8（decl init / call·ctor arg / assignment 含 `||=`&`&&=`&`??=` / aggregate wrapping 含 spread / return·yield / collection write / capture / module·export 含 `ExportDeclaration`）**。每个 boundary 取其类型 `getTypeAtLocation`（不要求 node.type），用 **`findDbCapabilityPaths`**（非仅 `isDbCapabilityType`——要抓 `options.db` 这种包裹）判携带能力 → 归对应 kind 产 known edge，否则 `unknown-boundary` edge（门红）。new/call 用 `getResolvedSignature` 取目标参类型跑 findDbCapabilityPaths；capture 验引用声明在函数作用域外。id = `${rel}#${owner}::${kind}::${target}::${param}`（param 可含 property path 如 `options.db`）。`{includeTests}` 控是否排 `src/test/`。**不做 byId owner 合并**，只去重完全相同 id。**任何 checker/API 异常带 context 重抛（fail-closed），绝不吞成「非 DB」。**
 
-- [ ] **Step 4: 运行确认通过**（6 类逐文件 pin + edge 级 + 合并回归全绿）
+- [ ] **Step 4: 运行确认通过**（全 FIXTURE_EXPECT 逐文件 deepEqual pin + edge 级 + 合并回归 + active-stack 双 path 全绿）
 
 - [ ] **Step 5: Commit** — `feat(shard): edge 级枚举全注入形态（property-access/对象包装/inferred/capture + 未知边界 fail-closed）`
 
@@ -348,14 +354,14 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 ## 收尾（全 task 完成后）
 
 - [ ] **本地全量门**：`npm run test:golden`（EXIT 0；本 Plan 不改运行逻辑故 unit/integration/parity 零回归；`check:db-access` 现为 edge 门——红则补 inventory 非放宽）。
-- [ ] **最终整片 code review**（最强模型审：重点核**扫描器是否真类型驱动而非退化名字匹配、canonical type 是否真从 .d.ts 解析成功且解析失败真 fail-closed、6 类形态是否真逐一被生产代码或 fixture 覆盖、edge 级 ID 是否真防 owner 合并、有无扫描器漏扫某形态导致的假完整**——这是隔离门的门，假完整=灾难）。
+- [ ] **最终整片 code review**（最强模型审：重点核**扫描器是否真类型驱动而非退化名字匹配、canonical type 是否真从 .d.ts 解析成功且解析失败真 fail-closed、A1-A4+B1-B8 各形态是否真逐一被生产代码或 fixture 覆盖、edge 级 ID 是否真防 owner 合并、有无扫描器漏扫某形态导致的假完整**——这是隔离门的门，假完整=灾难）。
 
 ## Self-Review（writing-plans 自检）
 
-**Spec 覆盖**：§3-A0（类型驱动 TypeChecker + 6 类形态 + 变异 fixture + 每 edge 稳定 ID + fail-closed）→ Task 1（类型判定内核 + canonical fail-closed + Program 健康）+ Task 2（edge 级全形态枚举）+ Task 3（inventory sink 级）+ Task 4（production 门）。已知 sink #1-7 → Task 3 完整性测试。
+**Spec 覆盖**：§3-A0（类型驱动 TypeChecker + A1-A4 接收+B1-B8 转移形态 + 变异 fixture + 每 edge 稳定 ID + fail-closed）→ Task 1（类型判定内核 + canonical fail-closed + Program 健康）+ Task 2（edge 级全形态枚举）+ Task 3（inventory sink 级）+ Task 4（production 门）。已知 sink #1-7 → Task 3 完整性测试。
 
-**采纳 Codex Plan 复审 10 项**：①edge 级 ID（Task 2 id 格式+合并回归）②三层 API 分离（enumerate/collect/scanProduction）③6 类逐文件表驱动 pin ④canonical type 从 .d.ts + 解析失败 fail-closed（Task 1）⑤property-access/对象包装/inferred/union/generic（Task 1/2）⑥未知边界 fail-closed ⑦Program sentinel/diagnostic 健康门 ⑧scope 诚实「Node server src」非全仓 ⑨`.mjs` 读 inventory 用 readFileSync 正则非 import ⑩disposition 必填 + wiringStatus 分离。
+**采纳 Codex Plan 复审 10 项**：①edge 级 ID（Task 2 id 格式+合并回归）②三层 API 分离（enumerate/collect/scanProduction）③全形态逐文件 deepEqual 表驱动 pin ④canonical type 从 .d.ts + 解析失败 fail-closed（Task 1）⑤property-access/对象包装/inferred/union/generic（Task 1/2）⑥未知边界 fail-closed ⑦Program sentinel/diagnostic 健康门 ⑧scope 诚实「Node server src」非全仓 ⑨`.mjs` 读 inventory 用 readFileSync 正则非 import ⑩disposition 必填 + wiringStatus 分离。
 
-**假完整防线（最关键）**：扫描器漏扫是最致命的假绿——防线 = ①fail-closed（canonical/sentinel/未知边界任一异常即红，不空扫）②6 类 fixture 证识别能力 ③终审专项核「有无漏扫形态」④wiringStatus 使「planned≠verified」，放开门（Plan 3）要 verified。诚实承认：fixture 只证「已知形态能识别」，证不了「无第 7 类未知形态」——故未知语法边界 fail-closed 是兜底（遇 DB capability 但语法 kind 未覆盖 → 红，逼人显式处理）。
+**假完整防线（最关键）**：扫描器漏扫是最致命的假绿——防线 = ①fail-closed（canonical/sentinel/未知边界任一异常即红，不空扫）②全形态 fixture 证识别能力（含无-initializer sink decl / 双能力 path / 包裹 / export）③终审专项核「有无漏扫形态」④wiringStatus 使「planned≠verified」，放开门（Plan 3）要 verified。诚实承认：fixture 只证「已知形态能识别」，证不了「无 taxonomy 外未知形态」——故未知边界三态 fail-closed 是兜底（有能力路径但不落任何 kind/预算超限 → unknown-boundary 红，逼人显式处理）。
 
 **类型一致性**：`Edge`（id/file/owner/kind/target/param）跨 Task 2/4 一致；`buildProgram`/`enumerateDbCapabilityEdges`/`collectUnregisteredEdges`/`scanProductionDbCapabilityEdges` 三层签名一致；`disposition`/`wiringStatus` union 与 spec 处置状态一致。
