@@ -1,5 +1,6 @@
 # 分片 Phase 0 · Plan 1：注入链统一（buildResolver + 单 resolver 穿全链）Implementation Plan
 
+> 状态：**已过 Codex 独立复审**（72→79→88→86→**95 通过「可交 subagent 实现」**）。实现须钉 4 细节（Codex 非阻断）：① fake resolver 映射键用夹具返回的**真实 tenantId**（非显示标签 "A"/"B"）② identity spy 在**真实 route 注册/子服务构造边界**采集 resolver（非 buildTestApp 回显传入的 fake=自证）③ guard 测按 `MultiShardRuntimeNotReadyError` **类型**断言 + worker/timer/route 注册计数 0 ④ 双 shard 测用 `try/finally` 关 app+三库 + `npm run typecheck` 独立强制步。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 > 第 5 轮修订（采纳 Codex 86 退回）：TASK_ROUTES 主链钉死 companion-chat(零-LLM→consumeQuota→quota_usage 可直接写 RED)+其余 identity spy；guard 单一真源 assertShardingActivationAllowed(createDatabase/buildResolver/createApp)；机械修(rg 门=零/删未用 ShardRouter import/typed deps 对象)。前轮 72→79→88 退。
 
