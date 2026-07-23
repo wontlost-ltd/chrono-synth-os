@@ -17,7 +17,7 @@ import {
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import { StateError, ErrorCode } from '../errors/index.js';
-import { IdentityService } from '../identity/identity-service.js';
+import { IdentityWriter } from '../identity/identity-service.js';
 
 /**
  * SCIM 操作发出的 CC6.1 证据签名。调用方通常注入 `recordEvidence` 的
@@ -121,11 +121,13 @@ export class ScimProvisioningService {
 
     const now = Date.now();
     const userId = existing?.id ?? `user_${randomUUID()}`;
-    const identityService = new IdentityService(this.tx);
+    /* 分片 Plan 1b：SCIM createUser 是 Plan 1c mixed-scope（跨租户 email 定位 + 租户级写）；
+     * 身份写经 tenant-bound IdentityWriter(tenantId, tx) seam（tenantId 为 SCIM 目标租户），非裸 new IdentityService(tx)。 */
+    const identityWriter = new IdentityWriter(tenantId, this.tx);
     if (!existing) {
       this.tx.execute(scimCmdCreateUser({ id: userId, email: input.email, tenantId, now }));
     }
-    identityService.ensureForUser(userId, tenantId, input.displayName);
+    identityWriter.ensureForUser(userId, input.displayName);
 
     const row = this.tx.queryOne(scimQueryUserById(userId));
     this.safeRecordEvidence({

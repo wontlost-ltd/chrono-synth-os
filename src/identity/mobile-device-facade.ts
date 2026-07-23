@@ -6,7 +6,7 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { JwtPayload } from '../types/auth.js';
 import type { PushService } from '../types/push.js';
-import { IdentityService } from './identity-service.js';
+import { IdentityWriter } from './identity-service.js';
 import { AvatarService } from './avatar-service.js';
 import { MobileDeviceService } from './mobile-device-service.js';
 import { DeviceAvatarService } from './device-avatar-service.js';
@@ -22,14 +22,21 @@ export interface RegisterDeviceInput {
 export class MobileDeviceFacade {
   private readonly deviceService: MobileDeviceService;
   private readonly deviceAvatarService: DeviceAvatarService;
-  private readonly identityService: IdentityService;
   private readonly avatarService: AvatarService;
 
-  constructor(tx: SyncWriteUnitOfWork, private readonly pushService: PushService) {
+  /**
+   * 分片 Plan 1b：facade 持 `tx`，身份读经 tenant-bound `IdentityWriter(user.tenantId, tx)` seam
+   * （非 `new IdentityService(tx)`）。多-shard resolver 化归 Task 3（Mobile 组），本 Task 只接线到 seam。
+   */
+  constructor(private readonly tx: SyncWriteUnitOfWork, private readonly pushService: PushService) {
     this.deviceService = new MobileDeviceService(tx);
     this.deviceAvatarService = new DeviceAvatarService(tx);
-    this.identityService = new IdentityService(tx);
     this.avatarService = new AvatarService(tx);
+  }
+
+  /** 用调用方 JWT 的 tenantId 现造 tenant-bound 身份读内核（不缓存）。 */
+  private identityWriter(user: JwtPayload): IdentityWriter {
+    return new IdentityWriter(user.tenantId, this.tx);
   }
 
   register(user: JwtPayload, input: RegisterDeviceInput) {
@@ -72,7 +79,7 @@ export class MobileDeviceFacade {
 
   listDeviceAvatars(user: JwtPayload, deviceId: string) {
     this.deviceService.requireOwnedDevice(deviceId, user.sub);
-    const identity = this.identityService.getByUser(user.sub);
+    const identity = this.identityWriter(user).getByUser(user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     const avatars = this.deviceAvatarService.listByDevice(deviceId);
     return avatars.filter((avatar) => avatar.identityId === identity.id);
@@ -89,7 +96,7 @@ export class MobileDeviceFacade {
   }
 
   private requireOwnedAvatar(user: JwtPayload, avatarId: string) {
-    const identity = this.identityService.getByUser(user.sub);
+    const identity = this.identityWriter(user).getByUser(user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     const avatar = this.avatarService.getByIdForIdentity(avatarId, identity.id);
     if (!avatar) throw new NotFoundError('分身不存在', ErrorCode.NOT_FOUND_AVATAR);

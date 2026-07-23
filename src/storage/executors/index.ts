@@ -78,7 +78,7 @@ import {
   LSIM_QUERY_BY_ID, CFG_QUERY_ALL, BSVC_QUERY_LIST_PLANS, AUDIT_QUERY_BY_ID,
   EVIDENCE_QUERY_BY_ID,
   AVT_QUERY_BY_ID, QUOTA_QUERY_LIMIT,
-  IDENT_QUERY_BY_USER, UPROF_QUERY_BY_ID,
+  IDENT_QUERY_BY_TENANT_AND_USER, UPROF_QUERY_BY_ID,
   SNAP_QUERY_BY_ID, UGATE_QUERY_BY_ID, DISTILL_QUERY_BY_ID, CONFLICT_QUERY_UNRESOLVED,
   ADDON_QUERY_BY_CODE, ENTL_QUERY_PLAN_ID,
   SUBQ_QUERY_LATEST_PLAN, APIKEY_QUERY_LIST,
@@ -136,7 +136,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(EVIDENCE_QUERY_BY_ID)) registerComplianceEvidenceExecutors();
   if (!resolveQueryExecutor(AVT_QUERY_BY_ID)) registerAvatarExecutors();
   if (!resolveQueryExecutor(QUOTA_QUERY_LIMIT)) registerQuotaExecutors();
-  if (!resolveQueryExecutor(IDENT_QUERY_BY_USER)) registerIdentityExecutors();
+  if (!resolveQueryExecutor(IDENT_QUERY_BY_TENANT_AND_USER)) registerIdentityExecutors();
   if (!resolveQueryExecutor(UPROF_QUERY_BY_ID)) registerUserProfileExecutors();
   if (!resolveQueryExecutor(SNAP_QUERY_BY_ID)) registerSnapshotExecutors();
   if (!resolveQueryExecutor(UGATE_QUERY_BY_ID)) registerUpdateGateExecutors();

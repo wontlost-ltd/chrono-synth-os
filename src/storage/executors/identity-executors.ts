@@ -6,9 +6,10 @@ import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import type {
   IdentityRow,
   IdentCreateParams, IdentCreateDefaultAvatarParams, IdentUpdateParams,
+  IdentByTenantAndUserParams, IdentByTenantAndIdParams,
 } from '@chrono/kernel';
 import {
-  IDENT_QUERY_BY_USER, IDENT_QUERY_BY_ID, IDENT_QUERY_BY_TENANT,
+  IDENT_QUERY_BY_TENANT_AND_USER, IDENT_QUERY_BY_TENANT_AND_ID, IDENT_QUERY_BY_TENANT,
   IDENT_CMD_CREATE, IDENT_CMD_CREATE_DEFAULT_AVATAR, IDENT_CMD_UPDATE,
 } from '@chrono/kernel';
 import type { SqlValue } from '../database.js';
@@ -16,16 +17,17 @@ import type { SqlValue } from '../database.js';
 export function registerIdentityExecutors(): void {
   /* ── Queries ── */
 
-  registerQuery<IdentityRow | null, string>(IDENT_QUERY_BY_USER, (db, userId) => {
+  /* 分片双重约束：tenant predicate `WHERE tenant_id=? AND user_id=?` 防同 shard 内跨租户读。 */
+  registerQuery<IdentityRow | null, IdentByTenantAndUserParams>(IDENT_QUERY_BY_TENANT_AND_USER, (db, p) => {
     return db.prepare<IdentityRow>(
-      'SELECT * FROM identities WHERE user_id = ?',
-    ).get(userId) ?? null;
+      'SELECT * FROM identities WHERE tenant_id = ? AND user_id = ?',
+    ).get(p.tenantId, p.userId) ?? null;
   });
 
-  registerQuery<IdentityRow | null, string>(IDENT_QUERY_BY_ID, (db, identityId) => {
+  registerQuery<IdentityRow | null, IdentByTenantAndIdParams>(IDENT_QUERY_BY_TENANT_AND_ID, (db, p) => {
     return db.prepare<IdentityRow>(
-      'SELECT * FROM identities WHERE id = ?',
-    ).get(identityId) ?? null;
+      'SELECT * FROM identities WHERE tenant_id = ? AND id = ?',
+    ).get(p.tenantId, p.identityId) ?? null;
   });
 
   registerQuery<IdentityRow[], string>(IDENT_QUERY_BY_TENANT, (db, tenantId) => {
@@ -57,9 +59,10 @@ export function registerIdentityExecutors(): void {
     const params: SqlValue[] = [p.now];
     if (p.displayName !== undefined) { sets.push('display_name = ?'); params.push(p.displayName); }
     if (p.bio !== undefined) { sets.push('bio = ?'); params.push(p.bio); }
-    params.push(p.identityId);
+    /* 租户约束：固定 `WHERE id=? AND tenant_id=?`（identities 有 tenant_id 列，非 EXISTS）——防跨租户改。 */
+    params.push(p.identityId, p.tenantId);
     const result = db.prepare<void>(
-      `UPDATE identities SET ${sets.join(', ')} WHERE id = ?`,
+      `UPDATE identities SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`,
     ).run(...params);
     return { rowsAffected: result.changes };
   });
