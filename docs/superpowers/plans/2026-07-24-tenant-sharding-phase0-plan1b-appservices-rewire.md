@@ -1,7 +1,7 @@
 # 分片 Phase 0 · Plan 1b：buildAppServices tenant-scoped 服务 rewire Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
-> 第 2 轮修订（采纳 Codex 68 退回 5 类）：tenant-bound seam(IdentityWriter 供 Plan 1c 复用不半截)+隔离约束诚实(predicate 只防同 shard 内,错映射靠 ShardRouter,两 mutation)+SQL/query/executor 工作面+每 service 操作矩阵+UserProfile/TenantEnterpriseProfile 拆 tenant vs coordinator+内部构造点逐项定死+主门用 Plan 0 AST 门非 rg。
+> 第 3 轮修订（采纳 Codex 77 退回 3 阻断）：IdentityWriter(tenantId,tx) 真绑定(方法不再接 tenantId,消双源)+每组产自己操作矩阵(Avatar JOIN/写前验二选一钉死/DeviceAvatar 两端验)+PushDispatcher 全传播链(dispatcher/types/invalidation 回调带 tenantId)+两 mutation 钉死(换 home 选非 home 租户/删 predicate 种 B 键用 A 查)+mixed 逐 edge 非整体升级。前轮 68 退。
 > Codex 分类裁决（见 spec 关联）：15 个 buildAppServices 成员按「调用前是否已知 tenantId」分类——JWT 带 tenantId 故已认证路径不需 userId→shard directory，穿 tenantId 进方法 + `(tenantId, key)` 查即可。本 Plan 只做**纯 tenant-scoped** 那批；mixed-scope/coordinator（Auth/UserProfile-email/SCIM-createUser/API-key-hash）归 Plan 1c；ConfigService platform 单列。
 
 **Goal:** 把 tenant-scoped 长期 service（Identity/Avatar/Collaboration/MobileDevice+Facade/Organization/AdminControlPlane/KnowledgeSource/ApiKey-mgmt/TenantEnterpriseProfile-tenant-methods）从「ctor 固定 host db」rewire 为「持 `TenantDbResolver`，方法接 tenantId，`resolver.dbForTenant(tenantId)` + SQL tenant predicate 双重约束」。删 `AppServices.db` 裸 host db 字段 + 未用 carrier + RBAC preHandler 改 resolver。**仍 fail-closed 挡多库**（Plan 1 guard 未放开）。
@@ -45,10 +45,17 @@
 
 **Files:** Modify `src/identity/identity-service.ts`（+ 抽 tenant-bound seam）+ `packages/kernel/src/domain/identity/identity-queries.ts`（query 加 tenant predicate：`identQueryByUser(userId)`→`identQueryByTenantAndUser(tenantId, userId)` 等）+ `src/storage/executors/identity-executors.ts`（参数含 tenantId）+ **全构造点**（`app-services.ts`/`avatars.ts`/`sso-user-service.ts`/`auth-service.ts:96`/`scim-provisioning-service.ts:124`）+ route（identity.ts 传 `request.user.tenantId`）；Test `src/test/unit/appservices-tenant-scoped-sharding.test.ts`
 
-**Interfaces（seam——Codex #2）：**
-- **抽 tenant-bound 内核** `IdentityWriter`（或 repo，ctor 收**已解析 tx**）：承载所有 identity 读写（`getByUser(userId)`/`update`/`create` 在 tx 上，query 带 tenant predicate）。
-- 长期 `IdentityService` ctor 收 `resolver`，方法 `getByUser(tenantId, userId)` = `new IdentityWriter(this.resolver.dbForTenant(tenantId)).getByUser(tenantId, userId)`（或缓存 writer）。
-- **Plan 1c 的 Auth/SCIM/SSO 定位 tenant 后用同一 `IdentityWriter`（传它解析的 tx）**——本 Plan 把它们的 `new IdentityService(tx)` 改为「拿 IdentityWriter（tx 由其 coordinator 逻辑解析）」，**依赖接线本 Plan 做**（不宣称其 mixed 语义 verified，那是 Plan 1c），不留编译不过的坏路径、不 `new SingleDbResolver(this.tx)` 回退。
+**Interfaces（真 tenant-bound seam——Codex 第 2 轮 #1：tenantId+tx 同一构造绑定，非两独立输入）：**
+```typescript
+class IdentityWriter {
+  constructor(private readonly tenantId: string, private readonly tx: SyncWriteUnitOfWork) {}
+  getByUser(userId: string) { return this.tx.queryOne(identQueryByTenantAndUser(this.tenantId, userId)); }
+  // 方法**不再接 tenantId**（消双源不一致）；tenantId 恒来自构造时绑定
+}
+```
+- 长期 `IdentityService` ctor 收 `resolver`，`private writerFor(tenantId) { return new IdentityWriter(tenantId, this.resolver.dbForTenant(tenantId)); }`；方法 `getByUser(tenantId, userId) = this.writerFor(tenantId).getByUser(userId)`。**writer 不跨请求缓存**（避免无界 tenant cache）。
+- **Plan 1c 的 Auth/SCIM/SSO 定位 tenant 后用 `new IdentityWriter(resolvedTenantId, resolvedTx)`**（同一 tenantId 同时建 writer）——本 Plan 把它们的 `new IdentityService(tx)` 改为经 writer seam；**依赖接线本 Plan 做**（不留编译坏路径、不 `new SingleDbResolver(this.tx)` 回退、不暴露不带 tenantId 的 `writer(tx)` 工厂）。ApiKey tenant-bound seam 同理（`ApiKeyWriter(tenantId, tx)`）。
+- **每个 `new IdentityWriter(...)` 是 Plan 0 inventory 里独立的 resolved-tx sink edge**，逐调用点审计（非函数整体升级）。
 
 **操作矩阵（read/write/update/delete + query 文件——Codex #4，不「同构」带过）：**
 | 操作 | 方法 | query helper（现→改） | 表/predicate |
@@ -86,16 +93,19 @@ test('IdentityService per-tenant：A 的 identity 落 A 的 shard，B 的 shard 
 
 - [ ] **Step 4: 运行确认通过 + typecheck**（2-shard 行为绿；`npm run typecheck` 捕获所有漏改调用点——方法加 tenantId 参是编译期破坏，逐个补）
 
-- [ ] **Step 5: 变异自证**：把 SQL 的 `AND tenant_id=?` 去掉（只选对 shard 不加 predicate）→ 构造「A、B 同 userId 但不同 shard，且测试用单库 fake（s0==s1）」场景应能抓（或断言 predicate 在 SQL）。或把 dbForTenant 换成恒 home → 串 shard 测红。还原。
+- [ ] **Step 5: 两独立变异自证（Codex 第 2 轮 #4——非静态字符串断言）**：
+  - **mutation ① 换 home DB**：租户 B 映射 s1、home=s0；把 `dbForTenant(tenantId)` 换成恒 home（s0）→ 断言「B 的 identity 写入 s1、s0 无」的 2-shard 测**红**（证选对 shard）。**须选真映射到非 home 的租户**（A 本在 home 时换 home 不红）。
+  - **mutation ② 删 tenant predicate**：**共享物理 db**，只种租户 B 的业务键 X（如 identity userId=X 属 tenantId=tB），用 **tenantId=tA + X** 查/改/删 → 有 predicate 时无结果（正确），删 predicate 后错误命中 B 的行 → 测**红**（证 predicate 防同库跨租户）。**不用「A/B 同主键 insert」**（有唯一约束会先撞）。
+  - **不写「断言 predicate 在 SQL」静态字符串**（Codex：静态断言不替代行为测）。还原后复绿。
 
 - [ ] **Step 6: Commit** — `feat(shard): IdentityService per-tenant rewire（resolver+方法 tenantId+SQL tenant predicate 双重约束）`（Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>）
 
 ## Task 2-8: 同构 rewire（按依赖分组，非机械单 service——Codex #「Task 拆分」）
 
-每组照 Task 1 范式（ctor 收 resolver + 方法加 tenantId + query 层 tenant predicate + 全构造点 + route 传 tenantId + 每操作矩阵 + 2-shard 行为测 + 两 mutation 自证 + commit）：
+每组照 Task 1 范式（ctor 收 resolver + writer seam + query 层 tenant predicate + 全构造点 + route 传 tenantId + 2-shard 行为测 + 两 mutation 自证 + commit）。**每组 task 实现前须先产出自己的操作矩阵**（read/write/update/delete × 现 helper→新 helper × tenant 约束 × executor 文件 × 变异用例），非套 Identity 的（各 service 表/predicate/JOIN 不同）。下列把**不能留给实现者二选一的决策**逐组钉死：
 
-- **Task 2 Avatar 组**（AvatarService + DeviceAvatarService + AvatarAutorunFacade + Identity ownership query）：avatars/device_avatars **无 tenant_id 列**（只 identity_id，v027）→ 用 `JOIN identities WHERE identities.tenant_id=?` 或写前同事务验 identity 属 tenant。构造点含 `avatars.ts`/`app.ts:queueTx AvatarService`（后者是 queue/worker shard 决策，标 Plan 3 不误 verified）。
-- **Task 3 Mobile 组**（MobileDeviceService + MobileDeviceFacade + build-dispatcher DeviceLookup）：device 表有 tenant_id。MobileDeviceFacade 已收 JwtPayload（有 tenantId）一次调用解析一次 tx 内部 helper 共用。**build-dispatcher（Codex #「内部构造点」）：`DeviceLookup`/token-invalidated 回调契约改 `(tenantId, deviceId)`——调用链全程带 tenantId（推荐，本 Plan 做）**。
+- **Task 2 Avatar 组**（AvatarService + DeviceAvatarService + AvatarAutorunFacade）：avatars/device_avatars **无 tenant_id 列**（只 identity_id，v027）。**钉死（非「JOIN 或验证」二选一）**：read = tenant-qualified `JOIN identities WHERE identities.tenant_id=?`；create = **同一 tx 内先验 identity 属 tenant（`EXISTS identities WHERE id=? AND tenant_id=?`）再 INSERT**；update/delete = `WHERE identity_id IN (SELECT id FROM identities WHERE tenant_id=?)` 或 EXISTS 父归属；DeviceAvatar = device 端 + avatar 端**两端**都验 tenant 归属。构造点含 `avatars.ts`/`app.ts:queueTx AvatarService`（queue/worker shard 决策 → 标 Plan 3 不误 verified）。
+- **Task 3 Mobile 组**（MobileDeviceService + MobileDeviceFacade + **PushDispatcher 全传播链**）：device 表有 tenant_id。**PushDispatcher 全链改 `(tenantId, deviceId)`（Codex 第 2 轮 #3——非只 lookup）**：改 `src/agent/push/dispatcher.ts`（`send()` 现丢弃 `_tenantId` → 用它；`sendBatch()`）+ `src/types/push.ts`（`DeviceLookup`/`TokenInvalidationCallback` 类型加 tenantId）+ `src/agent/push/build-dispatcher.ts`（构造接 resolver）+ provider 测试夹具。**invalidation 回调也带原 tenantId**（`fireAndForgetInvalidation(tenantId, deviceId, reason)`），非只 lookup。MobileDeviceFacade 已收 JwtPayload 一次调用解析一次 tx 内部 helper 共用。
 - **Task 4 OrganizationService**：方法已普遍带 tenantId → 改 resolver dbForTenant 即可（改动最小）。
 - **Task 5 AdminControlPlaneService**：名字像平台但查询全按 tenantId（租户管理面）→ per-tenant。
 - **Task 6 KnowledgeSourceService**：public 方法已有 tenantId → resolver 化。
@@ -105,6 +115,8 @@ test('IdentityService per-tenant：A 的 identity 落 A 的 shard，B 的 shard 
 ## Task 9: 删 `AppServices.db` + 未用 carrier + RBAC preHandler 改 resolver
 
 **Files:** Modify `src/server/app-services.ts`（删 `db` 字段 + 死 carrier）+ `src/server/routes/organizations.ts`（RBAC preHandler 用 resolver）+ 各处引用 `services.db` 的点。
+
+> **mixed 过渡状态诚实（Codex 第 2 轮 #3）**：Plan 1b 后 Auth/SCIM/SSO 仍在单库 fail-closed 下经 writer seam 用现有 tx（架构可接受）；但 inventory **逐 edge 更新非函数整体升级**——`buildAppServices` 里 mixed 成员（Auth/UserProfile.updateEmail/SCIM.createUser/API-key-hash）的 edge 保持 `planned`，只 tenant-scoped 成员 edge 升 `wired`/`verified`。`ScimProvisioningService` 的 evidence recorder（`recordEvidence(db,...)`）db 来源明确标注（coordinator/planned）。**绝不因删了 `AppServices.db` 字段/部分成员 resolver 化就把整个 buildAppServices carrier 标 wired**。
 
 - [ ] **Step 1: 写失败测试**（`AppServices` 类型无 `db` 字段——引用 `services.db` 编译红；RBAC preHandler per-tenant）
 - [ ] **Step 2-4: 删 db 字段 + 删未用 carrier（route 各自构造的死成员，`rg services.<member>` 零引用的）+ RBAC preHandler 从 `services.db` 改 `resolver.dbForTenant(request.user.tenantId)`；typecheck 捕获所有 `services.db` 引用逐个改**
