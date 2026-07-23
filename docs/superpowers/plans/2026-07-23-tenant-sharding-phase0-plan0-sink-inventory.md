@@ -1,9 +1,13 @@
 # 分片 Phase 0 · Plan 0：DB-capability edge 扫描器 + sink 盘点 + 放开门 Implementation Plan
 
-> 状态：第 6 轮修订（Codex Plan 复审 52→78→87→84→88 退，采纳五轮全部——A1 用 ts.isFunctionLike(含 FunctionExpression/setter) / A1·A2·B1 specificity precedence 去重 / unknown-boundary 三态(无能力→跳过) / 全口径统一 A1-A4+B1-B8）。
+> 状态：第 7 轮修订（**实现 Task 1-3 后暴露粒度设计问题 → Codex 裁决**：7701 syntax edge 不可作人工 inventory；改为「**登记 semantic sink（A1-A4 接收点 + 无法证明落到 A 的 terminal-B-escape）**，全量 edge 留机器证据图，门断言每条传播 edge=linked-to-sink/ephemeral/terminal-escape 之一且 unknown=0」；修扫描器 findDbCapabilityPaths 过度触发（只递归数据属性，跳方法/原型面 → 消 1269 unknown + 1356 return 噪音））。前 6 轮：Codex 52→78→87→84→88→95。
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development。步骤用 checkbox（`- [ ]`）追踪。
 
-**Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 **edge 级** DB-capability 扫描器 + 升级 `db-access-inventory.ts` 到 sink 级，使「每条持有 DB 能力的 source→sink edge 都有明确处置 + 接线状态」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical type 解析失败/遇未知语法边界/Program 不健康 → 退出非零），也绝不「漏扫却报绿」。**
+**Goal:** 建一个类型驱动（TS `Program+TypeChecker`）的 DB-capability 扫描器（保留全量 edge 作机器证据图）+ 升级 `db-access-inventory.ts` 到 **semantic sink 级**，使「每个 semantic sink 有明确处置 + 每条传播 edge 可归因（linked-to-sink / ephemeral / terminal-escape）+ 无 unknown」可被 CI 自动验证——后续 Plan 1/2/3 放开 fail-closed 的完整性前提。**核心不变量：扫描器宁可 fail-closed（canonical 解析失败/Program 不健康/递归预算超限/无法归因的 edge → 退出非零），也绝不「漏扫却报绿」。**
+
+**粒度（Codex 第 7 轮裁决——7701 syntax edge 不可手工登记）**：人工 inventory 登记 **semantic sink**，全量 edge 留机器证据图：
+- **semantic sink（人工登记，精确到成员/capability path）**：① **A 接收/存储点**（A1-A4：ctor/fn/method 参数、parameter property、class field、deps/property signature）；② **terminal-B-escape**（无法机械证明落到某 A 点、且能力可能跨调用/作用域/生命周期存活的 B edge：module export / timer·closure·worker capture / 动态 assignment / container write map.set / 逃逸到未知调用方的 return / 传给外部·any·动态边界的 call）。
+- **B 传播 edge（不登记，机器归因三态）**：`linked-to-sink`（能机械定位终点=已登记 A 点，如 `new Service(db)`→`Service.ctor(db)`）/ `ephemeral`（机械证明能力不逃逸：仅同步传给明确 per-request 函数、不返回不存字段不注册 callback 不写容器）/ `terminal-escape`（升级为 semantic sink 登记）/ `unknown`（解析失败/预算超限/callee 不明且未升级 escape → **门红**）。
 
 **Architecture:** 三层 API 分离（Codex 退回 #2）：
 - `enumerateDbCapabilityEdges(program, checker, { includeTests })` — **底层内核**，不隐式过滤路径；对每个 declaration/参数/属性/调用实参用 `checker.getTypeAtLocation`（不要求显式 `node.type`）判是否 DB 能力（canonical `IDatabase`/`SyncWriteUnitOfWork` 或结构兼容/别名/union 分量/generic 约束），产 **edge 级**结果（不按 owner 合并）。
@@ -313,7 +317,34 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 ---
 
-## Task 3: 升级 inventory 到 sink 级（disposition 必填 + wiringStatus + 登记全部已知 sink）
+## Task 2.5: 修扫描器过度触发 + edge 归因分类（Codex 第 7 轮裁决，Task 1-3 已实现后新增）
+
+> Task 1/2 产 7701 edge（含 1269 unknown-boundary 误报 + 1356 return + 1352 route-param 噪音）。根因：`findDbCapabilityPaths` 递归所有属性（含方法/原型面/库类型）→ 对 AppConfig/app 等大类型预算爆 + 把 DTO/service 方法面误判含 UoW。本 task 修过度触发 + 加 edge 归因，使门可维护。
+
+**Files:**
+- Modify: `scripts/db-sink-scanner.mjs`（`findDbCapabilityPaths` 只递归数据属性 + edge `classifyPropagation`）
+- Modify: `scripts/db-sink-scanner.d.mts`
+- Test: `src/test/unit/db-sink-scanner.test.ts`
+
+**关键（Codex 第 7 轮）**：
+- **findDbCapabilityPaths 收窄（消 unknown/return 噪音，但不牺牲完整性）**：只递归**数据属性**——跳方法签名/原型方法/函数对象表面；primitive/标准库容器原型不展开；array/tuple 直接取 element type 不遍历 map/filter 方法；类型图 memoize（同类型不重复展开）+ cycle guard（兄弟重复路径仍展开=active-stack）。记预算超限时 root type + 最深 path + 声明来源。**收窄后 unknown 应降到 ~0；仍超预算→门红（不改成「未发现 DB」，不按 AppConfig/Options 名字白名单——按「可证明的声明类别/来源」剪枝）**。
+- **route-param kind 收窄**：当前把所有 FunctionDeclaration 的 DB 参叫 route-param（过宽）→ 改为一般 `fn-param`；仅经 route registration 识别的函数标 `route-param`。
+- **edge 归因 `classifyPropagation(edge, checker) → 'linked-to-sink'|'ephemeral'|'terminal-escape'|'unknown'`**（Codex 第 7 轮二）：
+  - `linked-to-sink`：能机械定位终点=已扫描 A 点（`new Service(db)`→`Service.ctor(db)`；`h.db=db`→`Holder.db`；`{db}`传已解析参→对应 deps A 点）——记 `edge.sinkId=<终点 semantic sink id>`。
+  - `ephemeral`：机械证明不逃逸（仅同步传给明确 per-request 函数、不 return/不存字段/不注册 callback/不写容器）。
+  - `terminal-escape`：无法映射 A 点且能力可能跨调用/作用域/生命周期存活（module export / timer·closure·worker capture / 动态 assignment / container write / 逃逸未知调用方的 return / 传外部·any·动态边界 call）——必须升级为 semantic sink 登记。
+  - `unknown`：解析失败/预算超限/callee 不明且未升级 escape → 门红。
+
+- [ ] **Step 1: 写失败测试**：① unknown-boundary 收窄后 production `unknown` 数 === 0（`scanProductionDbCapabilityEdges().filter(e=>e.disposition==='unknown').length===0`）；② DTO/service 方法面 fixture（`return rows`/返回含方法的对象）不产 edge；③ classifyPropagation：`new Service(db)` fixture → linked-to-sink 且 sinkId 指向 Service ctor；`export default db` → terminal-escape；纯同步 use → ephemeral。
+- [ ] **Step 2: 运行确认失败**（当前 unknown=1269≠0；classifyPropagation 未定义）
+- [ ] **Step 3: 修 findDbCapabilityPaths（数据属性 only + memoize）+ 加 classifyPropagation + route-param 收窄**
+- [ ] **Step 4: 运行确认通过**（unknown=0 + 归因三态 + 方法面不误报）
+- [ ] **变异自证**：临时恢复递归方法面 → unknown 数暴涨测试红；临时把 terminal-escape（export default db）误判 ephemeral → escape 测试红。还原复绿。
+- [ ] **Step 5: Commit** — `fix(shard): 扫描器收窄数据属性递归(消 unknown 误报)+edge 归因分类(linked/ephemeral/escape/unknown)`
+
+---
+
+## Task 3: 升级 inventory 到 semantic sink 级（Codex 第 7 轮粒度——非全 edge）
 
 **Files:**
 - Modify: `src/storage/db-access-inventory.ts`
@@ -334,25 +365,25 @@ test('单-ID-删除 mutation：从完整 inventory 删一个指定 id → unregi
 
 ---
 
-## Task 4: production scope 主门 + 全 edge 已登记基线 + 接 check:db-access
+## Task 4: production 主门（semantic sink 归因门）+ 接 check:db-access
 
 **Files:**
-- Modify: `scripts/db-sink-scanner.mjs`（`scanProductionDbCapabilityEdges` + `collectUnregisteredEdges` 纯比较 + 读 inventory id 用 readFileSync 正则）
-- Modify: `scripts/check-db-access-ratchet.mjs`（调 production 门）
-- Test: `src/test/unit/db-sink-scanner.test.ts`（production 基线绿 + Program 健康门测）
+- Modify: `scripts/db-sink-scanner.mjs`（`scanProductionDbCapabilityEdges` + `evaluateGate(edges, inventoryIds)`）
+- Modify: `scripts/check-db-access-ratchet.mjs`（调 evaluateGate）
+- Test: `src/test/unit/db-sink-scanner.test.ts`
 
-**Interfaces:**
-- `scanProductionDbCapabilityEdges() → Edge[]`（`buildProgram` + `enumerate({includeTests:false})`）；`collectUnregisteredEdges(edges, inventoryIds: Set)`（纯比较）；`readInventoryIds()`（`readFileSync('src/storage/db-access-inventory.ts')` 正则抽 `id: '...'`——`.mjs` 不 import `.ts`）。
+**门契约（Codex 第 7 轮四条——非「全 edge 已登记」）**：`evaluateGate` pass iff 四者全成立：
+1. **semantic sink 完整**：所有 A1-A4 sink declaration + 所有 terminal-B-escape sink 都有精确 inventory id + disposition + wiringStatus（`unregisteredSemanticSinks === []`）。
+2. **传播可归因**：每条非 terminal B edge ∈ {linked-to-sink（终点是已登记 sink）, ephemeral（机械证明）}（`unlinkedPropagationEdges === []`）。
+3. **无 unknown**：`unknownEdges === []`（解析失败/预算超限/callee 不明未升级 escape 任一非空 → 红）。
+4. **terminal-escape 有处置**：`terminalEscapesWithoutDisposition === []`。
+形式：`gate passes iff unknownEdges===[] && unregisteredSemanticSinks===[] && unlinkedPropagationEdges===[] && terminalEscapesWithoutDisposition===[]`。**保留原 file 级 DB ratchet**（覆盖直接 query/execute/transaction 使用面作补充网）。
 
-- [ ] **Step 1: 写「production 无未登记 edge」基线测试**（`collectUnregisteredEdges(scanProductionDbCapabilityEdges(), readInventoryIds())` === []；含具体未登记 id 的诊断输出）+ Program 健康门测（sentinel 缺 → 抛）
-
-- [ ] **Step 2: 运行——预期先红，暴露真实未登记 edge**：把它们逐条登进 inventory（Task 3 续补，disposition+wiringStatus:planned）→ 至绿。**红时补 inventory，绝不改扫描器放宽/加白名单。** 若某形态 edge 数异常少（如 factory-indirect 生产里一条没有）→ 警惕扫描器漏扫该形态，回 Task 2 补，非跳过。
-
-- [ ] **Step 3: 改 `check-db-access-ratchet.mjs` 调 production 门**（`scanProductionDbCapabilityEdges` + `collectUnregisteredEdges(edges, readInventoryIds())`；非空 → 列 id+kind 退出 1；保留原 file 级作补充网）
-
+- [ ] **Step 1: 写门测试**：`evaluateGate(scanProductionDbCapabilityEdges(), readInventoryIds())` 返回四类空集诊断结构；各类非空时含具体 id/file/kind 诊断。Program 健康门测（sentinel 缺→抛）。
+- [ ] **Step 2: 运行——预期先红，暴露真实 semantic sink + terminal-escape**：把 A 点 + terminal-escape 登进 inventory（Task 3 续补，wiringStatus:planned）；B 传播 edge 确认 linked-to-sink/ephemeral（linked 的 sinkId 指向已登记 A 点）→ 至绿。**红时补 inventory / 修 classifyPropagation 归因（若某 B edge 应 linked 却判 unknown 是归因 bug），绝不加白名单绕过。** unknown 若因扫描器漏归因→回 Task 2.5 修，非登记成 known-limitation。
+- [ ] **Step 3: 改 `check-db-access-ratchet.mjs` 调 evaluateGate**（四类任一非空 → 列诊断退出 1；保留 file 级补充网）
 - [ ] **Step 4: `npm run check:db-access` + 全 scanner/inventory 测试绿**
-
-- [ ] **Step 5: Commit** — `feat(shard): check:db-access 升级 production edge 门（未登记 DB-capability edge→红）`
+- [ ] **Step 5: Commit** — `feat(shard): check:db-access 升级 semantic sink 归因门（sink 未登记/edge 未归因/unknown 非空→红）`
 
 ---
 
