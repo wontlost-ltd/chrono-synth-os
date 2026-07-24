@@ -17,6 +17,7 @@ import { CollaborationService } from '../identity/collaboration-service.js';
 import { MobileDeviceFacade } from '../identity/mobile-device-facade.js';
 import { MobileDeviceService } from '../identity/mobile-device-service.js';
 import { UserProfileService } from '../identity/user-profile-service.js';
+import { UserEmailDirectoryService } from '../identity/user-email-directory-service.js';
 import { OrganizationService } from '../enterprise/organization-service.js';
 import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-profile-service.js';
 import { ScimTenantDirectory } from '../enterprise/scim-tenant-directory.js';
@@ -40,6 +41,8 @@ export interface AppServices {
   /** 推送服务（ADR-0054 ③ nudge push 桥复用同一实例；生产可换 FCM/APNs provider）。 */
   readonly pushService: PushService;
   readonly userProfile: UserProfileService;
+  /** 用户 email 目录（全局 email 唯一性 → updateEmail，mixed-scope，Plan 1b 单库过渡 coordinatorDb，Plan 1c 替换实现）。 */
+  readonly userEmailDirectory: UserEmailDirectoryService;
   readonly organization: OrganizationService;
   readonly tenantProfile: TenantEnterpriseProfileService;
   /** SCIM 租户目录（token→tenant 反查，mixed-scope，Plan 1b 单库过渡 coordinatorDb，Plan 1c 替换实现）。 */
@@ -77,7 +80,12 @@ export function buildAppServices(
     mobileDevice: new MobileDeviceService(resolver),
     mobileDeviceFacade: new MobileDeviceFacade(tx, resolver, pushService),
     pushService,
-    userProfile: new UserProfileService(tx),
+    /* 分片 Plan 1b（Task 7）：UserProfileService 经共享 resolver 按 tenantId 路由（users 表有 tenant_id）；
+     * getProfile/changePassword 均带 tenantId + WHERE tenant_id=? AND id=? 双重约束。 */
+    userProfile: new UserProfileService(resolver),
+    /* 分片 Plan 1b（Task 7）：UserEmailDirectoryService 承载 updateEmail（全局 email 唯一性，mixed-scope）。
+     * 单库过渡经 coordinatorDb（=host db，行为不变）；真跨 shard 目录写一致性 = Plan 1c 替换实现（route 契约不变）。 */
+    userEmailDirectory: new UserEmailDirectoryService(resolver),
     /* 分片 Plan 1b（Task 5）：OrganizationService 经共享 resolver 按 tenantId 路由（org 系列表全有 tenant_id）。 */
     organization: new OrganizationService(resolver),
     /* 分片 Plan 1b（Task 6）：TenantEnterpriseProfileService 经共享 resolver 按 tenantId 路由

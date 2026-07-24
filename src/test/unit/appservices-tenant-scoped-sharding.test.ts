@@ -18,6 +18,8 @@ import { AdminControlPlaneService } from '../../enterprise/admin-control-plane-s
 import { KnowledgeSourceService } from '../../knowledge/knowledge-source-service.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { ScimTenantDirectory } from '../../enterprise/scim-tenant-directory.js';
+import { UserProfileService } from '../../identity/user-profile-service.js';
+import { UserEmailDirectoryService } from '../../identity/user-email-directory-service.js';
 import { loadConfig } from '../../config/schema.js';
 import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../../agent/push/dispatcher.js';
 import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
@@ -542,6 +544,90 @@ test('TenantEnterpriseProfileService tenant predicate：共享物理 db 只种 B
   assert.equal(aProfile.deploymentMode, 'shared_cluster', 'tA 侧无 tB 的 dedicated_db');
   /* B 自己查得到（正向锚点）。 */
   assert.equal(svc.getProfile('tB').deploymentMode, 'dedicated_db', 'tB 自己查得到已落库的 profile');
+  db.close();
+});
+
+/* ── UserProfile 组（Task 7）：users 表有 tenant_id 列（v013，NOT NULL default 'default'）→ getProfile/
+ *    changePassword 为 tenant-scoped，ctor (tx)→(resolver) + 每方法首参 tenantId + SQL WHERE tenant_id=? AND id=?。
+ *    updateEmail（全局 email 唯一性，无 tenantId 入参=mixed-scope）已拆到 UserEmailDirectoryService（单库过渡 coordinatorDb）。 ── */
+
+/** 在指定 db 种一条 users 行（含密码哈希，供 changePassword 验证用）。 */
+function seedUserWithPassword(db: IDatabase, userId: string, tenantId: string, passwordHash: string): void {
+  const now = Date.now();
+  db.prepare<void>(
+    `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+     VALUES (?, ?, ?, 'member', ?, ?, ?)`,
+  ).run(userId, `${userId}@example.com`, passwordHash, tenantId, now, now);
+}
+
+test('UserProfileService per-tenant：A 的 user 落 s0，用 tB（→s1）getProfile 查不到（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new UserProfileService(resolver);
+  /* A 的 user 直接种在自己 shard s0；B 的 user 种在自己 shard s1（AuthService 注册在别处，本 Task 只测 getProfile 读路径）。 */
+  seedUserWithPassword(s0, 'userA', 'tA', 'hashA');
+  seedUserWithPassword(s1, 'userB', 'tB', 'hashB');
+  /* A 在自己 shard（s0）用 tA getProfile 查得到。 */
+  const profA = svc.getProfile('tA', 'userA');
+  assert.equal(profA.userId, 'userA', 'A 在自己 shard 查得到自己的 profile');
+  assert.equal(profA.tenantId, 'tA', 'profile tenant 匹配');
+  /* 用 tB（→s1）查 A 的 userId：s1 根本没这行 → 抛 AuthenticationError（不串 shard）。 */
+  assert.throws(
+    () => svc.getProfile('tB', 'userA'),
+    /用户不存在|AUTH_INVALID_TOKEN/i,
+    '用 tB（→s1）查 userA：查不到（不串 shard）',
+  );
+  /* 对称：B 在 s1 查得到、用 tA（→s0）查 B 的 userId 查不到。 */
+  assert.equal(svc.getProfile('tB', 'userB').userId, 'userB', 'B 在自己 shard（s1）查得到');
+  assert.throws(() => svc.getProfile('tA', 'userB'), /用户不存在|AUTH_INVALID_TOKEN/i, '用 tA（→s0）查 userB：查不到');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('UserProfileService tenant predicate：共享物理 db 只种 B 的 user，用 tA getProfile/changePassword 均不命中（防同库跨租户）', async () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的 user（密码 hash 用真 argon2 便于 changePassword）。 */
+  const { hash } = await import('@node-rs/argon2');
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new UserProfileService(resolver);
+  const bHash = await hash('bPassword123');
+  seedUserWithPassword(db, 'userSharedB', 'tB', bHash);
+  /* getProfile：用 tA 查 B 的 userId → tenant predicate（WHERE tenant_id='tA' AND id=?）→ 抛 AuthenticationError（不命中 B 的行）。 */
+  assert.throws(
+    () => svc.getProfile('tA', 'userSharedB'),
+    /用户不存在|AUTH_INVALID_TOKEN/i,
+    'tA getProfile tB 的 userSharedB → 用户不存在（tenant predicate 隔离）',
+  );
+  assert.equal(svc.getProfile('tB', 'userSharedB').userId, 'userSharedB', 'tB 自己查得到');
+  /* changePassword：用 tA 改 B 的密码 → tenant predicate 令 fullById 查不到 → 抛 AuthenticationError（不误改 B 的行）。 */
+  await assert.rejects(
+    () => svc.changePassword('tA', 'userSharedB', 'bPassword123', 'newPassword456'),
+    /用户不存在|AUTH_INVALID_TOKEN/i,
+    'tA changePassword tB 的 user → 用户不存在（tenant predicate 隔离）',
+  );
+  /* B 自己改密码成功（正向锚点：验证 changePassword 在同租户下正常工作）。 */
+  const result = await svc.changePassword('tB', 'userSharedB', 'bPassword123', 'newPassword456');
+  assert.deepEqual(result, { success: true }, 'tB 改自己的密码成功');
+  db.close();
+});
+
+test('UserEmailDirectoryService 单库过渡：updateEmail 全局唯一性检查 + 落库往返（coordinatorDb，email 全局唯一）', () => {
+  /* 单库过渡：UserEmailDirectoryService 用 resolver.coordinatorDb()（单库=host db，行为不变）。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const dir = new UserEmailDirectoryService(resolver);
+  seedUserWithPassword(db, 'userE', 'tE', 'hashE');
+  seedUserWithPassword(db, 'userF', 'tF', 'hashF');
+  /* 合法：把 userE 的 email 改成未被占用的新地址 → 返回更新后的 profile。 */
+  const updated = dir.updateEmail('userE', 'brand-new@example.com');
+  assert.equal(updated.email, 'brand-new@example.com', 'updateEmail 落库后 email 更新');
+  assert.equal(updated.userId, 'userE', '返回的是 userE 的 profile');
+  /* 全局唯一性：把 userE 的 email 改成 userF 已占用的 email → 抛 ValidationError（email 全局唯一，无 tenant scope）。 */
+  assert.throws(
+    () => dir.updateEmail('userE', 'userF@example.com'),
+    /该邮箱已被使用|AUTH_EMAIL_EXISTS/i,
+    'updateEmail 撞 userF 的 email → 该邮箱已被使用（全局唯一性，跨租户也拦）',
+  );
   db.close();
 });
 
