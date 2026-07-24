@@ -104,14 +104,16 @@ describe('metrics routes', () => {
 
   it('/metrics 在 Postgres bigint 统计值下仍返回 200 JSON', async () => {
     app = Fastify({ logger: false });
+    /* 单库：稳定同一 db 实例 + SingleDbResolver（scatter-gather 下 allShardDbs()=[db]，等价现状）。 */
+    const db = createBigIntMetricsDb();
     const fakeOs = {
-      getDatabase: () => createBigIntMetricsDb(),
+      getDatabase: () => db,
       accelerated: { getAllPersonas: () => [] },
       meta: { conflicts: { getUnresolved: () => [] } },
       snapshots: { list: () => [] },
     };
 
-    registerMetricsRoutes(app, fakeOs as never);
+    registerMetricsRoutes(app, fakeOs as never, new SingleDbResolver(db));
 
     const res = await app.inject({ method: 'GET', url: '/metrics' });
     assert.equal(res.statusCode, 200);
@@ -126,6 +128,9 @@ describe('metrics routes', () => {
     assert.equal(body.observability.wallet.avg_settlement_latency_ms, 320);
     assert.equal(body.observability.last_updated_at, '2026-03-14T12:23:45.000Z');
     assert.equal(body.queue.pending, 1);
+    /* 单库：无 shard 失败 → 不降级。 */
+    assert.equal(body.sharding.degraded, false);
+    assert.equal(body.sharding.shard_failures, 0);
   });
 
   it('/metrics + /metrics/prometheus 暴露平台人群多样性（①度量 surface）', async () => {
@@ -144,7 +149,7 @@ describe('metrics routes', () => {
       meta: { conflicts: { getUnresolved: () => [] } },
       snapshots: { list: () => [] },
     };
-    registerMetricsRoutes(app, fakeOs as never);
+    registerMetricsRoutes(app, fakeOs as never, new SingleDbResolver(db));
 
     /* JSON：business.population_diversity 出现且 initialized_population=3、score>0。 */
     const json = JSON.parse((await app.inject({ method: 'GET', url: '/metrics' })).body);
