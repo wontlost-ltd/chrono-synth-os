@@ -122,6 +122,10 @@ const TENANT_TABLES = [
   /* GitHub 反馈起草段地基（Plan 3 Task 1）：github_reply_drafts 是回复草稿账本（起草停 drafted 待审批）；
      github_webhook_events 是 webhook 幂等账本（复合主键 tenant_id+delivery_id）。两表均含 tenant_id，须随租户导出/擦除 */
   'github_reply_drafts', 'github_webhook_events',
+  /* 租户分片 Phase 0 Plan 1c Task 1：tenant_identity_directory 是 coordinator 身份目录表（email/token/key
+     查找键→租户，含 pending_password_hash + 用户身份查找值）。行按 tenant_id 归属，须随租户导出/擦除（A 类）；
+     其全局查找语义只影响读路径（TenantDatabase），不影响此处按 tenant_id 的导出/擦除 */
+  'tenant_identity_directory',
 ] as const;
 
 /** 需要子查询关联的表 */
