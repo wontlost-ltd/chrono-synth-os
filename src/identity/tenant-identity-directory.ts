@@ -64,6 +64,14 @@ export class TenantIdentityDirectory {
    *
    * operationId 由调用方传入。首次即刚插的行、重试即上次持久化的行——两种情况都从读回行取 canonical
    * 身份 + pendingPasswordHash，故重试不产生第二个租户、复用同一密码 hash。
+   *
+   * `requireHash` **仅在 reservedByUs===true 时**求值：只有确属本 reservation（本次刚插 / 同 opId 重试）
+   * 才需复用 pending_password_hash 写 shard。reservedByUs===false（他人先占，含 SSO/SCIM 遗留的
+   * passwordless PENDING —— pending_password_hash=NULL）直接返回读回行的 canonical 身份 +
+   * `pendingPasswordHash: row.pending_password_hash`（passwordless 时为 null），**绝不因该行 hash 缺失
+   * 而抛 500 泄露内部消息**——调用方（auth-service register）见 reservedByUs:false 即按读回行 status
+   * 转 AUTH_EMAIL_EXISTS(ACTIVE) / AUTH_REGISTRATION_IN_PROGRESS(PENDING)，提前 return，绝不解引用
+   * pendingPasswordHash。
    */
   reserveTenant(input: {
     tenantId: string;
@@ -71,7 +79,7 @@ export class TenantIdentityDirectory {
     operationId: string;
     pendingPasswordHash: string;
     email: string;
-  }): { reservedByUs: boolean; canonicalTenantId: string; canonicalUserId: string; pendingPasswordHash: string } {
+  }): { reservedByUs: boolean; canonicalTenantId: string; canonicalUserId: string; pendingPasswordHash: string | null } {
     const lookupValue = canonicalizeEmail(input.email);
     const db = this.resolver.coordinatorDb();
     db.execute(dirCmdReserve({
@@ -80,11 +88,14 @@ export class TenantIdentityDirectory {
       lookupKind: 'email', lookupValue, status: 'PENDING', now: Date.now(),
     }));
     const row = this.readLookup(db.queryOne(dirQueryByLookup('email', lookupValue)), lookupValue);
+    const reservedByUs = row.operation_id === input.operationId;
     return {
-      reservedByUs: row.operation_id === input.operationId,
+      reservedByUs,
       canonicalTenantId: row.tenant_id,
       canonicalUserId: this.requireUserId(row, lookupValue),
-      pendingPasswordHash: this.requireHash(row, lookupValue),
+      /* 仅本 reservation 才要求 pending_password_hash 非空（复用作 shard user 的 password_hash）；
+       * 他人先占（含 passwordless 遗留 PENDING）原样返回读回行的 hash（可能为 null），不抛 500。 */
+      pendingPasswordHash: reservedByUs ? this.requireHash(row, lookupValue) : row.pending_password_hash,
     };
   }
 

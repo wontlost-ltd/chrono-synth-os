@@ -154,12 +154,20 @@ export class AuthService {
         pendingPasswordHash: firstHash, email: canonEmail,
       });
 
-    /* opId 不属本请求（他人 PENDING 占 / 无匹配 key）→ 不签 token。 */
+    /* opId 不属本请求（他人 PENDING 占 / 无匹配 key，含 SSO/SCIM 遗留的 passwordless PENDING）→ 不签
+     * token。此分支**提前 return**，绝不解引用 pendingPasswordHash（reserveTenant 在 reservedByUs:false
+     * 时该值可能为 null，如 passwordless 遗留行）。 */
     if (!reservedByUs) {
       const cur = this.directory.resolveByEmail(canonEmail);
       throw cur?.status === 'ACTIVE'
         ? new StateError('该邮箱已注册', ErrorCode.AUTH_EMAIL_EXISTS)
         : new StateError('该邮箱注册进行中', ErrorCode.AUTH_REGISTRATION_IN_PROGRESS);
+    }
+
+    /* reservedByUs===true 时 reserveTenant 已对读回行做 requireHash（非空断言），此处 null 不可达；
+     * 保留 fail-closed 守卫仅为类型收窄 + 数据完整性兜底（绝不用 null hash 走 verify）。 */
+    if (pendingPasswordHash === null) {
+      throw new StateError('该邮箱注册进行中', ErrorCode.AUTH_REGISTRATION_IN_PROGRESS);
     }
 
     /* ③续做密码所有权证明（第 6 轮）：读回行是既存 reservation（重试），须证明持有原密码。
