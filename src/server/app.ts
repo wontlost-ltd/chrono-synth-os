@@ -20,6 +20,7 @@ import { loadConfig, intelligenceProvidesEmbeddings } from '../config/schema.js'
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
+import { makeShardKeyer } from '../storage/shard-key.js';
 import { buildResolver, assertShardingActivationAllowed } from '../storage/build-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerA11yHeaders } from './plugins/a11y-headers.js';
@@ -751,9 +752,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     logger: deps.os.getLogger(),
   });
 
-  /* F4：tool_invocations retention worker */
+  /* F4：tool_invocations retention worker——分片 Plan 2 · Task 4：ctor 收 resolver（跨 shard fan-out，
+   * 内部逐 shard new ToolPermissionService(shardDb)），只跑一库会漏清非-home shard 的 tool_invocations。 */
   const toolInvocationsRetentionWorker = new ToolInvocationsRetentionWorker(
-    toolPermissionService,
+    captureResolver('tool-invocations-retention'),
     deps.os.getLogger(),
     {
       retentionMs: config.agent.toolInvocationsRetentionDays * 24 * 60 * 60 * 1000,
@@ -943,45 +945,45 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   registerDocsRoutes(app);
 
-  /* 定期清理过期刷新令牌（每 24 小时） */
+  /* 定期清理过期刷新令牌（每 24 小时）——分片 Plan 2 · Task 4：经 resolver 跨 shard fan-out
+   * （token 落用户所在 shard，coordinatorDb-only 会漏清非-coordinator shard）；坏 shard 不静默。 */
   if (config.jwt.enabled) {
     const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
     const cleanupTimer = setInterval(() => {
-      try { cleanupExpiredTokens(db); } catch { /* 清理失败不影响服务 */ }
+      try {
+        const { shardErrors } = cleanupExpiredTokens(resolver, deps.os.getLogger());
+        if (shardErrors.length > 0) {
+          deps.os.getLogger().error('AuthTokenCleanup', '过期令牌清理有 shard 失败（下周期重试）', { shardErrors });
+        }
+      } catch { /* 清理失败不影响服务 */ }
     }, CLEANUP_INTERVAL);
     cleanupTimer.unref();
     app.addHook('onClose', () => { clearInterval(cleanupTimer); });
   }
 
-  /* 定期清理过期数据（每 6 小时：usage_records 90 天、billing_outbox 30 天、webhook_events 7 天） */
+  /* 定期清理过期数据（每 6 小时：usage_records 90 天、billing_outbox 30 天、webhook_events 7 天）。
+   * 分片 Plan 2 · Task 4：抽为模块级可测 seam runDataRetentionOnce（跨租户表 allShardDbs fan-out /
+   * webhook_events 平台表 coordinatorDb）；timer 只调它 + 记 shardErrors 告警。 */
   const DATA_RETENTION_INTERVAL = 6 * 60 * 60 * 1000;
-  const RETENTION_BATCH_SIZE = 5000;
   const retentionTimer = setInterval(() => {
-    const now = Date.now();
     const log = deps.os.getLogger();
-    const pruneTable = (table: string, pkColumn: string, whereClause: string, ...params: SqlValue[]) => {
-      try {
-        let total = 0;
-        /* 批量删除：先 SELECT 主键再 DELETE，兼容 SQLite 和 PostgreSQL */
-        while (true) {
-          const ids = db.prepare<{ pk: SqlValue }>(
-            `SELECT ${pkColumn} AS pk FROM ${table} WHERE ${whereClause} LIMIT ${RETENTION_BATCH_SIZE}`,
-          ).all(...params);
-          if (ids.length === 0) break;
-          const placeholders = ids.map(() => '?').join(',');
-          db.prepare<void>(
-            `DELETE FROM ${table} WHERE ${pkColumn} IN (${placeholders})`,
-          ).run(...ids.map(r => r.pk));
-          total += ids.length;
-          if (ids.length < RETENTION_BATCH_SIZE) break;
-        }
-        if (total > 0) log.info('Retention', `清理 ${table}: 删除 ${total} 行`);
-      } catch { /* 表可能不存在 */ }
-    };
-    pruneTable('usage_records', 'id', 'recorded_at < ?', now - 90 * 24 * 60 * 60 * 1000);
-    pruneTable('billing_outbox', 'id', 'status = ? AND processed_at < ?', 'sent', now - 30 * 24 * 60 * 60 * 1000);
-    pruneTable('webhook_events', 'event_id', 'processed_at < ?', now - 7 * 24 * 60 * 60 * 1000);
-    pruneTable('idempotency_keys', 'id', 'expires_at < ?', now);
+    const r = runDataRetentionOnce({
+      resolver,
+      now: Date.now(),
+      retentionMs: {
+        usage: 90 * 24 * 60 * 60 * 1000,
+        billing: 30 * 24 * 60 * 60 * 1000,
+        idempotency: 0,
+        webhook: 7 * 24 * 60 * 60 * 1000,
+      },
+    });
+    if (r.usageDeleted > 0) log.info('Retention', `清理 usage_records: 删除 ${r.usageDeleted} 行`);
+    if (r.billingDeleted > 0) log.info('Retention', `清理 billing_outbox: 删除 ${r.billingDeleted} 行`);
+    if (r.idempotencyDeleted > 0) log.info('Retention', `清理 idempotency_keys: 删除 ${r.idempotencyDeleted} 行`);
+    if (r.webhookDeleted > 0) log.info('Retention', `清理 webhook_events: 删除 ${r.webhookDeleted} 行`);
+    if (r.shardErrors.length > 0) {
+      log.error('Retention', `数据 retention 有 shard 清理失败（下周期重试）`, { shardErrors: r.shardErrors });
+    }
   }, DATA_RETENTION_INTERVAL);
   retentionTimer.unref();
   app.addHook('onClose', () => { clearInterval(retentionTimer); });
@@ -1007,4 +1009,97 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   }
 
   return app;
+}
+
+/** runDataRetentionOnce 保留窗口（ms）——各表相对 now 的截止阈值。idempotency_keys 用绝对 expires_at（阈值 0）。 */
+export interface DataRetentionMs {
+  usage: number;
+  billing: number;
+  idempotency: number;
+  webhook: number;
+}
+
+/** runDataRetentionOnce 结果：四表各删除数 + 逐 shard 错误明细。 */
+export interface DataRetentionResult {
+  usageDeleted: number;
+  billingDeleted: number;
+  idempotencyDeleted: number;
+  webhookDeleted: number;
+  shardErrors: Array<{ shardKey: string; error: string }>;
+}
+
+const DATA_RETENTION_BATCH_SIZE = 5000;
+
+/**
+ * 单批范围删除 helper（先 SELECT 主键再 DELETE，兼容 SQLite 与 PostgreSQL）。返回本表删除总行数。
+ * 表不存在等异常由调用方的逐 shard try/catch 承接（不在此吞异常，避免坏 shard 静默）。
+ */
+function pruneTableOn(
+  db: IDatabase,
+  table: string,
+  pkColumn: string,
+  whereClause: string,
+  ...params: SqlValue[]
+): number {
+  let total = 0;
+  while (true) {
+    const ids = db.prepare<{ pk: SqlValue }>(
+      `SELECT ${pkColumn} AS pk FROM ${table} WHERE ${whereClause} LIMIT ${DATA_RETENTION_BATCH_SIZE}`,
+    ).all(...params);
+    if (ids.length === 0) break;
+    const placeholders = ids.map(() => '?').join(',');
+    db.prepare<void>(
+      `DELETE FROM ${table} WHERE ${pkColumn} IN (${placeholders})`,
+    ).run(...ids.map((r) => r.pk));
+    total += ids.length;
+    if (ids.length < DATA_RETENTION_BATCH_SIZE) break;
+  }
+  return total;
+}
+
+/**
+ * 周期性数据 retention 的可测 seam（分片 Plan 2 · Task 4）。
+ *
+ * 跨租户表（usage_records / billing_outbox / idempotency_keys 均含 tenant_id）经 `resolver.allShardDbs()`
+ * fan-out——只清一库会让非-home shard 的过期数据永不回收。webhook_events 是**平台表无 tenant_id**（Stripe
+ * 事件全局去重），只在 `resolver.coordinatorDb()` 清。逐 shard try/catch 隔离 + shardErrors 收集（坏 shard
+ * 不静默、不拖累其余 shard）。单库下 `allShardDbs()=[db]`、`coordinatorDb()=同一 db`，等价现状、零回归。
+ */
+export function runDataRetentionOnce(opts: {
+  resolver: TenantDbResolver;
+  now: number;
+  retentionMs: DataRetentionMs;
+}): DataRetentionResult {
+  const { resolver, now, retentionMs } = opts;
+  const keyer = makeShardKeyer();
+  let usageDeleted = 0;
+  let billingDeleted = 0;
+  let idempotencyDeleted = 0;
+  let webhookDeleted = 0;
+  const shardErrors: Array<{ shardKey: string; error: string }> = [];
+
+  /* 跨租户表：逐 shard fan-out。 */
+  for (const shardDb of resolver.allShardDbs()) {
+    const shardKey = keyer(shardDb);
+    try {
+      usageDeleted += pruneTableOn(shardDb, 'usage_records', 'id', 'recorded_at < ?', now - retentionMs.usage);
+      billingDeleted += pruneTableOn(shardDb, 'billing_outbox', 'id', 'status = ? AND processed_at < ?', 'sent', now - retentionMs.billing);
+      idempotencyDeleted += pruneTableOn(shardDb, 'idempotency_keys', 'id', 'expires_at < ?', now - retentionMs.idempotency);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      shardErrors.push({ shardKey, error });
+    }
+  }
+
+  /* webhook_events：平台表（无 tenant_id）——只在协调库清。 */
+  const coordinator = resolver.coordinatorDb();
+  const coordinatorKey = keyer(coordinator);
+  try {
+    webhookDeleted += pruneTableOn(coordinator, 'webhook_events', 'event_id', 'processed_at < ?', now - retentionMs.webhook);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    shardErrors.push({ shardKey: coordinatorKey, error });
+  }
+
+  return { usageDeleted, billingDeleted, idempotencyDeleted, webhookDeleted, shardErrors };
 }
