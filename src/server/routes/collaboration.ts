@@ -43,7 +43,7 @@ export function registerCollaborationRoutes(app: FastifyInstance, services: AppS
     }
 
     const { page, pageSize } = PaginationQuerySchema.parse(request.query);
-    const { data, total } = service.listSharedWithUser(userId, page, pageSize);
+    const { data, total } = service.listSharedWithUser(request.tenantId, userId, page, pageSize);
     return {
       data,
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
