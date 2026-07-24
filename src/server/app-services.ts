@@ -115,7 +115,9 @@ export function buildAppServices(
     ),
     /* 分片 Plan 1b（Task 5）：AdminControlPlaneService 经共享 resolver 按 tenantId 路由（persona/task/wallet/gov 表全有 tenant_id）。 */
     adminControlPlane: new AdminControlPlaneService(resolver),
-    apiKey: new ApiKeyService(tx),
+    /* 分片 Plan 1b（Task 8）：ApiKeyService 管理方法（create/list/revoke，已带 tenantId）经共享 resolver 按 tenantId 路由
+     * （api_keys 表有 tenant_id 列，query 层已含 tenant predicate）。key hash→tenant 反查在 auth 中间件（server/plugins/auth.ts），归 Plan 1c。 */
+    apiKey: new ApiKeyService(resolver),
     config: new ConfigService(db, appConfig),
     /* 分片 Plan 1b（Task 5）：KnowledgeSourceService 经共享 resolver 按 tenantId 路由（knowledge_sources 表有 tenant_id）。 */
     knowledgeSource: new KnowledgeSourceService(resolver),
