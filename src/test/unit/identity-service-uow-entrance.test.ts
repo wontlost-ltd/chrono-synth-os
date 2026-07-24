@@ -85,15 +85,15 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     } finally { db.close(); }
   });
 
-  it('UserProfileService / AvatarSnapshotService / SsoUserService 都接受双入口；CollaborationService（Task 4）/MobileDeviceService（Task 3）已 resolver 化', () => {
+  it('AvatarSnapshotService / SsoUserService 都接受双入口；CollaborationService（Task 4）/MobileDeviceService（Task 3）/UserProfileService（Task 7）已 resolver 化', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
       const uow = db;
       /* 分片 Plan 1b（Task 4）：CollaborationService 已 resolver 化——不再接裸 db/uow，而收 TenantDbResolver。 */
       assert.ok(new CollaborationService(new SingleDbResolver(db)));
-      assert.ok(new UserProfileService(db));
-      assert.ok(new UserProfileService(uow));
+      /* 分片 Plan 1b（Task 7）：UserProfileService 已 resolver 化——不再接裸 db/uow，而收 TenantDbResolver。 */
+      assert.ok(new UserProfileService(new SingleDbResolver(db)));
       /* 分片 Plan 1b（Task 3）：MobileDeviceService 已 resolver 化——不再接裸 db/uow，而收 TenantDbResolver。 */
       assert.ok(new MobileDeviceService(new SingleDbResolver(db)));
       assert.ok(new AvatarSnapshotService(db));
