@@ -158,6 +158,7 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
 import { SettlementReconciliationWorker } from '../billing/settlement-reconciliation-worker.js';
+import { TenantReservationRecovery } from '../identity/tenant-reservation-recovery.js';
 import { ObservabilityPipelineService } from '../observability/observability-pipeline-service.js';
 import { RuntimeRecoveryWorker } from '../persona-core/runtime-recovery-worker.js';
 import { DualWriteFlushWorker } from '../workers/dual-write-flush-worker.js';
@@ -333,6 +334,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   let observabilityWorker: ObservabilityPipelineService | undefined;
   let runtimeRecoveryWorker: RuntimeRecoveryWorker | undefined;
   let settlementReconciliationWorker: SettlementReconciliationWorker | undefined;
+  let reservationRecoveryWorker: TenantReservationRecovery | undefined;
   if (config.observability.worker.enabled) {
     observabilityWorker = new ObservabilityPipelineService(
       db,
@@ -384,6 +386,22 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     );
     settlementReconciliationWorker.start();
     app.addHook('onClose', async () => { await settlementReconciliationWorker!.stop(); });
+  }
+
+  /* 分片 Phase 0 · Plan 1c Task 8：PENDING 预留恢复 worker。经共享 resolver 扫协调库过期 email PENDING，
+   * 按 operation_kind 收敛（REGISTER 凭 shard bootstrap per-op / EMAIL_CHANGE 凭 shard canonical email），
+   * 绝不取消 PENDING（spec §4.1.6 铁律）。 */
+  if (config.auth.reservationRecovery.enabled) {
+    reservationRecoveryWorker = new TenantReservationRecovery(
+      captureResolver('reservation-recovery'),
+      deps.os.getLogger(),
+      {
+        pollIntervalMs: config.auth.reservationRecovery.pollIntervalMs,
+        graceMs: config.auth.reservationRecovery.graceMs,
+      },
+    );
+    reservationRecoveryWorker.start();
+    app.addHook('onClose', async () => { await reservationRecoveryWorker!.stop(); });
   }
 
   /* dual-write outbox flush — drains persona_core_ledger_outbox into SqliteEventLedger */
