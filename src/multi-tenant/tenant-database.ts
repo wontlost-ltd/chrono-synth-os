@@ -98,6 +98,10 @@ const TENANT_TABLES = new Set([
   'github_learn_state', 'github_ingest_digests',
   /* GitHub 反馈起草段地基（Plan 3 Task 1）：回复草稿账本 + webhook 幂等账本（复合主键 tenant_id+delivery_id），均含 tenant_id，须自动租户隔离 */
   'github_reply_drafts', 'github_webhook_events',
+  /* 租户分片 Phase 0 Plan 1c Task 2：tenant_bootstrap 是 register 单事务的完成标记表（PK tenant_id+operation_id）。
+     与 tenant_identity_directory（按 lookup_value 全局查找、查询时尚不知 tenant，故 KNOWN_UNISOLATED）不同，
+     它总是以已知 tenant_id 写入/查恢复，无全局查找语义 → 应随 TenantDatabase 自动隔离（注入 tenant 谓词安全一致） */
+  'tenant_bootstrap',
 ]);
 
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */

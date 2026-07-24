@@ -1316,6 +1316,21 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "CREATE TABLE IF NOT EXISTS tenant_identity_directory (\n    tenant_id TEXT NOT NULL,\n    user_id TEXT,\n    operation_id TEXT NOT NULL,\n    operation_kind TEXT NOT NULL CHECK(operation_kind IN ('REGISTER', 'EMAIL_CHANGE', 'TOKEN', 'API_KEY')),\n    previous_lookup_value TEXT,\n    pending_password_hash TEXT,\n    lookup_kind TEXT NOT NULL CHECK(lookup_kind IN ('email', 'refresh_token_hash', 'api_key_hash')),\n    lookup_value TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    UNIQUE(lookup_kind, lookup_value)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_tid_tenant ON tenant_identity_directory(tenant_id)"
     ]
+  },
+  {
+    "version": "v124",
+    "description": "Tenant sharding Phase 0 Plan 1c: tenant_bootstrap marker (PK tenant+op) + historical identity backfill into tenant_identity_directory (email normalized; duplicate-email fail-closed)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_bootstrap (\n      tenant_id TEXT NOT NULL,\n      operation_id TEXT NOT NULL,\n      status TEXT NOT NULL CHECK (status IN ('COMPLETE')),\n      created_at INTEGER NOT NULL,\n      PRIMARY KEY (tenant_id, operation_id)\n    )",
+      "DROP TABLE IF EXISTS _v124_duplicate_email_abort",
+      "CREATE TEMP TABLE _v124_duplicate_email_abort (must_be_unique_normalized_email TEXT NOT NULL UNIQUE)",
+      "INSERT INTO _v124_duplicate_email_abort (must_be_unique_normalized_email) SELECT LOWER(TRIM(email)) FROM users",
+      "DROP TABLE _v124_duplicate_email_abort",
+      "UPDATE users SET email = LOWER(TRIM(email))",
+      "INSERT OR IGNORE INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, id, 'backfill', 'REGISTER', NULL, NULL, 'email', LOWER(TRIM(email)), 'ACTIVE', created_at, updated_at\n     FROM users",
+      "/* safe:if-table-exists:refresh_tokens */ INSERT OR IGNORE INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT u.tenant_id, rt.user_id, 'backfill', 'TOKEN', NULL, NULL, 'refresh_token_hash', rt.token_hash, 'ACTIVE', rt.created_at, rt.created_at\n     FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id",
+      "/* safe:if-table-exists:api_keys */ INSERT OR IGNORE INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, NULL, 'backfill', 'API_KEY', NULL, NULL, 'api_key_hash', key_hash, 'ACTIVE', created_at, created_at\n     FROM api_keys"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2600,6 +2615,18 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "CREATE TABLE IF NOT EXISTS tenant_identity_directory (\n    tenant_id TEXT NOT NULL,\n    user_id TEXT,\n    operation_id TEXT NOT NULL,\n    operation_kind TEXT NOT NULL CHECK(operation_kind IN ('REGISTER', 'EMAIL_CHANGE', 'TOKEN', 'API_KEY')),\n    previous_lookup_value TEXT,\n    pending_password_hash TEXT,\n    lookup_kind TEXT NOT NULL CHECK(lookup_kind IN ('email', 'refresh_token_hash', 'api_key_hash')),\n    lookup_value TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE')),\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    UNIQUE(lookup_kind, lookup_value)\n  )",
       "CREATE INDEX IF NOT EXISTS idx_tid_tenant ON tenant_identity_directory (tenant_id)"
+    ]
+  },
+  {
+    "version": "v126",
+    "description": "Tenant sharding Phase 0 Plan 1c: tenant_bootstrap marker (PK tenant+op) + historical identity backfill into tenant_identity_directory (email normalized; duplicate-email fail-closed)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_bootstrap (\n      tenant_id TEXT NOT NULL,\n      operation_id TEXT NOT NULL,\n      status TEXT NOT NULL CHECK (status IN ('COMPLETE')),\n      created_at BIGINT NOT NULL,\n      PRIMARY KEY (tenant_id, operation_id)\n    )",
+      "DO $$\n     BEGIN\n       IF EXISTS (\n         SELECT 1 FROM users GROUP BY lower(trim(email)) HAVING count(*) > 1\n       ) THEN\n         RAISE EXCEPTION 'v124 tenant-bootstrap-backfill aborted: duplicate normalized email in users (LOWER(TRIM(email))); manual cleanup required before re-running (_v124_duplicate_email_abort)';\n       END IF;\n     END $$",
+      "UPDATE users SET email = lower(trim(email))",
+      "INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, id, 'backfill', 'REGISTER', NULL, NULL, 'email', lower(trim(email)), 'ACTIVE', created_at, updated_at\n     FROM users\n     ON CONFLICT (lookup_kind, lookup_value) DO NOTHING",
+      "INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT u.tenant_id, rt.user_id, 'backfill', 'TOKEN', NULL, NULL, 'refresh_token_hash', rt.token_hash, 'ACTIVE', rt.created_at, rt.created_at\n     FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id\n     ON CONFLICT (lookup_kind, lookup_value) DO NOTHING",
+      "INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, NULL, 'backfill', 'API_KEY', NULL, NULL, 'api_key_hash', key_hash, 'ACTIVE', created_at, created_at\n     FROM api_keys\n     ON CONFLICT (lookup_kind, lookup_value) DO NOTHING"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

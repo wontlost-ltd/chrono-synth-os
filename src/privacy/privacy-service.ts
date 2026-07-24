@@ -126,6 +126,10 @@ const TENANT_TABLES = [
      查找键→租户，含 pending_password_hash + 用户身份查找值）。行按 tenant_id 归属，须随租户导出/擦除（A 类）；
      其全局查找语义只影响读路径（TenantDatabase），不影响此处按 tenant_id 的导出/擦除 */
   'tenant_identity_directory',
+  /* 租户分片 Phase 0 Plan 1c Task 2：tenant_bootstrap 是 register 单事务的完成标记表（PK tenant_id+operation_id）。
+     行按 tenant_id 归属，须随租户导出/擦除（A 类）；与 tenant_identity_directory 不同，它按 tenant_id 查恢复、
+     无全局查找语义，可随 TenantDatabase 自动隔离，故不进 KNOWN_UNISOLATED */
+  'tenant_bootstrap',
 ] as const;
 
 /** 需要子查询关联的表 */
