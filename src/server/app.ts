@@ -361,8 +361,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   app.addHook('onClose', () => { nudgePushBridge.stop(); });
 
   if (config.runtime.recovery.enabled) {
+    /* 分片 Phase 0 · Plan 2 Task 3：经共享 resolver 跨 allShardDbs() fan-out 恢复卡死 runtime session
+     * （原经 SingleDbResolver 包裹裸 db，多 shard 下漏恢复非-home shard；单库下等价现状）。 */
     runtimeRecoveryWorker = new RuntimeRecoveryWorker(
-      db,
+      captureResolver('runtime-recovery'),
       deps.os.getLogger(),
       {
         pollIntervalMs: config.runtime.recovery.pollIntervalMs,
@@ -376,8 +378,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   }
 
   if (config.billing.reconciliation.enabled) {
+    /* 分片 Phase 0 · Plan 2 Task 3：经共享 resolver 跨 allShardDbs() fan-out 对账各 shard 的待结算租户
+     * （原收单一 tx，多 shard 下漏对非-home shard；单库下 allShardDbs()=[db] 等价现状）。 */
     settlementReconciliationWorker = new SettlementReconciliationWorker(
-      tx,
+      captureResolver('settlement-reconciliation'),
       deps.os.getLogger(),
       {
         pollIntervalMs: config.billing.reconciliation.pollIntervalMs,

@@ -4,6 +4,7 @@ import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/inde
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { RuntimeRecoveryWorker } from '../../persona-core/runtime-recovery-worker.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { SilentLogger } from '../../utils/logger.js';
 
 describe('RuntimeRecoveryWorker', () => {
@@ -69,7 +70,7 @@ describe('RuntimeRecoveryWorker', () => {
        WHERE tenant_id = ? AND id = ?`,
     ).run(Date.now() - 1_000, Date.now() - 1_000, 'tenant_runtime', runtime!.id);
 
-    const worker = new RuntimeRecoveryWorker(db, logger, {
+    const worker = new RuntimeRecoveryWorker(new SingleDbResolver(db), logger, {
       pollIntervalMs: 10_000,
       sessionTimeoutMs: 60_000,
       maxRetries: 1,
