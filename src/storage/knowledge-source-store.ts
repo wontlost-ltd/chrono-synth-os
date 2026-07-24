@@ -84,8 +84,9 @@ export class KnowledgeSourceStore {
     return rows.map(rowToRecord);
   }
 
-  updateState(id: string, stateJson: string | null, lastIngestedAt: number): void {
-    this.tx.execute(ksrcCmdUpdateState({ id, stateJson, lastIngestedAt, now: Date.now() }));
+  updateState(id: string, tenantId: string, stateJson: string | null, lastIngestedAt: number): void {
+    /* 分片 Plan 1b（Task 5）：tenantId 必传 → executor UPDATE 带 AND tenant_id=? 防越租户改摄入状态。 */
+    this.tx.execute(ksrcCmdUpdateState({ id, tenantId, stateJson, lastIngestedAt, now: Date.now() }));
   }
 
   delete(id: string, tenantId: string): boolean {

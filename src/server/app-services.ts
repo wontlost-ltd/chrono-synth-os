@@ -75,7 +75,8 @@ export function buildAppServices(
     mobileDeviceFacade: new MobileDeviceFacade(tx, resolver, pushService),
     pushService,
     userProfile: new UserProfileService(tx),
-    organization: new OrganizationService(tx),
+    /* 分片 Plan 1b（Task 5）：OrganizationService 经共享 resolver 按 tenantId 路由（org 系列表全有 tenant_id）。 */
+    organization: new OrganizationService(resolver),
     tenantProfile: new TenantEnterpriseProfileService(tx, appConfig, logger),
     scim: new ScimProvisioningService(
       tx,
@@ -96,9 +97,11 @@ export function buildAppServices(
         });
       },
     ),
-    adminControlPlane: new AdminControlPlaneService(tx),
+    /* 分片 Plan 1b（Task 5）：AdminControlPlaneService 经共享 resolver 按 tenantId 路由（persona/task/wallet/gov 表全有 tenant_id）。 */
+    adminControlPlane: new AdminControlPlaneService(resolver),
     apiKey: new ApiKeyService(tx),
     config: new ConfigService(db, appConfig),
-    knowledgeSource: new KnowledgeSourceService(tx),
+    /* 分片 Plan 1b（Task 5）：KnowledgeSourceService 经共享 resolver 按 tenantId 路由（knowledge_sources 表有 tenant_id）。 */
+    knowledgeSource: new KnowledgeSourceService(resolver),
   };
 }
