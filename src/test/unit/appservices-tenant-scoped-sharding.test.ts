@@ -13,6 +13,9 @@ import { AvatarService } from '../../identity/avatar-service.js';
 import { DeviceAvatarService } from '../../identity/device-avatar-service.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
 import { CollaborationService } from '../../identity/collaboration-service.js';
+import { OrganizationService } from '../../enterprise/organization-service.js';
+import { AdminControlPlaneService } from '../../enterprise/admin-control-plane-service.js';
+import { KnowledgeSourceService } from '../../knowledge/knowledge-source-service.js';
 import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../../agent/push/dispatcher.js';
 import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
@@ -25,6 +28,15 @@ function idDb(): IDatabase {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
   return db;
+}
+
+/** 种一条 users 行（persona_core.owner_user_id / org listMembers 的 users JOIN 需要它满足 FK）。 */
+function seedUser(db: IDatabase, userId: string, tenantId: string): void {
+  const now = Date.now();
+  db.prepare<void>(
+    `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+     VALUES (?, ?, 'hash', 'member', ?, ?, ?)`,
+  ).run(userId, `${userId}@example.com`, tenantId, now, now);
 }
 
 test('IdentityService per-tenant：A 的 identity 落 A 的 shard，B 的 shard 查不到（选对 shard + tenant predicate）', () => {
@@ -339,5 +351,152 @@ test('CollaborationService listSharedWithUser 父归属 predicate：共享物理
   const listedB = svc.listSharedWithUser('tB', 'sharedTarget', 1, 20);
   assert.equal(listedB.total, 1, 'tB 只看到属 tB 的 1 条 share');
   assert.equal(listedB.data[0]?.simulationId, 'simB', 'tB 看到的是 simB');
+  db.close();
+});
+
+/* ── Organization 组（Task 5）：organizations/workspaces/organization_memberships/organization_role_bindings
+ *    全有 tenant_id 列 → 每 query WHERE tenant_id=? predicate（executor 已含）。方法已带 tenantId，
+ *    仅 ctor (tx)→(resolver) + 每方法 dbForTenant(tenantId)。 ── */
+
+test('OrganizationService per-tenant：B create org 经 service 落 s1（非 home），用 tA listByUser 查不到（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new OrganizationService(resolver);
+  /* B（非 home 租户）的 org 经 service 建（必须由 dbForTenant 选对 s1）；先种 users 满足 membership JOIN。 */
+  seedUser(s1, 'userB', 'tB');
+  const createdB = svc.create('tB', 'userB', { name: 'B 公司', defaultWorkspaceName: 'B 默认空间' });
+  /* B（userB）在自己 shard（s1）listByUser 查得到自己的 org。 */
+  const listedB = svc.listByUser('tB', 'userB');
+  assert.equal(listedB.length, 1, 'B 的 userB 查到 1 个 org');
+  assert.equal(listedB[0]?.organizationId, createdB.organization.organizationId, 'org id 匹配');
+  /* 用 tA（→s0）以同一 userId 查：s0 根本没这行 → 空（不串 shard）。 */
+  assert.equal(svc.listByUser('tA', 'userB').length, 0, '用 tA（→s0）查 userB 的 org：查不到（不串 shard）');
+  /* 物理断言：org 行只在 s1（B 的 shard）、s0 无（防「都落 s0」的 shard 路由 bug）。 */
+  assert.ok(s1.prepare(`SELECT 1 FROM organizations WHERE id = ?`).get(createdB.organization.organizationId), 'B 的 org 行在 s1');
+  assert.equal(s0.prepare(`SELECT 1 FROM organizations WHERE id = ?`).get(createdB.organization.organizationId), undefined, 's0 无 B 的 org 行');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('OrganizationService tenant predicate：共享物理 db 只种 B 的 org，用 tA listByUser/listMembers 均不命中（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的 org。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new OrganizationService(resolver);
+  seedUser(db, 'userSharedB', 'tB');
+  const createdB = svc.create('tB', 'userSharedB', { name: 'B 独占公司', defaultWorkspaceName: 'B 空间' });
+  const orgId = createdB.organization.organizationId;
+  /* listByUser：用 tA + B 的 userId → 空（membership.tenant_id=? predicate 隔离）。 */
+  assert.equal(svc.listByUser('tA', 'userSharedB').length, 0, 'tA listByUser tB 的 userId → 空（tenant predicate 隔离）');
+  assert.ok(svc.listByUser('tB', 'userSharedB').length >= 1, 'tB 自己查得到');
+  /* listMembers：用 tA + B 的 orgId → 空（memberships.tenant_id=? predicate 隔离）。 */
+  assert.equal(svc.listMembers('tA', orgId).length, 0, 'tA listMembers tB 的 org → 空（tenant predicate 隔离）');
+  assert.ok(svc.listMembers('tB', orgId).length >= 1, 'tB 自己 listMembers 有成员');
+  db.close();
+});
+
+/* ── AdminControlPlane 组（Task 5）：persona_core/marketplace_tasks/persona_wallets/governance_cases
+ *    全有 tenant_id 列 → 每 count/list/summary query WHERE tenant_id=? predicate（executor 已含）。
+ *    方法已带 tenantId，仅 ctor (tx)→(resolver) + 每方法 dbForTenant(tenantId)。 ── */
+
+/** 在指定 db 种一条 persona_core 行（tenant + owner），供 listPersonas 断言用。 */
+function seedPersona(db: IDatabase, id: string, tenantId: string, ownerUserId: string): void {
+  const now = Date.now();
+  db.prepare<void>(
+    `INSERT INTO persona_core (
+      id, tenant_id, owner_user_id, display_name, profile_json, status, visibility,
+      growth_index, reputation, training_investment, created_at, updated_at, deceased_at, transferred_at, lifecycle_status
+    ) VALUES (?, ?, ?, ?, '{}', 'active', 'private', 0, 0, 0, ?, ?, NULL, NULL, 'active')`,
+  ).run(id, tenantId, ownerUserId, `persona_${id}`, now, now);
+}
+
+test('AdminControlPlaneService per-tenant：B 的 persona 落 s1（非 home），用 tA listPersonas 数不到（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new AdminControlPlaneService(resolver);
+  /* B（非 home 租户）的 persona 直接种在自己 shard s1（owner_user_id 有 FK → 先种 users）。 */
+  seedUser(s1, 'ownerB', 'tB');
+  seedPersona(s1, 'persB', 'tB', 'ownerB');
+  /* 用 tB（→s1）listPersonas 数得到。 */
+  const listedB = svc.listPersonas('tB', { page: 1, pageSize: 20 });
+  assert.equal(listedB.pagination.total, 1, 'B 在自己 shard（s1）数到 1 个 persona');
+  assert.equal(listedB.data[0]?.personaId, 'persB', 'persona id 匹配');
+  /* 用 tA（→s0）listPersonas：s0 根本没这行 → 0（不串 shard）。 */
+  const listedA = svc.listPersonas('tA', { page: 1, pageSize: 20 });
+  assert.equal(listedA.pagination.total, 0, '用 tA（→s0）listPersonas：数不到（不串 shard）');
+  assert.equal(listedA.data.length, 0, 'tA 结果集为空');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('AdminControlPlaneService tenant predicate：共享物理 db，A/B 各种 persona，tA listPersonas 只数得到属 tA 的（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。A/B 各种一个 persona。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new AdminControlPlaneService(resolver);
+  seedUser(db, 'ownerA', 'tA');
+  seedUser(db, 'ownerB', 'tB');
+  seedPersona(db, 'persA', 'tA', 'ownerA');
+  seedPersona(db, 'persB', 'tB', 'ownerB');
+  /* 用 tA listPersonas：tenant predicate（WHERE pc.tenant_id='tA'）→ 只数到 persA。 */
+  const listedA = svc.listPersonas('tA', { page: 1, pageSize: 20 });
+  assert.equal(listedA.pagination.total, 1, 'tA 只数到属 tA 的 1 个 persona（不串 tB）');
+  assert.equal(listedA.data[0]?.personaId, 'persA', 'tA 数到的是 persA');
+  assert.equal(listedA.summary.total, 1, 'tA summary total=1（tenant predicate 隔离）');
+  /* 对称：用 tB listPersonas → 只数到 persB。 */
+  const listedB = svc.listPersonas('tB', { page: 1, pageSize: 20 });
+  assert.equal(listedB.pagination.total, 1, 'tB 只数到属 tB 的 1 个 persona');
+  assert.equal(listedB.data[0]?.personaId, 'persB', 'tB 数到的是 persB');
+  db.close();
+});
+
+/* ── KnowledgeSource 组（Task 5）：knowledge_sources 表有 tenant_id 列 → 每 query WHERE tenant_id=? predicate
+ *    （executor 已含）。方法已带 tenantId，仅 ctor (tx)→(resolver) + 每方法经 dbForTenant(tenantId) 造 store。 ── */
+
+test('KnowledgeSourceService per-tenant：B create 知识源经 service 落 s1（非 home），用 tA list/getById 查不到（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new KnowledgeSourceService(resolver);
+  /* B（非 home 租户）的知识源经 service 建（必须由 dbForTenant 选对 s1）。 */
+  const createdB = svc.create('tB', { type: 'rss', name: 'B 的 RSS 源', config: { url: 'https://b.example/feed' } });
+  /* B 在自己 shard（s1）list/getById 查得到。 */
+  assert.equal(svc.list('tB', 1, 20).pagination.total, 1, 'B 在自己 shard（s1）list 到 1 条');
+  assert.ok(svc.getById('tB', createdB.id), 'B getById 查得到自己的知识源');
+  /* 用 tA（→s0）list：s0 根本没这行 → 0（不串 shard）。 */
+  assert.equal(svc.list('tA', 1, 20).pagination.total, 0, '用 tA（→s0）list：查不到（不串 shard）');
+  /* 物理断言：知识源行只在 s1（B 的 shard）、s0 无（防「都落 s0」的 shard 路由 bug）。 */
+  assert.ok(s1.prepare(`SELECT 1 FROM knowledge_sources WHERE id = ?`).get(createdB.id), 'B 的知识源行在 s1');
+  assert.equal(s0.prepare(`SELECT 1 FROM knowledge_sources WHERE id = ?`).get(createdB.id), undefined, 's0 无 B 的知识源行');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('KnowledgeSourceService tenant predicate：共享物理 db 只种 B 的知识源，用 tA getById/update/delete 均不命中（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的知识源。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new KnowledgeSourceService(resolver);
+  const createdB = svc.create('tB', { type: 'rss', name: 'B 独占源', config: { url: 'https://b.example/feed' } });
+  /* getById：用 tA 查 B 的 sourceId → 抛 NotFound（tenant predicate 隔离）。 */
+  assert.throws(
+    () => svc.getById('tA', createdB.id),
+    /不存在|NOT_FOUND/i,
+    'tA getById tB 的知识源 → NotFound（tenant predicate 隔离）',
+  );
+  assert.ok(svc.getById('tB', createdB.id), 'tB 自己查得到');
+  /* update：用 tA 改 B 的 sourceId → 抛 NotFound（不误改 B 的行）。 */
+  assert.throws(
+    () => svc.update('tA', createdB.id, { name: '越权改名' }),
+    /不存在|NOT_FOUND/i,
+    'tA update tB 的知识源 → NotFound（tenant predicate 隔离）',
+  );
+  assert.equal(svc.getById('tB', createdB.id).name, 'B 独占源', 'B 的知识源名未被越权改动');
+  /* delete：用 tA 删 B 的 sourceId → 抛 NotFound（不误删 B 的行）。 */
+  assert.throws(
+    () => svc.delete('tA', createdB.id),
+    /不存在|NOT_FOUND/i,
+    'tA delete tB 的知识源 → NotFound（tenant predicate 隔离）',
+  );
+  assert.ok(svc.getById('tB', createdB.id), 'tA 越权删除失败后 B 的知识源仍在');
   db.close();
 });
