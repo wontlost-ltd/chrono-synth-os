@@ -13,6 +13,7 @@ import { ErrorCode, StateError, AuthenticationError } from '../errors/index.js';
 import { createCustomer } from '../billing/stripe-client.js';
 import { syncPlanToQuota } from '../billing/plans.js';
 import { IdentityWriter } from './identity-service.js';
+import { canonicalizeEmail } from './email-canonical.js';
 import {
   authQueryUserByEmail, authQueryUserById, authQueryRefreshToken,
   authCmdCreateUser, authCmdCreateSubscription,
@@ -63,7 +64,9 @@ export class AuthService {
   }
 
   async register(app: FastifyInstance, email: string, password: string): Promise<RegisterResult> {
-    const existing = this.tx.queryOne(authQueryUserByEmail(email));
+    /* email 归一化：与 v124 存储侧的 LOWER(TRIM(email)) 对齐，登录标识全链路用 canon 值。 */
+    const canonEmail = canonicalizeEmail(email);
+    const existing = this.tx.queryOne(authQueryUserByEmail(canonEmail));
     if (existing) {
       throw new StateError('该邮箱已注册', ErrorCode.AUTH_EMAIL_EXISTS);
     }
@@ -74,13 +77,13 @@ export class AuthService {
     const tenantId = `tenant_${randomUUID()}`;
 
     this.tx.execute(authCmdCreateUser({
-      id: userId, email, passwordHash, role: 'admin', tenantId, now,
+      id: userId, email: canonEmail, passwordHash, role: 'admin', tenantId, now,
     }));
 
     let stripeCustomerId: string | null = null;
     if (this.config.stripe.enabled) {
       try {
-        const customer = await createCustomer(this.config, email, tenantId);
+        const customer = await createCustomer(this.config, canonEmail, tenantId);
         stripeCustomerId = customer.id;
       } catch (e) { app.log.warn(`Stripe 客户创建失败: ${e instanceof Error ? e.message : String(e)}`); }
     }
@@ -95,14 +98,15 @@ export class AuthService {
 
     /* 分片 Plan 1b：注册的租户级身份写经 tenant-bound IdentityWriter(tenantId, tx) seam
      * （Auth 是 Plan 1c mixed-scope；tenantId 由 register 流程本地生成，非裸 new IdentityService(tx)）。 */
-    new IdentityWriter(tenantId, this.tx).create(userId, email.split('@')[0]);
+    new IdentityWriter(tenantId, this.tx).create(userId, canonEmail.split('@')[0]);
 
     const tokens = await this.generateTokenPair(app, userId, tenantId, 'admin');
-    return { userId, email, tenantId, ...tokens };
+    return { userId, email: canonEmail, tenantId, ...tokens };
   }
 
   async login(app: FastifyInstance, email: string, password: string): Promise<LoginResult> {
-    const user = this.tx.queryOne(authQueryUserByEmail(email));
+    /* email 归一化：与 v124 存储侧的 LOWER(TRIM(email)) 对齐，消老用户大小写查找落空的锁死窗口。 */
+    const user = this.tx.queryOne(authQueryUserByEmail(canonicalizeEmail(email)));
     if (!user) {
       throw new AuthenticationError('邮箱或密码错误', ErrorCode.AUTH_INVALID_CREDENTIALS);
     }
