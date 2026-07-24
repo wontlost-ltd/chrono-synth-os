@@ -105,6 +105,7 @@ export class KnowledgeIngestionService {
         if (!truncated) {
           this.store.updateState(
             source.id,
+            tenantId,
             nextState ? JSON.stringify(nextState) : source.stateJson,
             this.clock.now(),
           );
