@@ -36,6 +36,21 @@ describe('协作 API 集成测试', () => {
     return JSON.parse(res.body).data;
   }
 
+  /**
+   * 为「同租户成员」铸 access token。
+   *
+   * 分片 Phase 0 · Plan 1b（Task 4）：sharding 后分享是**租户内**语义——
+   * listSharedWithUser 经 life_simulations 父归属 `WHERE ls.tenant_id=?` 隔离，
+   * request.tenantId 强制取自 JWT（tenant.ts 插件，不可被 header 覆盖）。故被分享者要看到分享，
+   * 其 JWT 必须与被分享模拟同租户。registerUser 每次铸新租户，这里直接用 app.jwtSign 为
+   * 同一 tenantId 的用户铸 token（模拟 owner 租户内的另一成员），而非跨租户注册。
+   */
+  function tokenForTenantMember(userId: string, tenantId: string): string {
+    const appWithJwt = app as unknown as { jwtSign?: (p: unknown) => string; jwt: { sign: (p: unknown) => string } };
+    const payload = { sub: userId, tenantId, role: 'member', planId: 'free', jti: `jti_${userId}` };
+    return appWithJwt.jwtSign ? appWithJwt.jwtSign(payload) : appWithJwt.jwt.sign(payload);
+  }
+
   /** 创建模拟并返回 simulationId。ownerUserId=模拟创建者（owner-only 分享鉴权基础）。 */
   function createSimulation(tenantId: string, ownerUserId: string | null = null): string {
     const simId = `sim_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -168,9 +183,11 @@ describe('协作 API 集成测试', () => {
   });
 
   describe('GET /api/v1/shared', () => {
-    it('返回被分享的模拟列表', async () => {
+    it('返回被分享的模拟列表（同租户成员视角）', async () => {
       const owner = await registerUser('sharer@test.com');
-      const target = await registerUser('receiver@test.com');
+      /* 被分享者是 owner 租户内的另一成员——sharding 后分享是租户内语义。 */
+      const targetUserId = 'member_receiver';
+      const targetToken = tokenForTenantMember(targetUserId, owner.tenantId);
       const simId = createSimulation(owner.tenantId, owner.userId);
 
       await app.inject({
@@ -180,15 +197,14 @@ describe('协作 API 集成测试', () => {
           authorization: `Bearer ${owner.accessToken}`,
           'x-tenant-id': owner.tenantId,
         },
-        payload: { userId: target.userId, permission: 'view' },
+        payload: { userId: targetUserId, permission: 'view' },
       });
 
       const res = await app.inject({
         method: 'GET',
         url: '/api/v1/shared',
         headers: {
-          authorization: `Bearer ${target.accessToken}`,
-          'x-tenant-id': target.tenantId,
+          authorization: `Bearer ${targetToken}`,
         },
       });
       assert.equal(res.statusCode, 200);
@@ -198,6 +214,29 @@ describe('协作 API 集成测试', () => {
       assert.equal(body.data[0].simulationId, simId);
       assert.ok(body.pagination);
       assert.equal(body.pagination.total, 1);
+    });
+
+    it('租户隔离：他租户成员看不到本租户内的分享', async () => {
+      const owner = await registerUser('sharer-iso@test.com');
+      const targetUserId = 'member_receiver_iso';
+      const simId = createSimulation(owner.tenantId, owner.userId);
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/simulations/${simId}/share`,
+        headers: { authorization: `Bearer ${owner.accessToken}`, 'x-tenant-id': owner.tenantId },
+        payload: { userId: targetUserId, permission: 'view' },
+      });
+      /* 同名 userId 但属另一租户（JWT tenantId 不同）→ 父归属 predicate 隔离 → 空。 */
+      const otherTenantToken = tokenForTenantMember(targetUserId, 'tenant_other_iso');
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/shared',
+        headers: { authorization: `Bearer ${otherTenantToken}` },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.data.length, 0, '他租户成员查不到本租户内的分享（父归属 predicate 隔离）');
+      assert.equal(body.pagination.total, 0);
     });
   });
 

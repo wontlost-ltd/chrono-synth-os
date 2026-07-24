@@ -12,7 +12,7 @@ import {
 import type {
   CollabSimTenantRow, CollabExistingShareRow, CollabShareCountRow,
   CollabSharedRow, CollabShareOwnerRow, CollabShareForSimulationRow,
-  CollabExistingShareParams, CollabSharedListParams, CollabSharesForSimulationParams,
+  CollabExistingShareParams, CollabShareCountParams, CollabSharedListParams, CollabSharesForSimulationParams,
   CollabUpdatePermissionParams, CollabCreateShareParams, CollabDeleteShareParams,
 } from '@chrono/kernel';
 
@@ -29,18 +29,27 @@ export function registerCollaborationExecutors(): void {
     ).get(p.simulationId, p.targetUserId) ?? null;
   });
 
-  registerQuery<CollabShareCountRow | null, string>(COLLAB_QUERY_SHARE_COUNT, (db, userId) => {
+  registerQuery<CollabShareCountRow | null, CollabShareCountParams>(COLLAB_QUERY_SHARE_COUNT, (db, p) => {
+    /* shared_simulations 无 tenant_id 列 → 经 life_simulations 父归属做 tenant predicate
+     * （JOIN ls ON ss.simulation_id=ls.id WHERE ls.tenant_id=?），防同库跨租户读到别租户的 share。 */
     const row = db.prepare<{ count: number | bigint }>(
-      'SELECT COUNT(*) as count FROM shared_simulations WHERE shared_with_user_id = ?',
-    ).get(userId);
+      `SELECT COUNT(*) as count FROM shared_simulations ss
+       JOIN life_simulations ls ON ss.simulation_id = ls.id
+       WHERE ss.shared_with_user_id = ? AND ls.tenant_id = ?`,
+    ).get(p.userId, p.tenantId);
     if (!row) return null;
     return { count: Number(row.count) };
   });
 
   registerQuery<readonly CollabSharedRow[], CollabSharedListParams>(COLLAB_QUERY_SHARED_LIST, (db, p) => {
+    /* 同 count：JOIN life_simulations 父归属 + WHERE ls.tenant_id=? 隔离租户。 */
     return db.prepare<CollabSharedRow>(
-      'SELECT id, simulation_id, owner_user_id, permission, created_at FROM shared_simulations WHERE shared_with_user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
-    ).all(p.userId, p.limit, p.offset);
+      `SELECT ss.id, ss.simulation_id, ss.owner_user_id, ss.permission, ss.created_at
+       FROM shared_simulations ss
+       JOIN life_simulations ls ON ss.simulation_id = ls.id
+       WHERE ss.shared_with_user_id = ? AND ls.tenant_id = ?
+       ORDER BY ss.created_at DESC LIMIT ? OFFSET ?`,
+    ).all(p.userId, p.tenantId, p.limit, p.offset);
   });
 
   registerQuery<CollabShareOwnerRow | null, CollabExistingShareParams>(COLLAB_QUERY_SHARE_OWNER, (db, p) => {

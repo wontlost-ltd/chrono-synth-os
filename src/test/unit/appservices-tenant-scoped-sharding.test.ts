@@ -12,6 +12,7 @@ import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
 import { DeviceAvatarService } from '../../identity/device-avatar-service.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
+import { CollaborationService } from '../../identity/collaboration-service.js';
 import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../../agent/push/dispatcher.js';
 import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
@@ -282,4 +283,61 @@ test('PushDispatcher tokenInvalidated 回调带 (tenantId, deviceId, reason)（f
     { tenantId: 'tenantW', deviceId: 'devBad' },
     'tokenInvalidated 回调收到 (tenantId, deviceId)',
   );
+});
+
+/* ── Collaboration 组（Task 4）：shared_simulations 无 tenant_id 列（只 simulation_id/owner_user_id/
+ *    shared_with_user_id）→ listSharedWithUser 经 life_simulations 父归属 JOIN（WHERE ls.tenant_id=?）。
+ *    另 3 方法（share/listSharesForSimulation/unshare）已带 tenantId（服务层查 life_simulations.tenant_id 校验）。 ── */
+
+/** 在指定 db 种一条 life_simulations 行（tenant + owner），供 share 的 owner-only 鉴权用。 */
+function seedSimulation(db: IDatabase, id: string, tenantId: string, ownerUserId: string): void {
+  const now = Date.now();
+  db.prepare<void>(
+    `INSERT INTO life_simulations (id, tenant_id, task_id, config_json, status, owner_user_id, created_at, updated_at)
+     VALUES (?, ?, ?, '{}', 'completed', ?, ?, ?)`,
+  ).run(id, tenantId, `task_${id}`, ownerUserId, now, now);
+}
+
+test('CollaborationService per-tenant：B share simulation 经 service 落 s1（非 home），用 tA listSharedWithUser 查不到（选对 shard + 父归属 predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new CollaborationService(resolver);
+  /* B（非 home 租户）的 simulation 种在自己 shard s1；share 经 service 写（必须由 txFor 选对 s1）。 */
+  seedSimulation(s1, 'simB', 'tB', 'ownerB');
+  svc.share('simB', 'ownerB', 'tB', 'targetUser', 'view');
+  /* targetUser 在租户 B（s1）里能查到分享给自己的 simulation。 */
+  const listedB = svc.listSharedWithUser('tB', 'targetUser', 1, 20);
+  assert.equal(listedB.total, 1, 'B 的 targetUser 查到 1 条 share');
+  assert.equal(listedB.data[0]?.simulationId, 'simB', 'share 指向 simB');
+  /* 用 tA（→s0）以同一 targetUserId 查：s0 根本没这行 → 空（不串 shard）。 */
+  const listedA = svc.listSharedWithUser('tA', 'targetUser', 1, 20);
+  assert.equal(listedA.total, 0, '用 tA（→s0）查 targetUser 的 share：查不到（不串 shard）');
+  assert.equal(listedA.data.length, 0, 'tA 结果集为空');
+  /* 物理断言：share 行只在 s1（B 的 shard）、s0 无（防 mutation① 把 B 的写恒路由到 home s0）。 */
+  assert.ok(s1.prepare(`SELECT 1 FROM shared_simulations WHERE shared_with_user_id = 'targetUser'`).get(), 'B 的 share 行在 s1');
+  assert.equal(s0.prepare(`SELECT 1 FROM shared_simulations WHERE shared_with_user_id = 'targetUser'`).get(), undefined, 's0 无 share 行');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('CollaborationService listSharedWithUser 父归属 predicate：共享物理 db，A/B 各有 owner 给同一 targetUser 的 share，tA 只看得到属 tA 的 simulation（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new CollaborationService(resolver);
+  /* A 的 simulation share 给 sharedTarget；B 的 simulation 也 share 给同名 sharedTarget。 */
+  seedSimulation(db, 'simA', 'tA', 'ownerA');
+  seedSimulation(db, 'simB', 'tB', 'ownerB');
+  svc.share('simA', 'ownerA', 'tA', 'sharedTarget', 'view');
+  svc.share('simB', 'ownerB', 'tB', 'sharedTarget', 'view');
+  /* 用 tA 查 sharedTarget：父归属 predicate（JOIN life_simulations WHERE ls.tenant_id='tA'）
+   * → 只看到 simA（属 tA），看不到 simB（属 tB）。 */
+  const listedA = svc.listSharedWithUser('tA', 'sharedTarget', 1, 20);
+  assert.equal(listedA.total, 1, 'tA 只看到属 tA 的 1 条 share（不串 tB 的 share）');
+  assert.equal(listedA.data[0]?.simulationId, 'simA', 'tA 看到的是 simA');
+  /* 对称：用 tB 查 sharedTarget → 只看到 simB。 */
+  const listedB = svc.listSharedWithUser('tB', 'sharedTarget', 1, 20);
+  assert.equal(listedB.total, 1, 'tB 只看到属 tB 的 1 条 share');
+  assert.equal(listedB.data[0]?.simulationId, 'simB', 'tB 看到的是 simB');
+  db.close();
 });
