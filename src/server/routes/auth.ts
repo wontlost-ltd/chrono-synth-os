@@ -11,8 +11,10 @@ import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import { makeShardKeyer } from '../../storage/shard-key.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
+import type { Logger } from '../../utils/logger.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
 import { RegisterSchema, LoginSchema, LogoutSchema } from '../schemas/api-schemas.js';
 import { AuthService } from '../../identity/auth-service.js';
@@ -287,7 +289,33 @@ export async function generateTokenPair(
   return authService.generateTokenPair(app, userId, tenantId, role);
 }
 
-/** 清理过期和已吊销的刷新令牌（静态方法直接收 UoW，无需构造 AuthService）。 */
-export function cleanupExpiredTokens(db: IDatabase): number {
-  return AuthService.cleanupExpired(db);
+/**
+ * 清理过期和已吊销的刷新令牌——**跨 shard fan-out**（分片 Plan 2 · Task 4）。
+ *
+ * refresh_token 现落**用户所在 shard**（AuthService.generateTokenPair 经 dbForTenant 写），旧
+ * coordinatorDb-only 清理会漏掉非-coordinator shard 的过期 token（token 落 shard 却只清 coordinator 的
+ * 真 bug）。故遍历 `allShardDbs()` 逐 shard 各 `AuthService.cleanupExpired(shardDb)`。
+ *
+ * 逐 shard try/catch 隔离 + **失败不静默**：某 shard 抛错记 logger.error + push shardError 继续下一 shard，
+ * 不阻断其余 shard 清理。返回 `{ total, shardErrors }`（与其他 fan-out 错误结构一致）。
+ * 单库下 `allShardDbs()=[db]`，等价现状、零回归。
+ */
+export function cleanupExpiredTokens(
+  resolver: TenantDbResolver,
+  logger: Logger,
+): { total: number; shardErrors: Array<{ shardKey: string; error: string }> } {
+  const keyer = makeShardKeyer();
+  let total = 0;
+  const shardErrors: Array<{ shardKey: string; error: string }> = [];
+  for (const shardDb of resolver.allShardDbs()) {
+    const shardKey = keyer(shardDb);
+    try {
+      total += AuthService.cleanupExpired(shardDb);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      shardErrors.push({ shardKey, error });
+      logger.error('AuthTokenCleanup', `shard ${shardKey} 过期令牌清理失败（隔离，不拖累其余 shard）: ${error}`);
+    }
+  }
+  return { total, shardErrors };
 }
