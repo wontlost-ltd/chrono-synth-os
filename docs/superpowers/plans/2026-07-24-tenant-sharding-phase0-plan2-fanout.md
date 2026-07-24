@@ -12,7 +12,7 @@
 - **公共可配置 throwingDb 测试桩（Codex：5 现有桩语义不同不能统一为全抛）**：建 `src/test/support/throwing-db.ts` 导出 `throwingDb(opts?: { on?: 'execute' | 'queryMany' | 'queryOne' | 'prepare' | 'all' }): IDatabase`——按 `opts.on` 指定的方法抛错、其余 no-op/返空（默认 `on:'execute'`）。**逐文件按原语义迁移** 5 现有 *-sharding.test.ts（billing/quota/template 原 execute 抛→`throwingDb({on:'execute'})`；persona-marketplace/persona-core 原 queryMany 抛→`throwingDb({on:'queryMany'})`），跑这 5 测确认行为不变。Plan 2 新测按需选 `on`。
 - **observability 独立进程拆出（真交付物已建，非只声明）**：Plan 2 **不含** observability worker fan-out。其跨 shard（Kafka consumer-group 路由/多 pipeline 生命周期/monitor 聚合/resolver 来源可能依赖 Plan 3）是独立子设计——**已建 DEFERRED 子 spec `docs/superpowers/specs/2026-07-25-tenant-sharding-observability-fanout-DEFERRED.md`**，待本 Plan 2（其余 5 块）完成后单独 brainstorm→spec→plan→实现。本计划 Self-Review 的 spec 覆盖据此排除 observability。
 - **ShardAggregate 通用类型**：建 `src/observability/shard-aggregate.ts` 导出 `interface ShardAggregate<TData> { data: TData; degraded: boolean; shardErrors: Array<{ shardKey: string; error: string }> }` + `aggregateShards<TShard, TData>(resolver, keyer, perShard: (db: IDatabase) => TShard, merge: (results: TShard[]) => TData): ShardAggregate<TData>`（**双泛型** TShard/TData，遍历 allShardDbs 逐 shard perShard 收集 + merge 成功结果 + shardErrors 收失败）。
-- **kernel query 链（Codex：新 raw query 需全链）**：Task5 的无-limit tenant usage raw query 需在 `packages/kernel/src/domain/.../metrics-queries.ts` 加 query constant+factory+类型+export，再在 `src/storage/executors/metrics-query-executors.ts` 注册——implementer 照现有 metrics query 的 kernel→executor 链核验后补全链（非只改 executor）。
+- **kernel query 链（Codex：新 raw query 需全链）**：Task5 的无-limit tenant usage raw query 需在 `packages/kernel/src/domain/observability/metrics-queries.ts` 加 query constant+factory+类型+export，再在 `src/storage/executors/metrics-query-executors.ts` 注册——implementer 照现有 metrics query 的 kernel→executor 链核验后补全链（非只改 executor）。
 
 **Goal:** 消除分片后「全局 worker/timer 只处理 home shard=静默漏」「route 内联 tenant-scoped 直查走 host db=错 shard」「metrics 跨租户聚合只读 home shard=假低值」三类 sink，让跨租户扫描经 `resolver.allShardDbs()` fan-out、租户级直查经 `dbForTenant`、平台表经 `coordinatorDb`。最高优先=GDPR MediaRetention。
 
@@ -178,7 +178,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `src/agent/tool-invocations-retention-worker.ts`（worker ctor 收 resolver + flushOnce 遍历 allShardDbs 各 new ToolPermissionService(shardDb)）
-- Modify: `src/server/routes/auth.ts:290-292`（`cleanupExpiredTokens` **route helper 改签名**收 `(resolver, logger)`——**逐 shard try/catch 隔离 + 失败不静默**：catch 里 `logger.error`（真实签名）记该 shard 失败（Codex #4：不能静默 swallow），继续下一 shard；返回 `{ total: number; shardErrors: string[] }` 或至少 catch 内强制 logger.error（app.ts 调用点消费/记录）。单 shard 失败不阻断其他 shard 清理。）
+- Modify: `src/server/routes/auth.ts:290-292`（`cleanupExpiredTokens` **route helper 改签名**收 `(resolver, logger)`——**逐 shard try/catch 隔离 + 失败不静默**：catch 里 `logger.error`（真实签名）记该 shard 失败 + push shardError，继续下一 shard；**返回类型定死 `{ total: number; shardErrors: Array<{ shardKey: string; error: string }> }`**（与其他 fan-out 错误结构一致，非「或至少」二选一）。app.ts:944 调用点消费：`shardErrors.length > 0` 时 timer-level logger.error。单 shard 失败不阻断其他 shard 清理。）
 - Modify: `src/server/app.ts`（抽 `runDataRetentionOnce(...)` 可测函数 + 三处装配传 resolver；`cleanupExpiredTokens(db)` @ :944 改 `cleanupExpiredTokens(resolver)`）
 - Test: `src/test/unit/retention-timers-sharding.test.ts`（新建）
 
@@ -210,7 +210,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/observability/shard-aggregate.ts`（`ShardAggregate<TData>` 类型 + `aggregateShards<TShard, TData>` helper，双泛型见 Global Constraints）
-- Create/Modify: `packages/kernel/src/domain/.../metrics-queries.ts`（**先 Read 现有 metrics query 的 kernel→executor 链**——加无-limit `tenantUsageRaw` query constant+factory+类型+export，照现有 metrics query 全链，非只改 executor）
+- Create/Modify: `packages/kernel/src/domain/observability/metrics-queries.ts`（**先 Read 现有 metrics query 的 kernel→executor 链**——加无-limit `tenantUsageRaw` query constant+factory+类型+export，照现有 metrics query 全链，非只改 executor）
 - Modify: `src/storage/executors/metrics-query-executors.ts`（tenant usage 查询去掉 per-shard `LIMIT`——加**无 limit 的 scatter 变体** `metricsQueryTenantUsageRaw(retentionMs)`：`SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource`（不 ORDER/LIMIT），协调层全局 sort+limit；保留原带 limit 查询给单库路径不破）
 - Modify: `src/observability/metrics-query-service.ts`（5 项聚合 scatter-gather + 合并算法 + ShardAggregate）
 - Modify: `src/server/routes/metrics.ts`（加 resolver 注入 + 解包 ShardAggregate：data 进 body + degraded/shardErrors 暴露 JSON + Prometheus degraded gauge）
@@ -236,7 +236,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 ```bash
 git add src/observability/shard-aggregate.ts src/observability/metrics-query-service.ts packages/kernel/src/domain src/storage/executors/metrics-query-executors.ts src/server/routes/metrics.ts src/server/app.ts src/test/unit/metrics-sharding.test.ts
-# 若 kernel dist 消费：tsc -b packages/kernel --force 后一并 add dist（若非 gitignore）；metrics-routes.test 若迁移一并 add
+# 若 kernel dist 消费：tsc -b packages/kernel --force 后一并 add dist（若非 gitignore）；src/test/unit/metrics-routes.test.ts 若迁移一并 add
 git commit -m "feat(shard): MetricsQueryService scatter-gather(diversity 全局重算/updated_at MAX/usage 全局 sort)+partial failure {data,degraded,shardErrors}+ShardAggregate+kernel raw query
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
