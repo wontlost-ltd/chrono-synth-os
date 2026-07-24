@@ -17,9 +17,10 @@
 
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
-import { apikeyQueryList, apikeyCmdCreate, apikeyCmdRevoke } from '@chrono/kernel';
+import { apikeyQueryList, apikeyQueryById, apikeyCmdCreate, apikeyCmdRevoke } from '@chrono/kernel';
 import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import { SubscriptionQueryService } from './subscription-query-service.js';
+import { TenantIdentityDirectory } from '../identity/tenant-identity-directory.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 export interface ApiKeyDto {
@@ -92,16 +93,30 @@ export class ApiKeyWriter {
     }));
   }
 
-  /** 吊销 API Key，返回是否成功。tenant predicate：`WHERE id=? AND tenant_id=?`（防跨租户误吊销）。 */
-  revoke(id: string): boolean {
+  /**
+   * 吊销 API Key（分片 Plan 1c Task 7：目录=定位器，shard is_revoked=权威）。
+   *
+   * 先按 id 取 key_hash（用于调用方清协调库目录定位项）→ shard 标 revoked（tenant predicate
+   * `WHERE id=? AND tenant_id=?` 防跨租户误吊销，是权威隔离门）。返回 `{ revoked, keyHash }`：
+   * `revoked` 为本次是否真吊销（tenant 隔离命中）；`keyHash` 为该 id 的 hash（供 removeLookup 清目录）。
+   * 跨租户越权（id 属他租户）→ revoked=false 且 keyHash=null（不取他租户 hash，不清他租户目录项）。
+   */
+  revoke(id: string): { revoked: boolean; keyHash: string | null } {
+    /* 先取 hash——但只在 tenant 隔离命中时才回传（防跨租户读他人 hash）。 */
+    const row = this.tx.queryOne(apikeyQueryById(id));
+    const keyHash = row && row.tenant_id === this.tenantId ? row.key_hash : null;
     const result = this.tx.execute(apikeyCmdRevoke({ id, tenantId: this.tenantId }));
-    return result.rowsAffected > 0;
+    return { revoked: result.rowsAffected > 0, keyHash };
   }
 }
 
 export class ApiKeyService {
+  /** 协调库身份目录门面：api_key_hash→tenant 定位项 record/remove（Plan 1c Task 7）。 */
+  private readonly directory: TenantIdentityDirectory;
+
   constructor(private readonly resolver: TenantDbResolver) {
     registerCoreSelfExecutors();
+    this.directory = new TenantIdentityDirectory(resolver);
   }
 
   /** 每 tenant-scoped 调用现造 tenant-bound writer（dbForTenant 选 shard），不跨请求缓存。 */
@@ -109,15 +124,35 @@ export class ApiKeyService {
     return new ApiKeyWriter(tenantId, this.resolver.dbForTenant(tenantId));
   }
 
+  /**
+   * 创建 API Key（分片 Plan 1c Task 7）——shard 写 key 行后记录 api_key_hash→tenant 目录定位项。
+   *
+   * recordActiveLookup 遇他租户已占同 hash 会抛——**不吞**：目录 locator 写失败则整个创建失败
+   * （避免发了 key 却定位不到 shard）。随机 key（csk_ + 36 字节）碰撞概率极低。
+   */
   create(tenantId: string, requestedPlanId: string): CreateApiKeyOutcome {
-    return this.writerFor(tenantId).create(requestedPlanId);
+    const outcome = this.writerFor(tenantId).create(requestedPlanId);
+    if (outcome.ok) {
+      const keyHash = createHash('sha256').update(outcome.data.apiKey).digest('hex');
+      this.directory.recordActiveLookup({ tenantId, lookupKind: 'api_key_hash', lookupValue: keyHash });
+    }
+    return outcome;
   }
 
   list(tenantId: string): ApiKeyDto[] {
     return this.writerFor(tenantId).list();
   }
 
+  /**
+   * 吊销 API Key（分片 Plan 1c Task 7：目录=定位器，shard is_revoked=权威）。
+   * 先在 shard 内标 revoked（权威）+ 取 key_hash → 再 removeLookup 清协调库目录定位项（尽力而为，
+   * 非原子可接受——shard 已 revoked=权威拒，目录清晚了/清不了都不越权）。返回是否真吊销。
+   */
   revoke(id: string, tenantId: string): boolean {
-    return this.writerFor(tenantId).revoke(id);
+    const { revoked, keyHash } = this.writerFor(tenantId).revoke(id);
+    if (keyHash) {
+      this.directory.removeLookup('api_key_hash', keyHash);
+    }
+    return revoked;
   }
 }
