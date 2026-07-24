@@ -8,9 +8,8 @@ import type { Query, Command } from '../../ports/query.js';
 
 export const MDEV_QUERY_BY_UID = 'mobileDevice.byUid' as const;
 export const MDEV_QUERY_BY_ID = 'mobileDevice.byId' as const;
-export const MDEV_QUERY_LIST_BY_USER = 'mobileDevice.listByUser' as const;
-/** 显式 (tenant_id, user_id) 列设备——宿主 DB 上必须用它，listByUser 只按 user_id 在宿主 DB
- * 无 tenant 隔离（跨租户推送风险，Codex 退回 High）。 */
+/** 分片 Plan 1b（Task 3）：devices 表有 tenant_id 列 → 一律 (tenant_id, user_id) 列设备。
+ * 原按裸 user_id 的 listByUser 无 tenant 谓词（跨租户推送风险），已删除。 */
 export const MDEV_QUERY_LIST_BY_TENANT_USER = 'mobileDevice.listByTenantUser' as const;
 export const MDEV_QUERY_OWNED = 'mobileDevice.owned' as const;
 
@@ -48,12 +47,18 @@ export interface MdevByUidParams {
   deviceUid: string;
 }
 
+export interface MdevByIdParams {
+  tenantId: string;
+  deviceId: string;
+}
+
 export interface MdevListByTenantUserParams {
   tenantId: string;
   userId: string;
 }
 
 export interface MdevOwnedParams {
+  tenantId: string;
   deviceId: string;
   userId: string;
 }
@@ -70,6 +75,7 @@ export interface MdevCreateParams {
 }
 
 export interface MdevUpdateOnRegisterParams {
+  tenantId: string;
   deviceId: string;
   platform: string;
   pushToken: string | null;
@@ -78,6 +84,7 @@ export interface MdevUpdateOnRegisterParams {
 }
 
 export interface MdevUpdatePushTokenParams {
+  tenantId: string;
   deviceId: string;
   pushToken: string;
   now: number;
@@ -85,6 +92,7 @@ export interface MdevUpdatePushTokenParams {
 
 /** EP-3.5: mark this device's push token as platform-invalidated. */
 export interface MdevMarkTokenInvalidParams {
+  tenantId: string;
   deviceId: string;
   /** epoch-ms; same value as the timestamp logged into the audit trail */
   now: number;
@@ -94,6 +102,12 @@ export interface MdevMarkTokenInvalidParams {
   reason?: string | undefined;
 }
 
+/** 分片 Plan 1b（Task 3）：删除按 (tenant_id, id) 的删除参数。 */
+export interface MdevDeleteParams {
+  tenantId: string;
+  deviceId: string;
+}
+
 /* ── Query 工厂 ── */
 
 export function mdevQueryByUid(params: MdevByUidParams): Query<MdevDeviceRow | null, MdevByUidParams> {
@@ -101,19 +115,16 @@ export function mdevQueryByUid(params: MdevByUidParams): Query<MdevDeviceRow | n
 }
 
 /**
- * 按主键查询，不带 user 校验。EP-3.5 dispatcher 用这个：dispatcher 从
- * autorun / drift 事件里只拿到 deviceId，没有 user 上下文；安全性靠
+ * 按 (tenantId, 主键) 查询，不带 user 校验。EP-3.5 dispatcher 用这个：dispatcher 从
+ * autorun / drift 事件里拿到 (tenantId, deviceId)，没有 user 上下文；安全性靠
  * "deviceId 已经是不可猜的随机串 + 推送内容只在该设备上展示"来保证。
+ * 分片 Plan 1b（Task 3）：带 tenant predicate `WHERE tenant_id=? AND id=?`（选对 shard + 同库跨租户隔离）。
  */
-export function mdevQueryById(deviceId: string): Query<MdevDeviceRow | null, string> {
-  return { kind: MDEV_QUERY_BY_ID, params: deviceId };
+export function mdevQueryById(params: MdevByIdParams): Query<MdevDeviceRow | null, MdevByIdParams> {
+  return { kind: MDEV_QUERY_BY_ID, params };
 }
 
-export function mdevQueryListByUser(userId: string): Query<MdevDeviceRow, string> {
-  return { kind: MDEV_QUERY_LIST_BY_USER, params: userId };
-}
-
-/** 显式 (tenant_id, user_id) 列设备——宿主 DB 上的租户隔离（Codex 退回 High）。 */
+/** 显式 (tenant_id, user_id) 列设备——devices 表有 tenant_id 列，直接租户隔离。 */
 export function mdevQueryListByTenantUser(params: MdevListByTenantUserParams): Query<MdevDeviceRow, MdevListByTenantUserParams> {
   return { kind: MDEV_QUERY_LIST_BY_TENANT_USER, params };
 }
@@ -140,6 +151,6 @@ export function mdevCmdMarkTokenInvalid(params: MdevMarkTokenInvalidParams): Com
   return { kind: MDEV_CMD_MARK_TOKEN_INVALID, params };
 }
 
-export function mdevCmdDelete(deviceId: string): Command<string> {
-  return { kind: MDEV_CMD_DELETE, params: deviceId };
+export function mdevCmdDelete(params: MdevDeleteParams): Command<MdevDeleteParams> {
+  return { kind: MDEV_CMD_DELETE, params };
 }
