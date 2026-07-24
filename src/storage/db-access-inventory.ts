@@ -36,6 +36,22 @@
  *   root-only                  确无租户归属的顶层构造原语（工厂/路由引擎本身），非拿-host-db 访问点
  *   terminal-escape            能力跨模块/timer/闭包/容器逃逸，须验证逃逸终点仍在正确 shard
  *   known-limitation           Phase 0 明确不下沉（note 须说明「为何不可能错-shard」）
+ *
+ * **Plan 1b · Task 10 收尾（逐 edge 校准的权威结论）**：Plan 1b Task 1-8 把 tenant-scoped 长期 service
+ * （Identity/Avatar/DeviceAvatar/MobileDevice/Collaboration/Organization/AdminControlPlane/KnowledgeSource/
+ * TenantEnterpriseProfile-tenant方法/UserProfile/ApiKey）rewire 为持 resolver + 方法接 tenantId + SQL tenant
+ * predicate，并在各自 commit 把这 15 条 **service 定义 edge** 标 `verified`（被 appservices-tenant-scoped-sharding
+ * .test.ts 的 2-shard 双 mutation 行为测覆盖）。Task 10 逐 edge 复核结论：
+ *   - **无遗漏**该 verified 但仍 planned 的 tenant-scoped service 定义 edge。
+ *   - **构造点/carrier edge 全部保持 planned**——`buildAppServices`/各 route registrar 的 carrier edge 仍精确覆盖
+ *     `mobileDeviceFacade`（持裸 tx 供 IdentityWriter/AvatarWriter seam）+ `scim`（ScimTenantDirectory coordinatorDb），
+ *     `AvatarAutorunFacade`（AvatarAutorunStore(db) 未下沉）、`avatars.registerAvatarRoutes/getTenantOS`（root os +
+ *     AvatarSnapshotService(tx)）、`NudgePushBridge`（deps.db 走 scimQueryUsers/NotificationPreferenceStore 的 pre-tenant
+ *     用户目录）、`SsoUserService`（ctor 裸 tx + identityWriter seam）、`PrivacyService`（root os 大 carrier，仅
+ *     TenantEnterpriseProfileService 依赖经 SingleDbResolver 桥接）——**均非纯 tenant-scoped resolver 载体**，仍携带
+ *     seam/coordinator/root-db 能力，升级须先真下沉 + 2-shard 覆盖（seam/coordinator 归 Plan 1c，大 carrier 归后续 Plan）。
+ *   诚实性铁律（Plan Global #3/#6）：**绝不**因「Plan 1b 做完」把整个 buildAppServices/route carrier 标 wired。
+ *   本结论由 db-access-inventory-completeness.test.ts 的两条 Task 10 回归门钉死（verified 不回退 + carrier 禁 mass-upgrade）。
  */
 
 export type DbAccessCategory =
