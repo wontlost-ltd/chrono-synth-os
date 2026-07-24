@@ -296,6 +296,37 @@ describe('认证 API 集成测试', () => {
       });
       assert.equal(res.statusCode, 401);
     });
+
+    /* 分片 Plan 1c Task 2 High 回归：v124 存储把 email 归一化为 LOWER(TRIM)，login/register 输入侧
+     * 也归一化 → 大小写混合的 email 注册后，用原大小写和纯小写都能登录（消老用户锁死窗口）。 */
+    it('大小写混合 email 归一化后 login 命中（原大小写 + 纯小写均通过）', async () => {
+      const regRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        payload: { email: 'User@Example.com', password: 'password123' },
+      });
+      assert.equal(regRes.statusCode, 201);
+      /* 注册返回的 email 已归一化，与 v124 存储侧一致。 */
+      assert.equal(JSON.parse(regRes.body).data.email, 'user@example.com');
+
+      /* 用注册时的原大小写登录：归一化后命中，不锁死。 */
+      const sameCaseRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: 'User@Example.com', password: 'password123' },
+      });
+      assert.equal(sameCaseRes.statusCode, 200);
+      assert.equal(JSON.parse(sameCaseRes.body).data.email, 'user@example.com');
+
+      /* 用不同大小写（纯小写）登录：同样命中，证明归一化生效。 */
+      const lowerCaseRes = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/login',
+        payload: { email: 'user@example.com', password: 'password123' },
+      });
+      assert.equal(lowerCaseRes.statusCode, 200);
+      assert.equal(JSON.parse(lowerCaseRes.body).data.email, 'user@example.com');
+    });
   });
 
   describe('POST /api/v1/auth/refresh', () => {
