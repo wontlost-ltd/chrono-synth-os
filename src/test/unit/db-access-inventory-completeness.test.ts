@@ -225,3 +225,86 @@ test('四态覆盖：inventory 含 requires-resolver-rewire + resolved-boundary-
   assert.ok(dispositions.has('requires-resolver-rewire'), 'inventory 应含 requires-resolver-rewire（组合根/路由用 host db 造 carrier）');
   assert.ok(dispositions.has('resolved-boundary-unproven'), 'inventory 应含 resolved-boundary-unproven（OS 内核内部 layer 互传）');
 });
+
+/*
+ * 分片 Phase 0 · Plan 1b · Task 10（收尾 · 逐 edge 校准的诚实性回归门）。
+ *
+ * 校准判据（Plan Global Constraint #3/#6）：
+ *   verified = tenant-scoped service 真 resolver 化 + 被 2-shard 行为测（换 home / 删 predicate 两 mutation）覆盖；
+ *   wired    = 构造点真接 resolver 但无直接 2-shard 行为覆盖；
+ *   planned  = mixed-scope / coordinatorDb / seam / 大 carrier 未真下沉（Plan 1c 及后续）。
+ *
+ * 诚实性铁律：**绝不**因「Plan 1b 做完」就把整个 buildAppServices / 路由 carrier 标 wired。
+ * 下面两组回归断言把 Task 1-8 的正确校准结果钉死——防止未来工作反向 downgrade tenant-scoped
+ * service edge，或把携带 seam/coordinator/root-db 能力的 carrier edge 静默 mass-upgrade。
+ */
+
+/** Task 1-8 已 resolver 化 + 2-shard 双 mutation 行为测覆盖的 tenant-scoped service 定义 edge。 */
+const TENANT_SCOPED_VERIFIED_EDGE_IDS = [
+  'src/identity/identity-service.ts#IdentityService::flow::resolver',
+  'src/identity/identity-service.ts#IdentityWriter::flow::terminal-escape',
+  'src/identity/avatar-service.ts#AvatarService::flow::resolver',
+  'src/identity/avatar-service.ts#AvatarWriter::flow::resolver',
+  'src/identity/device-avatar-service.ts#DeviceAvatarService::flow::resolver',
+  'src/identity/mobile-device-service.ts#MobileDeviceService::flow::resolver',
+  'src/identity/collaboration-service.ts#CollaborationService::flow::resolver',
+  'src/enterprise/organization-service.ts#OrganizationService::flow::terminal-escape',
+  'src/enterprise/admin-control-plane-service.ts#AdminControlPlaneService::flow::resolver',
+  'src/knowledge/knowledge-source-service.ts#KnowledgeSourceService::flow::resolver',
+  'src/enterprise/tenant-enterprise-profile-service.ts#TenantEnterpriseProfileService::flow::resolver',
+  'src/identity/user-profile-service.ts#UserProfileService::flow::resolver',
+  'src/billing/api-key-service.ts#ApiKeyService::flow::resolver',
+  'src/billing/api-key-service.ts#ApiKeyWriter::flow::resolver',
+  'src/billing/api-key-service.ts#ApiKeyWriter::flow::requires-resolver-rewire',
+] as const;
+
+/**
+ * 构造点/carrier edge：仍携带 seam-tx（MobileDeviceFacade 供 IdentityWriter/AvatarWriter）/
+ * coordinatorDb（ScimTenantDirectory/UserEmailDirectory）/root-db（PrivacyService、avatars getTenantOS）/
+ * pre-tenant 用户目录（NudgePushBridge deps.db 走 scimQueryUsers/NotificationPreferenceStore）。
+ * 这些**不是纯 tenant-scoped resolver 载体**，Task 10 明确保持 planned（seam/coordinator 归 Plan 1c，
+ * 大 carrier 下沉归后续 Plan）。任何一条被升为 wired/verified 即违反逐 edge 诚实性判据。
+ */
+const CARRIER_MUST_STAY_PLANNED_EDGE_IDS = [
+  'src/server/app-services.ts#AppServices::flow::resolver',
+  'src/server/app-services.ts#buildAppServices::flow::requires-resolver-rewire',
+  'src/server/app-services.ts#buildAppServices::flow::terminal-escape',
+  'src/identity/mobile-device-facade.ts#MobileDeviceFacade::flow::resolver',
+  'src/identity/mobile-device-facade.ts#MobileDeviceFacade.identityWriter::flow::seam',
+  'src/identity/mobile-device-facade.ts#MobileDeviceFacade.avatarWriter::flow::seam',
+  'src/identity/avatar-autorun-facade.ts#AvatarAutorunFacade::flow::resolver',
+  'src/identity/avatar-autorun-facade.ts#AvatarAutorunFacade::flow::requires-resolver-rewire',
+  'src/server/services/nudge-push-bridge.ts#NudgePushBridge::flow::resolver',
+  'src/server/routes/avatars.ts#registerAvatarRoutes::flow::resolver',
+  'src/server/routes/avatars.ts#getTenantOS::flow::requires-resolver-rewire',
+  'src/identity/sso-user-service.ts#SsoUserService::flow::resolver',
+  'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::seam',
+  'src/privacy/privacy-service.ts#PrivacyService::flow::resolver',
+  'src/privacy/privacy-service.ts#PrivacyService.exportData::flow::requires-resolver-rewire',
+  'src/privacy/privacy-service.ts#PrivacyService.getOS::flow::requires-resolver-rewire',
+] as const;
+
+test('Task 10 校准：tenant-scoped service 定义 edge 全为 verified（Task 1-8 结果不回退）', () => {
+  for (const id of TENANT_SCOPED_VERIFIED_EDGE_IDS) {
+    const point = DB_ACCESS_INVENTORY.find((p) => p.id === id);
+    assert.ok(point, `verified 契约 edge 缺失（id 变更须同步本清单）: ${id}`);
+    assert.equal(
+      point!.wiringStatus,
+      'verified',
+      `${id} 应保持 verified（Task 1-8 resolver 化 + 2-shard 双 mutation 覆盖），实际=${point!.wiringStatus}`,
+    );
+  }
+});
+
+test('Task 10 诚实性：携带 seam/coordinator/root-db 能力的 carrier edge 必须保持 planned（禁 mass-upgrade）', () => {
+  for (const id of CARRIER_MUST_STAY_PLANNED_EDGE_IDS) {
+    const point = DB_ACCESS_INVENTORY.find((p) => p.id === id);
+    assert.ok(point, `planned 契约 carrier edge 缺失（id 变更须同步本清单）: ${id}`);
+    assert.equal(
+      point!.wiringStatus,
+      'planned',
+      `${id} 必须保持 planned（仍携带 seam-tx/coordinatorDb/root-db，非纯 tenant-scoped resolver 载体；` +
+        `升级须先真下沉 + 2-shard 覆盖），实际=${point!.wiringStatus}`,
+    );
+  }
+});
