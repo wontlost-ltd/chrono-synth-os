@@ -750,7 +750,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * 下方分组注释仅作导航。 */
 
   /* ① 通用/平台 */
-  registerAuthRoutes(app, db, config);
+  /* 分片 Plan 1c Task 5：Auth 经共享 resolver（register→canonicalTenantId shard / login→entry.tenantId shard /
+   * email→tenant 目录经 coordinatorDb），不再裸传 host db。 */
+  registerAuthRoutes(app, captureResolver('auth'), config);
   registerUserRoutes(app, services);
   registerOrganizationRoutes(app, services, captureResolver('organizations-rbac'));
   registerBillingRoutes(app, db, config);

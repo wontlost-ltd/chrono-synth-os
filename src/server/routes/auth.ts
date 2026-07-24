@@ -9,6 +9,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
@@ -208,14 +210,18 @@ const authRateLimit = {
   },
 };
 
-export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
+export function registerAuthRoutes(app: FastifyInstance, resolver: TenantDbResolver, config: AppConfig): void {
   if (!config.jwt.enabled) return;
 
-  const authService = new AuthService(db, config);
+  const authService = new AuthService(resolver, config);
 
   app.post('/api/v1/auth/register', authRateLimit, async (request, reply) => {
     const { email, password } = RegisterSchema.parse(request.body);
-    const result = await authService.register(app, email, password);
+    /* 客户端幂等键透传：Idempotency-Key header → register 的 operationId（缺则 register 内一次性随机）。
+     * 私有属原客户端，是「重试收敛 vs 账号接管」的判据锚。 */
+    const rawIdemKey = request.headers['idempotency-key'];
+    const idempotencyKey = Array.isArray(rawIdemKey) ? rawIdemKey[0] : rawIdemKey;
+    const result = await authService.register(app, email, password, { idempotencyKey });
     setRefreshCookie(request, reply, config, result.refreshToken, config.jwt.refreshTtlMs);
     return reply.status(201).send({ data: result });
   });
@@ -268,7 +274,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
   });
 }
 
-/** 生成 access + refresh 令牌对（保留导出以兼容外部调用） */
+/** 生成 access + refresh 令牌对（保留导出以兼容 SSO/OIDC 单库调用；db 经 SingleDbResolver 适配新 ctor）。 */
 export async function generateTokenPair(
   app: FastifyInstance,
   db: IDatabase,
@@ -277,11 +283,11 @@ export async function generateTokenPair(
   tenantId: string,
   role: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
-  const authService = new AuthService(db, config);
+  const authService = new AuthService(new SingleDbResolver(db), config);
   return authService.generateTokenPair(app, userId, tenantId, role);
 }
 
-/** 清理过期和已吊销的刷新令牌 */
+/** 清理过期和已吊销的刷新令牌（静态方法直接收 UoW，无需构造 AuthService）。 */
 export function cleanupExpiredTokens(db: IDatabase): number {
   return AuthService.cleanupExpired(db);
 }
