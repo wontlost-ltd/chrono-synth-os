@@ -892,7 +892,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerOperationRoutes(app, deps.os, tenantFactory, config);
   /* ⑤ 治理与审计 */
   registerConflictRoutes(app, db, config);
-  registerMetricsRoutes(app, deps.os, config);
+  registerMetricsRoutes(app, deps.os, captureResolver('metrics'), config);
   registerAuditRoutes(app, db);
   registerAnalyticsRoutes(app, db);
   registerDashboardRoutes(app, db);

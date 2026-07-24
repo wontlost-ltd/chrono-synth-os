@@ -6,9 +6,11 @@ import { registerQuery } from '../legacy-sync-bridge.js';
 import {
   MTRX_QUERY_QUEUE_COUNT, MTRX_QUERY_ROLLUP_SUMMARY,
   MTRX_QUERY_BILLING_OUTBOX_COUNT, MTRX_QUERY_TENANT_USAGE,
+  MTRX_QUERY_TENANT_USAGE_RAW,
 } from '@chrono/kernel';
 import type {
   MtrxCountRow, MtrxRollupRow, MtrxTenantUsageRow, MtrxTenantUsageParams,
+  MtrxTenantUsageRawParams,
 } from '@chrono/kernel';
 
 export function registerMetricsQueryExecutors(): void {
@@ -74,6 +76,15 @@ export function registerMetricsQueryExecutors(): void {
     const rows = db.prepare<{ tenant_id: string; resource: string; total: number | bigint }>(
       `SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource ORDER BY total DESC LIMIT ?`,
     ).all(p.cutoff, p.limit);
+    return rows.map(r => ({ tenant_id: r.tenant_id, resource: r.resource, total: Number(r.total) }));
+  });
+
+  /* scatter-gather 变体：**无 ORDER/LIMIT**，各 shard 拉全量原始 (tenant, resource, total) 行；
+   * 协调层 concat 后全局 merge(同 tenant+resource SUM)+sort DESC+limit（防各 shard 各截断漏 Top-N）。 */
+  registerQuery<readonly MtrxTenantUsageRow[], MtrxTenantUsageRawParams>(MTRX_QUERY_TENANT_USAGE_RAW, (db, p) => {
+    const rows = db.prepare<{ tenant_id: string; resource: string; total: number | bigint }>(
+      `SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource`,
+    ).all(p.cutoff);
     return rows.map(r => ({ tenant_id: r.tenant_id, resource: r.resource, total: Number(r.total) }));
   });
 }

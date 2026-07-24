@@ -10,6 +10,12 @@ export const MTRX_QUERY_QUEUE_COUNT = 'metrics.queueCount' as const;
 export const MTRX_QUERY_ROLLUP_SUMMARY = 'metrics.rollupSummary' as const;
 export const MTRX_QUERY_BILLING_OUTBOX_COUNT = 'metrics.billingOutboxCount' as const;
 export const MTRX_QUERY_TENANT_USAGE = 'metrics.tenantUsage' as const;
+/**
+ * 跨 shard scatter-gather 专用：**无 ORDER/LIMIT** 的租户用量原始聚合。
+ * 单库路径仍用带 limit 的 `MTRX_QUERY_TENANT_USAGE`（各 shard 各截断会漏「跨 shard 求和后应进 Top-N」
+ * 的租户）；scatter-gather 下各 shard 拉全量原始行，由协调层全局 merge(同 tenant+resource SUM)+sort+limit。
+ */
+export const MTRX_QUERY_TENANT_USAGE_RAW = 'metrics.tenantUsageRaw' as const;
 
 /* ── 行类型 ── */
 
@@ -49,6 +55,11 @@ export interface MtrxTenantUsageParams {
   limit: number;
 }
 
+/** 无 limit 的 raw 变体参数（仅 cutoff；limit 由协调层全局施加）。 */
+export interface MtrxTenantUsageRawParams {
+  cutoff: number;
+}
+
 /* ── Query 工厂 ── */
 
 export function mtrxQueryQueueCount(status: string): Query<MtrxCountRow | null, string> {
@@ -65,4 +76,9 @@ export function mtrxQueryBillingOutboxCount(status: string): Query<MtrxCountRow 
 
 export function mtrxQueryTenantUsage(params: MtrxTenantUsageParams): Query<MtrxTenantUsageRow, MtrxTenantUsageParams> {
   return { kind: MTRX_QUERY_TENANT_USAGE, params };
+}
+
+/** 无 limit 的 raw 变体：各 shard 拉全量 (tenant, resource, total) 原始行，供协调层全局 merge+sort+limit。 */
+export function mtrxQueryTenantUsageRaw(params: MtrxTenantUsageRawParams): Query<MtrxTenantUsageRow, MtrxTenantUsageRawParams> {
+  return { kind: MTRX_QUERY_TENANT_USAGE_RAW, params };
 }
