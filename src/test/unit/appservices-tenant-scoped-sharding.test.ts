@@ -20,6 +20,7 @@ import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterpri
 import { ScimTenantDirectory } from '../../enterprise/scim-tenant-directory.js';
 import { UserProfileService } from '../../identity/user-profile-service.js';
 import { UserEmailDirectoryService } from '../../identity/user-email-directory-service.js';
+import { ApiKeyService } from '../../billing/api-key-service.js';
 import { loadConfig } from '../../config/schema.js';
 import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../../agent/push/dispatcher.js';
 import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
@@ -646,5 +647,51 @@ test('ScimTenantDirectory 单库过渡：storeScimToken 存 + resolveScimTenant 
   dir.storeScimToken('tB', 'scim_rotated_token_b');
   assert.equal(dir.resolveScimTenant('scim_secret_token_b'), null, '轮换后旧 token 失效');
   assert.deepEqual(dir.resolveScimTenant('scim_rotated_token_b'), { tenantId: 'tB' }, '轮换后新 token 命中 tB');
+  db.close();
+});
+
+/* ── ApiKey 管理组（Task 8）：api_keys 表有 tenant_id 列 → create/list/revoke（管理路径，已带 tenantId）
+ *    ctor (tx)→(resolver) + writerFor(tenantId)=每调用 dbForTenant(tenantId) 现造 ApiKeyWriter（不缓存）；
+ *    query 层已含 tenant predicate（list: WHERE tenant_id=?；revoke: WHERE id=? AND tenant_id=?）。
+ *    key hash→tenant 反查（无 tenantId 入参=mixed-scope，在 server/plugins/auth.ts）归 Plan 1c，本 Task 不动。 ── */
+
+test('ApiKeyService per-tenant：B create key 经 service 落 s1（非 home），用 tA list 查不到（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new ApiKeyService(resolver);
+  /* B（非 home 租户）create key（requestedPlanId='free' → 无订阅回退 free，plan 校验通过；必须由 dbForTenant 选对 s1）。 */
+  const outcomeB = svc.create('tB', 'free');
+  assert.ok(outcomeB.ok, 'B create key 成功（free plan 校验通过）');
+  const keyId = outcomeB.ok ? outcomeB.data.id : '';
+  /* B 在自己 shard（s1）list 查得到自己的 key。 */
+  const listedB = svc.list('tB');
+  assert.equal(listedB.length, 1, 'B 在自己 shard（s1）list 到 1 个 key');
+  assert.equal(listedB[0]?.id, keyId, 'key id 匹配');
+  /* 用 tA（→s0）list：s0 根本没这行 → 空（不串 shard）。 */
+  assert.equal(svc.list('tA').length, 0, '用 tA（→s0）list：查不到 B 的 key（不串 shard）');
+  /* 物理断言：key 行只在 s1（B 的 shard）、s0 无（防「都落 s0」的 shard 路由 bug）。 */
+  assert.ok(s1.prepare(`SELECT 1 FROM api_keys WHERE id = ?`).get(keyId), 'B 的 key 行在 s1');
+  assert.equal(s0.prepare(`SELECT 1 FROM api_keys WHERE id = ?`).get(keyId), undefined, 's0 无 B 的 key 行');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('ApiKeyService tenant predicate：共享物理 db 只种 B 的 key，用 tA list/revoke 均不命中（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的 key。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new ApiKeyService(resolver);
+  const outcomeB = svc.create('tB', 'free');
+  assert.ok(outcomeB.ok, 'B create key 成功');
+  const keyId = outcomeB.ok ? outcomeB.data.id : '';
+  /* list：用 tA list → 空（tenant predicate WHERE tenant_id='tA' 隔离，不命中 B 的行）。 */
+  assert.equal(svc.list('tA').length, 0, 'tA list → 空（tenant predicate 隔离，不命中 tB 的 key）');
+  assert.equal(svc.list('tB').length, 1, 'tB 自己 list 查得到（正向锚点）');
+  /* revoke：用 tA revoke B 的 keyId → false（tenant predicate WHERE id=? AND tenant_id='tA' 不命中，不误吊销 B 的 key）。 */
+  assert.equal(svc.revoke(keyId, 'tA'), false, 'tA revoke tB 的 key → false（tenant predicate 隔离，不误吊销）');
+  /* B 的 key 未被越权吊销（is_revoked 仍 0 → 仍在 list 中）。 */
+  assert.equal(svc.list('tB').length, 1, 'tA 越权吊销失败后 B 的 key 仍在（is_revoked 未被改）');
+  /* B 自己 revoke 生效（正向锚点：验证 revoke 在同租户下正常工作）。 */
+  assert.equal(svc.revoke(keyId, 'tB'), true, 'tB revoke 自己的 key → true');
   db.close();
 });
