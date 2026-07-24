@@ -40,8 +40,20 @@ interface DatabaseRuntime {
   - **shard tenant 表**（life_simulations/decisions/avatars/... 有 tenant_id 归属该 shard）→ `resolver.dbForTenant(tenantId)`。
   - **coordinator 身份目录**（`tenant_identity_directory`）→ `resolver.coordinatorDb()`（与 Plan 1c `TenantIdentityDirectory` 同——删该租户所有 lookup 行）。
   - **persona 状态**（core）→ 已经 `getOS(tenantId)→TenantOSFactory` 落对 shard（不变）。
-  - **import token store / export jobs / audit（recordPrivacyAudit）/ profileService**：逐个判表级归属（tenant-scoped→dbForTenant / 平台→coordinator），route 的 `recordPrivacyAudit(os.getDatabase())` 同步。
-  - **跨库擦除顺序（幂等/失败恢复，与 Plan 1c 协调）**：先删/失活 coordinator 登录目录（阻止新访问定位该租户）→ 再擦 shard tenant 数据 → 最后完成目录清理。**eraseData 不再是单 DB 原子事务**——是跨库序列，须定幂等 + 崩溃恢复（复用 Plan 1c PENDING/ACTIVE + 恢复 worker 思路）。
+  - **capability 数据域最终表（第 4 轮 Codex——定死非「逐个判」）**：
+
+    | Capability | 数据域 |
+    |---|---|
+    | `tenant_identity_directory` | coordinator |
+    | tenant payload 表（life_sim/decisions/avatars/...） | tenant shard `dbForTenant` |
+    | `import_commit_tokens` | tenant shard |
+    | `export_jobs` | tenant shard |
+    | tenant privacy audit（recordPrivacyAudit） | tenant shard（route 的裸 `os.getDatabase()` 改 dbForTenant；若合规定义为擦除豁免保留则明确独立 sink + 内容最小化，不与 tenant 数据一起删） |
+    | tenant enterprise profile（profileService） | tenant shard `dbForTenant`（现 `new SingleDbResolver(rootDb)` 改 resolver） |
+    | persona/core | TenantOSFactory `getOS(tenantId)` 对应 shard |
+    | `privacy_erasure_operations` ledger | coordinator |
+  - **coordinator==home 缺省快路径（第 4 轮 Codex）**：缺省 coordinatorConnStr=shards[home].connStr → `dbForTenant(tenantId)===coordinatorDb()` 同库时，eraseData **走单 DB 原子事务**（目录阻断+tenant 擦除+状态一次提交），无 saga 无多提交窗口。仅**显式独立 coordinator**（三库）才走下面的跨库 saga。
+  - **跨库擦除 saga（显式独立 coordinator 时，第 4 轮 Codex 硬条件——需专属持久状态机 + 新迁移）**：eraseData 跨库非原子，须**专属持久 ledger**（**非**复用 Plan 1c 的 tenant_identity_directory——那只有 REGISTER/EMAIL_CHANGE/TOKEN/API_KEY，TenantReservationRecovery 恢复不了 privacy erasure）。**新建 coordinator 表 `privacy_erasure_operations`（新迁移，「无新迁移」仅对 coordinator==home 缺省成立；独立 coordinator 需此迁移）**：`operation_id / tenant_id / state / created_at / updated_at / retry_count / last_error`。状态机 `PENDING → DIRECTORY_DISABLED → SHARD_ERASED → DIRECTORY_CLEANED → COMPLETE`，每步 CAS 幂等；恢复 worker 扫未完成记录续做（shard 擦除重复执行安全）；**仅 COMPLETE 才返 `deleted:true` + 记 privacy.erase.completed 审计**（崩溃/超时中途绝不误报完成）。崩溃中途（如 DIRECTORY_DISABLED 后 shard 未擦）由 ledger + 恢复 worker 收敛（租户暂不可定位但 PII 未残留无记录的情况被 ledger 排除）。
 - 同步 v1 privacy route + v2 portability route 的 PrivacyService 构造点传 resolver。**这是 carrier 下沉（PrivacyService 是 enterprise service 非 OS 内核层，深挖确认可下沉），非需 OS facade 分片。** 非-home 租户 erase 在其真 shard + coordinator 目录都删——不再漏擦，GDPR Art.17 真履行（非 501 拒绝、非漏 coordinator）。
 - **companion 例外**：companion 的 getOS 消费（chat/perceive 等 sharedDb）**若依赖 per-tenant OS 内部状态**（非纯 tenant-scoped 表直查）则经 `getTenantOS(tenantId)`（factory 已 shard-ready 自动对）；纯 tenant-scoped 表直查（如 companion 的 subscriptions 读）下沉 dbForTenant。逐 sink 判：能经 getTenantOS 的走它，直查表的下沉。
 
@@ -84,9 +96,9 @@ dbSchema 加 `.superRefine`：shards 非空 → homeShardId 必填且 ∈ shards
 放开门（bundle + 3 guard）+ P0 PrivacyService GDPR 下沉 + app.ts 3 root capture 下沉 + memory-facade/companion carrier 下沉 + TaskQueue per-shard + 剩余 carrier 守卫兜底 + config superRefine + 2-shard 证明（含真 PG 端到端）。
 
 ### 拆 3 个子 plan（诚实——114 carrier + 200 证明非单次可审，Codex 建议；每中间态多库门仍关，仅 3c 末提交放开）
-- **Plan 3a：runtime + ownership**——`createShardedDatabaseRuntime` bundle（`{defaultDb=home, resolver, close}` + ownsDb）+ ChronoSynthOS ctor ownsDb 标志 + 3 guard 职责 + config superRefine + main.ts 入口 owns runtime.close。**多库门仍关**（bundle 多库分支先建但 createApp/factory 仍 assert 挡，或 3a 只搭 bundle 骨架单库跑）。
+- **Plan 3a：runtime + ownership**——`createShardedDatabaseRuntime` bundle（`{defaultDb=home, resolver, close}` + ownsDb）+ ChronoSynthOS ctor ownsDb 标志 + config superRefine。**多库门仍关（钉死，无「或」，第 4 轮 Codex）**：**3a/3b 的生产 `main.ts/main-desktop.ts` 仍走旧 `createDatabase(config)`**（不切 runtime——若 3a 切了 runtime，多库 config 会先建池+迁移全库才在 createApp 被挡=已发生生产多库副作用）；`createApp` 最早期 `assertShardingActivationAllowed` 保留；非空 shards 仍在任何插件/worker/route 前拒绝。**bundle 多库分支只能被测试直构**（3a 单库跑生产）。
 - **Plan 3b：P0 carrier 下沉**——PrivacyService mixed-scope 路由表（shard tenant 表 + coordinator 目录 + 跨库擦除序列）、app.ts 3 root capture、companion/memory-facade、TaskQueue per-shard；每批完成独立 2-shard 单测（FakeMultiShardResolver）；**多库门仍关**（下沉正确性用 Fake 证，不需真放开）。
-- **Plan 3c：证明 + 原子放开**——`resolved-boundary-unproven`(27) 内核层 2-shard 证明 + 真 PG 三库（coordinator+home+shard2）端到端 + initialize/close/掉线负测；**最后一个提交才删旧激活门放开生产多库**。任何 3a/3b 中间态不得放开。
+- **Plan 3c：证明 + 原子放开**——`resolved-boundary-unproven`(27) 内核层 2-shard 证明 + 真 PG 三库（coordinator+home+shard2）端到端 + initialize/close/掉线负测；**最后一个原子提交同时**：切 `main.ts/main-desktop.ts` 到 runtime + 删 createApp 激活 assert + 保留 createDatabase 单库-only guard + 启用真生产 ShardRouter（真 PG 三库测 + golden 已先过）。任何 3a/3b 中间态生产 main 不调多库 runtime，不得放开。
 - **不含**：observability 独立进程 fan-out（DEFERRED 子 spec）；OS facade 真 per-shard 实例化（若 companion 有此需求则守卫兜底 + follow-up）。
 
 ### 诚实
@@ -100,7 +112,7 @@ dbSchema 加 `.superRefine`：shards 非空 → homeShardId 必填且 ∈ shards
 - **PrivacyService GDPR（P0，三库布局验）**：独立 coordinator+home+shard2 三库，非-home 租户 eraseData 在其真 shard 删 tenant 表 **且** coordinator 删 `tenant_identity_directory` lookup 行（测证：删后 shard tenant 数据空 + coordinator 目录该租户 lookup 空 + 无法再定位该租户；非 host 漏擦、非 501、非漏 coordinator）。default→home 非 coordinator（三库验 default 内核数据落 home 库，非 coordinator 库）。
 
 ## 破坏性
-- 无新迁移。
+- 迁移：coordinator==home 缺省无新迁移；**显式独立 coordinator 需新建 `privacy_erasure_operations` ledger 迁移（Plan 3b/3c）**（saga 崩溃恢复用）。tasks 表已有 tenant_id 无需改。
 - ChronoSynthOS ctor 加 `ownsDb` 标志（缺省 true 保现状零回归；多库 root OS 传 false）。
 - runtime 统一 `{defaultDb, resolver, close}`（defaultDb=home 非 coordinator）；main.ts/main-desktop.ts 入口 owns runtime.close。
 - PrivacyService ctor 加 resolver + 全构造点同步；TaskQueue/AvatarAutorun/bulk-import enqueueFor 路由。
