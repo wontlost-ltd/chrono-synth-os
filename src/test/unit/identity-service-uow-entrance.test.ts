@@ -85,7 +85,7 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     } finally { db.close(); }
   });
 
-  it('AvatarSnapshotService / SsoUserService 都接受双入口；CollaborationService（Task 4）/MobileDeviceService（Task 3）/UserProfileService（Task 7）已 resolver 化', () => {
+  it('AvatarSnapshotService 接受双入口；SsoUserService（Task 6）/CollaborationService（Task 4）/MobileDeviceService（Task 3）/UserProfileService（Task 7）已 resolver 化', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
@@ -98,8 +98,10 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
       assert.ok(new MobileDeviceService(new SingleDbResolver(db)));
       assert.ok(new AvatarSnapshotService(db));
       assert.ok(new AvatarSnapshotService(uow));
-      assert.ok(new SsoUserService(db));
-      assert.ok(new SsoUserService(uow));
+      /* 分片 Plan 1c（Task 6）：SsoUserService 已 resolver 化——收 TenantDbResolver，SSO/OIDC 经
+       * 协调库目录定位 email→tenant 再写 shard。 */
+      assert.ok(new SsoUserService(new SingleDbResolver(db)));
+      assert.ok(new SsoUserService(new SingleDbResolver(uow)));
     } finally { db.close(); }
   });
 });

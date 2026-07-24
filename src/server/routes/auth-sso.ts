@@ -7,6 +7,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import { buildAuthorizeUrl, exchangeCode, fetchUserInfo } from '../plugins/auth0.js';
 import { ConfigError, ValidationError, AuthenticationError, ErrorCode } from '../../errors/index.js';
@@ -80,7 +81,7 @@ function createMemoryStateStore(): SsoStateStore {
   };
 }
 
-export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
+export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, resolver: TenantDbResolver, config: AppConfig): void {
   if (!config.sso?.enabled) return;
 
   const ssoConfig = {
@@ -92,7 +93,8 @@ export function registerSsoRoutes(app: FastifyInstance, db: IDatabase, config: A
   };
 
   const baseUrl = config.server.publicUrl;
-  const ssoUserService = new SsoUserService(db);
+  /* 分片 Plan 1c（Task 6）：SsoUserService 经协调库目录定位 email→tenant，再经 resolver 路由 shard。 */
+  const ssoUserService = new SsoUserService(resolver);
   const stateStore: SsoStateStore = app.redis
     ? createRedisStateStore(app.redis)
     : createMemoryStateStore();
