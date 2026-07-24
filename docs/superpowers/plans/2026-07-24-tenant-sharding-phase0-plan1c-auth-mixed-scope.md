@@ -4,7 +4,9 @@
 >
 > **第 2 轮修订**：采纳 Codex 独立复审 57/100 退回的 8 项确认缺陷——① operationId 确定性重入（非随机）② 老用户 login 致命兼容→回填迁移 ③ shard 原子完成标记(bootstrap ledger) ④ CAS 失败不签发 token ⑤ 目录=定位器、shard is_revoked=权威（消双写一致性依赖）⑥ revoke-by-hash 接口 ⑦ 目录不存 shardId（tenantId 纯函数派生，消 `shardIdForTenant()` 幽灵方法 + 修 fake）⑧ 6 迁移同步点全显式。
 >
-> **第 3 轮修订**：采纳 Codex 复审 69/100 退回的 5 项——① **canonical identity**：`reserveTenant` 返回读回行的 canonical `(tenantId, userId)`，`reservedByUs` 按 operationId 匹配（非按本次随机 tenantId 比对）；reservation 表存 userId；重试用 canonical 身份不重生。② **bootstrap ledger 粒度**：主键 `(tenant_id, operation_id)`（非 tenant_id），恢复 worker 按 operationId 匹配——SCIM/OIDC 向已有 COMPLETE tenant 加用户时不误激活本次新 reservation。③ **email canonicalization**：单一 `canonicalizeEmail`（lowercase+trim）贯穿目录 lookup_value / users.email 写入 / 回填 SQL / login 派生——回填迁移也归一化历史 email（否则大小写不匹配锁死老用户）。④ **Stripe 幂等**：`stripe.customers.create` 用 operationId 作 idempotency key + customerId 持久化+重入读回；Stripe 成功 shard 事务失败时恢复不重复建。⑤ **directory 写失败可用性**：`recordActiveLookup` ON CONFLICT 后读回校验 tenantId（非假定冲突即同映射）；目录写失败时不返回凭据。⑥ **id-generator seam 修 fake**：AuthService/SsoUserService 注入 `idGenerator`（默认 randomUUID），测试注确定性 id 并预登记进 fake——真 register 测试可跑。⑦ 迁移同步点精确化：实际是 migration 文件 / index 三子处 / VERSION_MAP / `LEGACY_SQLITE_MIGRATIONS` / `LEGACY_POSTGRES_MIGRATIONS` / dist（parity 无独立硬编码期望数组/range 断言——删除不存在的同步点声明），且 `git add` 须含 legacy fixture 文件。
+> **第 3 轮修订**：采纳 Codex 复审 69/100 退回的 5 项——① **canonical identity**：`reserveTenant` 返回读回行的 canonical `(tenantId, userId)`；reservation 表存 userId；重试用 canonical 身份不重生。② **bootstrap ledger 粒度**：主键 `(tenant_id, operation_id)`。③ **email canonicalization**：单一 `canonicalizeEmail` 贯穿。④ Stripe 幂等（本轮发现不可执行，见第 4 轮）。⑤ **directory 写失败可用性**。⑥ **id-generator seam 修 fake**。⑦ 迁移同步点精确化（legacy fixture 两数组）。
+>
+> **第 4 轮修订（安全关键）**：采纳 Codex 复审 64/100 退回的 3 阻断——① **register 账号接管漏洞（致命）**：第 3 轮 `operationId=hash(email)` 使**任何人**再次 `register(victim@email, 任意密码)` 得同 operationId → `reservedByUs` 为真 → 走 COMPLETE 快路 → 不校验密码直接为 victim 签 token。**根治：register 绝不认证。** email 已 **ACTIVE** → 一律 `AUTH_EMAIL_EXISTS`(409)、绝不签 token（保持现状语义）。**幂等重试改由客户端 `Idempotency-Key` header 提供 operationId**（非 email 派生）：有 key 且指向本次 PENDING reservation 才幂等续做；无 key 时重复 register 一律 409（ACTIVE）或 `AUTH_REGISTRATION_IN_PROGRESS`（PENDING，不签 token）。PENDING 续做也须 idempotency-key 证明属原请求，仅知 email 不能接管。② **Stripe 不可执行**：`createCustomer(config,email,tenantId)` 现签名**不收 idempotencyKey**、`transaction(fn:()=>T)` **同步且拒 Promise**——不能把 Stripe HTTP 放进 DB 事务。**改：Stripe 在事务外先做**（`createCustomer` 加 idempotencyKey 形参 + 传 `stripe.customers.create(params,{idempotencyKey})`）→ 得稳定 customerId → 再开短 shard 同步事务写 DB；DB 失败重试用同 key 复用同 customer。须显式改 `stripe-client.ts` + 签名 + 测试。③ **changeEmail 跨库窗口**：coordinator 目录改了但 shard users.email 未改（或反）→ login 新 email 命中目录 tenant→shard 查新 email 查不到→永久登不上。**改：changeEmail 也走小状态机**——coordinator reserve 新 email PENDING → shard 事务改 users.email → coordinator 激活新 email+删旧映射 → 未完成保留旧 ACTIVE 映射（不锁死）+ 恢复 worker 凭 shard canonical email 补激活。另：email UPDATE 是**显式数据规范化**（非「完全等价现状」）——迁移说明须标明 email 成为 canonical login 标识、原展示大小写不保留、需展示格式另设 `display_email`。
 
 **Goal:** 把「无 tenantId 的全局定位 + 租户级写」这类 mixed-scope 入口（register/login/SSO/SCIM/refresh/api-key）切到 coordinator identity directory 定位后再到正确 shard 读写，落地 spec §4.1 的 `PENDING → ACTIVE` reservation 状态机（唯一真跨库写序列），**且升级前的历史用户无缝可用**。
 
@@ -13,14 +15,20 @@
 关键设计决策（回应 Codex）：
 - **目录=定位器，权威在 shard**：目录项只回答「这个 email/token/key 属哪个 tenant」；账号是否有效（密码、is_revoked、过期）永远以 `dbForTenant(tenantId)` 的 shard 内行为权威真源。故目录与 shard 的「双写」不需要原子/2PC——目录项过期/多余只导致「定位到一个 shard 后在 shard 上验证失败」（安全的拒绝），绝不导致越权。撤销以 shard `is_revoked` 为准，目录项清理是尽力而为的垃圾回收（清晚了不影响正确性，因 shard 已拒）。
 - **目录不存 shardId**：shardId 是 `tenantId` 的纯函数（`shardIdForTenant(tenantId, shardIds)`，`shard-hash.ts`，`dbForTenant` 内部即用它）。存 shardId 是会漂移的冗余，故目录只存 `tenant_id`，路由永远靠 `resolver.dbForTenant(tenantId)`。**无需给 resolver 加 `shardIdForTenant()` 方法**。
-- **确定性 operationId + canonical identity（第 3 轮修订）**：`operationId = 'reg:' + sha256(canonicalizeEmail(email))`。reserve 是**先写后读回**：`INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, ...) ON CONFLICT(lookup_kind,lookup_value) DO NOTHING` 后立刻 `dirQueryByLookup` 读回既存行，返回**读回行的 canonical `(tenantId, userId)`**（首次即本次随机生成的、重试即上次持久化的），`reservedByUs = 读回行.operation_id === 本次 operationId`（按 operationId 匹配，**不比对本次随机 tenantId**——重试新随机 tenantId 与既存不等是正常的，不能据此判 false）。故 reservation 表**存 user_id**，重试用 canonical `(tenantId,userId)` 写 shard、签发 token，绝不重生身份。同 email 的独立请求 operationId 相同（email-first-writer-wins：第一个建 reservation 的赢，后来者读回 operationId≠自己 → `reservedByUs:false` → `AUTH_EMAIL_EXISTS`）。
+- **register 绝不认证 + 客户端幂等键（第 4 轮，根治账号接管）**：register 是**建新账号**，永不为已存在账号签 token。逻辑：
+  - reserve 前先 `resolveByEmail(canonEmail)`：若 **ACTIVE** → `AUTH_EMAIL_EXISTS`(409)、绝不签 token（与现状 409 语义一致，堵住「重复 register 接管」）。
+  - `operationId` **来自客户端 `Idempotency-Key` header**（非 email 派生）；缺 header 时生成一次性随机 opId（该请求专属，无跨请求幂等）。
+  - reserve：`dirCmdReserve(tenantId, userId, operationId, 'email', canonEmail, 'PENDING')` ON CONFLICT DO NOTHING → 读回既存行；`reservedByUs = 读回行.operation_id === 本次 operationId`。**因 opId 现来自私有幂等键（非公开 email），他人无法伪造同 opId**——只有持同一 Idempotency-Key 的原客户端重试才 `reservedByUs:true`。
+  - `reservedByUs:false` 且读回行 ACTIVE → `AUTH_EMAIL_EXISTS`；`reservedByUs:false` 且 PENDING（他人在建同 email，罕见并发）→ `AUTH_REGISTRATION_IN_PROGRESS`（不签 token，客户端稍后重试或换 email）。
+  - `reservedByUs:true` → 用读回行 canonical `(tenantId, userId)` 续做（首次即刚插的、重试即上次持久化的），绝不重生身份、绝不用本次随机 tenantId 写 shard。
+  - reservation 表存 `user_id` 供重试复用。**register 从不校验密码去发既存账号 token——已 ACTIVE 就 409，PENDING 就续做本次注册，二者都不构成认证旁路。**
 - **shard bootstrap 完成标记（第 3 轮：per-operation 粒度）**：register 在 `dbForTenant(tenantId)` 的**单个事务**内写 user/subscription/quota/identity **加一行 `tenant_bootstrap(tenant_id, operation_id, status='COMPLETE')`，主键 `(tenant_id, operation_id)`**。CAS activate 与恢复 worker 以**匹配 operationId 的 COMPLETE 行**为判据（非「user 行存在」也非「tenant 有任一 COMPLETE」——SCIM/OIDC 向已 COMPLETE 的 tenant 加用户时，本次新 reservation 有独立 operationId，旧 COMPLETE 不能误证本次完成）。
-- **CAS 失败不签发 token**：`activateTenant` 返 false 后读回目录行——仅当 `tenantId===canonicalTenantId && operationId===本次 && status==='ACTIVE'`（本次 reservation 确已激活）才签发；否则抛 `AUTH_REGISTRATION_RETRY`（只查 status===ACTIVE 太宽松，必须三元匹配）。
+- **CAS 失败不签发 token**：`activateTenant` 返 false（本次前已被同一 reservation 的重试激活）后读回目录行；因 `reservedByUs` 已在前置证明本次 opId 属己（canonicalTenantId 来自本次 reservation 读回行、opId 私有不可伪造），此时 `tenantId===canonicalTenantId && status==='ACTIVE'` 即可确证本次 reservation 已激活→签发；否则抛 `AUTH_REGISTRATION_RETRY`。（opId 不必再比：`reservedByUs` 前置门已保证 canonicalTenantId 对应本次 opId；文档与伪代码统一为「tenantId+ACTIVE」两元，不再写「三元」。）
 - **email canonicalization（第 3 轮）**：单一纯函数 `canonicalizeEmail(email) = email.trim().toLowerCase()`（`src/identity/email-canonical.ts` 新建）贯穿：目录 `lookup_value`、users.email 写入、**回填迁移的历史 email**、login/register/SSO/SCIM 的 email 派生——全部先 canonicalize。回填 SQL 对历史 `users.email` 也 `LOWER(TRIM(...))` 后写入目录，且**同步把 users.email 归一化**（迁移内 UPDATE），否则 login 派生的 canonical 值与 shard 内原值大小写不符→查不到。
-- **Stripe 幂等（第 3 轮）**：register 的 `stripe.customers.create(...)` 传 `{ idempotencyKey: operationId }`（stripe-client 已支持 idempotencyKey 形参）+ 把返回 customerId 持久化在 subscription 行；重试时若 bootstrap 已 COMPLETE 则读回既存 customerId 不重复调 Stripe。Stripe 成功但 shard 事务失败→下次重试同 idempotencyKey 复用同 customer（不重复建）。
+- **Stripe 事务外幂等（第 4 轮，改正不可执行方案）**：`transaction(fn:()=>T)` 同步且拒 Promise，`createCustomer` 现不收 idempotencyKey——故**Stripe 在 DB 事务外先做**：① 给 `createCustomer(config,email,tenantId,idempotencyKey?)` 加形参，内部 `stripe.customers.create(params, { idempotencyKey })`；② register 在开 shard 事务**前** `await createCustomer(..., operationId)` 得稳定 customerId（重试同 operationId→Stripe 返同 customer，不重复建）；③ 再开**短同步** shard 事务写 user/subscription(customerId)/quota/identity/bootstrap；④ 若重试且 shard 已 COMPLETE，读回既存 customerId、跳过 Stripe 与重建。外部 HTTP 不进事务=不拉长持锁、不需回滚外部副作用。
 - **directory 写失败可用性（第 3 轮）**：`recordActiveLookup`（token/key）ON CONFLICT 后**读回校验 tenantId 属己**（冲突不假定同映射）；目录写失败（异常）时**不返回凭据**（token/key 签发前先确保目录 locator 写成功），避免「发了凭据但定位不到」。
 
-register/SSO 自生成 tenantId 序列：`reserve（确定性 opId，读回 canonical (tenantId,userId)）→ 若 reservedByUs 且 shard 未 COMPLETE 则 dbForTenant 单事务写租户数据+Stripe(幂等)+bootstrap(tenant_id,operation_id) COMPLETE → CAS PENDING→ACTIVE → 仅本次 reservation 三元匹配 ACTIVE 才签发 token`。login/refresh/SSO/OIDC/SCIM/api-key 只认 `ACTIVE` 目录项定位 tenant，再到 shard 权威验证。恢复 worker 凭匹配 operationId 的 bootstrap COMPLETE 补 ACTIVE、绝不取消 PENDING。**新增回填迁移**把升级前 users/api_keys/refresh_tokens 写成 ACTIVE 目录项（email 归一化），老用户无缝。单库下 `coordinatorDb() ≡ dbForTenant`，行为等价现状。
+register/SSO 自生成 tenantId 序列：`resolveByEmail ACTIVE→409；opId 来自 Idempotency-Key（缺则一次性随机）；reserve 读回 canonical (tenantId,userId)+reservedByUs；若 reservedByUs 且 shard 未 COMPLETE：先事务外 Stripe(idempotencyKey=opId) 得 customerId → 再开短同步 shard 事务写租户数据(含 customerId)+bootstrap(tenant_id,operation_id) COMPLETE → CAS PENDING→ACTIVE → 仅本次 reservation ACTIVE 才签发 token`。login/refresh/SSO/OIDC/SCIM/api-key 只认 `ACTIVE` 目录项定位 tenant，再到 shard 权威验证。恢复 worker 凭匹配 operationId 的 bootstrap COMPLETE 补 ACTIVE、绝不取消 PENDING。**新增回填迁移**把升级前 users/api_keys/refresh_tokens 写成 ACTIVE 目录项（email 归一化），老用户无缝。单库下 `coordinatorDb() ≡ dbForTenant`，行为等价现状。
 
 **Tech Stack:** TypeScript、`@wontlost-ltd/schema-dsl`（DSL 迁移）、kernel query/command 工厂 + executor、`TenantDbResolver`、`shardIdForTenant`（`src/storage/shard-hash.ts` 纯函数）、`FakeMultiShardResolver`（2-shard + 独立 coordinator）、node:test。
 
@@ -203,13 +211,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
   - `resolveByRefreshTokenHash(hash): { tenantId } | null` — 只在 ACTIVE 命中时返 tenantId，否则 null。
   - `resolveByApiKeyHash(hash): { tenantId } | null` — 同上。
   - `recordActiveLookup({ tenantId, lookupKind, lookupValue }): void` — 建 ACTIVE 目录项（token/key 由已 ACTIVE 租户签发，无两段）；ON CONFLICT DO NOTHING 后**读回校验 tenant_id===tenantId**，不等则 throw（冲突不假定同映射，第 3 轮 Codex #5）；写异常向上抛（调用方据此不签发凭据）。
-  - `changeEmailLookup({ tenantId, userId, oldEmail, newEmail }): void` — coordinator 单事务内 `removeLookup('email', canon(oldEmail))` + reserve/record `(email, canon(newEmail))` ACTIVE，新 email 冲突他人则 throw。
+  - `reserveEmailChange({ tenantId, userId, newEmail }): { operationId }` — 新 email 建 PENDING（旧 email ACTIVE 项保留，不锁死）；新 email 冲突他人 → throw。`completeEmailChange({ tenantId, oldEmail, newEmail, operationId }): void` — CAS 新 email PENDING→ACTIVE + removeLookup 旧 email。`rollbackEmailChange({ newEmail, operationId }): void` — 删未竟的新 email PENDING（改名回滚，旧 email 仍权威）。（跨库改名状态机见 Task 9，非 coordinator 单事务——shard users.email 是另一库写。）
   - `removeLookup(lookupKind, lookupValue): void` — `dirCmdDeleteByLookup`（撤销时清，尽力而为；正确性靠 shard is_revoked 权威）。
   - `listPending(cutoff): Array<{ tenantId; userId; operationId; lookupKind; lookupValue }>` — `dirQueryPendingBefore`（恢复 worker 用，Task 8）。
 
 - [ ] **Step 1: 门面单测（红）**
 
-`FakeMultiShardResolver`（coordinator 独立 db）。断言：`reserveTenant` 写落 **coordinator db**（非 shard）；**首次 reserve 返 `reservedByUs:true` 且 canonicalTenantId/canonicalUserId===传入值**；**同 email 用不同随机 tenantId 重试 reserve → 仍 `reservedByUs:true` 且 canonicalTenantId===第一次的（非本次随机值）**（确定性 opId 重入的核心断言，Codex #1）；模拟他人先占（先用另一 operationId 手插 email 行）后本次 reserve → `reservedByUs:false`；`resolveByEmail` PENDING 时返 status=PENDING（含 userId）；activate 后 ACTIVE；`recordActiveLookup` 遇既存他租户映射 → throw；`changeEmailLookup` 后旧 email 查 null、新 email 查命中。
+`FakeMultiShardResolver`（coordinator 独立 db）。断言：`reserveTenant` 写落 **coordinator db**（非 shard）；**首次 reserve 返 `reservedByUs:true` 且 canonicalTenantId/canonicalUserId===传入值**；**同 email 用不同随机 tenantId 重试 reserve → 仍 `reservedByUs:true` 且 canonicalTenantId===第一次的（非本次随机值）**（确定性 opId 重入的核心断言，Codex #1）；模拟他人先占（先用另一 operationId 手插 email 行）后本次 reserve → `reservedByUs:false`；`resolveByEmail` PENDING 时返 status=PENDING（含 userId）；activate 后 ACTIVE；`recordActiveLookup` 遇既存他租户映射 → throw；`reserveEmailChange`→新 email PENDING+旧仍 ACTIVE，`completeEmailChange`→新 ACTIVE+旧删，`rollbackEmailChange`→新 PENDING 删旧仍 ACTIVE。
 
 - [ ] **Step 2: 跑测试确认失败** — Expected FAIL。
 
@@ -232,69 +240,82 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `src/identity/auth-service.ts:57-136`（ctor + register + login；refresh 编译通过留 Task 7）
-- Modify: `src/server/routes/auth.ts:211-280`、`src/server/app.ts:753`（传 resolver）
-- Test: `src/test/unit/auth-mixed-scope-sharding.test.ts`（新）+ `src/test/integration/auth-api.test.ts`（回归 + 老用户 login）
+- Modify: `src/billing/stripe-client.ts:29`（`createCustomer` 加 idempotencyKey 形参）
+- Modify: `src/server/routes/auth.ts:211-280`（透传 `Idempotency-Key` header 给 register）、`src/server/app.ts:753`（传 resolver）
+- Test: `src/test/unit/auth-mixed-scope-sharding.test.ts`（新）+ `src/test/integration/auth-api.test.ts`（回归 + 老用户 login + **重复 register 不接管**）
 
 **Interfaces:**
-- Consumes: `TenantIdentityDirectory`（Task 4）、`TenantDbResolver`、`IdentityWriter`、`bootCmdMarkComplete`（Task 3）。
-- Produces: `AuthService` ctor `(private readonly resolver: TenantDbResolver, private readonly config: AppConfig)`；`private directory = new TenantIdentityDirectory(this.resolver)`。register/login HTTP 契约不变。
+- Consumes: `TenantIdentityDirectory`（Task 4）、`TenantDbResolver`、`IdentityWriter`、`bootCmdMarkComplete`/`bootQueryByOperation`（Task 3）、`createCustomer`（Stripe，事务外）。
+- Produces: `AuthService` ctor `(private readonly resolver, private readonly config, private readonly idGen = defaultIdGen)`；`private directory = new TenantIdentityDirectory(this.resolver)`。`register(email, password, opts?: { idempotencyKey?: string })`——route 从 `Idempotency-Key` header 取。register/login HTTP 契约不变（新 header 可选）。
 
-- [ ] **Step 1: 状态机 + 兼容行为测（红）**
+- [ ] **Step 1: 状态机 + 安全 + 兼容行为测（红）**
 
 `auth-mixed-scope-sharding.test.ts`（`FakeMultiShardResolver` 2 shard + 独立 coordinator）：
-1. **register 落点**：register(email) → coordinator 有 email ACTIVE + 对应 shard（`dbForTenant(tenantId)`）有 user 行 + `tenant_bootstrap` COMPLETE + **其他 shard 无** user。
-2. **CAS 前崩（shard 写成功、activate 未调）**：把 `directory.activateTenant` stub 成抛错 → 断言 shard 有 user + bootstrap COMPLETE，coordinator 留 **PENDING**，**且未签发 token**（register 抛错，无 token 返回）。
-3. **CAS 失败不发 token（三元匹配）**：stub activate 返 false 且目录行非本次 reservation 的 ACTIVE → 断言抛 `AUTH_REGISTRATION_RETRY`、不签发 token；反之 stub activate 返 false 但目录已是本次 (tenantId,operationId) 的 ACTIVE（他调用已激活同 reservation）→ 断言正常签发。
-4. **并发/重复 register 同 email**：先用另一 operationId 手插 email reservation（模拟他人先占）→ register(同 email, 新随机 tenantId) → `reservedByUs:false` → 抛 `AUTH_EMAIL_EXISTS`，不写第二 shard、不生第二 tenantId。
-5. **确定性重试幂等 + canonical 身份**：注入确定性 idGenerator（首次 tenantId=`tenant_A`/userId=`u_A`）register→shard 有 `tenant_A`/`u_A` + COMPLETE。再注入**不同** idGenerator（`tenant_B`/`u_B`）模拟重试同 email → reserve 返 `reservedByUs:true` 且 **canonicalTenantId=`tenant_A`**（非 B）→ 因 shard `tenant_A` 已 COMPLETE 跳过重建、直接 activate 收敛、签发 token 用 `u_A`（**不重建、不用 B**）。这是 Codex #1 canonical 身份重入的核心锚。
-6. **login 经目录**：register 后 login(email) → `resolveByEmail` ACTIVE → `dbForTenant` 验密码成功；PENDING 项 login → 拒。
-7. **老用户兼容（Task 2 回填后）**：手插一个「回填」ACTIVE 目录项（大小写混合 email 归一化后）+ 对应 shard 的 user（归一化 email）**不经 register** → login(原大小写 email) 成功（证 canonical 一致）。Codex 致命兼容项的回归锚。
-8. **Stripe 幂等**：spy Stripe createCustomer；首次 register 调一次带 idempotencyKey=operationId；重试同 email（shard 已 COMPLETE）→ **不再调 Stripe**（读回既存 customerId）。
+1. **register 落点**：register(email) → coordinator 有 email ACTIVE + 对应 shard 有 user 行 + `tenant_bootstrap` (tenant,op) COMPLETE + **其他 shard 无** user。
+2. **⚠️账号接管回归（Codex 致命项，最重要）**：register(`victim@x`, pw1) 成功后，**再** register(`victim@x`, pw2, 无 idempotency-key 或不同 key) → **抛 `AUTH_EMAIL_EXISTS`(409)、绝不签 token、绝不返回 victim 的 userId**。断言无任何 token pair 产出。这是根治 round-3 漏洞的锚。
+3. **CAS 前崩（shard 写成功、activate 未调）**：stub `activateTenant` 抛错 → shard 有 user+bootstrap COMPLETE，coordinator 留 **PENDING**，**未签发 token**。
+4. **CAS 失败续做（重试同 idempotency-key）**：同 idempotency-key 重试、shard 已 COMPLETE、目录已被前次激活为 ACTIVE → activate 返 false 但 `reservedByUs:true` 且 resolveByEmail 是本 tenant ACTIVE → 正常签发（幂等收敛，非接管——因 key 私有属原客户端）。
+5. **确定性重试 canonical 身份（带 idempotency-key）**：注确定性 idGen 首次 register(`e`, pw, key=`K`)→shard `tenant_A`/`u_A`+COMPLETE。**同 key=`K`** 但注不同 idGen(`tenant_B`) 重试 → reserve `reservedByUs:true`（同 opId=K）且 canonicalTenantId=`tenant_A` → 复用 `tenant_A`/`u_A` 签发（不重建不用 B）。**不同 key** 重试 → 走用例 2（409，不接管）。
+6. **PENDING 他人占**：手插另一 opId 的 PENDING email → register(同 email, 无匹配 key) → `reservedByUs:false` 且 PENDING → 抛 `AUTH_REGISTRATION_IN_PROGRESS`、不签 token。
+7. **login 经目录**：register 后 login(email) → `resolveByEmail` ACTIVE → `dbForTenant` 验密码成功；PENDING 项 login → 拒。
+8. **老用户兼容（Task 2 回填后）**：手插「回填」ACTIVE 目录项（大小写混合 email 归一化）+ 对应 shard user → login(原大小写 email) 成功。
+9. **Stripe 事务外幂等**：spy `createCustomer`；首次 register 调一次带 `idempotencyKey=operationId`（**在 shard 事务外调用**——可用 spy 记录调用时 tx 未开）；同 key 重试（shard COMPLETE）→ **不再调 Stripe**（读回既存 customerId）。
 
 - [ ] **Step 2: 跑测试确认失败** — Expected FAIL（ctor 裸 tx）。
 
-- [ ] **Step 3: 改 register/login**
+- [ ] **Step 3: 改 register/login + stripe-client**
+
+先改 `stripe-client.ts`：`createCustomer(config, email, tenantId, idempotencyKey?: string)` → `stripe.customers.create({email, metadata:{tenantId}}, idempotencyKey ? { idempotencyKey } : undefined)`。
 
 register 新序列（替换 `:65-102`）：
 ```
 const canonEmail = canonicalizeEmail(email);
-const tenantId = this.idGen.tenantId();  // 首次随机；仅作 reserve 的候选，canonical 以读回为准
+const existing = directory.resolveByEmail(canonEmail);
+if (existing?.status === 'ACTIVE') throw AUTH_EMAIL_EXISTS;          // 已注册→409，绝不签 token（堵接管）
+const operationId = opts?.idempotencyKey ?? ('reg:' + randomUUID()); // 私有幂等键；缺则一次性随机
+const tenantId = this.idGen.tenantId();   // 候选；canonical 以 reserve 读回为准
 const userId = this.idGen.userId();
-const { operationId, reservedByUs, canonicalTenantId, canonicalUserId } =
-  directory.reserveTenant({ tenantId, userId, email: canonEmail });
-if (!reservedByUs) throw AUTH_EMAIL_EXISTS;   // 他人已占 canonEmail
-const tx = resolver.dbForTenant(canonicalTenantId);  // 一律用 canonical（重试复用既存身份）
-const boot = tx.queryOne(bootQueryByOperation(canonicalTenantId, operationId));
+const { reservedByUs, canonicalTenantId, canonicalUserId } =
+  directory.reserveTenant({ tenantId, userId, operationId, email: canonEmail });
+if (!reservedByUs) {
+  const cur = directory.resolveByEmail(canonEmail);
+  throw cur?.status === 'ACTIVE' ? AUTH_EMAIL_EXISTS : AUTH_REGISTRATION_IN_PROGRESS;  // 不签 token
+}
+const boot = resolver.dbForTenant(canonicalTenantId).queryOne(bootQueryByOperation(canonicalTenantId, operationId));
+let customerId;
 if (boot?.status !== 'COMPLETE') {
-  tx.transaction(() => {
-    const customerId = maybeCreateStripeCustomer({ idempotencyKey: operationId });  // 幂等；持久化进 subscription
+  customerId = await createCustomer(config, canonEmail, canonicalTenantId, operationId);  // 事务外，幂等键
+  resolver.dbForTenant(canonicalTenantId).transaction(() => {        // 短同步事务
     建 user(canonicalUserId,email=canonEmail)/subscription(customerId)/quota/identity(new IdentityWriter(canonicalTenantId, tx));
     bootCmdMarkComplete({ tenantId: canonicalTenantId, operationId });
   });
-} // COMPLETE 已存在=重试，跳过重建；customerId 从既存 subscription 读回
+} else {
+  customerId = <从既存 subscription 读回>;   // 重试：跳过 Stripe 与重建
+}
 const activated = directory.activateTenant({ email: canonEmail, operationId });
 if (!activated) {
   const row = directory.resolveByEmail(canonEmail);
-  if (!(row && row.tenantId === canonicalTenantId && row.status === 'ACTIVE'))  // 三元匹配（Codex #4）
+  // reservedByUs 前置门已证 canonicalTenantId 属本次 opId（opId 私有不可伪造），故 tenantId+ACTIVE 两元即可
+  if (!(row && row.tenantId === canonicalTenantId && row.status === 'ACTIVE'))
     throw AUTH_REGISTRATION_RETRY;
 }
-generateTokenPair(app, canonicalUserId, canonicalTenantId, role);
+generateTokenPair(app, canonicalUserId, canonicalTenantId, role);   // 仅本次新注册的 canonical 身份，绝不发既存账号 token
 ```
 login（替换 `:104-117`）：`const canon = canonicalizeEmail(email); const entry = directory.resolveByEmail(canon); if (!entry || entry.status !== 'ACTIVE') throw INVALID_CREDENTIALS; const tx = resolver.dbForTenant(entry.tenantId); const user = tx.queryOne(authQueryUserByEmail(canon)); <argon2 verify + generateTokenPair(app, user.id, user.tenant_id, user.role)>`。
 refresh（`:119-136`）：本 Task 只保证 ctor 改造后编译 + 不破单库（暂用 user 表直查兜底），标注 `// Task 7: refresh_token_hash→tenant via directory`。
 
-- [ ] **Step 4: 同步构造点 + id-generator seam + canonicalizeEmail** — `AuthService` ctor 加可选 `idGen: { tenantId(): string; userId(): string } = { tenantId: () => 'tenant_'+randomUUID(), userId: () => randomUUID() }`；`routes/auth.ts` `registerAuthRoutes(app, resolver, config)` + `new AuthService(resolver, config)`（生产用默认 idGen）；`app.ts:753` 传 resolver。新建 `src/identity/email-canonical.ts` 导出 `canonicalizeEmail`。新错误码 `AUTH_REGISTRATION_RETRY` 注册进错误常量表（照抄 `AUTH_EMAIL_EXISTS` 位置）。
+- [ ] **Step 4: 同步构造点 + id-generator seam + canonicalizeEmail + header 透传** — `AuthService` ctor 加可选 `idGen: { tenantId(): string; userId(): string } = { tenantId: () => 'tenant_'+randomUUID(), userId: () => randomUUID() }`；`register` 加 `opts?: { idempotencyKey?: string }`，`routes/auth.ts` register handler 从 `request.headers['idempotency-key']` 取传入；`registerAuthRoutes(app, resolver, config)` + `new AuthService(resolver, config)`（生产用默认 idGen）；`app.ts:753` 传 resolver。新建 `src/identity/email-canonical.ts` 导出 `canonicalizeEmail`。新错误码 `AUTH_REGISTRATION_RETRY` + `AUTH_REGISTRATION_IN_PROGRESS` 注册进错误常量表（照抄 `AUTH_EMAIL_EXISTS` 位置）。
 
 - [ ] **Step 5: 跑测试确认通过 + 回归**
 
 Run: `npx tsx --test src/test/unit/auth-mixed-scope-sharding.test.ts src/test/integration/auth-api.test.ts 2>&1 | tail -25`
-Expected: 全绿。**auth-api 回归特别确认**：单库下 register 多写目录/bootstrap 后，email 重复仍返 `AUTH_EMAIL_EXISTS`（错误码路径不变）；老用户 login（Step 1.7 若在集成层也建一条）通。
+Expected: 全绿。**auth-api 回归特别确认**：单库下 register 多写目录/bootstrap 后，email 重复仍返 `AUTH_EMAIL_EXISTS`（错误码路径不变、绝不签 token）；老用户 login（Step 1.8 集成层建一条）通。
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/identity/auth-service.ts src/identity/email-canonical.ts src/server/routes/auth.ts src/server/app.ts src/test/unit/auth-mixed-scope-sharding.test.ts
-git commit -m "feat(shard): AuthService register 状态机(canonical 身份重入/per-op bootstrap/CAS 三元/Stripe 幂等/email 归一化)+login 经目录+老用户兼容
+git add src/identity/auth-service.ts src/identity/email-canonical.ts src/billing/stripe-client.ts src/server/routes/auth.ts src/server/app.ts src/test/unit/auth-mixed-scope-sharding.test.ts
+git commit -m "feat(shard): AuthService register 状态机(绝不认证/私有幂等键防接管/canonical 身份重入/per-op bootstrap/Stripe 事务外幂等/email 归一化)+login 经目录+老用户兼容
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -442,9 +463,17 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `TenantIdentityDirectory`。
 
-- [ ] **Step 1: updateEmail 经目录（红→绿）**
+- [ ] **Step 1: updateEmail 跨库可恢复状态机（Codex 第 3 轮 #C，红→绿）**
 
-`user-email-directory-service.ts:46-56`：唯一性检查 → `directory.resolveByEmail(newEmail)`（多库真源，返非 null 且 tenantId≠自己→拒）；改 email 成功后：`directory.removeLookup('email', oldEmail)` + `recordActiveLookup({tenantId, 'email', newEmail})`（在 `TenantIdentityDirectory` 加 `changeEmailLookup(tenantId, oldEmail, newEmail)` 原子封装于 coordinator 单事务）。per-tenant + 跨库唯一性测。
+changeEmail 是**跨库**写（coordinator 目录 + shard users.email），非原子。用可恢复小状态机避免「目录改了 shard 没改→login 永久失败」：
+```
+1. 唯一性：directory.resolveByEmail(canon(newEmail)) 非 null 且 tenantId≠自己 → 拒。
+2. coordinator: reserveEmailChange —— 新 email 建 PENDING 目录项（operationId=change 专属），旧 email ACTIVE 项**保留不删**（旧 email 仍可 login，不锁死）。
+3. shard 事务: UPDATE users SET email=canon(newEmail) WHERE tenant_id=? AND id=?。
+4. coordinator: activate 新 email PENDING→ACTIVE + removeLookup 旧 email（此后新 email 权威，旧失效）。
+5. 崩溃恢复：changeEmail 恢复分支（并入 Task 8 恢复 worker 或 updateEmail 幂等重试）——若 shard 已是 newEmail 则补 activate 新+删旧；若 shard 仍 oldEmail 则保留旧 ACTIVE + 删新 PENDING（回滚未竟改名，用户仍用旧 email 登录）。
+```
+在 `TenantIdentityDirectory` 加 `reserveEmailChange`/`completeEmailChange`/`rollbackEmailChange`。测：改 email 成功后新 email login 通、旧 email 拒；**步骤 3 后步骤 4 前崩溃 → 新旧 email 都不锁死**（旧仍 ACTIVE 可 login，恢复后收敛到新）；跨库窗口任一点崩溃无「两 email 都登不上」。per-tenant + 跨库唯一性测。
 
 - [ ] **Step 2: inventory 逐 edge 校准**
 
@@ -478,7 +507,8 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - **Spec 覆盖**：§4.1 coordinator directory ✅（Task 1/3/4）；PENDING→ACTIVE reservation ✅（Task 5）；只认 ACTIVE ✅（Task 5/6/7）；email 唯一挡并发 ✅（Task 1 UNIQUE + Task 5.1.4）；register 每步崩溃收敛 ✅（Task 5.1.2-5 + Task 8 bootstrap 判据）；PENDING 不自动取消 ✅（Task 8）；token/key 反查（用户选的范围）✅（Task 7）。
 - **Codex 8 项**：① operationId 确定性 sha256 派生 + reserve ON CONFLICT 幂等 + shard 携 operationId（bootstrap 标记）✅（Task 3/4/5）；② 老用户回填迁移 ✅（Task 2，硬前置）；③ shard 单事务 + bootstrap COMPLETE 标记、恢复凭标记非行存在 ✅（Task 3/5/8）；④ CAS 失败不发 token ✅（Task 5.1.3）；⑤ 目录=定位器/shard 权威、双写非原子可接受 ✅（Architecture + Task 7）；⑥ revoke by hash（revoke 先查 hash 再清目录）✅（Task 7）；⑦ 目录不存 shardId、用 `shardIdForTenant` 纯函数、fake 无需 shardIdForTenant 方法 ✅（Architecture）；⑧ 6 迁移同步点全显式 + 同 commit 补 ✅（Global Constraints + Task 1/2）。
 - **Codex 第 3 轮 5 项 + 2 新问题**：① canonical identity（reserve 返 canonicalTenantId/UserId、reservedByUs 按 operationId、reservation 存 user_id、重试复用不重生）✅（Task 3/4/5.1.5）；② per-op bootstrap（PK `(tenant_id,operation_id)`、`bootQueryByOperation`、worker 按 opId 匹配）✅（Task 2/3/8）；③ email canonicalization 单一函数贯穿 + 回填归一化 users.email + 冲突 fail-closed ✅（Task 2/5，`email-canonical.ts`）；④ Stripe operationId 幂等键 + customerId 持久化/读回 ✅（Task 5.3/5.1.8）；⑤ directory 写失败可用性（recordActiveLookup 读回校验、写失败不发凭据）✅（Task 4/7）；⑥ id-generator seam 修 fake（AuthService/SsoUserService 注 idGen，测试预登记）✅（Architecture + Task 5.4/6）；⑦ 迁移同步点精确化（legacy fixture 两数组显式、删不存在的期望数组/range 声明）✅（Global Constraints + Task 1/2）。CAS 三元匹配（tenantId+opId+ACTIVE）✅（Task 5.3）。
+- **Codex 第 4 轮 3 阻断**：① register 账号接管根治——register 绝不认证：ACTIVE→409 绝不签 token、opId 来自客户端私有 Idempotency-Key（非 email 派生，他人不可伪造）、PENDING 他人占→IN_PROGRESS 不签 token ✅（Architecture + Task 5.1.2 接管回归锚 + 5.3 序列）；② Stripe 事务外——`createCustomer` 加 idempotencyKey 形参、HTTP 在短同步 shard 事务**外**先做、DB 失败同 key 复用 customer ✅（Architecture + Task 5 Files/Step3/5.1.9，改 `stripe-client.ts`）；③ changeEmail 跨库可恢复状态机——reserve 新 PENDING(旧不删)→shard 改→complete 激活新删旧→崩溃保留旧 ACTIVE 不锁死+恢复收敛 ✅（Task 4 trio + Task 9.1）。email UPDATE 显式规范化语义（迁移标明成 canonical login 标识、展示格式另设 display_email）✅（Task 2）。CAS 两元（tenantId+ACTIVE，opId 由 reservedByUs 前置门保证）✅（Task 5.3 注释统一）。
 - **Placeholder 扫描**：DSL builder API 标「以 v078/v108 为准」（防自创非 placeholder）；legacy fixture「照末条 raw 风格加对应版本」是确定动作非 TBD。
-- **类型一致**：`reserveTenant` 返 `{operationId, reservedByUs, canonicalTenantId, canonicalUserId}`、`activateTenant` 返 boolean、`resolveByEmail` 返 `{tenantId, userId, status}|null`、`resolveBy*Hash` 返 `{tenantId}|null`、`recordActiveLookup`/`removeLookup`/`changeEmailLookup`/`listPending` 全 Task 引用一致；`dirCmdReserve` 带 userId、`bootCmdMarkComplete`/`bootQueryByOperation`（per-op）一致；`idGen: {tenantId();userId()}` seam 一致；`canonicalizeEmail` 单一真源；`AUTH_REGISTRATION_RETRY` 新错误码在 Task 5 注册。
+- **类型一致**：`reserveTenant` 返 `{operationId?, reservedByUs, canonicalTenantId, canonicalUserId}`（operationId 由调用方传入/派生）、`activateTenant` 返 boolean、`resolveByEmail` 返 `{tenantId, userId, status}|null`、`resolveBy*Hash` 返 `{tenantId}|null`、`recordActiveLookup`/`removeLookup`/`reserveEmailChange`/`completeEmailChange`/`rollbackEmailChange`/`listPending` 全 Task 引用一致；`dirCmdReserve` 带 userId+operationId 入参、`bootCmdMarkComplete`/`bootQueryByOperation`（per-op）一致；`idGen: {tenantId();userId()}` seam 一致；`register(email, password, opts?:{idempotencyKey?})`；`createCustomer(config,email,tenantId,idempotencyKey?)`；`canonicalizeEmail` 单一真源；错误码 `AUTH_REGISTRATION_RETRY` + `AUTH_REGISTRATION_IN_PROGRESS` 在 Task 5 注册。
 - **复杂度**：目录门面方法均单一职责、≤3 层缩进；三类 lookup 合表靠 `lookup_kind` 判别（非三表）；bootstrap per-op 表两列主键。register 序列虽长但线性（reserve→shard 单事务→CAS→签发），无深嵌套。恢复 worker reconcile 单循环。
 - **向后兼容/破坏性**：回填迁移（含 email 归一化）保证零中断——Codex 致命项闭合；单库 coordinatorDb≡dbForTenant 等价现状；错误码路径（AUTH_EMAIL_EXISTS）保持；idGen 默认 randomUUID 生产行为不变。
