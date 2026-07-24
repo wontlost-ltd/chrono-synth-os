@@ -3,6 +3,7 @@ import {
   orgQueryActiveMembership, orgQueryMembershipRoles,
 } from '@chrono/kernel';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
@@ -48,7 +49,12 @@ export function getOrganizationMembershipContext(
 }
 
 export function requireOrganizationRole(
-  db: IDatabase,
+  /**
+   * 分片 Phase 0 · Plan 1b（Task 9）：改收共享 `TenantDbResolver`（非固定 host db）。
+   * membership 校验在**请求内**经 `resolver.dbForTenant(request.tenantId)` 解析该租户所在 shard，
+   * 多库下不同租户命中不同物理 db；单库下三方法返回同一 db，行为等价现状（零回归）。
+   */
+  resolver: TenantDbResolver,
   resolveOrganizationId: (request: FastifyRequest) => string,
   ...allowedRoles: OrganizationRole[]
 ): preHandlerHookHandler {
@@ -61,6 +67,8 @@ export function requireOrganizationRole(
     }
 
     const organizationId = resolveOrganizationId(request);
+    /* 按请求租户选 shard：request.tenantId 由 tenant 插件从 JWT 解析（不可伪造）。 */
+    const db = resolver.dbForTenant(request.tenantId);
     const context = getOrganizationMembershipContext(db, request.tenantId, organizationId, user.sub);
     if (!context) {
       done(new AuthorizationError('无权访问该 organization', ErrorCode.AUTH_INSUFFICIENT_ROLE));
