@@ -36,6 +36,13 @@ export interface CollabShareCountRow {
   readonly count: number;
 }
 
+/** listSharedWithUser 的 count/list 参数：shared_simulations 无 tenant_id 列，
+ *  故经 life_simulations 父归属（JOIN ... WHERE ls.tenant_id=?）做 tenant predicate。 */
+export interface CollabShareCountParams {
+  tenantId: string;
+  userId: string;
+}
+
 export interface CollabSharedRow {
   readonly id: string;
   readonly simulation_id: string;
@@ -64,6 +71,7 @@ export interface CollabExistingShareParams {
 }
 
 export interface CollabSharedListParams {
+  tenantId: string;
   userId: string;
   limit: number;
   offset: number;
@@ -104,8 +112,8 @@ export function collabQueryExistingShare(params: CollabExistingShareParams): Que
   return { kind: COLLAB_QUERY_EXISTING_SHARE, params };
 }
 
-export function collabQueryShareCount(userId: string): Query<CollabShareCountRow | null, string> {
-  return { kind: COLLAB_QUERY_SHARE_COUNT, params: userId };
+export function collabQueryShareCount(params: CollabShareCountParams): Query<CollabShareCountRow | null, CollabShareCountParams> {
+  return { kind: COLLAB_QUERY_SHARE_COUNT, params };
 }
 
 export function collabQuerySharedList(params: CollabSharedListParams): Query<CollabSharedRow, CollabSharedListParams> {
