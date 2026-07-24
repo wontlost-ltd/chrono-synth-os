@@ -404,8 +404,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', async () => { await reservationRecoveryWorker!.stop(); });
   }
 
-  /* dual-write outbox flush — drains persona_core_ledger_outbox into SqliteEventLedger */
-  const flushWorker = new DualWriteFlushWorker({ db, logger: deps.logger });
+  /* dual-write outbox flush — 跨所有 shard fan-out drain persona_core_ledger_outbox 进各 shard 的
+   * SqliteEventLedger（循环内每 shard 现构造 ledger，源库=ledger 库同一 shardDb，防跨 shard 串写）。 */
+  const flushWorker = new DualWriteFlushWorker({ resolver: captureResolver('dual-write-flush'), logger: deps.logger });
   flushWorker.start();
   app.addHook('onClose', () => { flushWorker.stop(); });
 
