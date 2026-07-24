@@ -25,17 +25,23 @@ export function getStripe(config: AppConfig): Stripe {
   return stripeInstance;
 }
 
-/** 创建 Stripe 客户 */
+/**
+ * 创建 Stripe 客户。
+ *
+ * 分片 Plan 1c：register 状态机在**开 shard 事务前**（事务外）调用它，传入 register 的 operationId
+ * 作 `idempotencyKey`——同 Idempotency-Key 重试时 Stripe 侧幂等收敛（不重复建客户）。留空时行为不变。
+ */
 export async function createCustomer(
   config: AppConfig,
   email: string,
   tenantId: string,
+  idempotencyKey?: string,
 ): Promise<Stripe.Customer> {
   const stripe = getStripe(config);
-  return stripe.customers.create({
-    email,
-    metadata: { tenantId },
-  });
+  return stripe.customers.create(
+    { email, metadata: { tenantId } },
+    idempotencyKey ? { idempotencyKey } : undefined,
+  );
 }
 
 /** 创建 Checkout Session（将用户引导到 Stripe 支付页面） */
