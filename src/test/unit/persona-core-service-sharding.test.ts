@@ -28,6 +28,7 @@ import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js'
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { FieldEncryption } from '../../storage/encryption.js';
+import { throwingDb } from '../support/throwing-db.js';
 import type { IDatabase } from '../../storage/database.js';
 import type { Command, ExecResult, Query } from '@chrono/kernel';
 
@@ -81,20 +82,6 @@ function withExecuteFailure(
   } as unknown as IDatabase;
 }
 
-/** 最小 IDatabase 桩：queryMany 恒抛错，其余方法 no-op（同 Task2 探针 throwingDb，用于 shard 整体隔离）。 */
-function throwingDb(): IDatabase {
-  return {
-    dialect: 'sqlite',
-    exec: () => {},
-    prepare: () => ({ run: () => ({ changes: 0, lastInsertRowid: 0 }), get: () => undefined, all: () => [] }),
-    transaction: (fn: () => unknown) => fn(),
-    transactionRollback: (fn: () => unknown) => fn(),
-    close: () => {},
-    queryOne: () => null,
-    queryMany: () => { throw new Error('boom'); },
-    execute: () => ({ rowsAffected: 0 }),
-  } as unknown as IDatabase;
-}
 
 describe('PersonaCoreService 分片探针', () => {
   let s1: IDatabase;
@@ -339,9 +326,9 @@ describe('PersonaCoreService 分片探针', () => {
      * 「两 shard 各自恢复超时 session + 聚合求和」与「坏 shard 隔离、健康 shard 仍恢复」两条探针，
      * 覆盖 spec 验收段第 7 类。本探针只做最小存在性引用，避免与该文件重复维护同一断言。 */
     assert.equal(typeof PersonaCoreService.prototype.recoverTimedOutRuntimeSessions, 'function');
-    /* throwingDb 桩本身在本文件也用于探针的坏 shard 隔离场景（如需扩展），此行只是消
-     * "unused" 顾虑并留一个可读的锚点，非重复功能测试。 */
-    assert.equal(throwingDb().dialect, 'sqlite');
+    /* throwingDb（公共桩，queryMany 抛错）本身在本文件也用于探针的坏 shard 隔离场景（如需扩展），
+     * 此行只是消 "unused" 顾虑并留一个可读的锚点，非重复功能测试。 */
+    assert.equal(throwingDb({ on: 'queryMany' }).dialect, 'sqlite');
   });
 
   it('8. encryptionResolver canonical tenantId：跨租户不串加密配置', () => {

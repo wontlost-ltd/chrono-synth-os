@@ -27,6 +27,7 @@ import { BUILTIN_TEMPLATE_SEEDS, BUILTIN_TENANT_ID } from '../../enterprise/pers
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver, type TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { throwingDb } from '../support/throwing-db.js';
 import type { IDatabase } from '../../storage/database.js';
 
 /** 建带全量 schema 的内存 SQLite db（迁移入口），一个 db = 一个 shard。 */
@@ -45,20 +46,6 @@ function seedOwner(db: IDatabase, tenantId: string, ownerUserId: string): void {
   ).run(ownerUserId, `${ownerUserId}@example.com`, 'hash', 'member', tenantId, now, now);
 }
 
-/** 最小 IDatabase 桩：execute 恒抛错，其余 no-op（用于 syncBuiltins 坏 shard 隔离/居中探针）。 */
-function throwingDb(): IDatabase {
-  return {
-    dialect: 'sqlite',
-    exec: () => {},
-    prepare: () => ({ run: () => ({ changes: 0, lastInsertRowid: 0 }), get: () => undefined, all: () => [] }),
-    transaction: (fn: () => unknown) => fn(),
-    transactionRollback: (fn: () => unknown) => fn(),
-    close: () => {},
-    queryOne: () => null,
-    queryMany: () => [],
-    execute: () => { throw new Error('boom'); },
-  } as unknown as IDatabase;
-}
 
 /** 关键 helper：template 和 core 必须同 resolver，才能保证 instantiate 级联落同一 shard。 */
 function stack(resolver: TenantDbResolver): PersonaTemplateService {
@@ -173,7 +160,7 @@ describe('PersonaTemplateService 分片探针', () => {
 
   it('4. syncBuiltins 任一 shard 失败则抛（坏 shard 居中）：整体抛 + 前后健康 shard 都被尝试', () => {
     const s3 = tplDb();
-    const bad = throwingDb();
+    const bad = throwingDb({ on: 'execute' });
 
     const resolver = new FakeMultiShardResolver({
       coordinator: s1,
@@ -195,7 +182,7 @@ describe('PersonaTemplateService 分片探针', () => {
   });
 
   it('5. syncBuiltins 升级半成功 → 重跑收敛：换掉坏 shard 后重跑不抛 + 全 shard 内置一致', () => {
-    const bad = throwingDb();
+    const bad = throwingDb({ on: 'execute' });
     const resolverWithBad = new FakeMultiShardResolver({
       coordinator: s1,
       shards: { shard1: s1, shard2: bad },
