@@ -2,14 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development 逐 task 实现。步骤用 checkbox（`- [ ]`）跟踪。
 >
-> spec `docs/superpowers/specs/2026-07-24-tenant-sharding-phase0-plan2-fanout-design.md`（Codex 64→87→95 通过）。计划第 2 轮修订（采纳 Codex 72 退回 7 项——消 placeholder/精确 ctor+返回类型/抽测试 seam/公共 throwingDb/修 cleanupTokens 改对象/**observability 独立进程拆出单列 spec+plan**，剩 6 task 5 块）。
+> spec `docs/superpowers/specs/2026-07-24-tenant-sharding-phase0-plan2-fanout-design.md`（Codex 64→87→95 通过）。计划第 3 轮修订：**改用「implementer 自核签名」模式**——设计约束定死（fan-out 模式/隔离铁律/合并算法/健康状态机语义），但**具体真实签名由 implementer subagent 先 Read/codegraph 核验再 TDD**（不在计划里写从记忆推的伪代码——前两轮从记忆写伪代码引入了 runMediaRetention arity/Logger 签名等编译错，交给有代码上下文的 implementer 核更可靠）。observability 独立进程已拆出（见下）。
+>
+> **⚠️ implementer 铁律（每 task 必做）**：改任何函数前，先 `Read` 目标函数的**真实签名**（ctor 参数、返回类型）+ 调用的工具函数（如 `runMediaRetention`/`Logger.error`/`ToolPermissionService.pruneInvocationsBefore`/kernel query factory）的真实签名 + 现有该 worker/route 的**测试文件**（迁移它们到新 ctor/签名，别留旧签名调用编译错）。TDD red-first 会抓签名不符——先让红测试暴露真实契约，再按真实契约实现。计划给的是**意图+文件+模式+测试锚**，不是可粘贴的代码。
 
-## 关键约定（消 Codex placeholder，全 task 统一）
+## 关键约定（全 task 统一）
 
-- **shardKey 稳定物理库标识**：`allShardDbs()` 只返 `IDatabase[]`，`IDatabase` 无公开 connStr。每 worker 内用**模块级 `WeakMap<IDatabase, string>` + 单调计数器**给每个见过的 db 实例分配稳定 key（`shard#0/shard#1/...` 按首见顺序），fan-out 循环 `const shardKey = shardKeyFor(shardDb)`。测试断言按 shardKey 稳定（非数组下标）。建独立小工具 `src/storage/shard-key.ts` 导出 `makeShardKeyer(): (db: IDatabase) => string`（每 worker 一个 keyer 实例）。
-- **公共 throwingDb 测试桩**：现 5 个 *-sharding.test.ts 各自本地定义 `throwingDb()`——**抽到 `src/test/support/throwing-db.ts`** 导出 `throwingDb(): IDatabase`（execute/prepare/queryOne 等全抛），Plan 2 各测试 import 复用（不再本地重定义）。抽取时保持现有 5 测试行为不变（改 import）。
-- **observability 独立进程不含本 Plan**：`main-observability-worker.ts`/`ObservabilityPipelineService`/`observability-worker-monitor`/Kafka transport 的跨 shard fan-out 是独立子设计（Kafka consumer-group 跨 shard 路由需定型），**拆出独立 spec+plan 单独走**，Plan 2 不含。
-- **ShardAggregate 通用类型**：metrics scatter-gather 统一返回 `interface ShardAggregate<T> { data: T; degraded: boolean; shardErrors: Array<{ shardKey: string; error: string }> }`（`degraded = shardErrors.length > 0`），建 `src/observability/shard-aggregate.ts` 导出。
+- **shardKey 稳定物理库标识**：`allShardDbs()` 只返 `IDatabase[]`，`IDatabase` 无公开 connStr。建 `src/storage/shard-key.ts` 导出 `makeShardKeyer(): (db: IDatabase) => string`（内部 `WeakMap<IDatabase,string>` + 单调计数器，`shard#0/shard#1/...` 按首见顺序）。每 worker 一个 keyer 实例，fan-out 循环 `const shardKey = this.keyer(shardDb)`。测试断言按 shardKey 稳定（非数组下标）。
+- **公共可配置 throwingDb 测试桩（Codex：5 现有桩语义不同不能统一为全抛）**：建 `src/test/support/throwing-db.ts` 导出 `throwingDb(opts?: { on?: 'execute' | 'queryMany' | 'queryOne' | 'prepare' | 'all' }): IDatabase`——按 `opts.on` 指定的方法抛错、其余 no-op/返空（默认 `on:'execute'`）。**逐文件按原语义迁移** 5 现有 *-sharding.test.ts（billing/quota/template 原 execute 抛→`throwingDb({on:'execute'})`；persona-marketplace/persona-core 原 queryMany 抛→`throwingDb({on:'queryMany'})`），跑这 5 测确认行为不变。Plan 2 新测按需选 `on`。
+- **observability 独立进程拆出（真交付物，非只声明）**：Plan 2 **不含** observability worker fan-out。其跨 shard（Kafka consumer-group 路由/多 pipeline 生命周期/monitor 聚合）是独立子设计——**待本 Plan 2 完成后，另起独立 spec+plan 单独走**。本计划 Self-Review 的 spec 覆盖据此排除 observability（spec §范围里 observability 那条明确 defer）。
+- **ShardAggregate 通用类型**：建 `src/observability/shard-aggregate.ts` 导出 `interface ShardAggregate<TData> { data: TData; degraded: boolean; shardErrors: Array<{ shardKey: string; error: string }> }` + `aggregateShards<TShard, TData>(resolver, keyer, perShard: (db: IDatabase) => TShard, merge: (results: TShard[]) => TData): ShardAggregate<TData>`（**双泛型** TShard/TData，遍历 allShardDbs 逐 shard perShard 收集 + merge 成功结果 + shardErrors 收失败）。
+- **kernel query 链（Codex：新 raw query 需全链）**：Task5 的无-limit tenant usage raw query 需在 `packages/kernel/src/domain/.../metrics-queries.ts` 加 query constant+factory+类型+export，再在 `src/storage/executors/metrics-query-executors.ts` 注册——implementer 照现有 metrics query 的 kernel→executor 链核验后补全链（非只改 executor）。
 
 **Goal:** 消除分片后「全局 worker/timer 只处理 home shard=静默漏」「route 内联 tenant-scoped 直查走 host db=错 shard」「metrics 跨租户聚合只读 home shard=假低值」三类 sink，让跨租户扫描经 `resolver.allShardDbs()` fan-out、租户级直查经 `dbForTenant`、平台表经 `coordinatorDb`。最高优先=GDPR MediaRetention。
 
@@ -57,8 +60,8 @@
 - Test: `src/test/unit/media-retention-sharding.test.ts`（新建）
 
 **Interfaces:**
-- Consumes: `TenantDbResolver.allShardDbs()`、`runMediaRetention(db, eraser, now, options): Promise<{ erased: number; failed: number }>`（media-ref-store 现有签名）、`makeShardKeyer`。
-- Produces: `MediaRetentionWorker` ctor **`(resolver: TenantDbResolver, eraser: ObjectStorageEraser, logger: Logger, now: () => number = () => Date.now(), options: Partial<MediaRetentionOptions> = {})`**（把现 ctor 首参 `tx: SyncWriteUnitOfWork` 换成 `resolver`，保留 now/options 注入不变）；`flushOnce(): Promise<{ totalErased: number; totalFailed: number; shardErrors: Array<{ shardKey: string; error: string }> }>`（**保留 totalFailed + per-shard**）；`isHealthy(): boolean`；private `shardFailures: Map<string, { consecutiveFailures: number; lastFailureAt: number }>` + private `keyer = makeShardKeyer()`。
+- Consumes: `TenantDbResolver.allShardDbs()`、`runMediaRetention`（**先 Read 真实签名**——Codex 核为 `(tx, eraser, now: number)` 3 参返 `{erased, failed}`，别传 options）、`makeShardKeyer`、`Logger`（真实 `error(layer, message, data?)`）。
+- Produces: `MediaRetentionWorker` ctor 首参 `tx: SyncWriteUnitOfWork` → `resolver: TenantDbResolver`（eraser/logger/now/options 其余不变）；`flushOnce(): Promise<{ totalErased: number; totalFailed: number; shardErrors: Array<{ shardKey: string; error: string }> }>`（**保留 totalFailed + per-shard**）；`isHealthy()` = `timer !== undefined && shardFailures.size === 0`（保 timer 生命周期语义）；private `shardFailures: Map<string, { consecutiveFailures: number; lastFailureAt: number }>` + `keyer = makeShardKeyer()`。
 
 - [ ] **Step 0: 建公共工具（本 task 前置，全 Plan 复用）**
 
@@ -72,27 +75,21 @@
 2. **仅 home 会漏（旧行为锚）**：断言 s1 的 media 确被擦（若只跑 allShardDbs()[0] 则 s1 漏）——聚合计数证真 fan-out。
 3. **shard 抛错隔离 + 健康**：throwingDb() 作 s1 的 db（FakeMultiShardResolver shards.b=throwingDb()）→ flushOnce shardErrors 含 `{shardKey:'shard#1', error}` + s0 仍擦(totalErased>0) + `meterShardEraseFailure` 被调 + logger.error(非 info) + `isHealthy()===false`。
 4. **failed>0 路径**：eraser 对 s1 的对象擦除抛（runMediaRetention 内部捕获返 `{erased, failed>0}`，不进 shard catch）→ 断言 totalFailed>0 + 记 meterShardEraseFailure + logger.error + isHealthy false。
-5. **恢复**：s1 修好，下一轮 flushOnce failed===0 无异常 → 断言 shardFailures 删该 shard；两 shard 都好 → isHealthy true。
+5. **恢复（用可切换桩，非固定 throwingDb）**：用**可切换的 eraser 桩**（布尔开关：先 `failNext=true` 让 s1 的对象擦除抛→runMediaRetention 返 failed>0→isHealthy false；再 `failNext=false` 下一轮 s1 failed===0）→ 断言 shardFailures 删该 shard；两 shard 都好且 timer 已 start → isHealthy true。（不能用固定 throwingDb——它不会自动"修好"；恢复测试须用状态可变的桩。）
 
 - [ ] **Step 2: 跑测确认失败** — `npx tsx --test src/test/unit/media-retention-sharding.test.ts`，Expected FAIL（ctor 裸 tx）。
 
-- [ ] **Step 3: 改 MediaRetentionWorker**
+- [ ] **Step 3: 改 MediaRetentionWorker（先核签名再改）**
 
-ctor 首参 `tx` → `resolver`（其余 eraser/logger/now/options 不变）。`private keyer = makeShardKeyer()`；`private shardFailures = new Map()`。flushOnce：
-```ts
-let totalErased = 0, totalFailed = 0; const shardErrors: Array<{shardKey:string;error:string}> = [];
-for (const shardDb of this.resolver.allShardDbs()) {
-  const shardKey = this.keyer(shardDb);
-  try {
-    const r = await runMediaRetention(shardDb, this.eraser, this.now(), this.options);
-    totalErased += r.erased; totalFailed += r.failed;
-    if (r.failed > 0) { this.recordFailure(shardKey); meterShardEraseFailure(shardKey); this.logger.error({ shardKey, failed: r.failed }, 'media retention shard failed>0'); }
-    else this.recordSuccess(shardKey);
-  } catch (e) { const error = e instanceof Error ? e.message : String(e); shardErrors.push({ shardKey, error }); this.recordFailure(shardKey); meterShardEraseFailure(shardKey); this.logger.error({ shardKey, error }, 'media retention shard threw'); }
-}
-return { totalErased, totalFailed, shardErrors };
-```
-`recordFailure(k)`: `this.shardFailures.set(k, { consecutiveFailures: (prev?.consecutiveFailures ?? 0)+1, lastFailureAt: this.now() })`。`recordSuccess(k)`: `this.shardFailures.delete(k)`。`isHealthy()`: `this.shardFailures.size === 0`。timer 回调（现有 setInterval 内）flushOnce 后：`if (r.shardErrors.length > 0 || r.totalFailed > 0) this.logger.error(...)`（强制告警非「决定」）。加 `meterShardEraseFailure(shardKey)` 到 metric 模块（找 `meterShardFlushErrors` 同文件加同款 counter），暴露 `mediaRetentionShardEraseFailures` + `mediaRetentionDegraded` gauge 到 metrics.ts route（照 billingMetrics 暴露）。
+**先 Read**：`runMediaRetention` 真实签名（`media-ref-store.ts`——Codex 核为 `(tx, eraser, now: number)` 3 参返 `{erased, failed}`，**用真实参数别传多余的 options**）；`Logger` 接口真实签名（Codex 核为 `error(layer: string, message: string, data?: unknown)`——**按真实参数顺序调**，别写 `error(obj, msg)`）；BillingOutbox 的 shard-error metric 真实形态（Codex 核为内存数字 `billingMetrics.meterShardFlushErrors++` 非函数——**照真实形态**给 media 加同款内存 counter）。
+
+改法（意图，签名以 Read 为准）：
+- ctor 首参 `tx: SyncWriteUnitOfWork` → `resolver: TenantDbResolver`（eraser/logger/now/options 不变）；`private keyer = makeShardKeyer()`；`private shardFailures = new Map<string, { consecutiveFailures: number; lastFailureAt: number }>()`。
+- flushOnce 遍历 `this.resolver.allShardDbs()`：每 shard `this.keyer(shardDb)` → try `runMediaRetention(shardDb, this.eraser, this.now())`（**真实 3 参**）累加 erased/failed；`failed>0` → recordFailure + media shard-error counter++ + `logger.error`（真实签名）；成功 → recordSuccess（`shardFailures.delete`）；catch → shardErrors.push + recordFailure + counter++ + logger.error。返回 `{ totalErased, totalFailed, shardErrors }`（保留 totalFailed）。
+- `recordFailure(k)` 累加 consecutiveFailures + lastFailureAt；`recordSuccess(k)` 删。
+- **isHealthy 保留 timer 生命周期语义**（Codex：现未 start/stop 后应 false）：`return this.timer !== undefined && this.shardFailures.size === 0`（不能只判 shardFailures.size）。
+- timer 回调 flushOnce 后：`if (r.shardErrors.length > 0 || r.totalFailed > 0) logger.error(...)`（强制告警非「决定」）。
+- **metric 所有权定死**：media shard-error 用**模块级内存 counter**（照 billingMetrics 形态）；`registerMetricsRoutes` 读该模块级 counter + worker 的 degraded 状态暴露 `mediaRetentionShardEraseFailures` + `mediaRetentionDegraded` gauge（route 从模块级 metrics + 注入的 worker.isHealthy 读，别把 worker 实例散到 route——用模块级 metrics 状态是 codebase 既有模式，Read billingMetrics 暴露确认）。
 
 - [ ] **Step 4: 跑测确认通过** — Expected PASS。
 
@@ -126,16 +123,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 2: 跑测确认失败** — Expected FAIL。
 
-- [ ] **Step 3: 改 worker**
+- [ ] **Step 3: 改 worker（先核 SqliteEventLedger ctor + flushOutbox 签名）**
 
-```
-for (const shardDb of resolver.allShardDbs()) {
-  const shardKey = <稳定标识>;
-  try { const ledger = new SqliteEventLedger(shardDb); const r = await personaCoreDualWrite.flushOutbox(shardDb, ledger); totalFlushed+=r.flushed; totalFailed+=r.failed; }
-  catch (e) { shardErrors.push({shardKey, error:e}); logger.error(...); }
-}
-```
-删原 ctor 的 `this.ledger = new SqliteEventLedger(opts.db)`（改循环内构造）。
+**先 Read**：`SqliteEventLedger` ctor（Codex 核为收单 `IDatabase`）、`personaCoreDualWrite.flushOutbox(db, ledger)` 签名（Codex 核 `(db, ledger)` 返 `{flushed, failed}`）、现有 `dual-write-flush-worker.test.ts`（迁移到新 ctor）。
+改法（意图）：
+- ctor 从 `{ db, logger }` 改 `{ resolver, logger }`；`private keyer = makeShardKeyer()`；删 ctor 里 `this.ledger = new SqliteEventLedger(opts.db)`（改循环内构造）。
+- flush 遍历 `resolver.allShardDbs()`：每 shard `const shardKey = this.keyer(shardDb)` → try **循环内 `new SqliteEventLedger(shardDb)`**（源库=ledger 库同一 shardDb，防串写）→ `flushOutbox(shardDb, ledger)` 累加 flushed/failed；catch → shardErrors.push（`error` 转 message string，别塞 Error 对象）+ logger.error（真实 Logger 签名）。返回 `{ totalFlushed, totalFailed, shardErrors }`。
 
 - [ ] **Step 4: 跑测确认通过** — Expected PASS。
 - [ ] **Step 5: 装配 + 全门** — app.ts:408 传 resolver。`npm run test:golden` EXIT 0。
@@ -185,14 +178,14 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `src/agent/tool-invocations-retention-worker.ts`（worker ctor 收 resolver + flushOnce 遍历 allShardDbs 各 new ToolPermissionService(shardDb)）
-- Modify: `src/server/routes/auth.ts:290-292`（`cleanupExpiredTokens` **route helper 改签名**收 resolver：`export function cleanupExpiredTokens(resolver: TenantDbResolver): number { let total = 0; for (const shardDb of resolver.allShardDbs()) total += AuthService.cleanupExpired(shardDb); return total; }`）
-- Modify: `src/server/app.ts`（抽 `runDataRetentionOnce(deps, now)` 可测函数 + 三处装配传 resolver；`cleanupExpiredTokens(db)` @ :944 改 `cleanupExpiredTokens(resolver)`）
+- Modify: `src/server/routes/auth.ts:290-292`（`cleanupExpiredTokens` **route helper 改签名**收 resolver——**逐 shard try/catch 隔离**：`for (const shardDb of resolver.allShardDbs()) { try { total += AuthService.cleanupExpired(shardDb); } catch { /* 单 shard 清理失败不阻断其他 shard */ } }`）
+- Modify: `src/server/app.ts`（抽 `runDataRetentionOnce(...)` 可测函数 + 三处装配传 resolver；`cleanupExpiredTokens(db)` @ :944 改 `cleanupExpiredTokens(resolver)`）
 - Test: `src/test/unit/retention-timers-sharding.test.ts`（新建）
 
-**Interfaces:**
-- ToolInvocations: worker ctor 收 `resolver`（现收 `toolPermissionService`——改为收 resolver，内部 fan-out）；flushOnce `for (const shardDb of resolver.allShardDbs()) new ToolPermissionService(shardDb).pruneInvocationsBefore(cutoff, batchSize)` 逐 shard 隔离，聚合删除计数 + `mayHaveMore = 任一 shard mayHaveMore`（照 QuotaUsageRetention 续批语义）。
-- cleanupExpiredTokens: **route helper（非 AuthService 方法）** 改收 resolver fan-out（见 Files）；app.ts:944 调用点同步。
-- **retention timer 抽可测 seam**：现 app.ts:950-981 是内联 setInterval 闭包，**抽为模块级 `export function runDataRetentionOnce(opts: { resolver: TenantDbResolver; now: number; retentionMs: {...} }): { usageDeleted; billingDeleted; idempotencyDeleted; webhookDeleted; shardErrors }`**——跨租户表（usage_records/billing_outbox/idempotency_keys）`for (const shardDb of resolver.allShardDbs())` 各 prune 逐 shard 隔离；webhook_events（平台表无 tenant_id）→ `resolver.coordinatorDb()` prune。setInterval 闭包改调 `runDataRetentionOnce(...)`。
+**Interfaces（签名以 Read 为准）:**
+- ToolInvocations: **先 Read `ToolPermissionService.pruneInvocationsBefore` 真实签名**（Codex 核为**只返 number 无 mayHaveMore**）。worker ctor 从收 `toolPermissionService` 改收 `resolver`（迁移现有 `tool-invocations-retention-worker.test.ts`）；flushOnce 逐 shard `new ToolPermissionService(shardDb).pruneInvocationsBefore(cutoff, batchSize)` try/catch 隔离，聚合删除计数（number 累加）。**批次预算定死**：现 worker 有 `maxBatchesPerCycle` 循环——fan-out 后语义定为 **每 shard 各自最多 maxBatchesPerCycle 批**（非所有 shard 共享 N 批），即外层 for shard、内层现有批次循环不变（因 pruneInvocationsBefore 无 mayHaveMore，续批判据用返回 count===batchSize 近似，照现有 worker 现判据别改）。
+- cleanupExpiredTokens: **route helper（非 AuthService 方法）** 改收 resolver fan-out + 逐 shard try/catch（见 Files）；app.ts:944 调用点同步。
+- **retention timer 抽可测 seam**：现 app.ts:950-981 是内联 setInterval 闭包，**抽为模块级 `export function runDataRetentionOnce(opts: { resolver: TenantDbResolver; now: number; retentionMs: { usage: number; billing: number; idempotency: number; webhook: number } }): { usageDeleted: number; billingDeleted: number; idempotencyDeleted: number; webhookDeleted: number; shardErrors: Array<{ shardKey: string; error: string }> }`**——跨租户表（usage_records/billing_outbox/idempotency_keys）`for (const shardDb of resolver.allShardDbs())` 各 prune 逐 shard try/catch 隔离；webhook_events（平台表无 tenant_id）→ `resolver.coordinatorDb()` prune。setInterval 闭包改调 `runDataRetentionOnce(...)`（现有 prune 工厂/SQL 以 Read 现闭包为准）。
 
 - [ ] **Step 1: 写三处 fan-out 测（红）**
 
@@ -216,15 +209,17 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Task 5: MetricsQueryService scatter-gather + partial failure
 
 **Files:**
-- Create: `src/observability/shard-aggregate.ts`（`ShardAggregate<T>` 类型 + `aggregateShards` helper）
+- Create: `src/observability/shard-aggregate.ts`（`ShardAggregate<TData>` 类型 + `aggregateShards<TShard, TData>` helper，双泛型见 Global Constraints）
+- Create/Modify: `packages/kernel/src/domain/.../metrics-queries.ts`（**先 Read 现有 metrics query 的 kernel→executor 链**——加无-limit `tenantUsageRaw` query constant+factory+类型+export，照现有 metrics query 全链，非只改 executor）
 - Modify: `src/storage/executors/metrics-query-executors.ts`（tenant usage 查询去掉 per-shard `LIMIT`——加**无 limit 的 scatter 变体** `metricsQueryTenantUsageRaw(retentionMs)`：`SELECT tenant_id, resource, SUM(quantity) as total FROM usage_records WHERE recorded_at > ? GROUP BY tenant_id, resource`（不 ORDER/LIMIT），协调层全局 sort+limit；保留原带 limit 查询给单库路径不破）
 - Modify: `src/observability/metrics-query-service.ts`（5 项聚合 scatter-gather + 合并算法 + ShardAggregate）
 - Modify: `src/server/routes/metrics.ts`（加 resolver 注入 + 解包 ShardAggregate：data 进 body + degraded/shardErrors 暴露 JSON + Prometheus degraded gauge）
 - Modify: `src/server/app.ts:887`（registerMetricsRoutes 传 resolver）
+- Modify: 现有 `metrics-routes.test`（若 registerMetricsRoutes 加 resolver 参致旧签名调用编译错，迁移到新签名；**先 Read 确认现有测试怎么调**——route-schema 快照若因新响应字段 degraded/shardErrors 变则 `UPDATE_SNAPSHOTS=1 npm run test:contract`，仅实际变才更新）
 - Test: `src/test/unit/metrics-sharding.test.ts`（新建）
 
 **Interfaces:**
-- `ShardAggregate<T>`（Global Constraints 定义）+ `aggregateShards<T>(resolver, perShard: (db) => T, merge: (results: T[]) => Data, keyer): ShardAggregate<Data>`（通用 scatter-gather：遍历 allShardDbs 逐 shard 跑 perShard 收集 + merge 成功结果 + shardErrors 收失败 shard）。
+- `ShardAggregate<TData>` + `aggregateShards<TShard, TData>`（**双泛型，定义见 Global Constraints**——别用单泛型 `<T>` + 未声明的 `Data`，那是编译错）。
 - **MetricsQueryService ctor 收 `resolver: TenantDbResolver`**（**不用 fromResolver 二态**——直接 ctor 单参 resolver，各方法内 `this.resolver.allShardDbs()`）。
 - 合并算法（spec 定死）：diversity 各 shard 原始 styles concat → `personalityDiversity(全部 styles)`（一次全局重算）；billing/queue count SUM；observability count SUM + `updated_at` MAX；tenant usage 各 shard `metricsQueryTenantUsageRaw` 行 concat → 全局 merge（同 tenant+resource SUM）→ sort DESC → limit。
 - 每方法返回 `ShardAggregate<T>`（data + degraded + shardErrors）。route 解包 data 进响应 body、degraded/shardErrors 另字段。
@@ -294,8 +289,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ## Self-Review
 
 - **Spec 覆盖**：GDPR MediaRetention(Task1)/DualWrite(Task2)/Settlement+RuntimeRecovery(Task3)/ToolInvocations+cleanupTokens+retention timer(Task4)/metrics scatter-gather(Task5)/route 直查(Task6) — spec 范围 A/B/C/D 覆盖。**observability 独立进程拆出独立 spec+plan**（Kafka 跨 shard 路由子设计，不含本 Plan）。
-- **Codex 72 退回 7 项**：① placeholder 全消（shardKey→makeShardKeyer WeakMap/throwingDb→公共桩/ShardAggregate 类型/ctor 单参 resolver 非二选一，Global Constraints）✅；② Task1 保留 totalFailed+per-shard + 精确 ctor(tx→resolver 保 now/options) + metrics.ts 列进文件 + 恢复测 seam ✅；③ Task4 cleanupTokens 改对象(routes/auth.ts helper 非 AuthService 方法) + retention timer 抽 runDataRetentionOnce seam + observability 拆出 ✅；④ Task5 加 metrics-query-executors.ts(去 per-shard LIMIT 加 raw 变体) + ShardAggregate + ctor 单参 ✅；⑤ Task6 admin-deployment 已有 resolver(非加) + 真 createApp/inject fixtures ✅；⑥ 公共 throwingDb 桩 ✅；⑦ writing-plans note(shardKey 稳定标识/meterShardEraseFailure 按 shard-run 计数)✅。
-- **Placeholder 扫描**：无 `<...>` 占位、无二选一；每 task 的 Interfaces 块含精确 ctor/返回类型/文件行，Step 3「按 Interfaces」指向的是本 task 已填实的 Interfaces（非空转）；测试锚含真 fixture/endpoint/断言值。
+- **模式**：改用「implementer 自核签名」——计划给意图/文件/fan-out 模式/隔离铁律/健康状态机语义/测试锚，**真实签名由 implementer 先 Read 再 TDD**（前两轮从记忆写伪代码引入 runMediaRetention arity/Logger 编译错，此模式规避）。每 task Step 3 首句「先 Read <真实签名>」是硬要求。
+- **Codex 68/72 退回项处置**：① `<稳定标识>` placeholder 消（Task2 改意图+makeShardKeyer）；② Task1 runMediaRetention 3 参/Logger 真签名/isHealthy 保 timer 生命周期/metric 模块级所有权——改为「先核签名」+定死语义 ✅；③ throwingDb 改**可配置** `throwingDb({on})` 逐文件按原语义迁移（非全抛破坏后两类）✅；④ Task4 cleanupTokens route helper 加逐 shard try/catch 隔离/runDataRetentionOnce 类型+ToolInvocations 批次预算+pruneInvocationsBefore 只返 number 不假称 mayHaveMore——见 Task4 修 ✅；⑤ Task5 aggregateShards 双泛型 TShard/TData + kernel query 全链(constant+factory+export) ✅；⑥ Task6 真 endpoint(admin/vault/keys/:keyRef/rotate 等) ✅；⑦ observability **真 defer**(Plan 2 完成后另起 spec+plan，非只声明) ✅。
+- **Placeholder 扫描**：无 `<...>` 占位、无二选一；剩余的「先 Read <签名>」是**主动核验指令**（非占位——正是自核模式的核心）；测试锚含真 fixture/endpoint/断言值。
 - **类型一致**：各 worker flushOnce/flush 返回含 shardErrors；MetricsQueryService 聚合返回 {data,degraded,shardErrors}；worker ctor 全收 resolver。
 - **诚实性**：inventory 校准（Task6）逐 edge、有测才 verified、绝不 mass-upgrade，对齐 Plan 1b/1c 铁律。
 - **fail-closed 不放开**：全程不碰 assertShardingActivationAllowed（Plan 3）。
