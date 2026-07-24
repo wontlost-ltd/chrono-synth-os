@@ -85,8 +85,8 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       const config = loadConfig({});
-      const fromDb = new TenantEnterpriseProfileService(db, config);
-      const fromUow = new TenantEnterpriseProfileService(db, config);
+      const fromDb = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
+      const fromUow = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
       assert.equal(fromDb.getProfile('default').deploymentMode, 'shared_cluster');
       assert.equal(fromUow.getProfile('default').deploymentMode, 'shared_cluster');
     } finally { db.close(); }

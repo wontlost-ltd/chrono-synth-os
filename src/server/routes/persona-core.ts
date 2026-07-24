@@ -341,7 +341,7 @@ export interface MarketplaceTaskCompletedEvent {
 export interface PersonaCoreRoutesDeps {
   /** 共享 TenantDbResolver（组合根唯一实例）。 */
   resolver: TenantDbResolver;
-  /** 直查用 host db（TenantEnterpriseProfileService 直用，Plan 2）。 */
+  /** 直查用 host db（保留供组合根注入；Task 6 后 TenantEnterpriseProfileService 已改经 resolver 路由）。 */
   db: IDatabase;
   config?: AppConfig;
   /** 可选：任务完成回调（earn→distill 闭环）。app.ts 注入经 tenantFactory 调 earningDistiller。 */
@@ -349,9 +349,10 @@ export interface PersonaCoreRoutesDeps {
 }
 
 export function registerPersonaCoreRoutes(app: FastifyInstance, deps: PersonaCoreRoutesDeps): void {
-  const { resolver, db, config, onTaskCompleted } = deps;
-  const tx = db;
-  const profileService = config ? new TenantEnterpriseProfileService(tx, config) : undefined;
+  const { resolver, config, onTaskCompleted } = deps;
+  /* 分片 Plan 1b（Task 6）：TenantEnterpriseProfileService 经共享 resolver 按 tenantId 路由 shard
+   * （getTenantEncryption 是 tenant-scoped，PersonaCoreService 据此取每租户加密）。 */
+  const profileService = config ? new TenantEnterpriseProfileService(resolver, config) : undefined;
   const service = PersonaCoreService.fromResolver(
     resolver,
     profileService?.getTenantEncryption('default'),
