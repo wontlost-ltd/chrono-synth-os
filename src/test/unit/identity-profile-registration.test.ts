@@ -10,6 +10,8 @@ import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { UserProfileService } from '../../identity/user-profile-service.js';
+import { UserEmailDirectoryService } from '../../identity/user-email-directory-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { IDatabase } from '../../storage/database.js';
 import { hash } from '@node-rs/argon2';
 
@@ -52,46 +54,46 @@ describe('UserProfileService 执行器注册', () => {
     assert.ok(resolveCommandExecutor(UPROF_CMD_UPDATE_PASSWORD));
   });
 
-  it('getProfile 通过 data plane 契约工作', () => {
+  it('getProfile 通过 data plane 契约工作（tenant-scoped，穿 tenantId）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'test@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(new SingleDbResolver(db));
 
-    const profile = service.getProfile('user-1');
+    const profile = service.getProfile('tenant-test', 'user-1');
     assert.equal(profile.userId, 'user-1');
     assert.equal(profile.email, 'test@example.com');
     assert.equal(profile.role, 'member');
   });
 
-  it('updateEmail 通过 data plane 契约工作', () => {
+  it('updateEmail 通过 UserEmailDirectoryService data plane 契约工作（全局 email 唯一性）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'old@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const dir = new UserEmailDirectoryService(new SingleDbResolver(db));
 
-    const updated = service.updateEmail('user-1', 'new@example.com');
+    const updated = dir.updateEmail('user-1', 'new@example.com');
     assert.equal(updated.email, 'new@example.com');
   });
 
-  it('updateEmail 重复邮箱抛出错误', () => {
+  it('updateEmail 重复邮箱抛出错误（全局唯一性，跨租户也拦）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'a@example.com', 'hash');
     seedUser(db, 'user-2', 'b@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const dir = new UserEmailDirectoryService(new SingleDbResolver(db));
 
-    assert.throws(() => service.updateEmail('user-1', 'b@example.com'), /已被使用/);
+    assert.throws(() => dir.updateEmail('user-1', 'b@example.com'), /已被使用/);
   });
 
-  it('changePassword 验证旧密码并更新', async () => {
+  it('changePassword 验证旧密码并更新（tenant-scoped，穿 tenantId）', async () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     const pwHash = await hash('oldPassword123');
     seedUser(db, 'user-1', 'test@example.com', pwHash);
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(new SingleDbResolver(db));
 
-    const result = await service.changePassword('user-1', 'oldPassword123', 'newPassword456');
+    const result = await service.changePassword('tenant-test', 'user-1', 'oldPassword123', 'newPassword456');
     assert.deepEqual(result, { success: true });
   });
 });
