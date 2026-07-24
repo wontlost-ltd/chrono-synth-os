@@ -54,6 +54,13 @@ export const ErrorCode = {
   AUTH_INSUFFICIENT_ROLE: 'AUTH_INSUFFICIENT_ROLE',
   AUTH_INVALID_CREDENTIALS: 'AUTH_INVALID_CREDENTIALS',
   AUTH_EMAIL_EXISTS: 'AUTH_EMAIL_EXISTS',
+  /* 分片 Plan 1c：register 状态机专用（均映射 HTTP 409，随 StateError 抛出）。
+   *   - AUTH_REGISTRATION_IN_PROGRESS：同 email 有他人未竟 PENDING 占位，或续做时密码所有权
+   *     证明失败（argon2.verify 不通过）——绝不接管、绝不签发 token。
+   *   - AUTH_REGISTRATION_RETRY：本次 shard 已落地但目录 CAS 激活未确认（并发/崩溃窗口），
+   *     提示客户端携原 Idempotency-Key 重试收敛，不签发 token。 */
+  AUTH_REGISTRATION_IN_PROGRESS: 'AUTH_REGISTRATION_IN_PROGRESS',
+  AUTH_REGISTRATION_RETRY: 'AUTH_REGISTRATION_RETRY',
   AUTH_SSO_FAILED: 'AUTH_SSO_FAILED',
 
   /* 配置错误 (500) */

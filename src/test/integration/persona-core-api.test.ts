@@ -7,9 +7,25 @@ import { createApp } from '../../server/index.js';
 import { loadConfig } from '../../config/schema.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
+import type { IDatabase } from '../../storage/database.js';
+import { canonicalizeEmail } from '../../identity/email-canonical.js';
+import { dirCmdReserve } from '@chrono/kernel';
 
 const JWT_SECRET = 'test-secret-at-least-32-characters-long!';
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 分片 Plan 1c Task 5：login 经 tenant_identity_directory 目录（email→tenant→shard）。
+ * 直插 users 行的测试须同步登记一条 ACTIVE 目录项（否则 login 按目录查落空 → 401），
+ * 语义等价 register/v124 回填产出的 ACTIVE 项（user_id=users.id）。
+ */
+function seedDirectoryActive(db: IDatabase, input: { tenantId: string; userId: string; email: string }): void {
+  db.execute(dirCmdReserve({
+    tenantId: input.tenantId, userId: input.userId, operationId: `backfill:${input.userId}`,
+    operationKind: 'REGISTER', previousLookupValue: null, pendingPasswordHash: null,
+    lookupKind: 'email', lookupValue: canonicalizeEmail(input.email), status: 'ACTIVE', now: Date.now(),
+  }));
+}
 
 interface AuthContext {
   accessToken: string;
@@ -895,6 +911,10 @@ describe('Persona Core API 集成测试', () => {
       `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(targetUserId, 'persona-transfer-target@example.com', targetHash, 'member', ownerAuth.tenantId, now, now);
+    /* Plan 1c Task 5：login 经目录，直插 user 须同步登记 ACTIVE 目录项（否则 login 落空 401）。 */
+    seedDirectoryActive(os.getDatabase(), {
+      tenantId: ownerAuth.tenantId, userId: targetUserId, email: 'persona-transfer-target@example.com',
+    });
 
     const targetLoginRes = await app.inject({
       method: 'POST',

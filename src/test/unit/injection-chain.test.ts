@@ -65,10 +65,16 @@ test('注入链行为验[companion-chat]：A→shard0/B→shard1，A 的 quota_u
   const s0 = migratedDb();
   const s1 = migratedDb();
   const coord = migratedDb();
-  /* tenantToShard 用可变 record：先建 app + 注册拿真实 tenantId，再填映射后发 chat 请求。 */
+  /* tenantToShard 用可变 record：先建 app + 注册拿真实 tenantId，再填映射后发 chat 请求。
+   * defaultShardId='coordAsShard'：register（Plan 1c Task 5）为全新随机 tenantId 立即 dbForTenant 落 shard，
+   * 而映射在注册**后**才知 tenantId——故未映射时回退到 coordinator 库（把 coord 也作为一个 shard 暴露），
+   * 模拟真实 ShardRouter「新租户即可路由、永不因未知抛错」。register 的 user/token 落 coord（与旧 host 行为等价），
+   * chat 的 quota 经映射后的 s0/s1（本测真正断言的路由）。 */
   const tenantToShard: Record<string, string> = {};
-  const fake = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard });
-  /* OS 用 coordinator db（registerAuthRoutes 走 host db=coord；chat 的 quota 经共享 resolver 走 shard）。 */
+  const fake = new FakeMultiShardResolver({
+    coordinator: coord, shards: { s0, s1, coordAsShard: coord }, tenantToShard, defaultShardId: 'coordAsShard',
+  });
+  /* OS 用 coordinator db（registerAuthRoutes 经共享 resolver：新租户回退 coord；chat 的 quota 经共享 resolver 走 shard）。 */
   const os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger(), db: coord });
   os.start();
   const app = await createApp({ os, config: baseConfig(), resolver: fake });
