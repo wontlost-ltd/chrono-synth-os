@@ -13,6 +13,7 @@ import { describe, it } from 'node:test';
 import { ScimProvisioningService } from '../../enterprise/scim-provisioning-service.js';
 import { listEvidenceByControl, recordEvidence } from '../../compliance/evidence-store.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 
 const TENANT = 'tenant-scim-cc61';
 
@@ -21,7 +22,7 @@ describe('P1-M — SCIM provisioning SOC2 CC6.1 evidence', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
 
-    const scim = new ScimProvisioningService(db, ({ tenantId, evidenceType, payload }) => {
+    const scim = new ScimProvisioningService(new SingleDbResolver(db), ({ tenantId, evidenceType, payload }) => {
       recordEvidence(db, {
         tenantId,
         controlId: 'CC6.1',
@@ -46,7 +47,7 @@ describe('P1-M — SCIM provisioning SOC2 CC6.1 evidence', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
 
-    const scim = new ScimProvisioningService(db, ({ tenantId, evidenceType, payload }) => {
+    const scim = new ScimProvisioningService(new SingleDbResolver(db), ({ tenantId, evidenceType, payload }) => {
       recordEvidence(db, {
         tenantId,
         controlId: 'CC6.1',
@@ -71,7 +72,7 @@ describe('P1-M — SCIM provisioning SOC2 CC6.1 evidence', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
 
-    const scim = new ScimProvisioningService(db, () => {
+    const scim = new ScimProvisioningService(new SingleDbResolver(db), () => {
       throw new Error('simulated evidence-store outage');
     });
 
@@ -86,7 +87,7 @@ describe('P1-M — SCIM provisioning SOC2 CC6.1 evidence', () => {
 
     const failures: Array<{ tenantId: string; evidenceType: string; error: string }> = [];
     const scim = new ScimProvisioningService(
-      db,
+      new SingleDbResolver(db),
       () => { throw new Error('outage'); },
       ({ tenantId, evidenceType, error }) => {
         failures.push({ tenantId, evidenceType, error: error.message });
@@ -104,7 +105,7 @@ describe('P1-M — SCIM provisioning SOC2 CC6.1 evidence', () => {
   it('works without an evidenceRecorder (backward-compatible default)', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    const scim = new ScimProvisioningService(db);
+    const scim = new ScimProvisioningService(new SingleDbResolver(db));
 
     const result = scim.createUser(TENANT, { email: 'dave@example.com', displayName: 'Dave' });
     assert.ok(result.user.id);

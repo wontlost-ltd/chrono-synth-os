@@ -67,11 +67,13 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
-      const fromDb = new ScimProvisioningService(db);
+      /* 分片 Plan 1c（Task 6）：ScimProvisioningService 已 resolver 化——收 TenantDbResolver，
+       * createUser 经协调库目录定位 email→tenant 再写 shard。 */
+      const fromDb = new ScimProvisioningService(new SingleDbResolver(db));
       const r1 = fromDb.createUser('default', { email: 'scim1@x.com', displayName: 'S1' });
       assert.equal(r1.isNew, true);
 
-      const fromUow = new ScimProvisioningService(db);
+      const fromUow = new ScimProvisioningService(new SingleDbResolver(db));
       const r2 = fromUow.createUser('default', { email: 'scim2@x.com', displayName: 'S2' });
       assert.equal(r2.isNew, true);
 

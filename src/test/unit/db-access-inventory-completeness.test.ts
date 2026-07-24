@@ -277,8 +277,18 @@ const CARRIER_MUST_STAY_PLANNED_EDGE_IDS = [
   'src/server/services/nudge-push-bridge.ts#NudgePushBridge::flow::resolver',
   'src/server/routes/avatars.ts#registerAvatarRoutes::flow::resolver',
   'src/server/routes/avatars.ts#getTenantOS::flow::requires-resolver-rewire',
-  'src/identity/sso-user-service.ts#SsoUserService::flow::resolver',
-  'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::seam',
+  /* Plan 1c Task 6：SSO/OIDC + SCIM createUser 经协调库目录定位 email→tenant（mixed-scope：
+   * coordinator 目录查 + shard 写），仍非纯 tenant-scoped resolver 载体、无 2-shard mutation 门覆盖，
+   * 故保持 planned（升级须先真下沉 + 2-shard 覆盖）。旧 ctor-tx resolver / identityWriter seam 契约
+   * 因 ctor 改收 resolver 而重构为下列 mixed-scope 契约。 */
+  'src/identity/sso-user-service.ts#SsoUserService.provisionShardUser::flow::mixed-scope',
+  'src/identity/sso-user-service.ts#SsoUserService.ensureSubscription::flow::mixed-scope',
+  'src/identity/sso-user-service.ts#SsoUserService.findOrCreateForOidc::flow::mixed-scope',
+  'src/identity/sso-user-service.ts#SsoUserService.findOrCreateForSso::flow::mixed-scope',
+  'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::terminal-escape',
+  'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::mixed-scope',
+  'src/enterprise/scim-provisioning-service.ts#ScimProvisioningService.createUser::flow::mixed-scope',
+  'src/enterprise/scim-provisioning-service.ts#ScimProvisioningService.deleteUser::flow::mixed-scope',
   'src/privacy/privacy-service.ts#PrivacyService::flow::resolver',
   'src/privacy/privacy-service.ts#PrivacyService.exportData::flow::requires-resolver-rewire',
   'src/privacy/privacy-service.ts#PrivacyService.getOS::flow::requires-resolver-rewire',

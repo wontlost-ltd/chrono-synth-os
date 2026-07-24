@@ -32,6 +32,9 @@ import {
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { AuthService } from '../../identity/auth-service.js';
 import type { IdGenerator, StripeCustomerCreator } from '../../identity/auth-service.js';
+import { SsoUserService } from '../../identity/sso-user-service.js';
+import type { IdGenerator as SsoIdGenerator } from '../../identity/sso-user-service.js';
+import { ScimProvisioningService } from '../../enterprise/scim-provisioning-service.js';
 import { canonicalizeEmail } from '../../identity/email-canonical.js';
 import { loadConfig } from '../../config/schema.js';
 import { dirCmdReserve } from '@chrono/kernel';
@@ -422,5 +425,220 @@ describe('AuthService 混合 scope 分片（register 状态机 + login 经目录
     };
     await svc2.register(fakeApp(), 'stripe@example.com', 'password123', { idempotencyKey: 'reg:stripe' });
     assert.equal(calls.length, 1, '同 key 重试（shard COMPLETE）→ 不再调 Stripe');
+  });
+});
+
+/**
+ * 租户分片 Phase 0 · Plan 1c Task 6 —— SSO/OIDC + SCIM createUser 经协调库目录定位 email→tenant。
+ *
+ * 用 FakeMultiShardResolver（独立 coordinator + 2 独立 shard db）钉死：
+ *   - findOrCreateForSso（自生成 tenant）：走 reservePasswordlessTenant → coordinator email ACTIVE +
+ *     正确 shard 有 user；注确定性 idGen 验 canonical 身份落对 shard；
+ *   - findOrCreateForOidc(email, expectedTenantId)：目录 email 已属**其他** tenant → 抛 AUTH_SSO_FAILED
+ *     （从协调库目录判定，非某 shard users 查）；一致则 dbForTenant(expectedTenantId) 建/取；
+ *   - SCIM createUser(tenantId, {email})：email 属其他 tenant → 抛「已存在于其他 tenant」；新 email →
+ *     coordinator ACTIVE + tenantId 对应 shard 有 user；
+ *   - 大小写归一化（回归 v124 锁死类）：SSO/SCIM 用大小写混合 email → canonicalize 后正确定位。
+ */
+describe('SSO/OIDC + SCIM createUser 混合 scope 分片（经协调库目录定位）', () => {
+  let coordinator: IDatabase;
+  let shardA: IDatabase;
+  let shardB: IDatabase;
+
+  beforeEach(() => {
+    resetCoreSelfExecutors();
+    registerCoreSelfExecutors();
+    coordinator = createMemoryDatabase();
+    shardA = createMemoryDatabase();
+    shardB = createMemoryDatabase();
+    migrateToV124(coordinator);
+    migrateToV124(shardA);
+    migrateToV124(shardB);
+  });
+
+  function resolverFor(tenantToShard: Record<string, string>): FakeMultiShardResolver {
+    return new FakeMultiShardResolver({
+      coordinator,
+      shards: { A: shardA, B: shardB },
+      tenantToShard,
+    });
+  }
+
+  /** 确定性 idGen（SSO seam）：按预设序列吐 tenant/user id。 */
+  function ssoIdGen(tenantId: string, userId: string): SsoIdGenerator {
+    return { tenantId: () => tenantId, userId: () => userId };
+  }
+
+  function dirRow(email: string): { tenant_id: string; status: string } | undefined {
+    return coordinator.prepare<{ tenant_id: string; status: string }>(
+      'SELECT tenant_id, status FROM tenant_identity_directory WHERE lookup_kind = ? AND lookup_value = ?',
+    ).get('email', canonicalizeEmail(email));
+  }
+
+  function shardUser(db: IDatabase, userId: string): { id: string; email: string; tenant_id: string; role: string } | undefined {
+    return db.prepare<{ id: string; email: string; tenant_id: string; role: string }>(
+      'SELECT id, email, tenant_id, role FROM users WHERE id = ?',
+    ).get(userId);
+  }
+
+  it('findOrCreateForSso（自生成 tenant）→ reservePasswordlessTenant → coordinator ACTIVE + 正确 shard 有 user；确定性 idGen 落对 shard', () => {
+    const svc = new SsoUserService(resolverFor({ tenant_sso: 'A' }), ssoIdGen('tenant_sso', 'user_sso'));
+    const res = svc.findOrCreateForSso('SsoNew@Example.com');
+
+    assert.equal(res.isNew, true);
+    assert.equal(res.tenantId, 'tenant_sso');
+    assert.equal(res.userId, 'user_sso');
+    assert.equal(res.role, 'admin', '自生成 tenant 首用户为 admin');
+
+    /* coordinator email 目录 ACTIVE（归一化小写）。 */
+    assert.equal(dirRow('ssonew@example.com')!.status, 'ACTIVE');
+    /* shard A 有 user（email 归一化小写、tenant 绑定）。 */
+    const u = shardUser(shardA, 'user_sso');
+    assert.ok(u, 'shard A 有 user 行');
+    assert.equal(u!.email, 'ssonew@example.com', 'shard user email 归一化小写');
+    assert.equal(u!.tenant_id, 'tenant_sso');
+    /* shard B 无该 user。 */
+    assert.equal(shardUser(shardB, 'user_sso'), undefined, '他 shard 无 user 行');
+    /* 订阅落 shard A。 */
+    assert.ok(shardA.prepare('SELECT 1 FROM subscriptions WHERE tenant_id = ?').get('tenant_sso'), '订阅落用户所在 shard');
+  });
+
+  it('findOrCreateForSso 已 ACTIVE email → 走既有用户路径（isNew=false，同 tenant/user，不重建第二租户）', () => {
+    const resolver = resolverFor({ tenant_ret: 'A' });
+    const svc = new SsoUserService(resolver, ssoIdGen('tenant_ret', 'user_ret'));
+    const first = svc.findOrCreateForSso('returning@example.com');
+    assert.equal(first.isNew, true);
+
+    /* 再调（若 idGen 换值，canonical 仍以目录既存为准 → 复用第一次身份）。 */
+    const svc2 = new SsoUserService(resolver, ssoIdGen('tenant_other', 'user_other'));
+    const second = svc2.findOrCreateForSso('Returning@Example.com');
+    assert.equal(second.isNew, false, '已 ACTIVE → 既有用户路径');
+    assert.equal(second.userId, 'user_ret');
+    assert.equal(second.tenantId, 'tenant_ret');
+    assert.equal(shardUser(shardA, 'user_other'), undefined, '不重建第二租户/用户');
+  });
+
+  it('findOrCreateForOidc(email, expectedTenantId)：目录 email 已属其他 tenant → 抛 AUTH_SSO_FAILED（从协调库目录判定）', () => {
+    /* 先用 SSO 让 cross@ 落 tenant_a（目录 ACTIVE，绑 tenant_a）。 */
+    const svcA = new SsoUserService(resolverFor({ tenant_a: 'A' }), ssoIdGen('tenant_a', 'user_a'));
+    svcA.findOrCreateForSso('cross@example.com');
+    assert.equal(dirRow('cross@example.com')!.tenant_id, 'tenant_a');
+
+    /* OIDC 以 expectedTenantId=tenant_b 尝试同 email → 目录判定属 tenant_a → 抛 AUTH_SSO_FAILED。 */
+    const svcOidc = new SsoUserService(resolverFor({ tenant_a: 'A', tenant_b: 'B' }), ssoIdGen('tenant_b', 'user_b'));
+    let threw: unknown;
+    try {
+      svcOidc.findOrCreateForOidc('cross@example.com', 'tenant_b');
+      assert.fail('email 属其他 tenant 必须抛 AUTH_SSO_FAILED');
+    } catch (e) { threw = e; }
+    assert.equal((threw as { code?: string }).code, ErrorCode.AUTH_SSO_FAILED);
+    /* 不在 tenant_b 的 shard B 建 user（跨租户拒后无落地）。 */
+    assert.equal(shardUser(shardB, 'user_b'), undefined, '跨租户拒 → 不建 user');
+  });
+
+  it('findOrCreateForOidc 一致 tenant → dbForTenant(expectedTenantId) 建/取（新建 admin，已存在 isNew=false）', () => {
+    const resolver = resolverFor({ tenant_oidc: 'A' });
+    const svc1 = new SsoUserService(resolver, ssoIdGen('tenant_oidc', 'user_oidc1'));
+    /* 首次 OIDC：expectedTenantId=tenant_oidc，全新 email → 建 admin + 落 shard A。 */
+    const r1 = svc1.findOrCreateForOidc('oidc-first@example.com', 'tenant_oidc', 'First');
+    assert.equal(r1.isNew, true);
+    assert.equal(r1.role, 'admin');
+    assert.equal(r1.tenantId, 'tenant_oidc');
+    assert.equal(dirRow('oidc-first@example.com')!.status, 'ACTIVE');
+    const u = shardUser(shardA, 'user_oidc1')!;
+    assert.equal(u.tenant_id, 'tenant_oidc');
+    /* displayName 落 identity。 */
+    const ident = shardA.prepare<{ display_name: string }>(
+      'SELECT display_name FROM identities WHERE user_id = ?',
+    ).get('user_oidc1');
+    assert.equal(ident?.display_name, 'First');
+
+    /* 再次 OIDC 同 email 同 tenant → isNew=false，复用既有 user。 */
+    const svc2 = new SsoUserService(resolver, ssoIdGen('tenant_oidc', 'user_oidc2'));
+    const r2 = svc2.findOrCreateForOidc('oidc-first@example.com', 'tenant_oidc');
+    assert.equal(r2.isNew, false);
+    assert.equal(r2.userId, 'user_oidc1');
+    assert.equal(shardUser(shardA, 'user_oidc2'), undefined, '不重建第二 user');
+  });
+
+  it('SCIM createUser(tenantId, {email})：email 属其他 tenant → 抛「已存在于其他 tenant」', () => {
+    /* 先让 taken@ 落 tenant_x（经 SSO）。 */
+    const svcSso = new SsoUserService(resolverFor({ tenant_x: 'A' }), ssoIdGen('tenant_x', 'user_x'));
+    svcSso.findOrCreateForSso('taken@example.com');
+
+    const scim = new ScimProvisioningService(resolverFor({ tenant_x: 'A', tenant_y: 'B' }));
+    let threw: unknown;
+    try {
+      scim.createUser('tenant_y', { email: 'taken@example.com', displayName: 'Taken' });
+      assert.fail('email 属其他 tenant 必须抛');
+    } catch (e) { threw = e; }
+    assert.ok(String((threw as Error).message).includes('已存在于其他 tenant'), '抛跨租户冲突错误');
+    assert.equal(shardUser(shardB, 'user_x'), undefined, '不在 tenant_y shard 建 user');
+  });
+
+  it('SCIM createUser 新 email → coordinator ACTIVE + tenantId 对应 shard 有 user（isNew=true）', () => {
+    const scim = new ScimProvisioningService(resolverFor({ tenant_scim: 'A' }));
+    const res = scim.createUser('tenant_scim', { email: 'ScimUser@Example.com', displayName: 'Scim User' });
+
+    assert.equal(res.isNew, true);
+    assert.equal(res.user.userName, 'scimuser@example.com', 'SCIM userName=归一化 email');
+
+    /* coordinator email 目录 ACTIVE。 */
+    assert.equal(dirRow('scimuser@example.com')!.status, 'ACTIVE');
+    /* tenant_scim 映射的 shard A 有 user（email 归一化小写）。 */
+    const rows = shardA.prepare<{ id: string; email: string; tenant_id: string }>(
+      'SELECT id, email, tenant_id FROM users WHERE tenant_id = ?',
+    ).all('tenant_scim');
+    assert.equal(rows.length, 1, 'shard A 有 1 个 user');
+    assert.equal(rows[0].email, 'scimuser@example.com');
+    /* shard B 无。 */
+    assert.equal(
+      shardB.prepare('SELECT 1 FROM users WHERE tenant_id = ?').get('tenant_scim'),
+      undefined,
+      '他 shard 无 user',
+    );
+    /* identity 落 shard A。 */
+    assert.ok(
+      shardA.prepare('SELECT 1 FROM identities WHERE user_id = ?').get(rows[0].id),
+      'identity 落用户所在 shard',
+    );
+  });
+
+  it('SCIM createUser 幂等：同 email 再导入 → isNew=false，复用既有 user（不重建）', () => {
+    const scim = new ScimProvisioningService(resolverFor({ tenant_idem: 'A' }));
+    const r1 = scim.createUser('tenant_idem', { email: 'idem@example.com', displayName: 'Idem' });
+    const r2 = scim.createUser('tenant_idem', { email: 'IDEM@example.com', displayName: 'Idem2' });
+    assert.equal(r2.isNew, false, '既有 email → isNew=false');
+    assert.equal(r2.user.id, r1.user.id, '复用既有 user id');
+    const cnt = shardA.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM users WHERE tenant_id = ?',
+    ).get('tenant_idem');
+    assert.equal(Number(cnt!.c), 1, '不重建 user');
+  });
+
+  it('大小写归一化（回归 v124 锁死类）：老用户回填 ACTIVE 目录项（归一化）+ shard user → SSO 原大小写 email 正确定位', () => {
+    /* 模拟 Task 2 回填：目录项 email 归一化小写，shard user 存归一化 email。 */
+    const canon = canonicalizeEmail('Legacy.SSO@Example.COM');
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_legacy_sso', userId: 'user_legacy_sso', operationId: 'reg:backfill-sso',
+      operationKind: 'REGISTER', previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: canon, status: 'ACTIVE', now: NOW,
+    }));
+    shardA.prepare<void>(
+      'INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run('user_legacy_sso', canon, 'sso-managed', 'admin', 'tenant_legacy_sso', NOW, NOW);
+
+    /* SSO 用**原大小写** email → 归一化后命中目录 ACTIVE → 既有用户路径（不锁死、不重建）。 */
+    const svc = new SsoUserService(resolverFor({ tenant_legacy_sso: 'A' }), ssoIdGen('unused', 'unused'));
+    const res = svc.findOrCreateForSso('Legacy.SSO@Example.COM');
+    assert.equal(res.isNew, false, '大小写混合 email 归一化后命中既有 → 不重建');
+    assert.equal(res.userId, 'user_legacy_sso');
+    assert.equal(res.tenantId, 'tenant_legacy_sso');
+
+    /* SCIM 亦然：同 tenant 用原大小写导入 → isNew=false（归一化定位既有）。 */
+    const scim = new ScimProvisioningService(resolverFor({ tenant_legacy_sso: 'A' }));
+    const scimRes = scim.createUser('tenant_legacy_sso', { email: 'LEGACY.sso@example.com', displayName: 'Legacy' });
+    assert.equal(scimRes.isNew, false, 'SCIM 大小写混合 email 归一化后命中既有 → 不重建');
+    assert.equal(scimRes.user.id, 'user_legacy_sso');
   });
 });
