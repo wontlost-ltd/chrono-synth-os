@@ -26,15 +26,16 @@ export class MobileDeviceFacade {
 
   /**
    * 分片 Plan 1b：facade 持 `tx`，身份读/分身读经 tenant-bound `IdentityWriter`/`AvatarWriter(user.tenantId, tx)` seam
-   * （非 `new IdentityService/AvatarService(tx)`）。`DeviceAvatarService` 已 resolver 化（Task 2 Avatar 组）故收 `resolver`。
-   * `MobileDeviceService`（device 表）的多-shard resolver 化归 Task 3（Mobile 组），本 Task 只接线到 seam。
+   * （非 `new IdentityService/AvatarService(tx)`）。`DeviceAvatarService`（Task 2 Avatar 组）+
+   * `MobileDeviceService`（Task 3 Mobile 组，device 表有 tenant_id）均已 resolver 化，故都收 `resolver`。
+   * 一次调用解析一次 tx：device 读写走 `deviceService.<method>(user.tenantId, …)`（内部 dbForTenant）。
    */
   constructor(
     private readonly tx: SyncWriteUnitOfWork,
     resolver: TenantDbResolver,
     private readonly pushService: PushService,
   ) {
-    this.deviceService = new MobileDeviceService(tx);
+    this.deviceService = new MobileDeviceService(resolver);
     this.deviceAvatarService = new DeviceAvatarService(resolver);
   }
 
@@ -53,25 +54,25 @@ export class MobileDeviceFacade {
   }
 
   listDevices(user: JwtPayload) {
-    return this.deviceService.listByUser(user.sub);
+    return this.deviceService.listByUser(user.tenantId, user.sub);
   }
 
   updatePushToken(user: JwtPayload, deviceId: string, pushToken: string) {
-    return this.deviceService.updatePushToken(deviceId, user.sub, pushToken);
+    return this.deviceService.updatePushToken(user.tenantId, deviceId, user.sub, pushToken);
   }
 
   deleteDevice(user: JwtPayload, deviceId: string): void {
-    this.deviceService.delete(deviceId, user.sub);
+    this.deviceService.delete(user.tenantId, deviceId, user.sub);
   }
 
   installAvatar(user: JwtPayload, deviceId: string, avatarId: string) {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     this.requireOwnedAvatar(user, avatarId);
     return this.deviceAvatarService.install(user.tenantId, deviceId, avatarId);
   }
 
   uninstallAvatar(user: JwtPayload, deviceId: string, avatarId: string): boolean {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     this.requireOwnedAvatar(user, avatarId);
     const ok = this.deviceAvatarService.uninstall(user.tenantId, deviceId, avatarId);
     if (!ok) throw new NotFoundError('该分身未安装在此设备', ErrorCode.NOT_FOUND_AVATAR);
@@ -79,7 +80,7 @@ export class MobileDeviceFacade {
   }
 
   activateAvatar(user: JwtPayload, deviceId: string, avatarId: string): { deviceId: string; avatarId: string; active: true } {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     this.requireOwnedAvatar(user, avatarId);
     const ok = this.deviceAvatarService.activate(user.tenantId, deviceId, avatarId);
     if (!ok) throw new NotFoundError('该分身未安装在此设备', ErrorCode.NOT_FOUND_AVATAR);
@@ -87,7 +88,7 @@ export class MobileDeviceFacade {
   }
 
   listDeviceAvatars(user: JwtPayload, deviceId: string) {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     const identity = this.identityWriter(user).getByUser(user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     const avatars = this.deviceAvatarService.listByDevice(user.tenantId, deviceId);
@@ -95,7 +96,7 @@ export class MobileDeviceFacade {
   }
 
   async sendPushTest(user: JwtPayload, deviceId: string, body?: { title?: string; body?: string }) {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     await this.pushService.send(user.tenantId, deviceId, {
       title: body?.title ?? 'ChronoSynthOS 测试推送',
       body: body?.body ?? '这是一条测试推送通知',

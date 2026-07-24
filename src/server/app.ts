@@ -347,6 +347,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const nudgePushBridge = new NudgePushBridge({
     bus: deps.os.bus,
     db,
+    /* 分片 Plan 1b（Task 3）：设备解析经共享 resolver 按 tenantId 选对 shard。 */
+    resolver: captureResolver('nudge-push-bridge'),
     pushService: services.pushService,
     logger: deps.os.getLogger(),
     now: () => deps.os.getClock().now(),

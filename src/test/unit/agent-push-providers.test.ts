@@ -186,12 +186,13 @@ describe('PushDispatcher', () => {
   function makeDispatcher(devices: Map<string, DeviceLookupResult | null>) {
     const apns = new MockProvider({ channel: 'apns' });
     const fcm = new MockProvider({ channel: 'fcm' });
-    const invalidations: Array<{ deviceId: string; reason: string }> = [];
+    const invalidations: Array<{ tenantId: string; deviceId: string; reason: string }> = [];
     const dispatcher = new PushDispatcher({
       providers: new Map<string, PushProvider>([['apns', apns], ['fcm', fcm]]),
-      deviceLookup: async (id) => devices.get(id) ?? null,
-      onTokenInvalidated: async (deviceId, reason) => {
-        invalidations.push({ deviceId, reason });
+      /* 分片 Plan 1b（Task 3）：deviceLookup 现收 (tenantId, deviceId)——按 deviceId 查夹具。 */
+      deviceLookup: async (_tenantId, deviceId) => devices.get(deviceId) ?? null,
+      onTokenInvalidated: async (tenantId, deviceId, reason) => {
+        invalidations.push({ tenantId, deviceId, reason });
       },
     });
     return { dispatcher, apns, fcm, invalidations };
@@ -245,12 +246,12 @@ describe('PushDispatcher', () => {
 
   it('fires tokenInvalidated callback when provider reports invalid', async () => {
     const apns = new MockProvider({ channel: 'apns', invalidTokens: ['TOKEN_BAD'] });
-    const invalidations: Array<{ deviceId: string; reason: string }> = [];
+    const invalidations: Array<{ tenantId: string; deviceId: string; reason: string }> = [];
     const dispatcher = new PushDispatcher({
       providers: new Map<string, PushProvider>([['apns', apns]]),
       deviceLookup: async () => ({ platform: 'ios', pushToken: 'TOKEN_BAD' }),
-      onTokenInvalidated: async (deviceId, reason) => {
-        invalidations.push({ deviceId, reason });
+      onTokenInvalidated: async (tenantId, deviceId, reason) => {
+        invalidations.push({ tenantId, deviceId, reason });
       },
     });
     const result = await dispatcher.send('tenant', 'dev_bad', PAYLOAD);
@@ -259,6 +260,7 @@ describe('PushDispatcher', () => {
     /* fire-and-forget — wait one microtask flush */
     await new Promise((r) => setImmediate(r));
     assert.equal(invalidations.length, 1);
+    assert.equal(invalidations[0]!.tenantId, 'tenant');
     assert.equal(invalidations[0]!.deviceId, 'dev_bad');
   });
 
@@ -277,9 +279,9 @@ describe('PushDispatcher', () => {
     const apns = new MockProvider({ channel: 'apns', failingTokens: ['TOKEN_2'] });
     const dispatcher = new PushDispatcher({
       providers: new Map<string, PushProvider>([['apns', apns]]),
-      deviceLookup: async (id) => ({
+      deviceLookup: async (_tenantId, deviceId) => ({
         platform: 'ios',
-        pushToken: id === 'd1' ? 'TOKEN_1' : id === 'd2' ? 'TOKEN_2' : 'TOKEN_3',
+        pushToken: deviceId === 'd1' ? 'TOKEN_1' : deviceId === 'd2' ? 'TOKEN_2' : 'TOKEN_3',
       }),
     });
     const results = await dispatcher.sendBatch('tenant', ['d1', 'd2', 'd3'], PAYLOAD);

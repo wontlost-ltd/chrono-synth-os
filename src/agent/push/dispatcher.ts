@@ -28,9 +28,12 @@ import type {
 } from '../../types/push.js';
 import type { Logger } from '../../utils/logger.js';
 
-/** 宿主提供的设备查找接口；返回 null 表示设备不存在或已删除。 */
+/** 宿主提供的设备查找接口；返回 null 表示设备不存在或已删除。
+ *
+ *  分片 Phase 0 · Plan 1b（Task 3）：带 `tenantId`——宿主据此经 `resolver.dbForTenant(tenantId)`
+ *  在正确 shard 上按 `WHERE tenant_id=? AND id=?` 查设备（防跨 shard/跨租户串号）。 */
 export interface DeviceLookup {
-  (deviceId: string): Promise<DeviceLookupResult | null>;
+  (tenantId: string, deviceId: string): Promise<DeviceLookupResult | null>;
 }
 
 export interface DeviceLookupResult {
@@ -77,12 +80,14 @@ export class PushDispatcher implements PushService {
   }
 
   async send(
-    _tenantId: string,
+    tenantId: string,
     deviceId: string,
     payload: PushPayload,
     opts?: PushOpts,
   ): Promise<PushResult> {
-    const device = await this.deviceLookup(deviceId);
+    /* 分片 Plan 1b（Task 3）：tenantId 全链传下去——deviceLookup 据此选对 shard 并按
+     * tenant predicate 查设备；失效回调也带 tenantId 落到正确 shard（不再丢弃 _tenantId）。 */
+    const device = await this.deviceLookup(tenantId, deviceId);
     if (!device) {
       return { deviceId, success: false, error: 'device not found' };
     }
@@ -106,7 +111,7 @@ export class PushDispatcher implements PushService {
     const providerResult = await provider.send(device.pushToken, payload, opts);
 
     if (providerResult.tokenInvalidated && this.onTokenInvalidated) {
-      this.fireAndForgetInvalidation(deviceId, providerResult.error ?? 'token invalidated');
+      this.fireAndForgetInvalidation(tenantId, deviceId, providerResult.error ?? 'token invalidated');
     }
 
     /* 把 provider 的 deviceId（实际是 pushToken）替换成业务 deviceId，
@@ -146,10 +151,10 @@ export class PushDispatcher implements PushService {
     }
   }
 
-  private fireAndForgetInvalidation(deviceId: string, reason: string): void {
+  private fireAndForgetInvalidation(tenantId: string, deviceId: string, reason: string): void {
     if (!this.onTokenInvalidated) return;
-    /* 不等待结果，不抛异常。回调失败由宿主自行 log。 */
-    void this.onTokenInvalidated(deviceId, reason).catch((err: unknown) => {
+    /* 不等待结果，不抛异常。回调失败由宿主自行 log。tenantId 全链带下去，让宿主落到正确 shard。 */
+    void this.onTokenInvalidated(tenantId, deviceId, reason).catch((err: unknown) => {
       this.logger?.warn(
         'PushDispatcher',
         `tokenInvalidated callback failed for ${deviceId}: ${(err as Error).message}`,

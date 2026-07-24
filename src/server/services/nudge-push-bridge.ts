@@ -16,6 +16,7 @@
 
 import type { EventBus } from '../../events/event-bus.js';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { Logger } from '../../utils/logger.js';
 import type { PushService } from '../../types/push.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
@@ -29,8 +30,13 @@ const MAX_USERS_PER_TENANT = 50;
 
 export interface NudgePushBridgeDeps {
   readonly bus: EventBus;
-  /** 宿主 DB（解析 users / devices / 同意偏好）。 */
+  /** 宿主 DB（解析 users / 同意偏好——本 Plan 未迁移的 pre-tenant 概念，仍用 host db）。 */
   readonly db: IDatabase;
+  /**
+   * 分片 Phase 0 · Plan 1b（Task 3）：共享 `TenantDbResolver`——设备解析（有 tenant_id 列）经它按
+   * tenantId 选对 shard。事件已带 tenantId（deliver 首参），故设备读走 `dbForTenant(tenantId)`。
+   */
+  readonly resolver: TenantDbResolver;
   readonly pushService: PushService;
   readonly logger: Logger;
   /** epoch ms 时钟（测试注入）。 */
@@ -72,7 +78,7 @@ export class NudgePushBridge {
     const nowMs = this.deps.now();
     const utcNowMinute = Math.floor((nowMs % 86_400_000) / 60_000);
 
-    const deviceService = new MobileDeviceService(this.deps.db);
+    const deviceService = new MobileDeviceService(this.deps.resolver);
     const prefStore = new NotificationPreferenceStore(this.deps.db, this.deps.now, tenantId);
 
     for (const user of users) {
@@ -80,9 +86,8 @@ export class NudgePushBridge {
       const decision = evaluateNotificationGate(prefStore.get(user.id), utcNowMinute);
       if (!decision.deliver) continue;
 
-      /* 宿主 DB 上必须按 (tenantId, userId) 列设备——listByUser 无 tenant 谓词有跨租户风险
-       * （Codex 退回 High）。 */
-      const devices = deviceService.listByTenantUser(tenantId, user.id).filter((d) => !!d.pushToken);
+      /* 按 (tenantId, userId) 列设备——devices 表有 tenant_id 列，经 resolver 选对 shard + tenant predicate 隔离。 */
+      const devices = deviceService.listByUser(tenantId, user.id).filter((d) => !!d.pushToken);
       for (const device of devices) {
         /* 隐私：payload **不带 nudge 正文**——只刷新提示 + tap-to-open data。 */
         await this.deps.pushService.send(
