@@ -10,6 +10,7 @@ import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { throwingDb } from '../support/throwing-db.js';
 import type { IDatabase } from '../../storage/database.js';
 
 /** 建带 persona_core/marketplace_tasks/runtime_sessions 等表的内存 db（迁移入口）。 */
@@ -17,21 +18,6 @@ function pcoreDb(): IDatabase {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
   return db;
-}
-
-/** 最小 IDatabase 桩：queryMany 恒抛错，其余方法 no-op（只用于 shard 整体隔离探针）。 */
-function throwingDb(): IDatabase {
-  return {
-    dialect: 'sqlite',
-    exec: () => {},
-    prepare: () => ({ run: () => ({ changes: 0, lastInsertRowid: 0 }), get: () => undefined, all: () => [] }),
-    transaction: (fn: () => unknown) => fn(),
-    transactionRollback: (fn: () => unknown) => fn(),
-    close: () => {},
-    queryOne: () => null,
-    queryMany: () => { throw new Error('boom'); },
-    execute: () => ({ rowsAffected: 0 }),
-  } as unknown as IDatabase;
 }
 
 /** 在给定 db 上跑完整生命周期，落一条超时的 runtime_session，返回 sessionId。 */
@@ -115,7 +101,7 @@ describe('recoverTimedOutRuntimeSessions 分片探针', () => {
 
   it('2. shard 整体隔离（核心）：坏 shard 记 error，其余 shard 仍被恢复', () => {
     const sess1 = seedTimedOutSession(s1, 'tenant_a');
-    const bad = throwingDb();
+    const bad = throwingDb({ on: 'queryMany' });
 
     const r = new FakeMultiShardResolver({
       coordinator: s1,
