@@ -82,6 +82,13 @@ export class SsoUserService {
     const entry = this.directory.resolveByEmail(canonEmail);
 
     if (entry) {
+      /* PENDING 目录项（首次注册崩在 shard 写提交前的窗口）绝不当既有用户放行——否则 existingUserRole
+       * 查不到 shard user 兜底 member、路由据此为不存在的用户签发有效 token（越权/破坏用户空间）。
+       * 只有 ACTIVE 才走既有用户路径；PENDING → 拒（与姊妹服务 AuthService.login 的 ACTIVE 门一致，
+       * 交由调用方 / Task 8 恢复 worker 处理）。 */
+      if (entry.status !== 'ACTIVE') {
+        throw new AuthenticationError('该邮箱注册尚未完成，无法通过 OIDC 登录', ErrorCode.AUTH_SSO_FAILED);
+      }
       /* email 已在目录中登记 → 校验所属 tenant 与 OIDC 租户一致（跨租户即拒）。 */
       if (entry.tenantId !== expectedTenantId) {
         throw new AuthenticationError('该邮箱已绑定其他 tenant，无法通过当前 OIDC 租户登录', ErrorCode.AUTH_SSO_FAILED);
@@ -129,6 +136,10 @@ export class SsoUserService {
     const existing = this.directory.resolveByEmail(canonEmail);
 
     if (existing) {
+      /* 同 OIDC：仅 ACTIVE 目录项当既有用户放行；PENDING（崩溃窗口残留）→ 拒，绝不落到 role 兜底 + 签 token。 */
+      if (existing.status !== 'ACTIVE') {
+        throw new AuthenticationError('该邮箱注册尚未完成，无法通过 SSO 登录', ErrorCode.AUTH_SSO_FAILED);
+      }
       if (existing.userId === null) {
         throw new AuthenticationError('目录项缺少 user 绑定，无法完成 SSO 登录', ErrorCode.AUTH_SSO_FAILED);
       }
@@ -201,12 +212,21 @@ export class SsoUserService {
     return role;
   }
 
-  /** 读回既存 shard user 的角色（未命中兜底 member）。 */
+  /**
+   * 读回既存 shard user 的角色（纵深防御 fail-closed）。
+   *
+   * 本方法只在「目录 ACTIVE 既有用户路径」与「boot 已 COMPLETE 重试路径」调用——两者都保证 shard 必有该
+   * user 行。若查不到即目录/shard 漂移（如崩在 shard 写提交前留 PENDING 却被误当 ACTIVE，或数据完整性
+   * 违规），绝不静默兜底 `'member'`（那会为 shard 中不存在的用户返回角色 → 路由据此签发幽灵 token）。
+   */
   private existingUserRole(
     userId: string, shardDb: ReturnType<TenantDbResolver['dbForTenant']>,
   ): UserRole {
     const row = shardDb.queryOne(authQueryUserById(userId));
-    return (row?.role as UserRole) ?? 'member';
+    if (!row) {
+      throw new AuthenticationError('目录项指向的 shard user 不存在（目录/shard 漂移），拒绝签发凭据', ErrorCode.AUTH_SSO_FAILED);
+    }
+    return row.role as UserRole;
   }
 
   /** 幂等确保 tenant 有订阅（事务外，供既有用户路径调用）。 */

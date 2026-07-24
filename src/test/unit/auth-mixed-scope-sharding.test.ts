@@ -616,6 +616,69 @@ describe('SSO/OIDC + SCIM createUser 混合 scope 分片（经协调库目录定
     assert.equal(Number(cnt!.c), 1, '不重建 user');
   });
 
+  it('PENDING 目录项（崩溃窗口：shard 无 user）→ findOrCreateForOidc / findOrCreateForSso 均抛 AUTH_SSO_FAILED、不返回 {userId,role}、不签 token（防幽灵用户越权）', () => {
+    /* 模拟 SSO 崩在 reservePasswordlessTenant(PENDING) 之后、shard 写 user 提交之前：目录留 PENDING，
+     * shard 无 user 行。手插一个 PENDING email 目录项（无对应 shard user）。 */
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_ghost', userId: 'user_ghost', operationId: 'reg:ghost',
+      operationKind: 'REGISTER', previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'ghost@example.com', status: 'PENDING', now: NOW,
+    }));
+    /* 前置断言：shard 确无 user（崩溃窗口）。 */
+    assert.equal(shardUser(shardA, 'user_ghost'), undefined, '崩溃窗口：shard 无 user 行');
+
+    /* OIDC：进 if(entry) 既有用户分支前须被 ACTIVE 门拒——绝不落到 existingUserRole 兜底 member + 签 token。 */
+    const svcOidc = new SsoUserService(resolverFor({ tenant_ghost: 'A' }), ssoIdGen('tenant_ghost', 'user_ghost'));
+    let oidcThrew: unknown;
+    try {
+      const r = svcOidc.findOrCreateForOidc('ghost@example.com', 'tenant_ghost');
+      assert.fail(`PENDING 项 OIDC 必须抛错，绝不返回 ${JSON.stringify(r)} + 签 token`);
+    } catch (e) { oidcThrew = e; }
+    assert.equal((oidcThrew as { code?: string }).code, ErrorCode.AUTH_SSO_FAILED, 'OIDC PENDING → AUTH_SSO_FAILED');
+
+    /* SSO：同样被 ACTIVE 门拒。 */
+    const svcSso = new SsoUserService(resolverFor({ tenant_ghost: 'A' }), ssoIdGen('tenant_ghost', 'user_ghost'));
+    let ssoThrew: unknown;
+    try {
+      const r = svcSso.findOrCreateForSso('ghost@example.com');
+      assert.fail(`PENDING 项 SSO 必须抛错，绝不返回 ${JSON.stringify(r)} + 签 token`);
+    } catch (e) { ssoThrew = e; }
+    assert.equal((ssoThrew as { code?: string }).code, ErrorCode.AUTH_SSO_FAILED, 'SSO PENDING → AUTH_SSO_FAILED');
+
+    /* 目录仍 PENDING、shard 仍无 user（拒后无任何落地——交由 Task 8 恢复 worker 收敛）。 */
+    assert.equal(dirRow('ghost@example.com')!.status, 'PENDING', '拒后目录仍 PENDING');
+    assert.equal(shardUser(shardA, 'user_ghost'), undefined, '拒后 shard 仍无 user');
+  });
+
+  it('纵深防御：ACTIVE 目录项但 shard user 意外缺失（目录/shard 漂移）→ existingUserRole fail-closed 抛 AUTH_SSO_FAILED（不兜底 member 签幽灵）', () => {
+    /* 目录项 ACTIVE 且绑 user_drift，但 shard 无对应 user 行（数据完整性违规 / 漂移）。 */
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_drift', userId: 'user_drift', operationId: 'reg:drift',
+      operationKind: 'REGISTER', previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'drift@example.com', status: 'ACTIVE', now: NOW,
+    }));
+    assert.equal(shardUser(shardA, 'user_drift'), undefined, '漂移：ACTIVE 目录但 shard 无 user');
+
+    /* OIDC 既有用户路径：ensureSubscription / ensureForUser 会先跑（幂等），但 existingUserRole 查不到
+     * shard user → fail-closed 抛错，绝不返回 role='member'。 */
+    const svcOidc = new SsoUserService(resolverFor({ tenant_drift: 'A' }), ssoIdGen('tenant_drift', 'user_drift'));
+    let oidcThrew: unknown;
+    try {
+      svcOidc.findOrCreateForOidc('drift@example.com', 'tenant_drift');
+      assert.fail('漂移（ACTIVE 目录 + shard 无 user）OIDC 必须 fail-closed 抛错');
+    } catch (e) { oidcThrew = e; }
+    assert.equal((oidcThrew as { code?: string }).code, ErrorCode.AUTH_SSO_FAILED, 'OIDC 漂移 → AUTH_SSO_FAILED');
+
+    /* SSO 亦然。 */
+    const svcSso = new SsoUserService(resolverFor({ tenant_drift: 'A' }), ssoIdGen('tenant_drift', 'user_drift'));
+    let ssoThrew: unknown;
+    try {
+      svcSso.findOrCreateForSso('drift@example.com');
+      assert.fail('漂移 SSO 必须 fail-closed 抛错');
+    } catch (e) { ssoThrew = e; }
+    assert.equal((ssoThrew as { code?: string }).code, ErrorCode.AUTH_SSO_FAILED, 'SSO 漂移 → AUTH_SSO_FAILED');
+  });
+
   it('大小写归一化（回归 v124 锁死类）：老用户回填 ACTIVE 目录项（归一化）+ shard user → SSO 原大小写 email 正确定位', () => {
     /* 模拟 Task 2 回填：目录项 email 归一化小写，shard user 存归一化 email。 */
     const canon = canonicalizeEmail('Legacy.SSO@Example.COM');
