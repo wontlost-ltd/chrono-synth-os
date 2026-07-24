@@ -5,6 +5,7 @@ import {
   IDENT_CMD_CREATE, IDENT_CMD_CREATE_DEFAULT_AVATAR, IDENT_CMD_UPDATE,
   UPROF_QUERY_BY_ID, UPROF_QUERY_BY_EMAIL_EXCLUDE, UPROF_QUERY_FULL_BY_ID,
   UPROF_CMD_UPDATE_EMAIL, UPROF_CMD_UPDATE_PASSWORD,
+  dirCmdReserve,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
@@ -66,24 +67,37 @@ describe('UserProfileService 执行器注册', () => {
     assert.equal(profile.role, 'member');
   });
 
-  it('updateEmail 通过 UserEmailDirectoryService data plane 契约工作（全局 email 唯一性）', () => {
+  it('updateEmail 通过 UserEmailDirectoryService 跨库状态机工作（coordinator 目录 changeEmail trio + shard users.email）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'old@example.com', 'hash');
+    /* ctor 注册全部 core executors（含 directory.reserve），随后种目录项。 */
     const dir = new UserEmailDirectoryService(new SingleDbResolver(db));
+    /* register/backfill 落地态：旧 email 有 ACTIVE 目录项。 */
+    db.execute(dirCmdReserve({
+      tenantId: 'tenant-test', userId: 'user-1', operationId: 'reg:1', operationKind: 'REGISTER',
+      previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'old@example.com', status: 'ACTIVE', now: Date.now(),
+    }));
 
-    const updated = dir.updateEmail('user-1', 'new@example.com');
+    const updated = dir.updateEmail('tenant-test', 'user-1', 'new@example.com');
     assert.equal(updated.email, 'new@example.com');
   });
 
-  it('updateEmail 重复邮箱抛出错误（全局唯一性，跨租户也拦）', () => {
+  it('updateEmail 跨租户重复邮箱抛出错误（目录级唯一性拦截）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'a@example.com', 'hash');
     seedUser(db, 'user-2', 'b@example.com', 'hash');
     const dir = new UserEmailDirectoryService(new SingleDbResolver(db));
+    /* 为触发目录级唯一性，把 user-2 的 b@ 归到另一租户，模拟他租户占用（ctor 已注册 executors）。 */
+    db.execute(dirCmdReserve({
+      tenantId: 'tenant-other', userId: 'user-2', operationId: 'reg:2', operationKind: 'REGISTER',
+      previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'b@example.com', status: 'ACTIVE', now: Date.now(),
+    }));
 
-    assert.throws(() => dir.updateEmail('user-1', 'b@example.com'), /已被使用/);
+    assert.throws(() => dir.updateEmail('tenant-test', 'user-1', 'b@example.com'), /已被使用/);
   });
 
   it('changePassword 验证旧密码并更新（tenant-scoped，穿 tenantId）', async () => {

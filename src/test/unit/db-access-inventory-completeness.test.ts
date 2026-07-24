@@ -277,21 +277,48 @@ const CARRIER_MUST_STAY_PLANNED_EDGE_IDS = [
   'src/server/services/nudge-push-bridge.ts#NudgePushBridge::flow::resolver',
   'src/server/routes/avatars.ts#registerAvatarRoutes::flow::resolver',
   'src/server/routes/avatars.ts#getTenantOS::flow::requires-resolver-rewire',
-  /* Plan 1c Task 6：SSO/OIDC + SCIM createUser 经协调库目录定位 email→tenant（mixed-scope：
-   * coordinator 目录查 + shard 写），仍非纯 tenant-scoped resolver 载体、无 2-shard mutation 门覆盖，
-   * 故保持 planned（升级须先真下沉 + 2-shard 覆盖）。旧 ctor-tx resolver / identityWriter seam 契约
-   * 因 ctor 改收 resolver 而重构为下列 mixed-scope 契约。 */
+  /* Plan 1c Task 9 诚实性保留：这两条 mixed-scope edge **无** auth-mixed-scope-sharding.test.ts 2-shard
+   * 覆盖——`SsoUserService.identityWriter::flow::mixed-scope` 是 identityWriter helper 返回 IdentityWriter
+   * carrier（provenance=unresolved-carrier）；`deleteUser::flow::mixed-scope` 无 2-shard deleteUser 门。
+   * 故保持 planned（升级须先补 2-shard 行为门 + 证明 provenance）。同组已下沉 + 有 2-shard 覆盖的
+   * createUser/provisionShardUser/ensureSubscription/findOrCreate* 等已在 Task 9 升 verified（见下清单）。 */
+  'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::mixed-scope',
+  'src/enterprise/scim-provisioning-service.ts#ScimProvisioningService.deleteUser::flow::mixed-scope',
+  /* Plan 1c Task 9 诚实性保留：register flow-level + cleanup edge 仍 provenance=unresolved（组合根/静态
+   * cleanup 路径 tx provenance 未证明）、无专门 2-shard 门，故保持 planned（register 的 shardDb/
+   * syncPlanToQuota **子** edge 已下沉 + 有 2-shard 覆盖，见下清单；flow-level 聚合 edge 不随之升级）。 */
+  'src/identity/auth-service.ts#AuthService.register::flow::mixed-scope',
+  'src/identity/auth-service.ts#AuthService.cleanupExpired::flow::mixed-scope',
+  'src/identity/auth-service.ts#AuthService.cleanupExpiredTokens::flow::mixed-scope',
+  'src/privacy/privacy-service.ts#PrivacyService::flow::resolver',
+  'src/privacy/privacy-service.ts#PrivacyService.exportData::flow::requires-resolver-rewire',
+  'src/privacy/privacy-service.ts#PrivacyService.getOS::flow::requires-resolver-rewire',
+] as const;
+
+/**
+ * 分片 Phase 0 · Plan 1c Task 9 —— Auth/SSO/SCIM/registerAuth 的 mixed-scope（+ 关联 terminal-escape）
+ * edge：**真经协调库目录（directory.resolveByEmail / reservePasswordlessTenant）定位 email→tenant +
+ * `resolver.dbForTenant(tenantId)` 写 shard，且被 `auth-mixed-scope-sharding.test.ts` 2-shard
+ * FakeMultiShardResolver 行为门覆盖**（跨 shard 注册不串 / 他租户拒 / 目录=定位器 shard=权威）→ 逐 edge
+ * 从 planned/wired 升 verified。诚实性铁律（对齐 Plan 1b Task 10 + Global Constraint #3/#6）：仅这些
+ * **真下沉 + 有 2-shard 覆盖**的升 verified；deleteUser / cleanup / register-flow-level /
+ * identityWriter-mixed-scope（无门或 provenance 未证）仍在 CARRIER_MUST_STAY_PLANNED 保持 planned。
+ * id 变更须同步本清单（fingerprint 校验）。
+ */
+const MIXED_SCOPE_VERIFIED_EDGE_IDS = [
+  /* AuthService register 状态机子 edge（测 ①① register 落点 / ⑨ Stripe 事务外，2-shard）。 */
+  'src/identity/auth-service.ts#AuthService.register.shardDb::flow::mixed-scope',
+  'src/identity/auth-service.ts#AuthService.register.syncPlanToQuota::flow::mixed-scope',
+  /* SSO/OIDC 用户创建 + 既有用户订阅/身份写（测 findOrCreateForSso/Oidc 2-shard 落对 shard、跨租户拒）。 */
   'src/identity/sso-user-service.ts#SsoUserService.provisionShardUser::flow::mixed-scope',
   'src/identity/sso-user-service.ts#SsoUserService.ensureSubscription::flow::mixed-scope',
   'src/identity/sso-user-service.ts#SsoUserService.findOrCreateForOidc::flow::mixed-scope',
   'src/identity/sso-user-service.ts#SsoUserService.findOrCreateForSso::flow::mixed-scope',
   'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::terminal-escape',
-  'src/identity/sso-user-service.ts#SsoUserService.identityWriter::flow::mixed-scope',
+  /* SCIM createUser（测 SCIM createUser 新 email 落对 shard、他租户拒、幂等，2-shard）。 */
   'src/enterprise/scim-provisioning-service.ts#ScimProvisioningService.createUser::flow::mixed-scope',
-  'src/enterprise/scim-provisioning-service.ts#ScimProvisioningService.deleteUser::flow::mixed-scope',
-  'src/privacy/privacy-service.ts#PrivacyService::flow::resolver',
-  'src/privacy/privacy-service.ts#PrivacyService.exportData::flow::requires-resolver-rewire',
-  'src/privacy/privacy-service.ts#PrivacyService.getOS::flow::requires-resolver-rewire',
+  /* registerAuth preHandler api_key hash→tenant 目录定位 + shard 验 is_revoked（测 K1/K2/K2b，2-shard）。 */
+  'src/server/plugins/auth.ts#registerAuth::flow::terminal-escape',
 ] as const;
 
 test('Task 10 校准：tenant-scoped service 定义 edge 全为 verified（Task 1-8 结果不回退）', () => {
@@ -317,4 +344,28 @@ test('Task 10 诚实性：携带 seam/coordinator/root-db 能力的 carrier edge
         `升级须先真下沉 + 2-shard 覆盖），实际=${point!.wiringStatus}`,
     );
   }
+});
+
+test('Task 9 校准：mixed-scope edge 真下沉 + 有 auth-mixed-scope-sharding 2-shard 覆盖 → verified（provenance=resolved）', () => {
+  for (const id of MIXED_SCOPE_VERIFIED_EDGE_IDS) {
+    const point = DB_ACCESS_INVENTORY.find((p) => p.id === id);
+    assert.ok(point, `verified mixed-scope edge 缺失（id 变更须同步本清单）: ${id}`);
+    assert.equal(
+      point!.wiringStatus,
+      'verified',
+      `${id} 应为 verified（Plan 1c 真经 directory + dbForTenant + auth-mixed-scope-sharding.test.ts 2-shard 覆盖），实际=${point!.wiringStatus}`,
+    );
+    /* 诚实性：只有 provenance 已证的 carrier 才允许 verified（unresolved 不得升）。 */
+    assert.equal(
+      point!.provenanceStatus,
+      'resolved',
+      `${id} verified 前提须 provenanceStatus=resolved（carrier 来源已证），实际=${point!.provenanceStatus}`,
+    );
+  }
+});
+
+test('Task 9 诚实性互斥：verified mixed-scope 清单与 CARRIER_MUST_STAY_PLANNED 无交集（同一 edge 不能既 verified 又 planned）', () => {
+  const planned = new Set<string>(CARRIER_MUST_STAY_PLANNED_EDGE_IDS);
+  const overlap = MIXED_SCOPE_VERIFIED_EDGE_IDS.filter((id) => planned.has(id));
+  assert.deepEqual(overlap, [], `verified 与 planned 清单交集非空（诚实性违规）: ${overlap.join(', ')}`);
 });

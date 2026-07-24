@@ -22,8 +22,9 @@ export function registerUserRoutes(app: FastifyInstance, services: AppServices):
     const user = request.user as JwtPayload;
     const body = request.body as { email?: string };
     if (body.email) {
-      /* email 更新走 UserEmailDirectoryService（全局 email 唯一性，mixed-scope，coordinatorDb 过渡）。 */
-      return { data: userEmailDirectory.updateEmail(user.sub, body.email) };
+      /* email 更新走 UserEmailDirectoryService 跨库可恢复状态机（Plan 1c Task 9）：coordinator email→tenant
+       * 目录 changeEmail trio + shard users.email 写；JWT 带 tenantId 定位对 shard + tenant-scoped 写。 */
+      return { data: userEmailDirectory.updateEmail(user.tenantId, user.sub, body.email) };
     }
     return { data: service.getProfile(user.tenantId, user.sub) };
   });

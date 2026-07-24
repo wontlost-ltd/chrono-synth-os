@@ -199,14 +199,20 @@ export class TenantIdentityDirectory {
    */
   completeEmailChange(input: { oldEmail: string; newEmail: string; operationId: string }): void {
     const db = this.resolver.coordinatorDb();
-    const activated = db.execute(dirCmdActivate({
-      lookupKind: 'email', lookupValue: canonicalizeEmail(input.newEmail),
-      operationId: input.operationId, now: Date.now(),
-    })).rowsAffected === 1;
-    if (!activated) {
-      throw new StateError('改名提交失败：新 email PENDING→ACTIVE CAS 未命中，旧 email 保留', ErrorCode.STATE_INVALID_TRANSITION);
-    }
-    db.execute(dirCmdDeleteByLookup('email', canonicalizeEmail(input.oldEmail)));
+    const newLookup = canonicalizeEmail(input.newEmail);
+    const oldLookup = canonicalizeEmail(input.oldEmail);
+    /* CAS 激活新 + 删旧作**同一协调库事务**原子提交（Codex Task 9 复审 #1）：消除「CAS 后、删旧前崩」
+     * 留下「新旧双 ACTIVE」永久态（Task 8 只扫 PENDING、同参重试因 shard 已新 no-op，二者都收不回该态）。
+     * CAS 未命中 → 抛错触发事务回滚（新未激活、旧未删）——旧 email 仍权威 ACTIVE 可 login，交 Task 8 收敛。 */
+    db.transaction(() => {
+      const activated = db.execute(dirCmdActivate({
+        lookupKind: 'email', lookupValue: newLookup, operationId: input.operationId, now: Date.now(),
+      })).rowsAffected === 1;
+      if (!activated) {
+        throw new StateError('改名提交失败：新 email PENDING→ACTIVE CAS 未命中，旧 email 保留', ErrorCode.STATE_INVALID_TRANSITION);
+      }
+      db.execute(dirCmdDeleteByLookup('email', oldLookup));
+    });
   }
 
   /** 改名回滚：按 operationId 删自己未竟的新 PENDING（旧 email 仍权威 ACTIVE）。 */

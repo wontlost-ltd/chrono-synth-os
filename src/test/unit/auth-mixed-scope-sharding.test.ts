@@ -38,10 +38,13 @@ import type { IdGenerator as SsoIdGenerator } from '../../identity/sso-user-serv
 import { ScimProvisioningService } from '../../enterprise/scim-provisioning-service.js';
 import { ApiKeyService } from '../../billing/api-key-service.js';
 import { TenantIdentityDirectory } from '../../identity/tenant-identity-directory.js';
+import { UserEmailDirectoryService } from '../../identity/user-email-directory-service.js';
+import { TenantReservationRecovery } from '../../identity/tenant-reservation-recovery.js';
+import { SilentLogger } from '../../utils/logger.js';
 import { registerAuth } from '../../server/plugins/auth.js';
 import { canonicalizeEmail } from '../../identity/email-canonical.js';
 import { loadConfig } from '../../config/schema.js';
-import { dirCmdReserve } from '@chrono/kernel';
+import { dirCmdReserve, DIR_CMD_DELETE_BY_LOOKUP } from '@chrono/kernel';
 import { ErrorCode } from '../../errors/index.js';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
@@ -972,5 +975,296 @@ describe('AuthService/ApiKey 混合 scope 分片（Task 7：refresh + api_key ha
     );
     /* 目录仍属 tenant_a（未被 b 覆盖）。 */
     assert.equal(lookupRow('api_key_hash', stolenHash)!.tenant_id, 'tenant_a', '目录未被越权覆盖');
+  });
+});
+
+/**
+ * 租户分片 Phase 0 · Plan 1c Task 9 —— `UserEmailDirectoryService.updateEmail` 跨库可恢复状态机
+ * （coordinator 目录 changeEmail trio + shard users.email 写，非原子）的**混合 scope 分片**行为验证。
+ *
+ * updateEmail(tenantId, userId, newEmail) 走 Task 4 的 reserveEmailChange → shard UPDATE →
+ * completeEmailChange 三方法状态机；oldEmail 从 shard user（权威）读，operationId 确定性派生（同参重试
+ * 幂等复用同一 reservation）。用 `FakeMultiShardResolver`（独立 coordinator + 2 独立 shard）钉死：
+ *
+ *   ① 改 email 成功：新 email login 通、旧 email 拒；shard users.email 已改；coordinator 新 ACTIVE、旧删。
+ *   ② **跨库崩溃窗口不锁死（Codex #3.1，最重要）**：步骤 3 后步骤 4 前崩（shard 已改、coordinator 旧仍
+ *      ACTIVE 新仍 PENDING）→ login(旧) 仍通（旧 ACTIVE alias 定位到 userId，shard 按 userId 取到已改名
+ *      user，密码对即通）；login(新) 暂拒（新仍 PENDING）——**无「两 email 都登不上」**；Task 8 恢复 worker
+ *      凭 shard 权威 email 收敛到新（不依赖用户再调 updateEmail）→ 恢复后 login(新) 通、login(旧) 拒。
+ *   ③ 跨租户唯一性：目标 email 已被**他租户** ACTIVE 占用 → 抛 AUTH_EMAIL_EXISTS，不改 shard、不留 PENDING。
+ *   ④ per-tenant 定位：user 不在 tenantId 对应 shard（错 tenant）→ 拒，绝不改他 shard。
+ */
+describe('UserEmailDirectoryService 混合 scope 分片（updateEmail 跨库可恢复状态机）', () => {
+  let coordinator: IDatabase;
+  let shardA: IDatabase;
+  let shardB: IDatabase;
+  const config = loadConfig({});
+
+  beforeEach(() => {
+    resetCoreSelfExecutors();
+    registerCoreSelfExecutors();
+    coordinator = createMemoryDatabase();
+    shardA = createMemoryDatabase();
+    shardB = createMemoryDatabase();
+    migrateToV124(coordinator);
+    migrateToV124(shardA);
+    migrateToV124(shardB);
+  });
+
+  function resolverFor(tenantToShard: Record<string, string>): FakeMultiShardResolver {
+    return new FakeMultiShardResolver({
+      coordinator,
+      shards: { A: shardA, B: shardB },
+      tenantToShard,
+    });
+  }
+
+  /** 直查协调库 email 目录项。 */
+  function dirRow(email: string): { tenant_id: string; status: string; operation_kind: string } | undefined {
+    return coordinator.prepare<{ tenant_id: string; status: string; operation_kind: string }>(
+      'SELECT tenant_id, status, operation_kind FROM tenant_identity_directory WHERE lookup_kind = ? AND lookup_value = ?',
+    ).get('email', canonicalizeEmail(email));
+  }
+
+  /** 直查某 shard 的 user 行 email。 */
+  function shardEmail(db: IDatabase, userId: string): string | undefined {
+    return db.prepare<{ email: string }>('SELECT email FROM users WHERE id = ?').get(userId)?.email;
+  }
+
+  /**
+   * 用 AuthService.register 建一个 ACTIVE 用户（coordinator email ACTIVE + shard user + bootstrap），
+   * 返回其 tenantId/userId（updateEmail 状态机的起点：旧 email 已 ACTIVE、shard user 权威）。
+   */
+  async function seedRegistered(email: string, password: string, tenantId: string, userId: string, shardId: 'A' | 'B'): Promise<void> {
+    const svc = new AuthService(resolverFor({ [tenantId]: shardId }), config, fixedIdGen(tenantId, userId));
+    await svc.register(fakeApp(), email, password, { idempotencyKey: `reg:${userId}` });
+  }
+
+  it('① 改 email 成功：新 email login 通、旧 email 拒；shard users.email 已改、coordinator 新 ACTIVE+旧删', async () => {
+    await seedRegistered('old@example.com', 'password123', 'tenant_1', 'user_1', 'A');
+    assert.equal(dirRow('old@example.com')!.status, 'ACTIVE');
+
+    const dirSvc = new UserEmailDirectoryService(resolverFor({ tenant_1: 'A' }));
+    const updated = dirSvc.updateEmail('tenant_1', 'user_1', 'New@Example.com');
+    assert.equal(updated.email, 'new@example.com', 'updateEmail 返回归一化后的新 email');
+    assert.equal(updated.tenantId, 'tenant_1');
+
+    /* shard users.email 已改到归一化新 email。 */
+    assert.equal(shardEmail(shardA, 'user_1'), 'new@example.com', 'shard user.email 已改');
+    /* coordinator：新 email ACTIVE、旧 email 目录项已删。 */
+    assert.equal(dirRow('new@example.com')!.status, 'ACTIVE', '新 email 目录 ACTIVE');
+    assert.equal(dirRow('old@example.com'), undefined, '旧 email 目录项已删');
+
+    /* 新 email login 通、旧 email login 拒。 */
+    const authSvc = new AuthService(resolverFor({ tenant_1: 'A' }), config, fixedIdGen('unused', 'unused'));
+    const ok = await authSvc.login(fakeApp(), 'new@example.com', 'password123');
+    assert.equal(ok.userId, 'user_1');
+    await assert.rejects(() => authSvc.login(fakeApp(), 'old@example.com', 'password123'), /邮箱或密码错误/, '旧 email 改名后 login 拒');
+  });
+
+  it('②【跨库崩溃窗口不锁死·最重要】步骤3后步骤4前崩 → login(旧)仍通、login(新)暂拒（无两 email 都登不上）；Task8 恢复收敛到新', async () => {
+    await seedRegistered('crash-old@example.com', 'password123', 'tenant_c', 'user_c', 'A');
+
+    /* 用 stub 让 completeEmailChange 抛错（模拟 shard UPDATE 成功后、coordinator activate 前崩）。 */
+    const svc = new UserEmailDirectoryService(resolverFor({ tenant_c: 'A' }));
+    const dir = (svc as unknown as { directory: { completeEmailChange: (i: unknown) => void } }).directory;
+    dir.completeEmailChange = () => { throw new Error('步骤4前崩'); };
+
+    let threw = false;
+    try {
+      svc.updateEmail('tenant_c', 'user_c', 'crash-new@example.com');
+    } catch { threw = true; }
+    assert.equal(threw, true, 'complete 崩 → updateEmail 抛错');
+
+    /* 崩溃窗口态：shard 已改到新、coordinator 旧仍 ACTIVE、新仍 PENDING（EMAIL_CHANGE）。 */
+    assert.equal(shardEmail(shardA, 'user_c'), 'crash-new@example.com', 'shard 已改到新 email');
+    assert.equal(dirRow('crash-old@example.com')!.status, 'ACTIVE', '旧 email 目录仍 ACTIVE（未删）');
+    assert.equal(dirRow('crash-new@example.com')!.status, 'PENDING', '新 email 仍 PENDING');
+    assert.equal(dirRow('crash-new@example.com')!.operation_kind, 'EMAIL_CHANGE');
+
+    /* 崩溃窗口内 login：旧 email 仍通（旧 ACTIVE alias 定位到 user_c，shard 按 userId 取到已改名 user，密码对即通）。 */
+    const authSvc = new AuthService(resolverFor({ tenant_c: 'A' }), config, fixedIdGen('unused', 'unused'));
+    const oldOk = await authSvc.login(fakeApp(), 'crash-old@example.com', 'password123');
+    assert.equal(oldOk.userId, 'user_c', '崩溃窗口内旧 email 仍能 login（不锁死）');
+    /* 新 email 暂拒（仍 PENDING，非 ACTIVE）——不是「两 email 都登不上」，旧 email 始终可登录。 */
+    await assert.rejects(() => authSvc.login(fakeApp(), 'crash-new@example.com', 'password123'), /邮箱或密码错误/, '新 email PENDING → 暂拒');
+
+    /* Task 8 恢复 worker：凭 shard 权威 email（==新）收敛 → completeEmailChange（新 ACTIVE + 旧删）。 */
+    const recovery = new TenantReservationRecovery(resolverFor({ tenant_c: 'A' }), new SilentLogger(), { graceMs: 0 });
+    const run = recovery.reconcile(Date.now() + 1);
+    assert.equal(run.changesCompleted, 1, '恢复 worker 收敛改名到新（不依赖用户再调）');
+    assert.equal(dirRow('crash-new@example.com')!.status, 'ACTIVE', '恢复后新 email ACTIVE');
+    assert.equal(dirRow('crash-old@example.com'), undefined, '恢复后旧 email 目录项已删');
+
+    /* 恢复后：新 email login 通、旧 email login 拒。 */
+    const newOk = await authSvc.login(fakeApp(), 'crash-new@example.com', 'password123');
+    assert.equal(newOk.userId, 'user_c', '恢复后新 email login 通');
+    await assert.rejects(() => authSvc.login(fakeApp(), 'crash-old@example.com', 'password123'), /邮箱或密码错误/, '恢复后旧 email login 拒');
+  });
+
+  it('②b 崩溃窗口·shard 未改（reserve 后 shard UPDATE 前崩）→ login(旧)通、login(新)拒；Task8 rollback 删新 PENDING、旧仍权威', async () => {
+    await seedRegistered('r-old@example.com', 'password123', 'tenant_rb', 'user_rb', 'A');
+
+    /* stub：reserveEmailChange 成功后、shard UPDATE 前崩（此处让 shard UPDATE 抛错模拟）。
+     * 更直接：手插 EMAIL_CHANGE PENDING（新 email），shard 保持旧 email 不改（模拟 reserve 后即崩）。 */
+    const dir = new TenantIdentityDirectory(resolverFor({ tenant_rb: 'A' }));
+    dir.reserveEmailChange({
+      tenantId: 'tenant_rb', userId: 'user_rb',
+      oldEmail: 'r-old@example.com', newEmail: 'r-new@example.com', operationId: 'chg:rb',
+    });
+    /* shard 仍是旧 email（未执行步骤 3）。 */
+    assert.equal(shardEmail(shardA, 'user_rb'), 'r-old@example.com', 'shard 仍旧 email');
+    assert.equal(dirRow('r-new@example.com')!.status, 'PENDING');
+
+    /* 窗口内 login：旧通、新拒。 */
+    const authSvc = new AuthService(resolverFor({ tenant_rb: 'A' }), config, fixedIdGen('unused', 'unused'));
+    assert.equal((await authSvc.login(fakeApp(), 'r-old@example.com', 'password123')).userId, 'user_rb', '旧 email 仍通');
+    await assert.rejects(() => authSvc.login(fakeApp(), 'r-new@example.com', 'password123'), /邮箱或密码错误/);
+
+    /* Task 8 恢复：shard email==旧 → rollbackEmailChange（删新 PENDING，旧仍权威 ACTIVE）。 */
+    const recovery = new TenantReservationRecovery(resolverFor({ tenant_rb: 'A' }), new SilentLogger(), { graceMs: 0 });
+    const run = recovery.reconcile(Date.now() + 1);
+    assert.equal(run.changesRolledBack, 1, '恢复回滚未竟改名');
+    assert.equal(dirRow('r-new@example.com'), undefined, '新 PENDING 已删');
+    assert.equal(dirRow('r-old@example.com')!.status, 'ACTIVE', '旧 email 仍权威 ACTIVE');
+    assert.equal((await authSvc.login(fakeApp(), 'r-old@example.com', 'password123')).userId, 'user_rb', '回滚后旧 email 仍可登录');
+  });
+
+  it('③ 跨租户唯一性：目标 email 已被他租户 ACTIVE 占用 → 抛 AUTH_EMAIL_EXISTS、不改 shard、不留 PENDING', async () => {
+    await seedRegistered('me@example.com', 'password123', 'tenant_me', 'user_me', 'A');
+    await seedRegistered('taken@example.com', 'password123', 'tenant_them', 'user_them', 'B');
+
+    const svc = new UserEmailDirectoryService(resolverFor({ tenant_me: 'A', tenant_them: 'B' }));
+    let threw: unknown;
+    try {
+      svc.updateEmail('tenant_me', 'user_me', 'Taken@Example.com');
+      assert.fail('目标 email 属他租户 → 必须抛 AUTH_EMAIL_EXISTS');
+    } catch (e) { threw = e; }
+    assert.equal((threw as { code?: string }).code, ErrorCode.AUTH_EMAIL_EXISTS);
+
+    /* 未改 shard、未留 PENDING（跨租户 email 目录仍属 tenant_them）。 */
+    assert.equal(shardEmail(shardA, 'user_me'), 'me@example.com', 'shard 未改');
+    assert.equal(dirRow('taken@example.com')!.tenant_id, 'tenant_them', '目标 email 仍属他租户');
+    assert.equal(dirRow('taken@example.com')!.status, 'ACTIVE', '未被降级为 PENDING');
+  });
+
+  it('④ per-tenant 定位：user 不在 tenantId 对应 shard（错 tenant）→ 拒，绝不改他 shard', async () => {
+    await seedRegistered('perT@example.com', 'password123', 'tenant_pt', 'user_pt', 'A');
+
+    /* 用错误 tenantId（tenant_wrong 映射到 shard B，其上无 user_pt）→ 找不到 user → 拒。 */
+    const svc = new UserEmailDirectoryService(resolverFor({ tenant_pt: 'A', tenant_wrong: 'B' }));
+    let threw = false;
+    try {
+      svc.updateEmail('tenant_wrong', 'user_pt', 'moved@example.com');
+      assert.fail('错 tenant 定位不到 user → 必须拒');
+    } catch { threw = true; }
+    assert.equal(threw, true, '错 tenant → 拒');
+
+    /* shard A 上真正的 user 未被改、shard B 未被写入。 */
+    assert.equal(shardEmail(shardA, 'user_pt'), 'pert@example.com', 'shard A 真 user 未改');
+    assert.equal(shardEmail(shardB, 'user_pt'), undefined, 'shard B 未被误写');
+    assert.equal(dirRow('moved@example.com'), undefined, '未留新 email 目录项');
+  });
+
+  it('⑤ 幂等重试：同参 updateEmail 二次调用（模拟步骤4后重复）→ 幂等收敛，不抛、不产生第二个 PENDING', async () => {
+    await seedRegistered('idem-old@example.com', 'password123', 'tenant_id', 'user_id', 'A');
+
+    const svc = new UserEmailDirectoryService(resolverFor({ tenant_id: 'A' }));
+    const r1 = svc.updateEmail('tenant_id', 'user_id', 'idem-new@example.com');
+    assert.equal(r1.email, 'idem-new@example.com');
+    /* 二次同参：shard 已是新 email（oldEmail 读为新）→ email 未变 → 幂等 no-op 返回当前 profile。 */
+    const r2 = svc.updateEmail('tenant_id', 'user_id', 'idem-new@example.com');
+    assert.equal(r2.email, 'idem-new@example.com', '幂等：二次同参返回新 email');
+    assert.equal(dirRow('idem-new@example.com')!.status, 'ACTIVE');
+    assert.equal(dirRow('idem-old@example.com'), undefined, '旧 email 目录项已删（未复活）');
+  });
+
+  it('⑥【Codex #2 主动收敛】步骤3后步骤4前崩 → 同参重试主动完成未竟 PENDING（不只依赖 Task8 worker）', async () => {
+    await seedRegistered('ac-old@example.com', 'password123', 'tenant_ac', 'user_ac', 'A');
+
+    /* 首次 updateEmail 崩在步骤 4（completeEmailChange 抛）：shard 已改新、coordinator 旧 ACTIVE + 新 PENDING。 */
+    const svc1 = new UserEmailDirectoryService(resolverFor({ tenant_ac: 'A' }));
+    const dir1 = (svc1 as unknown as { directory: { completeEmailChange: (i: unknown) => void } }).directory;
+    const realComplete = dir1.completeEmailChange.bind(dir1);
+    dir1.completeEmailChange = () => { throw new Error('步骤4崩'); };
+    let firstThrew = false;
+    try { svc1.updateEmail('tenant_ac', 'user_ac', 'ac-new@example.com'); } catch { firstThrew = true; }
+    assert.equal(firstThrew, true);
+    assert.equal(dirRow('ac-new@example.com')!.status, 'PENDING', '崩后新 email 仍 PENDING');
+    assert.equal(shardEmail(shardA, 'user_ac'), 'ac-new@example.com', 'shard 已改新');
+    void realComplete;
+
+    /* 同参重试（新 svc，completeEmailChange 正常）：canonOld===canonNew（shard 已新）→ 走主动收敛分支
+     * 完成 opId 匹配的 PENDING（非纯 no-op、非等 Task8）。 */
+    const svc2 = new UserEmailDirectoryService(resolverFor({ tenant_ac: 'A' }));
+    const r = svc2.updateEmail('tenant_ac', 'user_ac', 'ac-new@example.com');
+    assert.equal(r.email, 'ac-new@example.com');
+    assert.equal(dirRow('ac-new@example.com')!.status, 'ACTIVE', '重试主动完成 → 新 email ACTIVE');
+    assert.equal(dirRow('ac-old@example.com'), undefined, '重试主动完成 → 旧 email 删');
+
+    /* 收敛后新 email login 通、旧 email 拒（无需 Task8 介入）。 */
+    const authSvc = new AuthService(resolverFor({ tenant_ac: 'A' }), config, fixedIdGen('unused', 'unused'));
+    assert.equal((await authSvc.login(fakeApp(), 'ac-new@example.com', 'password123')).userId, 'user_ac');
+    await assert.rejects(() => authSvc.login(fakeApp(), 'ac-old@example.com', 'password123'), /邮箱或密码错误/);
+  });
+
+  it('⑦【Codex #1 原子提交】completeEmailChange CAS 未命中 → 事务回滚：新未 ACTIVE、旧未删（无双 ACTIVE 永久态）', () => {
+    /* 直接测门面：手插 EMAIL_CHANGE PENDING（新 email）+ 旧 email ACTIVE，用**错 operationId** 调
+     * completeEmailChange → CAS 未命中 → 抛错回滚 → 新仍 PENDING、旧仍 ACTIVE（非「新 ACTIVE 旧 ACTIVE」）。 */
+    const dir = new TenantIdentityDirectory(resolverFor({ tenant_atomic: 'A' }));
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_atomic', userId: 'user_atomic', operationId: 'chg:right', operationKind: 'EMAIL_CHANGE',
+      previousLookupValue: canonicalizeEmail('atomic-old@example.com'), pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: canonicalizeEmail('atomic-new@example.com'), status: 'PENDING', now: NOW,
+    }));
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_atomic', userId: 'user_atomic', operationId: 'reg:atomic', operationKind: 'REGISTER',
+      previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: canonicalizeEmail('atomic-old@example.com'), status: 'ACTIVE', now: NOW,
+    }));
+
+    assert.throws(
+      () => dir.completeEmailChange({ oldEmail: 'atomic-old@example.com', newEmail: 'atomic-new@example.com', operationId: 'chg:WRONG' }),
+      /改名提交失败/,
+      'CAS 未命中（错 opId）→ 抛错',
+    );
+    /* 事务回滚保证：新仍 PENDING（未被激活）、旧仍 ACTIVE（未被删）。 */
+    assert.equal(dirRow('atomic-new@example.com')!.status, 'PENDING', '回滚：新仍 PENDING');
+    assert.equal(dirRow('atomic-old@example.com')!.status, 'ACTIVE', '回滚：旧仍 ACTIVE（未删）');
+  });
+
+  it('⑦b【Codex 复审故障注入】CAS 已命中后 delete 旧 email 抛错 → 整事务回滚：新激活被撤销（仍 PENDING）、旧未删', () => {
+    const dir = new TenantIdentityDirectory(resolverFor({ tenant_fi: 'A' }));
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_fi', userId: 'user_fi', operationId: 'chg:fi', operationKind: 'EMAIL_CHANGE',
+      previousLookupValue: canonicalizeEmail('fi-old@example.com'), pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: canonicalizeEmail('fi-new@example.com'), status: 'PENDING', now: NOW,
+    }));
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_fi', userId: 'user_fi', operationId: 'reg:fi', operationKind: 'REGISTER',
+      previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: canonicalizeEmail('fi-old@example.com'), status: 'ACTIVE', now: NOW,
+    }));
+
+    /* 故障注入：CAS 命中（正确 opId）后，删旧 email 时抛错——拦截 coordinator.execute 的 deleteByLookup
+     * 命令使其抛错。事务内异常须整体回滚（包括同事务内已执行的 activate CAS），证明「CAS 后删旧前崩」
+     * 不留半提交态。 */
+    const realExecute = coordinator.execute.bind(coordinator);
+    coordinator.execute = ((cmd: { kind?: string }) => {
+      if (cmd?.kind === DIR_CMD_DELETE_BY_LOOKUP) throw new Error('删旧 email 故障注入');
+      return realExecute(cmd as Parameters<typeof realExecute>[0]);
+    }) as typeof coordinator.execute;
+    try {
+      assert.throws(
+        () => dir.completeEmailChange({ oldEmail: 'fi-old@example.com', newEmail: 'fi-new@example.com', operationId: 'chg:fi' }),
+        /删旧 email 故障注入/,
+        'delete 抛错传播出事务边界',
+      );
+    } finally {
+      coordinator.execute = realExecute;
+    }
+    /* 关键断言：activate CAS 虽已在事务内命中，但因 delete 抛错整事务回滚 → 新仍 PENDING（非 ACTIVE）、旧未删。 */
+    assert.equal(dirRow('fi-new@example.com')!.status, 'PENDING', '回滚：activate 被撤销，新仍 PENDING（非双 ACTIVE）');
+    assert.equal(dirRow('fi-old@example.com')!.status, 'ACTIVE', '回滚：旧未删仍 ACTIVE');
   });
 });

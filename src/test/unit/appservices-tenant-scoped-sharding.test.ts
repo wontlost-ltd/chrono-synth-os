@@ -26,6 +26,8 @@ import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../.
 import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import { canonicalizeEmail } from '../../identity/email-canonical.js';
+import { dirCmdReserve } from '@chrono/kernel';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { requireOrganizationRole } from '../../server/plugins/organization-rbac.js';
@@ -616,22 +618,33 @@ test('UserProfileService tenant predicate：共享物理 db 只种 B 的 user，
   db.close();
 });
 
-test('UserEmailDirectoryService 单库过渡：updateEmail 全局唯一性检查 + 落库往返（coordinatorDb，email 全局唯一）', () => {
-  /* 单库过渡：UserEmailDirectoryService 用 resolver.coordinatorDb()（单库=host db，行为不变）。 */
+test('UserEmailDirectoryService 单库：updateEmail 跨库状态机（coordinator email→tenant 目录 changeEmail trio + shard users.email）', () => {
+  /* 单库下 dbForTenant≡coordinatorDb（同一 db，行为等价现状）；状态机以 shard user 为权威读 oldEmail。 */
   const db = idDb();
   const resolver = new SingleDbResolver(db);
   const dir = new UserEmailDirectoryService(resolver);
+  /* 种 user（shard 权威）+ 对应 ACTIVE email→tenant 目录项（模拟 register/backfill 落地态）。 */
   seedUserWithPassword(db, 'userE', 'tE', 'hashE');
   seedUserWithPassword(db, 'userF', 'tF', 'hashF');
-  /* 合法：把 userE 的 email 改成未被占用的新地址 → 返回更新后的 profile。 */
-  const updated = dir.updateEmail('userE', 'brand-new@example.com');
+  db.execute(dirCmdReserve({
+    tenantId: 'tE', userId: 'userE', operationId: 'reg:E', operationKind: 'REGISTER',
+    previousLookupValue: null, pendingPasswordHash: null,
+    lookupKind: 'email', lookupValue: canonicalizeEmail('userE@example.com'), status: 'ACTIVE', now: Date.now(),
+  }));
+  db.execute(dirCmdReserve({
+    tenantId: 'tF', userId: 'userF', operationId: 'reg:F', operationKind: 'REGISTER',
+    previousLookupValue: null, pendingPasswordHash: null,
+    lookupKind: 'email', lookupValue: canonicalizeEmail('userF@example.com'), status: 'ACTIVE', now: Date.now(),
+  }));
+  /* 合法：把 userE 的 email 改成未被占用的新地址 → 状态机 reserve→shard UPDATE→complete → 返回新 profile。 */
+  const updated = dir.updateEmail('tE', 'userE', 'brand-new@example.com');
   assert.equal(updated.email, 'brand-new@example.com', 'updateEmail 落库后 email 更新');
   assert.equal(updated.userId, 'userE', '返回的是 userE 的 profile');
-  /* 全局唯一性：把 userE 的 email 改成 userF 已占用的 email → 抛 ValidationError（email 全局唯一，无 tenant scope）。 */
+  /* 跨租户唯一性：把 userE 的 email 改成 userF（tF）已 ACTIVE 占用的 email → 步骤 1 前置门拒。 */
   assert.throws(
-    () => dir.updateEmail('userE', 'userF@example.com'),
+    () => dir.updateEmail('tE', 'userE', 'userF@example.com'),
     /该邮箱已被使用|AUTH_EMAIL_EXISTS/i,
-    'updateEmail 撞 userF 的 email → 该邮箱已被使用（全局唯一性，跨租户也拦）',
+    'updateEmail 撞 userF（他租户）的 email → 该邮箱已被使用（跨租户唯一性目录级拦截）',
   );
   db.close();
 });
