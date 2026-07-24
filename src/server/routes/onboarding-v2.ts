@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { OrganizationService } from '../../enterprise/organization-service.js';
 import { OnboardingV2Service } from '../../onboarding/onboarding-v2-service.js';
@@ -31,6 +32,10 @@ export function registerOnboardingV2Routes(
   config: AppConfig,
   db: IDatabase,
   organization: OrganizationService,
+  /* 分片 Phase 0 · Plan 2 · Task 6：注入共享 TenantDbResolver——agent 步的 persona_versions 直查
+   * （tenant-scoped）经 resolver.dbForTenant(tenantId) 路由到租户所在 shard。session 状态机
+   * （OnboardingV2Service）+ 工具权限 + LLM 凭据 store 仍走 host db（各自独立子域，非本 task 范围）。 */
+  resolver: TenantDbResolver,
 ): void {
   const service = new OnboardingV2Service(db);
   const permissions = new ToolPermissionService(db);
@@ -101,8 +106,9 @@ export function registerOnboardingV2Routes(
     const agentId = `agent_${randomUUID()}`;
     const now = Date.now();
     /* persona_versions 是 agent 主体表：写入最小可用的 v1 版本。
-     * agent 名字进 description；详细字段在 dashboard 完善。 */
-    db.prepare(
+     * agent 名字进 description；详细字段在 dashboard 完善。
+     * 分片 Plan 2 · Task 6：tenant-scoped 直查下沉 resolver.dbForTenant(tenantId)（多 shard 路由到租户所在 shard）。 */
+    resolver.dbForTenant(request.tenantId).prepare(
       `INSERT INTO persona_versions
          (id, tenant_id, persona_id, version, parent_version, name, description,
           decision_style_json, cognitive_model_json, knowledge_base_json,

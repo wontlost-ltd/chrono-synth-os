@@ -899,7 +899,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerPosRoutes(app, deps.os, tenantFactory);
   registerDecisionRoutes(app, { os: deps.os, config, resolver: captureResolver('decisions'), db, tenantFactory });
   registerOnboardingRoutes(app, { os: deps.os, config, resolver: captureResolver('onboarding'), db, tenantFactory });
-  registerOnboardingV2Routes(app, config, db, services.organization);
+  registerOnboardingV2Routes(app, config, db, services.organization, captureResolver('onboarding-v2'));
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory, config);
   /* ⑥ 人生模拟（ADR-0047 确定性离线决策引擎载体；前端已降位，非首屏） */
