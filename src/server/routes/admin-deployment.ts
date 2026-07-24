@@ -1,9 +1,11 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { TenantEnterpriseProfile } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
+import { ScimTenantDirectory } from '../../enterprise/scim-tenant-directory.js';
 import { requireRole } from '../plugins/rbac.js';
 import { UpdateDeploymentProfileSchema } from '../schemas/api-schemas.js';
 
@@ -50,8 +52,10 @@ interface TenantVaultAuditRow {
   performed_at: number;
 }
 
-export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
-  const profileService = new TenantEnterpriseProfileService(db, config);
+export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabase, resolver: TenantDbResolver, config: AppConfig): void {
+  /* 分片 Plan 1b（Task 6）：profile 读写经 resolver（tenant-scoped）；SCIM token 存经 ScimTenantDirectory（mixed-scope）。 */
+  const profileService = new TenantEnterpriseProfileService(resolver, config);
+  const scimDirectory = new ScimTenantDirectory(resolver);
 
   app.get('/api/v1/admin/deployment/profile', {
     preHandler: requireRole('admin'),
@@ -98,7 +102,7 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request) => {
     const token = `scim_${randomBytes(24).toString('hex')}`;
-    profileService.storeScimToken(request.tenantId, token);
+    scimDirectory.storeScimToken(request.tenantId, token);
     return {
       data: {
         token,

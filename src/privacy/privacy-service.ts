@@ -9,6 +9,7 @@ import type { AppConfig } from '../config/schema.js';
 import type { IDatabase, SqlValue } from '../storage/database.js';
 import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import { FieldEncryption } from '../storage/encryption.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-profile-service.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { compilePersonaState } from '../intelligence/persona-state.js';
@@ -408,7 +409,12 @@ export class PrivacyService {
     const db = os.getDatabase();
     this.config = config;
     this.importTokenStore = importTokenStore ?? createImportTokenStore(db);
-    this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
+    /* 分片 Plan 1b（Task 6）：TenantEnterpriseProfileService ctor 已改收 resolver。
+     * PrivacyService 本身是更大 carrier（其 resolver 化归后续 Plan/Task），此处用 SingleDbResolver(host db)
+     * 桥接——单库下 dbForTenant/coordinatorDb 均返回同一 host db，行为等价现状、零回归（本 carrier edge 仍 planned）。 */
+    this.profileService = config
+      ? new TenantEnterpriseProfileService(new SingleDbResolver(db), config)
+      : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.signingKey = config?.encryption.masterKey ?? 'change-me-in-production-32chars!';
     this.presignTtlSeconds = config?.objectStorage.presignTtlSeconds ?? 3600;

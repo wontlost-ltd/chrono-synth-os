@@ -1,12 +1,11 @@
-import { createHash } from 'node:crypto';
 import { SilentLogger, type Logger } from '../utils/logger.js';
 import type { SyncWriteUnitOfWork, TprofRow } from '@chrono/kernel';
 import {
-  tprofQueryByTenant, tprofQueryByScimToken,
+  tprofQueryByTenant,
   tprofCmdUpdate, tprofCmdInsert,
-  tprofCmdUpdateScimToken, tprofCmdInsertWithScimToken,
   tprofCmdUpdateByos,
 } from '@chrono/kernel';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import { TenantManifestV1Schema } from '@chrono/contracts';
 import type { TenantManifestV1 } from '@chrono/contracts';
 import type { AppConfig } from '../config/schema.js';
@@ -153,10 +152,6 @@ function profileToManifestV1(
   });
 }
 
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
 function normalizeOptionalString(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;
   const trimmed = value.trim();
@@ -200,23 +195,40 @@ function toProfile(row: TprofRow | null | undefined): TenantEnterpriseProfile {
   };
 }
 
+/**
+ * 租户企业级 profile 服务（分片 Phase 0 · Plan 1b · Task 6）。
+ *
+ * 只承载**已知 tenantId 的 tenant-scoped 方法**：profile 读写（getProfile/upsertProfile）、
+ * OIDC 生效配置（getEffectiveOidcConfig）、manifest（getManifest）、租户加密（getTenantEncryption）。
+ * ctor 收 `TenantDbResolver`，每方法经 `dbForTenant(tenantId)` 选对 shard + SQL `WHERE tenant_id=?`
+ * 双重约束（tenant_enterprise_profiles 主键即 tenant_id，query 层已 tenant-scoped）。
+ *
+ * **mixed-scope 的 SCIM token 读写（storeScimToken/resolveScimTenant，token→tenant 反查）已拆到
+ * `ScimTenantDirectory`**（Task 6）——避免「ctor resolver 化但 pre-tenant 方法假全局」的半成品。
+ */
 export class TenantEnterpriseProfileService {
   constructor(
-    private readonly tx: SyncWriteUnitOfWork,
+    private readonly resolver: TenantDbResolver,
     private readonly config: AppConfig,
     private readonly logger?: Logger,
   ) {
     registerCoreSelfExecutors();
   }
 
+  /** 取该租户所在 shard 的 tx（单库下恒返回同一 db；SQL 层再加 tenant predicate 双重约束）。 */
+  private txFor(tenantId: string): SyncWriteUnitOfWork {
+    return this.resolver.dbForTenant(tenantId);
+  }
+
   getProfile(tenantId: string): TenantEnterpriseProfile {
-    const row = this.getRow(tenantId);
+    const row = this.getRow(this.txFor(tenantId), tenantId);
     const profile = toProfile(row);
     return row ? profile : { ...profile, tenantId };
   }
 
   upsertProfile(tenantId: string, patch: TenantEnterpriseProfilePatch): TenantEnterpriseProfile {
-    const existing = this.getRow(tenantId);
+    const tx = this.txFor(tenantId);
+    const existing = this.getRow(tx, tenantId);
     const current = this.getProfile(tenantId);
     const now = Date.now();
 
@@ -281,16 +293,16 @@ export class TenantEnterpriseProfileService {
     };
 
     if (existing) {
-      this.tx.execute(tprofCmdUpdate(cmdParams));
+      tx.execute(tprofCmdUpdate(cmdParams));
     } else {
-      this.tx.execute(tprofCmdInsert(cmdParams));
+      tx.execute(tprofCmdInsert(cmdParams));
     }
 
     // 持久化 BYOS 配置字段
     const byosProvider = patch.byosProvider ?? current.byosProvider ?? 'platform';
     const byosBucket = patch.byosBucket ?? current.byosBucket ?? '';
     const byosKeyPrefix = patch.byosKeyPrefix ?? current.byosKeyPrefix ?? '';
-    this.tx.execute(tprofCmdUpdateByos({ tenantId, byosProvider, byosBucket, byosKeyPrefix }));
+    tx.execute(tprofCmdUpdateByos({ tenantId, byosProvider, byosBucket, byosKeyPrefix }));
 
     return this.getProfile(tenantId);
   }
@@ -305,26 +317,8 @@ export class TenantEnterpriseProfileService {
     return provisionTenantKafkaNamespace(tenantId, profile.kafkaNamespace, this.config, logger);
   }
 
-  storeScimToken(tenantId: string, token: string): void {
-    const existing = this.getRow(tenantId);
-    const now = Date.now();
-    const tokenHash = hashToken(token);
-    if (existing) {
-      this.tx.execute(tprofCmdUpdateScimToken({ tenantId, tokenHash, now }));
-      return;
-    }
-
-    this.tx.execute(tprofCmdInsertWithScimToken({ tenantId, tokenHash, now }));
-  }
-
-  resolveScimTenant(token: string): { tenantId: string } | null {
-    const row = this.tx.queryOne(tprofQueryByScimToken(hashToken(token)));
-    if (!row) return null;
-    return { tenantId: row.tenant_id };
-  }
-
   getEffectiveOidcConfig(tenantId: string): EffectiveOidcConfig | null {
-    const row = this.getRow(tenantId);
+    const row = this.getRow(this.txFor(tenantId), tenantId);
     const profile = row ? toProfile(row) : null;
     const base = this.config.oidc;
     const enabled = profile?.oidc.enabled || base.enabled;
@@ -367,8 +361,8 @@ export class TenantEnterpriseProfileService {
     });
   }
 
-  private getRow(tenantId: string): TprofRow | null {
-    return this.tx.queryOne(tprofQueryByTenant(tenantId));
+  private getRow(tx: SyncWriteUnitOfWork, tenantId: string): TprofRow | null {
+    return tx.queryOne(tprofQueryByTenant(tenantId));
   }
 
   private encryptSecret(secret: string, keyRef: string | null): string {

@@ -78,11 +78,12 @@ describe('TenantEnterpriseProfileService.provisionKafkaNamespace', () => {
     const { createMemoryDatabase } = await import('../../storage/database.js');
     const { runDslSqliteMigrations } = await import('../../storage/index.js');
     const { TenantEnterpriseProfileService } = await import('../../enterprise/tenant-enterprise-profile-service.js');
+    const { SingleDbResolver } = await import('../../storage/tenant-db-resolver.js');
 
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     const config = loadConfig({ encryption: { enabled: false } });
-    const service = new TenantEnterpriseProfileService(db, config, silentLogger);
+    const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config, silentLogger);
 
     service.upsertProfile('tenant-kafka', {
       deploymentMode: 'dedicated_db',
@@ -101,11 +102,12 @@ describe('TenantEnterpriseProfileService.provisionKafkaNamespace', () => {
     const { createMemoryDatabase } = await import('../../storage/database.js');
     const { runDslSqliteMigrations } = await import('../../storage/index.js');
     const { TenantEnterpriseProfileService } = await import('../../enterprise/tenant-enterprise-profile-service.js');
+    const { SingleDbResolver } = await import('../../storage/tenant-db-resolver.js');
 
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     const config = loadConfig({ encryption: { enabled: false } });
-    const service = new TenantEnterpriseProfileService(db, config, silentLogger);
+    const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config, silentLogger);
 
     service.upsertProfile('my-org', {
       deploymentMode: 'dedicated_db',

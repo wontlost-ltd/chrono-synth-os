@@ -19,6 +19,7 @@ import { MobileDeviceService } from '../identity/mobile-device-service.js';
 import { UserProfileService } from '../identity/user-profile-service.js';
 import { OrganizationService } from '../enterprise/organization-service.js';
 import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-profile-service.js';
+import { ScimTenantDirectory } from '../enterprise/scim-tenant-directory.js';
 import { ScimProvisioningService } from '../enterprise/scim-provisioning-service.js';
 import { recordEvidence } from '../compliance/evidence-store.js';
 import { AdminControlPlaneService } from '../enterprise/admin-control-plane-service.js';
@@ -41,6 +42,8 @@ export interface AppServices {
   readonly userProfile: UserProfileService;
   readonly organization: OrganizationService;
   readonly tenantProfile: TenantEnterpriseProfileService;
+  /** SCIM 租户目录（token→tenant 反查，mixed-scope，Plan 1b 单库过渡 coordinatorDb，Plan 1c 替换实现）。 */
+  readonly scimDirectory: ScimTenantDirectory;
   readonly scim: ScimProvisioningService;
   readonly adminControlPlane: AdminControlPlaneService;
   readonly apiKey: ApiKeyService;
@@ -77,7 +80,12 @@ export function buildAppServices(
     userProfile: new UserProfileService(tx),
     /* 分片 Plan 1b（Task 5）：OrganizationService 经共享 resolver 按 tenantId 路由（org 系列表全有 tenant_id）。 */
     organization: new OrganizationService(resolver),
-    tenantProfile: new TenantEnterpriseProfileService(tx, appConfig, logger),
+    /* 分片 Plan 1b（Task 6）：TenantEnterpriseProfileService 经共享 resolver 按 tenantId 路由
+     * （tenant_enterprise_profiles 主键即 tenant_id；profile/OIDC/KMS 方法均已带 tenantId）。 */
+    tenantProfile: new TenantEnterpriseProfileService(resolver, appConfig, logger),
+    /* 分片 Plan 1b（Task 6）：ScimTenantDirectory 承载 token→tenant 反查（mixed-scope）。
+     * 单库过渡经 coordinatorDb（=host db，行为不变）；真跨 shard 目录一致性 = Plan 1c 替换实现（route 契约不变）。 */
+    scimDirectory: new ScimTenantDirectory(resolver),
     scim: new ScimProvisioningService(
       tx,
       ({ tenantId, evidenceType, payload }) => {
