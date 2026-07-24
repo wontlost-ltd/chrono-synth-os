@@ -1,7 +1,6 @@
-import type { IDatabase } from '../storage/database.js';
 import type { Logger } from '../utils/logger.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import { PersonaCoreService } from './persona-core-service.js';
-import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 
 const LAYER = 'RuntimeRecoveryWorker';
 
@@ -33,7 +32,7 @@ export class RuntimeRecoveryWorker {
   private currentRun: Promise<RuntimeRecoveryResult> | undefined;
 
   constructor(
-    private readonly db: IDatabase,
+    private readonly resolver: TenantDbResolver,
     private readonly logger: Logger,
     options: Partial<RuntimeRecoveryWorkerOptions> = {},
   ) {
@@ -87,11 +86,10 @@ export class RuntimeRecoveryWorker {
   }
 
   private flushInternal(): RuntimeRecoveryResult {
-    /* worker 当前构造器仍收单一 IDatabase（app.ts 传根 db）：经 SingleDbResolver 包一层，
-     * allDbs()=[this.db]——单库下 fan-out 遍历一次，行为等价现状。
-     * recoverTimedOutRuntimeSessions 本身已真 fan-out（marketplace 层遍历 source.allDbs()），
-     * 多 shard 场景由调用方传入真正的多-shard resolver 时自动生效，此处零改动即可复用。 */
-    const service = PersonaCoreService.fromResolver(new SingleDbResolver(this.db));
+    /* worker 收共享 resolver（app.ts 传 captureResolver('runtime-recovery')）：
+     * recoverTimedOutRuntimeSessions 本身已真 fan-out（marketplace 层遍历 source.allDbs()=resolver.allShardDbs()），
+     * 多 shard 场景自动跨全 shard 恢复；单库下 allShardDbs()=[db]，行为等价现状。 */
+    const service = PersonaCoreService.fromResolver(this.resolver);
     const result = service.recoverTimedOutRuntimeSessions({
       now: Date.now(),
       sessionTimeoutMs: this.options.sessionTimeoutMs,
