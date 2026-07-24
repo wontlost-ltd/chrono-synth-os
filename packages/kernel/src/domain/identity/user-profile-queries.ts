@@ -59,7 +59,13 @@ export interface UprofByEmailExcludeParams {
   excludeUserId: string;
 }
 
+/**
+ * tenant-scoped 改 email 参数（分片 Phase 0 · Plan 1c Task 9）：加 tenantId → UPDATE 前
+ * WHERE tenant_id=? AND id=? 防同库跨租户改 email（updateEmail 跨库状态机步骤 3 落 shard，
+ * 已按 dbForTenant(tenantId) 取对 shard，此 predicate 是纵深防御——同一 shard 多租户时不误改）。
+ */
 export interface UprofUpdateEmailParams {
+  tenantId: string;
   userId: string;
   email: string;
   now: number;
