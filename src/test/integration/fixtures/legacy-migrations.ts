@@ -1308,6 +1308,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "/* safe:if-table-exists:github_reply_drafts_old */ CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
       "/* safe:if-table-exists:github_reply_drafts_old */ DROP TABLE IF EXISTS github_reply_drafts_old"
     ]
+  },
+  {
+    "version": "v123",
+    "description": "Tenant sharding Phase 0 Plan 1c: coordinator tenant_identity_directory (email/token/key lookup → tenant; PENDING/ACTIVE mixed-scope state)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_identity_directory (\n    tenant_id TEXT NOT NULL,\n    user_id TEXT,\n    operation_id TEXT NOT NULL,\n    operation_kind TEXT NOT NULL CHECK(operation_kind IN ('REGISTER', 'EMAIL_CHANGE', 'TOKEN', 'API_KEY')),\n    previous_lookup_value TEXT,\n    pending_password_hash TEXT,\n    lookup_kind TEXT NOT NULL CHECK(lookup_kind IN ('email', 'refresh_token_hash', 'api_key_hash')),\n    lookup_value TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    UNIQUE(lookup_kind, lookup_value)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tid_tenant ON tenant_identity_directory(tenant_id)"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2584,6 +2592,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "ALTER TABLE github_reply_drafts ADD CONSTRAINT github_reply_drafts_status_check CHECK (status IN ('drafted', 'approved', 'rejected', 'published'))",
       "ALTER TABLE github_reply_drafts ADD COLUMN IF NOT EXISTS published_at BIGINT",
       "ALTER TABLE github_reply_drafts ADD COLUMN IF NOT EXISTS github_ref TEXT"
+    ]
+  },
+  {
+    "version": "v125",
+    "description": "Tenant sharding Phase 0 Plan 1c: coordinator tenant_identity_directory (email/token/key lookup → tenant; PENDING/ACTIVE mixed-scope state)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_identity_directory (\n    tenant_id TEXT NOT NULL,\n    user_id TEXT,\n    operation_id TEXT NOT NULL,\n    operation_kind TEXT NOT NULL CHECK(operation_kind IN ('REGISTER', 'EMAIL_CHANGE', 'TOKEN', 'API_KEY')),\n    previous_lookup_value TEXT,\n    pending_password_hash TEXT,\n    lookup_kind TEXT NOT NULL CHECK(lookup_kind IN ('email', 'refresh_token_hash', 'api_key_hash')),\n    lookup_value TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE')),\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    UNIQUE(lookup_kind, lookup_value)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tid_tenant ON tenant_identity_directory (tenant_id)"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
