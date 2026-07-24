@@ -69,6 +69,8 @@ import { registerNotificationPreferenceExecutors } from './notification-preferen
 import { registerGithubAppExecutors } from './github-app-executors.js';
 import { registerGithubLearnExecutors } from './github-learn-executors.js';
 import { registerGithubDraftExecutors } from './github-draft-executors.js';
+import { registerDirectoryExecutors } from './directory-executors.js';
+import { registerBootstrapExecutors } from './bootstrap-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -112,6 +114,8 @@ import {
   GITHUB_APPCRED_QUERY_BY_TENANT,
   GITHUB_LEARN_STATE_QUERY,
   GITHUB_REPLY_DRAFT_QUERY_BY_ID,
+  DIR_QUERY_BY_LOOKUP,
+  BOOT_QUERY_BY_OPERATION,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -187,6 +191,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(GITHUB_APPCRED_QUERY_BY_TENANT)) registerGithubAppExecutors();
   if (!resolveQueryExecutor(GITHUB_LEARN_STATE_QUERY)) registerGithubLearnExecutors();
   if (!resolveQueryExecutor(GITHUB_REPLY_DRAFT_QUERY_BY_ID)) registerGithubDraftExecutors();
+  if (!resolveQueryExecutor(DIR_QUERY_BY_LOOKUP)) registerDirectoryExecutors();
+  if (!resolveQueryExecutor(BOOT_QUERY_BY_OPERATION)) registerBootstrapExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */
