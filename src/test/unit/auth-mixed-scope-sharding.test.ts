@@ -340,6 +340,35 @@ describe('AuthService 混合 scope 分片（register 状态机 + login 经目录
     assert.equal(dirRow('owner@example.com')!.status, 'ACTIVE', '续做后 ACTIVE');
   });
 
+  it('⑥c 密码 register 撞遗留 passwordless PENDING（pending_password_hash=NULL）→ AUTH_REGISTRATION_IN_PROGRESS(409) 而非 500/内部消息', async () => {
+    /* 崩溃遗留：SSO/SCIM 的 reservePasswordlessTenant 写过一条 PENDING（pending_password_hash=NULL），
+     * shard 提交前崩溃。此后一个**密码 register**（不同 operationId）撞同 email。 */
+    coordinator.execute(dirCmdReserve({
+      tenantId: 'tenant_sso', userId: 'user_sso', operationId: 'reg:sso_leftover',
+      operationKind: 'REGISTER', previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'collide@example.com', status: 'PENDING', now: NOW,
+    }));
+
+    const svc = new AuthService(resolverFor({ tenant_me: 'A' }), config, fixedIdGen('tenant_me', 'user_me'));
+    let threw: unknown;
+    try {
+      await svc.register(fakeApp(), 'collide@example.com', 'password123', { idempotencyKey: 'reg:mine' });
+      assert.fail('撞 passwordless 遗留 PENDING → 必须抛 AUTH_REGISTRATION_IN_PROGRESS，不得 500');
+    } catch (e) { threw = e; }
+    /* 修前：reserveTenant 的 requireHash(NULL) 抛 StorageError(STORAGE_READ,500,泄露 email 的内部消息)；
+     * 修后：reservedByUs:false 分支提前 return → AUTH_REGISTRATION_IN_PROGRESS(409)。 */
+    assert.equal((threw as { code?: string }).code, ErrorCode.AUTH_REGISTRATION_IN_PROGRESS, '409 而非 STORAGE_READ');
+    assert.equal((threw as { statusCode?: number }).statusCode, 409, 'HTTP 409（非 500）');
+    assert.equal(
+      /pending_password_hash|目录项缺少/.test((threw as { message?: string }).message ?? ''),
+      false,
+      '不泄露内部 requireHash 错误消息',
+    );
+    /* fail-closed：未接管遗留 tenant、未在本 shard 建 user、未签 token。 */
+    assert.equal(shardUser(shardA, 'user_me'), undefined, '不建本次候选 user');
+    assert.equal(dirRow('collide@example.com')!.tenant_id, 'tenant_sso', '遗留 tenant 未被接管/覆盖');
+  });
+
   it('⑦ login 经目录：register 后 login ACTIVE→验密码成功；PENDING 项 login→拒', async () => {
     const resolver = resolverFor({ tenant_l: 'A' });
     const svc = new AuthService(resolver, config, fixedIdGen('tenant_l', 'user_l'));

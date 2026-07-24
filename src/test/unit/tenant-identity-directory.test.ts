@@ -141,6 +141,30 @@ describe('TenantIdentityDirectory 协调库门面', () => {
       assert.equal(out.canonicalUserId, 'user_other');
       assert.equal(out.pendingPasswordHash, 'hash_other', '读回先占者持久化的 hash');
     });
+
+    it('撞遗留 passwordless PENDING（pending_password_hash=NULL）→ reservedByUs:false 不抛 500', () => {
+      /* 崩溃遗留：SSO/SCIM 的 reservePasswordlessTenant 写过一条 PENDING（pending_password_hash=NULL）。 */
+      coordinator.execute(dirCmdReserve({
+        tenantId: 'tenant_sso', userId: 'user_sso', operationId: 'reg:sso_pre',
+        operationKind: 'REGISTER', previousLookupValue: null, pendingPasswordHash: null,
+        lookupKind: 'email', lookupValue: 'collide@example.com', status: 'PENDING', now: NOW,
+      }));
+
+      /* 密码 register 撞同 email（不同 operationId）：读回行 hash 为 NULL，但因 reservedByUs:false，
+       * requireHash 不求值——绝不抛 StorageError(500)，而是返回 pendingPasswordHash:null 供调用方转 409。 */
+      let out!: ReturnType<TenantIdentityDirectory['reserveTenant']>;
+      assert.doesNotThrow(() => {
+        out = dir.reserveTenant({
+          tenantId: 'tenant_mine', userId: 'user_mine', operationId: 'reg:mine',
+          pendingPasswordHash: 'hash_mine', email: 'collide@example.com',
+        });
+      }, '撞 passwordless 遗留 PENDING 绝不抛 500/StorageError');
+
+      assert.equal(out.reservedByUs, false, '他人先占（passwordless）→ 不属己');
+      assert.equal(out.canonicalTenantId, 'tenant_sso', 'canonical 是既存 passwordless 行的');
+      assert.equal(out.canonicalUserId, 'user_sso');
+      assert.equal(out.pendingPasswordHash, null, 'passwordless 遗留行 hash 为 null，原样返回不抛');
+    });
   });
 
   describe('reservePasswordlessTenant（SSO/SCIM）', () => {
