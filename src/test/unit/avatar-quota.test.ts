@@ -11,10 +11,14 @@ import {
 } from '@chrono/kernel';
 import { AvatarService } from '../../identity/avatar-service.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
+
+/* 分片 Plan 1b（Task 2）：identities 用 tenant_id='tenant-test'（见 seedIdentity），AvatarService 方法带此 tenantId。 */
+const T = 'tenant-test';
 
 function seedIdentity(db: IDatabase, identityId: string): void {
   db.prepare<void>(
@@ -47,15 +51,15 @@ describe('AvatarService 执行器注册', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedIdentity(db, 'identity-1');
-    const service = new AvatarService(db);
+    const service = new AvatarService(new SingleDbResolver(db));
 
-    const avatar = service.create('identity-1', { label: '测试分身' });
+    const avatar = service.create(T, 'identity-1', { label: '测试分身' });
     assert.equal(avatar.identityId, 'identity-1');
     assert.equal(avatar.label, '测试分身');
     assert.equal(avatar.kind, 'general');
     assert.equal(avatar.isActive, true);
 
-    const fetched = service.getById(avatar.id);
+    const fetched = service.getById(T, avatar.id);
     assert.ok(fetched);
     assert.equal(fetched.label, '测试分身');
   });
@@ -64,17 +68,17 @@ describe('AvatarService 执行器注册', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedIdentity(db, 'identity-1');
-    const service = new AvatarService(db);
+    const service = new AvatarService(new SingleDbResolver(db));
 
-    const avatar = service.create('identity-1', { label: '原始' });
-    const updated = service.update(avatar.id, { label: '更新后' });
+    const avatar = service.create(T, 'identity-1', { label: '原始' });
+    const updated = service.update(T, avatar.id, { label: '更新后' });
     assert.ok(updated);
     assert.equal(updated.label, '更新后');
 
-    const deleted = service.softDelete(avatar.id);
+    const deleted = service.softDelete(T, avatar.id);
     assert.equal(deleted, true);
 
-    const gone = service.getById(avatar.id);
+    const gone = service.getById(T, avatar.id);
     assert.equal(gone, null);
   });
 
@@ -83,16 +87,16 @@ describe('AvatarService 执行器注册', () => {
     runDslSqliteMigrations(db);
     seedIdentity(db, 'identity-1');
     seedIdentity(db, 'identity-2');
-    const service = new AvatarService(db);
+    const service = new AvatarService(new SingleDbResolver(db));
 
-    service.create('identity-1', { label: '分身A' });
-    service.create('identity-1', { label: '分身B' });
-    service.create('identity-2', { label: '其他租户' });
+    service.create(T, 'identity-1', { label: '分身A' });
+    service.create(T, 'identity-1', { label: '分身B' });
+    service.create(T, 'identity-2', { label: '其他租户' });
 
-    const list = service.listByIdentity('identity-1');
+    const list = service.listByIdentity(T, 'identity-1');
     assert.equal(list.length, 2);
 
-    const count = service.countActive('identity-1');
+    const count = service.countActive(T, 'identity-1');
     assert.equal(count, 2);
   });
 });

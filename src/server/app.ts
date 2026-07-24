@@ -163,7 +163,6 @@ import { RuntimeRecoveryWorker } from '../persona-core/runtime-recovery-worker.j
 import { DualWriteFlushWorker } from '../workers/dual-write-flush-worker.js';
 import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
-import { AvatarService } from '../identity/avatar-service.js';
 import { AvatarAutorunService } from '../identity/avatar-autorun-service.js';
 import { KnowledgeIngestionService } from '../knowledge/knowledge-ingestion-service.js';
 import { KnowledgeSourceRegistry } from '../knowledge/knowledge-source-registry.js';
@@ -418,7 +417,6 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     const queueTx = queueDb;
     const autorunStore = new AvatarAutorunStore(queueDb);
     const knowledgeStore = new KnowledgeSourceStore(queueTx);
-    const avatarService = new AvatarService(queueTx);
     const quotaManager = QuotaManager.fromResolver(resolver);
     const knowledgeRegistry = new KnowledgeSourceRegistry();
     knowledgeRegistry.register('manual', new ManualKnowledgeSource());
@@ -447,7 +445,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
     const autorunService = new AvatarAutorunService(
       queueDb, queue, deps.os.bus, deps.os.getLogger(),
-      quotaManager, avatarService, autorunStore, knowledgeStore,
+      quotaManager, autorunStore, knowledgeStore,
       knowledgeIngestion, tenantFactory, config,
       /* ADR-0047 growth 档：注入 LLM 路由（含 D2 降级链），autorun 在确定性反思后额外跑 LLM 反思。
        * mock provider 不产实际成长（仅占位），生产配 anthropic/ollama 时生效。 */
@@ -470,7 +468,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', () => { clearInterval(autorunSchedulerTimer); });
 
     /* 注册自动运行路由（需 autorunService） */
-    registerAvatarAutorunRoutes(app, queueDb, autorunService);
+    registerAvatarAutorunRoutes(app, queueDb, captureResolver('avatar-autorun'), autorunService);
 
     worker.start();
     app.addHook('onClose', async () => { await worker!.stop(); });
@@ -910,7 +908,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
   if (!config.queue.enabled) {
-    registerAvatarAutorunRoutes(app, db, undefined);
+    registerAvatarAutorunRoutes(app, db, captureResolver('avatar-autorun'), undefined);
   }
 
   registerDocsRoutes(app);

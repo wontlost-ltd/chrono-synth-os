@@ -6,9 +6,11 @@ import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
   DAVT_QUERY_ACTIVE, DAVT_QUERY_LIST_BY_DEVICE, DAVT_QUERY_IS_INSTALLED,
   DAVT_CMD_INSTALL, DAVT_CMD_UNINSTALL, DAVT_CMD_DEACTIVATE_ALL, DAVT_CMD_ACTIVATE,
+  DAVT_QUERY_DEVICE_BELONGS_TO_TENANT, DAVT_QUERY_AVATAR_BELONGS_TO_TENANT,
 } from '@chrono/kernel';
 import type {
   DavtRow, DavtInstalledRow, DavtDeviceAvatarParams, DavtInstallParams,
+  DavtDeviceBelongsToTenantParams, DavtAvatarBelongsToTenantParams,
 } from '@chrono/kernel';
 
 export function registerDeviceAvatarExecutors(): void {
@@ -28,6 +30,22 @@ export function registerDeviceAvatarExecutors(): void {
     return db.prepare<DavtInstalledRow>(
       'SELECT id FROM device_avatars WHERE device_id = ? AND avatar_id = ?',
     ).get(p.deviceId, p.avatarId) ?? null;
+  });
+
+  /* device 端归属探针：device 是否属于该租户（devices 有 tenant_id 列）。 */
+  registerQuery<{ id: string } | null, DavtDeviceBelongsToTenantParams>(DAVT_QUERY_DEVICE_BELONGS_TO_TENANT, (db, p) => {
+    return db.prepare<{ id: string }>(
+      'SELECT id FROM devices WHERE id = ? AND tenant_id = ?',
+    ).get(p.deviceId, p.tenantId) ?? null;
+  });
+
+  /* avatar 端归属探针：avatar 经 identity 父归属是否属于该租户（avatars 无 tenant_id 列）。 */
+  registerQuery<{ id: string } | null, DavtAvatarBelongsToTenantParams>(DAVT_QUERY_AVATAR_BELONGS_TO_TENANT, (db, p) => {
+    return db.prepare<{ id: string }>(
+      `SELECT a.id FROM avatars a
+       JOIN identities i ON i.id = a.identity_id
+       WHERE a.id = ? AND i.tenant_id = ?`,
+    ).get(p.avatarId, p.tenantId) ?? null;
   });
 
   registerCommand<DavtInstallParams>(DAVT_CMD_INSTALL, (db, p) => {
