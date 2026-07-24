@@ -19,7 +19,11 @@
 
 **fan-out 隔离铁律**：跨租户 worker 的 fan-out 循环必须**逐 shard 隔离**——单 shard db 抛错（连接失败/损坏）时 catch 记录该 shard 错误 + 继续下一 shard，绝不因一个 shard 挂掉导致其他 shard 的 GDPR 擦除/结算/清理被跳过。返回结构含 per-shard 结果 + 错误列表（照 BillingOutbox `shardErrors`）。
 
-**GDPR fan-out 合规契约（第 2 轮定死，Codex #1——隔离不崩 ≠ 静默漏擦）**：MediaRetention 的 shard 隔离必须 **isolate + retry + alert**，非只记 info 日志：① 单 shard 失败 → catch 记 `shardErrors` + 保留媒体引用供下周期重试（现有行为）；② **失败必须升级为可观测信号**——每个 shard 擦除失败 metric（`meterShardEraseFailure`，照 BillingOutbox 的 `meterShardFlushErrors`）+ `logger.error`（非 info）；③ **连续失败治理**：worker 暴露 degraded 状态（`isHealthy()` 在有 shard 持续失败时返 false 供健康探针/告警），timer/装配层消费 `shardErrors` 决定告警。合规底线：绝不「fan-out 跑完返成功但某 shard 的 GDPR 数据从未擦除且无人知」。验收测须断言 shard 失败时 error 被记录 + metric 触发 + isHealthy 反映。
+**GDPR fan-out 合规契约（第 3 轮定死健康状态机，Codex——隔离不崩 ≠ 静默漏擦）**：MediaRetention 的 shard 隔离必须 **isolate + retry + alert**，非只记 info 日志。**两类失败都必须处理**（Codex 关键：① shard db 调用直接抛错 → shard-level catch；② `runMediaRetention()` 正常返回但 `failed > 0`——对象擦除器异常在内部被捕获，不进 shard catch）：
+- **健康状态机（定死，非推给实现者）**：任一 shard 本轮**抛错 OR 返回 `failed > 0`** → 立即 `isHealthy() = false`；worker 记录 per-shard 连续失败次数 + 最后失败时间；该 shard **下一轮 `failed === 0` 且无异常** → 清除该 shard 失败状态；**所有 shard 均恢复才** `isHealthy()` 返 true。（GDPR 取最安全：一次失败即 degraded，成功一轮恢复；不引入「连续 N 次才降级」的模糊阈值。）
+- **可观测信号（定死）**：每个 shard 擦除失败（抛错或 `failed>0`）→ `meterShardEraseFailure` metric（照 BillingOutbox `meterShardFlushErrors` 的计数手法）**且必须暴露到 metrics surface**（JSON/Prometheus route——BillingOutbox 现有 counter 未暴露 route，本 Plan 须显式暴露 `meterShardEraseFailure` 到 metrics endpoint + degraded gauge，不能只当内存 counter）+ `logger.error`（非 info）。
+- **timer 强制告警（非「决定」）**：timer flush 后 `shardErrors.length > 0` **或**任一 per-shard `failed > 0` → **必须** `logger.error`（不是「决定是否告警」）。
+- 合规底线：绝不「fan-out 跑完返成功但某 shard 的 GDPR 数据从未擦除且无人知」。验收测须断言：shard 抛错 + shard `failed>0` 两条路径都 → error 记录 + `meterShardEraseFailure` 触发 + isHealthy 立即 false + 成功一轮后恢复 true。
 
 **DualWrite ledger 亲和性（第 2 轮定死，Codex #2——防跨 shard 串写）**：`flushOutbox(db, ledger)` 的 `db`（outbox 源）与 `ledger`（`SqliteEventLedger`）当前都绑同一 `opts.db`。fan-out **必须在循环内为每个 shard 现构造 `new SqliteEventLedger(shardDb)`**（源库与 ledger 库同一 shardDb），绝不复用一个中心 ledger（否则跨 shard 写 ledger + 删源 shard outbox = 数据串写/丢失）。定死：`for (const shardDb of resolver.allShardDbs()) { const ledger = new SqliteEventLedger(shardDb); await flushOutbox(shardDb, ledger); }`。验收测须断言 shard A 的 outbox 只 flush 到 shard A 的 ledger、无跨 shard 串写。
 
@@ -34,12 +38,12 @@
 2. **DualWriteFlushWorker** — 对 `allShardDbs()` 各 flush persona ledger outbox；⚠️ ledger 目标库须与源 shard 一致（不能跨 shard 写 ledger）。
 3. **SettlementReconciliationWorker** — 对 `allShardDbs()` 各 `new SettlementReconciliationService(db).reconcileTenants()`（每 shard 枚举其租户）。
 4. **RuntimeRecoveryWorker（最小改）** — ctor 从裸 db 换注入 resolver（不再包 SingleDbResolver），底层 `recoverTimedOutRuntimeSessions` 的 `source.allDbs()` fan-out 自动生效。
-5. **ToolInvocationsRetentionWorker** — ToolPermissionService 的 prune 跨租户 → 对 `allShardDbs()` 各 prune（ToolPermissionService 加 fromResolver 或 worker 直接遍历 shard——选侵入小的）。
+5. **ToolInvocationsRetentionWorker** — ToolPermissionService 的 prune 跨租户 → **定死：worker 直接遍历 `resolver.allShardDbs()`，每 shard 各 `new ToolPermissionService(shardDb).pruneInvocationsBefore(...)`**（侵入最小，不改 ToolPermissionService 接口——它本就绑单 tx，per-shard 各建实例即可；逐 shard 隔离聚合删除计数）。
 6. **observability worker**（`main-observability-worker.ts` 独立进程）— 各 shard 各 drain outbox + 各 rollup。
 
 ### B. timer fan-out/拆分
 7. **retention timer**（app.ts:950-981）— 跨租户表（usage_records/billing_outbox/idempotency_keys）对 `allShardDbs()` 各 prune；webhook_events（平台表）→ `coordinatorDb()`。
-8. **cleanupExpiredTokens timer** — 对 token 表落 shard 的情况 fan-out（核对 token 表落 shard 还是 coordinator——AuthService.cleanupExpired 已用 coordinatorDb，须与 Plan 1c 的 refresh_token 落 shard 语义一致）。
+8. **cleanupExpiredTokens timer** — **定死 fan-out**：refresh_tokens 落各租户 shard（Plan 1c 已证），`cleanupExpiredTokens` 改 `for (const shardDb of resolver.allShardDbs()) AuthService.cleanupExpired(shardDb)`（逐 shard 隔离聚合），替换现有 coordinatorDb-only（漏清 shard token 的真 bug，见「设计决策」Token 段）。
 
 ### C. metrics route scatter-gather（`allShardDbs()`，第 2 轮定死合并算法 Codex #4/#5/#6）
 9. **MetricsQueryService**（metrics.ts + metrics-query-service.ts）— 加 resolver 注入，5 项跨租户聚合改 scatter-gather，**每项合并算法定死**：
@@ -48,7 +52,7 @@
    - **observability summary**：各 shard rollup——count 类 **SUM**，**`updated_at` 取各 shard 的 MAX**（非 SUM），outbox backlog SUM。
    - **queue backlog**：各 shard count by status **SUM**（临时——TaskQueue 分片归 Plan 3，Plan 2 先按现 queue_tasks 表 fan-out SUM，Plan 3 改队列归属后再调整；边界见「不含」）。
    - **tenant usage**：各 shard 各租户行 concat → **全局 merge + sort + limit（retentionMs 窗口）**（非各 shard 各自 limit 后拼）。
-   - **partial shard failure 显式暴露（Codex #6）**：MetricsQueryService 现把查询异常转零/空——scatter-gather 必须**显式暴露** partial shard failure（返回结构含成功 shard 聚合 + 失败 shard 列表 / 或整体标 degraded），绝不把某 shard 失败静默当零（否则 metrics 报假低值误导容量决策）。
+   - **partial shard failure 显式暴露（第 3 轮定死返回形状，Codex #6）**：MetricsQueryService 现把查询异常转零/空——scatter-gather 必须**显式暴露** partial shard failure，返回结构**固定为** `{ data, degraded: shardErrors.length > 0, shardErrors }`（成功 shard 聚合 + degraded 标志 + 失败 shard 列表，三者齐全，非二选一）。JSON metrics 直接暴露该结构；Prometheus 另输出 degraded gauge + shard failure counter。绝不把某 shard 失败静默当零（否则 metrics 报假低值误导容量决策）。
    - 进程级内存 counter（billingMetrics/llmMetrics 等）不改。
 
 ### D. route 内联直查下沉（`dbForTenant`）
