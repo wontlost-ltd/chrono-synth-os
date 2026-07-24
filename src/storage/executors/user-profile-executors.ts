@@ -46,11 +46,12 @@ export function registerUserProfileExecutors(): void {
 
   /* ── Commands ── */
 
-  /* email 更新（全局 email 唯一性 → 无 tenant predicate，经 coordinatorDb）：供 UserEmailDirectoryService。 */
+  /* 分片 Plan 1c（Task 9）：tenant-scoped 改 email → WHERE tenant_id=? AND id=?（updateEmail 状态机
+   * 步骤 3 落 shard，按 dbForTenant(tenantId) 取对 shard；tenant predicate 防同一 shard 多租户误改）。 */
   registerCommand<UprofUpdateEmailParams>(UPROF_CMD_UPDATE_EMAIL, (db, p) => {
     const result = db.prepare<void>(
-      'UPDATE users SET email = ?, updated_at = ? WHERE id = ?',
-    ).run(p.email, p.now, p.userId);
+      'UPDATE users SET email = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+    ).run(p.email, p.now, p.tenantId, p.userId);
     return { rowsAffected: result.changes };
   });
 
