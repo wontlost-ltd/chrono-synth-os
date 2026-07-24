@@ -4,6 +4,7 @@ import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/inde
 import { EventBus } from '../../events/event-bus.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { NotificationPreferenceStore } from '../../storage/notification-preference-store.js';
 import { NudgePushBridge } from '../../server/services/nudge-push-bridge.js';
 import type { IDatabase } from '../../storage/database.js';
@@ -46,13 +47,14 @@ describe('NudgePushBridge（ADR-0054 ③ nudge→系统推送）', () => {
     runDslSqliteMigrations(db);
     bus = new EventBus();
     push = makeMockPush();
-    bridge = new NudgePushBridge({ bus, db, pushService: push.service, logger: new SilentLogger(), now: () => NOW });
+    /* 分片 Plan 1b（Task 3）：bridge 设备解析经 resolver（单库测试 SingleDbResolver）。 */
+    bridge = new NudgePushBridge({ bus, db, resolver: new SingleDbResolver(db), pushService: push.service, logger: new SilentLogger(), now: () => NOW });
     bridge.start();
   });
 
   function seedUserWithDevice(tenantId: string, userId: string, pushToken: string | null): string {
     seedUser(db, tenantId, userId);
-    const dev = new MobileDeviceService(db).register(tenantId, userId, {
+    const dev = new MobileDeviceService(new SingleDbResolver(db)).register(tenantId, userId, {
       deviceUid: `uid-${userId}`, platform: 'ios', pushToken: pushToken ?? undefined,
     });
     return dev.id;
@@ -119,20 +121,24 @@ describe('NudgePushBridge（ADR-0054 ③ nudge→系统推送）', () => {
     bus.emit('companion:nudge-created', { nudgeId: 'pmsg-1', kind: 'growth', tenantId: 'tenant-a' });
     await flush();
     assert.equal(push.sent.length, 1, '只推 tenant-a');
-    assert.equal(push.sent[0].deviceId, new MobileDeviceService(db).listByTenantUser('tenant-a', 'ua')[0].id);
+    assert.equal(push.sent[0].deviceId, new MobileDeviceService(new SingleDbResolver(db)).listByUser('tenant-a', 'ua')[0].id);
   });
 
   it('租户隔离（Codex 退回 High）：同 user_id 跨租户的设备 → A 的 nudge 只推 A 租户的设备', async () => {
     /* 关键场景：tenant-a 的 user id='shared' 有设备；tenant-b 存在一台 user_id='shared' 的设备
-     * （脏数据 / user_id 非全局唯一）。宿主 DB 上 listByUser('shared') 会取到两租户的设备——
-     * 桥必须用 listByTenantUser 只取 tenant-a 的。 */
+     * （脏数据 / user_id 非全局唯一）。分片 Plan 1b（Task 3）：listByUser 现恒带 tenantId +
+     * tenant predicate（WHERE tenant_id=? AND user_id=?），只取 tenant-a 的。 */
     const devA = seedUserWithDevice('tenant-a', 'shared', 'tok-a'); enablePush('tenant-a', 'shared');
+    const svc = new MobileDeviceService(new SingleDbResolver(db));
     /* 直接插一台 tenant-b、user_id='shared' 的设备（不建 tenant-b 用户——模拟脏行/跨租户）。 */
-    new MobileDeviceService(db).register('tenant-b', 'shared', {
+    svc.register('tenant-b', 'shared', {
       deviceUid: 'uid-b', platform: 'ios', pushToken: 'tok-b',
     });
-    assert.equal(new MobileDeviceService(db).listByUser('shared').length, 2, '前置：listByUser(无tenant) 取到 2 台');
-    assert.equal(new MobileDeviceService(db).listByTenantUser('tenant-a', 'shared').length, 1, '前置：listByTenantUser 只取 1 台');
+    /* 前置：物理库确有两台 user_id='shared' 的行（跨租户），但 tenant predicate 让 listByUser 只取 1 台。 */
+    const rawCount = Number((db.prepare<{ n: number }>(`SELECT COUNT(*) AS n FROM devices WHERE user_id = 'shared'`).get())!.n);
+    assert.equal(rawCount, 2, '前置：物理库有 2 台 user_id=shared 的行');
+    assert.equal(svc.listByUser('tenant-a', 'shared').length, 1, '前置：listByUser 带 tenant predicate 只取 tenant-a 的 1 台');
+    assert.equal(svc.listByUser('tenant-b', 'shared').length, 1, '前置：tenant-b 也只取自己那 1 台');
 
     bus.emit('companion:nudge-created', { nudgeId: 'pmsg-1', kind: 'growth', tenantId: 'tenant-a' });
     await flush();
@@ -146,7 +152,7 @@ describe('NudgePushBridge（ADR-0054 ③ nudge→系统推送）', () => {
       send: async () => { throw new Error('boom'); },
       sendBatch: async () => [],
     };
-    const b2 = new NudgePushBridge({ bus, db, pushService: throwing, logger: new SilentLogger(), now: () => NOW });
+    const b2 = new NudgePushBridge({ bus, db, resolver: new SingleDbResolver(db), pushService: throwing, logger: new SilentLogger(), now: () => NOW });
     b2.start();
     seedUserWithDevice('tenant-a', 'u1', 'tok-1'); enablePush('tenant-a', 'u1');
     /* emit 同步返回不抛（push 是 async fire-and-forget）。 */

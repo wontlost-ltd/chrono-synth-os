@@ -68,7 +68,8 @@ export function buildAppServices(
     /* 分片 Plan 1b（Task 2 Avatar 组）：AvatarService 经共享 resolver 按 tenantId 路由。 */
     avatar: new AvatarService(resolver),
     collaboration: new CollaborationService(tx),
-    mobileDevice: new MobileDeviceService(tx),
+    /* 分片 Plan 1b（Task 3 Mobile 组）：MobileDeviceService 经共享 resolver 按 tenantId 路由（device 表有 tenant_id）。 */
+    mobileDevice: new MobileDeviceService(resolver),
     mobileDeviceFacade: new MobileDeviceFacade(tx, resolver, pushService),
     pushService,
     userProfile: new UserProfileService(tx),

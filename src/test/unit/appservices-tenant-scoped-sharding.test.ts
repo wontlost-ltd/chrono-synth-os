@@ -11,6 +11,9 @@ import assert from 'node:assert/strict';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
 import { DeviceAvatarService } from '../../identity/device-avatar-service.js';
+import { MobileDeviceService } from '../../identity/mobile-device-service.js';
+import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../../agent/push/dispatcher.js';
+import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
@@ -163,4 +166,120 @@ test('DeviceAvatarService install：device 端 + avatar 端两端都验 tenant �
     'A link 到 B 的 device 应被 device 端 tenant 验拦',
   );
   db.close();
+});
+
+/* ── Mobile 组（Task 3）：devices 表有 tenant_id 列 → 直接 WHERE tenant_id=? AND … predicate ── */
+
+test('MobileDeviceService per-tenant：A register device 落 s0，用 tB findById 该 device 返 null（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const svc = new MobileDeviceService(resolver);
+  const reg = svc.register('tA', 'userA', { deviceUid: 'duidA', platform: 'ios', pushToken: 'TOKEN_A' });
+  /* A 在自己 shard（s0）用 tA findById 查得到。 */
+  assert.ok(svc.findById('tA', reg.id), 'A 在自己 shard 查得到自己的 device');
+  /* 用 tB（→s1）查 A 的 deviceId：s1 根本没这行 → null（不串 shard）。 */
+  assert.equal(svc.findById('tB', reg.id), null, '用 tB（→s1）查 A 的 device：查不到（不串 shard）');
+  /* 对称：B register 落 s1，s0 查不到。 */
+  const regB = svc.register('tB', 'userB', { deviceUid: 'duidB', platform: 'android', pushToken: 'TOKEN_B' });
+  assert.ok(svc.findById('tB', regB.id), 'B 在自己 shard（s1）查得到');
+  assert.equal(svc.findById('tA', regB.id), null, '用 tA（→s0）查 B 的 device：查不到');
+  /* 物理断言：B 的 device 行只在 s1、s0 无（防「都落 s0」的 shard 路由 bug）。 */
+  assert.ok(s1.prepare(`SELECT 1 FROM devices WHERE id = ?`).get(regB.id), 'B 的 device 行在 s1');
+  assert.equal(s0.prepare(`SELECT 1 FROM devices WHERE id = ?`).get(regB.id), undefined, 's0 无 B 的 device 行');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('MobileDeviceService tenant predicate：共享物理 db 只种 B 的 device，用 tA findById/listByUser/updatePushToken/markTokenInvalid 均不命中（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的 device。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const svc = new MobileDeviceService(resolver);
+  const regB = svc.register('tB', 'userSharedB', { deviceUid: 'duidSharedB', platform: 'ios', pushToken: 'TOKEN_ORIG' });
+  /* findById：用 tA 查 B 的 deviceId → null（tenant predicate 隔离）。 */
+  assert.equal(svc.findById('tA', regB.id), null, 'tA 查不到 tB 的 device（findById tenant predicate 隔离）');
+  assert.ok(svc.findById('tB', regB.id), 'tB 自己查得到');
+  /* listByUser：用 tA + B 的 userId → 空（不串租户）。 */
+  assert.equal(svc.listByUser('tA', 'userSharedB').length, 0, 'tA listByUser tB 的 userId → 空');
+  assert.ok(svc.listByUser('tB', 'userSharedB').length >= 1, 'tB list 自己的 userId 有 device');
+  /* updatePushToken：用 tA + B 的 deviceId/userId 改 → 不生效（B 的 token 不变）。 */
+  const upd = svc.updatePushToken('tA', regB.id, 'userSharedB', 'TOKEN_HIJACK');
+  assert.equal(upd.updated, false, 'tA 改不到 tB 的 push token（updatePushToken tenant predicate 隔离）');
+  assert.equal(svc.findById('tB', regB.id)?.push_token, 'TOKEN_ORIG', 'B 的 push token 未被越权改动');
+  /* markTokenInvalid：用 tA + B 的 deviceId 标失效 → 不生效（B 的 is_invalid_at 仍 null）。 */
+  svc.markTokenInvalid('tA', regB.id, 'cross-tenant');
+  assert.equal(svc.findById('tB', regB.id)?.is_invalid_at, null, 'B 的 is_invalid_at 未被越权标位');
+  /* tB 自己标位则生效。 */
+  svc.markTokenInvalid('tB', regB.id, 'legit');
+  assert.notEqual(svc.findById('tB', regB.id)?.is_invalid_at, null, 'tB 自己标位生效');
+  db.close();
+});
+
+/* ── PushDispatcher 全传播链 (tenantId, deviceId)（Task 3）── */
+
+class RecordingProvider implements PushProvider {
+  readonly channel = 'apns' as const;
+  readonly sent: string[] = [];
+  constructor(private readonly invalidTokens: string[] = []) {}
+  async send(pushToken: string): Promise<PushResult> {
+    this.sent.push(pushToken);
+    const invalidated = this.invalidTokens.includes(pushToken);
+    return { deviceId: pushToken, success: !invalidated, tokenInvalidated: invalidated, ...(invalidated ? { error: 'BadDeviceToken' } : {}) };
+  }
+  async close(): Promise<void> {}
+}
+
+test('PushDispatcher.send 把 tenantId 传给 deviceLookup(tenantId, deviceId)（全链带 tenantId 非丢弃 _tenantId）', async () => {
+  const seen: Array<{ tenantId: string; deviceId: string }> = [];
+  const deviceLookup: DeviceLookup = async (tenantId, deviceId) => {
+    seen.push({ tenantId, deviceId });
+    const r: DeviceLookupResult = { platform: 'ios', pushToken: 'TOKEN_OK' };
+    return r;
+  };
+  const dispatcher = new PushDispatcher({
+    providers: new Map<string, PushProvider>([['apns', new RecordingProvider()]]),
+    deviceLookup,
+  });
+  await dispatcher.send('tenantX', 'devZ', { title: 't', body: 'b' });
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], { tenantId: 'tenantX', deviceId: 'devZ' }, 'deviceLookup 收到 (tenantId, deviceId)');
+});
+
+test('PushDispatcher.sendBatch 逐条把 tenantId 传下去', async () => {
+  const seen: Array<{ tenantId: string; deviceId: string }> = [];
+  const deviceLookup: DeviceLookup = async (tenantId, deviceId) => {
+    seen.push({ tenantId, deviceId });
+    return { platform: 'ios', pushToken: `T_${deviceId}` };
+  };
+  const dispatcher = new PushDispatcher({
+    providers: new Map<string, PushProvider>([['apns', new RecordingProvider()]]),
+    deviceLookup,
+  });
+  await dispatcher.sendBatch('tenantY', ['d1', 'd2'], { title: 't', body: 'b' });
+  assert.deepEqual(seen, [
+    { tenantId: 'tenantY', deviceId: 'd1' },
+    { tenantId: 'tenantY', deviceId: 'd2' },
+  ], 'sendBatch 每条都带同一 tenantId');
+});
+
+test('PushDispatcher tokenInvalidated 回调带 (tenantId, deviceId, reason)（fireAndForgetInvalidation 全链）', async () => {
+  const invalidations: Array<{ tenantId: string; deviceId: string; reason: string }> = [];
+  const onTokenInvalidated: TokenInvalidationCallback = async (tenantId, deviceId, reason) => {
+    invalidations.push({ tenantId, deviceId, reason });
+  };
+  const dispatcher = new PushDispatcher({
+    providers: new Map<string, PushProvider>([['apns', new RecordingProvider(['TOKEN_BAD'])]]),
+    deviceLookup: async () => ({ platform: 'ios', pushToken: 'TOKEN_BAD' }),
+    onTokenInvalidated,
+  });
+  const result = await dispatcher.send('tenantW', 'devBad', { title: 't', body: 'b' });
+  assert.equal(result.tokenInvalidated, true);
+  /* fire-and-forget — 等一个微任务 flush。 */
+  await new Promise((r) => setImmediate(r));
+  assert.equal(invalidations.length, 1);
+  assert.deepEqual(
+    { tenantId: invalidations[0]!.tenantId, deviceId: invalidations[0]!.deviceId },
+    { tenantId: 'tenantW', deviceId: 'devBad' },
+    'tokenInvalidated 回调收到 (tenantId, deviceId)',
+  );
 });

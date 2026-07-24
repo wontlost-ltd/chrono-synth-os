@@ -43,8 +43,11 @@ export interface PushResult {
 }
 
 /** Token 失效回调 — 宿主把它注入 PushDispatcher，dispatcher 在收到 invalidated
- *  结果后异步调用，与 send() 主路径解耦。回调失败不影响 send 的返回。 */
-export type TokenInvalidationCallback = (deviceId: string, reason: string) => Promise<void>;
+ *  结果后异步调用，与 send() 主路径解耦。回调失败不影响 send 的返回。
+ *
+ *  分片 Phase 0 · Plan 1b（Task 3）：带 `tenantId` 全链——宿主须经 `resolver.dbForTenant(tenantId)`
+ *  把设备失效标位落到正确 shard；单库下 tenantId 也用于 `WHERE tenant_id=? AND id=?` predicate。 */
+export type TokenInvalidationCallback = (tenantId: string, deviceId: string, reason: string) => Promise<void>;
 
 /**
  * 单通道 Provider 接口。
