@@ -876,7 +876,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { resolver: captureResolver('life-simulations'), queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
   registerSsoRoutes(app, db, config);
-  registerOidcRoutes(app, db, config);
+  registerOidcRoutes(app, db, captureResolver('auth-oidc'), config);
   registerScimRoutes(app, services);
   registerCollaborationRoutes(app, services);
   registerApiKeyRoutes(app, services);
@@ -886,7 +886,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     bulkImport: bulkImportService,
     personaCore: bulkImportPersonaCoreService,
   });
-  registerAdminDeploymentRoutes(app, db, config);
+  registerAdminDeploymentRoutes(app, db, captureResolver('admin-deployment'), config);
   registerAdminControlPlaneRoutes(app, services);
   registerAdminToolsRoutes(app, db);
   registerMcpRoutes(app, mcpServer, oauthResolverFactory);

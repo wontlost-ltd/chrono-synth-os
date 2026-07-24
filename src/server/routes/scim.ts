@@ -18,11 +18,13 @@ function parseScimFilter(raw: string | undefined): string | undefined {
 }
 
 export function registerScimRoutes(app: FastifyInstance, services: AppServices): void {
-  const { tenantProfile: profileService, scim: scimService } = services;
+  /* 分片 Plan 1b（Task 6）：token→tenant 反查经 ScimTenantDirectory（mixed-scope，非 tenantProfile）。
+   * route 契约稳定——Plan 1c 换 ScimTenantDirectory 实现（真跨 shard 目录）不改本 route。 */
+  const { scimDirectory, scim: scimService } = services;
 
   async function resolveTenantId(authHeader: string | undefined): Promise<string> {
     const token = getScimBearerToken({ authorization: authHeader });
-    const principal = profileService.resolveScimTenant(token);
+    const principal = scimDirectory.resolveScimTenant(token);
     if (!principal) {
       throw new AuthenticationError('SCIM token 无效', ErrorCode.AUTH_INVALID_TOKEN);
     }

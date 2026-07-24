@@ -16,6 +16,9 @@ import { CollaborationService } from '../../identity/collaboration-service.js';
 import { OrganizationService } from '../../enterprise/organization-service.js';
 import { AdminControlPlaneService } from '../../enterprise/admin-control-plane-service.js';
 import { KnowledgeSourceService } from '../../knowledge/knowledge-source-service.js';
+import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
+import { ScimTenantDirectory } from '../../enterprise/scim-tenant-directory.js';
+import { loadConfig } from '../../config/schema.js';
 import { PushDispatcher, type DeviceLookup, type DeviceLookupResult } from '../../agent/push/dispatcher.js';
 import type { PushProvider, PushResult, TokenInvalidationCallback } from '../../types/push.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
@@ -498,5 +501,64 @@ test('KnowledgeSourceService tenant predicate：共享物理 db 只种 B 的知�
     'tA delete tB 的知识源 → NotFound（tenant predicate 隔离）',
   );
   assert.ok(svc.getById('tB', createdB.id), 'tA 越权删除失败后 B 的知识源仍在');
+  db.close();
+});
+
+/* ── TenantEnterpriseProfile 组（Task 6）：tenant_enterprise_profiles 有 tenant_id 列（主键）→ profile/OIDC/KMS
+ *    方法已带 tenantId，ctor (tx)→(resolver) + 每方法经 dbForTenant(tenantId) 直查。
+ *    storeScimToken/resolveScimTenant（token→tenant，mixed-scope）已拆到 ScimTenantDirectory（单库过渡 coordinatorDb）。 ── */
+
+test('TenantEnterpriseProfileService per-tenant：A upsert 落自己 shard（s0），用 tB（→s1）getProfile 查不到（选对 shard + tenant predicate）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——刻意让 B 映射到非 home，才能被 mutation① 换 home 揪出。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const config = loadConfig({ encryption: { enabled: false } });
+  const svc = new TenantEnterpriseProfileService(resolver, config);
+  /* A（home 租户）的 profile 经 service upsert（必须由 dbForTenant 选对 s0）。 */
+  svc.upsertProfile('tA', { deploymentMode: 'dedicated_db', kafkaNamespace: 'tenant-a' });
+  /* A 在自己 shard（s0）getProfile 查得到（有落库记录 → createdAt 非 null）。 */
+  assert.equal(svc.getProfile('tA').deploymentMode, 'dedicated_db', 'A 自己 shard 查得到已落库的 profile');
+  assert.notEqual(svc.getProfile('tA').createdAt, null, 'A 的 profile 有落库记录（createdAt 非 null）');
+  /* 用 tB（→s1）getProfile：s1 根本没这行 → 回退默认（createdAt 为 null，不串 shard）。 */
+  const bProfile = svc.getProfile('tB');
+  assert.equal(bProfile.createdAt, null, '用 tB（→s1）getProfile：无记录回退默认（不串 shard）');
+  assert.equal(bProfile.deploymentMode, 'shared_cluster', 'B 侧无 A 的 dedicated_db（不串 shard）');
+  /* 物理断言：tA 的 profile 行只在 s0（A 的 shard）、s1 无（防「都落 host」的 shard 路由 bug）。 */
+  assert.ok(s0.prepare(`SELECT 1 FROM tenant_enterprise_profiles WHERE tenant_id = 'tA'`).get(), 'tA profile 行在 s0');
+  assert.equal(s1.prepare(`SELECT 1 FROM tenant_enterprise_profiles WHERE tenant_id = 'tA'`).get(), undefined, 's1 无 tA profile 行');
+  s0.close(); s1.close(); coord.close();
+});
+
+test('TenantEnterpriseProfileService tenant predicate：共享物理 db 只种 B 的 profile，用 tA getProfile 不命中 B（防同库跨租户）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的 profile。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const config = loadConfig({ encryption: { enabled: false } });
+  const svc = new TenantEnterpriseProfileService(resolver, config);
+  svc.upsertProfile('tB', { deploymentMode: 'dedicated_db', kafkaNamespace: 'tenant-b' });
+  /* getProfile：用 tA 查 → tenant predicate（WHERE tenant_id='tA'）→ 回退默认（不命中 B 的行）。 */
+  const aProfile = svc.getProfile('tA');
+  assert.equal(aProfile.createdAt, null, 'tA getProfile 无记录（tenant predicate 隔离，不命中 tB 的行）');
+  assert.equal(aProfile.deploymentMode, 'shared_cluster', 'tA 侧无 tB 的 dedicated_db');
+  /* B 自己查得到（正向锚点）。 */
+  assert.equal(svc.getProfile('tB').deploymentMode, 'dedicated_db', 'tB 自己查得到已落库的 profile');
+  db.close();
+});
+
+test('ScimTenantDirectory 单库过渡：storeScimToken 存 + resolveScimTenant 往返命中（coordinatorDb，token→tenant）', () => {
+  /* 单库过渡：ScimTenantDirectory 用 resolver.coordinatorDb()（单库=host db，行为不变）。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const dir = new ScimTenantDirectory(resolver);
+  /* 先建 profile 行（storeScimToken 无记录时会 insert-with-token，但保持与旧行为一致：直接 store）。 */
+  dir.storeScimToken('tB', 'scim_secret_token_b');
+  /* resolve 往返：token → tenant（无 tenantId 入参，token 即定位符）。 */
+  assert.deepEqual(dir.resolveScimTenant('scim_secret_token_b'), { tenantId: 'tB' }, 'store 的 token 能 resolve 回 tB');
+  /* 未知 token → null（不命中）。 */
+  assert.equal(dir.resolveScimTenant('unknown_token'), null, '未知 token resolve → null');
+  /* 同一租户重新 store 覆盖旧 token：旧 token 失效、新 token 命中。 */
+  dir.storeScimToken('tB', 'scim_rotated_token_b');
+  assert.equal(dir.resolveScimTenant('scim_secret_token_b'), null, '轮换后旧 token 失效');
+  assert.deepEqual(dir.resolveScimTenant('scim_rotated_token_b'), { tenantId: 'tB' }, '轮换后新 token 命中 tB');
   db.close();
 });

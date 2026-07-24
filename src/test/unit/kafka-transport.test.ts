@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { loadConfig } from '../../config/schema.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import {
   buildTenantKafkaTopic,
@@ -45,7 +46,7 @@ describe('Kafka transport helpers', () => {
   });
 
   it('可根据 enterprise deployment profile 解析 tenant Kafka topic', () => {
-    const service = new TenantEnterpriseProfileService(db, loadConfig({}));
+    const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), loadConfig({}));
     service.upsertProfile('tenant-enterprise', {
       deploymentMode: 'dedicated_db',
       kafkaNamespace: 'tenant-enterprise',
@@ -104,7 +105,7 @@ describe('Kafka transport helpers', () => {
   });
 
   it('Kafka outbox producer 会按 tenant namespace 分 topic 发送', async () => {
-    const profileService = new TenantEnterpriseProfileService(db, loadConfig({}));
+    const profileService = new TenantEnterpriseProfileService(new SingleDbResolver(db), loadConfig({}));
     profileService.upsertProfile('tenant-enterprise', {
       deploymentMode: 'dedicated_db',
       kafkaNamespace: 'tenant-enterprise',
