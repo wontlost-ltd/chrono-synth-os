@@ -10,7 +10,7 @@
 
 - **shardKey 稳定物理库标识**：`allShardDbs()` 只返 `IDatabase[]`，`IDatabase` 无公开 connStr。建 `src/storage/shard-key.ts` 导出 `makeShardKeyer(): (db: IDatabase) => string`（内部 `WeakMap<IDatabase,string>` + 单调计数器，`shard#0/shard#1/...` 按首见顺序）。每 worker 一个 keyer 实例，fan-out 循环 `const shardKey = this.keyer(shardDb)`。测试断言按 shardKey 稳定（非数组下标）。
 - **公共可配置 throwingDb 测试桩（Codex：5 现有桩语义不同不能统一为全抛）**：建 `src/test/support/throwing-db.ts` 导出 `throwingDb(opts?: { on?: 'execute' | 'queryMany' | 'queryOne' | 'prepare' | 'all' }): IDatabase`——按 `opts.on` 指定的方法抛错、其余 no-op/返空（默认 `on:'execute'`）。**逐文件按原语义迁移** 5 现有 *-sharding.test.ts（billing/quota/template 原 execute 抛→`throwingDb({on:'execute'})`；persona-marketplace/persona-core 原 queryMany 抛→`throwingDb({on:'queryMany'})`），跑这 5 测确认行为不变。Plan 2 新测按需选 `on`。
-- **observability 独立进程拆出（真交付物，非只声明）**：Plan 2 **不含** observability worker fan-out。其跨 shard（Kafka consumer-group 路由/多 pipeline 生命周期/monitor 聚合）是独立子设计——**待本 Plan 2 完成后，另起独立 spec+plan 单独走**。本计划 Self-Review 的 spec 覆盖据此排除 observability（spec §范围里 observability 那条明确 defer）。
+- **observability 独立进程拆出（真交付物已建，非只声明）**：Plan 2 **不含** observability worker fan-out。其跨 shard（Kafka consumer-group 路由/多 pipeline 生命周期/monitor 聚合/resolver 来源可能依赖 Plan 3）是独立子设计——**已建 DEFERRED 子 spec `docs/superpowers/specs/2026-07-25-tenant-sharding-observability-fanout-DEFERRED.md`**，待本 Plan 2（其余 5 块）完成后单独 brainstorm→spec→plan→实现。本计划 Self-Review 的 spec 覆盖据此排除 observability。
 - **ShardAggregate 通用类型**：建 `src/observability/shard-aggregate.ts` 导出 `interface ShardAggregate<TData> { data: TData; degraded: boolean; shardErrors: Array<{ shardKey: string; error: string }> }` + `aggregateShards<TShard, TData>(resolver, keyer, perShard: (db: IDatabase) => TShard, merge: (results: TShard[]) => TData): ShardAggregate<TData>`（**双泛型** TShard/TData，遍历 allShardDbs 逐 shard perShard 收集 + merge 成功结果 + shardErrors 收失败）。
 - **kernel query 链（Codex：新 raw query 需全链）**：Task5 的无-limit tenant usage raw query 需在 `packages/kernel/src/domain/.../metrics-queries.ts` 加 query constant+factory+类型+export，再在 `src/storage/executors/metrics-query-executors.ts` 注册——implementer 照现有 metrics query 的 kernel→executor 链核验后补全链（非只改 executor）。
 
@@ -66,7 +66,7 @@
 - [ ] **Step 0: 建公共工具（本 task 前置，全 Plan 复用）**
 
 `src/storage/shard-key.ts`：`export function makeShardKeyer(): (db: IDatabase) => string { const m = new WeakMap<IDatabase, string>(); let n = 0; return (db) => { let k = m.get(db); if (!k) { k = \`shard#\${n++}\`; m.set(db, k); } return k; }; }`。
-`src/test/support/throwing-db.ts`：`export function throwingDb(): IDatabase { ... }`（照 `billing-outbox-sharding.test.ts` 现有本地 throwingDb 抄一份，全方法抛）；改 5 个现有 *-sharding.test.ts（persona-marketplace-recovery/quota-manager/persona-template-service/persona-core-service/billing-outbox）的本地 `throwingDb` 为 `import { throwingDb } from '../support/throwing-db.js'`，跑这 5 测确认行为不变。
+`src/test/support/throwing-db.ts`：`export function throwingDb(opts?: { on?: 'execute' | 'queryMany' | 'queryOne' | 'prepare' | 'all' }): IDatabase`（默认 `on:'execute'`；按 `opts.on` 指定方法抛、其余 no-op/返空——**先 Read 5 现有本地 throwingDb 确认各自抛哪个方法**）；**逐文件按原语义迁移**：billing/quota/template 原 execute 抛→`throwingDb({on:'execute'})`（=默认）；persona-marketplace-recovery/persona-core 原 queryMany 抛→`throwingDb({on:'queryMany'})`。改这 5 个 *-sharding.test.ts 的本地 `throwingDb` 为 import + 对应 `{on}`，跑这 5 测确认行为不变。（**与 Global Constraints 的 `throwingDb({on})` 一致——无「无参全抛」版本。**）
 
 - [ ] **Step 1: 写 GDPR fan-out + 健康状态机测（红）**
 
@@ -89,7 +89,7 @@
 - `recordFailure(k)` 累加 consecutiveFailures + lastFailureAt；`recordSuccess(k)` 删。
 - **isHealthy 保留 timer 生命周期语义**（Codex：现未 start/stop 后应 false）：`return this.timer !== undefined && this.shardFailures.size === 0`（不能只判 shardFailures.size）。
 - timer 回调 flushOnce 后：`if (r.shardErrors.length > 0 || r.totalFailed > 0) logger.error(...)`（强制告警非「决定」）。
-- **metric 所有权定死**：media shard-error 用**模块级内存 counter**（照 billingMetrics 形态）；`registerMetricsRoutes` 读该模块级 counter + worker 的 degraded 状态暴露 `mediaRetentionShardEraseFailures` + `mediaRetentionDegraded` gauge（route 从模块级 metrics + 注入的 worker.isHealthy 读，别把 worker 实例散到 route——用模块级 metrics 状态是 codebase 既有模式，Read billingMetrics 暴露确认）。
+- **metric/degraded 状态所有权定死（唯一所有者=模块级 state，Codex #2/#3）**：建**模块级 media retention metrics state**（照 billingMetrics 形态，Read 确认），持 `shardEraseFailures` counter **和** `degraded` gauge 两者；**worker flushOnce 更新它**（失败 shard-run counter++ + set degraded=isHealthy 取反）；**`registerMetricsRoutes` 只读该模块级 state** 暴露 `mediaRetentionShardEraseFailures` + `mediaRetentionDegraded` 到 JSON/Prometheus。**绝不把 worker 实例传进 route**（唯一所有者是模块级 state，worker 写 route 读，无第二来源）。
 
 - [ ] **Step 4: 跑测确认通过** — Expected PASS。
 
@@ -151,9 +151,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - Modify: `src/server/app.ts:363-389`（两 worker 装配传 resolver）
 - Test: `src/test/unit/settlement-recovery-sharding.test.ts`（新建）
 
-**Interfaces:**
-- Settlement: ctor `(resolver, ...)`；flushInternal `for (const db of allShardDbs()) new SettlementReconciliationService(db).reconcileTenants()`（每 shard 枚举其租户），逐 shard 隔离聚合。
-- RuntimeRecovery: ctor 从裸 db 换收共享 `resolver`（**最小改**：内部原 `PersonaCoreService.fromResolver(new SingleDbResolver(this.db))` → `PersonaCoreService.fromResolver(this.resolver)`），底层 `recoverTimedOutRuntimeSessions` 的 `source.allDbs()` fan-out 自动生效。
+**Interfaces（签名以 Read 为准）:**
+- Settlement: **先 Read `SettlementReconciliationWorker.flush()` 现返回类型 + `SettlementReconciliationService.reconcileTenants()` 返回**（Codex 核 flush 现返 `SettlementReconciliationRun[]`）。ctor 首参 tx→`resolver`；flushInternal `for (const db of allShardDbs()) new SettlementReconciliationService(db).reconcileTenants()` 每 shard 枚举其租户，逐 shard try/catch 隔离。**公开返回契约定死**：flush 返回 `{ runs: SettlementReconciliationRun[]; shardErrors: Array<{ shardKey: string; error: string }> }`（各 shard runs concat + 失败 shard 收 shardErrors——**明确返回结构，非只「isolate aggregate」**，Codex #3）；现有 flush 调用方（app.ts timer）同步适配新返回。
+- RuntimeRecovery: ctor 从裸 db 换收共享 `resolver`（**最小改**：内部原 `PersonaCoreService.fromResolver(new SingleDbResolver(this.db))` → `PersonaCoreService.fromResolver(this.resolver)`——先 Read 确认此行），底层 `recoverTimedOutRuntimeSessions` 的 `source.allDbs()` fan-out 自动生效。
 
 - [ ] **Step 1: 写 Settlement + Recovery fan-out 测（红）**
 
@@ -178,7 +178,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `src/agent/tool-invocations-retention-worker.ts`（worker ctor 收 resolver + flushOnce 遍历 allShardDbs 各 new ToolPermissionService(shardDb)）
-- Modify: `src/server/routes/auth.ts:290-292`（`cleanupExpiredTokens` **route helper 改签名**收 resolver——**逐 shard try/catch 隔离**：`for (const shardDb of resolver.allShardDbs()) { try { total += AuthService.cleanupExpired(shardDb); } catch { /* 单 shard 清理失败不阻断其他 shard */ } }`）
+- Modify: `src/server/routes/auth.ts:290-292`（`cleanupExpiredTokens` **route helper 改签名**收 `(resolver, logger)`——**逐 shard try/catch 隔离 + 失败不静默**：catch 里 `logger.error`（真实签名）记该 shard 失败（Codex #4：不能静默 swallow），继续下一 shard；返回 `{ total: number; shardErrors: string[] }` 或至少 catch 内强制 logger.error（app.ts 调用点消费/记录）。单 shard 失败不阻断其他 shard 清理。）
 - Modify: `src/server/app.ts`（抽 `runDataRetentionOnce(...)` 可测函数 + 三处装配传 resolver；`cleanupExpiredTokens(db)` @ :944 改 `cleanupExpiredTokens(resolver)`）
 - Test: `src/test/unit/retention-timers-sharding.test.ts`（新建）
 
@@ -235,8 +235,9 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/observability/metrics-query-service.ts src/server/routes/metrics.ts src/server/app.ts src/test/unit/metrics-sharding.test.ts
-git commit -m "feat(shard): MetricsQueryService scatter-gather(diversity 全局重算/updated_at MAX/usage 全局 sort)+partial failure {data,degraded,shardErrors}
+git add src/observability/shard-aggregate.ts src/observability/metrics-query-service.ts packages/kernel/src/domain src/storage/executors/metrics-query-executors.ts src/server/routes/metrics.ts src/server/app.ts src/test/unit/metrics-sharding.test.ts
+# 若 kernel dist 消费：tsc -b packages/kernel --force 后一并 add dist（若非 gitignore）；metrics-routes.test 若迁移一并 add
+git commit -m "feat(shard): MetricsQueryService scatter-gather(diversity 全局重算/updated_at MAX/usage 全局 sort)+partial failure {data,degraded,shardErrors}+ShardAggregate+kernel raw query
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -258,12 +259,12 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: 写 route 直查落对 shard 测（红）**
 
-（2 shard）用 `createApp({ os, resolver: FakeMultiShardResolver, ... })`（照现有 route 测的 createApp + app.inject 手法）+ tenant hook 从 JWT/header 填 `request.tenantId`。租户 A 映射 s1：
-- decisions：`app.inject POST /api/v1/decisions`（body 含 decision case 字段）带 A 的 auth → 断言 decision_case 行落 **s1**（`resolver.dbForTenant('tenantA')`）+ **s0 该行 undefined**；GET 列表经 s1 读回。
-- onboarding：`POST /api/v1/onboarding/...` 建 onboarding_session → 落 s1、s0 无。
-- admin-deployment：`POST /api/v1/admin/deployment/...`（需 admin role JWT + 前置 seed tenant_key_versions 到 s1）→ tenant_key_versions 落/读 s1。
-- onboarding-v2：`POST /api/v1/onboarding-v2/...`（需 organization/session fixture）→ persona_versions 落 s1。
-每 endpoint 的确切 path/body/role 以现有对应 route 测（decisions.test/onboarding.test 等）为骨架照抄，只把 db 换 FakeMultiShardResolver 并加落对 shard 断言。若某 route 无现成测则查该 route 注册的 method+path 定路由契约。
+（2 shard）用 `createApp({ os, resolver: FakeMultiShardResolver, ... })`（照现有 route 测的 createApp + app.inject 手法）+ tenant hook 从 JWT/header 填 `request.tenantId`。租户 A 映射 s1。**真实 endpoint（Codex 核，以现有测试文件为骨架）**：
+- decisions：`POST /api/v1/decisions`（骨架测 `decision-api.test.ts`）带 A 的 auth → 断言 decision_case 行落 **s1**（`resolver.dbForTenant('tenantA')`）+ **s0 该行 undefined**；GET 列表经 s1 读回。
+- onboarding：`POST /api/v1/onboarding/start`（骨架 `onboarding-api.test.ts`）建 onboarding_session → 落 s1、s0 无。
+- admin-deployment：`POST /api/v1/admin/vault/keys/:keyRef/rotate`（骨架 `enterprise-deployment-api.test.ts`，需 admin role JWT + 前置 seed tenant_key_versions 到 s1）→ tenant_key_versions 落/读 s1。
+- onboarding-v2：`POST /api/v1/onboarding/v2/agent`（需 organization/session fixture）→ persona_versions 落 s1。
+**先 Read** 上述骨架测试文件确认确切 body/role/fixture，只把 db 换 FakeMultiShardResolver 并加落对 shard 断言。
 
 - [ ] **Step 2: 跑测确认失败** — Expected FAIL。
 - [ ] **Step 3: 改四 route** — 按 Interfaces。
