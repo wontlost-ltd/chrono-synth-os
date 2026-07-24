@@ -2,7 +2,7 @@
 
 **Goal:** 让分片引擎从「就位未激活」变「可真多-shard 跑」——首次生产装配 ShardRouter（typed runtime bundle 单 owner 作放开判据），下沉剩余 root-scoped carrier（含 P0 修 PrivacyService GDPR 静默漏擦），补 2-shard 行为证明，真 2-shard PG 端到端验收。**分片激活最后一步，唯一放开生产多库门，最高风险。**
 
-> **第 3 轮修订（采纳 Codex 67/100 退回 + 深挖分水岭事实）**：深挖确认 **TenantOSFactory 已传 `resolver.dbForTenant(tenantId)` 给每租户 ChronoSynthOS**（`tenant-os-factory.ts:110-127`）——per-tenant OS 的 ~20 内部层换 resolver 实现后**自动落对 shard，非重写内核**。故 Plan 3 真范围 = 放开门（小）+ `requires-resolver-rewire`(114) root-scoped carrier 下沉（P0=PrivacyService GDPR）+ ~200 edge 2-shard 证明（多是测试）。解决 Codex 4 致命：① bundle 不 seed hostDb 当 home（从 homeShard 自己 connStr 建）② PrivacyService GDPR 漏擦**改为 P0 代码修（下沉 dbForTenant），非 defer/501**（深挖确认 eraseData 用 root os.getDatabase() 是可修的 carrier 下沉，非需 OS facade 分片）③ 删 isMultiShardActive（守卫用实例比较）④ 统一 runtime `{rootDb, resolver, close}` 单一 close 所有权。
+> **第 3 轮修订（采纳 Codex 67/100 退回 + 深挖分水岭事实）**：深挖确认 **TenantOSFactory 已传 `resolver.dbForTenant(tenantId)` 给每租户 ChronoSynthOS**（`tenant-os-factory.ts:110-127`）——per-tenant OS 的 ~20 内部层换 resolver 实现后**自动落对 shard，非重写内核**。故 Plan 3 真范围 = 放开门（小）+ `requires-resolver-rewire`(114) root-scoped carrier 下沉（P0=PrivacyService GDPR）+ ~200 edge 2-shard 证明（多是测试）。解决 Codex 4 致命：① bundle 不 seed hostDb 当 home（从 homeShard 自己 connStr 建）② PrivacyService GDPR 漏擦**改为 P0 代码修（下沉 dbForTenant），非 defer/501**（深挖确认 eraseData 用 root os.getDatabase() 是可修的 carrier 下沉，非需 OS facade 分片）③ 删 isMultiShardActive（守卫用实例比较）④ 统一 runtime `{defaultDb, resolver, close}` 单一 close 所有权（defaultDb=home 非 coordinator）。
 
 ## 分水岭事实（决定范围）
 
@@ -12,22 +12,23 @@
 
 ## 核心设计决策
 
-### 1. typed runtime bundle 作放开判据（单 owner，含 rootDb）——Codex #1/#4
+### 1. typed runtime bundle 作放开判据（单 owner，含 defaultDb=home）——Codex #1/#4
 
 新建 `createShardedDatabaseRuntime(config): DatabaseRuntime`（`src/storage/sharded-database-runtime.ts`）：
 ```ts
 interface DatabaseRuntime {
   resolver: TenantDbResolver;
-  rootDb: IDatabase;      // 平台级/default 租户 db（明确 scope + 单一所有权）
+  defaultDb: IDatabase;   // = resolver.dbForTenant('default')（=home shard）——供 root OS（default 租户内核）
   close(): void;          // 单 owner：关它拥有的一切
 }
 ```
-- **单库分支**（`shards` 空）：`const hostDb = createDatabase(config)` → `{ resolver: new SingleDbResolver(hostDb), rootDb: hostDb, close: () => {} }`（hostDb 由 os 拥有，runtime close no-op；rootDb=hostDb）。
-- **多库分支**（`shards` 非空，**唯一构造 ShardRouter 处**）：config 嵌套 `{[id]:{connectionString}}` → flat `{[id]:connStr}`；coordinatorConnStr 取 `config.db.coordinator?.connectionString ?? shards[homeShardId].connectionString`；`buildDb=(cs)=>{const db=new PostgresDatabase(cs,pool); runDslPostgresMigrations(db); return db;}`；`new ShardRouter({shards, homeShardId, coordinatorConnStr, buildDb})`——**不传 seedDbs**（**Codex #1 致命修复**：homeShard 从它自己的 `shards[homeShardId].connectionString` 由 buildDb 建 owned，绝不 seed hostDb 当 home——hostDb 连 `config.db.connectionString` 与 homeShard connStr 可不同）；`router.initialize()`（预热全池，失败 throw+回收）。**rootDb = `router.coordinatorDb()`**（多库下平台级/default 落 coordinator，若 coordinator==home 则 per-connStr 缓存复用同实例）。返 `{ resolver: router, rootDb: router.coordinatorDb(), close: () => router.close() }`。
-- **rootDb 与 close 所有权（Codex #4）**：**ChronoSynthOS 不再自建 db close**——root OS 用 `new ChronoSynthOS({ db: runtime.rootDb, ownsDb: false })`（ChronoSynthOS ctor 加 `ownsDb` 标志，false 时 close 不下传 db.close）。**runtime 是 db 单 owner**：多库关 ShardRouter owned 池（含 rootDb=coordinator，若 owned）；单库 hostDb 由 os 拥有（runtime close no-op，此路径 ChronoSynthOS ownsDb=true 保持现状零回归）。**避免 os.close + runtime.close 双重关同一 db**。
+**（第 4 轮 Codex 致命修复：`rootDb` 改 `defaultDb`）**——root OS 是 `tenantId='default'`，`dbForTenant('default')=home`（default→home 铁律），故 root OS 的 db 必须是 **home shard**（`defaultDb`），**不是 coordinator**。若 root OS 用 coordinator，default 租户的 per-persona 内核（Core/UpdateGate/TaskQueue/snapshots）落 coordinator、resolver 访问的 default 数据落 home → 又静默分裂（与我上轮修的 hostDb seed 分裂同类）。**平台级代码显式用 `resolver.coordinatorDb()`**，不提供含混的「平台级/default rootDb」让消费者猜 scope。
+- **单库分支**（`shards` 空）：`const hostDb = createDatabase(config)` → `{ resolver: new SingleDbResolver(hostDb), defaultDb: hostDb, close: () => {} }`（hostDb 由 os 拥有，runtime close no-op；单库 dbForTenant('default')=coordinatorDb=hostDb 同实例）。
+- **多库分支**（`shards` 非空，**唯一构造 ShardRouter 处**）：config 嵌套 `{[id]:{connectionString}}` → flat `{[id]:connStr}`；coordinatorConnStr 取 `config.db.coordinator?.connectionString ?? shards[homeShardId].connectionString`；`buildDb=(cs)=>{const db=new PostgresDatabase(cs,pool); runDslPostgresMigrations(db); return db;}`；`new ShardRouter({shards, homeShardId, coordinatorConnStr, buildDb})`——**不传 seedDbs**（Codex #1：homeShard 从它自己的 `shards[homeShardId].connectionString` 由 buildDb 建 owned，绝不 seed hostDb 当 home——hostDb 连 `config.db.connectionString` 与 homeShard connStr 可不同）；`router.initialize()`（预热全池，失败 throw+回收）。**defaultDb = `router.dbForTenant('default')`（=home shard，非 coordinator）**。返 `{ resolver: router, defaultDb: router.dbForTenant('default'), close: () => router.close() }`。（coordinator 独立于 home 时是三库布局：home/shard2/coordinator——测试须用独立 coordinator+home 三库验 default→home 非 coordinator。）
+- **close 所有权（Codex #4）**：**ChronoSynthOS 不再无条件 db close**——root OS 用 `new ChronoSynthOS({ db: runtime.defaultDb, ownsDb: false })`（ctor 加 `ownsDb` 缺省 true 保现状；false 时 `close()` 不下传 `this.db.close()`）。**runtime 是 db 单 owner**：多库关 ShardRouter owned 池（home=defaultDb + 其他 shard + 独立 coordinator 全 owned）；单库 hostDb os 拥有（runtime close no-op，ChronoSynthOS ownsDb=true 零回归）。**避免 os.close+runtime.close 双重关**。关闭顺序 `app.close → rootOs.close(不关 db) → runtime.close(全池各关一次)`；runtime 建成后若 OS 构造/createApp 失败须回收 runtime。
 - **类型即证明**：多库 initialize 成功才产出 `DatabaseRuntime`（含真 resolver）；失败 throw=fail-closed。`assertShardingActivationAllowed` 删除，放开逻辑内化进 bundle。**无 isMultiShardActive 布尔**（Codex #3——守卫用实例比较，见 §3）。
 
-**入口装配链**：进程启动 `const runtime = createShardedDatabaseRuntime(config)` → root OS `new ChronoSynthOS({ db: runtime.rootDb, ownsDb: config 单库 })` → `createApp({ os: rootOs, resolver: runtime.resolver, ... })` → 退出**进程入口**（main.ts/main-desktop.ts）注册 `runtime.close()`（createApp 不声称拥有 runtime close——Codex 指出 createApp 拿不到 bundle；改由 main 入口 owns runtime 生命周期，createApp onClose 只 stop worker）。
+**入口装配链**：进程启动 `const runtime = createShardedDatabaseRuntime(config)` → root OS `new ChronoSynthOS({ db: runtime.defaultDb, ownsDb: (config 单库) })` → `createApp({ os: rootOs, resolver: runtime.resolver, ... })` → 退出**进程入口**（main.ts/main-desktop.ts）注册 `runtime.close()`（createApp 拿不到 runtime——改由 main 入口 owns runtime 生命周期，createApp onClose 只 stop worker）。
 
 **3 guard 职责（Codex #4）**：`factory.createDatabase(config)` 只管单库（shards 非空直接 throw，非调删掉的 assert——它是「单库入口」防旧路径拿多库 config 建裸 db）；`createShardedDatabaseRuntime` 多库唯一装配者+owner；`createApp` 接收 resolver+os 不自建不 assert。
 
@@ -35,7 +36,13 @@ interface DatabaseRuntime {
 
 **P0 正确性——PrivacyService GDPR 静默漏擦（Codex #2 致命，改为代码修非 defer）**：
 - `privacy-service.ts` eraseData(:513)/exportData(:459)/其余 8 处全用 `this.os.getDatabase()`(root host db)——多库非-home 租户 erase 在 host 库删 0 行却返 deleted:true（GDPR Art.17 漏擦）。
-- **修**：PrivacyService ctor **加 `resolver: TenantDbResolver`**；eraseData/exportData/commitImport/startExportJob/LegalHoldService 构造全改 `resolver.dbForTenant(tenantId)`（tenant-scoped 数据在其 shard 真删/真导）；平台级 export job 表若无 tenant_id 归 coordinator。同步 v1 privacy route + v2 portability route 的 PrivacyService 构造点传 resolver。**这是 carrier 下沉（PrivacyService 是 enterprise service 非 OS 内核层，深挖确认可下沉），非需 OS facade 分片。** 非-home 租户 erase 在其真 shard 删——不再漏擦，GDPR Art.17 真履行（非 501 拒绝）。
+- **修（PrivacyService 是 mixed-scope，须逐 capability 路由表，非笼统「全改 dbForTenant」——第 4 轮 Codex #2 致命）**：PrivacyService ctor **加 `resolver: TenantDbResolver`**。**关键**：`TENANT_TABLES` 含 **`tenant_identity_directory`（coordinator 表，Plan 1c——email/token/key→tenant 全局目录）**——若全改 dbForTenant 会**漏擦 coordinator 目录**（shard 上同名表空，coordinator 真目录行不删→删后仍能定位该租户→GDPR 漏导/漏擦）。逐 capability 路由表：
+  - **shard tenant 表**（life_simulations/decisions/avatars/... 有 tenant_id 归属该 shard）→ `resolver.dbForTenant(tenantId)`。
+  - **coordinator 身份目录**（`tenant_identity_directory`）→ `resolver.coordinatorDb()`（与 Plan 1c `TenantIdentityDirectory` 同——删该租户所有 lookup 行）。
+  - **persona 状态**（core）→ 已经 `getOS(tenantId)→TenantOSFactory` 落对 shard（不变）。
+  - **import token store / export jobs / audit（recordPrivacyAudit）/ profileService**：逐个判表级归属（tenant-scoped→dbForTenant / 平台→coordinator），route 的 `recordPrivacyAudit(os.getDatabase())` 同步。
+  - **跨库擦除顺序（幂等/失败恢复，与 Plan 1c 协调）**：先删/失活 coordinator 登录目录（阻止新访问定位该租户）→ 再擦 shard tenant 数据 → 最后完成目录清理。**eraseData 不再是单 DB 原子事务**——是跨库序列，须定幂等 + 崩溃恢复（复用 Plan 1c PENDING/ACTIVE + 恢复 worker 思路）。
+- 同步 v1 privacy route + v2 portability route 的 PrivacyService 构造点传 resolver。**这是 carrier 下沉（PrivacyService 是 enterprise service 非 OS 内核层，深挖确认可下沉），非需 OS facade 分片。** 非-home 租户 erase 在其真 shard + coordinator 目录都删——不再漏擦，GDPR Art.17 真履行（非 501 拒绝、非漏 coordinator）。
 - **companion 例外**：companion 的 getOS 消费（chat/perceive 等 sharedDb）**若依赖 per-tenant OS 内部状态**（非纯 tenant-scoped 表直查）则经 `getTenantOS(tenantId)`（factory 已 shard-ready 自动对）；纯 tenant-scoped 表直查（如 companion 的 subscriptions 读）下沉 dbForTenant。逐 sink 判：能经 getTenantOS 的走它，直查表的下沉。
 
 **app.ts 3 大 root capture**：`:238 db`（组合根 host db，几十子服务/route/worker capture）、`:283`（jwtKeyStore）、`:422 queueDb`——逐消费者判：tenant-scoped → dbForTenant/getTenantOS；平台级 → coordinatorDb；worker → allShardDbs fan-out（Plan 2 已做多数）。
@@ -76,23 +83,26 @@ dbSchema 加 `.superRefine`：shards 非空 → homeShardId 必填且 ∈ shards
 ### 本 Plan 含
 放开门（bundle + 3 guard）+ P0 PrivacyService GDPR 下沉 + app.ts 3 root capture 下沉 + memory-facade/companion carrier 下沉 + TaskQueue per-shard + 剩余 carrier 守卫兜底 + config superRefine + 2-shard 证明（含真 PG 端到端）。
 
-### 本 Plan 分批（诚实——114 carrier + 200 证明是大工程）
-Plan 3 拆多批 SDD task 逐类下沉（P0 PrivacyService/app root 先 → companion/memory-facade → 证明）。**不含**：observability 独立进程 fan-out（DEFERRED 子 spec）；OS facade 真 per-shard 实例化（若 companion 有此需求则守卫兜底 + follow-up）。
+### 拆 3 个子 plan（诚实——114 carrier + 200 证明非单次可审，Codex 建议；每中间态多库门仍关，仅 3c 末提交放开）
+- **Plan 3a：runtime + ownership**——`createShardedDatabaseRuntime` bundle（`{defaultDb=home, resolver, close}` + ownsDb）+ ChronoSynthOS ctor ownsDb 标志 + 3 guard 职责 + config superRefine + main.ts 入口 owns runtime.close。**多库门仍关**（bundle 多库分支先建但 createApp/factory 仍 assert 挡，或 3a 只搭 bundle 骨架单库跑）。
+- **Plan 3b：P0 carrier 下沉**——PrivacyService mixed-scope 路由表（shard tenant 表 + coordinator 目录 + 跨库擦除序列）、app.ts 3 root capture、companion/memory-facade、TaskQueue per-shard；每批完成独立 2-shard 单测（FakeMultiShardResolver）；**多库门仍关**（下沉正确性用 Fake 证，不需真放开）。
+- **Plan 3c：证明 + 原子放开**——`resolved-boundary-unproven`(27) 内核层 2-shard 证明 + 真 PG 三库（coordinator+home+shard2）端到端 + initialize/close/掉线负测；**最后一个提交才删旧激活门放开生产多库**。任何 3a/3b 中间态不得放开。
+- **不含**：observability 独立进程 fan-out（DEFERRED 子 spec）；OS facade 真 per-shard 实例化（若 companion 有此需求则守卫兜底 + follow-up）。
 
 ### 诚实
 分片引擎（ShardRouter + resolver 契约 + TenantOSFactory 传 dbForTenant）已全就位；Plan 3 = 放开门（小）+ carrier 下沉（大但机械，inventory 已铺路线图）+ 证明。**真跑仍依赖用户部署决策**（配几 shard/connStr/coordinator）。**Plan 3 是分片激活最大单 plan，周级工作。**
 
 ## 验收
 - 真 2-shard PG 端到端全清单绿。
-- 单库零回归（shards 空 → SingleDbResolver + rootDb=hostDb + ChronoSynthOS ownsDb=true 现状不变）。
+- 单库零回归（shards 空 → SingleDbResolver + defaultDb=hostDb + ChronoSynthOS ownsDb=true 现状不变）。
 - `npm run test:golden` 全门 EXIT 0（check:db-access——下沉的 carrier edge 升 verified，剩余守卫兜底的诚实标注）。
 - 放开门安全：initialize 失败 → fail-closed；hostDb≠homeShard 时 default 落真 homeShard 非 hostDb（测证不静默分裂）。
-- **PrivacyService GDPR（P0）**：多库非-home 租户 eraseData 在其真 shard 删（非 host 漏擦、非 501 拒绝），测证真删对 shard。
+- **PrivacyService GDPR（P0，三库布局验）**：独立 coordinator+home+shard2 三库，非-home 租户 eraseData 在其真 shard 删 tenant 表 **且** coordinator 删 `tenant_identity_directory` lookup 行（测证：删后 shard tenant 数据空 + coordinator 目录该租户 lookup 空 + 无法再定位该租户；非 host 漏擦、非 501、非漏 coordinator）。default→home 非 coordinator（三库验 default 内核数据落 home 库，非 coordinator 库）。
 
 ## 破坏性
 - 无新迁移。
 - ChronoSynthOS ctor 加 `ownsDb` 标志（缺省 true 保现状零回归；多库 root OS 传 false）。
-- runtime 统一 `{rootDb, resolver, close}`；main.ts/main-desktop.ts 入口 owns runtime.close。
+- runtime 统一 `{defaultDb, resolver, close}`（defaultDb=home 非 coordinator）；main.ts/main-desktop.ts 入口 owns runtime.close。
 - PrivacyService ctor 加 resolver + 全构造点同步；TaskQueue/AvatarAutorun/bulk-import enqueueFor 路由。
 - 放开门：单库零回归；多库首次可用。
 - **已消除 Codex 致命**：hostDb 不 seed 当 home（无静默分裂）；PrivacyService GDPR 真下沉（无漏擦，非 501）；无 isMultiShardActive 布尔；runtime 单一 close 所有权（无双重关）。
