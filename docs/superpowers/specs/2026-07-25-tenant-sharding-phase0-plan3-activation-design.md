@@ -44,7 +44,8 @@ interface DatabaseRuntime {
 
     | Capability | 数据域 |
     |---|---|
-    | `tenant_identity_directory` | coordinator |
+    | `tenant_identity_directory` | coordinator（Plan 1c，全局查找目录） |
+    | `tenant_bootstrap` | coordinator（Plan 1c，PK tenant+op 完成标记；Claude 自审补——TENANT_TABLES 含它，erase 须经 coordinatorDb 删非漏） |
     | tenant payload 表（life_sim/decisions/avatars/...） | tenant shard `dbForTenant` |
     | `import_commit_tokens` | tenant shard |
     | `export_jobs` | tenant shard |
