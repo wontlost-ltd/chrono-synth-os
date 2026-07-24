@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { AppServices } from '../app-services.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, ErrorCode } from '../../errors/index.js';
 import { requireOrganizationRole } from '../plugins/organization-rbac.js';
@@ -13,8 +14,16 @@ function requireJwtUser(request: { user?: JwtPayload }): JwtPayload {
   return user;
 }
 
-export function registerOrganizationRoutes(app: FastifyInstance, services: AppServices): void {
-  const { db, organization: service } = services;
+export function registerOrganizationRoutes(
+  app: FastifyInstance,
+  services: AppServices,
+  /**
+   * 分片 Phase 0 · Plan 1b（Task 9）：RBAC preHandler 改收共享 resolver（非 services.db 裸 host db）。
+   * 组合根穿进唯一 TenantDbResolver，preHandler 在请求内按 request.tenantId 选对 shard 校验 membership。
+   */
+  resolver: TenantDbResolver,
+): void {
+  const { organization: service } = services;
 
   app.get('/api/v1/organizations', async (request) => {
     const user = requireJwtUser(request);
@@ -34,13 +43,13 @@ export function registerOrganizationRoutes(app: FastifyInstance, services: AppSe
   });
 
   app.get<{ Params: { id: string } }>('/api/v1/organizations/:id/members', {
-    preHandler: requireOrganizationRole(db, (request) => (request.params as { id: string }).id),
+    preHandler: requireOrganizationRole(resolver, (request) => (request.params as { id: string }).id),
   }, async (request) => {
     return { data: service.listMembers(request.tenantId, request.params.id) };
   });
 
   app.post<{ Params: { id: string } }>('/api/v1/organizations/:id/members', {
-    preHandler: requireOrganizationRole(db, (request) => (request.params as { id: string }).id, 'org_admin'),
+    preHandler: requireOrganizationRole(resolver, (request) => (request.params as { id: string }).id, 'org_admin'),
   }, async (request, reply) => {
     const body = UpsertOrganizationMemberSchema.parse(request.body);
     const member = service.upsertMember(request.tenantId, request.params.id, {

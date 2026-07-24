@@ -28,6 +28,10 @@ import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js'
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
+import { requireOrganizationRole } from '../../server/plugins/organization-rbac.js';
+import { AuthorizationError } from '../../errors/index.js';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { AppServices } from '../../server/app-services.js';
 
 /** 建带 identities/avatars 表的内存 db（迁移入口——runDslSqliteMigrations 建全表）。 */
 function idDb(): IDatabase {
@@ -693,5 +697,96 @@ test('ApiKeyService tenant predicate：共享物理 db 只种 B 的 key，用 tA
   assert.equal(svc.list('tB').length, 1, 'tA 越权吊销失败后 B 的 key 仍在（is_revoked 未被改）');
   /* B 自己 revoke 生效（正向锚点：验证 revoke 在同租户下正常工作）。 */
   assert.equal(svc.revoke(keyId, 'tB'), true, 'tB revoke 自己的 key → true');
+  db.close();
+});
+
+/* ── Task 9：删 AppServices.db 裸 host db 逃生口 + RBAC preHandler resolver 化 ── */
+
+/**
+ * 编译期断言：AppServices 不再暴露 `db` 字段（裸 host db 逃生口已删）。
+ * 若哪天有人重新加回 `readonly db: IDatabase`，此赋值会因 `never` 类型不匹配而编译红。
+ * 运行时无实质断言（类型层已保证），仅作可读锚点。
+ */
+test('AppServices 类型不再暴露裸 host db 字段（编译期锚点）', () => {
+  type HasDb = 'db' extends keyof AppServices ? true : false;
+  /* 若 AppServices 仍含 db，HasDb=true，下行 `const _noDb: false = ...` 会编译失败。 */
+  const _noDb: false = false as HasDb;
+  assert.equal(_noDb, false, 'AppServices 无 db 字段（若编译到此说明字段确已删）');
+});
+
+/**
+ * 构造一个仅带 tenantId/user 的最小 fastify 请求替身，供 preHandler 直接调用。
+ * RBAC preHandler 只读 request.tenantId + request.user，故替身够用。
+ */
+function fakeRequest(tenantId: string, userSub: string): FastifyRequest {
+  return {
+    tenantId,
+    user: { sub: userSub, tenantId },
+    params: { id: '' },
+  } as unknown as FastifyRequest;
+}
+
+/** 同步跑一次 preHandler，捕获它交给 done 的错误（无错误返回 null）。 */
+function runPreHandler(
+  handler: ReturnType<typeof requireOrganizationRole>,
+  request: FastifyRequest,
+): Error | null {
+  let captured: Error | null = null;
+  /* preHandlerHookHandler 声明了 fastify `this` 绑定，直接调用会触发 this-context 类型报错；
+   * 用 Function.prototype.call 显式传 undefined this 绕过（运行时 handler 不用 this）。 */
+  (handler as (...a: unknown[]) => void).call(undefined, request, {} as FastifyReply, (err?: Error | null) => {
+    captured = err ?? null;
+  });
+  return captured;
+}
+
+test('RBAC preHandler per-tenant：resolver 按 request.tenantId 选对 shard（A 请求命中 s0，查不到只种在 s1 的 B org 成员）', () => {
+  const s0 = idDb(), s1 = idDb(), coord = idDb();
+  /* A→s0（home），B→s1（非 home）——B 的 org + 成员只落 s1；A 请求应经 dbForTenant('tA')→s0 查不到。 */
+  const resolver = new FakeMultiShardResolver({ coordinator: coord, shards: { s0, s1 }, tenantToShard: { tA: 's0', tB: 's1' } });
+  const orgSvc = new OrganizationService(resolver);
+  /* B 建 org（自动建 userB 的 org_admin membership + role binding，落 s1）。先种 users 满足 JOIN。 */
+  seedUser(s1, 'userB', 'tB');
+  const createdB = orgSvc.create('tB', 'userB', { name: 'B 公司', defaultWorkspaceName: 'B 空间' });
+  const orgId = createdB.organization.organizationId;
+
+  const handler = requireOrganizationRole(resolver, () => orgId, 'org_admin');
+
+  /* B 请求（→s1）：userB 是 org_admin → 通过（done 无错）。 */
+  const okReq = fakeRequest('tB', 'userB');
+  assert.equal(runPreHandler(handler, okReq), null, 'B 的 org_admin 经 s1 校验通过');
+  assert.ok(okReq.organizationMembership, 'membership 上下文已注入');
+  assert.ok(okReq.organizationMembership?.roles.includes('org_admin'), '角色含 org_admin');
+
+  /* A 请求（→s0）拿 B 的 orgId：s0 根本无此 org membership → 拒绝（AuthorizationError）。
+   * 这是 per-tenant 的核心证据：preHandler 用 request.tenantId 经 resolver.dbForTenant 选 shard，
+   * 而非固定 host db；A 落 s0、B 的行只在 s1，故 A 查不到。 */
+  const crossReq = fakeRequest('tA', 'userB');
+  const crossErr = runPreHandler(handler, crossReq);
+  assert.ok(crossErr instanceof AuthorizationError, 'A（→s0）拿 B 的 orgId 被拒（不串 shard）');
+  assert.equal(crossReq.organizationMembership, undefined, '被拒时不注入 membership');
+
+  s0.close(); s1.close(); coord.close();
+});
+
+test('RBAC preHandler tenant predicate：共享物理 db 只种 B 的 org 成员，用 tA 请求不命中（防同库跨租户提权）', () => {
+  /* 单一物理 db，A/B 同库（SingleDbResolver 模拟同 shard 内多租户）。只种 B 的 org + 成员。 */
+  const db = idDb();
+  const resolver = new SingleDbResolver(db);
+  const orgSvc = new OrganizationService(resolver);
+  seedUser(db, 'userSharedB', 'tB');
+  const createdB = orgSvc.create('tB', 'userSharedB', { name: 'B 独占公司', defaultWorkspaceName: 'B 空间' });
+  const orgId = createdB.organization.organizationId;
+
+  const handler = requireOrganizationRole(resolver, () => orgId, 'org_admin');
+
+  /* B 自己请求（同库、同租户）→ 通过（正向锚点）。 */
+  assert.equal(runPreHandler(handler, fakeRequest('tB', 'userSharedB')), null, 'tB 自己经校验通过');
+
+  /* A 请求同库、拿 B 的 orgId + B 的 userId：membership query 的 WHERE tenant_id='tA' predicate 隔离 → 拒绝。
+   * 若删 tenant predicate，A 会错误命中 B 的 membership 提权。 */
+  const crossErr = runPreHandler(handler, fakeRequest('tA', 'userSharedB'));
+  assert.ok(crossErr instanceof AuthorizationError, 'tA 同库拿 tB 的 org 成员被拒（tenant predicate 防提权）');
+
   db.close();
 });

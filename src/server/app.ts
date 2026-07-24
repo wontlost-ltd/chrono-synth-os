@@ -752,7 +752,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* ① 通用/平台 */
   registerAuthRoutes(app, db, config);
   registerUserRoutes(app, services);
-  registerOrganizationRoutes(app, services);
+  registerOrganizationRoutes(app, services, captureResolver('organizations-rbac'));
   registerBillingRoutes(app, db, config);
   /* earn→distill 闭环（WP-0）：任务完成 → 经 tenant OS 的 earningDistiller 把高质量 outcome
    * 蒸馏成 core value 候选（经蒸馏门，不绕过）。回调在此注入，因为这里能拿到 os + tenantFactory。 */
