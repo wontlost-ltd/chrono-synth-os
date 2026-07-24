@@ -65,14 +65,14 @@ export interface OnboardingRoutesDeps {
   config: AppConfig;
   /** 共享 TenantDbResolver（组合根唯一实例）。 */
   resolver: TenantDbResolver;
-  /** 直查用 host db（Plan 2 下沉）；缺省回退 os.getDatabase()。 */
+  /** 遗留 host db 入参（Plan 2 · Task 6 起 route 内 tenant-scoped 直查全下沉 resolver.dbForTenant，
+   * 本字段不再被 route 直查使用；仍接收以兼容 app.ts 现有装配调用点）。 */
   db?: IDatabase;
   tenantFactory?: TenantOSFactory;
 }
 
 export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingRoutesDeps): void {
   const { os, config, resolver, tenantFactory } = deps;
-  const sharedDb = deps.db ?? os.getDatabase();
   const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, resolver);
   const costTracker = CostTracker.fromResolver(resolver);
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
@@ -115,13 +115,15 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     }
 
     const tenantOS = getOS(tenantId);
+    /* 分片 Plan 2 · Task 6：subscriptions / tenant_llm_settings 直查下沉 resolver.dbForTenant(tenantId)。 */
+    const tenantDb = resolver.dbForTenant(tenantId);
     const stripeCustomerId = config.stripe.enabled
-      ? sharedDb.prepare<{ stripe_customer_id: string | null }>(
+      ? tenantDb.prepare<{ stripe_customer_id: string | null }>(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId)?.stripe_customer_id ?? undefined
       : undefined;
     /* BYOK：解析本租户有效 LLM 配置（active provider + 该 provider 的加密 key，缺失回退全局 config）。 */
-    const effectiveLlm = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
+    const effectiveLlm = resolveTenantLlmConfig(tenantDb, tenantId, config.intelligence, llmEncryption);
     const llm = new ModelRouter({
       provider: effectiveLlm.provider as LLMProviderName,
       model: effectiveLlm.model,
@@ -189,8 +191,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
   app.post('/api/v1/onboarding/start', async (request, reply) => {
     const tenantId = request.tenantId;
     const session = getOnboarding(tenantId).createSession();
-    /* 持久化到 DB */
-    sharedDb.prepare<void>(
+    /* 持久化到 DB（分片 Plan 2 · Task 6：下沉 resolver.dbForTenant(tenantId)）。 */
+    resolver.dbForTenant(tenantId).prepare<void>(
       `INSERT INTO onboarding_sessions (id, tenant_id, current_step, completed_steps_json, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(session.id, tenantId, session.currentStep, JSON.stringify(session.completedSteps), session.createdAt, session.updatedAt);
@@ -206,8 +208,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
     const memSession = getOnboarding(tenantId).getSession(sessionId);
     if (memSession) return { data: memSession };
 
-    /* 回退到 DB 读取（服务重启后内存缓存已丢失） */
-    const row = sharedDb.prepare<OnboardingSessionRow>(
+    /* 回退到 DB 读取（服务重启后内存缓存已丢失；分片 Plan 2 · Task 6：下沉 resolver.dbForTenant） */
+    const row = resolver.dbForTenant(tenantId).prepare<OnboardingSessionRow>(
       'SELECT * FROM onboarding_sessions WHERE id = ? AND tenant_id = ?',
     ).get(sessionId, tenantId);
     if (!row) {
@@ -247,8 +249,8 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
 
     const session = await getOnboarding(tenantId).submitStep(sessionId, step, data);
 
-    /* 更新 DB */
-    sharedDb.prepare<void>(
+    /* 更新 DB（分片 Plan 2 · Task 6：下沉 resolver.dbForTenant(tenantId)） */
+    resolver.dbForTenant(tenantId).prepare<void>(
       `UPDATE onboarding_sessions SET current_step = ?, completed_steps_json = ?, decision_json = ?, simulation_result_json = ?, snapshot_id = ?, updated_at = ?
        WHERE id = ? AND tenant_id = ?`,
     ).run(

@@ -52,8 +52,10 @@ interface TenantVaultAuditRow {
   performed_at: number;
 }
 
-export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabase, resolver: TenantDbResolver, config: AppConfig): void {
-  /* 分片 Plan 1b（Task 6）：profile 读写经 resolver（tenant-scoped）；SCIM token 存经 ScimTenantDirectory（mixed-scope）。 */
+export function registerAdminDeploymentRoutes(app: FastifyInstance, _db: IDatabase, resolver: TenantDbResolver, config: AppConfig): void {
+  /* 分片 Plan 1b：profile 读写经 resolver（tenant-scoped）；SCIM token 存经 ScimTenantDirectory（mixed-scope）。
+   * 分片 Plan 2 · Task 6：vault keys/audit 直查（tenant_key_versions / tenant_vault_audit）亦全下沉
+   * resolver.dbForTenant——本 registrar 内不再有裸 db 直查（db 入参保留仅为装配调用点兼容）。 */
   const profileService = new TenantEnterpriseProfileService(resolver, config);
   const scimDirectory = new ScimTenantDirectory(resolver);
 
@@ -115,7 +117,9 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
   app.get('/api/v1/admin/vault/keys', {
     preHandler: requireRole('admin'),
   }, async (request) => {
-    const rows = db
+    /* 分片 Plan 2 · Task 6：tenant_key_versions 直查下沉 resolver.dbForTenant(tenantId)
+     * （tenant-scoped，SQL 仍带 WHERE tenant_id；多 shard 下路由到租户所在 shard，单库等价现状）。 */
+    const rows = resolver.dbForTenant(request.tenantId)
       .prepare<TenantKeyVersionRow>(
         `SELECT key_ref, provider, version, status, created_at, revoked_at
          FROM tenant_key_versions
@@ -140,8 +144,11 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
     preHandler: requireRole('admin'),
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request) => {
-    const created = db.transaction(() => {
-      const latest = db
+    /* 分片 Plan 2 · Task 6：读既有版本 + 事务内写新版本全下沉 resolver.dbForTenant（同一 shard db 内开事务，
+     * 源库=写库同 shard，防跨 shard 串写）。 */
+    const tenantDb = resolver.dbForTenant(request.tenantId);
+    const created = tenantDb.transaction(() => {
+      const latest = tenantDb
         .prepare<LatestTenantKeyVersionRow>(
           `SELECT provider, version
            FROM tenant_key_versions
@@ -154,7 +161,7 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
       const version = (latest?.version ?? 0) + 1;
       const createdAt = Date.now();
 
-      db
+      tenantDb
         .prepare(
           `INSERT INTO tenant_key_versions(id, tenant_id, key_ref, provider, version, status, created_at)
            VALUES(?, ?, ?, ?, ?, 'active', ?)`,
@@ -176,7 +183,8 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
     preHandler: requireRole('admin'),
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request, reply) => {
-    const result = db
+    /* 分片 Plan 2 · Task 6：tenant_key_versions 撤销直查下沉 resolver.dbForTenant(tenantId)。 */
+    const result = resolver.dbForTenant(request.tenantId)
       .prepare(
         `UPDATE tenant_key_versions
          SET status = 'revoked', revoked_at = ?
@@ -199,7 +207,8 @@ export function registerAdminDeploymentRoutes(app: FastifyInstance, db: IDatabas
   app.get('/api/v1/admin/vault/audit', {
     preHandler: requireRole('admin'),
   }, async (request) => {
-    const rows = db
+    /* 分片 Plan 2 · Task 6：tenant_vault_audit 直查下沉 resolver.dbForTenant(tenantId)。 */
+    const rows = resolver.dbForTenant(request.tenantId)
       .prepare<TenantVaultAuditRow>(
         `SELECT id, operation, key_ref, key_version, outcome, error_message, performed_at
          FROM tenant_vault_audit
