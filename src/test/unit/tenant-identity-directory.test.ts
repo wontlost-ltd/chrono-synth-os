@@ -301,6 +301,27 @@ describe('TenantIdentityDirectory 协调库门面', () => {
       assert.equal(dir.resolveByEmail('old@example.com'), null, '旧 email 已删');
     });
 
+    it('completeEmailChange 错 operationId（CAS 未命中）→ throw + 旧 email 仍 ACTIVE + 新未激活（不锁死账号）', () => {
+      /* 新 email 已 reserve（正确 opId=ec:cas），但恢复 worker/重试用了 stale/错 operationId 调 complete。 */
+      dir.reserveEmailChange({
+        tenantId: 'tenant_a', userId: 'user_1',
+        oldEmail: 'old@example.com', newEmail: 'target@example.com', operationId: 'ec:cas',
+      });
+
+      /* CAS 按 operationId 匹配 PENDING→ACTIVE；传错 opId → 不命中，须抛错且绝不删旧。 */
+      assert.throws(
+        () => dir.completeEmailChange({ oldEmail: 'old@example.com', newEmail: 'target@example.com', operationId: 'ec:WRONG' }),
+        /CAS|未命中|失败/,
+        'CAS 未命中 → 抛错通知调用方完成失败',
+      );
+
+      /* 铁律「绝不破坏用户空间」：旧 email 仍权威 ACTIVE，用户可继续 login。 */
+      const oldRow = dir.resolveByEmail('old@example.com');
+      assert.equal(oldRow!.status, 'ACTIVE', 'CAS 未命中 → 旧 email 保留、仍 ACTIVE（未锁死账号）');
+      /* 新 email 未激活（仍 PENDING）。 */
+      assert.equal(dir.resolveByEmail('target@example.com')!.status, 'PENDING', 'CAS 未命中 → 新 email 未激活');
+    });
+
     it('rollbackEmailChange → 按 opId 删新 PENDING、旧仍 ACTIVE', () => {
       dir.reserveEmailChange({
         tenantId: 'tenant_a', userId: 'user_1',

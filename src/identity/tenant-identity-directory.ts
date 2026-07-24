@@ -189,13 +189,23 @@ export class TenantIdentityDirectory {
     }
   }
 
-  /** 改名提交：CAS 新 email PENDING→ACTIVE，再删旧 email 目录项（旧地址不再权威）。 */
+  /**
+   * 改名提交：CAS 新 email PENDING→ACTIVE 成功后，才删旧 email 目录项（旧地址不再权威）。
+   *
+   * 删旧 email **守卫在 CAS 命中之后**——若 CAS 未命中（rowsAffected≠1，如 stale/错 operationId、新
+   * PENDING 已被 rollback/过期），新 email 未激活，则抛 StateError 通知调用方（register / Task 8 恢复
+   * worker）完成失败，**绝不删旧 email**。否则「新未激活 + 旧被删」会让用户无任何 ACTIVE email 目录项，
+   * login 按 email 查 null → 账号锁死（违「绝不破坏用户空间」）。
+   */
   completeEmailChange(input: { oldEmail: string; newEmail: string; operationId: string }): void {
     const db = this.resolver.coordinatorDb();
-    db.execute(dirCmdActivate({
+    const activated = db.execute(dirCmdActivate({
       lookupKind: 'email', lookupValue: canonicalizeEmail(input.newEmail),
       operationId: input.operationId, now: Date.now(),
-    }));
+    })).rowsAffected === 1;
+    if (!activated) {
+      throw new StateError('改名提交失败：新 email PENDING→ACTIVE CAS 未命中，旧 email 保留', ErrorCode.STATE_INVALID_TRANSITION);
+    }
     db.execute(dirCmdDeleteByLookup('email', canonicalizeEmail(input.oldEmail)));
   }
 
