@@ -3,6 +3,8 @@ export * from './avatar-projection-logic.js';
 export * from './autorun-queries.js';
 export * from './avatar-queries.js';
 export * from './identity-queries.js';
+export * from './directory-queries.js';
+export * from './bootstrap-queries.js';
 export * from './user-profile-queries.js';
 export * from './auth-queries.js';
 export * from './collaboration-queries.js';
