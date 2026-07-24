@@ -229,6 +229,18 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     ? Fastify({ loggerInstance: deps.logger.pino, bodyLimit: config.request.maxBodyBytes }) as unknown as FastifyInstance
     : Fastify({ logger: false, bodyLimit: config.request.maxBodyBytes });
 
+  /* 分片 Phase 0 · Plan 1：组合根建**唯一一个** TenantDbResolver 穿全链——单库=SingleDbResolver(db)（零回归），
+   * 多库=buildResolver 直接 throw（本 Plan 不激活）。测试可经 deps.resolver 注入 FakeMultiShardResolver 验分流。
+   * 全链（factory + 各 route 子服务 + auth 插件）共享此实例；机械门保证 app.ts/routes 内无内联 SingleDbResolver 构造。
+   * 提前到同步插件之前构造：registerAuth（Plan 1c Task 7）需 resolver 走 api_key_hash→tenant 目录定位。 */
+  const db = deps.db ?? deps.os.getDatabase();
+  const resolver: TenantDbResolver = deps.resolver ?? buildResolver(config, db);
+  /** identity spy：在真实注入边界采集实际传出的 resolver（测试验「全链同一实例」）。 */
+  const captureResolver = (site: string): TenantDbResolver => {
+    deps.captureResolvers?.(resolver, site);
+    return resolver;
+  };
+
   /* 同步插件 */
   registerRequestId(app);
   registerTenantDecorator(app);  /* 仅注册装饰器，hook 延迟到 JWT 之后 */
@@ -239,7 +251,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* ADR-0061 红线 11：desktop sidecar 本地握手 guard（仅 CHRONO_DESKTOP_SESSION 存在时激活；否则 no-op）。
    * 放在 auth 之前=最外层 fail-closed，同机其他进程/误连即便有 JWT 也过不了本地会话门。 */
   registerDesktopSession(app);
-  registerAuth(app, config, deps.db);
+  registerAuth(app, config, captureResolver('auth-plugin'));
   registerAuditLog(app, deps.db);
   registerObservability(app, config);
 
@@ -300,18 +312,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * the implementation and the runbook for the deferred design. */
   void registerA11yHeaders;
 
-  /* 多租户 OS 工厂 */
-  const db = deps.db ?? deps.os.getDatabase();
+  /* 多租户 OS 工厂（db/resolver/captureResolver 已在同步插件之前构造，供 auth 插件共享同一实例）。 */
   const tx = db;
-  /* 分片 Phase 0 · Plan 1：组合根建**唯一一个** TenantDbResolver 穿全链——单库=SingleDbResolver(db)（零回归），
-   * 多库=buildResolver 直接 throw（本 Plan 不激活）。测试可经 deps.resolver 注入 FakeMultiShardResolver 验分流。
-   * 全链（factory + 各 route 子服务）共享此实例；机械门保证 app.ts/routes 内无内联 SingleDbResolver 构造。 */
-  const resolver: TenantDbResolver = deps.resolver ?? buildResolver(config, db);
-  /** identity spy：在真实注入边界采集实际传出的 resolver（测试验「全链同一实例」）。 */
-  const captureResolver = (site: string): TenantDbResolver => {
-    deps.captureResolvers?.(resolver, site);
-    return resolver;
-  };
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
   const services = buildAppServices(db, config, captureResolver('app-services'), deps.logger);
