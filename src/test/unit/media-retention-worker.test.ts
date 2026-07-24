@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { MediaRefStore, type ObjectStorageEraser } from '../../perception/media/media-ref-store.js';
 import { MediaRetentionWorker, FailClosedObjectStorageEraser, ObjectStorageClientEraser } from '../../perception/media/media-retention-worker.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { LocalObjectStorageClient } from '../../privacy/object-storage-client.js';
 import { SilentLogger } from '../../utils/index.js';
 import type { IDatabase } from '../../storage/index.js';
@@ -36,11 +37,11 @@ describe('MediaRetentionWorker（媒体 retention 周期接线）', () => {
 
     const eraser = recordingEraser();
     /* now 注入 10000：expired(5000) 过期，future(99999)/permanent(null) 不动。 */
-    const worker = new MediaRetentionWorker(db, eraser, new SilentLogger(), () => 10000);
+    const worker = new MediaRetentionWorker(new SingleDbResolver(db), eraser, new SilentLogger(), () => 10000);
     const result = await worker.flushOnce();
 
-    assert.equal(result.erased, 1, '仅过期引用被清');
-    assert.equal(result.failed, 0);
+    assert.equal(result.totalErased, 1, '仅过期引用被清');
+    assert.equal(result.totalFailed, 0);
     assert.deepEqual(eraser.erased, ['k-exp'], '只对过期对象调 erase');
     /* 过期引用行已删，未过期保留。 */
     assert.equal(store.getObjectKey('expired'), undefined, '过期引用行已删');
@@ -52,16 +53,16 @@ describe('MediaRetentionWorker（媒体 retention 周期接线）', () => {
     const store = new MediaRefStore(db, TENANT);
     store.register({ id: 'pending', objectKey: 'k-locator', sha256: 'h', mime: 'audio/wav', sizeBytes: 1, durationMs: 1, deleteAfter: 1 }, 1000);
 
-    const worker = new MediaRetentionWorker(db, new FailClosedObjectStorageEraser(new SilentLogger()), new SilentLogger(), () => 10000);
+    const worker = new MediaRetentionWorker(new SingleDbResolver(db), new FailClosedObjectStorageEraser(new SilentLogger()), new SilentLogger(), () => 10000);
     const result = await worker.flushOnce();
 
-    assert.equal(result.erased, 0, 'fail-closed 不删');
-    assert.equal(result.failed, 1, '计入 failed（下周期重试）');
+    assert.equal(result.totalErased, 0, 'fail-closed 不删');
+    assert.equal(result.totalFailed, 1, '计入 failed（下周期重试）');
     assert.equal(store.getObjectKey('pending'), 'k-locator', '引用行+object_key 定位保留（无孤儿）');
   });
 
   it('start/stop 生命周期：start 后 healthy，stop 后不再 healthy；重复 start 幂等', async () => {
-    const worker = new MediaRetentionWorker(db, recordingEraser(), new SilentLogger(), () => 0);
+    const worker = new MediaRetentionWorker(new SingleDbResolver(db), recordingEraser(), new SilentLogger(), () => 0);
     assert.equal(worker.isHealthy(), false, '未启动不 healthy');
     worker.start();
     assert.equal(worker.isHealthy(), true, '启动后 healthy');
@@ -92,11 +93,11 @@ describe('GDPR Art.17 物理删除端到端闭环（真实 LocalObjectStorageCli
     assert.equal(store.getObjectKey('gdpr1'), objectKey);
 
     /* worker 用真实 client 适配的 eraser 跑一次。 */
-    const worker = new MediaRetentionWorker(db, new ObjectStorageClientEraser(client), new SilentLogger(), () => 10000);
+    const worker = new MediaRetentionWorker(new SingleDbResolver(db), new ObjectStorageClientEraser(client), new SilentLogger(), () => 10000);
     const result = await worker.flushOnce();
 
-    assert.equal(result.erased, 1, '过期引用被清');
-    assert.equal(result.failed, 0);
+    assert.equal(result.totalErased, 1, '过期引用被清');
+    assert.equal(result.totalFailed, 0);
     /* 删后：真实对象物理消失 + 引用行删 = GDPR 物理删除闭环。 */
     await assert.rejects(readFile(join(tmpDir, objectKey)), '清理后真实对象应被物理删除');
     assert.equal(store.getObjectKey('gdpr1'), undefined, '引用行已删');

@@ -12,6 +12,7 @@ import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js'
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { loadConfig } from '../../config/schema.js';
+import { throwingDb } from '../support/throwing-db.js';
 import type { IDatabase } from '../../storage/database.js';
 
 /** 建带 billing_outbox 表的内存 db（迁移入口——runDslSqliteMigrations 建全表）。 */
@@ -19,21 +20,6 @@ function obxDb(): IDatabase {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
   return db;
-}
-
-/** 最小 IDatabase 桩：execute 恒抛错，其余方法 no-op（只用于 shard 整体隔离探针）。 */
-function throwingDb(): IDatabase {
-  return {
-    dialect: 'sqlite',
-    exec: () => {},
-    prepare: () => ({ run: () => ({ changes: 0, lastInsertRowid: 0 }), get: () => undefined, all: () => [] }),
-    transaction: (fn: () => unknown) => fn(),
-    transactionRollback: (fn: () => unknown) => fn(),
-    close: () => {},
-    queryOne: () => null,
-    queryMany: () => [],
-    execute: () => { throw new Error('boom'); },
-  } as unknown as IDatabase;
 }
 
 /*
@@ -73,7 +59,7 @@ describe('BillingOutbox 分片探针', () => {
 
   it('3. shard 整体隔离（核心）：坏 shard 记 error，其余 shard 仍被 flush', async () => {
     const s1 = obxDb(), s3 = obxDb();
-    const bad = throwingDb();
+    const bad = throwingDb({ on: 'execute' });
     const r = new FakeMultiShardResolver({ coordinator: s1, shards: { a: s1, bad, c: s3 }, tenantToShard: { tA: 'a', tC: 'c' } });
     const ob = BillingOutbox.fromResolver(r, cfg);
     ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'mA'); // 落 s1

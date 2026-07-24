@@ -10,6 +10,7 @@ import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
+import { throwingDb } from '../support/throwing-db.js';
 import type { IDatabase } from '../../storage/database.js';
 
 /** 建带 quota 表的内存 db（迁移入口——runDslSqliteMigrations 建全表）。 */
@@ -28,20 +29,6 @@ function seedOldUsage(db: IDatabase, n: number): void {
   }
 }
 
-/** 最小 IDatabase 桩：execute 恒抛错，其余方法 no-op（只用于 fan-out fail-fast 探针）。 */
-function throwingDb(): IDatabase {
-  return {
-    dialect: 'sqlite',
-    exec: () => {},
-    prepare: () => ({ run: () => ({ changes: 0, lastInsertRowid: 0 }), get: () => undefined, all: () => [] }),
-    transaction: (fn: () => unknown) => fn(),
-    transactionRollback: (fn: () => unknown) => fn(),
-    close: () => {},
-    queryOne: () => null,
-    queryMany: () => [],
-    execute: () => { throw new Error('boom'); },
-  } as unknown as IDatabase;
-}
 
 describe('QuotaManager 分片探针', () => {
   it('1. per-tenant 分流：写真落 dbForTenant 对应 shard', () => {
@@ -95,7 +82,7 @@ describe('QuotaManager 分片探针', () => {
   it('5. fan-out fail-fast：中途 shard 抛错 → 整体抛错 + s1 已部分执行 + 后续 shard 未执行；换掉坏 shard 后重试收敛', () => {
     const s1 = quotaDb(), s3 = quotaDb();
     /* bad 是会抛错的 db 桩（execute 抛）。三 shard 顺序 a→bad→c。 */
-    const bad = throwingDb();
+    const bad = throwingDb({ on: 'execute' });
     const r = new FakeMultiShardResolver({ coordinator: s1, shards: { a: s1, bad: bad, c: s3 }, tenantToShard: {} });
     const qm = QuotaManager.fromResolver(r);
     seedOldUsage(s1, 1);

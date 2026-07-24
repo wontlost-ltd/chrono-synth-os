@@ -10,6 +10,7 @@ import type { AppConfig } from '../../config/schema.js';
 import { getMetricsSnapshot, getTotalRequests } from '../plugins/metrics.js';
 import { getWsConnectionCount } from '../plugins/websocket.js';
 import { billingMetrics } from '../../billing/billing-outbox.js';
+import { mediaRetentionMetrics } from '../../perception/media/media-retention-worker.js';
 import { llmMetrics } from '../../intelligence/model-router.js';
 import { safetyMetrics } from '../../intelligence/llm-safety.js';
 import { calculatePercentile } from '../plugins/metrics.js';
@@ -76,6 +77,12 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         meter_events_failed: billingMetrics.meterEventsFailed,
         outbox_pending: outbox.pending,
         outbox_failed: outbox.failed,
+      },
+      /* 感知媒体 retention（GDPR Art.17 fan-out）：坏 shard 擦除失败计数 + 降级状态。
+       * 唯一来源=模块级 mediaRetentionMetrics（worker flushOnce 写、此处只读，不经 worker 实例）。 */
+      media_retention: {
+        shard_erase_failures: mediaRetentionMetrics.shardEraseFailures,
+        degraded: mediaRetentionMetrics.degraded,
       },
       llm: {
         chat_calls: llmMetrics.chatCalls,
@@ -217,6 +224,13 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     lines.push('# TYPE chrono_billing_outbox_backlog gauge');
     lines.push(`chrono_billing_outbox_backlog{status="pending"} ${outbox.pending}`);
     lines.push(`chrono_billing_outbox_backlog{status="failed"} ${outbox.failed}`);
+    /* 感知媒体 retention fan-out（GDPR Art.17）：坏 shard 擦除失败计数（可告警）+ 降级 gauge。 */
+    lines.push('# HELP chrono_media_retention_shard_erase_failures_total 媒体 retention shard 擦除失败累计（坏 shard 或 failed>0）');
+    lines.push('# TYPE chrono_media_retention_shard_erase_failures_total counter');
+    lines.push(`chrono_media_retention_shard_erase_failures_total ${mediaRetentionMetrics.shardEraseFailures}`);
+    lines.push('# HELP chrono_media_retention_degraded 媒体 retention 降级状态（0=健康，1=有 shard 连续失败）');
+    lines.push('# TYPE chrono_media_retention_degraded gauge');
+    lines.push(`chrono_media_retention_degraded ${mediaRetentionMetrics.degraded}`);
     lines.push('# HELP chrono_observability_events_total 异步观测事件处理统计');
     lines.push('# TYPE chrono_observability_events_total counter');
     lines.push(`chrono_observability_events_total{status="enqueued"} ${observabilityPipelineMetrics.eventsEnqueued}`);

@@ -595,8 +595,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   app.addHook('onClose', async () => { await quotaUsageRetentionWorker.stop(); });
 
   /* 感知媒体引用 retention：runMediaRetention 早已实现但缺周期触发器——GDPR Art.17 擦除依赖它
-   * 才真正删对象+删行（privacy eraseData 只标记 delete_after=0），过期引用也靠它回收。用 root tx
-   * 全局扫描。擦除器用真实对象存储 driver（createObjectStorageClient 按 config.provider 选
+   * 才真正删对象+删行（privacy eraseData 只标记 delete_after=0），过期引用也靠它回收。收共享
+   * resolver，flushOnce 对 allShardDbs() fan-out 逐 shard 全局扫描（非-home shard 的过期媒体也必须
+   * 物理删；单库下=[db] 等价现状）。擦除器用真实对象存储 driver（createObjectStorageClient 按 config.provider 选
    * local/S3/GCS/Azure，各后端 delete 幂等）→ 物理删对象 + 删引用行的端到端闭环。构造失败兜底
    * fail-closed（抛错→保留引用行下周期重试，绝不删定位造孤儿）。 */
   let mediaEraser;
@@ -606,7 +607,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     deps.os.getLogger().warn('createApp', `对象存储 driver 构造失败，媒体 retention 降级 fail-closed（引用行保留可重试）`, err);
     mediaEraser = new FailClosedObjectStorageEraser(deps.os.getLogger());
   }
-  const mediaRetentionWorker = new MediaRetentionWorker(tx, mediaEraser, deps.os.getLogger());
+  const mediaRetentionWorker = new MediaRetentionWorker(captureResolver('media-retention'), mediaEraser, deps.os.getLogger());
   mediaRetentionWorker.start();
   app.addHook('onClose', async () => { await mediaRetentionWorker.stop(); });
 
