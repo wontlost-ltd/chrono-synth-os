@@ -877,7 +877,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* ⑥ 人生模拟（ADR-0047 确定性离线决策引擎载体；前端已降位，非首屏） */
   registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { resolver: captureResolver('life-simulations'), queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
-  registerSsoRoutes(app, db, config);
+  registerSsoRoutes(app, db, captureResolver('auth-sso'), config);
   registerOidcRoutes(app, db, captureResolver('auth-oidc'), config);
   registerScimRoutes(app, services);
   registerCollaborationRoutes(app, services);

@@ -90,8 +90,10 @@ export function buildAppServices(
     /* 分片 Plan 1b（Task 6）：ScimTenantDirectory 承载 token→tenant 反查（mixed-scope）。
      * 单库过渡经 coordinatorDb（=host db，行为不变）；真跨 shard 目录一致性 = Plan 1c 替换实现（route 契约不变）。 */
     scimDirectory: new ScimTenantDirectory(resolver),
+    /* 分片 Plan 1c（Task 6）：ScimProvisioningService 经协调库目录定位 email→tenant，写走 resolver 路由 shard。
+     * 证据记录 recordEvidence(db, ...) 是 coordinator/platform 级（SOC2 CC6.1），保留 host db。 */
     scim: new ScimProvisioningService(
-      tx,
+      resolver,
       ({ tenantId, evidenceType, payload }) => {
         /* SCIM 操作发出 SOC2 CC6.1 证据：覆盖 provisioning + deprovisioning。 */
         recordEvidence(db, {
