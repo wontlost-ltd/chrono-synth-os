@@ -8,7 +8,7 @@ import type { TaskQueue } from '../queue/task-queue.js';
 import type { EventBus } from '../events/event-bus.js';
 import type { Logger } from '../utils/logger.js';
 import type { QuotaManager } from '../multi-tenant/quota-manager.js';
-import type { AvatarService } from './avatar-service.js';
+import { AvatarWriter } from './avatar-service.js';
 import type { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
 import type { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import type { KnowledgeIngestionService } from '../knowledge/knowledge-ingestion-service.js';
@@ -23,12 +23,16 @@ import type { LLMProvider } from '../intelligence/llm-provider.js';
 
 export class AvatarAutorunService {
   constructor(
-    _db: IDatabase,
+    /**
+     * 分片 Plan 1b（Task 2 Avatar 组）：worker 持 queue db，executeRun 时用 run.tenantId 现造
+     * tenant-bound `AvatarWriter(run.tenantId, queueDb)` seam 读分身（不再持整表 `AvatarService`）。
+     * ⚠️ queue/worker 的 shard 路由决策归 Plan 3——此处单库下 queueDb 即正确 shard，多库激活时须换 resolver.dbForTenant。
+     */
+    private readonly queueDb: IDatabase,
     private readonly queue: TaskQueue,
     private readonly bus: EventBus,
     private readonly logger: Logger,
     private readonly quota: QuotaManager | undefined,
-    private readonly avatarService: AvatarService,
     private readonly autorunStore: AvatarAutorunStore,
     _knowledgeStore: KnowledgeSourceStore,
     private readonly knowledgeIngestion: KnowledgeIngestionService,
@@ -109,7 +113,8 @@ export class AvatarAutorunService {
     const config = this.autorunStore.getConfigById(run.configId);
     if (!config) throw new Error(`自动运行配置 ${run.configId} 不存在`);
 
-    const avatar = this.avatarService.getById(config.avatarId);
+    /* tenant-bound 读：用 run.tenantId 现造 AvatarWriter（父归属 tenant predicate 防跨租户读）。 */
+    const avatar = new AvatarWriter(run.tenantId, this.queueDb).getById(config.avatarId);
     if (!avatar) throw new Error(`Avatar ${config.avatarId} 不存在`);
 
     const tenantOS = this.tenantFactory.getTenantOS(run.tenantId);

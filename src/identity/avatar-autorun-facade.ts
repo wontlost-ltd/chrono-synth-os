@@ -5,6 +5,7 @@
  */
 
 import type { IDatabase } from '../storage/database.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import type { AvatarAutorunService } from './avatar-autorun-service.js';
 import type { AvatarAutorunConfig, AvatarAutorunRunLog } from '../types/avatar-autorun.js';
 import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
@@ -41,23 +42,28 @@ export class AvatarAutorunFacade {
   private readonly store: AvatarAutorunStore;
   private readonly avatarService: AvatarService;
 
+  /**
+   * 分片 Plan 1b（Task 2 Avatar 组）：AvatarService 经共享 `resolver` 按 tenantId 路由（不再 `new AvatarService(db)`）；
+   * autorun 配置/运行历史存储 `store` 仍持 `db`（autorun store 的 shard 化归后续 Plan，非本 Task Avatar 组范围）。
+   */
   constructor(
     db: IDatabase,
+    resolver: TenantDbResolver,
     private readonly autorunService: AvatarAutorunService | undefined,
   ) {
     this.store = new AvatarAutorunStore(db);
-    this.avatarService = new AvatarService(db);
+    this.avatarService = new AvatarService(resolver);
   }
 
   getConfig(tenantId: string, avatarId: string): (AvatarAutorunConfig & { intervalMinutes: number }) | null {
-    this.requireAvatar(avatarId);
+    this.requireAvatar(tenantId, avatarId);
     const config = this.store.getConfig(tenantId, avatarId);
     if (!config) return null;
     return { ...config, intervalMinutes: Math.round(config.intervalMs / 60_000) };
   }
 
   upsertConfig(tenantId: string, avatarId: string, input: UpsertAutorunInput): AvatarAutorunConfig {
-    this.requireAvatar(avatarId);
+    this.requireAvatar(tenantId, avatarId);
     return this.store.upsertConfig(tenantId, avatarId, {
       enabled: input.enabled,
       intervalMs: input.intervalMinutes * 60 * 1000,
@@ -72,7 +78,7 @@ export class AvatarAutorunFacade {
       return { ok: false, error: '自动运行服务未启用（需启用任务队列）' };
     }
 
-    this.requireAvatar(avatarId);
+    this.requireAvatar(tenantId, avatarId);
     const config = this.store.getConfig(tenantId, avatarId);
     if (!config) throw new NotFoundError(`Avatar ${avatarId} 未配置自动运行`, ErrorCode.NOT_FOUND_AVATAR);
 
@@ -114,8 +120,8 @@ export class AvatarAutorunFacade {
     return { reviewId, status: 'applied' };
   }
 
-  private requireAvatar(avatarId: string): void {
-    const avatar = this.avatarService.getById(avatarId);
+  private requireAvatar(tenantId: string, avatarId: string): void {
+    const avatar = this.avatarService.getById(tenantId, avatarId);
     if (!avatar) throw new NotFoundError(`Avatar ${avatarId} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
   }
 }

@@ -11,18 +11,20 @@ describe('AvatarService', () => {
   let identityService: IdentityService;
   let avatarService: AvatarService;
   let identityId: string;
+  /* 分片 Plan 1b（Task 2）：AvatarService 方法首参加 tenantId；本套固定同一租户。 */
+  const TENANT = 'tenant_1';
 
   beforeEach(() => {
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     identityService = new IdentityService(new SingleDbResolver(db));
-    avatarService = new AvatarService(db);
-    const identity = identityService.create('tenant_1', 'user_1', '测试用户');
+    avatarService = new AvatarService(new SingleDbResolver(db));
+    const identity = identityService.create(TENANT, 'user_1', '测试用户');
     identityId = identity.id;
   });
 
   it('创建分身', () => {
-    const avatar = avatarService.create(identityId, { label: '工作模式', kind: 'work' });
+    const avatar = avatarService.create(TENANT, identityId, { label: '工作模式', kind: 'work' });
     assert.equal(avatar.label, '工作模式');
     assert.equal(avatar.kind, 'work');
     assert.equal(avatar.isDefault, false);
@@ -30,35 +32,35 @@ describe('AvatarService', () => {
   });
 
   it('listByIdentity 包含默认分身和自定义分身', () => {
-    avatarService.create(identityId, { label: '社交模式', kind: 'social' });
-    const avatars = avatarService.listByIdentity(identityId);
+    avatarService.create(TENANT, identityId, { label: '社交模式', kind: 'social' });
+    const avatars = avatarService.listByIdentity(TENANT, identityId);
     assert.equal(avatars.length, 2);
     assert.ok(avatars.some(a => a.isDefault));
     assert.ok(avatars.some(a => a.label === '社交模式'));
   });
 
   it('getById 返回正确分身', () => {
-    const created = avatarService.create(identityId, { label: '创意模式' });
-    const found = avatarService.getById(created.id);
+    const created = avatarService.create(TENANT, identityId, { label: '创意模式' });
+    const found = avatarService.getById(TENANT, created.id);
     assert.ok(found);
     assert.equal(found!.label, '创意模式');
   });
 
   it('getById 不存在时返回 null', () => {
-    assert.equal(avatarService.getById('nonexistent'), null);
+    assert.equal(avatarService.getById(TENANT, 'nonexistent'), null);
   });
 
   it('更新分身', () => {
-    const avatar = avatarService.create(identityId, { label: '旧名' });
-    const updated = avatarService.update(avatar.id, { label: '新名', kind: 'family' });
+    const avatar = avatarService.create(TENANT, identityId, { label: '旧名' });
+    const updated = avatarService.update(TENANT, avatar.id, { label: '新名', kind: 'family' });
     assert.ok(updated);
     assert.equal(updated!.label, '新名');
     assert.equal(updated!.kind, 'family');
   });
 
   it('更新分身行为覆盖', () => {
-    const avatar = avatarService.create(identityId, { label: '测试' });
-    const updated = avatarService.update(avatar.id, {
+    const avatar = avatarService.create(TENANT, identityId, { label: '测试' });
+    const updated = avatarService.update(TENANT, avatar.id, {
       behaviorOverrides: { valueWeightAdjustments: { v1: 0.1 } },
     });
     assert.ok(updated);
@@ -66,26 +68,26 @@ describe('AvatarService', () => {
   });
 
   it('软删除分身', () => {
-    const avatar = avatarService.create(identityId, { label: '临时' });
-    assert.ok(avatarService.softDelete(avatar.id));
-    assert.equal(avatarService.getById(avatar.id), null);
+    const avatar = avatarService.create(TENANT, identityId, { label: '临时' });
+    assert.ok(avatarService.softDelete(TENANT, avatar.id));
+    assert.equal(avatarService.getById(TENANT, avatar.id), null);
   });
 
   it('不允许删除默认分身', () => {
-    const defaultAvatar = avatarService.getDefault(identityId);
+    const defaultAvatar = avatarService.getDefault(TENANT, identityId);
     assert.ok(defaultAvatar);
-    assert.equal(avatarService.softDelete(defaultAvatar!.id), false);
+    assert.equal(avatarService.softDelete(TENANT, defaultAvatar!.id), false);
   });
 
   it('countActive 正确计数', () => {
-    assert.equal(avatarService.countActive(identityId), 1); /* 默认分身 */
-    avatarService.create(identityId, { label: '额外1' });
-    avatarService.create(identityId, { label: '额外2' });
-    assert.equal(avatarService.countActive(identityId), 3);
+    assert.equal(avatarService.countActive(TENANT, identityId), 1); /* 默认分身 */
+    avatarService.create(TENANT, identityId, { label: '额外1' });
+    avatarService.create(TENANT, identityId, { label: '额外2' });
+    assert.equal(avatarService.countActive(TENANT, identityId), 3);
   });
 
   it('getDefault 返回默认分身', () => {
-    const def = avatarService.getDefault(identityId);
+    const def = avatarService.getDefault(TENANT, identityId);
     assert.ok(def);
     assert.equal(def!.isDefault, true);
     assert.equal(def!.label, '默认');

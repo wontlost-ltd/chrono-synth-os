@@ -5,6 +5,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AvatarAutorunService } from '../../identity/avatar-autorun-service.js';
 import { AvatarAutorunFacade } from '../../identity/avatar-autorun-facade.js';
 import { UpsertAutorunConfigSchema, TriggerAutorunSchema, DriftReviewSchema } from '../schemas/api-schemas.js';
@@ -13,9 +14,11 @@ import { parsePagination } from '../plugins/pagination.js';
 export function registerAvatarAutorunRoutes(
   app: FastifyInstance,
   db: IDatabase,
+  resolver: TenantDbResolver,
   autorunService: AvatarAutorunService | undefined,
 ): void {
-  const facade = new AvatarAutorunFacade(db, autorunService);
+  /* 分片 Plan 1b（Task 2）：facade 的 AvatarService 经共享 resolver 按 tenantId 路由；autorun store 仍持 db。 */
+  const facade = new AvatarAutorunFacade(db, resolver, autorunService);
 
   /* GET /api/v1/avatars/:id/autorun — 获取自动运行配置 */
   app.get<{ Params: { id: string } }>('/api/v1/avatars/:id/autorun', async (request) => {
