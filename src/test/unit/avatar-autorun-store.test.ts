@@ -22,11 +22,11 @@ describe('AvatarAutorunStore', () => {
     runDslSqliteMigrations(db);
     store = new AvatarAutorunStore(db);
 
-    /* 创建 identity + avatar 满足外键约束 */
+    /* 创建 identity + avatar 满足外键约束（分片 Plan 1b Task 2：AvatarService 收 resolver，方法带 tenantId）。 */
     const identityService = new IdentityService(new SingleDbResolver(db));
-    const avatarService = new AvatarService(db);
+    const avatarService = new AvatarService(new SingleDbResolver(db));
     const identity = identityService.create('tenant_1', 'user_1', '测试用户');
-    const avatar = avatarService.create(identity.id, { label: '测试分身', kind: 'work' });
+    const avatar = avatarService.create('tenant_1', identity.id, { label: '测试分身', kind: 'work' });
     avatarId = avatar.id;
   });
 

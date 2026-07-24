@@ -65,10 +65,11 @@ export function buildAppServices(
     db,
     auth: new AuthService(tx, appConfig),
     identity: new IdentityService(resolver),
-    avatar: new AvatarService(tx),
+    /* 分片 Plan 1b（Task 2 Avatar 组）：AvatarService 经共享 resolver 按 tenantId 路由。 */
+    avatar: new AvatarService(resolver),
     collaboration: new CollaborationService(tx),
     mobileDevice: new MobileDeviceService(tx),
-    mobileDeviceFacade: new MobileDeviceFacade(tx, pushService),
+    mobileDeviceFacade: new MobileDeviceFacade(tx, resolver, pushService),
     pushService,
     userProfile: new UserProfileService(tx),
     organization: new OrganizationService(tx),

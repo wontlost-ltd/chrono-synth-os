@@ -52,10 +52,11 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
       seedUser(db, 'user_av', 'av@x.com');
       const ident = new IdentityService(new SingleDbResolver(db)).create('default', 'user_av', 'Av');
 
-      const fromDb = new AvatarService(db);
-      const fromUow = new AvatarService(db);
-      assert.ok(fromDb.getDefault(ident.id));
-      assert.ok(fromUow.getDefault(ident.id));
+      /* 分片 Plan 1b（Task 2）：AvatarService ctor 收 resolver，方法首参加 tenantId。 */
+      const fromDb = new AvatarService(new SingleDbResolver(db));
+      const fromUow = new AvatarService(new SingleDbResolver(db));
+      assert.ok(fromDb.getDefault('default', ident.id));
+      assert.ok(fromUow.getDefault('default', ident.id));
     } finally { db.close(); }
   });
 
@@ -65,8 +66,8 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     try {
       seedUser(db, 'user_da', 'da@x.com');
       const ident = new IdentityService(new SingleDbResolver(db)).create('default', 'user_da', 'DA');
-      const avatarSvc = new AvatarService(db);
-      const av1 = avatarSvc.create(ident.id, { label: 'A1' });
+      const avatarSvc = new AvatarService(new SingleDbResolver(db));
+      const av1 = avatarSvc.create('default', ident.id, { label: 'A1' });
 
       const now = Date.now();
       db.prepare<void>(
@@ -74,12 +75,13 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
          VALUES (?, 'default', 'user_da', 'duid', 'web', ?, ?)`,
       ).run('dev1', now, now);
 
-      const svc = new DeviceAvatarService(db);
-      svc.install('dev1', av1.id);
-      assert.equal(svc.activate('dev1', av1.id), true);
+      /* 分片 Plan 1b（Task 2）：DeviceAvatarService ctor 收 resolver，方法首参加 tenantId（两端验）。 */
+      const svc = new DeviceAvatarService(new SingleDbResolver(db));
+      svc.install('default', 'dev1', av1.id);
+      assert.equal(svc.activate('default', 'dev1', av1.id), true);
 
-      const svcUow = new DeviceAvatarService(db);
-      assert.equal(svcUow.isInstalled('dev1', av1.id), true);
+      const svcUow = new DeviceAvatarService(new SingleDbResolver(db));
+      assert.equal(svcUow.isInstalled('default', 'dev1', av1.id), true);
     } finally { db.close(); }
   });
 
