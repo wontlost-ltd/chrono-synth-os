@@ -253,41 +253,75 @@ export class AuthService {
     return { userId: user.id, email: user.email, tenantId: user.tenant_id, role: user.role, ...tokens };
   }
 
+  /**
+   * refresh（分片 Plan 1c Task 7）——目录=定位器，shard is_revoked=权威。
+   *
+   * ① `resolveByRefreshTokenHash(tokenHash)` 从协调库目录反查 token 属哪个 tenant（仅定位，不判有效性）；
+   *    未命中 → INVALID（不静默兜底其他库，避免跨 shard 误查）。
+   * ② `dbForTenant(entry.tenantId)` 取该 tenant 所在 shard，`authQueryRefreshToken` 查 token 行——
+   *    该 query SQL 已含 `AND is_revoked = 0`（shard 权威过滤），另显式再校验 `row.is_revoked` 作纵深
+   *    防御：**目录多余/过期项只导致「定位到 shard 后被 shard 拒」**，绝不越权。
+   * ③ 轮转：shard 内标旧 token revoked（权威撤销）+ 目录 `removeLookup`（清定位项，非原子可接受——
+   *    旧 token shard 已 revoked=权威拒，目录清晚不越权）；`generateTokenPair` 落新 token 并记录新目录项。
+   */
   async refresh(app: FastifyInstance, refreshToken: string): Promise<RefreshResult> {
-    // Task 7: refresh_token_hash→tenant via directory；本 Task 暂用协调库直查兜底（单库零回归）。
-    const tx = this.resolver.coordinatorDb();
     const tokenHash = hashToken(refreshToken);
-    const row = tx.queryOne(authQueryRefreshToken(tokenHash));
 
-    if (!row || row.expires_at < Date.now()) {
+    /* ① 目录反查 token→tenant（仅定位）。未命中即拒（不兜底其他库）。 */
+    const entry = this.directory.resolveByRefreshTokenHash(tokenHash);
+    if (!entry) {
       throw new AuthenticationError('刷新令牌无效或已过期', ErrorCode.AUTH_EXPIRED);
     }
 
-    tx.execute(authCmdRevokeTokenById(row.id));
+    /* ② shard 权威校验：dbForTenant(entry.tenantId) 查 token 且 is_revoked=0（query 已过滤 + 显式再验）。 */
+    const tx = this.resolver.dbForTenant(entry.tenantId);
+    const row = tx.queryOne(authQueryRefreshToken(tokenHash));
+    if (!row || row.is_revoked || row.expires_at < Date.now()) {
+      throw new AuthenticationError('刷新令牌无效或已过期', ErrorCode.AUTH_EXPIRED);
+    }
 
     const user = tx.queryOne(authQueryUserById(row.user_id));
     if (!user) {
       throw new AuthenticationError('用户不存在', ErrorCode.AUTH_INVALID_TOKEN);
     }
 
+    /* ③ 轮转旧 token：shard 内标 revoked（权威）+ 目录清定位项（尽力而为，非原子）。 */
+    tx.execute(authCmdRevokeTokenById(row.id));
+    this.directory.removeLookup('refresh_token_hash', tokenHash);
+
     const tokens = await this.generateTokenPair(app, user.id, user.tenant_id, user.role);
     return { userId: user.id, email: user.email, ...tokens };
   }
 
+  /**
+   * logout（分片 Plan 1c Task 7）——经目录定位 shard 标 refresh token revoked + 清目录项。
+   * jwtUser 分支按 sub（userId）撤销该用户所在 shard 的全部 refresh token。
+   */
   logout(refreshToken: string | undefined, jwtUser: JwtPayload | undefined): void {
-    // Task 7: 经目录定位 shard；本 Task 单库兜底走协调库。
-    const tx = this.resolver.coordinatorDb();
     if (refreshToken) {
       const tokenHash = hashToken(refreshToken);
-      tx.execute(authCmdRevokeTokenByHash(tokenHash));
+      const entry = this.directory.resolveByRefreshTokenHash(tokenHash);
+      if (entry) {
+        /* 目录命中：shard 内标 revoked（权威）+ 清目录定位项。 */
+        this.resolver.dbForTenant(entry.tenantId).execute(authCmdRevokeTokenByHash(tokenHash));
+        this.directory.removeLookup('refresh_token_hash', tokenHash);
+      }
     }
     if (jwtUser) {
-      tx.execute(authCmdRevokeTokensByUser(jwtUser.sub));
+      /* JWT 已解出 tenantId → 直接定位该用户所在 shard，撤销其全部 refresh token。 */
+      this.resolver.dbForTenant(jwtUser.tenantId).execute(authCmdRevokeTokensByUser(jwtUser.sub));
     }
   }
 
+  /**
+   * 按 token hash 尽力吊销（分片 Plan 1c Task 7）——经目录定位 shard 标 revoked + 清目录项。
+   * 目录未命中即 no-op（token 从未签发 / 已清理），不兜底其他库。
+   */
   revokeByTokenHash(tokenHash: string): void {
-    this.resolver.coordinatorDb().execute(authCmdRevokeTokenByHash(tokenHash));
+    const entry = this.directory.resolveByRefreshTokenHash(tokenHash);
+    if (!entry) return;
+    this.resolver.dbForTenant(entry.tenantId).execute(authCmdRevokeTokenByHash(tokenHash));
+    this.directory.removeLookup('refresh_token_hash', tokenHash);
   }
 
   revokeByRawToken(rawToken: string): void {
@@ -329,6 +363,11 @@ export class AuthService {
     tx.execute(authCmdCreateRefreshToken({
       id: `rt_${randomUUID()}`, userId, tokenHash, expiresAt, now,
     }));
+
+    /* 分片 Plan 1c Task 7：记录 refresh_token_hash→tenant 的目录定位项（协调库）。
+     * recordActiveLookup 遇他租户已占同 hash 会抛——**不吞**：目录 locator 写失败则整个签发失败
+     * （避免发了 token 却定位不到 shard）。随机 UUID token 碰撞概率极低，此门是完整性硬保证。 */
+    this.directory.recordActiveLookup({ tenantId, lookupKind: 'refresh_token_hash', lookupValue: tokenHash });
 
     return {
       accessToken,

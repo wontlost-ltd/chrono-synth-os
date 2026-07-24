@@ -22,6 +22,7 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { hash as argon2Hash } from '@node-rs/argon2';
 import { createMemoryDatabase, renderAllForTarget } from '../../storage/index.js';
@@ -35,10 +36,14 @@ import type { IdGenerator, StripeCustomerCreator } from '../../identity/auth-ser
 import { SsoUserService } from '../../identity/sso-user-service.js';
 import type { IdGenerator as SsoIdGenerator } from '../../identity/sso-user-service.js';
 import { ScimProvisioningService } from '../../enterprise/scim-provisioning-service.js';
+import { ApiKeyService } from '../../billing/api-key-service.js';
+import { TenantIdentityDirectory } from '../../identity/tenant-identity-directory.js';
+import { registerAuth } from '../../server/plugins/auth.js';
 import { canonicalizeEmail } from '../../identity/email-canonical.js';
 import { loadConfig } from '../../config/schema.js';
 import { dirCmdReserve } from '@chrono/kernel';
 import { ErrorCode } from '../../errors/index.js';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 const V124_SQLITE = 'v124';
 
@@ -703,5 +708,269 @@ describe('SSO/OIDC + SCIM createUser 混合 scope 分片（经协调库目录定
     const scimRes = scim.createUser('tenant_legacy_sso', { email: 'LEGACY.sso@example.com', displayName: 'Legacy' });
     assert.equal(scimRes.isNew, false, 'SCIM 大小写混合 email 归一化后命中既有 → 不重建');
     assert.equal(scimRes.user.id, 'user_legacy_sso');
+  });
+});
+
+/**
+ * 租户分片 Phase 0 · Plan 1c Task 7 —— refresh_token + api_key hash → tenant **目录反查**
+ * （目录=定位器，shard is_revoked=权威）的混合 scope 分片行为验证。
+ *
+ * 核心不变式：目录项只回答「token/key hash 属哪个 tenant」；有效性（is_revoked）永远以 shard 内行为
+ * 权威真源。目录多余/过期项只导致「定位到 shard 后被拒」（安全），绝不越权。
+ *
+ * 用 FakeMultiShardResolver（独立 coordinator + 2 独立 shard db）钉死：
+ *   R1 refresh 跨 shard：签发 refresh token → 目录有 token_hash→tenant ACTIVE → refresh 经
+ *      resolveByRefreshTokenHash 得 tenantId → dbForTenant 查 token（token 属 s1，从 coordinator
+ *      反查得 s1 不误查 s0）→ is_revoked=0 → 发新（且新 token 目录 ACTIVE、旧 token shard revoked + 目录清）。
+ *   R2 目录=定位器权威在 shard：手动留目录项但 shard 内 is_revoked=1 → refresh 拒（证 shard 权威，
+ *      目录多余项不越权）。
+ *   R3 目录无该 hash → refresh 拒（INVALID，不静默兜底其他库）。
+ *   R4 logout：清 shard token（revoked）+ 清目录项 → 后续 refresh 拒。
+ *   K1 api-key create → 目录 ACTIVE → preHandler resolveByApiKeyHash → dbForTenant 验 is_revoked=0；
+ *      跨 shard（key 属 s1，coordinator 反查得 s1）。
+ *   K2 revoke(id, tenantId)：先取 hash → shard is_revoked=1 → 目录 removeLookup → 后续 resolve 返 null
+ *      且 preHandler 认证失败（静默 401/403，不 500）。
+ *   K3 api-key create 时 recordActiveLookup 写失败（他租户已占同 hash）→ 抛错、不吞、不返回 key。
+ */
+describe('AuthService/ApiKey 混合 scope 分片（Task 7：refresh + api_key hash→tenant 目录定位/shard 权威）', () => {
+  let coordinator: IDatabase;
+  let shardA: IDatabase;
+  let shardB: IDatabase;
+  const config = loadConfig({});
+
+  beforeEach(() => {
+    resetCoreSelfExecutors();
+    registerCoreSelfExecutors();
+    coordinator = createMemoryDatabase();
+    shardA = createMemoryDatabase();
+    shardB = createMemoryDatabase();
+    migrateToV124(coordinator);
+    migrateToV124(shardA);
+    migrateToV124(shardB);
+  });
+
+  function resolverFor(tenantToShard: Record<string, string>): FakeMultiShardResolver {
+    return new FakeMultiShardResolver({
+      coordinator,
+      shards: { A: shardA, B: shardB },
+      tenantToShard,
+    });
+  }
+
+  /** sha256(token) —— 与 auth-service / plugins/auth 存储格式一致。 */
+  function sha256(v: string): string {
+    return createHash('sha256').update(v).digest('hex');
+  }
+
+  /** 直查协调库某 lookup_kind 的目录项。 */
+  function lookupRow(lookupKind: string, lookupValue: string): { tenant_id: string; status: string } | undefined {
+    return coordinator.prepare<{ tenant_id: string; status: string }>(
+      'SELECT tenant_id, status FROM tenant_identity_directory WHERE lookup_kind = ? AND lookup_value = ?',
+    ).get(lookupKind, lookupValue);
+  }
+
+  /** 直查某 shard 的 refresh_token 行（含 is_revoked）。 */
+  function tokenRow(db: IDatabase, tokenHash: string): { user_id: string; is_revoked: number } | undefined {
+    return db.prepare<{ user_id: string; is_revoked: number }>(
+      'SELECT user_id, is_revoked FROM refresh_tokens WHERE token_hash = ?',
+    ).get(tokenHash);
+  }
+
+  /**
+   * 捕获 registerAuth 注册的 onRequest hook，返回可驱动的 preHandler。
+   * fake app 只实现 addHook；请求驱动器返回 { user, statusCode, sent }。
+   */
+  function captureAuthHook(resolver: FakeMultiShardResolver): (apiKey: string) => {
+    user?: { tenantId: string; planId: string; sub: string };
+    statusCode?: number;
+  } {
+    let hook: ((req: FastifyRequest, reply: FastifyReply, done: () => void) => unknown) | undefined;
+    const fakeApp = {
+      addHook: (_name: string, fn: unknown) => { hook = fn as typeof hook; },
+      log: { warn: () => { /* noop */ } },
+    } as unknown as Parameters<typeof registerAuth>[0];
+    /* auth.enabled 须显式开（loadConfig 默认 false 会 early-return 不注册 hook）；无静态 key，仅 DB Key 路径。 */
+    const authOnConfig = loadConfig({ auth: { enabled: true, apiKeys: [], metricsApiKeys: [], requireDbKeys: false } });
+    registerAuth(fakeApp, authOnConfig, resolver);
+    if (!hook) throw new Error('registerAuth 未注册 onRequest hook');
+
+    return (apiKey: string) => {
+      let statusCode: number | undefined;
+      const req = {
+        url: '/api/v1/personas',
+        method: 'GET',
+        headers: { 'x-api-key': apiKey },
+        query: {},
+      } as unknown as FastifyRequest & { user?: { tenantId: string; planId: string; sub: string } };
+      const reply = {
+        status: (code: number) => { statusCode = code; return { send: () => reply }; },
+      } as unknown as FastifyReply;
+      let doneCalled = false;
+      hook!(req, reply, () => { doneCalled = true; });
+      return { user: req.user, statusCode: doneCalled ? statusCode : statusCode };
+    };
+  }
+
+  it('R1 refresh 跨 shard：token 属 s(A)，经 resolveByRefreshTokenHash 反查得 tenant→dbForTenant 查 s(A) 验 is_revoked=0→发新（新 token 目录 ACTIVE、旧 token shard revoked+目录清）', async () => {
+    const resolver = resolverFor({ tenant_1: 'A', tenant_other: 'B' });
+    const svc = new AuthService(resolver, config, fixedIdGen('tenant_1', 'user_1'));
+    const reg = await svc.register(fakeApp(), 'r1@example.com', 'password123', { idempotencyKey: 'reg:r1' });
+    const oldHash = sha256(reg.refreshToken);
+
+    /* 签发后：目录有该 refresh_token_hash→tenant_1 ACTIVE；token 行落 shard A（用户 shard）。 */
+    assert.equal(lookupRow('refresh_token_hash', oldHash)!.tenant_id, 'tenant_1', '目录记录 token_hash→tenant_1');
+    assert.equal(lookupRow('refresh_token_hash', oldHash)!.status, 'ACTIVE');
+    assert.ok(tokenRow(shardA, oldHash), 'refresh token 落 shard A');
+    assert.equal(tokenRow(shardB, oldHash), undefined, 'token 不在 shard B');
+
+    /* refresh：经目录反查得 tenant_1 → dbForTenant(A) → 验 is_revoked=0 → 发新。 */
+    const refreshed = await svc.refresh(fakeApp(), reg.refreshToken);
+    assert.ok(refreshed.accessToken && refreshed.refreshToken, '发新 token 对');
+    assert.notEqual(refreshed.refreshToken, reg.refreshToken, '轮转出新 refresh token');
+
+    /* 旧 token：shard A 内 is_revoked=1（轮转标撤销）+ 目录项已清。 */
+    assert.equal(tokenRow(shardA, oldHash)!.is_revoked, 1, '旧 token shard 内 revoked');
+    assert.equal(lookupRow('refresh_token_hash', oldHash), undefined, '旧 token 目录项已清');
+
+    /* 新 token：目录 ACTIVE→tenant_1 + 落 shard A。 */
+    const newHash = sha256(refreshed.refreshToken);
+    assert.equal(lookupRow('refresh_token_hash', newHash)!.tenant_id, 'tenant_1', '新 token 目录 ACTIVE→tenant_1');
+    assert.ok(tokenRow(shardA, newHash), '新 token 落 shard A');
+  });
+
+  it('R2 目录=定位器权威在 shard：手留目录项但 shard 内 is_revoked=1 → refresh 拒（shard 权威，目录多余项不越权）', async () => {
+    const resolver = resolverFor({ tenant_2: 'A' });
+    const svc = new AuthService(resolver, config, fixedIdGen('tenant_2', 'user_2'));
+    const reg = await svc.register(fakeApp(), 'r2@example.com', 'password123', { idempotencyKey: 'reg:r2' });
+    const h = sha256(reg.refreshToken);
+
+    /* 手动在 shard A 把 token 标 revoked（模拟 logout/轮转已撤销），但目录项**仍留着**（多余项）。 */
+    shardA.prepare<void>('UPDATE refresh_tokens SET is_revoked = 1 WHERE token_hash = ?').run(h);
+    assert.equal(lookupRow('refresh_token_hash', h)!.status, 'ACTIVE', '目录项仍留着（多余）');
+
+    /* refresh：目录定位到 tenant_2，但 shard 内 is_revoked=1 → 拒（证 shard 权威）。 */
+    await assert.rejects(
+      () => svc.refresh(fakeApp(), reg.refreshToken),
+      (e: unknown) => (e as { code?: string }).code === ErrorCode.AUTH_EXPIRED
+        || (e as { code?: string }).code === ErrorCode.AUTH_INVALID_TOKEN,
+      '目录留项但 shard revoked → refresh 拒（shard 权威）',
+    );
+  });
+
+  it('R3 目录无该 hash → refresh 拒（INVALID，不静默兜底其他库）', async () => {
+    const resolver = resolverFor({ tenant_3: 'A' });
+    const svc = new AuthService(resolver, config, fixedIdGen('tenant_3', 'user_3'));
+    await assert.rejects(
+      () => svc.refresh(fakeApp(), 'never-issued-token'),
+      (e: unknown) => (e as { code?: string }).code === ErrorCode.AUTH_EXPIRED
+        || (e as { code?: string }).code === ErrorCode.AUTH_INVALID_TOKEN,
+      '目录无该 token_hash → 拒',
+    );
+  });
+
+  it('R4 logout：清 shard token（revoked）+ 清目录项 → 后续 refresh 拒', async () => {
+    const resolver = resolverFor({ tenant_4: 'A' });
+    const svc = new AuthService(resolver, config, fixedIdGen('tenant_4', 'user_4'));
+    const reg = await svc.register(fakeApp(), 'r4@example.com', 'password123', { idempotencyKey: 'reg:r4' });
+    const h = sha256(reg.refreshToken);
+
+    svc.logout(reg.refreshToken, undefined);
+
+    assert.equal(tokenRow(shardA, h)!.is_revoked, 1, 'logout 标 shard token revoked');
+    assert.equal(lookupRow('refresh_token_hash', h), undefined, 'logout 清目录项');
+    await assert.rejects(() => svc.refresh(fakeApp(), reg.refreshToken), 'logout 后 refresh 拒');
+  });
+
+  it('K1 api-key create → 目录 ACTIVE → preHandler resolveByApiKeyHash → dbForTenant 验 is_revoked=0（跨 shard：key 属 A）', async () => {
+    const resolver = resolverFor({ tenant_k1: 'A', tenant_kb: 'B' });
+    /* 先给 tenant_k1 建 subscription（free），再 create key。 */
+    shardA.prepare<void>(
+      `INSERT INTO subscriptions (id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
+       VALUES (?, ?, NULL, 'free', 'active', ?, ?, ?, ?)`,
+    ).run('sub_k1', 'tenant_k1', NOW, NOW + 1, NOW, NOW);
+    const svc = new ApiKeyService(resolver);
+    const outcome = svc.create('tenant_k1', 'free');
+    assert.ok(outcome.ok, 'create key 成功');
+    const apiKey = outcome.ok ? outcome.data.apiKey : '';
+    const keyHash = sha256(apiKey);
+
+    /* 目录记录 api_key_hash→tenant_k1 ACTIVE；key 行落 shard A（不在 B）。 */
+    assert.equal(lookupRow('api_key_hash', keyHash)!.tenant_id, 'tenant_k1', '目录记录 key_hash→tenant_k1');
+    assert.ok(shardA.prepare('SELECT 1 FROM api_keys WHERE key_hash = ?').get(keyHash), 'key 落 shard A');
+    assert.equal(shardB.prepare('SELECT 1 FROM api_keys WHERE key_hash = ?').get(keyHash), undefined, 'key 不在 shard B');
+
+    /* preHandler：resolveByApiKeyHash 得 tenant_k1 → dbForTenant(A) 验 is_revoked=0 → 注入 user（tenantId=tenant_k1）。 */
+    const drive = captureAuthHook(resolver);
+    const res = drive(apiKey);
+    assert.equal(res.statusCode, undefined, 'valid key 认证通过（不拒）');
+    assert.equal(res.user?.tenantId, 'tenant_k1', 'preHandler 注入正确 tenant（经目录跨 shard 定位）');
+  });
+
+  it('K2 revoke(id, tenantId)：先取 hash→shard is_revoked=1→removeLookup 清目录→后续 preHandler 认证失败（静默，不 500）', async () => {
+    const resolver = resolverFor({ tenant_k2: 'A' });
+    shardA.prepare<void>(
+      `INSERT INTO subscriptions (id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
+       VALUES (?, ?, NULL, 'free', 'active', ?, ?, ?, ?)`,
+    ).run('sub_k2', 'tenant_k2', NOW, NOW + 1, NOW, NOW);
+    const svc = new ApiKeyService(resolver);
+    const outcome = svc.create('tenant_k2', 'free');
+    assert.ok(outcome.ok);
+    const { apiKey, id } = outcome.ok ? outcome.data : { apiKey: '', id: '' };
+    const keyHash = sha256(apiKey);
+
+    /* revoke：先取 hash → shard is_revoked=1 → 目录 removeLookup。 */
+    assert.equal(svc.revoke(id, 'tenant_k2'), true, 'revoke 生效');
+    assert.equal(
+      shardA.prepare<{ is_revoked: number }>('SELECT is_revoked FROM api_keys WHERE id = ?').get(id)!.is_revoked,
+      1,
+      'shard is_revoked=1',
+    );
+    assert.equal(lookupRow('api_key_hash', keyHash), undefined, 'revoke 清目录项（removeLookup）');
+
+    /* 后续 preHandler：resolve 返 null（目录已清）→ 认证失败（静默 401/403，绝不 500）。 */
+    const drive = captureAuthHook(resolver);
+    const res = drive(apiKey);
+    assert.equal(res.user, undefined, 'revoked key 不注入 user');
+    assert.ok(res.statusCode === 401 || res.statusCode === 403, 'revoked key 静默认证失败（非 500）');
+  });
+
+  it('K2b 目录=定位器权威在 shard（api-key）：手留目录项但 shard is_revoked=1 → preHandler 认证失败（shard 权威）', async () => {
+    const resolver = resolverFor({ tenant_k2b: 'A' });
+    shardA.prepare<void>(
+      `INSERT INTO subscriptions (id, tenant_id, stripe_customer_id, plan_id, status, current_period_start, current_period_end, created_at, updated_at)
+       VALUES (?, ?, NULL, 'free', 'active', ?, ?, ?, ?)`,
+    ).run('sub_k2b', 'tenant_k2b', NOW, NOW + 1, NOW, NOW);
+    const svc = new ApiKeyService(resolver);
+    const outcome = svc.create('tenant_k2b', 'free');
+    assert.ok(outcome.ok);
+    const { apiKey, id } = outcome.ok ? outcome.data : { apiKey: '', id: '' };
+    const keyHash = sha256(apiKey);
+
+    /* 手动只在 shard 标 revoked，目录项仍留（多余项）。 */
+    shardA.prepare<void>('UPDATE api_keys SET is_revoked = 1 WHERE id = ?').run(id);
+    assert.ok(lookupRow('api_key_hash', keyHash), '目录项仍留（多余）');
+
+    const drive = captureAuthHook(resolver);
+    const res = drive(apiKey);
+    assert.equal(res.user, undefined, '目录留项但 shard revoked → 不注入 user（shard 权威）');
+    assert.ok(res.statusCode === 401 || res.statusCode === 403, '认证失败（shard 权威，目录多余不越权）');
+  });
+
+  it('K3 create 时 recordActiveLookup 写失败（他租户已占同 hash）→ 抛错、不吞（recordActiveLookup 保证目录 locator 写成功才发凭据）', async () => {
+    /* 构造：先让 tenant_occupied 占据某 api_key_hash 的目录项。因 apiKey 随机，直接测门面语义：
+     * 手动占位一个 api_key_hash → 其他租户 recordActiveLookup 同 hash 必抛。 */
+    const resolver = resolverFor({ tenant_a: 'A', tenant_b: 'B' });
+    const dir = new TenantIdentityDirectory(resolver);
+    const stolenHash = sha256('shared-key-material');
+    dir.recordActiveLookup({ tenantId: 'tenant_a', lookupKind: 'api_key_hash', lookupValue: stolenHash });
+
+    /* tenant_b 尝试记录同 hash → 读回校验属 tenant_a → 抛（拒发凭据，不越权）。 */
+    assert.throws(
+      () => dir.recordActiveLookup({ tenantId: 'tenant_b', lookupKind: 'api_key_hash', lookupValue: stolenHash }),
+      (e: unknown) => (e as { code?: string }).code === ErrorCode.STATE_ALREADY_EXISTS,
+      '目录键已映射他租户 → recordActiveLookup 抛（不吞，签发失败）',
+    );
+    /* 目录仍属 tenant_a（未被 b 覆盖）。 */
+    assert.equal(lookupRow('api_key_hash', stolenHash)!.tenant_id, 'tenant_a', '目录未被越权覆盖');
   });
 });

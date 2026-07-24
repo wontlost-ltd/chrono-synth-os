@@ -4,7 +4,7 @@
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import {
-  APIKEY_QUERY_LIST, APIKEY_QUERY_BY_HASH, APIKEY_CMD_CREATE, APIKEY_CMD_REVOKE,
+  APIKEY_QUERY_LIST, APIKEY_QUERY_BY_HASH, APIKEY_QUERY_BY_ID, APIKEY_CMD_CREATE, APIKEY_CMD_REVOKE,
 } from '@chrono/kernel';
 import type { ApiKeyRow, ApiKeyCreateParams, ApiKeyRevokeParams } from '@chrono/kernel';
 
@@ -21,6 +21,13 @@ export function registerApiKeyExecutors(): void {
     return db.prepare<ApiKeyRow>(
       'SELECT id, tenant_id, key_hash, plan_id, is_revoked FROM api_keys WHERE key_hash = ? AND is_revoked = 0',
     ).get(keyHash) ?? null;
+  });
+
+  /* 按 id 取 key（含 key_hash），不过滤 is_revoked——revoke 时先取 hash 以清协调库定位项。 */
+  registerQuery<ApiKeyRow | null, string>(APIKEY_QUERY_BY_ID, (db, id) => {
+    return db.prepare<ApiKeyRow>(
+      'SELECT id, tenant_id, key_hash, plan_id, is_revoked, created_at FROM api_keys WHERE id = ?',
+    ).get(id) ?? null;
   });
 
   /* ── Commands ── */
