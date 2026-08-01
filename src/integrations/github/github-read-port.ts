@@ -84,6 +84,13 @@ export interface GitHubReadPort {
   getRepoTree(repo: string): Promise<GitHubTree>;
   /** 读单个文件内容（自动解 base64）。 */
   getFileContent(repo: string, path: string): Promise<string>;
+  /**
+   * 列某 issue 的讨论评论正文（丢弃空正文）。讨论串是组织信息密度最高的知识——
+   * 「这个问题最后怎么定的」只存在于评论里，标题正文答不了。
+   */
+  listIssueComments(repo: string, issueNumber: number): Promise<string[]>;
+  /** 列某 PR 的 review 意见正文（丢弃空正文）。 */
+  listPullReviewComments(repo: string, pullNumber: number): Promise<string[]>;
 }
 
 /** GitHubReadPortImpl 的可选依赖（默认走公有云 + 真 githubFetch）。 */
@@ -189,6 +196,29 @@ export class GitHubReadPortImpl implements GitHubReadPort {
     }
     /* 少数情况（如空文件）content 为空串；非 base64 直接返回原文。 */
     return typeof body.content === 'string' ? body.content : '';
+  }
+
+  async listIssueComments(repo: string, issueNumber: number): Promise<string[]> {
+    return this.listComments(`${this.apiBase}/repos/${repo}/issues/${issueNumber}/comments`);
+  }
+
+  async listPullReviewComments(repo: string, pullNumber: number): Promise<string[]> {
+    return this.listComments(`${this.apiBase}/repos/${repo}/pulls/${pullNumber}/comments`);
+  }
+
+  /**
+   * 评论抓取公共实现：带 per_page 沿 Link header 跟随分页拉全量，只取正文字符串。
+   *
+   * 丢弃空正文/缺 body 的条目——mapper 的 summarizeComments 只消费有内容的讨论要点，
+   * 空条目混进去会挤占 MAX_COMMENTS 名额，把真正的结论挤出表征。
+   */
+  private async listComments(baseUrl: string): Promise<string[]> {
+    const url = new URL(baseUrl);
+    url.searchParams.set('per_page', String(PER_PAGE));
+    const raw = await this.fetchAllPages(url.toString());
+    return raw
+      .map((item) => (item as Record<string, unknown>).body)
+      .filter((body): body is string => typeof body === 'string' && body.trim().length > 0);
   }
 
   /** 拼 list 端点 URL（含 per_page、since、以及额外 query）。 */

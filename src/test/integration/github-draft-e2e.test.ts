@@ -58,6 +58,9 @@ function fakeReadPort(overrides: Partial<GitHubReadPort> = {}): GitHubReadPort {
     listCommits: async (): Promise<GitHubCommit[]> => [],
     getRepoTree: async (): Promise<GitHubTree> => ({ sha: '', paths: [] }),
     getFileContent: async (): Promise<string> => '',
+    /* 起草路径不消费讨论内容（只用 webhook payload 的标题正文），缺省空。 */
+    listIssueComments: async (): Promise<string[]> => [],
+    listPullReviewComments: async (): Promise<string[]> => [],
     ...overrides,
   };
 }
