@@ -56,6 +56,8 @@ function fakeReadPort(overrides: Partial<GitHubReadPort> = {}): GitHubReadPort {
     listCommits: async (): Promise<GitHubCommit[]> => [],
     getRepoTree: async (): Promise<GitHubTree> => ({ sha: '', paths: [] }),
     getFileContent: async (): Promise<string> => '',
+    listIssueComments: async (): Promise<string[]> => [],
+    listPullReviewComments: async (): Promise<string[]> => [],
     ...overrides,
   };
 }

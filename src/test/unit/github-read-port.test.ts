@@ -293,6 +293,55 @@ describe('GitHubReadPort', () => {
     await assert.rejects(() => port.listIssues('owner/repo'), /404|失败|Not Found/i);
   });
 
+  /* 讨论内容摄入：issue 讨论串 / PR review 意见是组织信息密度最高的知识，
+   * 此前 ReadPort 无 comments 方法，学到的 issue 记忆恒为「（暂无讨论）」占位。 */
+  it('listIssueComments：拉取 issue 讨论评论正文数组', async () => {
+    const { calls, impl } = makeFetchSpy([{
+      body: JSON.stringify([
+        { body: '这个问题定位到是 token 过期' },
+        { body: '已修复，见 PR #43' },
+      ]),
+    }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    const comments = await port.listIssueComments('acme/widget', 42);
+
+    assert.deepEqual(comments, ['这个问题定位到是 token 过期', '已修复，见 PR #43']);
+    assert.ok(calls[0]!.url.includes('/repos/acme/widget/issues/42/comments'), '打到 issue comments 端点');
+    assert.ok(calls[0]!.url.includes('per_page=100'), '带分页参数');
+  });
+
+  it('listPullReviewComments：拉取 PR review 意见正文数组', async () => {
+    const { calls, impl } = makeFetchSpy([{
+      body: JSON.stringify([{ body: '这里建议提前返回，减少嵌套' }]),
+    }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    const comments = await port.listPullReviewComments('acme/widget', 7);
+
+    assert.deepEqual(comments, ['这里建议提前返回，减少嵌套']);
+    assert.ok(calls[0]!.url.includes('/repos/acme/widget/pulls/7/comments'), '打到 PR review comments 端点');
+  });
+
+  it('评论抓取：空正文/缺 body 的条目被丢弃（mapper 只消费有内容的要点）', async () => {
+    const { impl } = makeFetchSpy([{
+      body: JSON.stringify([{ body: '' }, {}, { body: '   ' }, { body: '真正的结论' }]),
+    }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    assert.deepEqual(await port.listIssueComments('acme/widget', 1), ['真正的结论']);
+  });
+
+  it('评论抓取：带 Authorization 头（复用同一 installation token 链路）', async () => {
+    const { calls, impl } = makeFetchSpy([{ body: '[]' }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-xyz'), { fetchImpl: impl });
+
+    await port.listIssueComments('acme/widget', 5);
+
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    assert.equal(headers.Authorization, 'token tok-xyz');
+  });
+
   it('铁律：只读 port——不含任何写方法（comment/review/create/update/...）', () => {
     const port = new GitHubReadPortImpl(makeAuth('t'), { fetchImpl: makeFetchSpy([{ body: '[]' }]).impl });
     /* 只允许以下读方法存在。 */
@@ -302,6 +351,12 @@ describe('GitHubReadPort', () => {
       'listCommits',
       'getRepoTree',
       'getFileContent',
+      /* 讨论内容摄入：名字含 comment/review 但语义纯读（GET .../comments）。
+       * 白名单是显式的——加读方法必须在此登记，杜绝写方法借名字混入。 */
+      'listIssueComments',
+      'listPullReviewComments',
+      /* 私有公共实现（listIssueComments/listPullReviewComments 共用），同样只读。 */
+      'listComments',
     ]);
     /* 收集实例 + 原型链上的所有方法名。 */
     const methodNames = new Set<string>();
