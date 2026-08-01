@@ -28,7 +28,13 @@ describe('server-raw coverage', () => {
      * 两表含 tenant_id 纳入隔离/GDPR 清单）。 */
     /* v124 = v122_github_draft_published（pg-aliased v124，GitHub 反馈发布段地基：github_reply_drafts status
      * CHECK 加 published 终态 + published_at/github_ref 审计列，PG 原地 ALTER / SQLite 重建表）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124']);
+    /* v126 = v124_tenant_bootstrap_backfill（pg-aliased v126，租户分片 Phase 0 Plan 1c：tenant_bootstrap
+     * 完成标记表 + 历史身份回填至 tenant_identity_directory，含 email 归一化与 fail-closed 重复检测；
+     * 数据迁移故用 raw。该迁移加入 RAW_MIGRATIONS 时漏更新本覆盖列表——此处补齐，与实际一致）。 */
+    /* v127 = v125_github_digest_discussion_key（pg-aliased v127，GitHub 讨论内容摄入：github_ingest_digests
+     * 加 discussion_key（讨论稳定标识）+ memory_id（该讨论当前记忆指针）+ 二级索引，支撑演进式取代——
+     * contentSha 含评论后随讨论变化致去重账本失效，故以稳定讨论键定位并取代上一版记忆；纯加列不重建表）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127']);
   });
 
   it('covers disabled raw migrations', () => {
