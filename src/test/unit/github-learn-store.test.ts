@@ -141,4 +141,48 @@ describe('GitHub 学习段 storage（GithubLearnStore）', () => {
       assert.equal(cursorForB, undefined, 'B 读不到 A 的游标（tenant scoped）');
     });
   });
+
+  /* 演进式取代（讨论内容摄入设计 §3.3）：讨论演进时新记忆取代旧记忆，靠稳定讨论键
+   * 反查上一版记忆指针。contentSha 随评论变化，故不能用它定位「同一个 issue 的上一版」。 */
+  describe('讨论键与记忆指针（演进式取代）', () => {
+    const DISCUSSION = 'issues:acme/repo#42';
+
+    it('claim 时带 discussionKey、回写 memoryId 后可按讨论键反查', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
+      store.recordMemoryId(PERSONA, REPO, 'issues', 'sha-v1', 'mem_first', 1001);
+
+      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), 'mem_first');
+    });
+
+    it('未知讨论键返回 undefined', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, 'issues:acme/repo#999'), undefined);
+    });
+
+    it('尚未回写 memoryId 的占位行不被反查到（memory_id IS NULL 排除）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
+      /* 只 claim 未 recordMemoryId：还没有记忆可取代，反查应为空。 */
+      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), undefined);
+    });
+
+    it('同讨论新版本：反查返回最新回写的 memoryId（取代语义的存储侧基础）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
+      store.recordMemoryId(PERSONA, REPO, 'issues', 'sha-v1', 'mem_first', 1001);
+      /* 讨论新增评论 → 表征变 → 新 sha，同一讨论键。 */
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v2', 2000, DISCUSSION);
+      store.recordMemoryId(PERSONA, REPO, 'issues', 'sha-v2', 'mem_second', 2001);
+
+      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), 'mem_second', '取最新回写那条');
+    });
+
+    it('跨租户隔离：A 的讨论记忆指针不被 B 读到', () => {
+      new GithubLearnStore(db, 'tenant_A').claimDigest(PERSONA, REPO, 'issues', 'sha-a', 1000, DISCUSSION);
+      new GithubLearnStore(db, 'tenant_A').recordMemoryId(PERSONA, REPO, 'issues', 'sha-a', 'mem_A', 1001);
+
+      assert.equal(new GithubLearnStore(db, 'tenant_B').findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), undefined);
+    });
+  });
 });

@@ -18,6 +18,7 @@ import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   githubLearnStateQuery, githubLearnStateUpsertCursor,
   githubDigestClaim, githubDigestMarkIngested,
+  githubDigestByDiscussionKeyQuery, githubDigestSetMemoryId,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from './executors/index.js';
 
@@ -66,9 +67,9 @@ export class GithubLearnStore {
    * 行数判定——返 true=本次抢到（未摄入过，可继续摄入）；false=已被抢/已摄入（跳过，防重复灌记忆）。
    * **绝非 check-then-act**：不先 SELECT 再 INSERT，故并发/崩溃下同 content_sha 只有一个调用方拿到 true。
    */
-  claimDigest(personaId: string, repo: string, resourceType: string, contentSha: string, now: number): boolean {
+  claimDigest(personaId: string, repo: string, resourceType: string, contentSha: string, now: number, discussionKey?: string): boolean {
     const result = this.tx.execute(githubDigestClaim({
-      tenantId: this.tenantId, personaId, repo, resourceType, contentSha, now,
+      tenantId: this.tenantId, personaId, repo, resourceType, contentSha, now, discussionKey,
     }));
     return result.rowsAffected === 1;
   }
@@ -79,6 +80,26 @@ export class GithubLearnStore {
   markIngested(personaId: string, repo: string, resourceType: string, contentSha: string, now: number): void {
     this.tx.execute(githubDigestMarkIngested({
       tenantId: this.tenantId, personaId, repo, resourceType, contentSha, now,
+    }));
+  }
+
+  /**
+   * 反查某讨论**当前**对应的记忆 ID（演进式取代用）。无记录 / 尚未回写记忆指针返回 undefined。
+   *
+   * 为什么不能用 content_sha 反查：讨论新增评论 → 表征变 → content_sha 变，
+   * 按 sha 找不到「同一 issue 的上一版」。discussion_key 跨轮次稳定，才是取代路径的正确锚。
+   */
+  findMemoryIdByDiscussionKey(personaId: string, discussionKey: string): string | undefined {
+    const row = this.tx.queryOne(githubDigestByDiscussionKeyQuery({
+      tenantId: this.tenantId, personaId, discussionKey,
+    }));
+    return row?.memory_id ?? undefined;
+  }
+
+  /** 回写摘要行对应的记忆 ID（perceive 产出 memoryIds 后调用），供下一轮取代定位旧记忆。 */
+  recordMemoryId(personaId: string, repo: string, resourceType: string, contentSha: string, memoryId: string, now: number): void {
+    this.tx.execute(githubDigestSetMemoryId({
+      tenantId: this.tenantId, personaId, repo, resourceType, contentSha, memoryId, now,
     }));
   }
 }

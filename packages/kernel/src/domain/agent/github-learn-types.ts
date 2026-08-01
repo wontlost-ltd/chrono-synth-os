@@ -30,6 +30,10 @@ export const GITHUB_LEARN_STATE_CMD_UPSERT_CURSOR = 'githubLearnState.upsertCurs
 export const GITHUB_INGEST_DIGEST_QUERY = 'githubIngestDigest.byKey' as const;
 export const GITHUB_INGEST_DIGEST_CMD_CLAIM = 'githubIngestDigest.claim' as const;
 export const GITHUB_INGEST_DIGEST_CMD_MARK_INGESTED = 'githubIngestDigest.markIngested' as const;
+/** 按讨论键反查摘要行（演进式取代：定位同一 issue/PR 的上一版记忆）。 */
+export const GITHUB_INGEST_DIGEST_QUERY_BY_DISCUSSION = 'githubIngestDigest.byDiscussion' as const;
+/** 回写摘要行对应的记忆 ID（perceive 产出记忆后记录，供下一轮取代用）。 */
+export const GITHUB_INGEST_DIGEST_CMD_SET_MEMORY_ID = 'githubIngestDigest.setMemoryId' as const;
 
 /* ── Row（对齐 DB 列，snake_case） ── */
 
@@ -64,6 +68,10 @@ export interface GithubIngestDigestRow {
   readonly claimed_at: number | null;
   /** 摄入完成时间（毫秒 epoch）；null = 尚未完成摄入。 */
   readonly ingested_at: number | null;
+  /** 讨论稳定标识（issues:owner/repo#42）；null = code/commits 等无讨论概念的资源。 */
+  readonly discussion_key: string | null;
+  /** 该讨论当前对应的记忆 ID；null = 尚未回写（仅占位未摄入完成）。 */
+  readonly memory_id: string | null;
 }
 
 /* ── Params ── */
@@ -93,9 +101,28 @@ export interface GithubIngestDigestKeyParams extends GithubLearnStateKeyParams {
 
 export interface GithubDigestClaimParams extends GithubIngestDigestKeyParams {
   now: number;
+  /**
+   * 讨论稳定标识（issues:owner/repo#42）。跨轮次恒定、与 contentSha 无关——
+   * 讨论新增评论使 contentSha 变化，靠此键才能定位「同一 issue 的上一版记忆」。
+   * code / commits 无讨论概念时省略。
+   */
+  discussionKey?: string;
 }
 
 export interface GithubDigestMarkIngestedParams extends GithubIngestDigestKeyParams {
+  now: number;
+}
+
+/** 按讨论键定位（tenant, persona, discussion_key）——取代路径反查上一版记忆指针。 */
+export interface GithubDigestByDiscussionKeyParams {
+  tenantId: string;
+  personaId: string;
+  discussionKey: string;
+}
+
+export interface GithubDigestSetMemoryIdParams extends GithubIngestDigestKeyParams {
+  /** perceive 产出的新记忆 ID。 */
+  memoryId: string;
   now: number;
 }
 
@@ -140,4 +167,20 @@ export function githubDigestMarkIngested(params: GithubDigestMarkIngestedParams)
  */
 export function githubDigestQuery(params: GithubIngestDigestKeyParams): Query<GithubIngestDigestRow | null, GithubIngestDigestKeyParams> {
   return { kind: GITHUB_INGEST_DIGEST_QUERY, params };
+}
+
+/**
+ * 按 (tenant, persona, discussion_key) 反查该讨论**当前**的摘要行（演进式取代用）。
+ *
+ * 为什么不用 githubDigestQuery：那个按 content_sha 定位，而讨论新增评论会改变 content_sha——
+ * 反查「同一 issue 的上一版」必须用跨轮次稳定的 discussion_key。执行器只取已回写 memory_id
+ * 的行（占位未完成的行没有记忆可取代），按摄入时间取最新一条。
+ */
+export function githubDigestByDiscussionKeyQuery(params: GithubDigestByDiscussionKeyParams): Query<GithubIngestDigestRow | null, GithubDigestByDiscussionKeyParams> {
+  return { kind: GITHUB_INGEST_DIGEST_QUERY_BY_DISCUSSION, params };
+}
+
+/** 回写摘要行的 memory_id（perceive 返回 memoryIds 后调用），供下一轮取代定位旧记忆。 */
+export function githubDigestSetMemoryId(params: GithubDigestSetMemoryIdParams): Command<GithubDigestSetMemoryIdParams> {
+  return { kind: GITHUB_INGEST_DIGEST_CMD_SET_MEMORY_ID, params };
 }
