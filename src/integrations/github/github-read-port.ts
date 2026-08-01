@@ -45,6 +45,11 @@ export interface GitHubIssue {
   title: string;
   body: string;
   updatedAt: string;
+  /**
+   * 讨论评论数（GitHub 列表响应自带，零额外成本）。
+   * 为 0 时跳过评论抓取——省一次 API 请求，是组织级同步的关键省配额闸。
+   */
+  comments: number;
 }
 
 /** 学习段消费的精简 PR。 */
@@ -317,6 +322,7 @@ export class GitHubReadPortImpl implements GitHubReadPort {
       title: typeof o.title === 'string' ? o.title : '',
       body: typeof o.body === 'string' ? o.body : '',
       updatedAt: typeof o.updated_at === 'string' ? o.updated_at : '',
+      comments: typeof o.comments === 'number' ? o.comments : 0,
     };
   }
 

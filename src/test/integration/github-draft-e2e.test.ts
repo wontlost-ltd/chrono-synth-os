@@ -119,6 +119,7 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
           title: 'GraphQL 查询缓存失效导致重复请求',
           body: '在高并发下 GraphQL 的缓存键算错，命中率骤降，请问怎么修？',
           updatedAt: '2026-01-10T00:00:00Z',
+          comments: 0,
         },
       ],
     });
@@ -170,7 +171,7 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
     /* 不 seed 任何相关记忆；issue 讲的主题数字人没学过 → 诚实说不知道，不编造。 */
     const readPort = fakeReadPort({
       listIssues: async (): Promise<GitHubIssue[]> => [
-        { number: 99, title: '量子退火调度器', body: '关于量子退火任务调度的讨论', updatedAt: '2026-03-01T00:00:00Z' },
+        { number: 99, title: '量子退火调度器', body: '关于量子退火任务调度的讨论', updatedAt: '2026-03-01T00:00:00Z', comments: 0 },
       ],
     });
     const app = await mountDraftGithub(os, { readPort });
@@ -187,7 +188,7 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
     os.core.addMemory('semantic', '我听到：缓存键要包含租户维度避免串号', 0, 0.6);
     const readPort = fakeReadPort({
       listIssues: async (): Promise<GitHubIssue[]> => [
-        { number: 5, title: '缓存键串号', body: '不同租户命中同一缓存键，缓存键该加租户维度', updatedAt: '2026-04-01T00:00:00Z' },
+        { number: 5, title: '缓存键串号', body: '不同租户命中同一缓存键，缓存键该加租户维度', updatedAt: '2026-04-01T00:00:00Z', comments: 0 },
       ],
     });
     const app = await mountDraftGithub(os, { readPort });
@@ -226,7 +227,7 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
     os.core.addMemory('semantic', '我听到：日志要脱敏后再落盘', 0, 0.6);
     const readPort = fakeReadPort({
       listIssues: async (): Promise<GitHubIssue[]> => [
-        { number: 8, title: '日志脱敏', body: '日志里有明文密码，落盘前要脱敏', updatedAt: '2026-05-01T00:00:00Z' },
+        { number: 8, title: '日志脱敏', body: '日志里有明文密码，落盘前要脱敏', updatedAt: '2026-05-01T00:00:00Z', comments: 0 },
       ],
     });
     const app = await mountDraftGithub(os, { readPort });
@@ -273,7 +274,7 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
       os.core.addMemory('semantic', '我听到：重试要带指数退避 + 抖动，避免惊群', 0, 0.6);
       const readPort = fakeReadPort({
         listIssues: async (): Promise<GitHubIssue[]> => [
-          { number: 11, title: '重试风暴', body: '大量客户端同时重试导致惊群，重试该加退避', updatedAt: '2026-06-01T00:00:00Z' },
+          { number: 11, title: '重试风暴', body: '大量客户端同时重试导致惊群，重试该加退避', updatedAt: '2026-06-01T00:00:00Z', comments: 0 },
         ],
       });
       const app = await mountDraftGithub(os, { readPort });
@@ -310,7 +311,7 @@ describe('ChronoCompanion GitHub 起草 E2E（读 issue → 检索记忆 → 零
     /* ReadPort 列表里只有 42 号，请求 999 号 → find 未命中 → 明确 4xx。 */
     const readPort = fakeReadPort({
       listIssues: async (): Promise<GitHubIssue[]> => [
-        { number: 42, title: '存在的 issue', body: '正文', updatedAt: '2026-01-10T00:00:00Z' },
+        { number: 42, title: '存在的 issue', body: '正文', updatedAt: '2026-01-10T00:00:00Z', comments: 0 },
       ],
     });
     const app = await mountDraftGithub(os, { readPort });
