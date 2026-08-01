@@ -135,8 +135,11 @@ export function registerGithubLearnExecutors(): void {
   });
 
   /**
-   * 回写摘要行的 memory_id（perceive 产出记忆后调用）。五键定位。tenant scoped。
-   * 下一轮同讨论摄入时据此找到并删除这条旧记忆，实现「每 issue 恒为一条最新共识」。
+   * 回写摘要行的记忆 ID 列表（perceive 产出记忆后调用）。五键定位。tenant scoped。
+   * 下一轮同讨论摄入时据此找到并删除这**整组**旧记忆，实现「每 issue 恒为最新一版共识」。
+   *
+   * 存 JSON 数组字符串：perceive 把一条表征切成多条事实记忆（标题/正文/讨论各一条），
+   * 只存单个 ID 会漏删其余、记忆仍堆积。列本就是 TEXT，无需改表。
    */
   registerCommand<GithubDigestSetMemoryIdParams>(GITHUB_INGEST_DIGEST_CMD_SET_MEMORY_ID, (db, p) => {
     const result = db.prepare<void>(
@@ -144,7 +147,7 @@ export function registerGithubLearnExecutors(): void {
          SET memory_id = ?
        WHERE tenant_id = ? AND persona_id = ? AND repo = ? AND resource_type = ? AND content_sha = ?`,
     ).run(
-      p.memoryId, p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha,
+      JSON.stringify(p.memoryIds), p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha,
     );
     return { rowsAffected: result.changes };
   });

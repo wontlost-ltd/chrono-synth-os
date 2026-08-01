@@ -185,6 +185,8 @@ export function registerCompanionLearnGithubRoutes(app: FastifyInstance, deps: C
     /* 编排：增量拉取 → digest 原子摄入 → 游标成功才推进。零新领域逻辑，只确定性编排。 */
     const service = new GitHubLearningService({
       readPort, store, distiller, tenantId: request.tenantId, personaId: COMPANION_PERSONA_ID,
+      /* 演进式取代需删同讨论旧记忆——注入本租户 OS 的记忆图。 */
+      memories: tenantOS.core.memories,
     });
     const result: LearnGithubResult = await service.learn(body.repo, resourceTypes);
 

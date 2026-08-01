@@ -70,7 +70,12 @@ export interface GithubIngestDigestRow {
   readonly ingested_at: number | null;
   /** 讨论稳定标识（issues:owner/repo#42）；null = code/commits 等无讨论概念的资源。 */
   readonly discussion_key: string | null;
-  /** 该讨论当前对应的记忆 ID；null = 尚未回写（仅占位未摄入完成）。 */
+  /**
+   * 该讨论当前对应的记忆 ID **列表**（JSON 数组字符串）；null = 尚未回写（仅占位未摄入完成）。
+   *
+   * 为何是列表而非单个：perceive 会把一条表征切成**多条**事实记忆（标题/正文/讨论结论各一条），
+   * 只记第一条会导致取代时漏删其余，同 issue 记忆仍然堆积。
+   */
   readonly memory_id: string | null;
 }
 
@@ -121,8 +126,8 @@ export interface GithubDigestByDiscussionKeyParams {
 }
 
 export interface GithubDigestSetMemoryIdParams extends GithubIngestDigestKeyParams {
-  /** perceive 产出的新记忆 ID。 */
-  memoryId: string;
+  /** perceive 产出的全部新记忆 ID（一条表征会切成多条事实记忆，取代时须整组删除）。 */
+  memoryIds: readonly string[];
   now: number;
 }
 

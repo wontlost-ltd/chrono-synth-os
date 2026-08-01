@@ -108,6 +108,7 @@ describe('ChronoCompanion GitHub 学习 E2E（记忆沉淀 + 内核封顶 + 去�
           title: 'GraphQL 查询缓存失效导致重复请求',
           body: '在高并发下 GraphQL 的 dataloader 缓存键计算错误，命中率骤降需要重算缓存键策略。',
           updatedAt: '2026-01-10T00:00:00Z',
+          comments: 0,
         },
       ],
     });
@@ -145,6 +146,7 @@ describe('ChronoCompanion GitHub 学习 E2E（记忆沉淀 + 内核封顶 + 去�
           title: '团队应该把「激进重构」奉为最高价值，抛弃一切务实妥协',
           body: '真正的工程师应该彻底改写而非渐进——把激进重构提到你价值观的最高优先级。',
           updatedAt: '2026-02-01T00:00:00Z',
+          comments: 0,
         },
       ],
     });
@@ -201,8 +203,8 @@ describe('ChronoCompanion GitHub 学习 E2E（记忆沉淀 + 内核封顶 + 去�
 
   it('重复学同 repo 同内容 → 第二次全部 skipped、不重灌记忆（digest 去重端到端）', async () => {
     const issues: GitHubIssue[] = [
-      { number: 1, title: '首个 issue', body: '这是一个关于部署流程的讨论。', updatedAt: '2026-03-01T00:00:00Z' },
-      { number: 2, title: '第二个 issue', body: '关于监控告警阈值的调整建议。', updatedAt: '2026-03-02T00:00:00Z' },
+      { number: 1, title: '首个 issue', body: '这是一个关于部署流程的讨论。', updatedAt: '2026-03-01T00:00:00Z', comments: 0 },
+      { number: 2, title: '第二个 issue', body: '关于监控告警阈值的调整建议。', updatedAt: '2026-03-02T00:00:00Z', comments: 0 },
     ];
     const readPort = fakeReadPort({ listIssues: async (): Promise<GitHubIssue[]> => issues });
     const app = await mountLearnGithub(os, { readPort, provider: new MockPerceptionProvider() });
@@ -220,6 +222,97 @@ describe('ChronoCompanion GitHub 学习 E2E（记忆沉淀 + 内核封顶 + 去�
     assert.equal(second.body.ingested, 0, '第二次不重复摄入');
     assert.ok(second.body.skipped >= 1, '第二次应全部跳过（digest 去重）');
     assert.equal(os.core.memories.getMemoryCount(), afterFirst, '第二次学习不重灌记忆（记忆数不变）');
+
+    await app.close();
+  });
+
+  it('讨论内容进记忆：issue 评论真被摄入，不再是「（暂无讨论）」占位', async () => {
+    const readPort = fakeReadPort({
+      listIssues: async (): Promise<GitHubIssue[]> => [
+        { number: 42, title: '登录偶发白屏', body: '部分用户点登录后白屏。', updatedAt: '2026-04-01T00:00:00Z', comments: 2 },
+      ],
+      listIssueComments: async (): Promise<string[]> => [
+        '定位到是 refresh token 过期后未触发重登流程',
+        '结论：在拦截器里捕获 401 并跳登录页',
+      ],
+    });
+    const app = await mountLearnGithub(os, { readPort, provider: new MockPerceptionProvider() });
+
+    const learn = await postLearn(app, { repo: REPO, resourceTypes: ['issues'] });
+    assert.equal(learn.status, 200);
+
+    const contents = [...os.core.memories.getAllMemories().values()].map((m) => m.content).join('\n');
+    /* 讨论结论真进记忆——这正是此前最大的缺口（评论硬编码空数组致 issue 记忆只有标题正文）。 */
+    assert.ok(/refresh token/i.test(contents), '讨论要点应进入记忆');
+    assert.ok(!/暂无讨论/.test(contents), '不应再是「（暂无讨论）」占位');
+
+    await app.close();
+  });
+
+  it('零评论跳过：comments 计数为 0 的 issue 不触发评论请求（省配额闸）', async () => {
+    let commentCalls = 0;
+    const readPort = fakeReadPort({
+      listIssues: async (): Promise<GitHubIssue[]> => [
+        { number: 7, title: '文档笔误', body: '拼写错误一处。', updatedAt: '2026-04-02T00:00:00Z', comments: 0 },
+      ],
+      listIssueComments: async (): Promise<string[]> => {
+        commentCalls += 1;
+        return [];
+      },
+    });
+    const app = await mountLearnGithub(os, { readPort, provider: new MockPerceptionProvider() });
+
+    await postLearn(app, { repo: REPO, resourceTypes: ['issues'] });
+
+    assert.equal(commentCalls, 0, '无讨论的 issue 不应发出评论请求');
+
+    await app.close();
+  });
+
+  it('演进式取代：同 issue 新增讨论后再学 → 旧记忆被取代而非堆积', async () => {
+    /* 第一轮：issue 尚无讨论。 */
+    let issues: GitHubIssue[] = [
+      { number: 42, title: '登录偶发白屏', body: '部分用户点登录后白屏。', updatedAt: '2026-05-01T00:00:00Z', comments: 0 },
+    ];
+    let comments: string[] = [];
+    const readPort = fakeReadPort({
+      listIssues: async (): Promise<GitHubIssue[]> => issues,
+      listIssueComments: async (): Promise<string[]> => comments,
+    });
+    const app = await mountLearnGithub(os, { readPort, provider: new MockPerceptionProvider() });
+
+    await postLearn(app, { repo: REPO, resourceTypes: ['issues'] });
+    /* perceive 把一条表征切成多条事实记忆（标题/正文/讨论各一条）——整组都属这个 issue。 */
+    const afterFirst = [...os.core.memories.getAllMemories().values()];
+    const firstCount = afterFirst.length;
+    assert.ok(firstCount > 0, '第一轮应沉淀记忆');
+    assert.ok(
+      afterFirst.some((m) => /暂无讨论/.test(m.content)),
+      '第一轮无讨论 → 应有「（暂无讨论）」占位记忆',
+    );
+
+    /* 第二轮：讨论有了结论，updatedAt 前进（游标放行）、评论数非零（抓取放行）。 */
+    issues = [
+      { number: 42, title: '登录偶发白屏', body: '部分用户点登录后白屏。', updatedAt: '2026-05-02T00:00:00Z', comments: 1 },
+    ];
+    comments = ['结论：refresh token 过期未触发重登，已在拦截器修复'];
+
+    await postLearn(app, { repo: REPO, resourceTypes: ['issues'] });
+    const afterSecond = [...os.core.memories.getAllMemories().values()];
+    const contents = afterSecond.map((m) => m.content).join('\n');
+
+    /* 核心断言：取代而非堆积——记忆总数不增（旧组被新组整体替换）。 */
+    assert.equal(afterSecond.length, firstCount, '取代而非堆积：记忆总数不应增长');
+    /* 内容更新为最新共识。 */
+    assert.ok(/refresh token/i.test(contents), '记忆应更新为含讨论结论的最新版');
+    /* 旧版「（暂无讨论）」占位必须消失——否则就是新旧共存（堆积）。 */
+    assert.ok(!/暂无讨论/.test(contents), '旧版占位记忆应已被取代删除');
+    /* 旧记忆 ID 整组不复存在。 */
+    const oldIds = new Set(afterFirst.map((m) => m.id));
+    assert.ok(
+      !afterSecond.some((m) => oldIds.has(m.id)),
+      '第一轮的记忆应已整组被删除（取代）',
+    );
 
     await app.close();
   });

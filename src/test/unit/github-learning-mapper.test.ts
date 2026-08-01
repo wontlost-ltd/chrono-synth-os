@@ -26,7 +26,7 @@ import type {
 } from '../../integrations/github/github-read-port.js';
 
 function issue(over: Partial<GitHubIssue> = {}): GitHubIssue {
-  return { number: 42, title: '默认标题', body: '默认正文', updatedAt: '2026-07-01T00:00:00Z', ...over };
+  return { number: 42, title: '默认标题', body: '默认正文', updatedAt: '2026-07-01T00:00:00Z', comments: 0, ...over };
 }
 
 function pull(over: Partial<GitHubPull> = {}): GitHubPull {

@@ -38,8 +38,8 @@ const REPO = 'acme/repo';
 
 /** 固定两条 issue（updatedAt 递增，供游标推进断言）。 */
 const ISSUES: GitHubIssue[] = [
-  { number: 1, title: '登录报错', body: '点登录后白屏', updatedAt: '2026-01-01T00:00:00Z' },
-  { number: 2, title: '性能优化', body: '列表页加载慢', updatedAt: '2026-01-02T00:00:00Z' },
+  { number: 1, title: '登录报错', body: '点登录后白屏', updatedAt: '2026-01-01T00:00:00Z', comments: 0 },
+  { number: 2, title: '性能优化', body: '列表页加载慢', updatedAt: '2026-01-02T00:00:00Z', comments: 0 },
 ];
 
 /** 只实现 learn 用到的方法；未用到的读方法抛错（不该被调）。 */
@@ -63,6 +63,11 @@ function makeReadPort(overrides: Partial<GitHubReadPort> = {}): GitHubReadPort {
     listPullReviewComments: async (): Promise<string[]> => [],
     ...overrides,
   };
+}
+
+/** 假记忆图：只暴露 deleteMemory（service 类型边界即此），记录被删的记忆 ID。 */
+function fakeMemories(deleted: string[] = []): { deleteMemory(id: string): boolean } {
+  return { deleteMemory: (id: string): boolean => { deleted.push(id); return true; } };
 }
 
 /** mock distiller：记录 perceive 调用（可注入抛错）。 */
@@ -101,6 +106,7 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
       distiller,
       tenantId: TENANT,
       personaId: PERSONA,
+      memories: fakeMemories(),
     });
 
     const result = await service.learn(REPO, ['issues']);
@@ -141,6 +147,7 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
       distiller: first.distiller,
       tenantId: TENANT,
       personaId: PERSONA,
+      memories: fakeMemories(),
     }).learn(REPO, ['issues']);
     assert.equal(first.calls.length, 2, '首次两条各 perceive 一次');
 
@@ -152,6 +159,7 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
       distiller: second.distiller,
       tenantId: TENANT,
       personaId: PERSONA,
+      memories: fakeMemories(),
     }).learn(REPO, ['issues']);
 
     assert.equal(second.calls.length, 0, '增量去重：第二次 perceive 零调用');
@@ -170,6 +178,7 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
       distiller,
       tenantId: TENANT,
       personaId: PERSONA,
+      memories: fakeMemories(),
     }).learn(REPO, ['issues']);
 
     /* perceive 被调一次（抢到 claim 后调），抛错 → 该 resourceType 不推进。 */

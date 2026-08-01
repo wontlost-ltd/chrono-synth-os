@@ -150,39 +150,56 @@ describe('GitHub 学习段 storage（GithubLearnStore）', () => {
     it('claim 时带 discussionKey、回写 memoryId 后可按讨论键反查', () => {
       const store = new GithubLearnStore(db, TENANT);
       store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
-      store.recordMemoryId(PERSONA, REPO, 'issues', 'sha-v1', 'mem_first', 1001);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-v1', ['mem_first'], 1001);
 
-      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), 'mem_first');
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), ['mem_first']);
+    });
+
+    it('整组记忆 ID 往返：perceive 把一条表征切成多条事实记忆，须整组记录与反查', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-multi', 1000, DISCUSSION);
+      /* 真实形态：标题/正文/讨论结论各一条记忆——只记第一条会导致取代时漏删其余。 */
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-multi', ['mem_a', 'mem_b', 'mem_c'], 1001);
+
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), ['mem_a', 'mem_b', 'mem_c']);
+    });
+
+    it('空 ID 组不写入（保持 NULL，反查不命中）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-empty', 1000, DISCUSSION);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-empty', [], 1001);
+
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
     });
 
     it('未知讨论键返回 undefined', () => {
       const store = new GithubLearnStore(db, TENANT);
-      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, 'issues:acme/repo#999'), undefined);
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, 'issues:acme/repo#999'), []);
     });
 
     it('尚未回写 memoryId 的占位行不被反查到（memory_id IS NULL 排除）', () => {
       const store = new GithubLearnStore(db, TENANT);
       store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
       /* 只 claim 未 recordMemoryId：还没有记忆可取代，反查应为空。 */
-      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), undefined);
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
     });
 
     it('同讨论新版本：反查返回最新回写的 memoryId（取代语义的存储侧基础）', () => {
       const store = new GithubLearnStore(db, TENANT);
       store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
-      store.recordMemoryId(PERSONA, REPO, 'issues', 'sha-v1', 'mem_first', 1001);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-v1', ['mem_first'], 1001);
       /* 讨论新增评论 → 表征变 → 新 sha，同一讨论键。 */
       store.claimDigest(PERSONA, REPO, 'issues', 'sha-v2', 2000, DISCUSSION);
-      store.recordMemoryId(PERSONA, REPO, 'issues', 'sha-v2', 'mem_second', 2001);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-v2', ['mem_second'], 2001);
 
-      assert.equal(store.findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), 'mem_second', '取最新回写那条');
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), ['mem_second'], '取最新回写那条');
     });
 
     it('跨租户隔离：A 的讨论记忆指针不被 B 读到', () => {
       new GithubLearnStore(db, 'tenant_A').claimDigest(PERSONA, REPO, 'issues', 'sha-a', 1000, DISCUSSION);
-      new GithubLearnStore(db, 'tenant_A').recordMemoryId(PERSONA, REPO, 'issues', 'sha-a', 'mem_A', 1001);
+      new GithubLearnStore(db, 'tenant_A').recordMemoryIds(PERSONA, REPO, 'issues', 'sha-a', ['mem_A'], 1001);
 
-      assert.equal(new GithubLearnStore(db, 'tenant_B').findMemoryIdByDiscussionKey(PERSONA, DISCUSSION), undefined);
+      assert.deepEqual(new GithubLearnStore(db, 'tenant_B').findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
     });
   });
 });

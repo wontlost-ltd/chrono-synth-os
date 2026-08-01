@@ -89,17 +89,36 @@ export class GithubLearnStore {
    * 为什么不能用 content_sha 反查：讨论新增评论 → 表征变 → content_sha 变，
    * 按 sha 找不到「同一 issue 的上一版」。discussion_key 跨轮次稳定，才是取代路径的正确锚。
    */
-  findMemoryIdByDiscussionKey(personaId: string, discussionKey: string): string | undefined {
+  findMemoryIdsByDiscussionKey(personaId: string, discussionKey: string): string[] {
     const row = this.tx.queryOne(githubDigestByDiscussionKeyQuery({
       tenantId: this.tenantId, personaId, discussionKey,
     }));
-    return row?.memory_id ?? undefined;
+    return parseMemoryIds(row?.memory_id ?? null);
   }
 
-  /** 回写摘要行对应的记忆 ID（perceive 产出 memoryIds 后调用），供下一轮取代定位旧记忆。 */
-  recordMemoryId(personaId: string, repo: string, resourceType: string, contentSha: string, memoryId: string, now: number): void {
+  /**
+   * 回写摘要行对应的**全部**记忆 ID（perceive 产出 memoryIds 后调用），供下一轮取代整组删除。
+   * 传空数组视为「无记忆可记」，不写入（保持 NULL，反查不会命中）。
+   */
+  recordMemoryIds(personaId: string, repo: string, resourceType: string, contentSha: string, memoryIds: readonly string[], now: number): void {
+    if (memoryIds.length === 0) return;
     this.tx.execute(githubDigestSetMemoryId({
-      tenantId: this.tenantId, personaId, repo, resourceType, contentSha, memoryId, now,
+      tenantId: this.tenantId, personaId, repo, resourceType, contentSha, memoryIds, now,
     }));
+  }
+}
+
+/**
+ * 解析 memory_id 列（JSON 数组字符串）成 ID 列表。
+ * 容错：null / 非法 JSON / 非数组 → 空列表（取代退化为「不删旧记忆」，宁可留冗余不误删）。
+ */
+function parseMemoryIds(raw: string | null): string[] {
+  if (raw === null || raw.length === 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is string => typeof id === 'string');
+  } catch {
+    return [];
   }
 }
