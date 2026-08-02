@@ -45,6 +45,9 @@ import type { AppConfig } from '../../config/schema.js';
 import { AuthenticationError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { tryByokEncryption } from '../../storage/llm-credential-store.js';
 import { GithubAppCredentialStore } from '../../storage/github-app-credential-store.js';
+import { mapWebhookEventToLearnIntent } from '../../integrations/github/github-event-mapper.js';
+import { GITHUB_LEARN_TASK_TYPE, type GithubLearnTaskPayload } from '../../integrations/github/github-learn-task-handler.js';
+import { GithubLearnStore } from '../../storage/github-learn-store.js';
 import { GithubDraftStore } from '../../storage/github-draft-store.js';
 import { composeGithubReply } from '../../integrations/github/github-response-composer.js';
 import { retrieveMemoriesDeterministic } from '../../conversation/deterministic-memory-retrieval.js';
@@ -184,7 +187,38 @@ export function registerGithubWebhookRoutes(
       return reply.status(200).send({ data: { received: true, deduplicated: true } });
     }
 
-    /* ⑤ 仅 issue/PR opened 触发起草；其它事件/action → 200 忽略。 */
+    /* ⑤ 学习分支（事件驱动低延迟摄入）：与起草分支**并联**——起草只认 opened，学习覆盖
+     * 讨论演进全过程（评论/编辑/关闭）。必须置于下方 opened 早返回**之前**，否则非 opened
+     * 事件（恰恰是讨论演进的主要信号）永远走不到这里。
+     *
+     * 入队而非同步学：perceive 要调 LLM 老师抽事实（单条 1-3 秒），同步会逼近 GitHub
+     * 的 ~10 秒 webhook 超时。入队后 50ms 返回 200。 */
+    const intent = mapWebhookEventToLearnIntent(eventType, payload);
+    if (intent.kind === 'learn') {
+      try {
+        const learnPayload: GithubLearnTaskPayload = { repo: intent.repo, resourceType: intent.resourceType };
+        tenantOS.queue.enqueue(tenantId, GITHUB_LEARN_TASK_TYPE, learnPayload);
+      } catch (err) {
+        /* 队列满/写失败：记日志但**不影响 webhook 响应**——起草已成功，该内容会被
+         * 轮转 worker 补学，不该因学习入队失败而让 GitHub 重投整个事件。 */
+        request.log.warn({ err }, 'GitHub 学习任务入队失败（将由轮转 worker 补学）');
+      }
+    } else if (intent.kind === 'mark-commits') {
+      /* push 降频：不入队，只把该 repo 的 commits 游标时间戳刷新为「待扫」，交轮转 worker
+       * 下次扫到时用增量游标批量聚合学（mapCommits 本就把多条 commit 聚合成一条表征）。
+       * 无游标行 → 本就会被轮转全量扫到，无需标记。 */
+      try {
+        const learnStore = new GithubLearnStore(tenantOS.getDatabase(), tenantId);
+        const existing = learnStore.getCursor(COMPANION_PERSONA_ID, intent.repo, 'commits');
+        if (existing?.cursor) {
+          learnStore.advanceCursor(COMPANION_PERSONA_ID, intent.repo, 'commits', existing.cursor, 0);
+        }
+      } catch (err) {
+        request.log.warn({ err }, 'push 标记失败（将由轮转 worker 自然覆盖）');
+      }
+    }
+
+    /* ⑥ 仅 issue/PR opened 触发起草；其它事件/action → 200 忽略。 */
     const target = extractOpenedTarget(payload, eventType);
     if (!target) {
       return reply.status(200).send({ data: { received: true, drafted: false } });
