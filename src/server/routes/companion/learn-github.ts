@@ -39,14 +39,12 @@ import { PerceptionDistiller } from '../../../perception/perception-distiller.js
 import type { PerceptionProvider } from '../../../perception/perception-provider.js';
 import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
 import { selectPerceptionProvider } from './perception-provider-factory.js';
-import { GithubAppCredentialStore } from '../../../storage/github-app-credential-store.js';
+import { assembleGitHubReadPort } from '../../../integrations/github/github-readport-factory.js';
 import { GithubLearnStore } from '../../../storage/github-learn-store.js';
-import { GitHubAuthManager } from '../../../integrations/github/github-auth-manager.js';
-import { GitHubReadPortImpl, type GitHubReadPort } from '../../../integrations/github/github-read-port.js';
+import type { GitHubReadPort } from '../../../integrations/github/github-read-port.js';
 import {
   GitHubLearningService, type GitHubResourceType, type LearnGithubResult,
 } from '../../../integrations/github/github-learning-service.js';
-import { githubInstallListByTenant } from '@chrono/kernel';
 
 /** companion 单 persona core-self 的 personaId（与 chat/perceive 一致）。 */
 const COMPANION_PERSONA_ID = 'default';
@@ -133,29 +131,16 @@ export function registerCompanionLearnGithubRoutes(app: FastifyInstance, deps: C
     if (!credEncryption) {
       throw new ValidationError('尚未连接 GitHub（本机未启用凭据加密，无法读取 GitHub App 凭据）——请先在设置里连接 GitHub');
     }
-    const credStore = new GithubAppCredentialStore(tenantOS.getDatabase(), credEncryption, tenantId);
-    const appCred = credStore.getApp();
-    if (!appCred) {
+    /* 装配本身走共享工厂（与起草/发布/组织同步 worker 同一实现）；本端点只负责把
+     * failure 翻译成面向用户的明确 4xx 文案。 */
+    const result = assembleGitHubReadPort(tenantOS.getDatabase(), credEncryption, tenantId, now);
+    if (result.failure === 'no-credential') {
       throw new ValidationError('尚未连接 GitHub——请先在设置里安装并连接 GitHub App，再让它学 repo');
     }
-    /* 取本租户最近一个 installation（首版：一个租户第一个 installation；listByTenant 按 created_at DESC）。 */
-    const installations = tenantOS.getDatabase().queryMany(githubInstallListByTenant(tenantId));
-    const installation = installations[0];
-    if (!installation) {
+    if (result.failure === 'no-installation') {
       throw new ValidationError('已配置 GitHub App 但尚无 installation——请在 GitHub 上把 App 安装到目标仓库后再试');
     }
-
-    const auth = new GitHubAuthManager({
-      getApp: () => ({ appId: appCred.appId, privateKeyPem: appCred.privateKeyPem, gheBaseUrl: appCred.gheBaseUrl }),
-      installationId: installation.installation_id,
-      now,
-    });
-    /* GHE 自托管：ReadPort 走企业 API base，并把企业 host 放进 SSRF allowlist；公有云走默认。 */
-    if (appCred.gheBaseUrl) {
-      const host = new URL(appCred.gheBaseUrl).hostname;
-      return new GitHubReadPortImpl(auth, { apiBase: appCred.gheBaseUrl, hostAllowlist: [host] });
-    }
-    return new GitHubReadPortImpl(auth);
+    return result.readPort!;
   }
 
   /* POST /api/v1/companion/me/learn-github —「让 TA 学一个 GitHub repo」 */
