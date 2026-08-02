@@ -48,6 +48,7 @@ import { TaskWakeHandler } from './workforce/task-wake-handler.js';
 import { TaskWakeReconciler, type ReconcileStats } from './workforce/task-wake-reconciler.js';
 import { TaskWakeReconcilerWorker } from './workforce/task-wake-reconciler-worker.js';
 import { LearningWorker } from './workforce/learning-worker.js';
+import { GithubSyncWorker } from './integrations/github/github-sync-worker.js';
 import type { DriveStats } from './intelligence/deterministic-learning-service.js';
 import { ShadowExamVerifier } from './intelligence/shadow-exam-verifier.js';
 import { DeterministicLearningService } from './intelligence/deterministic-learning-service.js';
@@ -164,6 +165,10 @@ export class ChronoSynthOS {
   private readonly taskWakeReconcilerWorker: TaskWakeReconcilerWorker;
   /** ADR-0057 进修闭环：确定性进修 worker（周期驱动 pending 学习请求 → 零-LLM 教学+验收+落核 → 唤醒）。 */
   private readonly learningWorker: LearningWorker;
+  /* 组织同步 worker（默认关闭；setGithubOrgSyncDriver 注入驱动后才启用，故非 readonly）。 */
+  private githubSyncWorker: GithubSyncWorker;
+  /** 组织同步驱动（组合根注入；未注入时 worker 驱动为空操作）。 */
+  private githubOrgSyncDriver?: () => Promise<void>;
 
   private readonly db: IDatabase;
   private readonly clock: Clock;
@@ -403,6 +408,43 @@ export class ChronoSynthOS {
       this.bus, () => this.clock.now(), this.tenantId, this.logger,
     );
     this.learningWorker = new LearningWorker(deterministicLearning, this.logger);
+
+    /* GitHub 组织同步 worker（组织级驻留）。**默认关闭**——自动出站 + 消耗 LLM 老师额度的
+     * 后台循环须显式启用（见 setGithubOrgSyncDriver）。
+     *
+     * 驱动函数由组合根注入而非在此装配：一轮组织同步需要 AppConfig（BYOK 解析感官老师），
+     * 而 OS 不持有 config（那是 server 层的东西）。OS 只负责生命周期（跟随 start/stop），
+     * 「怎么同步」交给有完整依赖的一层决定——职责分离，也避免 OS 反向依赖 server 层。 */
+    this.githubSyncWorker = new GithubSyncWorker(
+      async () => { await this.githubOrgSyncDriver?.(); },
+      this.logger,
+      { enabled: false },
+    );
+  }
+
+  /**
+   * 注入 GitHub 组织同步驱动并启用 worker（组合根调用；不注入则 worker 恒不启动）。
+   *
+   * 为什么要显式注入才启用：这是会自动向 GitHub 发请求、并对每条新内容调 LLM 老师的后台
+   * 循环。默认开启对现有部署构成行为突变与非预期成本，故必须由组合根显式打开。
+   *
+   * 须在 start() 之前调用（start 时 worker 才读 enabled 起定时器）。
+   */
+  setGithubOrgSyncDriver(driver: () => Promise<void>, intervalMs?: number): void {
+    this.githubOrgSyncDriver = driver;
+    this.githubSyncWorker = new GithubSyncWorker(
+      async () => { await this.githubOrgSyncDriver?.(); },
+      this.logger,
+      intervalMs === undefined ? { enabled: true } : { enabled: true, intervalMs },
+    );
+  }
+
+  /**
+   * 手动驱动一轮 GitHub 组织同步（运维/测试用）。未注入驱动则无操作。
+   * 生产周期触发由 GithubSyncWorker 负责（须先 setGithubOrgSyncDriver 启用）。
+   */
+  async driveGithubOrgSync(): Promise<void> {
+    await this.githubSyncWorker.driveOnce();
   }
 
   /**
@@ -490,6 +532,7 @@ export class ChronoSynthOS {
     this.taskWakeHandler.start();
     this.taskWakeReconcilerWorker.start();
     this.learningWorker.start();
+    this.githubSyncWorker.start();
     this.bus.emit('system:started', { timestamp: this.clock.now(), tenantId: this.tenantId });
     this.logger.info('System', 'ChronoSynth OS 已启动');
   }
@@ -742,6 +785,7 @@ export class ChronoSynthOS {
       this.taskWakeHandler.stop();
       this.taskWakeReconcilerWorker.stop();
       this.learningWorker.stop();
+      this.githubSyncWorker.stop();
       this.auditChainAnchors?.stop();
       this.bus.emit('system:stopping', { timestamp: this.clock.now(), tenantId: this.tenantId });
       this.createSnapshot('shutdown');
