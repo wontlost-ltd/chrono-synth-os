@@ -130,12 +130,8 @@ import { registerDistillationRoutes } from './routes/distillation.js';
 import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
 import { resolveLlmApiKeyAtStartup, tryByokEncryption } from '../storage/llm-credential-store.js';
-import { GITHUB_LEARN_TASK_TYPE, createGithubLearnTaskHandler } from '../integrations/github/github-learn-task-handler.js';
-import { assembleGitHubReadPort } from '../integrations/github/github-readport-factory.js';
-import { GitHubLearningService } from '../integrations/github/github-learning-service.js';
-import { GithubLearnStore } from '../storage/github-learn-store.js';
-import { PerceptionDistiller } from '../perception/perception-distiller.js';
-import { selectPerceptionProvider } from './routes/companion/perception-provider-factory.js';
+import { GITHUB_LEARN_TASK_TYPE } from '../integrations/github/github-learn-task-handler.js';
+import { createGithubLearnTaskHandlerForProduction } from '../integrations/github/github-learn-task-wiring.js';
 import { resolveTargetValueForCategory } from '../intelligence/earning-value-resolver.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
 import { CostTracker as ConversationCostTracker } from '../intelligence/cost-tracker.js';
@@ -450,33 +446,12 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     /* github-learn handler：消费 webhook 入队的学习任务（事件驱动低延迟摄入）。
      * 队列是 DB 支撑的表，webhook 侧经 tenantOS.queue 入队、此处经同库 queue 消费——
      * 两个 TaskQueue 实例包同一个库，故可见。
-     *
-     * 安全不变量：装配与学习**都**用任务自带的 tenantId 取对应租户 OS，绝不用默认租户。 */
-    const githubLearnEncryption = tryByokEncryption(config.encryption);
-    worker.register(GITHUB_LEARN_TASK_TYPE, createGithubLearnTaskHandler({
-      assemble: (tenantId) => {
-        if (!githubLearnEncryption) return { failure: 'no-credential' };
-        const tenantOS = tenantFactory && tenantId !== 'default' ? tenantFactory.getTenantOS(tenantId) : deps.os;
-        return assembleGitHubReadPort(
-          tenantOS.getDatabase(), githubLearnEncryption, tenantId, () => tenantOS.getClock().now(),
-        );
-      },
-      learn: async (tenantId, readPort, repo, resourceTypes) => {
-        const tenantOS = tenantFactory && tenantId !== 'default' ? tenantFactory.getTenantOS(tenantId) : deps.os;
-        /* 感官老师按租户 BYOK 选（LLM 只在此摄取阶段被调，不进 runtime）。 */
-        const provider = selectPerceptionProvider(tenantId, queueDb, config, githubLearnEncryption);
-        const distiller = new PerceptionDistiller(provider, tenantOS.core.memories, tenantOS.distillation);
-        const service = new GitHubLearningService({
-          readPort,
-          store: new GithubLearnStore(tenantOS.getDatabase(), tenantId),
-          distiller,
-          tenantId,
-          personaId: 'default',
-          memories: tenantOS.core.memories,
-        });
-        await service.learn(repo, resourceTypes);
-      },
-      logger: deps.os.getLogger(),
+     * 领域装配收敛在 github-learn-task-wiring（组合根不承担领域装配职责）。 */
+    worker.register(GITHUB_LEARN_TASK_TYPE, createGithubLearnTaskHandlerForProduction({
+      os: deps.os,
+      tenantFactory,
+      config,
+      encryption: tryByokEncryption(config.encryption),
     }), 120_000);
 
     /* Avatar 自动运行 handler */
