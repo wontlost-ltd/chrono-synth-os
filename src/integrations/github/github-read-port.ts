@@ -96,6 +96,11 @@ export interface GitHubReadPort {
   listIssueComments(repo: string, issueNumber: number): Promise<string[]>;
   /** 列某 PR 的 review 意见正文（丢弃空正文）。 */
   listPullReviewComments(repo: string, pullNumber: number): Promise<string[]>;
+  /**
+   * 列出本 installation 被授权访问的全部仓库全名（owner/name）。
+   * 返回值即「组织授权边界」——不用猜组织名，也不可能越权读到未授权仓库。
+   */
+  listInstallationRepos(): Promise<string[]>;
 }
 
 /** GitHubReadPortImpl 的可选依赖（默认走公有云 + 真 githubFetch）。 */
@@ -209,6 +214,19 @@ export class GitHubReadPortImpl implements GitHubReadPort {
 
   async listPullReviewComments(repo: string, pullNumber: number): Promise<string[]> {
     return this.listComments(`${this.apiBase}/repos/${repo}/pulls/${pullNumber}/comments`);
+  }
+
+  async listInstallationRepos(): Promise<string[]> {
+    const url = new URL(`${this.apiBase}/installation/repositories`);
+    url.searchParams.set('per_page', String(PER_PAGE));
+    /* 该端点响应体是 {total_count, repositories:[...]} 而非裸数组，与既有 list 端点形状不同，
+     * 故不复用 fetchAllPages（它按裸数组展开每页）。
+     * 首版只取第一页（100 仓库）——单个 installation 授权超 100 仓库罕见，超出时轮转仍在
+     * 前 100 内正常工作、不报错。需要时再加 Link header 跟随。 */
+    const page = await this.fetchJson<{ repositories?: Array<{ full_name?: string }> }>(url.toString());
+    return (page.repositories ?? [])
+      .map((r) => r.full_name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
   }
 
   /**

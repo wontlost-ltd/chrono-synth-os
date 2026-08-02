@@ -342,6 +342,50 @@ describe('GitHubReadPort', () => {
     assert.equal(headers.Authorization, 'token tok-xyz');
   });
 
+  /* 组织级驻留：枚举本 installation 被授权的全部仓库。该端点返回值即「组织授权边界」——
+   * 不用猜组织名，也不可能越权读到未授权仓库。 */
+  it('listInstallationRepos：解包 {repositories:[...]} 取 full_name 列表', async () => {
+    const { calls, impl } = makeFetchSpy([{
+      body: JSON.stringify({
+        total_count: 2,
+        repositories: [{ full_name: 'acme/web' }, { full_name: 'acme/api' }],
+      }),
+    }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    const repos = await port.listInstallationRepos();
+
+    assert.deepEqual(repos, ['acme/web', 'acme/api']);
+    assert.ok(calls[0]!.url.includes('/installation/repositories'), '打到 installation repositories 端点');
+    assert.ok(calls[0]!.url.includes('per_page=100'), '带分页参数');
+  });
+
+  it('listInstallationRepos：空授权返回空数组', async () => {
+    const { impl } = makeFetchSpy([{ body: JSON.stringify({ total_count: 0, repositories: [] }) }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    assert.deepEqual(await port.listInstallationRepos(), []);
+  });
+
+  it('listInstallationRepos：丢弃缺 full_name 的畸形条目', async () => {
+    const { impl } = makeFetchSpy([{
+      body: JSON.stringify({ repositories: [{ full_name: 'acme/web' }, {}, { full_name: '' }] }),
+    }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    assert.deepEqual(await port.listInstallationRepos(), ['acme/web']);
+  });
+
+  it('listInstallationRepos：带 Authorization 头', async () => {
+    const { calls, impl } = makeFetchSpy([{ body: JSON.stringify({ repositories: [] }) }]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-abc'), { fetchImpl: impl });
+
+    await port.listInstallationRepos();
+
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    assert.equal(headers.Authorization, 'token tok-abc');
+  });
+
   it('铁律：只读 port——不含任何写方法（comment/review/create/update/...）', () => {
     const port = new GitHubReadPortImpl(makeAuth('t'), { fetchImpl: makeFetchSpy([{ body: '[]' }]).impl });
     /* 只允许以下读方法存在。 */
@@ -357,6 +401,8 @@ describe('GitHubReadPort', () => {
       'listPullReviewComments',
       /* 私有公共实现（listIssueComments/listPullReviewComments 共用），同样只读。 */
       'listComments',
+      /* 组织级驻留：枚举 installation 授权仓库，纯读（GET /installation/repositories）。 */
+      'listInstallationRepos',
     ]);
     /* 收集实例 + 原型链上的所有方法名。 */
     const methodNames = new Set<string>();

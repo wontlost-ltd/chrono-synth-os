@@ -58,6 +58,8 @@ function fakeReadPort(overrides: Partial<GitHubReadPort> = {}): GitHubReadPort {
     getFileContent: async (): Promise<string> => '',
     listIssueComments: async (): Promise<string[]> => [],
     listPullReviewComments: async (): Promise<string[]> => [],
+    /* 组织级驻留：缺省无授权仓库；需要枚举的用例经 overrides 注入。 */
+    listInstallationRepos: async (): Promise<string[]> => [],
     ...overrides,
   };
 }
