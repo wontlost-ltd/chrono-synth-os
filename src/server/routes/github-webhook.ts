@@ -65,7 +65,7 @@ export interface GithubWebhookInjected {
  * 只取起草与路由必需字段——installation.id（反查）、action（是否 opened）、issue/pull_request 的
  * number/title/body（起草上下文）。其余字段忽略（不做全量 schema 校验——签名已保证来源可信）。
  */
-interface GithubWebhookPayload {
+export interface GithubWebhookPayload {
   action?: string;
   installation?: { id?: number | string };
   repository?: { full_name?: string };
