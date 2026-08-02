@@ -191,4 +191,101 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
     const cursor = store.getCursor(PERSONA, REPO, 'issues');
     assert.equal(cursor?.cursor, 'OLD_CURSOR', '游标停在旧值（未被推进）');
   });
+
+  /* 组织级驻留：轮转推进使单轮成本恒定，不随组织规模膨胀——一个 50 仓库的组织
+   * 一次学完就是几百次 API + 几百次 LLM 老师调用，会触发速率限制并烧光额度。 */
+  describe('learnOrg 轮转编排', () => {
+    /** 造 N 个 repo 的 fake ReadPort；listIssues 按 repo 返回一条可映射内容。 */
+    function makeOrgReadPort(repoCount: number): GitHubReadPort {
+      const repos = Array.from({ length: repoCount }, (_, i) => `acme/repo-${i}`);
+      return makeReadPort({
+        listInstallationRepos: async (): Promise<string[]> => repos,
+        listIssues: async (repo: string): Promise<GitHubIssue[]> => [
+          { number: 1, title: `${repo} 的 issue`, body: '正文', updatedAt: '2026-01-01T00:00:00Z', comments: 0 },
+        ],
+      });
+    }
+
+    it('每轮只处理上限个仓库，游标推进并回绕', async () => {
+      const { distiller } = makeDistiller();
+      const service = new GitHubLearningService({
+        readPort: makeOrgReadPort(12), store, distiller,
+        tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      });
+
+      const r1 = await service.learnOrg('acme', ['issues'], 5);
+      assert.deepEqual(r1.reposProcessed, ['acme/repo-0', 'acme/repo-1', 'acme/repo-2', 'acme/repo-3', 'acme/repo-4']);
+      assert.equal(r1.nextCursor, 5, '第一轮后游标 → 5');
+
+      const r2 = await service.learnOrg('acme', ['issues'], 5);
+      assert.deepEqual(r2.reposProcessed, ['acme/repo-5', 'acme/repo-6', 'acme/repo-7', 'acme/repo-8', 'acme/repo-9']);
+      assert.equal(r2.nextCursor, 10, '第二轮后游标 → 10');
+
+      /* 第三轮只剩 2 个（10, 11），处理完回绕到 0。 */
+      const r3 = await service.learnOrg('acme', ['issues'], 5);
+      assert.deepEqual(r3.reposProcessed, ['acme/repo-10', 'acme/repo-11']);
+      assert.equal(r3.nextCursor, 0, '轮完一圈回绕到 0');
+    });
+
+    it('单个 repo 失败不中断整轮，游标仍推进（防坏 repo 永久卡死组织轮转）', async () => {
+      const { distiller } = makeDistiller();
+      const readPort = makeReadPort({
+        listInstallationRepos: async (): Promise<string[]> => ['acme/good-1', 'acme/bad', 'acme/good-2'],
+        listIssues: async (repo: string): Promise<GitHubIssue[]> => {
+          if (repo === 'acme/bad') throw new Error('该 repo 无权访问');
+          return [{ number: 1, title: `${repo} issue`, body: '正文', updatedAt: '2026-01-01T00:00:00Z', comments: 0 }];
+        },
+      });
+      const service = new GitHubLearningService({
+        readPort, store, distiller, tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      });
+
+      const r = await service.learnOrg('acme', ['issues'], 5);
+
+      /* learn 内部已逐 resourceType 吞异常，故坏 repo 也算「处理过」（只是零摄入）。 */
+      assert.equal(r.reposProcessed.length, 3, '三个 repo 都被处理（坏的不中断整轮）');
+      assert.equal(r.nextCursor, 0, '游标推进到尾并回绕（不被坏 repo 卡住）');
+    });
+
+    it('空组织（无授权仓库）→ 零处理、游标归零、不抛错', async () => {
+      const { distiller } = makeDistiller();
+      const service = new GitHubLearningService({
+        readPort: makeReadPort({ listInstallationRepos: async (): Promise<string[]> => [] }),
+        store, distiller, tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      });
+
+      const r = await service.learnOrg('acme', ['issues'], 5);
+
+      assert.deepEqual(r.reposProcessed, []);
+      assert.equal(r.nextCursor, 0);
+    });
+
+    it('组织游标与 per-repo 游标互不干扰（哨兵 resource_type 隔离）', async () => {
+      const { distiller } = makeDistiller();
+      const service = new GitHubLearningService({
+        readPort: makeOrgReadPort(3), store, distiller,
+        tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      });
+
+      await service.learnOrg('acme', ['issues'], 2);
+
+      assert.equal(store.getCursor(PERSONA, 'acme', '_org_rotation')?.cursor, '2', '组织轮转游标');
+      assert.ok(store.getCursor(PERSONA, 'acme/repo-0', 'issues')?.cursor, 'per-repo 游标独立推进');
+    });
+
+    it('游标越界（仓库数变少）→ 收敛回 0 重新轮转，不抛错', async () => {
+      const { distiller } = makeDistiller();
+      /* 先把组织游标推到 99（模拟仓库曾经很多、后来被移除授权）。 */
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '99', 1000);
+      const service = new GitHubLearningService({
+        readPort: makeOrgReadPort(3), store, distiller,
+        tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      });
+
+      const r = await service.learnOrg('acme', ['issues'], 5);
+
+      assert.deepEqual(r.reposProcessed, ['acme/repo-0', 'acme/repo-1', 'acme/repo-2'], '越界收敛回 0 从头轮');
+      assert.equal(r.nextCursor, 0);
+    });
+  });
 });

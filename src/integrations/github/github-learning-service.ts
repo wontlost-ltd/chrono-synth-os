@@ -44,6 +44,32 @@ export interface LearnGithubResult {
 /** README 候选文件名（大小写/扩展变体），按序尝试第一个能读到的。 */
 const README_CANDIDATES = ['README.md', 'README', 'readme.md'];
 
+/**
+ * 组织轮转游标的哨兵 resource_type。与四类真实资源（code/issues/pulls/commits）区分，
+ * 复用 github_learn_state 存「下一个起始下标」（迁移 v126 已扩 CHECK 容纳该值）。
+ */
+export const ORG_ROTATION_RESOURCE_TYPE = '_org_rotation';
+
+/**
+ * 单轮最多处理几个仓库。轮转的意义就在这个上限——它使**单轮成本恒定**，不随组织规模膨胀，
+ * 从而不触发 GitHub 二级速率限制、不一次性烧光 LLM 老师额度。
+ */
+export const DEFAULT_MAX_REPOS_PER_RUN = 5;
+
+/** learnOrg 单轮结果。 */
+export interface LearnOrgResult {
+  /** 本轮实际学习的仓库全名（按处理顺序）。 */
+  reposProcessed: string[];
+  /** 本轮跨全部仓库新摄入条数。 */
+  ingested: number;
+  /** 本轮跨全部仓库跳过（已摄入过）条数。 */
+  skipped: number;
+  /** 本轮抛出不可预期异常的仓库（learn 内部已逐类吞异常，正常为空）。 */
+  failedRepos: string[];
+  /** 推进后的组织轮转游标（下一轮起始下标；已回绕）。 */
+  nextCursor: number;
+}
+
 export interface GitHubLearningServiceDeps {
   readPort: GitHubReadPort;
   store: GithubLearnStore;
@@ -91,6 +117,59 @@ export class GitHubLearningService {
     }
 
     return { ingested, skipped, cursorAdvanced };
+  }
+
+  /**
+   * 学一个组织（installation 授权范围）的仓库，**轮转推进**：每轮只处理 maxReposPerRun 个，
+   * 用组织游标记住下次从哪开始，绕完一圈回到开头。
+   *
+   * 为什么轮转而非一次学完：一个 50 仓库的组织单轮就是几百次 API 调用 + 几百次 LLM 老师调用，
+   * 会触发 GitHub 二级速率限制并烧光额度。轮转使**单轮成本恒定可预测**，大组织只是周期更长。
+   *
+   * 游标推进语义：无论各 repo 成败都推进——否则一个持续失败的 repo 会永久卡住整个组织的轮转。
+   * 已成功摄入的内容靠 digest 账本保证回绕后不重复灌。
+   */
+  async learnOrg(
+    orgKey: string,
+    resourceTypes: GitHubResourceType[],
+    maxReposPerRun: number = DEFAULT_MAX_REPOS_PER_RUN,
+  ): Promise<LearnOrgResult> {
+    const repos = await this.readPort.listInstallationRepos();
+    if (repos.length === 0) {
+      return { reposProcessed: [], ingested: 0, skipped: 0, failedRepos: [], nextCursor: 0 };
+    }
+
+    /* 读组织轮转游标（哨兵行）。非法/缺失 → 从 0 开始；越界（授权仓库变少）→ 收敛回 0。 */
+    const raw = this.store.getCursor(this.personaId, orgKey, ORG_ROTATION_RESOURCE_TYPE)?.cursor;
+    const parsed = raw === undefined || raw === null ? 0 : Number.parseInt(raw, 10);
+    const start = Number.isInteger(parsed) && parsed >= 0 && parsed < repos.length ? parsed : 0;
+
+    const slice = repos.slice(start, start + maxReposPerRun);
+
+    const reposProcessed: string[] = [];
+    const failedRepos: string[] = [];
+    let ingested = 0;
+    let skipped = 0;
+    for (const repo of slice) {
+      try {
+        const outcome = await this.learn(repo, resourceTypes);
+        ingested += outcome.ingested;
+        skipped += outcome.skipped;
+        reposProcessed.push(repo);
+      } catch {
+        /* 兜底：learn 内部已逐 resourceType 吞异常，此处防不可预期的异常中断整轮。 */
+        failedRepos.push(repo);
+      }
+    }
+
+    /* 推进游标：走到尾部则回绕到 0（下轮重新从头增量扫，未变内容靠 digest 全 skip）。 */
+    const advanced = start + slice.length;
+    const nextCursor = advanced >= repos.length ? 0 : advanced;
+    this.store.advanceCursor(
+      this.personaId, orgKey, ORG_ROTATION_RESOURCE_TYPE, String(nextCursor), Date.now(),
+    );
+
+    return { reposProcessed, ingested, skipped, failedRepos, nextCursor };
   }
 
   /**
