@@ -61,6 +61,8 @@ function makeReadPort(overrides: Partial<GitHubReadPort> = {}): GitHubReadPort {
     /* 缺省无讨论；需要讨论内容的用例经 overrides 注入。 */
     listIssueComments: async (): Promise<string[]> => [],
     listPullReviewComments: async (): Promise<string[]> => [],
+    /* 组织级驻留：缺省无授权仓库；需要枚举的用例经 overrides 注入。 */
+    listInstallationRepos: async (): Promise<string[]> => [],
     ...overrides,
   };
 }

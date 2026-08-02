@@ -61,6 +61,8 @@ function fakeReadPort(overrides: Partial<GitHubReadPort> = {}): GitHubReadPort {
     /* 起草路径不消费讨论内容（只用 webhook payload 的标题正文），缺省空。 */
     listIssueComments: async (): Promise<string[]> => [],
     listPullReviewComments: async (): Promise<string[]> => [],
+    /* 组织级驻留：缺省无授权仓库；需要枚举的用例经 overrides 注入。 */
+    listInstallationRepos: async (): Promise<string[]> => [],
     ...overrides,
   };
 }
