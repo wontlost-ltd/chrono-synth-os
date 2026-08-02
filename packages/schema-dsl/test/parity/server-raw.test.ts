@@ -34,7 +34,11 @@ describe('server-raw coverage', () => {
     /* v127 = v125_github_digest_discussion_key（pg-aliased v127，GitHub 讨论内容摄入：github_ingest_digests
      * 加 discussion_key（讨论稳定标识）+ memory_id（该讨论当前记忆指针）+ 二级索引，支撑演进式取代——
      * contentSha 含评论后随讨论变化致去重账本失效，故以稳定讨论键定位并取代上一版记忆；纯加列不重建表）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127']);
+    /* v128 = v126_github_learn_state_org_rotation（pg-aliased v128，GitHub 组织级驻留：
+     * github_learn_state.resource_type CHECK 扩加 _org_rotation 哨兵，供组织轮转游标复用该表
+     * 存「下一个起始下标」；新 CHECK 是旧取值超集，既有行全合法；SQLite 重建表（RENAME 后先
+     * DROP INDEX 防静默丢唯一索引），PG 原地 ALTER CONSTRAINT）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128']);
   });
 
   it('covers disabled raw migrations', () => {

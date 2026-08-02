@@ -202,4 +202,50 @@ describe('GitHub 学习段 storage（GithubLearnStore）', () => {
       assert.deepEqual(new GithubLearnStore(db, 'tenant_B').findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
     });
   });
+
+  /* 组织轮转游标（组织级驻留设计 §3.2）：组织级同步每轮只处理 N 个仓库，需一条
+   * 「下一个起始下标」游标记进度。该游标本质即学习进度游标，故复用本表——
+   * repo 存组织标识、resource_type 存哨兵 _org_rotation、cursor 存下标。 */
+  describe('组织轮转游标（_org_rotation 哨兵）', () => {
+    it('哨兵 resource_type 可写入并读回（CHECK 已扩容）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '5', 1000);
+
+      assert.deepEqual(
+        store.getCursor(PERSONA, 'acme', '_org_rotation'),
+        { cursor: '5', cursorAdvancedAt: 1000 },
+      );
+    });
+
+    it('四类真实资源类型仍可写入（CHECK 是超集，无回归）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      for (const rt of ['code', 'issues', 'pulls', 'commits']) {
+        store.advanceCursor(PERSONA, REPO, rt, `cur-${rt}`, 1000);
+        assert.equal(store.getCursor(PERSONA, REPO, rt)?.cursor, `cur-${rt}`, `${rt} 应可写`);
+      }
+    });
+
+    it('重建表后唯一索引真实存在（PRAGMA 内省，防重建静默丢索引）', () => {
+      /* 独立于 parity 的直验：parity 的 legacy fixture 可能从同样 buggy 的迁移手抄，
+       * 两库同错仍 deepEqual 通过，抓不到丢索引。故此处直接内省 SQLite 元数据。 */
+      const indexes = db.prepare<{ name: string; unique: number }>(
+        `SELECT name, "unique" FROM pragma_index_list('github_learn_state')`,
+      ).all();
+      const key = indexes.find((i) => i.name === 'idx_github_learn_state_key');
+      assert.ok(key, 'idx_github_learn_state_key 必须存在（重建表后未丢）');
+      assert.equal(key.unique, 1, '该索引必须是唯一索引');
+    });
+
+    it('唯一约束仍生效：同四键重复 advance 覆盖不新增行', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '5', 1000);
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '10', 2000);
+
+      const cnt = db.prepare<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM github_learn_state WHERE tenant_id=? AND persona_id=? AND repo=? AND resource_type=?',
+      ).get(TENANT, PERSONA, 'acme', '_org_rotation')?.c;
+      assert.equal(cnt, 1, '唯一约束生效：覆盖不多行');
+      assert.equal(store.getCursor(PERSONA, 'acme', '_org_rotation')?.cursor, '10');
+    });
+  });
 });
