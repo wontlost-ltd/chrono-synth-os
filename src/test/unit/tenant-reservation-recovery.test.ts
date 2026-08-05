@@ -125,6 +125,22 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       assert.equal(bEntry!.status, 'PENDING', 'B 仍 PENDING');
     });
 
+    /* 审计 Warning B1-3 的配套证明：activateTenantOrThrow 在 CAS 失败时抛错，
+     * 会留下「shard 已落地 + 目录仍 PENDING」的状态。该状态**必须可由清扫器收敛**——
+     * 否则修掉「签出登不进去的账号」反而换来「账号永久卡住」。
+     * SSO/SCIM 的 reservePasswordlessTenant 同样写 operationKind='REGISTER'，
+     * 故走同一分支。 */
+    it('SSO/SCIM 抛错后的滞留项（shard COMPLETE + 目录 PENDING）可被清扫器收敛', () => {
+      insertPending({ tenantId: 'tenant_a', userId: 'u_sso', operationId: 'sso:X',
+        operationKind: 'REGISTER', previousLookupValue: null, email: 'sso@example.com' });
+      shard.execute(bootCmdMarkComplete({ tenantId: 'tenant_a', operationId: 'sso:X', now: RESERVED_AT }));
+
+      const out = recovery.reconcile(NOW);
+
+      assert.equal(out.activated, 1, '清扫器补 ACTIVE');
+      assert.equal(dir.resolveByEmail('sso@example.com')!.status, 'ACTIVE', '账号可用，未永久卡死');
+    });
+
     it('per-op 锚：tenant 有别 operationId 的旧 COMPLETE（SCIM/OIDC 复用已存在 tenant）→ 仍 retained', () => {
       insertPending({ tenantId: 'tenant_a', userId: 'u_new', operationId: 'reg:NEW',
         operationKind: 'REGISTER', previousLookupValue: null, email: 'reuse@example.com' });

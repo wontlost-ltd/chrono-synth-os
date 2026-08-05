@@ -930,9 +930,14 @@ export function registerPersonaCoreExecutors(): void {
    */
   registerCommand<PcoreDebitWalletBalanceParams>(PCORE_CMD_DEBIT_WALLET_BALANCE, (db, p) => {
     const result = db.prepare<void>(
+      /* CAST(balance AS numeric) 不可省：balance 是 real 列，PostgreSQL 的
+       * round(double precision, integer) **没有重载**，不转型会直接
+       * 「function round(double precision, integer) does not exist」——
+       * 即所有提现在 PG 上全部报错。CAST 形式在 SQLite / PG 上行为一致
+       * （已在真实 PG 17 与 node:sqlite 上双向实测）。 */
       `UPDATE persona_wallets
-       SET balance = ROUND((ROUND(balance * 100) - ?) / 100.0, 4), updated_at = ?
-       WHERE tenant_id = ? AND id = ? AND ROUND(balance * 100) >= ?`,
+       SET balance = ROUND((ROUND(CAST(balance AS numeric) * 100) - ?) / 100.0, 4), updated_at = ?
+       WHERE tenant_id = ? AND id = ? AND ROUND(CAST(balance AS numeric) * 100) >= ?`,
     ).run(p.amountMinor, p.now, p.tenantId, p.walletId, p.amountMinor);
     return { rowsAffected: result.changes };
   });

@@ -1,11 +1,17 @@
 import { useExportFlow } from '../../hooks/usePortability';
-import { safeExternalUrl } from '../../utils/external-url';
 
 export function ExportCard() {
   const { state, start, reset } = useExportFlow();
-  /* 下载地址来自服务端且契约里只是 z.string()——渲染成 href 前先校验协议，
-   * 避免把 javascript: 之类的伪协议直接交给用户点击。 */
-  const safeDownloadUrl = safeExternalUrl(state.downloadUrl);
+  /* 下载**始终**走同源 API 端点，而不是把 downloadUrl 原样渲染成 href：
+   *   - 默认的本地对象存储返回的是 `file://<服务器路径>`，浏览器既取不到，
+   *     还会把服务端目录结构暴露给用户；
+   *   - 配了 S3 时该端点会 302 到预签名 URL，行为不变；
+   *   - 同源地址无需协议白名单，也就没有伪协议注入面。
+   * downloadUrl 仍用于判断「是否已有可下载产物」。 */
+  /* 同时要求 exportId 与 downloadUrl 存在，收窄成非空字符串供 href 直接使用。 */
+  const downloadHref = state.exportId !== null && state.downloadUrl !== null
+    ? `/api/v1/privacy/export/${encodeURIComponent(state.exportId)}/download`
+    : null;
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -37,12 +43,12 @@ export function ExportCard() {
           </div>
         )}
 
-        {state.phase === 'ready' && safeDownloadUrl && (
+        {state.phase === 'ready' && downloadHref && (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-green-700 font-medium">✓ Export complete</p>
             <div className="flex gap-2">
               <a
-                href={safeDownloadUrl}
+                href={downloadHref}
                 download
                 className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-sm font-medium text-white hover:opacity-90"
               >
@@ -70,9 +76,9 @@ export function ExportCard() {
               ))}
             </ul>
             <div className="flex gap-2">
-              {safeDownloadUrl && (
+              {downloadHref && (
                 <a
-                  href={safeDownloadUrl}
+                  href={downloadHref}
                   download
                   className="inline-flex items-center gap-1.5 rounded-lg bg-warning px-4 py-2 text-sm font-medium text-white hover:opacity-90"
                 >
