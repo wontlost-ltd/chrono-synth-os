@@ -123,7 +123,11 @@ export class SsoUserService {
       shardDb.execute(authCmdUpdateDisplayName({ userId: canonicalUserId, displayName, now: Date.now() }));
     }
 
-    this.directory.activateTenant({ email: canonEmail, operationId });
+    /* CAS 失败不返回可用会话：目录若仍停在 PENDING，登录路径会把它当崩溃残留拒绝，
+     * 等于签出一个之后登不进去的账号。 */
+    this.directory.activateTenantOrThrow({
+      email: canonEmail, operationId, expectedTenantId: canonicalTenantId,
+    });
     return { userId: canonicalUserId, tenantId: canonicalTenantId, role, isNew: true };
   }
 
@@ -165,7 +169,11 @@ export class SsoUserService {
       passwordHash: 'sso-managed', operationId, shardDb,
     });
 
-    this.directory.activateTenant({ email: canonEmail, operationId });
+    /* CAS 失败不返回可用会话：目录若仍停在 PENDING，登录路径会把它当崩溃残留拒绝，
+     * 等于签出一个之后登不进去的账号。 */
+    this.directory.activateTenantOrThrow({
+      email: canonEmail, operationId, expectedTenantId: canonicalTenantId,
+    });
     return { userId: canonicalUserId, tenantId: canonicalTenantId, role, isNew: true };
   }
 

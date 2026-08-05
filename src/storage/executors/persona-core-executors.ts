@@ -57,7 +57,7 @@ import {
   PCORE_CMD_UPDATE_PERSONA_KNOWLEDGE_SYNC,
   PCORE_CMD_APPLY_GOVERNANCE_EVENT,
   PCORE_CMD_CREATE_WALLET_PAYOUT_REQUEST,
-  PCORE_CMD_UPDATE_WALLET_BALANCE,
+  PCORE_CMD_DEBIT_WALLET_BALANCE,
   PCORE_CMD_CREATE_WALLET_SETTLEMENT,
   PCORE_CMD_SETTLE_PERSONA_WALLET,
   PCORE_CMD_CREATE_TASK_APPLICATION,
@@ -187,7 +187,7 @@ import type {
   PcoreApplyGovernanceEventParams,
   PcoreWalletByIdParams,
   PcoreCreateWalletPayoutRequestParams,
-  PcoreUpdateWalletBalanceParams,
+  PcoreDebitWalletBalanceParams,
   PcoreCreateWalletSettlementParams,
   PcoreSettlePersonaWalletParams,
   PcoreTaskApplicationParams,
@@ -923,12 +923,17 @@ export function registerPersonaCoreExecutors(): void {
     return { rowsAffected: result.changes };
   });
 
-  registerCommand<PcoreUpdateWalletBalanceParams>(PCORE_CMD_UPDATE_WALLET_BALANCE, (db, p) => {
+  /**
+   * 条件原子扣减：相对扣减 + 同语句余额校验，消除「事务外读余额→写绝对值」的丢更新。
+   * 余额是 real 列，故比较统一在 minor units 上做（ROUND(balance*100)），避免浮点漂移。
+   * rowsAffected=0 表示余额不足（或钱包不存在），调用方据此拒绝并回滚。
+   */
+  registerCommand<PcoreDebitWalletBalanceParams>(PCORE_CMD_DEBIT_WALLET_BALANCE, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE persona_wallets
-       SET balance = ?, updated_at = ?
-       WHERE tenant_id = ? AND id = ?`,
-    ).run(p.balance, p.now, p.tenantId, p.walletId);
+       SET balance = ROUND((ROUND(balance * 100) - ?) / 100.0, 4), updated_at = ?
+       WHERE tenant_id = ? AND id = ? AND ROUND(balance * 100) >= ?`,
+    ).run(p.amountMinor, p.now, p.tenantId, p.walletId, p.amountMinor);
     return { rowsAffected: result.changes };
   });
 
