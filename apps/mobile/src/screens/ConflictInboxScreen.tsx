@@ -7,14 +7,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../api/client';
-import { useConflictInbox } from '../sync/useConflictInbox';
-import type { ConflictItem } from '../sync/useConflictInbox';
+import { useConflictInbox, useResolveConflict } from '../sync/useConflictInbox';
+import type { ConflictAction, ConflictItem } from '../sync/useConflictInbox';
 
-function formatRelativeTime(epochMs: number): string {
-  const diffMs = Date.now() - epochMs;
-  const diffMin = Math.floor(diffMs / 60_000);
+/** 契约的 detectedAt 是 ISO 8601 字符串（带偏移），不是 epoch 毫秒。 */
+function formatRelativeTime(isoTimestamp: string): string {
+  const parsed = Date.parse(isoTimestamp);
+  if (Number.isNaN(parsed)) return '';
+  const diffMin = Math.floor((Date.now() - parsed) / 60_000);
   if (diffMin < 1) return 'just now';
   if (diffMin < 60) return `${diffMin}m ago`;
   const diffHr = Math.floor(diffMin / 60);
@@ -26,103 +26,85 @@ function formatObjectId(id: string): string {
   return id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id;
 }
 
-type ResolutionChoice = 'keep_local' | 'keep_remote';
-
-interface ResolvePayload {
-  choice: ResolutionChoice;
+/** 摘要以 messageId + 参数下发；移动端暂无 i18n 目录，退化为可读的键值串。 */
+function formatSummary(summaryId: string, params: Record<string, unknown>): string {
+  const detail = Object.entries(params)
+    .map(([k, v]) => `${k}: ${String(v)}`)
+    .join(', ');
+  return detail ? `${summaryId} (${detail})` : summaryId;
 }
 
+const ACTION_LABELS: Record<ConflictAction, string> = {
+  keep_local: 'Keep Local',
+  keep_server: 'Keep Server',
+  duplicate: 'Keep Both',
+  /* merge_manually 需要结构化编辑器（desktop 有 ManualMergeEditor），
+   * 移动端尚未实现，故不在此渲染为可点按钮——见下方 filter。 */
+  merge_manually: 'Merge Manually',
+};
+
 function ConflictCard({ item }: { item: ConflictItem }) {
-  const queryClient = useQueryClient();
-  const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [activeAction, setActiveAction] = useState<ConflictAction | null>(null);
+  const resolve = useResolveConflict();
 
-  const resolveMutation = useMutation({
-    mutationFn: (choice: ResolutionChoice) => {
-      setActiveAction(choice);
-      return apiFetch(`/api/v1/conflicts/${item.id}/resolve`, {
-        method: 'POST',
-        body: JSON.stringify({ choice } satisfies ResolvePayload),
-      });
-    },
-    onSettled: () => {
-      setActiveAction(null);
-      void queryClient.invalidateQueries({ queryKey: ['conflicts', 'inbox', 'pending'] });
-    },
-  });
+  /* 只渲染服务端为该冲突建议、且移动端能够完成的动作。
+   * merge_manually 需要字段级编辑界面，移动端未实现——列出却点不动比不列更糟。 */
+  const actions = item.suggestedActions.filter((a) => a !== 'merge_manually');
 
-  const dismissMutation = useMutation({
-    mutationFn: () => {
-      setActiveAction('dismiss');
-      return apiFetch(`/api/v1/conflicts/${item.id}/dismiss`, { method: 'POST' });
-    },
-    onSettled: () => {
-      setActiveAction(null);
-      void queryClient.invalidateQueries({ queryKey: ['conflicts', 'inbox', 'pending'] });
-    },
-  });
-
-  const isBusy = resolveMutation.isPending || dismissMutation.isPending;
+  const onResolve = (action: ConflictAction): void => {
+    setActiveAction(action);
+    resolve.mutate(
+      /* ifMatch 取当前 conflictVersion：他端已解决时服务端返 409，避免覆盖。 */
+      { conflictId: item.conflictId, ifMatch: item.conflictVersion, action },
+      { onSettled: () => setActiveAction(null) },
+    );
+  };
 
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.typeBadge}>
-          <Text style={styles.typeBadgeText}>{item.objectType}</Text>
+          <Text style={styles.typeBadgeText}>{item.entityType}</Text>
         </View>
         <Text style={styles.timestamp}>{formatRelativeTime(item.detectedAt)}</Text>
       </View>
 
-      <Text style={styles.conflictType}>{item.conflictType}</Text>
-      <Text style={styles.objectId}>{formatObjectId(item.objectId)}</Text>
+      <Text style={styles.conflictType}>{item.severity === 'blocking' ? 'Blocking' : 'Warning'}</Text>
+      <Text style={styles.objectId}>{formatObjectId(item.entityId)}</Text>
 
       <View style={styles.versionRow}>
-        <Text style={styles.versionLabel}>Local v{item.localVersion}</Text>
+        <Text style={styles.versionLabel}>
+          {formatSummary(item.localSummaryId, item.localSummaryParams)}
+        </Text>
         <Text style={styles.versionSep}>→</Text>
-        <Text style={styles.versionLabel}>Remote v{item.remoteVersion}</Text>
+        <Text style={styles.versionLabel}>
+          {formatSummary(item.serverSummaryId, item.serverSummaryParams)}
+        </Text>
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.localBtn, isBusy && styles.actionBtnDisabled]}
-          onPress={() => resolveMutation.mutate('keep_local')}
-          disabled={isBusy}
-          accessibilityLabel="Keep local version"
-        >
-          {activeAction === 'keep_local' ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.actionBtnText}>Keep Local</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.remoteBtn, isBusy && styles.actionBtnDisabled]}
-          onPress={() => resolveMutation.mutate('keep_remote')}
-          disabled={isBusy}
-          accessibilityLabel="Keep remote version"
-        >
-          {activeAction === 'keep_remote' ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.actionBtnText}>Keep Remote</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.dismissBtn, isBusy && styles.actionBtnDisabled]}
-          onPress={() => dismissMutation.mutate()}
-          disabled={isBusy}
-          accessibilityLabel="Dismiss conflict"
-        >
-          {activeAction === 'dismiss' ? (
-            <ActivityIndicator size="small" color="#94A3B8" />
-          ) : (
-            <Text style={styles.dismissBtnText}>Dismiss</Text>
-          )}
-        </TouchableOpacity>
+        {actions.map((action) => (
+          <TouchableOpacity
+            key={action}
+            style={[
+              styles.actionBtn,
+              action === 'keep_local' ? styles.localBtn : styles.remoteBtn,
+              resolve.isPending && styles.actionBtnDisabled,
+            ]}
+            onPress={() => onResolve(action)}
+            disabled={resolve.isPending}
+            accessibilityLabel={ACTION_LABELS[action]}
+          >
+            {activeAction === action ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.actionBtnText}>{ACTION_LABELS[action]}</Text>
+            )}
+          </TouchableOpacity>
+        ))}
       </View>
 
-      {(resolveMutation.isError || dismissMutation.isError) && (
+      {resolve.isError && (
         <Text style={styles.errorText}>Action failed — please retry</Text>
       )}
     </View>
@@ -165,7 +147,7 @@ export function ConflictInboxScreen() {
   return (
     <FlatList
       data={conflicts}
-      keyExtractor={(item) => item.id}
+      keyExtractor={(item) => item.conflictId}
       renderItem={({ item }) => <ConflictCard item={item} />}
       contentContainerStyle={styles.list}
       style={styles.screen}
@@ -256,20 +238,10 @@ const styles = StyleSheet.create({
   remoteBtn: {
     backgroundColor: '#15803d',
   },
-  dismissBtn: {
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
   actionBtnText: {
     color: '#fff',
     fontSize: 13,
     fontWeight: '600',
-  },
-  dismissBtnText: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '500',
   },
   errorText: {
     color: '#f87171',

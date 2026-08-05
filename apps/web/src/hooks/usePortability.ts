@@ -6,17 +6,24 @@ import {
   useCommitImport,
   type DryRunReport,
   type CommitImportResult,
+  type ExportJob,
 } from '../api/queries/portability';
 
 // ── Export state machine ──────────────────────────────────────────────────────
 
-export type ExportPhase = 'idle' | 'starting' | 'polling' | 'ready' | 'error';
+/**
+ * 'partial' 单列一相：契约的 partial 表示「导出完成但有部分数据缺失」——
+ * 归入 ready 会让用户以为拿到了完整数据，归入 error 又会掩盖已可下载的部分。
+ */
+export type ExportPhase = 'idle' | 'starting' | 'polling' | 'ready' | 'partial' | 'error';
 
 export interface ExportState {
   phase: ExportPhase;
   exportId: string | null;
   downloadUrl: string | null;
   errorMessage: string | null;
+  /** 服务端下发的告警（partial 时说明缺了什么）。messageId 需经 i18n 目录渲染。 */
+  warnings: ExportJob['warnings'];
 }
 
 export function useExportFlow() {
@@ -37,15 +44,20 @@ export function useExportFlow() {
   const job = jobQuery.data;
   let phase: ExportPhase = 'idle';
   if (startMutation.isPending) phase = 'starting';
-  else if (exportId && (!job || job.state === 'pending' || job.state === 'running')) phase = 'polling';
+  /* 服务端的初始状态是 'queued'（此前前端写的 'pending' 根本不存在，
+   * 导致排队中的任务落不进任何分支，界面停在 idle）。 */
+  else if (exportId && (!job || job.state === 'queued' || job.state === 'running')) phase = 'polling';
   else if (job?.state === 'completed') phase = 'ready';
+  else if (job?.state === 'partial') phase = 'partial';
   else if (startMutation.isError || job?.state === 'failed') phase = 'error';
 
   const state: ExportState = {
     phase,
     exportId,
     downloadUrl: job?.downloadUrl ?? null,
-    errorMessage: startMutation.error?.message ?? job?.errorMessage ?? null,
+    /* 契约字段是 errorCode（此前读的 errorMessage 恒为 undefined，失败原因永远丢失）。 */
+    errorMessage: startMutation.error?.message ?? job?.errorCode ?? null,
+    warnings: job?.warnings ?? [],
   };
 
   return { state, start, reset };
