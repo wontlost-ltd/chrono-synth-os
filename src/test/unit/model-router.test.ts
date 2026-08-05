@@ -280,6 +280,39 @@ describe('ModelRouter (Mock Provider)', () => {
       await assert.doesNotReject(() => r.embed(['', '']));
     });
 
+    /* Codex 第八轮：config schema 的 .min(1) 只约束**配置来源**；调用方经
+     * options 逐次传入、或在代码里直接构造 Router，两条路都绕过 schema，
+     * 非正值会一路传到配额层（负数还能反向降低已用量）。故在 chat 入口把关。 */
+    it('chat 传入非正 maxTokens：以清晰错误拒绝（不落到配额层）', async () => {
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
+      quotaManager.setLimit('tenant-1', 'llm_tokens', 100_000, 3_600_000);
+
+      const r = new ModelRouter({
+        provider: 'mock', model: 'mock', embeddingModel: 'mock',
+        quotaManager, tenantId: 'tenant-1',
+      });
+
+      for (const bad of [0, -1, 1.5, Number.NaN]) {
+        await assert.rejects(
+          () => r.chat([{ role: 'user', content: 'x' }], { maxTokens: bad }),
+          /maxTokens 必须为正整数/,
+          `maxTokens=${bad} 应被拒绝`,
+        );
+      }
+    });
+
+    it('构造 Router 时非正 maxTokens：构造期即拒绝', () => {
+      for (const bad of [0, -1, 2.5]) {
+        assert.throws(
+          () => new ModelRouter({
+            provider: 'mock', model: 'mock', embeddingModel: 'mock', maxTokens: bad,
+          }),
+          /maxTokens 必须为正整数/,
+          `构造期 maxTokens=${bad} 应被拒绝`,
+        );
+      }
+    });
+
     it('llm_tokens 配额耗尽时 chat 抛出 QuotaExceededError', async () => {
       const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100, 3_600_000);
