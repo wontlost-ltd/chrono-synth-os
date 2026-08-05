@@ -129,11 +129,13 @@ export class PerceptionDistiller {
     } catch (err) {
       throw new PartialPerceptionError(memoryIds, err);
     }
-    this.logger?.info('PerceptionDistiller', `感知沉淀 ${memoryIds.length} 条记忆（${input.media.modality}）`);
 
-    /* 以下步骤（边候选、身份提案）全部发生在记忆已落库之后，任何抛错同样意味着
-     * "部分成功"，必须同样附带已写入的 ID，语义与上面的写入循环一致。 */
+    /* 记忆已落库。此后**任何**语句抛错都属于「部分成功」，必须携带已写入的 ID——
+     * 包括看似无害的日志调用（注入的 logger 同样可能抛错）。故用单一 try 覆盖
+     * 落库之后的全部代码，而不是逐段包装：留任何一行在窗口外，该行抛错就会被
+     * 调用方误判为「零写入可安全重试」，进而重复灌记忆。 */
     try {
+      this.logger?.info('PerceptionDistiller', `感知沉淀 ${memoryIds.length} 条记忆（${input.media.modality}）`);
       return this.buildCandidates(input, analysis, memoryIds);
     } catch (err) {
       throw new PartialPerceptionError(memoryIds, err);
