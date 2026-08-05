@@ -301,6 +301,36 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
     );
   });
 
+  /* 边界：写第一条就失败 → writtenMemoryIds 为空 → 确无记忆落库 → 必须释放。
+   * 这是「不释放」与「释放」的分界点，若判据写成 instanceof 而漏掉长度检查，
+   * 该内容会被永久跳过。 */
+  it('PartialPerceptionError 但零写入：仍释放占位（内容可重学）', async () => {
+    const singleIssue: GitHubIssue[] = [
+      { number: 1, title: '登录报错', body: '点登录后白屏', updatedAt: '2026-01-01T00:00:00Z', comments: 0 },
+    ];
+    const onePort = makeReadPort({ listIssues: async (): Promise<GitHubIssue[]> => singleIssue });
+
+    const emptyPartial = {
+      perceive: async (): Promise<PerceptionDistillResult> => {
+        throw new PartialPerceptionError([], new Error('第一条就失败'));
+      },
+    } as unknown as PerceptionDistiller;
+
+    await new GitHubLearningService({
+      readPort: onePort, store, distiller: emptyPartial,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+
+    const second = makeDistiller();
+    const r2 = await new GitHubLearningService({
+      readPort: onePort, store, distiller: second.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+
+    assert.equal(second.calls.length, 1, '零写入 → 占位应释放 → 内容可重学');
+    assert.equal(r2.ingested, 1);
+  });
+
   /* 同一分界线的另一侧：claim 之后、记忆落库之前的任何失败都必须释放占位。
    * 旧记忆查询就在该窗口内——它若抛错而不释放，内容同样被永久跳过。 */
   it('claim 后、落库前的旧记忆查询失败：释放占位（内容可重学）', async () => {
@@ -312,22 +342,108 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
       return [];
     };
 
+    /* 单条 issue 输入：批次里若有第二条，它本来就会在下一轮被摄入，
+     * 会把「第一条占位未释放」掩盖成绿灯（Codex 抓到的假绿模式）。 */
+    const singleIssue: GitHubIssue[] = [
+      { number: 1, title: '登录报错', body: '点登录后白屏', updatedAt: '2026-01-01T00:00:00Z', comments: 0 },
+    ];
+    const onePort = makeReadPort({ listIssues: async (): Promise<GitHubIssue[]> => singleIssue });
+
     await new GitHubLearningService({
-      readPort: makeReadPort(), store: brittleStore, distiller: first.distiller,
+      readPort: onePort, store: brittleStore, distiller: first.distiller,
       tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
     }).learn(REPO, ['issues']);
     assert.equal(first.calls.length, 0, '查询在 perceive 之前失败，perceive 未被调用');
 
-    /* 第二轮用正常 store：内容必须能被重新学习（占位已释放）。 */
+    /* 第二轮用正常 store：那条**唯一**内容必须能被重新学习（占位已释放）。 */
     failLookup = false;
     const second = makeDistiller();
     const r2 = await new GitHubLearningService({
-      readPort: makeReadPort(), store, distiller: second.distiller,
+      readPort: onePort, store, distiller: second.distiller,
       tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
     }).learn(REPO, ['issues']);
 
-    assert.ok(second.calls.length >= 1, '占位已释放：内容下一轮可重新摄入');
-    assert.ok(r2.ingested >= 1, '真正摄入而非全部 skipped');
+    assert.equal(second.calls.length, 1, '占位已释放：那条内容下一轮被重新摄入');
+    assert.equal(r2.ingested, 1, '真正摄入而非 skipped');
+  });
+
+  /* Codex 第三轮补口：以上用例都用手工构造的 PartialPerceptionError，
+   * 无法证明**真实** PerceptionDistiller 会在落库后的各失败点正确包装。
+   * 这里用真实 distiller + 注入故障，覆盖两个关键边界。 */
+  it('真实 distiller：第二条记忆写入失败时，异常携带第一条已写入 ID', async () => {
+    const { PerceptionDistiller, PartialPerceptionError: PPE } =
+      await import('../../perception/perception-distiller.js');
+
+    let written = 0;
+    const memoryGraph = {
+      addMemory: (): { id: string } => {
+        written += 1;
+        if (written === 2) throw new Error('第二条写入失败（模拟基础设施故障）');
+        return { id: `m-${written}` };
+      },
+    };
+    const provider = {
+      analyze: async (): Promise<unknown> => ({
+        facts: [
+          { memoryKind: 'episodic', summary: '事实一', valence: 0, salience: 0.5 },
+          { memoryKind: 'episodic', summary: '事实二', valence: 0, salience: 0.5 },
+        ],
+        confidence: 0.8,
+        identityHints: [],
+      }),
+    };
+    const distiller = new PerceptionDistiller(
+      provider as never, memoryGraph as never,
+      { ingest: (): unknown => ({ status: 'pending' }) } as never,
+    );
+
+    await assert.rejects(
+      () => distiller.perceive({
+        personaId: PERSONA, tenantId: TENANT,
+        media: { modality: 'audio', mediaSha256: 'sha-x', durationMs: 0, representation: '表征' },
+      }),
+      (err: unknown) => {
+        assert.ok(err instanceof PPE, '必须是 PartialPerceptionError');
+        assert.deepEqual(
+          [...err.writtenMemoryIds], ['m-1'],
+          '必须携带失败前已落库的记忆 ID，否则调用方会误判为零写入而重复摄入',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('真实 distiller：落库后日志抛错同样携带全部已写入 ID', async () => {
+    const { PerceptionDistiller, PartialPerceptionError: PPE } =
+      await import('../../perception/perception-distiller.js');
+
+    let n = 0;
+    const memoryGraph = { addMemory: (): { id: string } => ({ id: `m-${++n}` }) };
+    const provider = {
+      analyze: async (): Promise<unknown> => ({
+        facts: [{ memoryKind: 'episodic', summary: '事实一', valence: 0, salience: 0.5 }],
+        confidence: 0.8, identityHints: [],
+      }),
+    };
+    /* 注入会抛错的 logger——它位于「记忆已落库」之后，绝不能逃逸为普通 Error。 */
+    const brittleLogger = { info: (): never => { throw new Error('日志后端故障'); } };
+    const distiller = new PerceptionDistiller(
+      provider as never, memoryGraph as never,
+      { ingest: (): unknown => ({ status: 'pending' }) } as never,
+      brittleLogger as never,
+    );
+
+    await assert.rejects(
+      () => distiller.perceive({
+        personaId: PERSONA, tenantId: TENANT,
+        media: { modality: 'audio', mediaSha256: 'sha-y', durationMs: 0, representation: '表征' },
+      }),
+      (err: unknown) => {
+        assert.ok(err instanceof PPE, '落库后的日志失败也必须包装为部分成功');
+        assert.deepEqual([...err.writtenMemoryIds], ['m-1']);
+        return true;
+      },
+    );
   });
 
   /* 与上一条互为镜像：释放只能删 claimed 行，绝不能删已 ingested 的去重记录，
