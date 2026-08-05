@@ -9,6 +9,7 @@
  * 不变量（ADR-0047 D3）：LLM 输出**不可信**，绝不直接改核心状态。所有候选都交
  * DistillationService 经统一门（core-update-gate）：
  *   - value_shift：满足 confidence≥0.8 ∧ patternAgrees ∧ |delta|≤0.05 则自动编译；
+ *     **本蒸馏器恒给 patternAgrees=false**，故反思产出的 value_shift 必进人工审批（内核封顶）。
  *   - memory_edge：满足 confidence≥0.75 ∧ evidenceCount≥2 则自动编译（仅链接两条真实记忆，安全）；
  *   - narrative_patch / rule 等改「我是谁」的 kind：保守，默认需人工审批（不自动编译）。
  * 进门前先**硬校验**：valueId/memoryId 必须真实存在；value_shift delta **先封顶**到「单周期剩余预算」
@@ -99,7 +100,7 @@ export class LlmReflectionDistiller {
     const results: IngestResult[] = [];
 
     /* ① value_shift：valueId 必须真实存在；delta 封顶到「单周期单 value 剩余预算」（0.05 减去本周期
-     * 确定性反思已用量），patternAgrees=true（仍需过门 confidence/delta 才自动编译）。 */
+     * 确定性反思已用量），patternAgrees=false（单源 LLM 不冒充 pattern 交叉验证 → 必人审）。 */
     const vs = this.buildValueShift(proposal.valueShift, valueById, input.appliedDeltas);
     if (vs) {
       const r = this.distillation.ingest(input.personaId, {
@@ -187,7 +188,12 @@ export class LlmReflectionDistiller {
     const suggestedWeight = clamp01(round(value.weight + delta, 4));
     const actualDelta = round(suggestedWeight - value.weight, 4);
     if (actualDelta === 0) return null; /* clamp 后无净变化 */
-    return { valueId: value.id, currentWeight: value.weight, suggestedWeight, delta: actualDelta, patternAgrees: true };
+    /* patternAgrees 恒 false（审计 Critical 修复）：该字段的语义是「有**独立的确定性
+     * pattern 交叉验证**支持这次漂移」，是自动编译三重门之一。单次 LLM 读几条记忆
+     * 提出的漂移不构成多源交叉验证——此前硬编码 true 等于让反思冒充 pattern 证据，
+     * 只要 confidence/delta 达标就能自动改写人格价值观、绕过人工审批。
+     * 与 perception 路径同款（感知单源同样不冒充 pattern）。 */
+    return { valueId: value.id, currentWeight: value.weight, suggestedWeight, delta: actualDelta, patternAgrees: false };
   }
 
   /** 校验并构造 memory_edge payload。source/target 必须是可见记忆且不同 → 否则 null。 */
