@@ -202,3 +202,34 @@ describe('SiemDelivery — drain 期间入队', () => {
     assert.equal(s.snapshot().pending, 0);
   });
 });
+
+/* Codex 第六轮抓到的真缺陷（我在单飞修复中引入）：drain 为空时同步走完，
+ * 但 inFlight 要到 finally 的微任务才清除。在这个必然存在的窗口里入队，
+ * 新事件既没被上一轮看到，又因复用旧 Promise 而无人处理 → 无限期滞留。 */
+describe('SiemDelivery — 单飞的微任务竞态', () => {
+  it('空 drain 完成后、finally 之前入队：事件仍被投递（不滞留）', async () => {
+    const t = new StubTransport();
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0 });
+
+    const f1 = s.flush();   /* 空队列：drain 同步走完，inFlight 尚未清除 */
+    s.enqueue('late');      /* 正落在窗口内 */
+    const f2 = s.flush();   /* 若直接复用已完成的旧 Promise，该事件永不投递 */
+    await Promise.all([f1, f2]);
+
+    assert.deepEqual(t.delivered, ['late']);
+    assert.equal(s.snapshot().pending, 0, '事件不得滞留在队列');
+  });
+
+  it('瞬态失败下不无限递归（保留重试语义，不自旋）', async () => {
+    const t = new StubTransport();
+    t.mode = 'transient';
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0, maxRetries: 3 });
+    s.enqueue('A');
+    const f1 = s.flush();
+    s.enqueue('B');
+    const f2 = s.flush();
+    /* 关键：必须落定。递归若无终止条件，这里会挂死。 */
+    await Promise.all([f1, f2]);
+    assert.equal(s.snapshot().pending, 2, '瞬态失败保留在队列待下轮重试');
+  });
+});

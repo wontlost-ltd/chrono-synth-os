@@ -105,7 +105,15 @@ export class SiemDelivery {
    * 断点。若允许并发进入，两个 flush 会读到同一条目→重复投递，随后两次 shift
    * 各删一条→后一条从未投递却消失。故并发调用复用同一次 drain 的 Promise。 */
   async flush(): Promise<void> {
-    if (this.inFlight) return this.inFlight;
+    if (this.inFlight) {
+      /* 复用进行中的 drain。但**不能就此返回**：调用方可能在上一轮 drain 判空之后、
+       * finally 清除 inFlight 之前入队（drain 为空时同步走完，这个窗口必然存在）。
+       * 那样新事件既没被上一轮看到，又因复用旧 Promise 而无人处理，将无限期滞留。
+       * 故等旧 drain 落定后重新检查队列——有残留就再跑一轮。 */
+      await this.inFlight;
+      if (this.buffer.length === 0) return;
+      return this.flush();
+    }
     this.inFlight = this.drain().finally(() => { this.inFlight = undefined; });
     return this.inFlight;
   }

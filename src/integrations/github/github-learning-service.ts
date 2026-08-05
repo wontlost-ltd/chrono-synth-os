@@ -305,8 +305,8 @@ export class GitHubLearningService {
    * 且账本没有 lease/超时回收机制）。释放是幂等的单条 DELETE，短暂故障（锁竞争、
    * 瞬时 I/O）重试即可收敛，因此不接受一次失败就放弃。
    *
-   * 仍然不抛出：调用方已经在失败路径上，释放失败不应掩盖原始故障。改为返回布尔值
-   * 并写日志，让「永久跳过」至少是**可观测**的，而不是静默发生。
+   * 仍然不抛出：调用方已经在失败路径上，释放失败不应掩盖原始故障。改为写 error 日志，
+   * 让「永久跳过」至少是**可观测**的，而不是静默发生。
    */
   private releaseClaimDurably(repo: string, resourceType: string, contentSha: string): void {
     const MAX_ATTEMPTS = 3;
