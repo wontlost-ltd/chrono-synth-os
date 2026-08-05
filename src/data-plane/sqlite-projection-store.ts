@@ -27,12 +27,16 @@ export class SqliteProjectionStore implements ProjectionStore {
     value: T,
     version: number,
   ): Promise<void> {
+    /* 版本单调：只有更高版本才能覆盖。事件投递天然乱序（重试、并发消费者、
+     * 跨分片延迟），无条件覆盖会让延迟到达的 v1 抹掉已写入的 v2——读模型静默
+     * 回退到旧状态，且没有任何错误可循。WHERE 谓词让旧版本写入成为无操作。 */
     this.db
       .prepare(
         `INSERT INTO projection_store(tenant_id, projection, id, value_json, version, updated_at)
          VALUES(?, ?, ?, ?, ?, ?)
          ON CONFLICT(tenant_id, projection, id) DO UPDATE
-           SET value_json = excluded.value_json, version = excluded.version, updated_at = excluded.updated_at`,
+           SET value_json = excluded.value_json, version = excluded.version, updated_at = excluded.updated_at
+           WHERE excluded.version > projection_store.version`,
       )
       .run(tenantId, projection, id, JSON.stringify(value), version, Date.now());
   }

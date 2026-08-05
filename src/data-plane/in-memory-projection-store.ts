@@ -35,7 +35,12 @@ export class InMemoryProjectionStore implements ProjectionStore {
     value: T,
     version: number,
   ): Promise<void> {
-    this.proj(tenantId, projection).set(id, { value, version });
+    /* 版本单调：与 SQLite 实现保持同一语义（只有更高版本才覆盖），
+     * 否则内存实现会在测试中放行 SQLite 实际拒绝的乱序写入。 */
+    const p = this.proj(tenantId, projection);
+    const current = p.get(id);
+    if (current && current.version >= version) return;
+    p.set(id, { value, version });
   }
 
   async list<T>(

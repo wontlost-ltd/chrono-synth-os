@@ -52,7 +52,27 @@ export class QuotaManager {
     });
   }
 
+  /**
+   * 校验计量数量：必须是有限正整数。
+   *
+   * 负数是真实的配额绕过——它会让 consume/record 反向**降低**已用量，等于自助重置
+   * 配额；NaN 会让所有比较返回 false 而静默放行。这类值只可能来自调用方 bug 或
+   * 恶意输入，任何一种都不该被当作合法计量吞下，故直接抛错而非夹取。
+   */
+  private static assertQuantity(quantity: number): void {
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      throw new Error(`配额数量必须为正整数，收到: ${quantity}`);
+    }
+  }
+
   setLimit(tenantId: string, resource: string, maxPerWindow: number, windowMs: number): void {
+    if (!Number.isInteger(maxPerWindow) || maxPerWindow < 0) {
+      throw new Error(`配额上限必须为非负整数，收到: ${maxPerWindow}`);
+    }
+    if (!Number.isInteger(windowMs) || windowMs <= 0) {
+      /* windowMs<=0 会让 ts % window_ms 产生 NaN/除零语义，窗口计算彻底失效。 */
+      throw new Error(`配额窗口必须为正整数毫秒，收到: ${windowMs}`);
+    }
     this.source.forTenant(tenantId).execute(quotaCmdSetLimit({ tenantId, resource, maxPerWindow, windowMs }));
   }
 
@@ -61,6 +81,7 @@ export class QuotaManager {
   }
 
   checkQuota(tenantId: string, resource: string, quantity = 1, now?: number): boolean {
+    QuotaManager.assertQuantity(quantity);
     const tx = this.source.forTenant(tenantId);
     const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));
     if (!limit) return true;
@@ -72,6 +93,7 @@ export class QuotaManager {
   }
 
   consumeQuota(tenantId: string, resource: string, quantity = 1, now?: number): boolean {
+    QuotaManager.assertQuantity(quantity);
     const tx = this.source.forTenant(tenantId);
     const ts = now ?? Date.now();
     const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));
@@ -88,6 +110,7 @@ export class QuotaManager {
   }
 
   recordUsage(tenantId: string, resource: string, quantity = 1, now?: number): void {
+    QuotaManager.assertQuantity(quantity);
     const tx = this.source.forTenant(tenantId);
     const ts = now ?? Date.now();
     const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));

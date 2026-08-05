@@ -41,18 +41,24 @@ describe('PlatformKeyResolver', () => {
     await assert.rejects(() => resolver.resolve('nonexistent', 'encrypt'));
   });
 
-  it('rotate() returns KeyRotationResult with new keyRef', async () => {
+  /* 审计 Warning B5-7：原实现生成 32 字节密钥材料后直接丢弃，只返回
+   * `master.v<时间戳>` 这个**永远无法 resolve** 的引用。原两条测试只断言返回值
+   * 形状（前缀、算法名），从不验证该引用可用——于是「轮换后数据永久不可解」这一
+   * 后果被绿灯掩盖。现契约为显式 fail-closed：本 resolver 不支持轮换。 */
+  it('rotate() 显式拒绝——不返回无法解析的密钥引用', async () => {
     const resolver = makeResolver(db);
-    const result = await resolver.rotate('master');
-    assert.equal(result.previousKeyRef, 'master');
-    assert.ok(result.newKeyRef.startsWith('master.v'));
-    assert.equal(result.algorithm, 'aes-256-gcm');
+    await assert.rejects(
+      () => resolver.rotate('master'),
+      /不支持密钥轮换/,
+      '必须明确拒绝，而非返回一个之后 resolve 必然失败的引用',
+    );
   });
 
-  it('rotate() returns newKeyRef starting with master.v', async () => {
+  it('拒绝轮换后原密钥仍可正常解析（拒绝无副作用）', async () => {
     const resolver = makeResolver(db);
-    const result = await resolver.rotate('master');
-    assert.ok(result.newKeyRef.startsWith('master.v'));
+    await assert.rejects(() => resolver.rotate('master'));
+    const handle = await resolver.resolve('master', 'decrypt');
+    assert.equal(handle.keyRef, 'master');
   });
 
   it('revoke() is idempotent - second call does not throw', async () => {
