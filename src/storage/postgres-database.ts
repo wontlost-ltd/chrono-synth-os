@@ -294,12 +294,21 @@ if (!isMainThread && parentPort) {
         }
 
         case 'close': {
-          /* 释放所有事务 client */
+          /* 释放所有事务 client。
+           * ROLLBACK 失败也**必须**释放：原实现把 release 放在 try 内，回滚一旦抛错
+           * 就整个跳过释放，随后 pool.end() 会卡在未归还的连接上。故释放移入 finally，
+           * 且失败路径以 destroy 归还（连接状态已不可信）。 */
           for (const [, client] of txClients) {
+            let rollbackFailed = false;
             try {
               await client.query('ROLLBACK');
-              client.release();
-            } catch { /* 忽略 */ }
+            } catch {
+              rollbackFailed = true;
+            } finally {
+              try {
+                client.release(rollbackFailed);
+              } catch { /* 释放本身失败：已在关闭路径，无处可上报 */ }
+            }
           }
           txClients.clear();
           await pool.end();

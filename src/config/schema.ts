@@ -255,7 +255,10 @@ const intelligenceSchema = z.object({
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
   })).default([]),
-  maxTokens: z.coerce.number().int().default(4096),
+  /* 必须为正：该值会作为 quantity 进入配额计量（model-router 以 estimatedTokens
+   * 调 checkQuota/consumeQuota），0 或负数在计量层已被拒绝——与其等到运行期抛错，
+   * 不如在配置解析期就失败，把错误留在启动而非请求路径上。 */
+  maxTokens: z.coerce.number().int().min(1).default(4096),
   temperature: z.coerce.number().min(0).max(2).default(0.7),
   /** LLM 单次请求超时（ms）。默认 30s；接慢网关（如自建 OpenAI 兼容代理）可经
    * CHRONO_INTELLIGENCE_TIMEOUT_MS 调大。0=用 ModelRouter 内置默认。 */

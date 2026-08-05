@@ -87,6 +87,11 @@ curl http://localhost:3100/metrics/prometheus
 - `CHRONO_OBSERVABILITY_WORKER_HTTP_HOST`
 - `CHRONO_OBSERVABILITY_WORKER_HTTP_PORT`
 
+> **默认绑回环**：`HTTP_HOST` 默认 `127.0.0.1`。`/readyz` 与 `/metrics` 无鉴权，
+> 却会暴露队列 backlog 深度、运行模式与版本号，故默认不对外监听。
+> 需要被容器外或跨主机的 Prometheus 抓取时，必须显式设为 `0.0.0.0`
+> （本仓库 `docker-compose.yml` 已如此配置），并自行置于网络策略/防火墙之后。
+
 ### Kafka
 
 - `CHRONO_OBSERVABILITY_KAFKA_ENABLED`
