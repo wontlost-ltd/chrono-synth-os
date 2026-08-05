@@ -183,3 +183,22 @@ describe('SiemDelivery — 并发 flush', () => {
     assert.equal(s.snapshot().delivered, 2);
   });
 });
+
+/* Codex 交叉审查补口：单飞的正确性不仅是「并发不重复」，还须保证
+ * drain 等待期间入队的事件不会被漏掉（drain 循环读实时 buffer.length 而非启动快照）。 */
+describe('SiemDelivery — drain 期间入队', () => {
+  it('投递挂起期间入队的新事件仍会被同一轮 drain 处理', async () => {
+    const t = new GatedTransport();
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0 });
+    s.enqueue('A');
+
+    const f = s.flush();
+    await t.firstCallEntered;   /* 此刻 A 正挂在 transport 里 */
+    s.enqueue('B');             /* drain 进行中入队 */
+    t.releaseGate();
+    await f;
+
+    assert.deepEqual(t.delivered, ['A', 'B'], 'B 不得被漏掉');
+    assert.equal(s.snapshot().pending, 0);
+  });
+});

@@ -209,14 +209,22 @@ export class GitHubLearningService {
         continue;
       }
 
-      try {
-        /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
-        const previousMemoryIds = mapped.discussionKey
-          ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
-          : [];
+      /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
+      const previousMemoryIds = mapped.discussionKey
+        ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
+        : [];
 
-        /* 抢到才摄入：audio 壳范式喂进感知蒸馏管线（与 learn-topic 同款）。 */
-        const result = await this.distiller.perceive({
+      /* 抢到才摄入：audio 壳范式喂进感知蒸馏管线（与 learn-topic 同款）。
+       *
+       * 释放占位的窗口**只覆盖 perceive 本身**，这是分界线：
+       *   - perceive 抛错 → 尚无任何记忆落库，释放占位是安全的，否则该内容永久跳过；
+       *   - perceive 成功后的任何步骤抛错 → 记忆**已经写入**，此时释放占位会让下一轮
+       *     重新 perceive，凭空生成第二套记忆。宁可留下 claimed 占位（该条本轮不再
+       *     重学，但已有记忆完好），也不能制造重复知识。
+       * 故绝不可把整段循环体裹进同一个 catch。 */
+      let result: Awaited<ReturnType<typeof this.distiller.perceive>>;
+      try {
+        result = await this.distiller.perceive({
           personaId: this.personaId,
           tenantId: this.tenantId,
           media: {
@@ -226,7 +234,18 @@ export class GitHubLearningService {
             representation: mapped.representation,
           },
         });
+      } catch {
+        /* perceive 失败：无记忆落库 → 释放占位，使该内容下一轮可重新学习。 */
+        try {
+          this.store.releaseDigestClaim(this.personaId, repo, resourceType, mapped.contentSha);
+        } catch { /* 释放失败：该条下一轮仍被跳过，但不能因此掩盖原始失败 */ }
+        /* 不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
+        return { ingested, skipped, cursorAdvanced: false };
+      }
 
+      /* 以下为 perceive 成功后的收尾——记忆已落库，**不再释放占位**。
+       * 收尾失败时占位保持 claimed：内容不重复灌入，且已写入的记忆完整保留。 */
+      try {
         /* 演进式取代：记新指针组 + 删旧记忆组，使同一 issue/PR 恒为最新一版共识。
          * 仅当 perceive 真产出新记忆时才取代——空产出（老师失败/无事实）时保留旧记忆，
          * 宁可留旧共识也不能把已有知识删成空白。
@@ -243,13 +262,7 @@ export class GitHubLearningService {
         this.store.markIngested(this.personaId, repo, resourceType, mapped.contentSha, Date.now());
         ingested += 1;
       } catch {
-        /* 摄入失败必须**释放占位**再返回：claim 发生在 perceive 之前，若占位残留，
-         * 下一轮 claimDigest 返回 false → 该条内容被当作「已摄入」永久跳过，知识静默丢失。
-         * 释放本身再抛错也要吞掉——已经在失败路径上，不能让它掩盖原始失败。 */
-        try {
-          this.store.releaseDigestClaim(this.personaId, repo, resourceType, mapped.contentSha);
-        } catch { /* 释放失败：下一轮仍会跳过该条，但不能因此中断整体错误返回 */ }
-        /* 不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
+        /* 收尾失败：记忆已在库，占位保持 claimed（不释放）。不推进游标。 */
         return { ingested, skipped, cursorAdvanced: false };
       }
     }

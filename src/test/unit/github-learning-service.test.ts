@@ -231,6 +231,41 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
     assert.ok(second.ingested >= 1, '恢复后真正摄入，而非全部 skipped');
   });
 
+  /* Codex 交叉审查发现：释放窗口若覆盖 perceive **之后**的收尾步骤，
+   * 就把「永久跳过」换成了更坏的「重复灌记忆」——记忆已落库却释放占位，
+   * 下一轮重新 perceive 会凭空生成第二套。故注入 markIngested 失败，
+   * 断言第二轮**不再** perceive（占位保持 claimed）。 */
+  it('perceive 成功但收尾失败：不释放占位，下一轮不重复灌记忆', async () => {
+    const first = makeDistiller();
+    /* 注入：markIngested 抛错，模拟 perceive 成功后的收尾故障。 */
+    let failMark = true;
+    const brittleStore = Object.create(store) as GithubLearnStore;
+    brittleStore.markIngested = (): void => {
+      if (failMark) throw new Error('收尾写入失败（模拟）');
+    };
+
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store: brittleStore, distiller: first.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+    assert.ok(first.calls.length >= 1, '首轮 perceive 成功（记忆已落库）');
+    const ingestedSha = first.calls[0]!.media.mediaSha256;
+
+    /* 第二轮用正常 store：那条已产生记忆的内容必须**不再**被 perceive。 */
+    failMark = false;
+    const second = makeDistiller();
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store, distiller: second.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+
+    const retried = second.calls.map((c) => c.media.mediaSha256);
+    assert.equal(
+      retried.includes(ingestedSha), false,
+      `记忆已落库的内容（${ingestedSha}）不得重新 perceive，否则产生重复记忆`,
+    );
+  });
+
   /* 与上一条互为镜像：释放只能删 claimed 行，绝不能删已 ingested 的去重记录，
    * 否则「释放」会退化成重复灌记忆的漏洞。 */
   it('释放占位不影响已摄入记录：ingested 行不被删除，仍正常去重', async () => {

@@ -91,3 +91,28 @@ describe('InMemoryProjectionStore', () => {
     assert.equal(result, null);
   });
 });
+
+/* 与 SqliteProjectionStore 同一语义（审计 Warning B5-6）：内存实现若放行
+ * SQLite 实际拒绝的乱序写入，测试就会掩盖生产行为差异。 */
+describe('InMemoryProjectionStore — 版本单调', () => {
+  let s: InMemoryProjectionStore;
+  beforeEach(() => { s = new InMemoryProjectionStore(); });
+
+  it('较低版本不得覆盖', async () => {
+    await s.write('t1', 'proj', 'id-1', { v: 'v2' }, 2);
+    await s.write('t1', 'proj', 'id-1', { v: 'v1-late' }, 1);
+    assert.deepEqual(await s.read('t1', 'proj', 'id-1'), { v: 'v2' });
+  });
+
+  it('同版本重放不改变状态', async () => {
+    await s.write('t1', 'proj', 'id-1', { v: 'original' }, 2);
+    await s.write('t1', 'proj', 'id-1', { v: 'replayed' }, 2);
+    assert.deepEqual(await s.read('t1', 'proj', 'id-1'), { v: 'original' });
+  });
+
+  it('更高版本正常覆盖', async () => {
+    await s.write('t1', 'proj', 'id-1', { v: 'v1' }, 1);
+    await s.write('t1', 'proj', 'id-1', { v: 'v2' }, 2);
+    assert.deepEqual(await s.read('t1', 'proj', 'id-1'), { v: 'v2' });
+  });
+});
