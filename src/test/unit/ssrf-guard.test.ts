@@ -63,6 +63,27 @@ describe('isPrivateIPv6', () => {
   it('public IPv6 allowed', () => {
     assert.equal(isPrivateIPv6('2001:4860:4860::8888'), false); /* Google DNS */
   });
+
+  /* 审计发现的绕过（Critical）：此前只识别 `::ffff:` 后跟**点分**IPv4 的写法，
+   * 十六进制嵌入形式（IPv4-mapped 的等价表示）与 IPv4-compatible 形式全部漏网。
+   * `::ffff:a9fe:a9fe` = 169.254.169.254 是云元数据端点——绕过=可窃取实例凭据。 */
+  it('IPv4-mapped 的十六进制写法同样必须拦截（审计 Critical 回归）', () => {
+    assert.equal(isPrivateIPv6('::ffff:7f00:1'), true, '::ffff:7f00:1 = 127.0.0.1 环回');
+    assert.equal(isPrivateIPv6('::ffff:7f00:0001'), true, '补零写法');
+    assert.equal(isPrivateIPv6('::ffff:a9fe:a9fe'), true, '::ffff:a9fe:a9fe = 169.254.169.254 云元数据');
+    assert.equal(isPrivateIPv6('::ffff:c0a8:1'), true, '::ffff:c0a8:1 = 192.168.0.1');
+    assert.equal(isPrivateIPv6('::ffff:0a00:1'), true, '::ffff:0a00:1 = 10.0.0.1');
+  });
+
+  it('IPv4-compatible（已废弃但仍可解析）必须拦截', () => {
+    assert.equal(isPrivateIPv6('::127.0.0.1'), true);
+    assert.equal(isPrivateIPv6('::169.254.169.254'), true);
+  });
+
+  it('十六进制写法的公网地址仍放行（不误杀）', () => {
+    assert.equal(isPrivateIPv6('::ffff:0808:0808'), false, '::ffff:8.8.8.8 公网 DNS');
+    assert.equal(isPrivateIPv6('::ffff:2200:1'), false, '34.0.0.1 公网');
+  });
 });
 
 describe('validateOutboundUrl', () => {
