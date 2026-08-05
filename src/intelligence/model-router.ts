@@ -156,6 +156,12 @@ export class ModelRouter implements LLMProvider {
     this.embeddingModel = config.embeddingModel;
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl;
+    /* 程序化构造同样绕过 config schema 的 .min(1)，在此把非正值挡在构造期——
+     * 比等到第一次 chat 调用才炸更早暴露，也更容易定位到错误的构造点。 */
+    if (config.maxTokens !== undefined
+      && (!Number.isInteger(config.maxTokens) || config.maxTokens <= 0)) {
+      throw new Error(`ModelRouter maxTokens 必须为正整数，收到: ${config.maxTokens}`);
+    }
     this.maxTokens = config.maxTokens ?? 4096;
     this.temperature = config.temperature ?? 0.7;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -183,7 +189,14 @@ export class ModelRouter implements LLMProvider {
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
+    /* maxTokens 直接作为配额消费量。config schema 的 .min(1) 只约束**配置来源**——
+     * 调用方可经 options 逐次传入，也可在代码里直接构造 Router，两条路都绕过 schema。
+     * 非正值传进计量层会被拒（负数还能反向降低已用量），故在此把关：token 上限
+     * 本就没有 ≤0 的合理语义，拒绝比让它在配额层炸开更早、也更好定位。 */
     const estimatedTokens = options?.maxTokens ?? this.maxTokens;
+    if (!Number.isInteger(estimatedTokens) || estimatedTokens <= 0) {
+      throw new Error(`maxTokens 必须为正整数，收到: ${estimatedTokens}`);
+    }
 
     /* 安全检查：提示注入检测（mock 模式跳过，避免影响测试） */
     if (this.provider !== 'mock') {
