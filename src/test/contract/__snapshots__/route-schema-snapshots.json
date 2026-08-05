@@ -12,6 +12,12 @@
       "hash": "708022d11c9a0628edef77e47372b34730474526375096bff6f3c28cdaf7cc59"
     }
   ],
+  "admin-github.ts": [
+    {
+      "name": "ConnectAppSchema",
+      "hash": "d5330c8e3d41f110634b631e78f718601feaa600fe5800f1abfe3482ea7071df"
+    }
+  ],
   "admin-templates.ts": [
     {
       "name": "CreatePersonaTemplateSchema",

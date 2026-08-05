@@ -1177,3 +1177,15 @@ export const WorkforceOffboardBodySchema = z.object({
   reparentReportsTo: z.string().min(1).max(128).optional(),
   reassignTasksTo: z.string().min(1).max(128).optional(),
 });
+
+/**
+ * GitHub App 凭据录入（安装入口产品化）。私钥必须含 PRIVATE KEY 头——挡住粘错内容
+ * （如粘了公钥或 App ID）。私钥只经此 POST body 进入，绝不走 GET/URL，绝不回显。
+ */
+export const ConnectAppSchema = z.object({
+  appId: z.string().trim().min(1, 'appId 必填').max(64),
+  privateKeyPem: z.string().min(1, 'privateKeyPem 必填')
+    .refine((s) => s.includes('PRIVATE KEY'), '私钥 PEM 内容不含 PRIVATE KEY 头，请粘贴完整的 .pem 文件内容'),
+  webhookSecret: z.string().min(1, 'webhookSecret 必填').max(256),
+  gheBaseUrl: z.string().url().optional(),
+});
