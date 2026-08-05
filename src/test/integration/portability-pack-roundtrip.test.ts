@@ -456,4 +456,61 @@ describe('Portability Pack GA roundtrip', () => {
     assert.equal(edge?.relation, 'associative', '复合 PK 边不得被跨租户导入劫持');
     assert.equal(edge?.tenant_id, victimTenant, '边的 tenant_id 不得被改写');
   });
+
+  /** 起一套 in-memory 服务 + 完成一次导出，返回可复用的包与服务。 */
+  async function exportOnce(): Promise<{ service: PrivacyService; tenantId: string; packJson: string }> {
+    db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    tmpDir = await mkdtemp(join(tmpdir(), 'chrono-portability-sig-'));
+    os = new ChronoSynthOS({
+      db, skipMigrations: true,
+      clock: new TestClock(1_700_000_000_000), logger: new SilentLogger(),
+    });
+    os.start();
+    const config = loadConfig({
+      websocket: { enabled: false },
+      objectStorage: { provider: 'local', localPath: tmpDir, presignTtlSeconds: 60 },
+    });
+    const service = new PrivacyService(os, undefined, config, new LocalObjectStorageClient(tmpDir));
+    const tenantId = 'default';
+
+    const started = service.startExportJob(tenantId);
+    let status = service.getExportJobStatus(tenantId, started.exportId);
+    const deadline = Date.now() + 3_000;
+    while (status?.state !== 'completed' && Date.now() < deadline) {
+      await sleep(100);
+      status = service.getExportJobStatus(tenantId, started.exportId);
+    }
+    assert.equal(status?.state, 'completed');
+    const row = getExportJob(db, started.exportId);
+    assert.ok(row?.pack_json);
+    return { service, tenantId, packJson: row.pack_json };
+  }
+
+  /* 审计 Critical：dryRunImport 此前只比较 signatureAlgorithm 字符串是否等于
+   * 'hmac-sha256' 就把 signatureValid 报为 true，从不重算 checksum、也从不验 HMAC。
+   * 后果：攻击者自造 manifest 写上算法名即可拿到 commit token 进入导入流程。 */
+  it('伪造 manifest（算法名写对但签名无效）必须被拒绝，不得签发 commit token', async () => {
+    const { service, tenantId, packJson } = await exportOnce();
+
+    /* 篡改 manifest 的**合法字段**（exportedAt），签名与 checksum 保持原值。
+     * 用合法字段而非注入新键——schema 是 .strict()，注入未知键会先被 schema 拦下，
+     * 走不到验签分支，那样的测试是假绿。 */
+    const bundled = JSON.parse(packJson) as { manifest: Record<string, unknown>; payloads: unknown };
+    bundled.manifest.exportedAt = '2000-01-01T00:00:00.000Z';
+    const forged = JSON.stringify(bundled);
+
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, forged));
+
+    assert.equal(dryRun.signatureValid, false, 'manifest 被改后签名必须判为无效');
+    assert.equal(dryRun.canCommit, false, '验签失败绝不可放行导入');
+    assert.equal(dryRun.commitToken, undefined, '验签失败绝不可签发 commit token');
+  });
+
+  it('未被篡改的原始包仍应验签通过（不误杀正常流程）', async () => {
+    const { service, tenantId, packJson } = await exportOnce();
+    const dryRun = ImportDryRunReportV1Schema.parse(service.dryRunImport(tenantId, packJson));
+    assert.equal(dryRun.signatureValid, true, '原始包签名必须有效');
+    assert.ok(dryRun.canCommit, '原始包应可导入');
+  });
 });

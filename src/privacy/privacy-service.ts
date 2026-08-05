@@ -3,7 +3,7 @@
  * 封装 GDPR 数据导出与擦除的业务逻辑
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { ChronoSynthOS } from '../chrono-synth-os.js';
 import type { AppConfig } from '../config/schema.js';
 import type { IDatabase, SqlValue } from '../storage/database.js';
@@ -18,7 +18,7 @@ import {
   PortabilityPackManifestV1Schema,
   ExportJobStatusV1Schema,
 } from '@chrono/contracts';
-import type { ExportJobStatusV1, ImportCommitResultV1, ImportDryRunReportV1 } from '@chrono/contracts';
+import type { ExportJobStatusV1, ImportCommitResultV1, ImportDryRunReportV1, PortabilityPackManifestV1 } from '@chrono/contracts';
 import { buildPortabilityPack } from './export-pack-builder.js';
 import {
   createExportJob,
@@ -324,6 +324,17 @@ export const PRIVACY_RETENTION_EXEMPT_TABLES: ReadonlySet<string> = new Set<stri
 export type EraseResult =
   | { deleted: true; blocked: false; tenantId: string; timestamp: number; tablesAffected: Record<string, number> }
   | { deleted: false; blocked: true; tenantId: string; timestamp: number; reason: string; blockingHoldId: string; tablesAffected: Record<string, number> };
+
+/**
+ * 常量时间比较两个十六进制字符串。长度不等直接返 false——
+ * timingSafeEqual 对不等长 Buffer 会抛 RangeError，须先挡。
+ */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ba = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
 
 function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
@@ -700,6 +711,33 @@ export class PrivacyService {
   }
 
   /**
+   * 校验 manifest 完整性：重算 checksum + 重算 HMAC，常量时间比较。
+   *
+   * 必须与导出侧 buildPortabilityPack 的构造完全一致：
+   *   checksum  = sha256(JSON.stringify(manifest 去掉 integrity 字段))
+   *   signature = HMAC-SHA256(checksum, signingKey)
+   *
+   * 注意 tenant_dedicated 租户导出时用的是 kmsKeyRef 作签名密钥（见 startExportJob），
+   * 故此处按同一规则解析有效密钥，否则专属加密租户的合法包会被误判为伪造。
+   */
+  private verifyManifestIntegrity(manifest: PortabilityPackManifestV1): boolean {
+    try {
+      const { integrity, ...withoutIntegrity } = manifest;
+      const expectedChecksum = sha256Hex(JSON.stringify(withoutIntegrity));
+      if (!timingSafeEqualStr(integrity.manifestChecksum, expectedChecksum)) return false;
+
+      const signingKey = manifest.tenant.encryptionMode === 'tenant_dedicated' && manifest.tenant.kmsKeyRef
+        ? manifest.tenant.kmsKeyRef
+        : this.signingKey;
+      const expectedSig = createHmac('sha256', signingKey).update(expectedChecksum, 'utf8').digest('hex');
+      return timingSafeEqualStr(integrity.signaturePublicKey ?? '', expectedSig);
+    } catch {
+      /* 任何解析/计算异常一律视为验签失败（fail-closed）。 */
+      return false;
+    }
+  }
+
+  /**
    * 对导入包清单执行 dry-run 验证，返回报告（不写入任何数据）
    */
   dryRunImport(tenantId: string, packManifestJson: string): ImportDryRunReportV1 {
@@ -740,13 +778,27 @@ export class PrivacyService {
       });
     }
 
-    // 检查签名算法
+    /* 完整性验证（审计 Critical 修复）：此前只比较 signatureAlgorithm 字符串就把
+     * signatureValid 报为 true，从不重算 checksum、也从不验 HMAC——攻击者自造 manifest
+     * 写上算法名即可拿到 commit token。现在按导出侧同款构造重算并常量时间比较：
+     *   checksum  = sha256(JSON(manifest 去掉 integrity))
+     *   signature = HMAC-SHA256(checksum, signingKey)
+     * 任一不符即为 blocker（阻断签发 token），而非仅 warning。 */
+    let signatureValid = false;
     if (manifest.integrity.signatureAlgorithm !== 'hmac-sha256') {
-      warnings.push({
+      blockers.push({
         code: 'UNSUPPORTED_SIGNATURE_ALG',
         messageId: 'import.warning.unsupportedSignatureAlg',
         entity: manifest.integrity.signatureAlgorithm,
       });
+    } else {
+      signatureValid = this.verifyManifestIntegrity(manifest);
+      if (!signatureValid) {
+        blockers.push({
+          code: 'SIGNATURE_INVALID',
+          messageId: 'import.error.signatureInvalid',
+        });
+      }
     }
 
     // 构建 deltaSummary（每个 required payload 条目视为待创建）
@@ -770,7 +822,7 @@ export class PrivacyService {
       schemaVersion: 'import-dryrun.v1',
       importId,
       packSchemaVersion: manifest.schemaVersion,
-      signatureValid: manifest.integrity.signatureAlgorithm === 'hmac-sha256',
+      signatureValid,
       blockers,
       warnings,
       deltaSummary,
