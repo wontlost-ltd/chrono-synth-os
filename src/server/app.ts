@@ -57,6 +57,7 @@ import { registerCompanionChatRoutes } from './routes/companion/chat.js';
 import { registerCompanionLearnGithubRoutes } from './routes/companion/learn-github.js';
 import { registerCompanionDraftGithubRoutes } from './routes/companion/draft-github-reply.js';
 import { registerGithubWebhookRoutes } from './routes/github-webhook.js';
+import { registerAdminGithubRoutes } from './routes/admin-github.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -900,6 +901,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* GitHub webhook 接收器（可选系统入站入口，非用户动作 → 前缀 integrations/github）：
    * GitHub 发 issue/PR opened → HMAC 验签 + 反查租户 + 幂等 → 零-LLM 起草停 drafted（绝不发布）。 */
   registerGithubWebhookRoutes(app, deps.os, tenantFactory, db, config);
+  registerAdminGithubRoutes(app, { os: deps.os, tenantFactory, config });
   registerPersonaRoutes(app, { os: deps.os, resolver: captureResolver('personas'), tenantFactory });
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);
