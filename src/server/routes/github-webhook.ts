@@ -45,9 +45,13 @@ import type { AppConfig } from '../../config/schema.js';
 import { AuthenticationError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { tryByokEncryption } from '../../storage/llm-credential-store.js';
 import { GithubAppCredentialStore } from '../../storage/github-app-credential-store.js';
+import { githubInstallListByTenant } from '@chrono/kernel';
 import { mapWebhookEventToLearnIntent } from '../../integrations/github/github-event-mapper.js';
 import { GITHUB_LEARN_TASK_TYPE, type GithubLearnTaskPayload } from '../../integrations/github/github-learn-task-handler.js';
 import { GithubLearnStore } from '../../storage/github-learn-store.js';
+import {
+  mapInstallationEvent, applyRepoDelta, type GithubInstallationEventPayload,
+} from '../../integrations/github/github-installation-event-mapper.js';
 import { GithubDraftStore } from '../../storage/github-draft-store.js';
 import { composeGithubReply } from '../../integrations/github/github-response-composer.js';
 import { retrieveMemoriesDeterministic } from '../../conversation/deterministic-memory-retrieval.js';
@@ -218,7 +222,39 @@ export function registerGithubWebhookRoutes(
       }
     }
 
-    /* ⑥ 仅 issue/PR opened 触发起草；其它事件/action → 200 忽略。 */
+    /* ⑥ installation 生命周期同步（安装入口产品化）：装/卸/暂停/改授权经此自动跟上，
+     * 使 github_installations 表真实反映 GitHub 侧状态。
+     *
+     * 卸载即停学：映射一删，assembleGitHubReadPort 即返 no-installation，组织同步
+     * worker 与学习 handler 都静默跳过——无需额外停学逻辑。 */
+    const installAction = mapInstallationEvent(eventType, payload as GithubInstallationEventPayload);
+    if (installAction.kind !== 'ignore') {
+      try {
+        const installStore = new GithubAppCredentialStore(tenantOS.getDatabase(), credEncryption, tenantId);
+        const now = tenantOS.getClock().now();
+        if (installAction.kind === 'delete') {
+          installStore.deleteInstallation(GITHUB_HOST, installationId);
+        } else if (installAction.kind === 'suspend') {
+          installStore.setInstallationSuspended(GITHUB_HOST, installationId, now, now);
+        } else if (installAction.kind === 'unsuspend') {
+          installStore.setInstallationSuspended(GITHUB_HOST, installationId, null, now);
+        } else {
+          /* repos 增删：GitHub 只推增量不推完整列表，故读现有列 → 应用增量 → 写回。 */
+          const existing = tenantOS.getDatabase()
+            .queryMany(githubInstallListByTenant(tenantId))
+            .find((r) => r.installation_id === installationId);
+          const nextRepos = applyRepoDelta(existing?.repos ?? null, installAction);
+          installStore.updateInstallationRepos(GITHUB_HOST, installationId, nextRepos, now);
+        }
+      } catch (err) {
+        /* 同步失败不影响 webhook 响应——GitHub 侧状态是权威，下次事件会再同步。 */
+        request.log.warn({ err }, 'installation 生命周期同步失败');
+      }
+      /* installation 类事件不参与起草，直接返回。 */
+      return reply.status(200).send({ data: { received: true, installationSynced: true } });
+    }
+
+    /* ⑦ 仅 issue/PR opened 触发起草；其它事件/action → 200 忽略。 */
     const target = extractOpenedTarget(payload, eventType);
     if (!target) {
       return reply.status(200).send({ data: { received: true, drafted: false } });

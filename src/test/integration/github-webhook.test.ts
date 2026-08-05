@@ -299,6 +299,71 @@ describe('GitHub webhook 接收器（HMAC 验签 + 反查 fail-closed + 幂等 +
       await app.close();
     });
   });
+
+  /* installation 生命周期同步（安装入口产品化）：装/卸/暂停/改授权经 webhook 自动跟上，
+   * 使 github_installations 表真实反映 GitHub 侧状态。 */
+  describe('installation 生命周期事件', () => {
+    /** 造本租户凭据 store（seedGithubApp 已建 App 凭据 + installation 映射）。 */
+    function credStore(): GithubAppCredentialStore {
+      const enc = tryByokEncryption(config.encryption);
+      assert.ok(enc, '测试需启用凭据加密');
+      return new GithubAppCredentialStore(os.getDatabase(), enc, 'default');
+    }
+
+    /** 直查 suspended_at 列。 */
+    function readSuspended(): number | null {
+      const row = os.getDatabase().prepare<{ suspended_at: number | null }>(
+        'SELECT suspended_at FROM github_installations WHERE github_host=? AND installation_id=?',
+      ).get(GITHUB_HOST, INSTALLATION_ID);
+      return row?.suspended_at ?? null;
+    }
+
+    it('installation.deleted → 映射删除（卸载即停学的端到端证明）', async () => {
+      const app = await mountWebhook(os, config);
+      assert.ok(credStore().resolveTenantByInstallation(GITHUB_HOST, INSTALLATION_ID), '删前映射存在');
+
+      const raw = JSON.stringify({ action: 'deleted', installation: { id: INSTALLATION_ID } });
+      const res = await deliver(app, raw, { event: 'installation' });
+
+      assert.equal(res.status, 200);
+      assert.equal(
+        credStore().resolveTenantByInstallation(GITHUB_HOST, INSTALLATION_ID), undefined,
+        '卸载后映射应删除——后续 ReadPort 装配即返 no-installation，学习自动停',
+      );
+
+      await app.close();
+    });
+
+    it('installation.suspend → suspended_at 置位；unsuspend → 清除', async () => {
+      const app = await mountWebhook(os, config);
+
+      await deliver(app, JSON.stringify({ action: 'suspend', installation: { id: INSTALLATION_ID } }), { event: 'installation' });
+      assert.notEqual(readSuspended(), null, 'suspend 后应置位');
+
+      await deliver(app, JSON.stringify({ action: 'unsuspend', installation: { id: INSTALLATION_ID } }), { event: 'installation' });
+      assert.equal(readSuspended(), null, 'unsuspend 后应清除');
+
+      await app.close();
+    });
+
+    it('installation_repositories.added → repos 列同步（该列此前写了从不读）', async () => {
+      const app = await mountWebhook(os, config);
+
+      const raw = JSON.stringify({
+        action: 'added',
+        installation: { id: INSTALLATION_ID },
+        repositories_added: [{ full_name: 'acme/api' }],
+      });
+      await deliver(app, raw, { event: 'installation_repositories' });
+
+      const repos = os.getDatabase().prepare<{ repos: string | null }>(
+        'SELECT repos FROM github_installations WHERE github_host=? AND installation_id=?',
+      ).get(GITHUB_HOST, INSTALLATION_ID)?.repos;
+      assert.ok(repos?.includes('acme/api'), `repos 应含新增仓库，实际 ${repos}`);
+
+      await app.close();
+    });
+  });
 });
 
 /**
