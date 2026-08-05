@@ -129,4 +129,62 @@ describe('GitHub App 凭据存储', () => {
     assert.equal(rows[0].id, id1, 'id 稳定不变（冲突更新不换主键）');
     assert.equal(rows[0].account, 'org1-renamed', '元数据被更新');
   });
+
+  /* 安装入口产品化：装/卸/暂停/改授权的存储侧能力。删除与暂停按
+   * (github_host, installation_id) 全局唯一键定位——平台级映射表，不带 tenant 过滤
+   * （与 resolveTenantByInstallation 同款）。 */
+  describe('installation 生命周期（删除 / 暂停 / 授权仓库同步）', () => {
+    /** 直查 suspended_at 列（绕过 store，验证列真被写入）。 */
+    function readSuspendedAt(installationId: string): number | null {
+      const row = db.prepare<{ suspended_at: number | null }>(
+        'SELECT suspended_at FROM github_installations WHERE github_host=? AND installation_id=?',
+      ).get('github.com', installationId);
+      return row?.suspended_at ?? null;
+    }
+
+    it('deleteInstallation：删除后反查不到（卸载即停学的存储侧基础）', () => {
+      const store = new GithubAppCredentialStore(db, enc, TENANT);
+      store.upsertInstallation('inst_1', 'github.com', 'acme', 'acme/web', 1000);
+      assert.ok(store.resolveTenantByInstallation('github.com', 'inst_1'), '删前能反查到');
+
+      const deleted = store.deleteInstallation('github.com', 'inst_1');
+
+      assert.equal(deleted, true, '应报告删除成功');
+      assert.equal(store.resolveTenantByInstallation('github.com', 'inst_1'), undefined, '删后反查不到');
+    });
+
+    it('deleteInstallation：删不存在的行返回 false（幂等，不抛错）', () => {
+      const store = new GithubAppCredentialStore(db, enc, TENANT);
+      assert.equal(store.deleteInstallation('github.com', 'never_existed'), false);
+    });
+
+    it('setInstallationSuspended：置位与清除 suspended_at', () => {
+      const store = new GithubAppCredentialStore(db, enc, TENANT);
+      store.upsertInstallation('inst_2', 'github.com', 'acme', null, 1000);
+
+      store.setInstallationSuspended('github.com', 'inst_2', 5000, 5000);
+      assert.equal(readSuspendedAt('inst_2'), 5000, 'suspend 置位');
+
+      store.setInstallationSuspended('github.com', 'inst_2', null, 6000);
+      assert.equal(readSuspendedAt('inst_2'), null, 'unsuspend 清除');
+    });
+
+    it('updateInstallationRepos：同步授权仓库列表（该列此前写了从不读）', () => {
+      const store = new GithubAppCredentialStore(db, enc, TENANT);
+      store.upsertInstallation('inst_3', 'github.com', 'acme', 'acme/web', 1000);
+
+      store.updateInstallationRepos('github.com', 'inst_3', 'acme/web,acme/api', 2000);
+
+      const row = db.prepare<{ repos: string | null }>(
+        'SELECT repos FROM github_installations WHERE github_host=? AND installation_id=?',
+      ).get('github.com', 'inst_3');
+      assert.equal(row?.repos, 'acme/web,acme/api');
+    });
+
+    it('新建 installation 默认未暂停（suspended_at 为 NULL，既有行兼容）', () => {
+      const store = new GithubAppCredentialStore(db, enc, TENANT);
+      store.upsertInstallation('inst_4', 'github.com', 'acme', null, 1000);
+      assert.equal(readSuspendedAt('inst_4'), null);
+    });
+  });
 });

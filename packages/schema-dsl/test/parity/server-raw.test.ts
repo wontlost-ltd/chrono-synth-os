@@ -38,7 +38,10 @@ describe('server-raw coverage', () => {
      * github_learn_state.resource_type CHECK 扩加 _org_rotation 哨兵，供组织轮转游标复用该表
      * 存「下一个起始下标」；新 CHECK 是旧取值超集，既有行全合法；SQLite 重建表（RENAME 后先
      * DROP INDEX 防静默丢唯一索引），PG 原地 ALTER CONSTRAINT）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128']);
+    /* v129 = v127_github_installation_suspended（pg-aliased v129，GitHub 安装入口产品化：
+     * github_installations 加 suspended_at 暂停状态列，由 installation.suspend/unsuspend
+     * webhook 事件维护；纯加列不重建表，既有唯一索引原地保留）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129']);
   });
 
   it('covers disabled raw migrations', () => {

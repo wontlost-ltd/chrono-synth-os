@@ -26,6 +26,12 @@ export const GITHUB_APPCRED_CMD_DELETE = 'githubAppCred.delete' as const;
 export const GITHUB_INSTALL_QUERY_BY_HOST_IID = 'githubInstall.byHostIid' as const;
 export const GITHUB_INSTALL_QUERY_LIST_BY_TENANT = 'githubInstall.listByTenant' as const;
 export const GITHUB_INSTALL_CMD_UPSERT = 'githubInstall.upsert' as const;
+/** 删除 installation 映射（App 被卸载 → 学习自动停）。 */
+export const GITHUB_INSTALL_CMD_DELETE = 'githubInstall.delete' as const;
+/** 置/清 installation 暂停状态。 */
+export const GITHUB_INSTALL_CMD_SET_SUSPENDED = 'githubInstall.setSuspended' as const;
+/** 同步 installation 的授权仓库列表。 */
+export const GITHUB_INSTALL_CMD_UPDATE_REPOS = 'githubInstall.updateRepos' as const;
 
 /* ── Row（对齐 DB 列，snake_case） ── */
 
@@ -54,6 +60,8 @@ export interface GithubInstallationRow {
   readonly repos: string | null;
   readonly created_at: number;
   readonly updated_at: number;
+  /** 暂停时刻（毫秒 epoch）；null = 未暂停。GitHub 允许暂停已安装 App（暂停期 token 换取失败）。 */
+  readonly suspended_at: number | null;
 }
 
 /* ── Params ── */
@@ -118,4 +126,40 @@ export function githubInstallListByTenant(tenantId: string): Query<GithubInstall
 /** upsert installation 映射（安装回调 / 元数据同步）。 */
 export function githubInstallUpsert(params: GithubInstallUpsertParams): Command<GithubInstallUpsertParams> {
   return { kind: GITHUB_INSTALL_CMD_UPSERT, params };
+}
+
+/** installation 全局唯一定位键（平台级映射表，不带 tenant 过滤——同 resolveTenantByInstallation）。 */
+export interface GithubInstallKeyParams {
+  githubHost: string;
+  installationId: string;
+}
+
+export interface GithubInstallSetSuspendedParams extends GithubInstallKeyParams {
+  /** 暂停时刻（毫秒 epoch）；null = 恢复（清除暂停）。 */
+  suspendedAt: number | null;
+  now: number;
+}
+
+export interface GithubInstallUpdateReposParams extends GithubInstallKeyParams {
+  /** 授权仓库列表（逗号分隔的 owner/name）；null = 未知。 */
+  repos: string | null;
+  now: number;
+}
+
+/**
+ * 删除 installation 映射。App 被卸载时调用——映射一删，assembleGitHubReadPort 即返
+ * no-installation，组织同步 worker 与学习 handler 都会静默跳过，学习自动停止。
+ */
+export function githubInstallDelete(params: GithubInstallKeyParams): Command<GithubInstallKeyParams> {
+  return { kind: GITHUB_INSTALL_CMD_DELETE, params };
+}
+
+/** 置/清 installation 暂停状态（suspendedAt=null 表示恢复）。 */
+export function githubInstallSetSuspended(params: GithubInstallSetSuspendedParams): Command<GithubInstallSetSuspendedParams> {
+  return { kind: GITHUB_INSTALL_CMD_SET_SUSPENDED, params };
+}
+
+/** 同步 installation 的授权仓库列表（installation_repositories 事件维护）。 */
+export function githubInstallUpdateRepos(params: GithubInstallUpdateReposParams): Command<GithubInstallUpdateReposParams> {
+  return { kind: GITHUB_INSTALL_CMD_UPDATE_REPOS, params };
 }
