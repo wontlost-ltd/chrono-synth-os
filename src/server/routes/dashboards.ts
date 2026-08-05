@@ -14,6 +14,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { requireRole } from '../plugins/rbac.js';
 import type { IDatabase } from '../../storage/database.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -125,6 +126,11 @@ function buildRadarSeries(
     });
 }
 
+/**
+ * 决策趋势。**注意**：evolution_diff_report 表在任何迁移中都不存在，故本函数当前
+ * 恒走 catch 返回空数组（已实测）。参数 _tenantId 未用于 SQL——一旦将来真建了该表，
+ * **必须先补 tenant_id 谓词**再启用，否则立刻成为跨租户泄漏点（审计 Critical 同类）。
+ */
 function buildDecisionTrend(db: IDatabase, _tenantId: string, now: number): DecisionTrendPoint[] {
   type Row = { day_bucket: number; cnt: number };
   const since = startOfDayUtc(now) - 30 * MS_PER_DAY;
@@ -147,25 +153,27 @@ function buildDecisionTrend(db: IDatabase, _tenantId: string, now: number): Deci
 
 function buildMemoryStack(
   db: IDatabase,
-  _tenantId: string,
-  _personaId: string,
+  tenantId: string,
+  personaId: string,
   now: number,
 ): MemoryStackPoint[] {
   type Row = { day_bucket: number; kind: string; cnt: number };
   const since = startOfDayUtc(now) - 30 * MS_PER_DAY;
   let rows: Row[] = [];
   try {
+    /* 必须按 tenant_id + persona_id 过滤（审计 Critical）：此前 SQL 只按时间过滤，
+     * 参数以 `_` 前缀标记为未使用——租户 A 看到的统计里混入了所有租户的记忆。 */
     rows = db
       .prepare<Row>(
         `SELECT (created_at / ${MS_PER_DAY}) * ${MS_PER_DAY} AS day_bucket,
                 kind,
                 COUNT(*) AS cnt
            FROM memory_nodes
-          WHERE created_at >= ?
+          WHERE tenant_id = ? AND persona_id = ? AND created_at >= ?
           GROUP BY day_bucket, kind
           ORDER BY day_bucket ASC`,
       )
-      .all(since) as Row[];
+      .all(tenantId, personaId, since) as Row[];
   } catch {
     return [];
   }
@@ -251,6 +259,9 @@ function normalizeAlertLevel(raw: string): 'ok' | 'warning' | 'critical' {
 export function registerDashboardRoutes(app: FastifyInstance, db: IDatabase | undefined): void {
   app.get<{ Params: { personaId: string } }>(
     '/api/v1/admin/dashboards/persona/:personaId',
+    /* 审计 Critical：此前无角色门，任何已认证用户都能访问管理统计。
+     * admin 前缀路由必须过 requireRole('admin')（与 admin-config 等同款）。 */
+    { preHandler: requireRole('admin') },
     async (request, reply) => {
       const { personaId } = request.params;
       const tenantId = request.tenantId ?? 'default';
