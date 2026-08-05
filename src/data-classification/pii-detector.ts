@@ -76,6 +76,9 @@ export const PII_PATTERNS: readonly DetectorPattern[] = [
   { category: 'jwt', regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g },
   /* API keys with common vendor prefixes */
   { category: 'api_key', regex: /\b(?:sk|pk|ghp|xoxb|AKIA|AIza|gho|ya29)[_-][A-Za-z0-9_-]{16,}\b/g },
+  /* AWS access key IDs：AKIA（长期）/ ASIA（临时会话）后**直接**跟 16 位大写字母数字，
+   * 中间没有分隔符——上面那条通用模式要求 `[_-]`，恰好漏掉标准 AWS 密钥这一最常见形态。 */
+  { category: 'api_key', regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   /* US SSN — added beyond the redactor surface since SOC2 audit
    * fixtures use US data and procurement reviewers ask about it. */
   { category: 'ssn', regex: /\b(?!000|666|9\d{2})\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b/g },

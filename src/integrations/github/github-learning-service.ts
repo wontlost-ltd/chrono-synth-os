@@ -193,22 +193,23 @@ export class GitHubLearningService {
 
     let ingested = 0;
     let skipped = 0;
-    try {
-      for (const mapped of batch.items) {
-        const now = Date.now();
-        /* 原子占位：claim=false 表示已摄入过 → 跳过，绝不再 perceive（增量去重核心）。 */
-        const claimed = this.store.claimDigest(
-          this.personaId,
-          repo,
-          resourceType,
-          mapped.contentSha,
-          now,
-          mapped.discussionKey,
-        );
-        if (!claimed) {
-          skipped += 1;
-          continue;
-        }
+    for (const mapped of batch.items) {
+      const now = Date.now();
+      /* 原子占位：claim=false 表示已摄入过 → 跳过，绝不再 perceive（增量去重核心）。 */
+      const claimed = this.store.claimDigest(
+        this.personaId,
+        repo,
+        resourceType,
+        mapped.contentSha,
+        now,
+        mapped.discussionKey,
+      );
+      if (!claimed) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
         /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
         const previousMemoryIds = mapped.discussionKey
           ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
@@ -241,10 +242,16 @@ export class GitHubLearningService {
 
         this.store.markIngested(this.personaId, repo, resourceType, mapped.contentSha, Date.now());
         ingested += 1;
+      } catch {
+        /* 摄入失败必须**释放占位**再返回：claim 发生在 perceive 之前，若占位残留，
+         * 下一轮 claimDigest 返回 false → 该条内容被当作「已摄入」永久跳过，知识静默丢失。
+         * 释放本身再抛错也要吞掉——已经在失败路径上，不能让它掩盖原始失败。 */
+        try {
+          this.store.releaseDigestClaim(this.personaId, repo, resourceType, mapped.contentSha);
+        } catch { /* 释放失败：下一轮仍会跳过该条，但不能因此中断整体错误返回 */ }
+        /* 不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
+        return { ingested, skipped, cursorAdvanced: false };
       }
-    } catch {
-      /* perceive（或 markIngested）抛错：不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
-      return { ingested, skipped, cursorAdvanced: false };
     }
 
     /* 全批成功才推进游标（spec ⑦）。newCursor 为空（空批）则不推进。 */

@@ -42,6 +42,9 @@ const PATTERNS: readonly Pattern[] = [
   { category: 'ipv4', regex: /\b(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})(?:\.(?:25[0-5]|2[0-4]\d|[01]?\d{1,2})){3}\b/g, replacement: '[REDACTED_IP]' },
   /* JWT */
   { category: 'jwt', regex: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, replacement: '[REDACTED_JWT]' },
+  /* AWS access key ID（AKIA/ASIA + 16 位大写字母数字，总长 20）。
+   * 必须单列：下面的通用启发式要求 >= 32 字符，20 字符的 AWS 密钥恰好漏网。 */
+  { category: 'api_key', regex: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, replacement: '[REDACTED_API_KEY]' },
   /* 通用 API key 启发式（>= 32 字符的随机字母数字串），最后处理避免覆盖前面已替换的占位符 */
   { category: 'api_key', regex: /\b[A-Za-z0-9_-]{32,}\b/g, replacement: '[REDACTED_API_KEY]' },
 ];

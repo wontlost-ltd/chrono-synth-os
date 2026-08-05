@@ -19,6 +19,7 @@ import {
   githubLearnStateQuery, githubLearnStateUpsertCursor,
   githubDigestClaim, githubDigestMarkIngested,
   githubDigestByDiscussionKeyQuery, githubDigestSetMemoryId,
+  githubDigestReleaseClaim,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from './executors/index.js';
 
@@ -81,6 +82,17 @@ export class GithubLearnStore {
     this.tx.execute(githubDigestMarkIngested({
       tenantId: this.tenantId, personaId, repo, resourceType, contentSha, now,
     }));
+  }
+
+  /**
+   * 释放占位（摄入失败路径）：删除仍为 claimed 的行，使该内容下一轮可重新 claim。
+   * 返回是否真的释放了一行（已 ingested 的行不会被删，返回 false）。
+   */
+  releaseDigestClaim(personaId: string, repo: string, resourceType: string, contentSha: string): boolean {
+    const result = this.tx.execute(githubDigestReleaseClaim({
+      tenantId: this.tenantId, personaId, repo, resourceType, contentSha,
+    }));
+    return result.rowsAffected === 1;
   }
 
   /**

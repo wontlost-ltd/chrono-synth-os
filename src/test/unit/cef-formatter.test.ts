@@ -117,3 +117,49 @@ describe('auditToCef', () => {
     assert.equal(r.extension.rt, 1_716_000_000_000);
   });
 });
+
+/* 审计 Warning B1-10：header 字段未清换行 → syslog 记录伪造。
+ * 「一事件一记录」是本模块声明的载荷不变量；能注入 CR/LF 即可凭一条真事件
+ * 伪造出第二条看似合法的审计记录，正是 SIEM 最不能失守的地方。 */
+describe('CEF 日志注入防护', () => {
+  it('header 字段中的换行被转义，不产生第二条记录', () => {
+    const out = formatCef({
+      signatureId: 'sig.1\nCEF:0|Evil|fake|1.0|forged|伪造登录成功|0|',
+      name: 'evt',
+      severity: 5,
+      extension: {},
+    });
+    assert.equal(out.includes('\n'), false, '输出不得含裸换行');
+    assert.equal(out.includes('\r'), false, '输出不得含裸回车');
+    /* 记录数由**行数**决定，而非 "CEF:" 子串出现次数——被转义后的伪造头部仍以
+     * 惰性文本留在同一行内，那是无害的；真正的注入是多出一行。 */
+    assert.equal(out.split(/\r\n|\r|\n/).length, 1, '只应存在一行（即一条记录）');
+    /* 伪造的头部必须以转义形态存在，证明它没有被当作新记录起始：
+     * 换行转成字面 \n，其自带的管道符也被转成 \| —— 两者都失去分隔语义。 */
+    assert.match(out, /\\nCEF:0\\\|Evil/);
+  });
+
+  it('name 字段的 CR 同样被转义', () => {
+    const out = formatCef({
+      signatureId: 'sig.1', name: 'evt\rinjected', severity: 5, extension: {},
+    });
+    assert.equal(out.includes('\r'), false);
+    assert.match(out, /evt\\ninjected/);
+  });
+
+  it('扩展值中的单独 CR 被转义（原实现只覆盖 \\n 与 \\r\\n）', () => {
+    const out = formatCef({
+      signatureId: 'sig.1', name: 'evt', severity: 5,
+      extension: { msg: 'line1\rline2' },
+    });
+    assert.equal(out.includes('\r'), false);
+  });
+
+  it('控制字符被剥离', () => {
+    const out = formatCef({
+      signatureId: 'sig\x00.1', name: 'evt\x1b[31m', severity: 5, extension: {},
+    });
+    assert.equal(out.includes('\x00'), false);
+    assert.equal(out.includes('\x1b'), false);
+  });
+});
