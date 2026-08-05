@@ -133,3 +133,53 @@ describe('SiemDelivery — drainDeadLetter', () => {
     assert.equal(s.snapshot().deadLettered, 0);
   });
 });
+
+/* ── 审计 Warning B1-9：并发 flush 的重复投递 + 事件丢失 ────────────────
+ * flush() 原实现「peek buffer[0] → await deliver → shift()」，peek 与 shift 之间
+ * 有 await 断点。两个 flush 并发时都读到同一条 A：A 被投递两次，随后两次 shift
+ * 分别删掉 A 和 B——B 从未投递却永久消失。定时器与外部调用天然并发，非理论风险。 */
+class GatedTransport implements SiemTransport {
+  delivered: string[] = [];
+  private release!: () => void;
+  readonly firstCallEntered: Promise<void>;
+  private signalEntered!: () => void;
+  private entered = false;
+
+  constructor() {
+    this.firstCallEntered = new Promise((r) => { this.signalEntered = r; });
+    /* 第一次 deliver 会挂起，直到测试显式放行，以此制造稳定的交错窗口。 */
+    this.gate = new Promise((r) => { this.release = r; });
+  }
+  private gate: Promise<void>;
+
+  async deliver(payload: string): Promise<{ ok: true }> {
+    if (!this.entered) {
+      this.entered = true;
+      this.signalEntered();
+      await this.gate;
+    }
+    this.delivered.push(payload);
+    return { ok: true };
+  }
+  releaseGate(): void { this.release(); }
+}
+
+describe('SiemDelivery — 并发 flush', () => {
+  it('并发 flush 不重复投递、不丢事件', async () => {
+    const t = new GatedTransport();
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0 });
+    s.enqueue('A'); s.enqueue('B');
+
+    /* flush #1 进入 transport 并挂在 A 上，此时 flush #2 启动。 */
+    const f1 = s.flush();
+    await t.firstCallEntered;
+    const f2 = s.flush();
+    t.releaseGate();
+    await Promise.all([f1, f2]);
+
+    /* A、B 各恰好一次，顺序保持。 */
+    assert.deepEqual(t.delivered, ['A', 'B']);
+    assert.equal(s.snapshot().pending, 0);
+    assert.equal(s.snapshot().delivered, 2);
+  });
+});

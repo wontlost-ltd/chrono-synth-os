@@ -64,3 +64,23 @@ describe('PII Redactor', () => {
     assert.equal(r.redactedCount, 0);
   });
 });
+
+/* 审计 Warning B1-14：标准 AWS access key（AKIA + 16 位，共 20 字符）
+ * 既不满足通用启发式的 >=32 长度，也不满足需要 [_-] 分隔符的厂商前缀模式。 */
+describe('PII Redactor — AWS 访问密钥', () => {
+  it('脱敏标准 AKIA 长期密钥', () => {
+    const r = redactPii('key is AKIAIOSFODNN7EXAMPLE here');
+    assert.match(r.text, /\[REDACTED_API_KEY\]/);
+    assert.equal(r.text.includes('AKIAIOSFODNN7EXAMPLE'), false);
+  });
+
+  it('脱敏 ASIA 临时会话密钥', () => {
+    const r = redactPii('temp ASIAY34FZKBOKMUTVV7A rotate');
+    assert.equal(r.text.includes('ASIAY34FZKBOKMUTVV7A'), false);
+  });
+
+  it('不误伤普通大写单词', () => {
+    const r = redactPii('ASIA PACIFIC REGION');
+    assert.equal(r.text, 'ASIA PACIFIC REGION');
+  });
+});

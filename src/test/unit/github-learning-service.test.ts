@@ -192,6 +192,69 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
     assert.equal(cursor?.cursor, 'OLD_CURSOR', '游标停在旧值（未被推进）');
   });
 
+  /* 审计 Warning B4-16：claim 发生在 perceive 之前，失败若不释放占位，
+   * 下一轮 claimDigest 返回 false → 该条内容被当作「已摄入」永久跳过。
+   * 只验游标不推进是不够的——游标回到旧值也救不回被占位卡死的那条内容。 */
+  it('perceive 抛错后释放占位：同内容下一轮仍可重新学习（不被永久跳过）', async () => {
+    /* 第一次：老师失败 → 占位必须被释放。 */
+    const failing = makeDistiller({ throwOnCall: true });
+    await new GitHubLearningService({
+      readPort: makeReadPort(),
+      store,
+      distiller: failing.distiller,
+      tenantId: TENANT,
+      personaId: PERSONA,
+      memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+    assert.ok(failing.calls.length >= 1, '首轮 perceive 被调（抢到 claim 后）');
+
+    /* 第二次：老师恢复 → 同内容必须能重新被摄入，而不是被 digest 判为已学过。 */
+    const recovered = makeDistiller();
+    const second = await new GitHubLearningService({
+      readPort: makeReadPort(),
+      store,
+      distiller: recovered.distiller,
+      tenantId: TENANT,
+      personaId: PERSONA,
+      memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+
+    /* 关键断言：必须是**那条失败的内容**重新被摄入。
+     * 不能只断言「有内容被 perceive」——批次里还有其它未被 claim 的条目，
+     * 它们本来就会在下一轮被处理，会把占位泄漏掩盖成绿灯。 */
+    const failedSha = failing.calls[0]!.media.mediaSha256;
+    const retriedShas = recovered.calls.map((c) => c.media.mediaSha256);
+    assert.ok(
+      retriedShas.includes(failedSha),
+      `占位已释放：失败内容（${failedSha}）必须重新 perceive，实际重试了 ${JSON.stringify(retriedShas)}`,
+    );
+    assert.ok(second.ingested >= 1, '恢复后真正摄入，而非全部 skipped');
+  });
+
+  /* 与上一条互为镜像：释放只能删 claimed 行，绝不能删已 ingested 的去重记录，
+   * 否则「释放」会退化成重复灌记忆的漏洞。 */
+  it('释放占位不影响已摄入记录：ingested 行不被删除，仍正常去重', async () => {
+    const first = makeDistiller();
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store, distiller: first.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+    assert.ok(first.calls.length >= 1, '首轮正常摄入');
+
+    /* 对已 ingested 的同一条目直接调释放：必须返回 false 且不删行。 */
+    const sha = first.calls[0]!.media.mediaSha256;
+    const released = store.releaseDigestClaim(PERSONA, REPO, 'issues', sha);
+    assert.equal(released, false, '已 ingested 的行不可被释放');
+
+    /* 去重仍然生效：第二轮不再 perceive。 */
+    const second = makeDistiller();
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store, distiller: second.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+    assert.equal(second.calls.length, 0, '已摄入内容仍被去重跳过');
+  });
+
   /* 组织级驻留：轮转推进使单轮成本恒定，不随组织规模膨胀——一个 50 仓库的组织
    * 一次学完就是几百次 API + 几百次 LLM 老师调用，会触发速率限制并烧光额度。 */
   describe('learnOrg 轮转编排', () => {

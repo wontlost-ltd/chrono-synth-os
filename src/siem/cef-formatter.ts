@@ -32,9 +32,19 @@ export interface CefRecord {
   extension: Record<string, string | number | boolean | null | undefined>;
 }
 
-/** Escape header-field chars per CEF spec. */
+/** Escape header-field chars per CEF spec.
+ *
+ * 换行/回车必须一并转义：下游 SIEM 按行切分记录，header 字段（如 signatureId、
+ * name）若带 CR/LF，攻击者就能凭一条真事件伪造出第二条 syslog 记录——即上面
+ * 「一事件一记录」不变量的直接破口。扩展值早已转义换行，header 之前漏了。
+ * 同时清除其余 C0 控制字符，避免终端/解析器被转义序列干扰。 */
 function escapeHeaderField(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r\n|\r|\n/g, '\\n')
+    /* eslint-disable-next-line no-control-regex -- 有意匹配 C0 控制字符 */
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
 /** Escape extension-value chars per CEF spec. */
@@ -42,7 +52,10 @@ function escapeExtensionValue(value: string): string {
   return value
     .replace(/\\/g, '\\\\')
     .replace(/=/g, '\\=')
-    .replace(/\r?\n/g, '\\n');
+    /* 单独的 CR 也要转义——syslog 传输同样按 CR 断行，原实现只覆盖 \n 和 \r\n。 */
+    .replace(/\r\n|\r|\n/g, '\\n')
+    /* eslint-disable-next-line no-control-regex -- 有意匹配 C0 控制字符 */
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
 function serialiseExtension(ext: CefRecord['extension']): string {

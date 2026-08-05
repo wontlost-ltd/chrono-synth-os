@@ -31,6 +31,7 @@ import {
   GITHUB_LEARN_STATE_QUERY, GITHUB_LEARN_STATE_CMD_UPSERT_CURSOR,
   GITHUB_INGEST_DIGEST_QUERY, GITHUB_INGEST_DIGEST_CMD_CLAIM, GITHUB_INGEST_DIGEST_CMD_MARK_INGESTED,
   GITHUB_INGEST_DIGEST_QUERY_BY_DISCUSSION, GITHUB_INGEST_DIGEST_CMD_SET_MEMORY_ID,
+  GITHUB_INGEST_DIGEST_CMD_RELEASE_CLAIM,
 } from '@chrono/kernel';
 
 export function registerGithubLearnExecutors(): void {
@@ -112,6 +113,21 @@ export function registerGithubLearnExecutors(): void {
        WHERE tenant_id = ? AND persona_id = ? AND repo = ? AND resource_type = ? AND content_sha = ?`,
     ).run(
       p.now, p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha,
+    );
+    return { rowsAffected: result.changes };
+  });
+
+  /**
+   * 释放占位：删除仍处 claimed 的行，使失败内容下一轮可重新 claim。五键定位。tenant scoped。
+   * status 谓词是安全闸——已 ingested 的行是有效去重记录，任何情况下都不删。
+   */
+  registerCommand<GithubIngestDigestKeyParams>(GITHUB_INGEST_DIGEST_CMD_RELEASE_CLAIM, (db, p) => {
+    const result = db.prepare<void>(
+      `DELETE FROM github_ingest_digests
+       WHERE tenant_id = ? AND persona_id = ? AND repo = ? AND resource_type = ? AND content_sha = ?
+         AND status = 'claimed'`,
+    ).run(
+      p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha,
     );
     return { rowsAffected: result.changes };
   });

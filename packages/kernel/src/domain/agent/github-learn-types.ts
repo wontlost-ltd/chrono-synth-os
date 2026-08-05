@@ -30,6 +30,7 @@ export const GITHUB_LEARN_STATE_CMD_UPSERT_CURSOR = 'githubLearnState.upsertCurs
 export const GITHUB_INGEST_DIGEST_QUERY = 'githubIngestDigest.byKey' as const;
 export const GITHUB_INGEST_DIGEST_CMD_CLAIM = 'githubIngestDigest.claim' as const;
 export const GITHUB_INGEST_DIGEST_CMD_MARK_INGESTED = 'githubIngestDigest.markIngested' as const;
+export const GITHUB_INGEST_DIGEST_CMD_RELEASE_CLAIM = 'githubIngestDigest.releaseClaim' as const;
 /** 按讨论键反查摘要行（演进式取代：定位同一 issue/PR 的上一版记忆）。 */
 export const GITHUB_INGEST_DIGEST_QUERY_BY_DISCUSSION = 'githubIngestDigest.byDiscussion' as const;
 /** 回写摘要行对应的记忆 ID（perceive 产出记忆后记录，供下一轮取代用）。 */
@@ -164,6 +165,17 @@ export function githubDigestClaim(params: GithubDigestClaimParams): Command<Gith
 /** 摄入完成：把某条摘要 status 由 claimed 置为 ingested，并记录 ingested_at。 */
 export function githubDigestMarkIngested(params: GithubDigestMarkIngestedParams): Command<GithubDigestMarkIngestedParams> {
   return { kind: GITHUB_INGEST_DIGEST_CMD_MARK_INGESTED, params };
+}
+
+/**
+ * 释放占位：摄入失败时把 claimed（未完成）行删除，让下一轮可以重新 claim。
+ *
+ * 为什么必须有：claim 在 perceive 之前完成，若 perceive 抛错而占位仍在，下一轮
+ * claimDigest 返回 false → 该条内容被判定「已摄入」而永久跳过，知识静默丢失。
+ * 只删 status='claimed' 的行——已 ingested 的行是有效去重记录，绝不能被误删。
+ */
+export function githubDigestReleaseClaim(params: GithubIngestDigestKeyParams): Command<GithubIngestDigestKeyParams> {
+  return { kind: GITHUB_INGEST_DIGEST_CMD_RELEASE_CLAIM, params };
 }
 
 /**

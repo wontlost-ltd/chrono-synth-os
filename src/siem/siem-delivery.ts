@@ -67,6 +67,8 @@ export class SiemDelivery {
   private transientFailures = 0;
   private overflowDrops = 0;
   private timer: NodeJS.Timeout | undefined;
+  /** 进行中的 drain；并发 flush() 复用它而非另起一轮（见 flush 注释）。 */
+  private inFlight: Promise<void> | undefined;
 
   constructor(
     private readonly transport: SiemTransport,
@@ -97,8 +99,18 @@ export class SiemDelivery {
   }
 
   /** Attempt to drain the buffer. Stops on first transient failure
-   * to preserve event ordering — SIEM expects sequenced delivery. */
+   * to preserve event ordering — SIEM expects sequenced delivery.
+   *
+   * 单飞：定时器与外部调用天然并发，而 drain 循环在 peek 与 shift 之间有 await
+   * 断点。若允许并发进入，两个 flush 会读到同一条目→重复投递，随后两次 shift
+   * 各删一条→后一条从未投递却消失。故并发调用复用同一次 drain 的 Promise。 */
   async flush(): Promise<void> {
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.drain().finally(() => { this.inFlight = undefined; });
+    return this.inFlight;
+  }
+
+  private async drain(): Promise<void> {
     while (this.buffer.length > 0) {
       const entry = this.buffer[0]!;
       let result: Awaited<ReturnType<SiemTransport['deliver']>>;
