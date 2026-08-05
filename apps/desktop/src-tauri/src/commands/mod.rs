@@ -1,4 +1,5 @@
 pub mod app_settings;
+pub mod credentials;
 pub mod crdt;
 pub mod database;
 pub mod memories;
