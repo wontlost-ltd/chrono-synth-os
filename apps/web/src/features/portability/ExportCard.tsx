@@ -55,6 +55,37 @@ export function ExportCard() {
           </div>
         )}
 
+        {/* partial：导出完成但有数据缺失。既给下载入口，也必须把缺了什么讲清楚——
+            当作 ready 会让用户误以为数据完整，当作 error 又会藏起已可用的部分。 */}
+        {state.phase === 'partial' && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-medium text-amber-700">⚠ Export completed with warnings</p>
+            <ul className="list-disc pl-5 text-sm text-amber-700">
+              {state.warnings.map((w) => (
+                <li key={w.code}>{w.messageId}</li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              {state.downloadUrl && (
+                <a
+                  href={state.downloadUrl}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-warning px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                >
+                  Download Partial Pack
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={reset}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                New Export
+              </button>
+            </div>
+          </div>
+        )}
+
         {state.phase === 'error' && (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-red-600">
