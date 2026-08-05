@@ -31,6 +31,7 @@ import type {
   PerceptionDistillInput,
   PerceptionDistillResult,
 } from '../../perception/perception-distiller.js';
+import { PartialPerceptionError } from '../../perception/perception-distiller.js';
 
 const TENANT = 'tenant_a';
 const PERSONA = 'persona_1';
@@ -264,6 +265,69 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
       retried.includes(ingestedSha), false,
       `记忆已落库的内容（${ingestedSha}）不得重新 perceive，否则产生重复记忆`,
     );
+  });
+
+  /* Codex 第二轮：perceive 的记忆写入逐条独立、无事务包裹，中途抛错会留下
+   * **部分已落库**的记忆。若把这种失败也当作零写入而释放占位，下一轮重新摄入
+   * 会为已落库的部分再生成一套重复记忆。PartialPerceptionError 用于区分。 */
+  it('perceive 部分写入后失败：不释放占位（避免为已落库部分生成重复记忆）', async () => {
+    const calls: PerceptionDistillInput[] = [];
+    const partialDistiller = {
+      perceive: async (input: PerceptionDistillInput): Promise<PerceptionDistillResult> => {
+        calls.push(input);
+        /* 模拟：已写入 2 条记忆后基础设施失败。 */
+        throw new PartialPerceptionError(['m-written-1', 'm-written-2'], new Error('db 写入失败'));
+      },
+    } as unknown as PerceptionDistiller;
+
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store, distiller: partialDistiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+    assert.ok(calls.length >= 1, '首轮 perceive 被调用');
+    const partialSha = calls[0]!.media.mediaSha256;
+
+    /* 第二轮：该条**不得**重新 perceive，否则重复灌记忆。 */
+    const second = makeDistiller();
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store, distiller: second.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+
+    const retried = second.calls.map((c) => c.media.mediaSha256);
+    assert.equal(
+      retried.includes(partialSha), false,
+      `已部分落库的内容（${partialSha}）不得重新摄入`,
+    );
+  });
+
+  /* 同一分界线的另一侧：claim 之后、记忆落库之前的任何失败都必须释放占位。
+   * 旧记忆查询就在该窗口内——它若抛错而不释放，内容同样被永久跳过。 */
+  it('claim 后、落库前的旧记忆查询失败：释放占位（内容可重学）', async () => {
+    const first = makeDistiller();
+    let failLookup = true;
+    const brittleStore = Object.create(store) as GithubLearnStore;
+    brittleStore.findMemoryIdsByDiscussionKey = (): string[] => {
+      if (failLookup) throw new Error('旧记忆查询失败（模拟）');
+      return [];
+    };
+
+    await new GitHubLearningService({
+      readPort: makeReadPort(), store: brittleStore, distiller: first.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+    assert.equal(first.calls.length, 0, '查询在 perceive 之前失败，perceive 未被调用');
+
+    /* 第二轮用正常 store：内容必须能被重新学习（占位已释放）。 */
+    failLookup = false;
+    const second = makeDistiller();
+    const r2 = await new GitHubLearningService({
+      readPort: makeReadPort(), store, distiller: second.distiller,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+    }).learn(REPO, ['issues']);
+
+    assert.ok(second.calls.length >= 1, '占位已释放：内容下一轮可重新摄入');
+    assert.ok(r2.ingested >= 1, '真正摄入而非全部 skipped');
   });
 
   /* 与上一条互为镜像：释放只能删 claimed 行，绝不能删已 ingested 的去重记录，

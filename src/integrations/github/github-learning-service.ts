@@ -25,6 +25,7 @@
 import type { GitHubReadPort, GitHubCommit } from './github-read-port.js';
 import type { GithubLearnStore } from '../../storage/github-learn-store.js';
 import type { PerceptionDistiller } from '../../perception/perception-distiller.js';
+import { PartialPerceptionError } from '../../perception/perception-distiller.js';
 import type { MappedLearning } from './github-learning-mapper.js';
 import { mapIssue, mapPull, mapCommits, mapCodeAndReadme } from './github-learning-mapper.js';
 
@@ -209,21 +210,22 @@ export class GitHubLearningService {
         continue;
       }
 
-      /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
-      const previousMemoryIds = mapped.discussionKey
-        ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
-        : [];
-
-      /* 抢到才摄入：audio 壳范式喂进感知蒸馏管线（与 learn-topic 同款）。
-       *
-       * 释放占位的窗口**只覆盖 perceive 本身**，这是分界线：
-       *   - perceive 抛错 → 尚无任何记忆落库，释放占位是安全的，否则该内容永久跳过；
-       *   - perceive 成功后的任何步骤抛错 → 记忆**已经写入**，此时释放占位会让下一轮
+      /* 释放占位的窗口 = claim 之后、**记忆落库之前**的全部步骤，这是分界线：
+       *   - 本窗口内抛错 → 尚无任何记忆落库，释放占位是安全的，否则该内容永久跳过；
+       *   - perceive 成功之后的任何步骤抛错 → 记忆**已经写入**，此时释放占位会让下一轮
        *     重新 perceive，凭空生成第二套记忆。宁可留下 claimed 占位（该条本轮不再
        *     重学，但已有记忆完好），也不能制造重复知识。
-       * 故绝不可把整段循环体裹进同一个 catch。 */
+       * 故绝不可把整段循环体裹进同一个 catch；旧记忆查询虽在 perceive 之前，
+       * 也必须落在本窗口内——它同样发生在 claim 之后，抛错会同样泄漏占位。 */
       let result: Awaited<ReturnType<typeof this.distiller.perceive>>;
+      let previousMemoryIds: readonly string[];
       try {
+        /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
+        previousMemoryIds = mapped.discussionKey
+          ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
+          : [];
+
+        /* 抢到才摄入：audio 壳范式喂进感知蒸馏管线（与 learn-topic 同款）。 */
         result = await this.distiller.perceive({
           personaId: this.personaId,
           tenantId: this.tenantId,
@@ -234,11 +236,16 @@ export class GitHubLearningService {
             representation: mapped.representation,
           },
         });
-      } catch {
-        /* perceive 失败：无记忆落库 → 释放占位，使该内容下一轮可重新学习。 */
-        try {
-          this.store.releaseDigestClaim(this.personaId, repo, resourceType, mapped.contentSha);
-        } catch { /* 释放失败：该条下一轮仍被跳过，但不能因此掩盖原始失败 */ }
+      } catch (err) {
+        /* 只有**确无记忆落库**时才释放占位。perceive 的记忆写入逐条独立、无事务，
+         * 中途失败会留下部分记忆——此时释放占位等于允许下一轮重新摄入，为已落库的
+         * 部分再生成一套重复记忆。PartialPerceptionError 正是用来区分这两种失败。 */
+        const partial = err instanceof PartialPerceptionError && err.writtenMemoryIds.length > 0;
+        if (!partial) {
+          try {
+            this.store.releaseDigestClaim(this.personaId, repo, resourceType, mapped.contentSha);
+          } catch { /* 释放失败：该条下一轮仍被跳过，但不能因此掩盖原始失败 */ }
+        }
         /* 不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
         return { ingested, skipped, cursorAdvanced: false };
       }
