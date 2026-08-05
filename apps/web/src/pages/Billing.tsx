@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePlans, useUsage, useCreateCheckout, useCustomerPortal, useAddOns, usePurchaseAddOn } from '../api/queries/billing';
 import type { AddOn, Plan } from '../api/queries/billing';
@@ -5,6 +6,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { navigateExternal } from '../utils/external-url';
 
 export function Billing() {
   const { t } = useTranslation();
@@ -16,16 +18,22 @@ export function Billing() {
   const purchase = usePurchaseAddOn();
   const checkout = useCreateCheckout();
 
+  /* 跳转 URL 来自服务端，跳转前必须校验协议（见 utils/external-url）。
+   * 校验失败不静默——用户点了按钮却什么都没发生，比报错更难排查。 */
+  const [redirectError, setRedirectError] = useState(false);
+
   function handleUpgrade(priceId: string) {
+    setRedirectError(false);
     checkout.mutate(
       { priceId, successUrl: window.location.href, cancelUrl: window.location.href },
-      { onSuccess: (data) => { window.location.href = data.url; } },
+      { onSuccess: (data) => { if (!navigateExternal(data.url)) setRedirectError(true); } },
     );
   }
 
   function handleManage() {
+    setRedirectError(false);
     portal.mutate({ returnUrl: window.location.href }, {
-      onSuccess: (data) => { window.location.href = data.url; },
+      onSuccess: (data) => { if (!navigateExternal(data.url)) setRedirectError(true); },
     });
   }
 
@@ -68,6 +76,11 @@ export function Billing() {
         {portal.error && (
           <p className="mt-2 text-sm text-warning" role="alert">
             {t('billing.portalError', { message: portal.error.message ?? t('common.error') })}
+          </p>
+        )}
+        {redirectError && (
+          <p className="mt-2 text-sm text-warning" role="alert">
+            {t('billing.invalidRedirect')}
           </p>
         )}
       </div>
