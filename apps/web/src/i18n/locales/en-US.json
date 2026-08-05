@@ -212,6 +212,7 @@
     "currentPlanBadge": "Current Plan",
     "loadError": "Failed to load billing data: {{message}}",
     "portalError": "Failed to open billing portal: {{message}}",
+    "invalidRedirect": "The payment provider returned an invalid address; redirect was blocked. Please retry or contact support.",
     "addOnsTitle": "Add-ons",
     "addOnOwned": "Owned",
     "purchaseAddOn": "Purchase",
@@ -979,7 +980,8 @@
       "authorize": "Authorize",
       "authorizing": "Preparing…",
       "authorized": "Authorized",
-      "startError": "Authorization start failed: {{message}}"
+      "startError": "Authorization start failed: {{message}}",
+      "invalidRedirect": "The authorization service returned an invalid address; redirect was blocked. Please retry."
     },
     "list": {
       "heading": "Granted scopes",

@@ -6,12 +6,14 @@
  * 后端的 callback 路由 /api/v1/agent/oauth/google/callback 处理。
  */
 
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { PageHeader } from '../components/layout/PageHeader';
 import { Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { navigateExternal } from '../utils/external-url';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   useUserOauthTokens,
@@ -48,6 +50,8 @@ export function AgentOauthGoogle() {
   const tokens = useUserOauthTokens();
   const start = useStartGoogleAuthorize();
   const revoke = useRevokeGoogleToken();
+  /* 服务端返回的授权 URL 非法时置位（见 onSuccess）。 */
+  const [redirectError, setRedirectError] = useState(false);
 
   const grantedScopes = new Set((tokens.data ?? []).filter((tok) => !tok.revokedAt).map((tok) => tok.scope));
 
@@ -81,8 +85,10 @@ export function AgentOauthGoogle() {
                       { scope: s.value, redirectAfter: '/agent/oauth/google' },
                       {
                         onSuccess: (result) => {
-                          if (typeof window !== 'undefined') {
-                            window.location.assign(result.authorizeUrl);
+                          /* 授权 URL 来自服务端，跳转前校验协议（阻断 javascript: 等伪协议）。
+                           * 校验失败复用同一 startError 横幅，不静默吞掉。 */
+                          if (!navigateExternal(result.authorizeUrl)) {
+                            setRedirectError(true);
                           }
                         },
                       },
@@ -99,6 +105,11 @@ export function AgentOauthGoogle() {
             );
           })}
         </ul>
+        {redirectError && (
+          <p className="text-xs text-warning" role="alert">
+            {t('agentOauthGoogle.addSection.invalidRedirect')}
+          </p>
+        )}
         {start.error && (
           <p className="text-xs text-warning">
             {t('agentOauthGoogle.addSection.startError', { message: (start.error as Error).message })}
