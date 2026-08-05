@@ -158,6 +158,110 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
     assert.ok(txs!.some((t) => t.transactionType === 'owner_payout' && t.amountMinor === -5000));
   });
 
+  /* 审计 Warning B3-2：余额在事务**外**读取，事务内写入预先算好的绝对值。
+   * 余额 100 的钱包并发提现两笔 80，两者都读到 100、都写 20——账面只扣一次，
+   * 却产生两条 80 的提现记录（凭空多出 80）。
+   *
+   * requestWalletPayout 是同步方法，无法用真并发触发；这里模拟交错的**后果**：
+   * 第一笔提现落库后，用第二个持有陈旧余额视图的调用再次提现。条件原子扣减
+   * （相对扣减 + 同语句余额校验）必须拒绝它。 */
+  it('并发提现不产生丢更新：余额不足的第二笔被原子扣减拒绝', () => {
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    /* 第一笔：$80 成功，余额剩 $20。 */
+    const first = fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 8000,
+    });
+    assert.ok(first, '第一笔提现应成功');
+
+    /* 第二笔：同样 $80。余额只剩 $20，必须被拒。 */
+    const second = fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 8000,
+    });
+    assert.equal(second, null, '余额不足的第二笔必须被拒绝');
+
+    /* 关键不变量：余额恰好扣一次，且只有一条提现流水。 */
+    const wallet = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.balance, 20, '余额必须恰好扣一次');
+
+    const txs = fx.walletService.listWalletTransactions(fx.tenantId, fx.ownerUserId, fx.walletId);
+    const payouts = txs!.filter((t) => t.transactionType === 'owner_payout');
+    assert.equal(payouts.length, 1, '只应有一条提现流水（被拒的那笔不得留痕）');
+  });
+
+  /* 上一条只证明了事务外的快速失败检查有效——它在 SQL 之前就拦下了第二笔。
+   * 要真正把守条件原子扣减，必须让**事务外读到的余额是陈旧的**（高于库中真实值），
+   * 这正是并发交错的真实形态：A 读到 100 → B 扣到 20 → A 才带着 100 的视图去写。 */
+  it('陈旧余额视图下：条件原子扣减仍拒绝超额提现（真并发交错）', () => {
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(20, now, fx.walletId);   /* 库中真实余额只剩 $20 */
+
+    /* 伪造「事务外读到 $100」的陈旧快照，绕过快速失败检查，逼出 SQL 层判定。 */
+    const stale = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId)!;
+    const spy = Object.create(fx.walletService) as PersonaWalletService;
+    spy.getWalletByIdForOwner = (): typeof stale => ({ ...stale, balance: 100 });
+
+    const result = spy.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 8000,  /* $80 > 真实余额 $20 */
+    });
+
+    assert.equal(result, null, '陈旧视图放行后，SQL 层的余额校验必须拒绝');
+    const wallet = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.balance, 20, '余额不得被扣成负数');
+
+    const txs = fx.walletService.listWalletTransactions(fx.tenantId, fx.ownerUserId, fx.walletId);
+    assert.equal(
+      txs!.filter((t) => t.transactionType === 'owner_payout').length, 0,
+      '被拒的提现不得留下流水',
+    );
+  });
+
+  it('提现被拒时整体回滚：不留下提现请求行', () => {
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(10, now, fx.walletId);
+
+    /* 余额 $10，提现 $10 成功；再提 $10 必被拒。 */
+    assert.ok(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 1000,
+    }));
+    assert.equal(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 1000,
+    }), null);
+
+    /* 被拒那笔的 payout_request 行不得残留（事务须整体回滚）。 */
+    const rows = fx.db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM wallet_payout_requests WHERE wallet_id = ?`,
+    ).get(fx.walletId);
+    assert.equal(Number(rows?.n), 1, '只应有一条提现请求行');
+  });
+
+  /* 边界：恰好提空余额必须成功（校验用 >=，不能写成 >）。 */
+  it('提现恰好等于余额：成功清零', () => {
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(42.5, now, fx.walletId);
+
+    assert.ok(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 4250,
+    }), '提现恰好等于余额应成功');
+    const wallet = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.balance, 0);
+  });
+
   it('facade and sub-service return byte-equal wallets for the same persona', () => {
     const viaFacade = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
     const viaSub = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);

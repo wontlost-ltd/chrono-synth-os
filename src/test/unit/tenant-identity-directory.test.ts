@@ -223,6 +223,67 @@ describe('TenantIdentityDirectory 协调库门面', () => {
       assert.equal(active!.status, 'ACTIVE', '激活后 ACTIVE');
     });
 
+    /* 审计 Warning B1-3：SSO/SCIM 三处调用把 activateTenant 的 CAS 结果**丢弃**，
+     * 激活失败时目录停在 PENDING，却仍返回可用会话——而登录路径明确把 PENDING 当
+     * 崩溃残留拒绝，等于签出一个之后登不进去的账号。activateTenantOrThrow 收口该判据。 */
+    describe('activateTenantOrThrow（CAS 失败必须确认收敛）', () => {
+      it('CAS 命中 → 正常返回', () => {
+        dir.reserveTenant({
+          tenantId: 'tenant_a', userId: 'user_1', operationId: 'reg:ok',
+          pendingPasswordHash: 'h', email: 'ok@example.com',
+        });
+        assert.doesNotThrow(() => dir.activateTenantOrThrow({
+          email: 'ok@example.com', operationId: 'reg:ok', expectedTenantId: 'tenant_a',
+        }));
+        assert.equal(dir.resolveByEmail('ok@example.com')!.status, 'ACTIVE');
+      });
+
+      it('CAS 失败但已收敛为本 tenant ACTIVE（并发重试先行激活）→ 放行', () => {
+        dir.reserveTenant({
+          tenantId: 'tenant_a', userId: 'user_1', operationId: 'reg:dup',
+          pendingPasswordHash: 'h', email: 'dup@example.com',
+        });
+        /* 模拟并发重试已先激活：此时本次 CAS 必然 miss。 */
+        assert.equal(dir.activateTenant({ email: 'dup@example.com', operationId: 'reg:dup' }), true);
+
+        assert.doesNotThrow(() => dir.activateTenantOrThrow({
+          email: 'dup@example.com', operationId: 'reg:dup', expectedTenantId: 'tenant_a',
+        }), '已收敛为本 tenant 的 ACTIVE，应放行而非报错');
+      });
+
+      it('CAS 失败且仍 PENDING → 抛错（绝不返回可用会话）', () => {
+        dir.reserveTenant({
+          tenantId: 'tenant_a', userId: 'user_1', operationId: 'reg:right',
+          pendingPasswordHash: 'h', email: 'stuck@example.com',
+        });
+        /* 用错误的 operationId 激活：CAS 不命中，目录仍 PENDING。 */
+        assert.throws(
+          () => dir.activateTenantOrThrow({
+            email: 'stuck@example.com', operationId: 'reg:wrong', expectedTenantId: 'tenant_a',
+          }),
+          /未确认/,
+          '目录仍 PENDING 时必须抛错',
+        );
+        assert.equal(dir.resolveByEmail('stuck@example.com')!.status, 'PENDING');
+      });
+
+      it('CAS 失败且已 ACTIVE 但属**他** tenant → 抛错（防跨租户放行）', () => {
+        dir.reserveTenant({
+          tenantId: 'tenant_other', userId: 'user_x', operationId: 'reg:other',
+          pendingPasswordHash: 'h', email: 'cross@example.com',
+        });
+        assert.equal(dir.activateTenant({ email: 'cross@example.com', operationId: 'reg:other' }), true);
+
+        assert.throws(
+          () => dir.activateTenantOrThrow({
+            email: 'cross@example.com', operationId: 'reg:mine', expectedTenantId: 'tenant_a',
+          }),
+          /未确认/,
+          '目录归属他 tenant，绝不能放行',
+        );
+      });
+    });
+
     it('activate 错 operationId → false（CAS 防越权），resolveByEmail 未命中 → null', () => {
       dir.reserveTenant({
         tenantId: 'tenant_a', userId: 'user_1', operationId: 'reg:right',

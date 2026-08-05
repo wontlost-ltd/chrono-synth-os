@@ -29,7 +29,7 @@ import type { FieldEncryption } from '../storage/encryption.js';
 import {
   pcoreCmdCreateWalletPayoutRequest,
   pcoreCmdInsertWalletTransaction,
-  pcoreCmdUpdateWalletBalance,
+  pcoreCmdDebitWalletBalance,
   pcoreQueryWalletByIdForOwner,
   pcoreQueryWalletByPersona,
   pcoreQueryWalletByPersonaId,
@@ -46,7 +46,7 @@ import {
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { ValidationError, ErrorCode } from '../errors/index.js';
-import { fromMinor, toMinor } from './persona-core-utils.js';
+import { toMinor } from './persona-core-utils.js';
 import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import type {
   PersonaWallet,
@@ -184,43 +184,57 @@ export class PersonaWalletService {
     if (!wallet || wallet.status !== 'active') return null;
 
     const amountMinor = Math.max(0, Math.round(input.amountMinor));
+    /* 事务外的余额检查只是快速失败（省掉明显无望的事务开销）——**不是**授权判据。
+     * 真正的余额把关在事务内的条件原子扣减里，见下方注释。 */
     if (amountMinor <= 0 || amountMinor > toMinor(wallet.balance)) return null;
 
     const now = Date.now();
     const payoutId = generatePrefixedId('wpr');
-    const nextBalanceMinor = toMinor(wallet.balance) - amountMinor;
     const currency = wallet.currency;
 
     const db = this.source.forTenant(input.tenantId);
-    db.transaction(() => {
-      db.execute(pcoreCmdCreateWalletPayoutRequest({
-        id: payoutId,
-        tenantId: input.tenantId,
-        walletId: input.walletId,
-        amountMinor,
-        currency,
-        requestedByUserId: input.ownerUserId,
-        now,
-      }));
+    /* 余额不足时用哨兵回滚整个事务：此时提现请求行与流水都不能留下。
+     * 与真异常区分——余额不足是正常业务结果（返回 null），不该向上抛。 */
+    const INSUFFICIENT = Symbol('insufficient-balance');
+    try {
+      db.transaction(() => {
+        db.execute(pcoreCmdCreateWalletPayoutRequest({
+          id: payoutId,
+          tenantId: input.tenantId,
+          walletId: input.walletId,
+          amountMinor,
+          currency,
+          requestedByUserId: input.ownerUserId,
+          now,
+        }));
 
-      db.execute(pcoreCmdUpdateWalletBalance({
-        tenantId: input.tenantId,
-        walletId: input.walletId,
-        balance: fromMinor(nextBalanceMinor),
-        now,
-      }));
+        /* 条件原子扣减：相对扣减 + 同语句余额校验。
+         * 原实现在事务**外**读余额、事务内写算好的绝对值——余额 100 的钱包并发提现
+         * 两笔 80，两者都读到 100、都写 20：账面只扣一次，却产生两条 80 的提现记录。
+         * rowsAffected=0 表示余额已被其它并发请求扣走，本次必须整体回滚。 */
+        const debited = db.execute(pcoreCmdDebitWalletBalance({
+          tenantId: input.tenantId,
+          walletId: input.walletId,
+          amountMinor,
+          now,
+        }));
+        if (debited.rowsAffected !== 1) throw INSUFFICIENT;
 
-      this.insertWalletTransactionInTx(db, {
-        tenantId: input.tenantId,
-        walletId: input.walletId,
-        transactionType: 'owner_payout',
-        amountMinor: -amountMinor,
-        currency,
-        referenceType: 'wallet_payout_request',
-        referenceId: payoutId,
-        actorType: 'human', /* 提现由 owner 经 HTTP 发起，已 owner 校验（ADR-0048 D2） */
+        this.insertWalletTransactionInTx(db, {
+          tenantId: input.tenantId,
+          walletId: input.walletId,
+          transactionType: 'owner_payout',
+          amountMinor: -amountMinor,
+          currency,
+          referenceType: 'wallet_payout_request',
+          referenceId: payoutId,
+          actorType: 'human', /* 提现由 owner 经 HTTP 发起，已 owner 校验（ADR-0048 D2） */
+        });
       });
-    });
+    } catch (err) {
+      if (err === INSUFFICIENT) return null;
+      throw err;
+    }
 
     return this.getWalletPayoutRequestById(input.tenantId, payoutId);
   }

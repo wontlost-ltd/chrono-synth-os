@@ -166,8 +166,14 @@ export class TenantReservationRecovery {
     const shardDb = this.resolver.dbForTenant(pending.tenantId);
     const boot = shardDb.queryOne(bootQueryByOperation(pending.tenantId, pending.operationId));
     if (boot?.status === 'COMPLETE') {
-      this.directory.activateTenant({ email: pending.lookupValue, operationId: pending.operationId });
-      run.activated += 1;
+      /* CAS 可能失败（另一并发实例或原请求已先行激活）。此时该项已是 ACTIVE，
+       * 不算本轮的战果——照计只会让 activated 虚高，掩盖真实的收敛情况。
+       * 与创建路径不同，这里**不抛错**：清扫器的职责是收敛，已收敛即目的达成。 */
+      const activated = this.directory.activateTenant({
+        email: pending.lookupValue, operationId: pending.operationId,
+      });
+      if (activated) run.activated += 1;
+      else run.retained += 1;
       return;
     }
     run.retained += 1;

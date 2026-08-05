@@ -135,6 +135,27 @@ export class TenantIdentityDirectory {
     return result.rowsAffected === 1;
   }
 
+  /**
+   * 激活并**确认已收敛**——CAS 失败时回读目录，只有已是本 tenant 的 ACTIVE 项才放行。
+   *
+   * 为什么必须有：activateTenant 返回的 CAS 结果若被丢弃，激活失败时目录项仍停在
+   * PENDING，调用方却会继续签发可用会话。而系统其它地方（登录、SSO 既有用户路径）
+   * 明确把 PENDING 当作「崩溃窗口残留」拒绝——即产生一个能签发 token、之后却登不进去
+   * 的账号。CAS 失败的正常成因是同一 operation 的并发重试已先行激活，故回读确认收敛
+   * 即可放行；否则必须抛错要求携原 Idempotency-Key 重试，而不是静默继续。
+   *
+   * @throws StateError 目录未收敛为本 tenant 的 ACTIVE 项
+   */
+  activateTenantOrThrow(input: { email: string; operationId: string; expectedTenantId: string }): void {
+    if (this.activateTenant({ email: input.email, operationId: input.operationId })) return;
+    const row = this.resolveByEmail(input.email);
+    if (row && row.tenantId === input.expectedTenantId && row.status === 'ACTIVE') return;
+    throw new StateError(
+      '账号未确认，请携原 Idempotency-Key 重试',
+      ErrorCode.AUTH_REGISTRATION_RETRY,
+    );
+  }
+
   /** 按 email 查目录项（返全元数据供续做校验 / worker 分支），未命中 null。 */
   resolveByEmail(email: string): DirectoryEntry | null {
     const row = this.resolver.coordinatorDb().queryOne(dirQueryByLookup('email', canonicalizeEmail(email)));
