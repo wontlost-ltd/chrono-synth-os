@@ -431,7 +431,8 @@
     "toolPermissions": "工具权限",
     "toolInvocations": "调用审计",
     "safetyDrift": "漂移监控",
-    "toolAutoAuth": "工具自动授权"
+    "toolAutoAuth": "工具自动授权",
+    "adminGithub": "GitHub 连接"
   },
   "appShell": {
     "skipToMain": "跳转到主要内容",
@@ -1758,7 +1759,11 @@
     "load": "加载",
     "selectOrgTitle": "选择一个组织",
     "selectOrgMessage": "输入组织 ID 查看其协作状态",
-    "tab": { "tasks": "任务协作", "threads": "讨论线程", "strategy": "战略辅助" },
+    "tab": {
+      "tasks": "任务协作",
+      "threads": "讨论线程",
+      "strategy": "战略辅助"
+    },
     "goalsHeading": "目标",
     "selectGoal": "选择一个目标",
     "noGoals": "没有目标",
@@ -1771,8 +1776,18 @@
     "toWorkerId": "接收者 worker ID",
     "createdByWorkerId": "创建者 worker ID",
     "cancel": "取消",
-    "taskStatus": { "draft": "草稿", "delegated": "已委派", "in_progress": "执行中", "submitted": "已提交", "approved": "已通过", "rejected": "已退回", "blocked": "阻塞" },
-    "panel": { "heading": "任务协作" },
+    "taskStatus": {
+      "draft": "草稿",
+      "delegated": "已委派",
+      "in_progress": "执行中",
+      "submitted": "已提交",
+      "approved": "已通过",
+      "rejected": "已退回",
+      "blocked": "阻塞"
+    },
+    "panel": {
+      "heading": "任务协作"
+    },
     "escalations": {
       "heading": "升级链",
       "empty": "无升级",
@@ -1784,7 +1799,12 @@
       "byWorkerPrompt": "填写操作者 worker ID",
       "reescReasonPrompt": "填写再升级原因"
     },
-    "escStatus": { "pending": "待处理", "resolved": "已处置", "reescalated": "已再升级", "cancelled": "已取消" },
+    "escStatus": {
+      "pending": "待处理",
+      "resolved": "已处置",
+      "reescalated": "已再升级",
+      "cancelled": "已取消"
+    },
     "handoffs": {
       "heading": "交接",
       "empty": "无交接",
@@ -1793,7 +1813,12 @@
       "accept": "接受",
       "reject": "拒绝"
     },
-    "handoffStatus": { "proposed": "已提议", "accepted": "已接受", "rejected": "已拒绝", "cancelled": "已取消" },
+    "handoffStatus": {
+      "proposed": "已提议",
+      "accepted": "已接受",
+      "rejected": "已拒绝",
+      "cancelled": "已取消"
+    },
     "threads": {
       "heading": "讨论线程",
       "empty": "无线程",
@@ -1810,15 +1835,33 @@
       "close": "关闭线程",
       "confirmClose": "确定关闭这个线程吗？"
     },
-    "threadType": { "delegation": "委派", "report": "汇报", "handoff": "交接", "coordination": "协调" },
-    "threadStatus": { "open": "开放", "closed": "已关闭" },
-    "messageType": { "request": "请求", "response": "回复", "report": "汇报", "note": "备注", "escalation": "升级" },
+    "threadType": {
+      "delegation": "委派",
+      "report": "汇报",
+      "handoff": "交接",
+      "coordination": "协调"
+    },
+    "threadStatus": {
+      "open": "开放",
+      "closed": "已关闭"
+    },
+    "messageType": {
+      "request": "请求",
+      "response": "回复",
+      "report": "汇报",
+      "note": "备注",
+      "escalation": "升级"
+    },
     "strategy": {
       "inputHeading": "战略输入",
       "hint": "零-LLM 确定性：按 3 个透镜（影响优先/风险规避/速赢）重排候选举措并在预算内贪心纳入。结果恒需人类批准。",
       "objective": "战略目标",
       "budgetCap": "预算上限",
-      "risk": { "low": "低风险", "medium": "中风险", "high": "高风险" },
+      "risk": {
+        "low": "低风险",
+        "medium": "中风险",
+        "high": "高风险"
+      },
       "initiatives": "候选举措",
       "addInitiative": "加一个举措",
       "initTitle": "举措标题",
@@ -1831,7 +1874,11 @@
       "resultHeading": "3 视角对比",
       "resultEmpty": "填写举措并生成建议",
       "requiresApproval": "⚠ 这是辅助建议，恒需人类批准，不会自动执行",
-      "lens": { "impact_first": "影响优先", "risk_averse": "风险规避", "quick_wins": "速赢优先" },
+      "lens": {
+        "impact_first": "影响优先",
+        "risk_averse": "风险规避",
+        "quick_wins": "速赢优先"
+      },
       "included": "纳入",
       "escalations": "需升级",
       "totalCost": "总成本",
@@ -2069,5 +2116,47 @@
       "runFailed": "运行失败：{{message}}",
       "loadFailed": "加载失败：{{message}}"
     }
+  },
+  "adminGithub": {
+    "title": "GitHub 连接",
+    "description": "连接 GitHub App，让数字人学习组织的知识。",
+    "noPermission": "需要管理员权限才能管理 GitHub 连接。",
+    "loadError": "加载 GitHub 连接状态失败：{{message}}",
+    "connecting": "连接中…",
+    "connectSuccess": "凭据已保存。下一步：到 GitHub 安装该 App，安装完成后会自动回记 installation。",
+    "disconnectSuccess": "已断开 GitHub 连接。",
+    "disconnect": "断开连接",
+    "status": {
+      "heading": "连接状态",
+      "connected": "已连接（App ID：{{appId}}）",
+      "notConnected": "尚未连接 GitHub。"
+    },
+    "installations": {
+      "heading": "已安装位置",
+      "empty": "凭据已配好，但还没有安装记录——请到 GitHub 把该 App 安装到目标组织或仓库。",
+      "suspended": "已暂停",
+      "repos": "授权仓库：{{repos}}"
+    },
+    "connect": {
+      "heading": "录入 App 凭据",
+      "hint": "私钥只在此上传一次，加密保存后不再回显。凭据配好后请到 GitHub 安装该 App。",
+      "submit": "保存凭据"
+    },
+    "fields": {
+      "appId": "App ID",
+      "privateKey": "私钥（.pem 文件内容）",
+      "privateKeyHint": "粘贴完整的 .pem 文件内容，含 BEGIN/END 行。",
+      "webhookSecret": "Webhook Secret"
+    },
+    "errors": {
+      "pemFormat": "私钥内容不含 PRIVATE KEY 头，请粘贴完整的 .pem 文件内容。"
+    }
+  },
+  "githubSetup": {
+    "title": "GitHub 安装回调",
+    "success": "安装已绑定到你的账号（installation #{{installationId}}）。数字人可以开始学习这个组织的知识了。",
+    "failed": "绑定失败。",
+    "missingParam": "回调缺少 installation_id 参数。",
+    "backToSettings": "返回 GitHub 连接设置"
   }
 }

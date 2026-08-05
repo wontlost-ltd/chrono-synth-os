@@ -22,6 +22,8 @@ const Billing = lazy(() => import('./pages/Billing').then(m => ({ default: m.Bil
 const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const SSOCallback = lazy(() => import('./pages/SSOCallback').then(m => ({ default: m.SSOCallback })));
 const AdminConfig = lazy(() => import('./pages/AdminConfig').then(m => ({ default: m.AdminConfig })));
+const AdminGithub = lazy(() => import('./pages/AdminGithub').then(m => ({ default: m.AdminGithub })));
+const GithubSetupCallback = lazy(() => import('./pages/GithubSetupCallback').then(m => ({ default: m.GithubSetupCallback })));
 const EnterpriseConsole = lazy(() => import('./pages/EnterpriseConsole').then(m => ({ default: m.EnterpriseConsole })));
 const SafetyDriftReport = lazy(() => import('./pages/SafetyDriftReport').then(m => ({ default: m.SafetyDriftReport })));
 const AdminToolPermissions = lazy(() => import('./pages/AdminToolPermissions').then(m => ({ default: m.AdminToolPermissions })));
@@ -101,6 +103,9 @@ export const routes: RouteObject[] = [
   { path: '/workforce/viz', element: <Protected><AdminOnly><WorkforceVisualization /></AdminOnly></Protected> },
   { path: '/workforce/marketplace', element: <Protected><AdminOnly><OrgMarketplace /></AdminOnly></Protected> },
   { path: '/admin/config', element: <Protected><AdminOnly><AdminConfig /></AdminOnly></Protected> },
+  { path: '/admin/github', element: <Protected><AdminOnly><AdminGithub /></AdminOnly></Protected> },
+  /* GitHub 安装完成落地页：GitHub 直接跳浏览器到此，本页用会话调后端回调完成绑定。 */
+  { path: '/integrations/github/setup', element: <Protected><GithubSetupCallback /></Protected> },
   { path: '/admin/safety/drift', element: <Protected><AdminOnly><SafetyDriftReport /></AdminOnly></Protected> },
   { path: '/admin/tool-permissions', element: <Protected><AdminOnly><AdminToolPermissions /></AdminOnly></Protected> },
   { path: '/admin/agency-authorizations', element: <Protected><AdminOnly><AdminAgencyAuthorizations /></AdminOnly></Protected> },
