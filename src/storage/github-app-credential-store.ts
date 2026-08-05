@@ -19,6 +19,7 @@ import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   githubAppCredQueryByTenant, githubAppCredUpsert,
   githubInstallQueryByHostIid, githubInstallUpsert,
+  githubInstallDelete, githubInstallSetSuspended, githubInstallUpdateRepos,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from './executors/index.js';
 import { FieldEncryption } from './encryption.js';
@@ -118,5 +119,26 @@ export class GithubAppCredentialStore {
     const row = this.tx.queryOne(githubInstallQueryByHostIid({ githubHost, installationId }));
     if (!row) return undefined;
     return { tenantId: row.tenant_id };
+  }
+
+  /**
+   * 删除 installation 映射（App 卸载时）。返回是否确有删除（幂等：删不存在的返 false 不抛错）。
+   *
+   * 删除即「停止学习」——映射一没，assembleGitHubReadPort 返 no-installation，
+   * 组织同步 worker 与学习 handler 都静默跳过，无需额外停学逻辑。
+   */
+  deleteInstallation(githubHost: string, installationId: string): boolean {
+    const result = this.tx.execute(githubInstallDelete({ githubHost, installationId }));
+    return result.rowsAffected > 0;
+  }
+
+  /** 置/清 installation 暂停状态（suspendedAt=null 表示恢复）。 */
+  setInstallationSuspended(githubHost: string, installationId: string, suspendedAt: number | null, now: number): void {
+    this.tx.execute(githubInstallSetSuspended({ githubHost, installationId, suspendedAt, now }));
+  }
+
+  /** 同步 installation 的授权仓库列表（installation_repositories 事件维护）。 */
+  updateInstallationRepos(githubHost: string, installationId: string, repos: string | null, now: number): void {
+    this.tx.execute(githubInstallUpdateRepos({ githubHost, installationId, repos, now }));
   }
 }
