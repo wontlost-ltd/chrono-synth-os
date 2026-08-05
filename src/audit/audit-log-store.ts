@@ -282,11 +282,17 @@ export function verifyAuditChain(
     }));
     if (predecessor.length === 1 && predecessor[0].record_hash !== null) {
       start = { expectedSeq: firstSeq, expectedPrev: predecessor[0].record_hash };
-    } else {
-      /* Predecessor missing or has NULL hash — anchor at the first row
-       * and report nothing (the gap, if any, is genuinely undetectable
-       * from this range alone). */
+    } else if (options.fromSeq !== undefined) {
+      /* 调用方**显式**要求从某个 seq 开始的范围验证，但 predecessor 不存在
+       * （已被保留策略清理或本就不在范围内）：只能以本行 prevHash 为锚，
+       * 这在「分段校验」语义下是可接受的——调用方知道自己在验片段。 */
       start = { expectedSeq: firstSeq, expectedPrev: verifiable[0].prevHash };
+    } else {
+      /* **完整链验证**（未指定 fromSeq）却发现首个可见 seq > 1 且 predecessor 缺失
+       * ——这正是「删除链前缀」的特征（审计 Critical）。此前以本行自称的 prevHash
+       * 自建信任锚，使前缀篡改不可检测。现在 fail-closed：仍以 GENESIS/seq 1 为
+       * 期望起点，让 verifyChain 报告 seq gap。 */
+      start = undefined;
     }
   }
   return verifyChain(verifiable, start);
