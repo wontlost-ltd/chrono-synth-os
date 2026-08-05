@@ -74,6 +74,8 @@ export function createGithubLearnTaskHandlerForProduction(
         tenantId,
         personaId: COMPANION_PERSONA_ID,
         memories: tenantOS.core.memories,
+        /* 占位释放彻底失败＝该条内容永久跳过，必须可观测。 */
+        logger: deps.os.getLogger(),
       });
       await service.learn(repo, resourceTypes);
     },
