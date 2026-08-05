@@ -20,7 +20,6 @@
  */
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { z } from 'zod';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { AppConfig } from '../../config/schema.js';
@@ -29,19 +28,12 @@ import { ValidationError, StateError, ErrorCode } from '../../errors/index.js';
 import { requireRole } from '../plugins/rbac.js';
 import { tryByokEncryption } from '../../storage/llm-credential-store.js';
 import { GithubAppCredentialStore } from '../../storage/github-app-credential-store.js';
+import { ConnectAppSchema } from '../schemas/api-schemas.js';
 import { githubAppCredDelete, githubInstallListByTenant } from '@chrono/kernel';
 
 /** 公有云 GitHub host（首版只处理 github.com，与 webhook 一致）。 */
 const GITHUB_HOST = 'github.com';
 
-/** 录凭据请求体。私钥必须含 PRIVATE KEY 头——挡住粘错内容（如粘了公钥或 App ID）。 */
-const ConnectAppSchema = z.object({
-  appId: z.string().trim().min(1, 'appId 必填').max(64),
-  privateKeyPem: z.string().min(1, 'privateKeyPem 必填')
-    .refine((s) => s.includes('PRIVATE KEY'), '私钥 PEM 内容不含 PRIVATE KEY 头，请粘贴完整的 .pem 文件内容'),
-  webhookSecret: z.string().min(1, 'webhookSecret 必填').max(256),
-  gheBaseUrl: z.string().url().optional(),
-});
 
 export interface AdminGithubRoutesDeps {
   os: ChronoSynthOS;
