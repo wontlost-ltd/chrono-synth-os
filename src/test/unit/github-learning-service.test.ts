@@ -367,6 +367,57 @@ describe('GitHubLearningService（编排：增量拉取→digest 原子摄入→
     assert.match(errors[0]!, /acme\/repo/, '日志需含可检索的定位信息');
   });
 
+  /* Codex 第五轮：releaseDigestClaim 返回 false（没删到 claimed 行）同样意味着
+   * 占位仍在、内容会被永久跳过。若把 false 当成功，"释放失败"会悄悄退化成静默丢内容。 */
+  it('占位释放返回 false：视为失败并最终告警（不得当成功）', async () => {
+    const singleIssue: GitHubIssue[] = [
+      { number: 1, title: '登录报错', body: '点登录后白屏', updatedAt: '2026-01-01T00:00:00Z', comments: 0 },
+    ];
+    const onePort = makeReadPort({ listIssues: async (): Promise<GitHubIssue[]> => singleIssue });
+
+    let attempts = 0;
+    const falseStore = Object.create(store) as GithubLearnStore;
+    falseStore.releaseDigestClaim = (): boolean => { attempts += 1; return false; };
+
+    const errors: string[] = [];
+    const teacherDown = {
+      perceive: async (): Promise<PerceptionDistillResult> =>
+        ({ memoryIds: [], candidates: [], teacherFailed: true }),
+    } as unknown as PerceptionDistiller;
+
+    await new GitHubLearningService({
+      readPort: onePort, store: falseStore, distiller: teacherDown,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      logger: { error: (_s, m) => { errors.push(m); } },
+    }).learn(REPO, ['issues']);
+
+    assert.equal(attempts, 3, 'false 应触发重试，而非被当作成功直接返回');
+    assert.equal(errors.length, 1, 'false 到底仍须告警');
+    assert.match(errors[0]!, /永久跳过/);
+  });
+
+  it('日志后端自身抛错：不向上传播（不得掩盖原始故障）', async () => {
+    const singleIssue: GitHubIssue[] = [
+      { number: 1, title: '登录报错', body: '点登录后白屏', updatedAt: '2026-01-01T00:00:00Z', comments: 0 },
+    ];
+    const onePort = makeReadPort({ listIssues: async (): Promise<GitHubIssue[]> => singleIssue });
+
+    const deadStore = Object.create(store) as GithubLearnStore;
+    deadStore.releaseDigestClaim = (): boolean => { throw new Error('账本不可写'); };
+
+    const teacherDown = {
+      perceive: async (): Promise<PerceptionDistillResult> =>
+        ({ memoryIds: [], candidates: [], teacherFailed: true }),
+    } as unknown as PerceptionDistiller;
+
+    /* 释放失败 + 日志后端也失败：learn 仍须正常返回，不抛出。 */
+    await assert.doesNotReject(() => new GitHubLearningService({
+      readPort: onePort, store: deadStore, distiller: teacherDown,
+      tenantId: TENANT, personaId: PERSONA, memories: fakeMemories(),
+      logger: { error: (): never => { throw new Error('日志后端故障'); } },
+    }).learn(REPO, ['issues']));
+  });
+
   /* Codex 第四轮抓到的既有缺陷：老师瞬时故障时 perceive **不抛错**，而是降级返回
    * 空结果 + teacherFailed=true。编排若忽略该标志照常 markIngested，一次网关抖动
    * 就把该内容永久标为已摄入（零记忆），下一轮 claim=false 永远学不到。 */

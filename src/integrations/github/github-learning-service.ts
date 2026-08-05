@@ -308,24 +308,28 @@ export class GitHubLearningService {
    * 仍然不抛出：调用方已经在失败路径上，释放失败不应掩盖原始故障。改为返回布尔值
    * 并写日志，让「永久跳过」至少是**可观测**的，而不是静默发生。
    */
-  private releaseClaimDurably(repo: string, resourceType: string, contentSha: string): boolean {
+  private releaseClaimDurably(repo: string, resourceType: string, contentSha: string): void {
     const MAX_ATTEMPTS = 3;
-    let lastErr: unknown;
+    let lastFailure = '未知原因';
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        this.store.releaseDigestClaim(this.personaId, repo, resourceType, contentSha);
-        return true;
+        /* 返回 false = 没有删到 claimed 行。这**不是**成功：占位仍在，内容照样会被
+         * 永久跳过。必须与抛错同等对待（继续重试，最终告警），否则「释放失败」会
+         * 悄悄退化成静默丢内容——正是本次要消除的问题。 */
+        if (this.store.releaseDigestClaim(this.personaId, repo, resourceType, contentSha)) return;
+        lastFailure = '未删到 claimed 行（占位可能已被并发改写）';
       } catch (err) {
-        lastErr = err;
+        lastFailure = err instanceof Error ? err.message : String(err);
       }
     }
-    /* 三次仍失败：该条内容将被永久跳过。必须留下可检索的痕迹。 */
-    this.logger?.error?.(
-      'GitHubLearningService',
-      `释放摘要占位失败，内容将被永久跳过（repo=${repo} type=${resourceType} sha=${contentSha}）：` +
-      `${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
-    );
-    return false;
+    /* 三次仍失败：该条内容将被永久跳过。必须留下可检索的痕迹。
+     * 日志后端自身也可能故障——它绝不能再把异常抛回失败路径、掩盖原始故障。 */
+    try {
+      this.logger?.error?.(
+        'GitHubLearningService',
+        `释放摘要占位失败，内容将被永久跳过（repo=${repo} type=${resourceType} sha=${contentSha}）：${lastFailure}`,
+      );
+    } catch { /* 日志后端故障：已无处上报，绝不向上传播 */ }
   }
 
   /**
