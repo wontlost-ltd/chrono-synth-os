@@ -6,6 +6,7 @@ mod tray;
 use std::sync::Mutex;
 
 use commands::app_settings::{get_app_setting, set_app_setting};
+use commands::credentials::{clear_api_token, get_api_token, set_api_token};
 use commands::crdt::{
     crdt_apply_local_field_update, crdt_apply_remote_update, crdt_export_full_state,
     crdt_get_persona_state,
@@ -61,6 +62,9 @@ fn main() {
         .manage(SidecarState::default())
         .invoke_handler(tauri::generate_handler![
             open_database,
+            set_api_token,
+            get_api_token,
+            clear_api_token,
             query_personas,
             upsert_personas,
             query_memories,

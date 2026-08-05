@@ -989,6 +989,27 @@ export function loadConfig(overrides?: DeepPartial<AppConfig>, configPath?: stri
 
   const parsed = AppConfigSchema.parse(merged);
 
+  /* 生产 fail-closed（审计 Critical 10）：认证与字段加密默认关闭，且 masterKey 有公开占位值——
+   * 生产环境**漏配**环境变量时服务会「成功启动」但处于无认证、无字段加密状态，是静默失败。
+   * 既有校验只在 enabled=true 时检查密钥强度，挡不住「忘了开」。
+   *
+   * 判据用显式部署信号 NODE_ENV=production（容器/进程管理器标准做法），不猜测：
+   * 本地开发与测试不受影响；生产漏配立即拒启并指明缺哪一项。
+   * 可用 CHRONO_ALLOW_INSECURE_PRODUCTION=true 显式豁免（仅限受控演示环境，
+   * 名字即警告——不给沉默的后门）。 */
+  if (process.env.NODE_ENV === 'production' && process.env.CHRONO_ALLOW_INSECURE_PRODUCTION !== 'true') {
+    const insecure: string[] = [];
+    if (!parsed.jwt.enabled) insecure.push('jwt.enabled=false（服务将无认证对外提供）');
+    if (!parsed.encryption.enabled) insecure.push('encryption.enabled=false（凭据/私钥将明文落库）');
+    if (insecure.length > 0) {
+      throw new Error(
+        `拒绝以不安全配置启动生产环境：\n  - ${insecure.join('\n  - ')}\n`
+        + '请设置 CHRONO_JWT_ENABLED=true / CHRONO_ENCRYPTION_ENABLED=true 及对应密钥；'
+        + '若确为受控演示环境，可显式设 CHRONO_ALLOW_INSECURE_PRODUCTION=true 豁免。',
+      );
+    }
+  }
+
   const jwtIsAsymmetric = parsed.jwt.algorithm.startsWith('RS') || parsed.jwt.algorithm.startsWith('ES');
   if (parsed.jwt.enabled && !jwtIsAsymmetric && parsed.jwt.secret === 'change-me-in-production') {
     throw new Error('jwt.enabled=true 时（对称算法）必须设置非默认的 jwt.secret');

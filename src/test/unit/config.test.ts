@@ -183,4 +183,31 @@ describe('配置系统', () => {
       },
     }));
   });
+
+  /* 审计 Critical 10：认证/加密默认关闭 + masterKey 有公开占位值，生产漏配会
+   * 「成功启动」但处于无认证无加密状态（静默失败）。既有校验只在 enabled=true
+   * 时查密钥强度，挡不住「忘了开」。 */
+  describe('生产 fail-closed 门', () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      process.env.NODE_ENV = saved.NODE_ENV;
+      delete process.env.CHRONO_ALLOW_INSECURE_PRODUCTION;
+    });
+
+    it('NODE_ENV=production 且未开认证/加密 → 拒绝启动', () => {
+      process.env.NODE_ENV = 'production';
+      assert.throws(() => loadConfig({}), /拒绝以不安全配置启动生产环境/);
+    });
+
+    it('非生产环境不受影响（本地开发默认可启动）', () => {
+      process.env.NODE_ENV = 'development';
+      assert.doesNotThrow(() => loadConfig({}));
+    });
+
+    it('显式豁免开关可放行（受控演示环境）', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CHRONO_ALLOW_INSECURE_PRODUCTION = 'true';
+      assert.doesNotThrow(() => loadConfig({}));
+    });
+  });
 });
