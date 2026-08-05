@@ -431,7 +431,8 @@
     "toolPermissions": "Tool Permissions",
     "toolInvocations": "Tool Invocations",
     "safetyDrift": "Drift Monitor",
-    "toolAutoAuth": "Tool Auto-Authorization"
+    "toolAutoAuth": "Tool Auto-Authorization",
+    "adminGithub": "GitHub Connection"
   },
   "appShell": {
     "skipToMain": "Skip to main content",
@@ -1758,7 +1759,11 @@
     "load": "Load",
     "selectOrgTitle": "Select an org",
     "selectOrgMessage": "Enter an org ID to view its collaboration state",
-    "tab": { "tasks": "Task Collaboration", "threads": "Threads", "strategy": "Strategy" },
+    "tab": {
+      "tasks": "Task Collaboration",
+      "threads": "Threads",
+      "strategy": "Strategy"
+    },
     "goalsHeading": "Goals",
     "selectGoal": "Select a goal",
     "noGoals": "No goals",
@@ -1771,8 +1776,18 @@
     "toWorkerId": "To worker ID",
     "createdByWorkerId": "Created-by worker ID",
     "cancel": "Cancel",
-    "taskStatus": { "draft": "Draft", "delegated": "Delegated", "in_progress": "In progress", "submitted": "Submitted", "approved": "Approved", "rejected": "Rejected", "blocked": "Blocked" },
-    "panel": { "heading": "Task Collaboration" },
+    "taskStatus": {
+      "draft": "Draft",
+      "delegated": "Delegated",
+      "in_progress": "In progress",
+      "submitted": "Submitted",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "blocked": "Blocked"
+    },
+    "panel": {
+      "heading": "Task Collaboration"
+    },
     "escalations": {
       "heading": "Escalation chain",
       "empty": "No escalations",
@@ -1784,7 +1799,12 @@
       "byWorkerPrompt": "Enter acting worker ID",
       "reescReasonPrompt": "Enter re-escalation reason"
     },
-    "escStatus": { "pending": "Pending", "resolved": "Resolved", "reescalated": "Re-escalated", "cancelled": "Cancelled" },
+    "escStatus": {
+      "pending": "Pending",
+      "resolved": "Resolved",
+      "reescalated": "Re-escalated",
+      "cancelled": "Cancelled"
+    },
     "handoffs": {
       "heading": "Handoffs",
       "empty": "No handoffs",
@@ -1793,7 +1813,12 @@
       "accept": "Accept",
       "reject": "Reject"
     },
-    "handoffStatus": { "proposed": "Proposed", "accepted": "Accepted", "rejected": "Rejected", "cancelled": "Cancelled" },
+    "handoffStatus": {
+      "proposed": "Proposed",
+      "accepted": "Accepted",
+      "rejected": "Rejected",
+      "cancelled": "Cancelled"
+    },
     "threads": {
       "heading": "Threads",
       "empty": "No threads",
@@ -1810,15 +1835,33 @@
       "close": "Close thread",
       "confirmClose": "Close this thread?"
     },
-    "threadType": { "delegation": "Delegation", "report": "Report", "handoff": "Handoff", "coordination": "Coordination" },
-    "threadStatus": { "open": "Open", "closed": "Closed" },
-    "messageType": { "request": "Request", "response": "Response", "report": "Report", "note": "Note", "escalation": "Escalation" },
+    "threadType": {
+      "delegation": "Delegation",
+      "report": "Report",
+      "handoff": "Handoff",
+      "coordination": "Coordination"
+    },
+    "threadStatus": {
+      "open": "Open",
+      "closed": "Closed"
+    },
+    "messageType": {
+      "request": "Request",
+      "response": "Response",
+      "report": "Report",
+      "note": "Note",
+      "escalation": "Escalation"
+    },
     "strategy": {
       "inputHeading": "Strategy input",
       "hint": "Zero-LLM deterministic: re-ranks candidate initiatives via 3 lenses (impact-first / risk-averse / quick-wins) and greedily includes within budget. Results always require human approval.",
       "objective": "Strategic objective",
       "budgetCap": "Budget cap",
-      "risk": { "low": "Low risk", "medium": "Medium risk", "high": "High risk" },
+      "risk": {
+        "low": "Low risk",
+        "medium": "Medium risk",
+        "high": "High risk"
+      },
       "initiatives": "Candidate initiatives",
       "addInitiative": "Add initiative",
       "initTitle": "Initiative title",
@@ -1831,7 +1874,11 @@
       "resultHeading": "3-lens comparison",
       "resultEmpty": "Fill in initiatives and generate an advisory",
       "requiresApproval": "⚠ This is advisory only — always requires human approval, never auto-executed",
-      "lens": { "impact_first": "Impact first", "risk_averse": "Risk averse", "quick_wins": "Quick wins" },
+      "lens": {
+        "impact_first": "Impact first",
+        "risk_averse": "Risk averse",
+        "quick_wins": "Quick wins"
+      },
       "included": "Included",
       "escalations": "Needs escalation",
       "totalCost": "Total cost",
@@ -2069,5 +2116,47 @@
       "runFailed": "Run failed: {{message}}",
       "loadFailed": "Failed to load: {{message}}"
     }
+  },
+  "adminGithub": {
+    "title": "GitHub Connection",
+    "description": "Connect a GitHub App so your persona can learn your organization's knowledge.",
+    "noPermission": "Administrator access is required to manage the GitHub connection.",
+    "loadError": "Failed to load GitHub connection status: {{message}}",
+    "connecting": "Connecting…",
+    "connectSuccess": "Credentials saved. Next, install the App on GitHub — the installation will be recorded automatically.",
+    "disconnectSuccess": "GitHub connection removed.",
+    "disconnect": "Disconnect",
+    "status": {
+      "heading": "Connection status",
+      "connected": "Connected (App ID: {{appId}})",
+      "notConnected": "GitHub is not connected yet."
+    },
+    "installations": {
+      "heading": "Installations",
+      "empty": "Credentials are configured, but no installation yet — install the App on your organization or repository in GitHub.",
+      "suspended": "Suspended",
+      "repos": "Repositories: {{repos}}"
+    },
+    "connect": {
+      "heading": "Enter App credentials",
+      "hint": "The private key is uploaded once, stored encrypted, and never shown again. After saving, install the App on GitHub.",
+      "submit": "Save credentials"
+    },
+    "fields": {
+      "appId": "App ID",
+      "privateKey": "Private key (.pem contents)",
+      "privateKeyHint": "Paste the full .pem file contents, including the BEGIN/END lines.",
+      "webhookSecret": "Webhook secret"
+    },
+    "errors": {
+      "pemFormat": "The private key must contain a PRIVATE KEY header — paste the full .pem contents."
+    }
+  },
+  "githubSetup": {
+    "title": "GitHub Setup",
+    "success": "Installation linked to your account (installation #{{installationId}}). Your persona can start learning from this organization.",
+    "failed": "Linking failed.",
+    "missingParam": "The callback is missing the installation_id parameter.",
+    "backToSettings": "Back to GitHub settings"
   }
 }
