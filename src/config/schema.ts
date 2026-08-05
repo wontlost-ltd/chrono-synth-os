@@ -367,13 +367,16 @@ const observabilityWorkerSchema = z.object({
   batchSize: z.coerce.number().int().min(1).default(100),
   maxAttempts: z.coerce.number().int().min(1).default(5),
   staleProcessingMs: z.coerce.number().int().min(1000).default(5 * 60 * 1000),
+  /* 运维面（/readyz、/metrics）默认只绑回环：这些端点无鉴权，却会暴露 backlog
+   * 深度、运行模式与版本号。默认 0.0.0.0 意味着同网段任意主机可直接读取。
+   * 需要被 Prometheus 跨主机抓取时，显式配置 host 并自行置于网络策略之后。 */
   http: z.object({
     enabled: z.boolean().default(true),
-    host: z.string().default('0.0.0.0'),
+    host: z.string().default('127.0.0.1'),
     port: z.coerce.number().int().min(1).max(65535).default(3100),
   }).default({
     enabled: true,
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 3100,
   }),
 }).default({
@@ -384,7 +387,7 @@ const observabilityWorkerSchema = z.object({
   staleProcessingMs: 5 * 60 * 1000,
   http: {
     enabled: true,
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 3100,
   },
 });

@@ -68,6 +68,22 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
   if (res.status === 204) return undefined as T;
 
-  const json = await res.json() as { data?: T };
-  return (json.data ?? json) as T;
+  const json: unknown = await res.json();
+
+  /* 仅当 `data` 是**唯一**字段时才解包信封——与 Web 端 apiFetch 同一规则。
+   * 原实现 `json.data ?? json` 有两个缺陷：
+   *   1. 合法的 `{data: null}`（如「尚无资源」）会因 ?? 回退成整个信封对象，
+   *      调用方拿到 `{data:null}` 而非 null；
+   *   2. `{data:[...], pagination}` 这类多键富信封会被误解包，静默丢掉分页。
+   * 用 own-property 检查 + 单键判定同时消除两者。 */
+  if (
+    json !== null &&
+    typeof json === 'object' &&
+    !Array.isArray(json) &&
+    'data' in json &&
+    Object.keys(json).length === 1
+  ) {
+    return (json as { data: T }).data;
+  }
+  return json as T;
 }
