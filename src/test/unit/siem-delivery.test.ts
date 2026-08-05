@@ -233,3 +233,24 @@ describe('SiemDelivery — 单飞的微任务竞态', () => {
     assert.equal(s.snapshot().pending, 2, '瞬态失败保留在队列待下轮重试');
   });
 });
+
+/* Codex 第七轮：以「队列非空」为补轮判据会让 N 个并发等待者各拉一轮，
+ * 一轮之内烧掉 N 次重试预算 —— SIEM 端故障时事件被过早打进死信。
+ * 判据须为「该轮 drain 之后有无**新入队**」。 */
+describe('SiemDelivery — 并发等待者不放大重试', () => {
+  it('N 个并发 flush 对同一瞬态失败条目只消耗一次重试', async () => {
+    const t = new StubTransport();
+    t.mode = 'transient';
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0, maxRetries: 10 });
+    s.enqueue('A');
+
+    await Promise.all(Array.from({ length: 8 }, () => s.flush()));
+
+    assert.equal(
+      s.snapshot().transientFailures, 1,
+      '8 个等待者只应产生 1 次投递尝试，否则重试预算被并发放大',
+    );
+    assert.equal(s.snapshot().pending, 1, '条目保留待下轮重试');
+    assert.equal(s.snapshot().deadLettered, 0, '不得因放大而过早进死信');
+  });
+});

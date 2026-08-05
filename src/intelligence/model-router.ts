@@ -282,8 +282,12 @@ export class ModelRouter implements LLMProvider {
       if (!check.allowed) throw new QuotaExceededError(`Token 预算不足: ${check.reason}`);
     }
 
-    /* 原子性配额预消费 */
-    if (this.quotaManager && !this.quotaManager.consumeQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
+    /* 原子性配额预消费。
+     * estimatedTokens 可能为 0（空批次，或全是空字符串）——零消费是无操作，不该进入
+     * 计量层：配额接口要求正整数（负数会反向降低已用量，是真实绕过），把 0 也一并
+     * 挡在外面才能既保持该约束、又不让空批次退化成报错。 */
+    if (estimatedTokens > 0 && this.quotaManager
+      && !this.quotaManager.consumeQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
       throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
     }
 

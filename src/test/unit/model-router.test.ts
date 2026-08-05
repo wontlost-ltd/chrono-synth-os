@@ -249,6 +249,37 @@ describe('ModelRouter (Mock Provider)', () => {
       assert.equal(res.content, 'OK');
     });
 
+    /* 审计 Warning B1-6 的配额校验（拒绝非正整数）曾使空批次 embed 报错：
+     * embed([]) 估算出 estimatedTokens=0 并原样传给 consumeQuota。零消费是无操作，
+     * 不该进入计量层——否则「防负数绕过」的正确约束会误伤合法的空批次调用。 */
+    it('embed 空批次：启用配额时不报错（零消费不进计量层）', async () => {
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
+      quotaManager.setLimit('tenant-1', 'llm_tokens', 100_000, 3_600_000);
+
+      const r = new ModelRouter({
+        provider: 'mock',
+        model: 'mock',
+        embeddingModel: 'mock',
+        quotaManager,
+        tenantId: 'tenant-1',
+      });
+
+      const out = await r.embed([]);
+      assert.deepEqual(out, [], '空批次应正常返回空结果');
+    });
+
+    it('embed 全空字符串：同样零估算，不报错', async () => {
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
+      quotaManager.setLimit('tenant-1', 'llm_tokens', 100_000, 3_600_000);
+
+      const r = new ModelRouter({
+        provider: 'mock', model: 'mock', embeddingModel: 'mock',
+        quotaManager, tenantId: 'tenant-1',
+      });
+
+      await assert.doesNotReject(() => r.embed(['', '']));
+    });
+
     it('llm_tokens 配额耗尽时 chat 抛出 QuotaExceededError', async () => {
       const quotaManager = QuotaManager.fromUnitOfWork(db);
       quotaManager.setLimit('tenant-1', 'llm_tokens', 100, 3_600_000);
