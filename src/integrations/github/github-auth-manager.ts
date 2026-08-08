@@ -69,6 +69,8 @@ export class GitHubAuthManager {
 
   /** 内存缓存的 installation token；null 表示尚未换取或已失效。 */
   private cached: CachedToken | null = null;
+  /** 进行中的 token 兑换；并发调用复用它而非各自兑换（见 getInstallationToken）。 */
+  private inFlightExchange: Promise<string> | undefined;
 
   constructor(deps: {
     /** 通常包 Task 3 的 store.getApp()——返回本租户 App 凭据或 undefined。 */
@@ -97,9 +99,19 @@ export class GitHubAuthManager {
     if (this.cached && this.now() + REFRESH_SKEW_MS < this.cached.expiresAt) {
       return this.cached.token;
     }
-    const fresh = await this.exchangeInstallationToken();
-    this.cached = fresh;
-    return fresh.token;
+    /* 单飞：到期窗口内并发调用会**同时**看到缓存失效，各自去换一枚 token。
+     * GitHub 的 access_tokens 端点有速率限制，且每次兑换都会让上一枚提前失效——
+     * 并发兑换既浪费配额，又可能让正在使用的 token 被后一次兑换作废。
+     * 故进行中的兑换复用同一个 Promise。 */
+    if (!this.inFlightExchange) {
+      this.inFlightExchange = this.exchangeInstallationToken()
+        .then((fresh) => {
+          this.cached = fresh;
+          return fresh.token;
+        })
+        .finally(() => { this.inFlightExchange = undefined; });
+    }
+    return this.inFlightExchange;
   }
 
   /** 签 App JWT → POST access_tokens 端点换取 installation token。 */

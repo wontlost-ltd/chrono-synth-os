@@ -219,13 +219,16 @@ export class GitHubReadPortImpl implements GitHubReadPort {
   async listInstallationRepos(): Promise<string[]> {
     const url = new URL(`${this.apiBase}/installation/repositories`);
     url.searchParams.set('per_page', String(PER_PAGE));
-    /* 该端点响应体是 {total_count, repositories:[...]} 而非裸数组，与既有 list 端点形状不同，
-     * 故不复用 fetchAllPages（它按裸数组展开每页）。
-     * 首版只取第一页（100 仓库）——单个 installation 授权超 100 仓库罕见，超出时轮转仍在
-     * 前 100 内正常工作、不报错。需要时再加 Link header 跟随。 */
-    const page = await this.fetchJson<{ repositories?: Array<{ full_name?: string }> }>(url.toString());
-    return (page.repositories ?? [])
-      .map((r) => r.full_name)
+    /* 该端点响应体是 {total_count, repositories:[...]} 而非裸数组，故传入取值函数
+     * 复用统一的 Link header 翻页逻辑。原实现只取第一页——授权超过 100 个仓库时，
+     * 第 101 个之后的仓库**永远**不会进入组织轮转，且不报错、无痕迹。 */
+    const raw = await this.fetchAllPages(url.toString(), (body) => {
+      if (body === null || typeof body !== 'object') return [];
+      const repos = (body as { repositories?: unknown }).repositories;
+      return Array.isArray(repos) ? repos : [];
+    });
+    return raw
+      .map((r) => (r as { full_name?: unknown }).full_name)
       .filter((name): name is string => typeof name === 'string' && name.length > 0);
   }
 
@@ -266,7 +269,17 @@ export class GitHubReadPortImpl implements GitHubReadPort {
    * 沿 Link header rel="next" 循环拉取所有页，合并成一个数组。触及
    * MAX_LIST_PAGES 上限时显式 warn 并停止（不静默丢数据）。
    */
-  private async fetchAllPages(firstUrl: string): Promise<unknown[]> {
+  /**
+   * 沿 Link header 翻页拉全量。
+   *
+   * @param extract 从单页响应体取出条目数组。缺省按**裸数组**解（多数 list 端点如此）；
+   *   少数端点（如 /installation/repositories）返回 `{total_count, repositories:[...]}`
+   *   这类包装体，由调用方传入取值函数——否则会静默拿到空数组。
+   */
+  private async fetchAllPages(
+    firstUrl: string,
+    extract: (body: unknown) => unknown[] = (body) => (Array.isArray(body) ? body : []),
+  ): Promise<unknown[]> {
     const all: unknown[] = [];
     let nextUrl: string | undefined = firstUrl;
     let page = 0;
@@ -281,9 +294,7 @@ export class GitHubReadPortImpl implements GitHubReadPort {
       }
       const res = await this.request(nextUrl);
       const body = (await res.json()) as unknown;
-      if (Array.isArray(body)) {
-        all.push(...body);
-      }
+      all.push(...extract(body));
       page += 1;
       nextUrl = parseNextLink(res.headers.get('link'));
     }

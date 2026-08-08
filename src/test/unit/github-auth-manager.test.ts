@@ -379,3 +379,76 @@ describe('GitHubAuthManager', () => {
     assert.equal(spy.calls.length, 2);
   });
 });
+
+/* 审计 Warning B4-18：token 缓存刷新没有 single-flight。到期窗口内并发调用会
+ * **同时**看到缓存失效、各自去兑换。GitHub 的 access_tokens 端点有速率限制，
+ * 且每次兑换都会让上一枚提前失效——并发兑换既浪费配额，又可能让正在使用的
+ * token 被后一次兑换作废。 */
+describe('GitHubAuthManager — token 兑换单飞', () => {
+  it('并发调用只兑换一次，且都拿到同一枚 token', async () => {
+    const { privateKeyPem } = makeKeyPair();
+    const now = 1_700_000_000_000;
+    const app: AppCreds = { appId: '123456', privateKeyPem, gheBaseUrl: null };
+    /* 队列里放两枚不同 token：若发生并发兑换，返回值会出现 t2。 */
+    const spy = makeFetchSpy([
+      { token: 't1', expires_at: isoAt(now + 3_600_000) },
+      { token: 't2', expires_at: isoAt(now + 3_600_000) },
+    ]);
+
+    const mgr = new GitHubAuthManager({
+      getApp: () => app,
+      installationId: '987654',
+      now: () => now,
+      fetchImpl: spy.impl,
+    });
+
+    const tokens = await Promise.all([
+      mgr.getInstallationToken(),
+      mgr.getInstallationToken(),
+      mgr.getInstallationToken(),
+      mgr.getInstallationToken(),
+    ]);
+
+    assert.equal(spy.calls.length, 1, '4 个并发调用只应兑换一次');
+    assert.deepEqual(tokens, ['t1', 't1', 't1', 't1'], '全部复用同一枚 token');
+  });
+
+  it('兑换失败后不残留在飞状态：下次调用可重新兑换', async () => {
+    const { privateKeyPem } = makeKeyPair();
+    const now = 1_700_000_000_000;
+    const app: AppCreds = { appId: '123456', privateKeyPem, gheBaseUrl: null };
+    /* 首次 500 失败，其后成功——验证 finally 清了 inFlight，否则第二次会复用
+     * 已 reject 的 Promise，token 永远换不回来。 */
+    const raw = makeRawFetchSpy([
+      { status: 500, body: '{"message":"boom"}' },
+      { status: 201, body: JSON.stringify({ token: 't-ok', expires_at: isoAt(now + 3_600_000) }) },
+    ]);
+
+    const mgr = new GitHubAuthManager({
+      getApp: () => app,
+      installationId: '987654',
+      now: () => now,
+      fetchImpl: raw.impl,
+    });
+
+    await assert.rejects(() => mgr.getInstallationToken(), '首次兑换应失败');
+    const token = await mgr.getInstallationToken();
+    assert.equal(token, 't-ok', '失败不得让后续调用永久卡在已 reject 的 Promise 上');
+    assert.equal(raw.calls.length, 2, '第二次应真的重新兑换');
+  });
+
+  it('缓存有效期内不重复兑换（单飞不破坏既有缓存语义）', async () => {
+    const { privateKeyPem } = makeKeyPair();
+    const now = 1_700_000_000_000;
+    const app: AppCreds = { appId: '123456', privateKeyPem, gheBaseUrl: null };
+    const spy = makeFetchSpy([{ token: 't1', expires_at: isoAt(now + 3_600_000) }]);
+
+    const mgr = new GitHubAuthManager({
+      getApp: () => app, installationId: '987654', now: () => now, fetchImpl: spy.impl,
+    });
+
+    await mgr.getInstallationToken();
+    await mgr.getInstallationToken();
+    assert.equal(spy.calls.length, 1, '缓存命中不应再次兑换');
+  });
+});
