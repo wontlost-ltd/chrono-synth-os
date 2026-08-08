@@ -717,13 +717,15 @@ export class ConversationService {
       || outcome.guardAction === 'llm_fallback'
       || outcome.guardAction === 'autonomous_response';
     if (billable) {
-      this.recordBillableUsage(input.tenantId, 1);
+      /* 传消息行 id 作为计费因果锚：无 sourceId 时 outbox 退化成
+       * 「tenant:event:时间戳:进程序号」，跨进程/跨重试无去重能力 → 重复计费。 */
+      this.recordBillableUsage(input.tenantId, 1, message.id);
     }
 
     return message;
   }
 
-  private recordBillableUsage(tenantId: string, quantity: number): void {
+  private recordBillableUsage(tenantId: string, quantity: number, sourceId?: string): void {
     try {
       this.deps.usageTracker?.record(tenantId, 'conversation_message', quantity);
     } catch (err) {
@@ -733,7 +735,7 @@ export class ConversationService {
       try {
         const customerId = this.deps.stripeCustomerLookup(tenantId);
         if (customerId) {
-          this.deps.billingOutbox.enqueue(tenantId, customerId, 'chrono_conversation_message', quantity);
+          this.deps.billingOutbox.enqueue(tenantId, customerId, 'chrono_conversation_message', quantity, sourceId);
         }
       } catch (err) {
         this.deps.logger.warn('ConversationService', `billing outbox enqueue failed: ${err instanceof Error ? err.message : String(err)}`);

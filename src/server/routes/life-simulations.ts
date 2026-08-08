@@ -104,7 +104,9 @@ export function registerLifeSimulationRoutes(
       const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
       if (stripeCustomerId) {
         /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
-        if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1)) {
+        /* simulationId 作为计费因果锚——否则 outbox 退化成时间戳+进程序号，
+         * 重试会重复计费。 */
+        if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1, simulationId)) {
           billingMetrics.meterEventsEnqueued++;
         }
       }
@@ -218,7 +220,7 @@ export function registerLifeSimulationRoutes(
         const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
         if (stripeCustomerId) {
           /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
-          if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1)) {
+          if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1, simulationId)) {
             billingMetrics.meterEventsEnqueued++;
           }
         }

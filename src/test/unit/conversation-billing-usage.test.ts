@@ -32,9 +32,10 @@ interface RecordedEnqueue {
 }
 
 class StubBillingOutbox {
-  public events: Array<RecordedEnqueue & { tenantId: string }> = [];
-  enqueue(tenantId: string, customerId: string, eventName: string, quantity: number): void {
-    this.events.push({ tenantId, resource: eventName, customerId, quantity });
+  public events: Array<RecordedEnqueue & { tenantId: string; sourceId?: string }> = [];
+  /* 必须捕获 sourceId：不捕获就无法发现「退化成时间戳+进程序号」的重复计费缺陷。 */
+  enqueue(tenantId: string, customerId: string, eventName: string, quantity: number, sourceId?: string): void {
+    this.events.push({ tenantId, resource: eventName, customerId, quantity, sourceId });
   }
 }
 
@@ -99,6 +100,24 @@ describe('ConversationService 计费上报', () => {
     assert.equal(billingOutbox.events.length, 1);
     assert.equal(billingOutbox.events[0].resource, 'chrono_conversation_message');
     assert.equal(billingOutbox.events[0].quantity, 1);
+  });
+
+  /* 审计 Warning B4-6：无 sourceId 时 outbox 的幂等键退化成
+   * 「tenant:event:时间戳:进程序号」——跨进程/跨重试都不去重，重试即重复计费。
+   * 生产上**所有** enqueue 调用点原先都没传 sourceId。 */
+  it('计费事件必须携带业务因果 ID（sourceId），否则重试会重复计费', async () => {
+    await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-bill', messageId: 'm-bill-1', externalUserId: 'eu',
+      content: '你好',
+    });
+
+    assert.equal(billingOutbox.events.length, 1);
+    const ev = billingOutbox.events[0]!;
+    assert.ok(ev.sourceId, 'enqueue 必须带 sourceId');
+    /* 锚是**服务端生成的消息行 id**（cmsg_ 前缀），不是客户端给的 messageId——
+     * 前者由服务端唯一生成，后者可被客户端复用，作为计费锚不可靠。 */
+    assert.match(ev.sourceId!, /^cmsg_/, 'sourceId 应为服务端生成的消息行 id');
   });
 
   it('pre_block 命中 → 不上报用量', async () => {

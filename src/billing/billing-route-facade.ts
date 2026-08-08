@@ -50,7 +50,15 @@ async function ensureStripeCustomer(
     registerCoreSelfExecutors();
     const user = tx.queryOne(orgQueryTenantUserEmail(tenantId));
     if (!user) throw new StateError('租户无关联用户', ErrorCode.STATE_INVALID_TRANSITION);
-    const customer = await createCustomer(config, user.email, tenantId);
+    /* 跨进程幂等：inflightCustomerCreation 只是**本进程内**的去重（模块级 Map），
+     * 多实例部署时两个进程会各自创建一个 Stripe Customer，同一租户从此有两份计费
+     * 主体，后续订阅/发票会分裂到两边。
+     * 传确定性 idempotencyKey 让 Stripe 侧兜底：同 key 的重复创建返回**同一个**
+     * Customer，与进程数无关。key 以租户为界且稳定（不含时间戳/随机数），
+     * 否则重试会各自生成新 key 而失去幂等意义。 */
+    const customer = await createCustomer(
+      config, user.email, tenantId, `chrono-customer-${tenantId}`,
+    );
     webhookService.persistStripeCustomerId(customer.id, sub?.id);
     return customer.id;
   })();

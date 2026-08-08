@@ -264,7 +264,11 @@ export class ModelRouter implements LLMProvider {
       this.usageTracker.record(this.tenantId, 'llm_tokens', totalTokens);
     }
 
-    /* Stripe 计量上报 */
+    /* Stripe 计量上报。
+     * ⚠️ 残留（审计 Warning B4-6）：此处没有可用的业务因果 ID——token 用量按调用累计，
+     * 不对应任何持久化实体。故 outbox 退化为「tenant:event:时间戳:进程序号」，
+     * 跨进程/跨重试无去重能力。要真正闭合需把请求级 ID 贯穿 ModelRouter 公开 API，
+     * 属独立改造；conversation / simulation / decision 三条路径已传 sourceId。 */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && totalTokens > 0) {
       if (this.billingOutbox) {
         /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
