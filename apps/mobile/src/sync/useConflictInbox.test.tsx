@@ -99,6 +99,33 @@ describe('useResolveConflict — 请求体契约', () => {
     expect(body).not.toHaveProperty('choice');
   });
 
+  it('resolve 响应形状漂移 → 边界报错（不把 undefined 带进 UI）', async () => {
+    jest.spyOn(client, 'apiFetch').mockResolvedValue({
+      /* 缺 resultingSyncState / remainingBlockingCount 等契约必填字段。 */
+      data: { schemaVersion: 'conflict-resolve-result.v1', conflictId: 'cf_1' },
+    } as never);
+
+    const { result } = renderHook(() => useResolveConflict(), { wrapper });
+    result.current.mutate({ conflictId: 'cf_1', ifMatch: 'v7', action: 'keep_local' });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+  });
+
+  it('conflictId 含特殊字符 → 路径被正确编码（不产生路径穿越）', async () => {
+    const spy = jest.spyOn(client, 'apiFetch').mockResolvedValue({
+      data: {
+        schemaVersion: 'conflict-resolve-result.v1', conflictId: 'a/../b',
+        action: 'keep_local', resolvedAt: '2026-08-06T10:01:00.000Z',
+        resultingSyncState: 'online_synced', remainingBlockingCount: 0,
+      },
+    } as never);
+
+    const { result } = renderHook(() => useResolveConflict(), { wrapper });
+    result.current.mutate({ conflictId: 'a/../b', ifMatch: 'v7', action: 'keep_local' });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(spy.mock.calls[0]![0]).toBe('/api/v1/conflicts/a%2F..%2Fb/resolve');
+  });
+
   it('merge_manually 缺 mergePayload → 请求前即被契约拒绝（不发网络请求）', async () => {
     const spy = jest.spyOn(client, 'apiFetch').mockResolvedValue({} as never);
 

@@ -8,12 +8,22 @@ const mockStartExport = vi.fn();
 const mockDryRun = vi.fn();
 const mockCommit = vi.fn();
 
-const makeIdleMutation = (mutateAsync: ReturnType<typeof vi.fn>) => ({
+/* mutation 状态可注入——原实现硬编码 isPending/isError/error，使
+ * 'starting' 相与 start-failure 相在结构上**不可达**：改掉生产代码里对应的
+ * 判定分支，测试依旧全绿（变异存活）。 */
+interface MutationOverrides {
+  isPending?: boolean;
+  isError?: boolean;
+  error?: Error | null;
+}
+let startMutationOverrides: MutationOverrides = {};
+
+const makeIdleMutation = (mutateAsync: ReturnType<typeof vi.fn>, o: MutationOverrides = {}) => ({
   mutateAsync,
   reset: vi.fn(),
-  isPending: false,
-  isError: false,
-  error: null,
+  isPending: o.isPending ?? false,
+  isError: o.isError ?? false,
+  error: o.error ?? null,
 });
 
 /* 任务状态可注入——原 mock 硬编码 data: undefined，导致 job.state 分支
@@ -21,7 +31,7 @@ const makeIdleMutation = (mutateAsync: ReturnType<typeof vi.fn>) => ({
 let mockJobData: unknown = undefined;
 
 vi.mock('../api/queries/portability', () => ({
-  useStartExport: () => makeIdleMutation(mockStartExport),
+  useStartExport: () => makeIdleMutation(mockStartExport, startMutationOverrides),
   useExportJob: () => ({ data: mockJobData }),
   useDryRunImport: () => makeIdleMutation(mockDryRun),
   useCommitImport: () => makeIdleMutation(mockCommit),
@@ -30,6 +40,7 @@ vi.mock('../api/queries/portability', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mockJobData = undefined;
+  startMutationOverrides = {};
 });
 
 /** 服务端 ExportJobStatusV1 的真实形状（契约 .strict()）。 */
@@ -194,5 +205,31 @@ describe('useExportFlow — 服务端真实状态映射', () => {
     const { result } = renderHook(() => useExportFlow());
     await act(async () => { await result.current.start(); });
     expect(result.current.state.phase).toBe('ready');
+  });
+});
+
+/* 变异测试暴露的覆盖缺口：ExportPhase 六个值里 'starting' 与 start-failure 两条
+ * 分支从未被执行——把生产代码里对应判定改成 if(false) 测试依旧全绿。
+ * 根因是 mutation mock 硬编码了 isPending/isError/error。 */
+describe('useExportFlow — 启动相与启动失败相', () => {
+  it("mutation 进行中 → 'starting'（此前该分支不可达）", () => {
+    startMutationOverrides = { isPending: true };
+    const { result } = renderHook(() => useExportFlow());
+    expect(result.current.state.phase).toBe('starting');
+  });
+
+  it("启动失败 → 'error'，且错误消息取自 mutation", () => {
+    startMutationOverrides = { isError: true, error: new Error('配额不足') };
+    const { result } = renderHook(() => useExportFlow());
+    expect(result.current.state.phase).toBe('error');
+    expect(result.current.state.errorMessage).toBe('配额不足');
+  });
+
+  it('启动失败的消息优先于任务态消息（用户先看到启动为何失败）', async () => {
+    mockStartExport.mockResolvedValue({ exportId: 'exp_1' });
+    startMutationOverrides = { isError: true, error: new Error('启动失败原因') };
+    mockJobData = job({ state: 'failed', errorCode: 'EXPORT_FAILED' });
+    const { result } = renderHook(() => useExportFlow());
+    expect(result.current.state.errorMessage).toBe('启动失败原因');
   });
 });

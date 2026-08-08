@@ -130,6 +130,15 @@ export class CalendarTool implements ToolAdapter {
       ? { ...event, extendedProperties: { ...(event.extendedProperties as object | undefined), private: { 'chrono.idempotencyKey': idempotencyKey } } }
       : event;
 
+    /* 真幂等：原实现只把 key **写进** extendedProperties 就直接 POST，从不回查——
+     * 请求已到达但响应丢失时（网络中断/超时重试），下一次调用会创建**第二个**日历事件。
+     * 日历是对外可见的副作用，重复事件会直接打扰真人。
+     * 故带 key 时先按该 key 搜一次：已存在即返回既有事件，不再创建。 */
+    if (idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(calendarId, idempotencyKey, token, deadline);
+      if (existing) return wrapJson(existing);
+    }
+
     const url = `${API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
     const json = await this.fetchJson(url, {
       method: 'POST',
@@ -156,6 +165,31 @@ export class CalendarTool implements ToolAdapter {
     const url = `${API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`;
     await this.fetchJson(url, { method: 'DELETE' }, token, deadline, { allowEmpty: true });
     return wrapJson({ deleted: true, eventId });
+  }
+
+  /**
+   * 按幂等键回查既有事件。命中返回该事件，未命中返回 undefined。
+   *
+   * 用 Google Calendar 的 privateExtendedProperty 过滤（正是 create 写入的位置）。
+   * 查询本身失败时**返回 undefined 让创建继续**——回查是去重优化，不该因它的
+   * 瞬时故障阻断正常创建；代价是极端情况下仍可能重复，好过完全无法创建。
+   */
+  private async findByIdempotencyKey(
+    calendarId: string,
+    idempotencyKey: string,
+    token: string,
+    deadline: number,
+  ): Promise<unknown | undefined> {
+    const url = new URL(`${API_BASE}/calendars/${encodeURIComponent(calendarId)}/events`);
+    url.searchParams.set('privateExtendedProperty', `chrono.idempotencyKey=${idempotencyKey}`);
+    url.searchParams.set('maxResults', '1');
+    try {
+      const json = await this.fetchJson(url.toString(), { method: 'GET' }, token, deadline);
+      const items = (json as { items?: unknown[] } | null)?.items;
+      return Array.isArray(items) && items.length > 0 ? items[0] : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async fetchJson(
