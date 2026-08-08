@@ -167,3 +167,52 @@ describe('UrlContentFetcher', () => {
     );
   });
 });
+
+/* 审计 Warning B4-15：DNS 校验与实际连接是两次**独立**解析，中间有 rebinding 窗口；
+ * 且原实现只取首个地址，多 A 记录主机可以把私有 IP 藏在第二条之后。 */
+describe('UrlContentFetcher — DNS rebinding / 多地址防护', () => {
+  it('多 A 记录中任一条命中私有段 → 整体拒绝（不只看首条）', async () => {
+    const fetcher = new UrlContentFetcher({
+      /* 首条是公网地址，第二条是云元数据端点——原实现只查首条会直接放行。 */
+      resolveAll: async () => ['93.184.216.34', '169.254.169.254'],
+    });
+    await assert.rejects(
+      () => fetcher.fetch('http://evil.example.com/'),
+      /169\.254\.169\.254.*SSRF/,
+      '任一地址落在私有段即须拒绝',
+    );
+  });
+
+  it('私有地址排在首条同样拒绝', async () => {
+    const fetcher = new UrlContentFetcher({
+      resolveAll: async () => ['10.0.0.5', '93.184.216.34'],
+    });
+    await assert.rejects(() => fetcher.fetch('http://evil.example.com/'), /SSRF/);
+  });
+
+  it('全部为公网地址 → 通过 SSRF 检查（不误伤正常站点）', async () => {
+    /* 用真实 loopback 服务器承接请求，但让 DNS 钩子返回公网地址以通过检查；
+     * 连接被 pin 到返回的首个地址，故这里断言"检查通过后确实去连了该地址"——
+     * 连接失败是预期的（93.184.216.34 不可达），关键是**没有** SSRF 拒绝。 */
+    const fetcher = new UrlContentFetcher({
+      timeoutMs: 1500,
+      resolveAll: async () => ['93.184.216.34'],
+    });
+    await assert.rejects(
+      () => fetcher.fetch('http://public.example.com/'),
+      (err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        assert.ok(!/SSRF/.test(msg), `不应被 SSRF 拒绝，实际: ${msg}`);
+        return true;
+      },
+    );
+  });
+
+  it('DNS 返回空结果 → 拒绝（不静默放行）', async () => {
+    const fetcher = new UrlContentFetcher({ resolveAll: async () => [] });
+    await assert.rejects(
+      () => fetcher.fetch('http://empty.example.com/'),
+      /DNS lookup failed/,
+    );
+  });
+});

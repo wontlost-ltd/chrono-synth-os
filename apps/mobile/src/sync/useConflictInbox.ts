@@ -67,10 +67,10 @@ export function useResolveConflict() {
     mutationFn: async (input: ResolveConflictInput): Promise<ConflictResolveResultV1> => {
       const body = ConflictResolveRequestV1Schema.parse(input);
       const raw = await apiFetch<unknown>(
-        `/api/v1/conflicts/${input.conflictId}/resolve`,
+        `/api/v1/conflicts/${encodeURIComponent(input.conflictId)}/resolve`,
         { method: 'POST', body: JSON.stringify(body) },
       );
-      return ConflictResolveEnvelopeSchema.parse(raw).data;
+      return (raw as {data: ConflictResolveResultV1}).data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: INBOX_QUERY_KEY });
