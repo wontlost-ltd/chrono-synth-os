@@ -70,7 +70,9 @@ export function useResolveConflict() {
         `/api/v1/conflicts/${encodeURIComponent(input.conflictId)}/resolve`,
         { method: 'POST', body: JSON.stringify(body) },
       );
-      return (raw as {data: ConflictResolveResultV1}).data;
+      /* 响应侧同样要 parse：`as` 只是编译期断言，服务端形状漂移时会把
+       * undefined 一路带进 UI。ConflictResolveEnvelopeSchema 已在上方定义。 */
+      return ConflictResolveEnvelopeSchema.parse(raw).data;
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: INBOX_QUERY_KEY });

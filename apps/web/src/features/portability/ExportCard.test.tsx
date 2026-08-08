@@ -69,6 +69,10 @@ describe('ExportCard 下载链路', () => {
     };
     render(<ExportCard />);
 
+    /* 该 href 必须是服务端**接受 partial 状态**的端点。
+     * 此前这条断言只比对了字符串，而端点当时硬拒非 completed——等于用测试把
+     * 「点了必得 409」这个 bug 焊死。服务端侧的对应断言见
+     * src/test/integration/privacy-business-audit.test.ts「partial 状态可下载」。 */
     expect(screen.getByRole('link', { name: /download partial pack/i }).getAttribute('href'))
       .toBe('/api/v1/privacy/export/exp_p/download');
     expect(screen.getByText('export.warning.memoryPartial')).toBeTruthy();

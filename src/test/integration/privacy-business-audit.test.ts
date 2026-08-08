@@ -84,3 +84,62 @@ describe('F5 privacy export/erase 业务审计留痕', () => {
     assert.equal(businessEvents('privacy.import.failed').length, 1, 'v2 也应写 import.failed 业务审计');
   });
 });
+
+/* 审计回归（前后端契约两侧对读）：ExportCard 为 partial 状态渲染下载入口，
+ * 而 /export/:id/download 原先硬拒非 completed → 该按钮必得 409。
+ *
+ * 这个缺口是我修「completed 的 file:// 断链」时引入的：把「一律走同源端点」
+ * 也套到了 partial 分支上，却没核对端点是否接受该状态。前端测试还把这个坏
+ * href 断言成了预期行为，等于用测试把 bug 焊死。
+ * 教训：前后端契约缺陷必须**两侧对读**，只验一侧的渲染不算验证。 */
+describe('导出下载端点的状态机（partial 亦有产物）', () => {
+  let os2: ChronoSynthOS;
+  let app2: FastifyInstance;
+  const cfg = loadConfig({
+    rateLimit: { max: 10000, timeWindowMs: 60_000 },
+    websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+  });
+
+  beforeEach(async () => {
+    os2 = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os2.start();
+    app2 = await createApp({ os: os2, config: cfg });
+  });
+  afterEach(async () => { await app2.close(); os2.close(); });
+
+  /** 直接插一行指定状态的导出任务（带内联 manifest 作为产物）。 */
+  function seedJob(id: string, state: string): void {
+    os2.getDatabase().prepare<void>(
+      `INSERT INTO export_jobs (id, tenant_id, state, percent, created_at, completed_at, pack_json)
+       VALUES (?, 'default', ?, 100, 1000, 2000, ?)`,
+    ).run(id, state, JSON.stringify({ manifest: { schemaVersion: 'x' } }));
+  }
+
+  it('★partial 状态可下载（不得 409）——前端为它渲染了下载入口', async () => {
+    seedJob('exp_partial', 'partial');
+    const res = await app2.inject({ method: 'GET', url: '/api/v1/privacy/export/exp_partial/download' });
+    assert.notEqual(res.statusCode, 409, 'partial 是终态且有产物，必须可取走已导出部分');
+    assert.equal(res.statusCode, 200);
+  });
+
+  it('completed 状态可下载（回归保护）', async () => {
+    seedJob('exp_done', 'completed');
+    const res = await app2.inject({ method: 'GET', url: '/api/v1/privacy/export/exp_done/download' });
+    assert.equal(res.statusCode, 200);
+  });
+
+  it('running / queued 仍拒（未完成确实无产物）', async () => {
+    seedJob('exp_running', 'running');
+    seedJob('exp_queued', 'queued');
+    for (const id of ['exp_running', 'exp_queued']) {
+      const res = await app2.inject({ method: 'GET', url: `/api/v1/privacy/export/${id}/download` });
+      assert.equal(res.statusCode, 409, `${id} 未完成应拒`);
+    }
+  });
+
+  it('failed 仍拒（无产物可取）', async () => {
+    seedJob('exp_failed', 'failed');
+    const res = await app2.inject({ method: 'GET', url: '/api/v1/privacy/export/exp_failed/download' });
+    assert.equal(res.statusCode, 409);
+  });
+});
