@@ -115,9 +115,12 @@ describe('ConversationService 计费上报', () => {
     assert.equal(billingOutbox.events.length, 1);
     const ev = billingOutbox.events[0]!;
     assert.ok(ev.sourceId, 'enqueue 必须带 sourceId');
-    /* 锚是**服务端生成的消息行 id**（cmsg_ 前缀），不是客户端给的 messageId——
-     * 前者由服务端唯一生成，后者可被客户端复用，作为计费锚不可靠。 */
-    assert.match(ev.sourceId!, /^cmsg_/, 'sourceId 应为服务端生成的消息行 id');
+    /* 锚必须是**跨重试稳定**的值。曾误用服务端行 id（generatePrefixedId → randomUUID），
+     * 每次调用都是新值 → outbox 的 `tenant:event:sourceId` 键永不碰撞 = 幂等为零。
+     * 正解是调用方给的 sessionId:messageId，受 UNIQUE(tenant,persona,session,message_id)
+     * 约束保护，稳定且唯一。 */
+    assert.equal(ev.sourceId, 's-bill:m-bill-1', 'sourceId 须为 sessionId:messageId');
+    assert.ok(!/^cmsg_/.test(ev.sourceId!), '绝不能用每次新生成的服务端行 id');
   });
 
   it('pre_block 命中 → 不上报用量', async () => {

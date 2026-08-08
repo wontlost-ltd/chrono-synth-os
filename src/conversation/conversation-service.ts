@@ -717,9 +717,13 @@ export class ConversationService {
       || outcome.guardAction === 'llm_fallback'
       || outcome.guardAction === 'autonomous_response';
     if (billable) {
-      /* 传消息行 id 作为计费因果锚：无 sourceId 时 outbox 退化成
-       * 「tenant:event:时间戳:进程序号」，跨进程/跨重试无去重能力 → 重复计费。 */
-      this.recordBillableUsage(input.tenantId, 1, message.id);
+      /* 计费因果锚必须用**调用方给的 messageId**，不能用服务端行 id：
+       * 后者是 generatePrefixedId → randomUUID()，每次调用都是新值，
+       * 重试时锚也变，outbox 的 `tenant:event:sourceId` 键永远不碰撞 = 幂等为零。
+       * messageId 受 UNIQUE(tenant, persona, session, message_id) 约束（v065），
+       * 是这条消息**跨重试稳定且唯一**的标识，才是正确的锚。
+       * 加 sessionId 前缀避免不同会话复用同一 messageId 时误判为同一计费事件。 */
+      this.recordBillableUsage(input.tenantId, 1, `${input.sessionId}:${input.messageId}`);
     }
 
     return message;

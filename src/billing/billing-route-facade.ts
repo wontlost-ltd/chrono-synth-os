@@ -3,6 +3,7 @@
  * 封装计费路由的业务逻辑：计划管理、订阅、用量、Stripe 集成、附加组件
  */
 
+import { createHash } from 'node:crypto';
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import { orgQueryTenantUserEmail } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
@@ -56,8 +57,14 @@ async function ensureStripeCustomer(
      * 传确定性 idempotencyKey 让 Stripe 侧兜底：同 key 的重复创建返回**同一个**
      * Customer，与进程数无关。key 以租户为界且稳定（不含时间戳/随机数），
      * 否则重试会各自生成新 key 而失去幂等意义。 */
+    /* key 必须**混入 email 摘要**：Stripe 对「同 key + 不同请求体」返回 400
+     * idempotency_error，而请求体里就含 email。若 key 只绑 tenantId，租户改过
+     * email 后再次走到这里就会硬失败，且 Stripe 的 key 24h 后才释放——
+     * 表现为「改完 email 当天必挂、隔天自愈」的间歇故障。
+     * 混入摘要后 email 变更自然换 key，既保留重试幂等又不撞体校验。 */
+    const emailDigest = createHash('sha256').update(user.email).digest('hex').slice(0, 16);
     const customer = await createCustomer(
-      config, user.email, tenantId, `chrono-customer-${tenantId}`,
+      config, user.email, tenantId, `chrono-customer-${tenantId}-${emailDigest}`,
     );
     webhookService.persistStripeCustomerId(customer.id, sub?.id);
     return customer.id;

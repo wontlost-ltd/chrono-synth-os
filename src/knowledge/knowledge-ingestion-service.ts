@@ -15,6 +15,12 @@ export interface IngestionResult {
   readonly imported: number;
   readonly skipped: number;
   readonly memoryIds: string[];
+  /**
+   * 游标推进失败的 source id。这些 source 的记忆**已经落库**，但游标停在旧位置，
+   * 下一轮会重新拉同一批内容重复摄入（fingerprint 去重只在单次运行内有效）。
+   * 调用方据此告警/人工介入；空数组表示本轮游标全部正常推进。
+   */
+  readonly cursorAdvanceFailures: string[];
 }
 
 export class KnowledgeIngestionService {
@@ -44,6 +50,7 @@ export class KnowledgeIngestionService {
     let imported = 0;
     let skipped = 0;
     const memoryIds: string[] = [];
+    const cursorAdvanceFailures: string[] = [];
     const seenFingerprints = new Set<string>();
 
     for (const source of sources) {
@@ -123,7 +130,11 @@ export class KnowledgeIngestionService {
               `下一轮将重复摄入这批内容（source=${source.id} tenant=${tenantId}）：` +
               `${err instanceof Error ? err.message : String(err)}`,
             );
-            throw err;
+            /* 不 rethrow：throw 会被本函数 per-source 的 catch 接住，进而**跳过**下方的
+             * knowledge:ingested 事件发射——已落库的记忆从此对下游不可见，并让 skipped
+             * 计数把一批成功摄入的条目误计为跳过。游标失败的正确处理是「记录并继续」，
+             * 而不是把一个已完成的摄入伪装成失败。 */
+            cursorAdvanceFailures.push(source.id);
           }
         }
 
@@ -142,6 +153,6 @@ export class KnowledgeIngestionService {
       }
     }
 
-    return { imported, skipped, memoryIds };
+    return { imported, skipped, memoryIds, cursorAdvanceFailures };
   }
 }
