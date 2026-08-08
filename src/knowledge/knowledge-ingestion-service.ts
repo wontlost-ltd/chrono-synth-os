@@ -101,14 +101,30 @@ export class KnowledgeIngestionService {
         memoryIds.push(...sourceMemoryIds);
         skipped += Math.max(0, items.length - batch.length);
 
-        /* 仅在未截断时推进游标，避免跳过未处理的条目 */
+        /* 仅在未截断时推进游标，避免跳过未处理的条目。
+         *
+         * 游标推进失败是**静默重复摄入**的根因（审计 Warning B4-12）：记忆已写入，
+         * 但游标停在旧位置 → 下一轮重新拉同一批内容。而 fingerprint 去重只是本次
+         * 运行内的内存 Set（第 47 行），跨运行完全不设防，于是同一内容被重复灌进记忆图。
+         * 记忆节点没有持久化 fingerprint 列，真正的跨运行去重需要加表 + 迁移，
+         * 超出本次范围；此处至少把该失败**显式暴露**，不让它混在通用 warn 里被忽略。 */
         if (!truncated) {
-          this.store.updateState(
-            source.id,
-            tenantId,
-            nextState ? JSON.stringify(nextState) : source.stateJson,
-            this.clock.now(),
-          );
+          try {
+            this.store.updateState(
+              source.id,
+              tenantId,
+              nextState ? JSON.stringify(nextState) : source.stateJson,
+              this.clock.now(),
+            );
+          } catch (err) {
+            this.logger.error(
+              'KnowledgeIngestion',
+              `游标推进失败——已写入 ${sourceMemoryIds.length} 条记忆但游标未前移，` +
+              `下一轮将重复摄入这批内容（source=${source.id} tenant=${tenantId}）：` +
+              `${err instanceof Error ? err.message : String(err)}`,
+            );
+            throw err;
+          }
         }
 
         /* 发射摄入事件 */
