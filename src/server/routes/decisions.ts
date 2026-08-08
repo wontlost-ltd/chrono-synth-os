@@ -249,7 +249,8 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
         ).get(tenantId);
         if (sub?.stripe_customer_id) {
           /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
-          if (billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1)) {
+          /* runId 作为计费因果锚，防重试重复计费。 */
+          if (billingOutbox.enqueue(tenantId, sub.stripe_customer_id, 'simulation', 1, runId)) {
             billingMetrics.meterEventsEnqueued++;
           }
         }
