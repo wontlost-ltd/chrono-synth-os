@@ -17,6 +17,7 @@
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import { ValidationError, ErrorCode } from '../errors/index.js';
 import type { LLMProvider, ChatMessage } from '../intelligence/llm-provider.js';
 import type { Logger } from '../utils/logger.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
@@ -184,7 +185,23 @@ export class ConversationService {
       sessionId: input.sessionId,
       messageId: input.messageId,
     });
+    /* 幂等缓存命中即返回既有结果。
+     *
+     * ⚠️ needs_confirmation 的续做契约（审计 Warning B4-11）：
+     * 该状态返回的是「请先确认」的挑战。调用方拿到 token 后重投时**必须换一个
+     * messageId**——messageId 是这条消息的幂等键，携原键重投在语义上就是「重放同一条
+     * 消息」，理应拿回同一个结果。续做的连续性由 confirmationToken 承载，不是 messageId。
+     *
+     * 若携原 messageId + token 重投，会命中此处缓存并拿回旧挑战，token 永远消费不掉。
+     * 这既非缓存的错也非 token 的错，而是调用方用错了幂等键；故此处**显式报错**指出
+     * 该用法，而不是静默返回旧挑战让调用方陷入「反复确认却不生效」的死循环。 */
     if (existing) {
+      if (existing.guardAction === 'needs_confirmation' && input.confirmationToken) {
+        throw new ValidationError(
+          '携 confirmationToken 重投时必须使用新的 messageId（原 messageId 已绑定那次待确认挑战）',
+          ErrorCode.VALIDATION_FORMAT,
+        );
+      }
       this.recordMetric(existing.guardAction, Date.now() - startedAt);
       return toConversationResponse(existing);
     }
