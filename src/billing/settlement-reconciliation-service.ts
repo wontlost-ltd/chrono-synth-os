@@ -115,7 +115,16 @@ export class SettlementReconciliationService {
       mismatchedSettlements += 1;
       mismatchedSettlementIds.push(settlement.id);
 
+      let repaired = false;
       this.tx.transaction(() => {
+        /* 事务内**重新核对**再修（审计 Warning B4-7）：上面的判定发生在事务外，
+         * 期间可能有并发结算补齐了流水、或另一个对账实例已经修过。
+         * 若不复核就 delete/reinsert，会把并发写入的合法流水删掉，
+         * 两个对账实例还会互相覆盖对方的修复结果。
+         * 复核发现已一致 → 本次整体跳过（不删不插），使重复对账天然幂等。 */
+        const current = this.tx.queryMany(settleQueryTransactionsBySettlement(tenantId, settlement.id));
+        if (isLedgerConsistent(current, settlement)) return;
+
         const deleted = this.tx.execute(settleCmdDeleteSettlementTransactions({
           tenantId, settlementId: settlement.id,
         }));
@@ -134,9 +143,12 @@ export class SettlementReconciliationService {
           }));
           insertedTransactions += 1;
         }
+        repaired = true;
       });
 
-      repairedSettlements += 1;
+      /* 只统计**真的修了**的：事务内复核发现已一致时不算战果，
+       * 否则并发场景下 repaired 会虚高，掩盖真实的对账收敛情况。 */
+      if (repaired) repairedSettlements += 1;
     }
 
     const orphanResult = this.tx.execute(settleCmdDeleteOrphanTransactions({ tenantId }));
