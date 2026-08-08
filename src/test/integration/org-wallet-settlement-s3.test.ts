@@ -114,3 +114,74 @@ describe('OrgWalletService S3（组织金库结算·两方分账·幂等）', ()
     assert.equal(a.orgAmountMinor, b.orgAmountMinor, '相同组织净留存');
   });
 });
+
+/* 审计 Warning B4-2：getOrCreateOrgWallet 只在**新建**时用 input.currency，
+ * 已有金库直接返回、请求币种被静默忽略。一笔 USD 结算会把 USD 的 minor units
+ * 直接加进 CRED 余额——数字看着正常，余额已被污染且无任何错误痕迹。 */
+describe('OrgWalletService — 币种一致性', () => {
+  let db: IDatabase;
+  let store: OrgWorkforceStore;
+  let svc: OrgWalletService;
+  let counter: number;
+
+  beforeEach(() => {
+    db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    store = new OrgWorkforceStore(db, 't1');
+    counter = 0;
+    svc = new OrgWalletService(store, () => 1000, () => `id-${++counter}`);
+  });
+
+  it('已有 CRED 金库收到 USD 结算 → 拒绝，余额不被污染', () => {
+    /* 先用 CRED 建库并入账。 */
+    const first = svc.settleOrgTaskPayment({
+      orgId: 'acme', sourceMarketplaceTaskId: 'mkt-1', goalId: 'g1',
+      totalAmountMinor: 10000, currency: 'CRED', platformPct: 20,
+    });
+    assert.ok(first);
+    assert.equal(store.getOrgWallet('acme')!.balance, 8000);
+
+    /* 同一 org 来一笔 USD：必须被拒。 */
+    const second = svc.settleOrgTaskPayment({
+      orgId: 'acme', sourceMarketplaceTaskId: 'mkt-2', goalId: 'g2',
+      totalAmountMinor: 5000, currency: 'USD', platformPct: 20,
+    });
+    assert.equal(second, null, '币种不符必须拒绝');
+
+    /* 关键不变量：余额与流水都不得因被拒的结算而改变。 */
+    assert.equal(store.getOrgWallet('acme')!.balance, 8000, '余额不得被污染');
+    assert.equal(store.getOrgWallet('acme')!.currency, 'CRED', '金库币种不变');
+    assert.ok(
+      !store.getOrgWalletSettlementBySourceTask('mkt-2'),
+      '被拒的结算不得留下记录',
+    );
+  });
+
+  it('同币种续结算正常放行（校验不误伤）', () => {
+    assert.ok(svc.settleOrgTaskPayment({
+      orgId: 'acme', sourceMarketplaceTaskId: 'mkt-1', goalId: 'g1',
+      totalAmountMinor: 10000, currency: 'CRED', platformPct: 20,
+    }));
+    assert.ok(svc.settleOrgTaskPayment({
+      orgId: 'acme', sourceMarketplaceTaskId: 'mkt-2', goalId: 'g2',
+      totalAmountMinor: 5000, currency: 'CRED', platformPct: 20,
+    }), '同币种必须放行');
+    assert.equal(store.getOrgWallet('acme')!.balance, 8000 + 4000);
+  });
+
+  it('settleInTx（事务内调用方）遇币种不符抛错，由外层回滚', () => {
+    svc.settleOrgTaskPayment({
+      orgId: 'acme', sourceMarketplaceTaskId: 'mkt-1', goalId: 'g1',
+      totalAmountMinor: 10000, currency: 'CRED', platformPct: 20,
+    });
+    assert.throws(
+      () => store.transaction(() => svc.settleInTx({
+        orgId: 'acme', sourceMarketplaceTaskId: 'mkt-9', goalId: 'g9',
+        totalAmountMinor: 5000, currency: 'USD', platformPct: 20,
+      })),
+      /币种不符/,
+      '事务内路径必须抛错而非静默放行',
+    );
+    assert.equal(store.getOrgWallet('acme')!.balance, 8000, '外层回滚后余额不变');
+  });
+});
