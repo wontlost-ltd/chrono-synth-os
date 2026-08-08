@@ -121,7 +121,16 @@ export class SettlementReconciliationService {
          * 期间可能有并发结算补齐了流水、或另一个对账实例已经修过。
          * 若不复核就 delete/reinsert，会把并发写入的合法流水删掉，
          * 两个对账实例还会互相覆盖对方的修复结果。
-         * 复核发现已一致 → 本次整体跳过（不删不插），使重复对账天然幂等。 */
+         * 复核发现已一致 → 本次整体跳过（不删不插），使重复对账天然幂等。
+         *
+         * ⚠️ 两种后端的强度不同，别以为这里已完全闭合：
+         *   - SQLite（WAL 快照隔离）：复核后若有并发写，本事务的 DELETE 会直接
+         *     SQLITE_BUSY 报错回滚，不会误删——实际安全；
+         *   - PostgreSQL：连接只发裸 BEGIN，即默认 READ COMMITTED。复核读能看到
+         *     最新已提交数据（故复核本身有效），但**不加行锁**，复核与 DELETE 之间
+         *     仍有真实 TOCTOU 窗口：并发结算在此间隙插入的流水照样会被删。
+         *     要彻底关闭需把复核查询改 SELECT ... FOR UPDATE（或先锁 settlement 行），
+         *     属独立改造。当前只是把窗口从「整个事务外判定期」缩短到「事务内两语句间」。 */
         const current = this.tx.queryMany(settleQueryTransactionsBySettlement(tenantId, settlement.id));
         if (isLedgerConsistent(current, settlement)) return;
 
