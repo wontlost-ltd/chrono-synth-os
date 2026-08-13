@@ -64,6 +64,10 @@ export const DEFAULT_LLM_RETRY_LIMIT = 2;
 export const DEFAULT_LLM_RETRY_BACKOFF_MS = 500;
 export const DEFAULT_QUOTA_RESOURCE = 'conversation_message';
 
+/** 计费锚各段的分隔符：US（Unit Separator, U+001F）。
+ *  用控制字符而非 ':' 等可见符号——ID 里若含该符号会导致不同锚拼成同一个键。 */
+const BILLING_ANCHOR_SEP = '\u001f';
+
 export const FALLBACK_RESPONSE = '抱歉，当前服务遇到瞬时问题，已记录此请求并将由人工同事跟进。';
 export const QUOTA_EXCEEDED_RESPONSE = '当前对话流量已达上限，请稍后重试或联系管理员。';
 
@@ -720,10 +724,18 @@ export class ConversationService {
       /* 计费因果锚必须用**调用方给的 messageId**，不能用服务端行 id：
        * 后者是 generatePrefixedId → randomUUID()，每次调用都是新值，
        * 重试时锚也变，outbox 的 `tenant:event:sourceId` 键永远不碰撞 = 幂等为零。
-       * messageId 受 UNIQUE(tenant, persona, session, message_id) 约束（v065），
-       * 是这条消息**跨重试稳定且唯一**的标识，才是正确的锚。
-       * 加 sessionId 前缀避免不同会话复用同一 messageId 时误判为同一计费事件。 */
-      this.recordBillableUsage(input.tenantId, 1, `${input.sessionId}:${input.messageId}`);
+       *
+       * 锚必须覆盖**完整唯一域**：v065 的约束是
+       * UNIQUE(tenant_id, persona_id, session_id, message_id) —— 四列。
+       * 少写 personaId 会让同租户同会话下的两个 persona 撞成同一个键，
+       * 第二条计费事件被 outbox 当作重复丢弃 → **少计费**。
+       * tenantId 已在 outbox 键前缀里（`tenant:event:sourceId`），故此处补 persona/session/message 三段。
+       * 用不可见控制字符 US 分隔而非 ':'：会话/消息 ID 里若含冒号，'a:b'+'c' 与
+       * 'a'+'b:c' 会拼成同一个键（分隔符碰撞）；控制字符不可能出现在这些 ID 中。 */
+      this.recordBillableUsage(
+        input.tenantId, 1,
+        [input.personaId, input.sessionId, input.messageId].join(BILLING_ANCHOR_SEP),
+      );
     }
 
     return message;

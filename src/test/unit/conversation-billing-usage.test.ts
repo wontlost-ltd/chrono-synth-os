@@ -115,12 +115,41 @@ describe('ConversationService 计费上报', () => {
     assert.equal(billingOutbox.events.length, 1);
     const ev = billingOutbox.events[0]!;
     assert.ok(ev.sourceId, 'enqueue 必须带 sourceId');
-    /* 锚必须是**跨重试稳定**的值。曾误用服务端行 id（generatePrefixedId → randomUUID），
-     * 每次调用都是新值 → outbox 的 `tenant:event:sourceId` 键永不碰撞 = 幂等为零。
-     * 正解是调用方给的 sessionId:messageId，受 UNIQUE(tenant,persona,session,message_id)
-     * 约束保护，稳定且唯一。 */
-    assert.equal(ev.sourceId, 's-bill:m-bill-1', 'sourceId 须为 sessionId:messageId');
+    /* 锚必须①跨重试稳定 ②覆盖完整唯一域。
+     * 曾误用服务端行 id（randomUUID，每次新值 → 幂等为零）；
+     * 又曾漏掉 personaId（撞键 → 少计费，见下一条用例）。 */
+    const SEP = '\u001f';
+    assert.equal(
+      ev.sourceId, [personaId, 's-bill', 'm-bill-1'].join(SEP),
+      'sourceId 须为 personaId+sessionId+messageId 三段',
+    );
     assert.ok(!/^cmsg_/.test(ev.sourceId!), '绝不能用每次新生成的服务端行 id');
+  });
+
+  /* Codex 交叉审查抓到（同模型 agent 漏判）：v065 的约束是
+   * UNIQUE(tenant_id, persona_id, session_id, message_id) —— **四列**。
+   * 锚少写 personaId 会让同租户同会话下的两个 persona 撞成同一个 outbox 键，
+   * 第二条计费事件被当作重复丢弃 → **少计费**（漏钱，方向与重复计费相反）。 */
+  it('同会话不同 persona：计费锚不得撞键（防少计费）', async () => {
+    const secondPersona = personaCoreService.createPersona({
+      tenantId: TEST_TENANT_ID,
+      ownerUserId: TEST_USER_ID,
+      displayName: '第二人格',
+      profile: { narrative: '客服', behaviorBoundaries: [] },
+    }).id;
+
+    /* 两个 persona、同一 sessionId、同一 messageId。 */
+    for (const pid of [personaId, secondPersona]) {
+      await service.submit({
+        tenantId: TEST_TENANT_ID, personaId: pid, ownerUserId: TEST_USER_ID,
+        sessionId: 's-same', messageId: 'm-same', externalUserId: 'eu',
+        content: '你好',
+      });
+    }
+
+    const anchors = billingOutbox.events.map((e) => e.sourceId);
+    assert.equal(anchors.length, 2, '两个 persona 各产生一条计费事件');
+    assert.notEqual(anchors[0], anchors[1], '两条锚必须不同，否则第二条会被去重丢弃');
   });
 
   it('pre_block 命中 → 不上报用量', async () => {
