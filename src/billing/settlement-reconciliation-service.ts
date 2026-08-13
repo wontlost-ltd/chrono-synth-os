@@ -12,6 +12,7 @@ import {
   settleQueryTenantsWithSettlements, settleQueryRunsByTenant,
   settleCmdDeleteSettlementTransactions, settleCmdInsertTransaction,
   settleCmdDeleteOrphanTransactions, settleCmdInsertRun,
+  settleCmdAcquireLock,
   signedAmountForTransaction,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
@@ -123,14 +124,14 @@ export class SettlementReconciliationService {
          * 两个对账实例还会互相覆盖对方的修复结果。
          * 复核发现已一致 → 本次整体跳过（不删不插），使重复对账天然幂等。
          *
-         * ⚠️ 两种后端的强度不同，别以为这里已完全闭合：
-         *   - SQLite（WAL 快照隔离）：复核后若有并发写，本事务的 DELETE 会直接
-         *     SQLITE_BUSY 报错回滚，不会误删——实际安全；
-         *   - PostgreSQL：连接只发裸 BEGIN，即默认 READ COMMITTED。复核读能看到
-         *     最新已提交数据（故复核本身有效），但**不加行锁**，复核与 DELETE 之间
-         *     仍有真实 TOCTOU 窗口：并发结算在此间隙插入的流水照样会被删。
-         *     要彻底关闭需把复核查询改 SELECT ... FOR UPDATE（或先锁 settlement 行），
-         *     属独立改造。当前只是把窗口从「整个事务外判定期」缩短到「事务内两语句间」。 */
+         * 两种后端的并发保护各自成立：
+         *   - PostgreSQL（默认 READ COMMITTED，复核 SELECT 不加行锁）：靠下面这把
+         *     pg_advisory_xact_lock 把「复核+删+重插」整段对同一 settlement 串行化，
+         *     消除复核与 DELETE 之间的 TOCTOU 窗口；
+         *   - SQLite：单写者 + WAL 快照隔离，写事务本就互斥（并发写会 SQLITE_BUSY
+         *     回滚而非误删），锁执行器在该方言下是 no-op。 */
+        this.tx.execute(settleCmdAcquireLock({ tenantId, settlementId: settlement.id }));
+
         const current = this.tx.queryMany(settleQueryTransactionsBySettlement(tenantId, settlement.id));
         if (isLedgerConsistent(current, settlement)) return;
 
