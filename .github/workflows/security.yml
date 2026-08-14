@@ -3,8 +3,12 @@ name: Security
 on:
   push:
     branches: [main]
+  # PR 一律触发，不限 base 分支。
+  # 原先写死 `branches: [main]`，导致**栈式 PR 完全不跑 CI**——目标是中间分支的
+  # PR（如 A→B→main 的 A→B）既不触发 push 也不触发 pull_request，等于无门合并。
+  # push 仍只限 main：中间分支的每次 push 都跑一遍纯属浪费 runner，
+  # PR 事件已覆盖「合并前必须验证」这一真实需求。
   pull_request:
-    branches: [main]
   schedule:
     # Weekly Sunday 04:00 UTC for drift detection on supply-chain CVEs
     - cron: '0 4 * * 0'
