@@ -31,6 +31,12 @@ export interface MappedLearning {
   representation: string;
   /** representation 的 sha256（十六进制）。同输入同 sha、文本变则 sha 变。 */
   contentSha: string;
+  /**
+   * 讨论稳定标识（issues:owner/repo#42）；code/commits 无讨论概念时为 undefined。
+   * 与 contentSha 正交：contentSha 随讨论内容变化，discussionKey 跨轮次恒定——
+   * 演进式取代靠它定位「同一 issue 的上一版记忆」。
+   */
+  discussionKey?: string;
 }
 
 /** README 摘要上限（字符）：避免整篇 README 灌进表征稀释信号。 */

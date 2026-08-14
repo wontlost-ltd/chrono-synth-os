@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { personaCoreDualWrite } from '../../data-plane/persona-core-dual-write.js';
 import { createMemoryDatabase, type IDatabase } from '../../storage/database.js';
 import { runDslSqliteMigrations } from '../../storage/index.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { DualWriteFlushWorker } from '../../workers/dual-write-flush-worker.js';
 
 function makeDb(): IDatabase {
@@ -11,18 +12,25 @@ function makeDb(): IDatabase {
   return db;
 }
 
+/** 单库装配：SingleDbResolver.allShardDbs()=[db]，等价现状（零回归）。 */
+function makeWorker(db: IDatabase, intervalMs?: number): DualWriteFlushWorker {
+  return new DualWriteFlushWorker(
+    intervalMs !== undefined
+      ? { resolver: new SingleDbResolver(db), intervalMs }
+      : { resolver: new SingleDbResolver(db) },
+  );
+}
+
 describe('DualWriteFlushWorker', () => {
   it('start() and stop() do not throw', () => {
-    const db = makeDb();
-    const worker = new DualWriteFlushWorker({ db, intervalMs: 60_000 });
+    const worker = makeWorker(makeDb(), 60_000);
 
     assert.doesNotThrow(() => worker.start());
     assert.doesNotThrow(() => worker.stop());
   });
 
   it('stop() called twice does not throw', () => {
-    const db = makeDb();
-    const worker = new DualWriteFlushWorker({ db, intervalMs: 60_000 });
+    const worker = makeWorker(makeDb(), 60_000);
 
     worker.start();
 
@@ -31,17 +39,16 @@ describe('DualWriteFlushWorker', () => {
   });
 
   it('flush() with empty outbox returns zero counts', async () => {
-    const db = makeDb();
-    const worker = new DualWriteFlushWorker({ db });
+    const worker = makeWorker(makeDb());
 
     const result = await worker.flush();
 
-    assert.deepEqual(result, { flushed: 0, failed: 0 });
+    assert.deepEqual(result, { totalFlushed: 0, totalFailed: 0, shardErrors: [] });
   });
 
   it('flush() with one pending outbox entry returns one flushed entry', async () => {
     const db = makeDb();
-    const worker = new DualWriteFlushWorker({ db });
+    const worker = makeWorker(db);
 
     personaCoreDualWrite.enqueuePersonaEvent(
       db,
@@ -54,12 +61,12 @@ describe('DualWriteFlushWorker', () => {
 
     const result = await worker.flush();
 
-    assert.deepEqual(result, { flushed: 1, failed: 0 });
+    assert.deepEqual(result, { totalFlushed: 1, totalFailed: 0, shardErrors: [] });
   });
 
   it('flush() processes multiple outbox entries in one call', async () => {
     const db = makeDb();
-    const worker = new DualWriteFlushWorker({ db });
+    const worker = makeWorker(db);
 
     for (let i = 1; i <= 3; i++) {
       personaCoreDualWrite.enqueuePersonaEvent(
@@ -75,7 +82,7 @@ describe('DualWriteFlushWorker', () => {
     const result = await worker.flush();
     const remaining = db.prepare('SELECT * FROM persona_core_ledger_outbox').all();
 
-    assert.deepEqual(result, { flushed: 3, failed: 0 });
+    assert.deepEqual(result, { totalFlushed: 3, totalFailed: 0, shardErrors: [] });
     assert.equal(remaining.length, 0);
   });
 });

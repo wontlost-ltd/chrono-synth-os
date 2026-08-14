@@ -8,6 +8,7 @@ import { createMemoryDatabase } from '../../storage/database.js';
 import { runDslSqliteMigrations } from '../../storage/index.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { CollaborationService } from '../../identity/collaboration-service.js';
 import { UserProfileService } from '../../identity/user-profile-service.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
@@ -30,13 +31,13 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_a', 'a@x.com');
-      const fromDb = new IdentityService(db);
-      const ident = fromDb.create('user_a', 'default', 'A');
+      const fromDb = new IdentityService(new SingleDbResolver(db));
+      const ident = fromDb.create('default', 'user_a', 'A');
       assert.ok(ident.id);
 
       seedUser(db, 'user_b', 'b@x.com');
-      const fromUow = new IdentityService(db);
-      const ident2 = fromUow.create('user_b', 'default', 'B');
+      const fromUow = new IdentityService(new SingleDbResolver(db));
+      const ident2 = fromUow.create('default', 'user_b', 'B');
       assert.ok(ident2.id);
 
       const list = fromUow.listByTenant('default');
@@ -49,12 +50,13 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_av', 'av@x.com');
-      const ident = new IdentityService(db).create('user_av', 'default', 'Av');
+      const ident = new IdentityService(new SingleDbResolver(db)).create('default', 'user_av', 'Av');
 
-      const fromDb = new AvatarService(db);
-      const fromUow = new AvatarService(db);
-      assert.ok(fromDb.getDefault(ident.id));
-      assert.ok(fromUow.getDefault(ident.id));
+      /* 分片 Plan 1b（Task 2）：AvatarService ctor 收 resolver，方法首参加 tenantId。 */
+      const fromDb = new AvatarService(new SingleDbResolver(db));
+      const fromUow = new AvatarService(new SingleDbResolver(db));
+      assert.ok(fromDb.getDefault('default', ident.id));
+      assert.ok(fromUow.getDefault('default', ident.id));
     } finally { db.close(); }
   });
 
@@ -63,9 +65,9 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_da', 'da@x.com');
-      const ident = new IdentityService(db).create('user_da', 'default', 'DA');
-      const avatarSvc = new AvatarService(db);
-      const av1 = avatarSvc.create(ident.id, { label: 'A1' });
+      const ident = new IdentityService(new SingleDbResolver(db)).create('default', 'user_da', 'DA');
+      const avatarSvc = new AvatarService(new SingleDbResolver(db));
+      const av1 = avatarSvc.create('default', ident.id, { label: 'A1' });
 
       const now = Date.now();
       db.prepare<void>(
@@ -73,30 +75,33 @@ describe('Phase 2 批次 2：identity stores 双入口', () => {
          VALUES (?, 'default', 'user_da', 'duid', 'web', ?, ?)`,
       ).run('dev1', now, now);
 
-      const svc = new DeviceAvatarService(db);
-      svc.install('dev1', av1.id);
-      assert.equal(svc.activate('dev1', av1.id), true);
+      /* 分片 Plan 1b（Task 2）：DeviceAvatarService ctor 收 resolver，方法首参加 tenantId（两端验）。 */
+      const svc = new DeviceAvatarService(new SingleDbResolver(db));
+      svc.install('default', 'dev1', av1.id);
+      assert.equal(svc.activate('default', 'dev1', av1.id), true);
 
-      const svcUow = new DeviceAvatarService(db);
-      assert.equal(svcUow.isInstalled('dev1', av1.id), true);
+      const svcUow = new DeviceAvatarService(new SingleDbResolver(db));
+      assert.equal(svcUow.isInstalled('default', 'dev1', av1.id), true);
     } finally { db.close(); }
   });
 
-  it('CollaborationService / UserProfileService / MobileDeviceService / AvatarSnapshotService / SsoUserService 都接受双入口', () => {
+  it('AvatarSnapshotService 接受双入口；SsoUserService（Task 6）/CollaborationService（Task 4）/MobileDeviceService（Task 3）/UserProfileService（Task 7）已 resolver 化', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
       const uow = db;
-      assert.ok(new CollaborationService(db));
-      assert.ok(new CollaborationService(uow));
-      assert.ok(new UserProfileService(db));
-      assert.ok(new UserProfileService(uow));
-      assert.ok(new MobileDeviceService(db));
-      assert.ok(new MobileDeviceService(uow));
+      /* 分片 Plan 1b（Task 4）：CollaborationService 已 resolver 化——不再接裸 db/uow，而收 TenantDbResolver。 */
+      assert.ok(new CollaborationService(new SingleDbResolver(db)));
+      /* 分片 Plan 1b（Task 7）：UserProfileService 已 resolver 化——不再接裸 db/uow，而收 TenantDbResolver。 */
+      assert.ok(new UserProfileService(new SingleDbResolver(db)));
+      /* 分片 Plan 1b（Task 3）：MobileDeviceService 已 resolver 化——不再接裸 db/uow，而收 TenantDbResolver。 */
+      assert.ok(new MobileDeviceService(new SingleDbResolver(db)));
       assert.ok(new AvatarSnapshotService(db));
       assert.ok(new AvatarSnapshotService(uow));
-      assert.ok(new SsoUserService(db));
-      assert.ok(new SsoUserService(uow));
+      /* 分片 Plan 1c（Task 6）：SsoUserService 已 resolver 化——收 TenantDbResolver，SSO/OIDC 经
+       * 协调库目录定位 email→tenant 再写 shard。 */
+      assert.ok(new SsoUserService(new SingleDbResolver(db)));
+      assert.ok(new SsoUserService(new SingleDbResolver(uow)));
     } finally { db.close(); }
   });
 });

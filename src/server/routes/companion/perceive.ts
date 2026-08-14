@@ -18,7 +18,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
-import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, QuotaExceededError, ErrorCode } from '../../../errors/index.js';
@@ -35,22 +35,27 @@ import type { PerceptionProvider } from '../../../perception/perception-provider
 import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
 import { selectPerceptionProvider } from './perception-provider-factory.js';
 
-export function registerCompanionPerceiveRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  tenantFactory: TenantOSFactory | undefined,
-  /** BYOK 选 provider 需要 db + config（缺省构造 LLM teacher）；测试可省略只用注入 provider。 */
-  db?: IDatabase,
-  config?: AppConfig,
+/** Companion 感知路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface CompanionPerceiveRoutesDeps {
+  os: ChronoSynthOS;
+  tenantFactory: TenantOSFactory | undefined;
+  /** 共享 TenantDbResolver（组合根唯一实例；quotaManager 经它路由 shard）。 */
+  resolver: TenantDbResolver;
+  /** BYOK 选 provider 需要 db + config（缺省构造 LLM teacher）；直查用 host db（Plan 2）；缺省回退 os.getDatabase()。 */
+  db?: IDatabase;
+  config?: AppConfig;
   /** provider 显式注入（测试用）；给定则忽略 BYOK 解析，所有租户用它。 */
-  injectedProvider?: PerceptionProvider,
-): void {
-  const sharedDb = db ?? os.getDatabase();
+  injectedProvider?: PerceptionProvider;
+}
+
+export function registerCompanionPerceiveRoutes(app: FastifyInstance, deps: CompanionPerceiveRoutesDeps): void {
+  const { os, tenantFactory, resolver, config, injectedProvider } = deps;
+  const sharedDb = deps.db ?? os.getDatabase();
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   /* 感知配额（防 BYOK LLM teacher 被刷爆——LlmPerceptionProvider 每次 perceive 调 LLM 有成本）。
    * 复用现有 QuotaManager：未设 perception 限额的租户默认无限（consumeQuota 返回 true）。 */
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
+  const quotaManager = QuotaManager.fromResolver(resolver);
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;

@@ -196,10 +196,13 @@ describe('github-learn-types kernel 契约', () => {
         status: 'claimed',
         claimed_at: 1,
         ingested_at: null,
+        /* v125 演进式取代两列：讨论稳定标识 + 该讨论当前记忆指针（均可空）。 */
+        discussion_key: null,
+        memory_id: null,
       };
       assert.deepEqual(Object.keys(row).sort(), [
-        'claimed_at', 'content_sha', 'id', 'ingested_at',
-        'persona_id', 'repo', 'resource_type', 'status', 'tenant_id',
+        'claimed_at', 'content_sha', 'discussion_key', 'id', 'ingested_at',
+        'memory_id', 'persona_id', 'repo', 'resource_type', 'status', 'tenant_id',
       ]);
     });
   });

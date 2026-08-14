@@ -11,7 +11,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { apikeyQueryByHash } from '@chrono/kernel';
 import type { AppConfig } from '../../config/schema.js';
-import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
+import { TenantIdentityDirectory } from '../../identity/tenant-identity-directory.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
 
@@ -49,18 +50,27 @@ function hashKey(key: string): string {
   return createHash('sha256').update(key).digest('hex');
 }
 
-export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IDatabase): void {
+/**
+ * API Key 认证插件（分片 Plan 1c Task 7）。
+ *
+ * 收 `resolver`（TenantDbResolver）而非裸 db：DB Key 校验走 **api_key_hash→tenant 目录定位**（协调库）
+ * → `dbForTenant` 取该 tenant 所在 shard → 查 api_keys 行（shard is_revoked=权威）。目录=定位器：
+ * 目录多余/过期项只导致「定位到 shard 后被拒」（安全），绝不越权。未命中目录时回退 coordinatorDb() 单库直查
+ * （单库下 coordinator === shard；多库老 key 无目录项时的过渡查询，仍受 shard is_revoked 权威约束）。
+ */
+export function registerAuth(app: FastifyInstance, config: AppConfig, resolver?: TenantDbResolver): void {
   if (!config.auth.enabled) return;
 
   const validKeys = config.auth.apiKeys;
   const metricsKeys = config.auth.metricsApiKeys;
 
-  if (validKeys.length === 0 && !db) {
+  if (validKeys.length === 0 && !resolver) {
     app.log.warn('auth.enabled=true 但 apiKeys 为空且无 DB，所有需认证的端点将被拒绝访问');
   }
 
-  if (db) registerCoreSelfExecutors();
-  const tx = db ? db : null;
+  if (resolver) registerCoreSelfExecutors();
+  /* 目录门面按 resolver 定位 tenant；单库下 coordinator===shard，行为等价现状。 */
+  const directory = resolver ? new TenantIdentityDirectory(resolver) : null;
 
   app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
     /* 运维端点和 CORS 预检请求豁免 */
@@ -138,12 +148,18 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
       });
     }
 
-    /* 优先从 DB 查找 API Key（绑定租户和计划） */
-    if (tx) {
+    /* 优先从 DB 查找 API Key（绑定租户和计划）。分片 Plan 1c Task 7：目录=定位器 → dbForTenant → shard 权威。 */
+    if (directory && resolver) {
       try {
         const keyHash = hashKey(apiKey);
+        /* ① api_key_hash→tenant 目录反查（仅定位，不判有效性）。命中→该 tenant 所在 shard；
+         *    未命中→回退 coordinatorDb() 单库直查（单库下等价现状；多库老 key 无目录项时的过渡）。 */
+        const entry = directory.resolveByApiKeyHash(keyHash);
+        const tx = entry ? resolver.dbForTenant(entry.tenantId) : resolver.coordinatorDb();
+        /* ② shard 权威校验：apikeyQueryByHash 的 SQL 已含 `AND is_revoked = 0`（shard 权威过滤），
+         *    另显式再验 row.is_revoked 作纵深防御——目录多余/过期项只导致此处被 shard 拒，不越权。 */
         const row = tx.queryOne(apikeyQueryByHash(keyHash));
-        if (row) {
+        if (row && !row.is_revoked) {
           /* 注入伪 JWT user 以便下游计划感知限流和租户解析.
            * iat/exp 不适用于 API key,但 JwtPayload 类型要求它们;
            * 用 0 占位且 cast 缩窄. */
@@ -157,7 +173,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, db?: IData
           };
           return done();
         }
-      } catch { /* api_keys 表可能尚未创建，回退到静态 Key */ }
+      } catch { /* api_keys 表可能尚未创建 / 目录查询失败，静默回退到静态 Key（认证失败不 500） */ }
     }
 
     const staticKeys = metricsRoute ? [...metricsKeys, ...validKeys] : validKeys;

@@ -80,6 +80,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/enterprise', labelKey: 'sidebar.enterprise', icon: 'building', adminOnly: true },
       { to: '/settings', labelKey: 'sidebar.settings', icon: 'sliders' },
       { to: '/admin/config', labelKey: 'sidebar.adminConfig', icon: 'wrench', adminOnly: true },
+      { to: '/admin/github', labelKey: 'sidebar.adminGithub', icon: 'wrench', adminOnly: true },
     ],
   },
 ];

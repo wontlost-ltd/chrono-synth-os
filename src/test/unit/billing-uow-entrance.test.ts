@@ -36,8 +36,9 @@ describe('Phase 3 Bil：billing 模块双入口', () => {
       assert.equal(new SubscriptionQueryService(db).getLatestPlanId('default'), 'free');
       assert.equal(new SubscriptionQueryService(db).getLatestPlanId('default'), 'free');
 
-      assert.deepEqual(new ApiKeyService(db).list('default'), []);
-      assert.deepEqual(new ApiKeyService(db).list('default'), []);
+      /* 分片 Plan 1b（Task 8）：ApiKeyService ctor 已从 (tx) 改为 (resolver)——单库经 SingleDbResolver 包裹（行为等价）。 */
+      assert.deepEqual(new ApiKeyService(new SingleDbResolver(db)).list('default'), []);
+      assert.deepEqual(new ApiKeyService(new SingleDbResolver(db)).list('default'), []);
 
       assert.equal(BillingOutbox.fromUnitOfWork(db, config).pendingCount(), 0);
       assert.equal(BillingOutbox.fromUnitOfWork(db, config).pendingCount(), 0);

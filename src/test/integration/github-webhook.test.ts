@@ -224,6 +224,146 @@ describe('GitHub webhook 接收器（HMAC 验签 + 反查 fail-closed + 幂等 +
 
     await app.close();
   });
+
+  /* 事件驱动学习（低延迟摄入）：与起草分支**并联**——起草只认 opened，学习覆盖讨论演进
+   * 全过程。异步入队而非同步学：perceive 要调 LLM 老师（1-3 秒），同步会逼近 GitHub
+   * ~10 秒 webhook 超时。 */
+  describe('学习入队分支（事件驱动低延迟摄入）', () => {
+    it('issue_comment 事件 → 入队 github-learn 任务并返回 200（携带反查出的租户）', async () => {
+      const app = await mountWebhook(os, config);
+
+      const raw = JSON.stringify({
+        action: 'created',
+        installation: { id: INSTALLATION_ID },
+        repository: { full_name: 'acme/widgets' },
+        issue: { number: 42, title: '登录报错', body: '正文' },
+      });
+      const res = await deliver(app, raw, { event: 'issue_comment' });
+
+      assert.equal(res.status, 200, 'webhook 应快速返回 200（不同步学，防超时）');
+
+      const queued = os.queue.dequeue();
+      assert.ok(queued, '应入队一条学习任务');
+      assert.equal(queued.type, 'github-learn');
+      /* 安全不变量：任务须携带 webhook 反查出的租户，供 handler 装配 ReadPort。 */
+      assert.equal(queued.tenantId, 'default', '任务须携带反查出的租户');
+      assert.deepEqual(JSON.parse(queued.payload), { repo: 'acme/widgets', resourceType: 'issues' });
+
+      await app.close();
+    });
+
+    it('push 事件 → 不入队（降频聚合，交轮转 worker 批量学）', async () => {
+      const app = await mountWebhook(os, config);
+
+      const raw = JSON.stringify({
+        installation: { id: INSTALLATION_ID },
+        repository: { full_name: 'acme/widgets' },
+      });
+      const res = await deliver(app, raw, { event: 'push' });
+
+      assert.equal(res.status, 200);
+      assert.equal(os.queue.dequeue(), undefined, 'push 不应入队（避免逐次调老师烧额度）');
+
+      await app.close();
+    });
+
+    it('discussion 事件 → 不入队（ReadPort 无 GraphQL 支持，入队必败）', async () => {
+      const app = await mountWebhook(os, config);
+
+      const raw = JSON.stringify({
+        action: 'created',
+        installation: { id: INSTALLATION_ID },
+        repository: { full_name: 'acme/widgets' },
+      });
+      const res = await deliver(app, raw, { event: 'discussion' });
+
+      assert.equal(res.status, 200);
+      assert.equal(os.queue.dequeue(), undefined, 'discussion 不入队');
+
+      await app.close();
+    });
+
+    it('issues opened 事件 → 既起草**又**入队学习（两分支并联，互不干扰）', async () => {
+      const app = await mountWebhook(os, config);
+      const before = draftCount();
+
+      const raw = issuesOpenedPayload({ action: 'opened' });
+      const res = await deliver(app, raw, { event: 'issues' });
+
+      assert.equal(res.status, 200);
+      assert.equal(draftCount(), before + 1, '起草分支照常工作（零变更）');
+      const queued = os.queue.dequeue();
+      assert.ok(queued, '学习分支并联入队');
+      assert.equal(queued.type, 'github-learn');
+
+      await app.close();
+    });
+  });
+
+  /* installation 生命周期同步（安装入口产品化）：装/卸/暂停/改授权经 webhook 自动跟上，
+   * 使 github_installations 表真实反映 GitHub 侧状态。 */
+  describe('installation 生命周期事件', () => {
+    /** 造本租户凭据 store（seedGithubApp 已建 App 凭据 + installation 映射）。 */
+    function credStore(): GithubAppCredentialStore {
+      const enc = tryByokEncryption(config.encryption);
+      assert.ok(enc, '测试需启用凭据加密');
+      return new GithubAppCredentialStore(os.getDatabase(), enc, 'default');
+    }
+
+    /** 直查 suspended_at 列。 */
+    function readSuspended(): number | null {
+      const row = os.getDatabase().prepare<{ suspended_at: number | null }>(
+        'SELECT suspended_at FROM github_installations WHERE github_host=? AND installation_id=?',
+      ).get(GITHUB_HOST, INSTALLATION_ID);
+      return row?.suspended_at ?? null;
+    }
+
+    it('installation.deleted → 映射删除（卸载即停学的端到端证明）', async () => {
+      const app = await mountWebhook(os, config);
+      assert.ok(credStore().resolveTenantByInstallation(GITHUB_HOST, INSTALLATION_ID), '删前映射存在');
+
+      const raw = JSON.stringify({ action: 'deleted', installation: { id: INSTALLATION_ID } });
+      const res = await deliver(app, raw, { event: 'installation' });
+
+      assert.equal(res.status, 200);
+      assert.equal(
+        credStore().resolveTenantByInstallation(GITHUB_HOST, INSTALLATION_ID), undefined,
+        '卸载后映射应删除——后续 ReadPort 装配即返 no-installation，学习自动停',
+      );
+
+      await app.close();
+    });
+
+    it('installation.suspend → suspended_at 置位；unsuspend → 清除', async () => {
+      const app = await mountWebhook(os, config);
+
+      await deliver(app, JSON.stringify({ action: 'suspend', installation: { id: INSTALLATION_ID } }), { event: 'installation' });
+      assert.notEqual(readSuspended(), null, 'suspend 后应置位');
+
+      await deliver(app, JSON.stringify({ action: 'unsuspend', installation: { id: INSTALLATION_ID } }), { event: 'installation' });
+      assert.equal(readSuspended(), null, 'unsuspend 后应清除');
+
+      await app.close();
+    });
+
+    it('installation_repositories.added → repos 列同步（该列此前写了从不读）', async () => {
+      const app = await mountWebhook(os, config);
+
+      const raw = JSON.stringify({
+        action: 'added',
+        installation: { id: INSTALLATION_ID },
+        repositories_added: [{ full_name: 'acme/api' }],
+      });
+      await deliver(app, raw, { event: 'installation_repositories' });
+
+      const repos = os.getDatabase().prepare<{ repos: string | null }>(
+        'SELECT repos FROM github_installations WHERE github_host=? AND installation_id=?',
+      ).get(GITHUB_HOST, INSTALLATION_ID)?.repos;
+      assert.ok(repos?.includes('acme/api'), `repos 应含新增仓库，实际 ${repos}`);
+
+      await app.close();
+    });
+  });
 });
 
 /**

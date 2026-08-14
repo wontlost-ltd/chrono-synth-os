@@ -83,14 +83,15 @@ export function registerV2Routes(
       const user = request.user as JwtPayload | undefined;
       const tenantId = request.tenantId ?? user?.tenantId ?? 'default';
 
-      const { flushed, failed } = await flushWorker.flush();
+      /* fan-out drain 全 shard 的 outbox；跨 shard 求和后映射到本路由的 synced/failed 契约。 */
+      const { totalFlushed, totalFailed } = await flushWorker.flush();
 
       const conflictCount = countPendingConflicts(db, tenantId);
       const pendingPushCount = personaCoreDualWrite.countPendingOutbox(db, tenantId);
 
       return {
-        synced: flushed,
-        failed,
+        synced: totalFlushed,
+        failed: totalFailed,
         conflicts: conflictCount,
         pendingPushCount,
       };

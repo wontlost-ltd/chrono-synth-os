@@ -10,6 +10,7 @@ import { loadConfig } from '../../config/schema.js';
 import { AdminControlPlaneService } from '../../enterprise/admin-control-plane-service.js';
 import { OrganizationService } from '../../enterprise/organization-service.js';
 import { ScimProvisioningService } from '../../enterprise/scim-provisioning-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { resolveTenantKafkaTopic, listTenantKafkaTopics } from '../../enterprise/tenant-kafka-topics.js';
 import type { IDatabase } from '../../storage/database.js';
@@ -27,8 +28,9 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
-      const fromDb = new AdminControlPlaneService(db);
-      const fromUow = new AdminControlPlaneService(db);
+      /* 分片 Plan 1b（Task 5）：AdminControlPlaneService ctor 收 resolver（不再接裸 db/uow）。 */
+      const fromDb = new AdminControlPlaneService(new SingleDbResolver(db));
+      const fromUow = new AdminControlPlaneService(new SingleDbResolver(db));
       assert.deepEqual(
         fromDb.listPersonas('default', { page: 1, pageSize: 10 }).pagination.total,
         fromUow.listPersonas('default', { page: 1, pageSize: 10 }).pagination.total,
@@ -41,7 +43,8 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       seedUser(db, 'user_org_db', 'org-db@x.com');
-      const fromDb = new OrganizationService(db);
+      /* 分片 Plan 1b（Task 5）：OrganizationService ctor 收 resolver（不再接裸 db/uow）。 */
+      const fromDb = new OrganizationService(new SingleDbResolver(db));
       const result = fromDb.create('default', 'user_org_db', {
         name: 'Acme',
         defaultWorkspaceName: 'Default',
@@ -49,7 +52,7 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
       assert.ok(result.organization.organizationId.startsWith('org_'));
 
       seedUser(db, 'user_org_uow', 'org-uow@x.com');
-      const fromUow = new OrganizationService(db);
+      const fromUow = new OrganizationService(new SingleDbResolver(db));
       const result2 = fromUow.create('default', 'user_org_uow', {
         name: 'Beta Co',
         defaultWorkspaceName: 'Main',
@@ -64,11 +67,13 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
-      const fromDb = new ScimProvisioningService(db);
+      /* 分片 Plan 1c（Task 6）：ScimProvisioningService 已 resolver 化——收 TenantDbResolver，
+       * createUser 经协调库目录定位 email→tenant 再写 shard。 */
+      const fromDb = new ScimProvisioningService(new SingleDbResolver(db));
       const r1 = fromDb.createUser('default', { email: 'scim1@x.com', displayName: 'S1' });
       assert.equal(r1.isNew, true);
 
-      const fromUow = new ScimProvisioningService(db);
+      const fromUow = new ScimProvisioningService(new SingleDbResolver(db));
       const r2 = fromUow.createUser('default', { email: 'scim2@x.com', displayName: 'S2' });
       assert.equal(r2.isNew, true);
 
@@ -82,8 +87,8 @@ describe('Phase 2 批次 3：enterprise services 双入口', () => {
     runDslSqliteMigrations(db);
     try {
       const config = loadConfig({});
-      const fromDb = new TenantEnterpriseProfileService(db, config);
-      const fromUow = new TenantEnterpriseProfileService(db, config);
+      const fromDb = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
+      const fromUow = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
       assert.equal(fromDb.getProfile('default').deploymentMode, 'shared_cluster');
       assert.equal(fromUow.getProfile('default').deploymentMode, 'shared_cluster');
     } finally { db.close(); }

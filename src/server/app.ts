@@ -19,7 +19,9 @@ import type { FieldCrypto } from '@chrono/data-plane';
 import { loadConfig, intelligenceProvidesEmbeddings } from '../config/schema.js';
 import type { CircuitBreaker } from './plugins/circuit-breaker.js';
 import { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
-import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
+import { makeShardKeyer } from '../storage/shard-key.js';
+import { buildResolver, assertShardingActivationAllowed } from '../storage/build-resolver.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerA11yHeaders } from './plugins/a11y-headers.js';
 import { registerRequestId } from './plugins/request-id.js';
@@ -55,6 +57,7 @@ import { registerCompanionChatRoutes } from './routes/companion/chat.js';
 import { registerCompanionLearnGithubRoutes } from './routes/companion/learn-github.js';
 import { registerCompanionDraftGithubRoutes } from './routes/companion/draft-github-reply.js';
 import { registerGithubWebhookRoutes } from './routes/github-webhook.js';
+import { registerAdminGithubRoutes } from './routes/admin-github.js';
 import { registerPersonaRoutes } from './routes/personas.js';
 import { registerSnapshotRoutes } from './routes/snapshots.js';
 import { registerOperationRoutes } from './routes/operations.js';
@@ -128,6 +131,8 @@ import { registerDistillationRoutes } from './routes/distillation.js';
 import { CircuitBreaker as ConversationCircuitBreaker } from './plugins/circuit-breaker.js';
 import { FieldEncryption as ConversationFieldEncryption } from '../storage/encryption.js';
 import { resolveLlmApiKeyAtStartup, tryByokEncryption } from '../storage/llm-credential-store.js';
+import { GITHUB_LEARN_TASK_TYPE } from '../integrations/github/github-learn-task-handler.js';
+import { createGithubLearnTaskHandlerForProduction } from '../integrations/github/github-learn-task-wiring.js';
 import { resolveTargetValueForCategory } from '../intelligence/earning-value-resolver.js';
 import { TokenBudget as ConversationTokenBudget } from '../intelligence/token-budget.js';
 import { CostTracker as ConversationCostTracker } from '../intelligence/cost-tracker.js';
@@ -157,12 +162,12 @@ import { TaskQueue } from '../queue/task-queue.js';
 import { TaskWorker } from '../queue/task-worker.js';
 import { BillingOutbox } from '../billing/billing-outbox.js';
 import { SettlementReconciliationWorker } from '../billing/settlement-reconciliation-worker.js';
+import { TenantReservationRecovery } from '../identity/tenant-reservation-recovery.js';
 import { ObservabilityPipelineService } from '../observability/observability-pipeline-service.js';
 import { RuntimeRecoveryWorker } from '../persona-core/runtime-recovery-worker.js';
 import { DualWriteFlushWorker } from '../workers/dual-write-flush-worker.js';
 import { AvatarAutorunStore } from '../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
-import { AvatarService } from '../identity/avatar-service.js';
 import { AvatarAutorunService } from '../identity/avatar-autorun-service.js';
 import { KnowledgeIngestionService } from '../knowledge/knowledge-ingestion-service.js';
 import { KnowledgeSourceRegistry } from '../knowledge/knowledge-source-registry.js';
@@ -197,10 +202,20 @@ export interface CreateAppDeps {
   /** 异步 UnitOfWorkFactory（P0-1 过渡）：新服务优先使用，旧服务继续使用 db */
   uowFactory?: UnitOfWorkFactory;
   fieldCrypto?: FieldCrypto;
+  /** 分片 Phase 0 · Plan 1 测试 seam：注入共享 TenantDbResolver（如 FakeMultiShardResolver）验注入链分流；
+   * 未传时由 buildResolver(config, hostDb) 建单库 SingleDbResolver。注入 fake 仍先过 config guard（不解除 fail-closed）。 */
+  resolver?: TenantDbResolver;
+  /** 分片 Phase 0 · Plan 1 测试 seam：在真实 route/factory 注入边界回调采集实际传出的 resolver（identity spy）。 */
+  captureResolvers?: (resolver: TenantDbResolver, site: string) => void;
 }
 
 export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const config = deps.config ?? loadConfig();
+
+  /* 分片 Phase 0 · Plan 1（约束 2）：放开门单一真源，在**任何插件/hook/worker/timer/route 注册副作用之前**
+   * 校验——config.db.shards 非空即抛 MultiShardRuntimeNotReadyError。deps.resolver 测试 seam 绕不过此门
+   * （防注入 fake 后半初始化产生副作用再抛）。生产仍 fail-closed 挡多库。 */
+  assertShardingActivationAllowed(config);
 
   /* SQLite 多副本安全检查 */
   if (config.db.driver === 'sqlite' && process.env.REPLICA_COUNT && Number(process.env.REPLICA_COUNT) > 1) {
@@ -219,6 +234,18 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     ? Fastify({ loggerInstance: deps.logger.pino, bodyLimit: config.request.maxBodyBytes }) as unknown as FastifyInstance
     : Fastify({ logger: false, bodyLimit: config.request.maxBodyBytes });
 
+  /* 分片 Phase 0 · Plan 1：组合根建**唯一一个** TenantDbResolver 穿全链——单库=SingleDbResolver(db)（零回归），
+   * 多库=buildResolver 直接 throw（本 Plan 不激活）。测试可经 deps.resolver 注入 FakeMultiShardResolver 验分流。
+   * 全链（factory + 各 route 子服务 + auth 插件）共享此实例；机械门保证 app.ts/routes 内无内联 SingleDbResolver 构造。
+   * 提前到同步插件之前构造：registerAuth（Plan 1c Task 7）需 resolver 走 api_key_hash→tenant 目录定位。 */
+  const db = deps.db ?? deps.os.getDatabase();
+  const resolver: TenantDbResolver = deps.resolver ?? buildResolver(config, db);
+  /** identity spy：在真实注入边界采集实际传出的 resolver（测试验「全链同一实例」）。 */
+  const captureResolver = (site: string): TenantDbResolver => {
+    deps.captureResolvers?.(resolver, site);
+    return resolver;
+  };
+
   /* 同步插件 */
   registerRequestId(app);
   registerTenantDecorator(app);  /* 仅注册装饰器，hook 延迟到 JWT 之后 */
@@ -229,7 +256,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* ADR-0061 红线 11：desktop sidecar 本地握手 guard（仅 CHRONO_DESKTOP_SESSION 存在时激活；否则 no-op）。
    * 放在 auth 之前=最外层 fail-closed，同机其他进程/误连即便有 JWT 也过不了本地会话门。 */
   registerDesktopSession(app);
-  registerAuth(app, config, deps.db);
+  registerAuth(app, config, captureResolver('auth-plugin'));
   registerAuditLog(app, deps.db);
   registerObservability(app, config);
 
@@ -290,14 +317,13 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * the implementation and the runbook for the deferred design. */
   void registerA11yHeaders;
 
-  /* 多租户 OS 工厂 */
-  const db = deps.db ?? deps.os.getDatabase();
+  /* 多租户 OS 工厂（db/resolver/captureResolver 已在同步插件之前构造，供 auth 插件共享同一实例）。 */
   const tx = db;
   const uowFactory: UnitOfWorkFactory = deps.uowFactory
     ?? new NodeUnitOfWorkFactory(db, new NodeEventPublisher());
-  const services = buildAppServices(db, config, deps.logger);
+  const services = buildAppServices(db, config, captureResolver('app-services'), deps.logger);
   const tenantFactory = new TenantOSFactory(
-    new SingleDbResolver(db),
+    captureResolver('tenant-os-factory'),
     deps.os.getClock(),
     deps.os.getLogger(),
     /* 透传给所有租户 OS：①ADR-0054 主动性配置（红线 3）；②ADR-0048 动态成长预算开关。 */
@@ -312,6 +338,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   let observabilityWorker: ObservabilityPipelineService | undefined;
   let runtimeRecoveryWorker: RuntimeRecoveryWorker | undefined;
   let settlementReconciliationWorker: SettlementReconciliationWorker | undefined;
+  let reservationRecoveryWorker: TenantReservationRecovery | undefined;
   if (config.observability.worker.enabled) {
     observabilityWorker = new ObservabilityPipelineService(
       db,
@@ -328,6 +355,8 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   const nudgePushBridge = new NudgePushBridge({
     bus: deps.os.bus,
     db,
+    /* 分片 Plan 1b（Task 3）：设备解析经共享 resolver 按 tenantId 选对 shard。 */
+    resolver: captureResolver('nudge-push-bridge'),
     pushService: services.pushService,
     logger: deps.os.getLogger(),
     now: () => deps.os.getClock().now(),
@@ -336,8 +365,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   app.addHook('onClose', () => { nudgePushBridge.stop(); });
 
   if (config.runtime.recovery.enabled) {
+    /* 分片 Phase 0 · Plan 2 Task 3：经共享 resolver 跨 allShardDbs() fan-out 恢复卡死 runtime session
+     * （原经 SingleDbResolver 包裹裸 db，多 shard 下漏恢复非-home shard；单库下等价现状）。 */
     runtimeRecoveryWorker = new RuntimeRecoveryWorker(
-      db,
+      captureResolver('runtime-recovery'),
       deps.os.getLogger(),
       {
         pollIntervalMs: config.runtime.recovery.pollIntervalMs,
@@ -351,8 +382,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   }
 
   if (config.billing.reconciliation.enabled) {
+    /* 分片 Phase 0 · Plan 2 Task 3：经共享 resolver 跨 allShardDbs() fan-out 对账各 shard 的待结算租户
+     * （原收单一 tx，多 shard 下漏对非-home shard；单库下 allShardDbs()=[db] 等价现状）。 */
     settlementReconciliationWorker = new SettlementReconciliationWorker(
-      tx,
+      captureResolver('settlement-reconciliation'),
       deps.os.getLogger(),
       {
         pollIntervalMs: config.billing.reconciliation.pollIntervalMs,
@@ -363,8 +396,25 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', async () => { await settlementReconciliationWorker!.stop(); });
   }
 
-  /* dual-write outbox flush — drains persona_core_ledger_outbox into SqliteEventLedger */
-  const flushWorker = new DualWriteFlushWorker({ db, logger: deps.logger });
+  /* 分片 Phase 0 · Plan 1c Task 8：PENDING 预留恢复 worker。经共享 resolver 扫协调库过期 email PENDING，
+   * 按 operation_kind 收敛（REGISTER 凭 shard bootstrap per-op / EMAIL_CHANGE 凭 shard canonical email），
+   * 绝不取消 PENDING（spec §4.1.6 铁律）。 */
+  if (config.auth.reservationRecovery.enabled) {
+    reservationRecoveryWorker = new TenantReservationRecovery(
+      captureResolver('reservation-recovery'),
+      deps.os.getLogger(),
+      {
+        pollIntervalMs: config.auth.reservationRecovery.pollIntervalMs,
+        graceMs: config.auth.reservationRecovery.graceMs,
+      },
+    );
+    reservationRecoveryWorker.start();
+    app.addHook('onClose', async () => { await reservationRecoveryWorker!.stop(); });
+  }
+
+  /* dual-write outbox flush — 跨所有 shard fan-out drain persona_core_ledger_outbox 进各 shard 的
+   * SqliteEventLedger（循环内每 shard 现构造 ledger，源库=ledger 库同一 shardDb，防跨 shard 串写）。 */
+  const flushWorker = new DualWriteFlushWorker({ resolver: captureResolver('dual-write-flush'), logger: deps.logger });
   flushWorker.start();
   app.addHook('onClose', () => { flushWorker.stop(); });
 
@@ -386,7 +436,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       config.queue.maxConcurrent,
       config.queue.maxRetries,
     );
-    registerTaskRoutes(app, queue, worker, queueDb);
+    registerTaskRoutes(app, { queue, worker, resolver: captureResolver('tasks') });
     worker.register('life_simulation', async (task, _signal) => {
       let payload: { simulationId: string };
       try { payload = JSON.parse(task.payload) as { simulationId: string }; }
@@ -394,12 +444,22 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
       deps.os.lifeSimulation.executeTask(payload.simulationId);
     }, 180_000);
 
+    /* github-learn handler：消费 webhook 入队的学习任务（事件驱动低延迟摄入）。
+     * 队列是 DB 支撑的表，webhook 侧经 tenantOS.queue 入队、此处经同库 queue 消费——
+     * 两个 TaskQueue 实例包同一个库，故可见。
+     * 领域装配收敛在 github-learn-task-wiring（组合根不承担领域装配职责）。 */
+    worker.register(GITHUB_LEARN_TASK_TYPE, createGithubLearnTaskHandlerForProduction({
+      os: deps.os,
+      tenantFactory,
+      config,
+      encryption: tryByokEncryption(config.encryption),
+    }), 120_000);
+
     /* Avatar 自动运行 handler */
     const queueTx = queueDb;
     const autorunStore = new AvatarAutorunStore(queueDb);
     const knowledgeStore = new KnowledgeSourceStore(queueTx);
-    const avatarService = new AvatarService(queueTx);
-    const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(queueTx));
+    const quotaManager = QuotaManager.fromResolver(resolver);
     const knowledgeRegistry = new KnowledgeSourceRegistry();
     knowledgeRegistry.register('manual', new ManualKnowledgeSource());
     knowledgeRegistry.register('rss', new RssKnowledgeSource());
@@ -427,7 +487,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
     const autorunService = new AvatarAutorunService(
       queueDb, queue, deps.os.bus, deps.os.getLogger(),
-      quotaManager, avatarService, autorunStore, knowledgeStore,
+      quotaManager, autorunStore, knowledgeStore,
       knowledgeIngestion, tenantFactory, config,
       /* ADR-0047 growth 档：注入 LLM 路由（含 D2 降级链），autorun 在确定性反思后额外跑 LLM 反思。
        * mock provider 不产实际成长（仅占位），生产配 anthropic/ollama 时生效。 */
@@ -450,7 +510,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     app.addHook('onClose', () => { clearInterval(autorunSchedulerTimer); });
 
     /* 注册自动运行路由（需 autorunService） */
-    registerAvatarAutorunRoutes(app, queueDb, autorunService);
+    registerAvatarAutorunRoutes(app, queueDb, captureResolver('avatar-autorun'), autorunService);
 
     worker.start();
     app.addHook('onClose', async () => { await worker!.stop(); });
@@ -459,12 +519,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   /* P1-B 知识批量导入：service 在 queue 启用与否都可用（≤20 条走同步路径）
    * 注入 templateService 启用 expectedTemplateId 校验（建议 2 联动）
    * P1-D 注入 UsageTracker + BillingOutbox 上报 bulk_knowledge_import_item */
-  const bulkImportResolver = new SingleDbResolver(tx);
-  const bulkImportPersonaCoreService = PersonaCoreService.fromResolver(bulkImportResolver);
-  const bulkImportTemplateService = PersonaTemplateService.fromResolver(bulkImportResolver, bulkImportPersonaCoreService);
+  const bulkImportPersonaCoreService = PersonaCoreService.fromResolver(resolver);
+  const bulkImportTemplateService = PersonaTemplateService.fromResolver(resolver, bulkImportPersonaCoreService);
   bulkImportTemplateService.syncBuiltins();
-  const p1dUsageTracker = P1dUsageTracker.fromResolver(new SingleDbResolver(tx));
-  const p1dBillingOutbox = config.stripe.enabled ? P1dBillingOutbox.fromResolver(new SingleDbResolver(tx), config) : undefined;
+  const p1dUsageTracker = P1dUsageTracker.fromResolver(resolver);
+  const p1dBillingOutbox = config.stripe.enabled ? P1dBillingOutbox.fromResolver(resolver, config) : undefined;
   const stripeCustomerLookup = (tenantId: string): string | null => {
     try {
       const row = db.prepare<{ stripe_customer_id: string | null }>(
@@ -508,9 +567,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     temperature: config.intelligence.temperature,
   });
   const conversationEncryption = config.encryption.enabled ? new ConversationFieldEncryption(config.encryption) : undefined;
-  const conversationTokenBudget = ConversationTokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(db));
-  const conversationCostTracker = ConversationCostTracker.fromResolver(new SingleDbResolver(db));
-  const conversationQuotaManager = QuotaManager.fromResolver(new SingleDbResolver(tx));
+  const conversationTokenBudget = ConversationTokenBudget.fromResolver(config.intelligence.budget, resolver);
+  const conversationCostTracker = ConversationCostTracker.fromResolver(resolver);
+  const conversationQuotaManager = QuotaManager.fromResolver(resolver);
   const conversationCircuitBreaker = new ConversationCircuitBreaker({
     failureThreshold: 5,
     halfOpenMaxRequests: 1,
@@ -556,8 +615,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   app.addHook('onClose', async () => { await quotaUsageRetentionWorker.stop(); });
 
   /* 感知媒体引用 retention：runMediaRetention 早已实现但缺周期触发器——GDPR Art.17 擦除依赖它
-   * 才真正删对象+删行（privacy eraseData 只标记 delete_after=0），过期引用也靠它回收。用 root tx
-   * 全局扫描。擦除器用真实对象存储 driver（createObjectStorageClient 按 config.provider 选
+   * 才真正删对象+删行（privacy eraseData 只标记 delete_after=0），过期引用也靠它回收。收共享
+   * resolver，flushOnce 对 allShardDbs() fan-out 逐 shard 全局扫描（非-home shard 的过期媒体也必须
+   * 物理删；单库下=[db] 等价现状）。擦除器用真实对象存储 driver（createObjectStorageClient 按 config.provider 选
    * local/S3/GCS/Azure，各后端 delete 幂等）→ 物理删对象 + 删引用行的端到端闭环。构造失败兜底
    * fail-closed（抛错→保留引用行下周期重试，绝不删定位造孤儿）。 */
   let mediaEraser;
@@ -567,7 +627,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     deps.os.getLogger().warn('createApp', `对象存储 driver 构造失败，媒体 retention 降级 fail-closed（引用行保留可重试）`, err);
     mediaEraser = new FailClosedObjectStorageEraser(deps.os.getLogger());
   }
-  const mediaRetentionWorker = new MediaRetentionWorker(tx, mediaEraser, deps.os.getLogger());
+  const mediaRetentionWorker = new MediaRetentionWorker(captureResolver('media-retention'), mediaEraser, deps.os.getLogger());
   mediaRetentionWorker.start();
   app.addHook('onClose', async () => { await mediaRetentionWorker.stop(); });
 
@@ -706,9 +766,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     logger: deps.os.getLogger(),
   });
 
-  /* F4：tool_invocations retention worker */
+  /* F4：tool_invocations retention worker——分片 Plan 2 · Task 4：ctor 收 resolver（跨 shard fan-out，
+   * 内部逐 shard new ToolPermissionService(shardDb)），只跑一库会漏清非-home shard 的 tool_invocations。 */
   const toolInvocationsRetentionWorker = new ToolInvocationsRetentionWorker(
-    toolPermissionService,
+    captureResolver('tool-invocations-retention'),
     deps.os.getLogger(),
     {
       retentionMs: config.agent.toolInvocationsRetentionDays * 24 * 60 * 60 * 1000,
@@ -731,9 +792,11 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * 下方分组注释仅作导航。 */
 
   /* ① 通用/平台 */
-  registerAuthRoutes(app, db, config);
+  /* 分片 Plan 1c Task 5：Auth 经共享 resolver（register→canonicalTenantId shard / login→entry.tenantId shard /
+   * email→tenant 目录经 coordinatorDb），不再裸传 host db。 */
+  registerAuthRoutes(app, captureResolver('auth'), config);
   registerUserRoutes(app, services);
-  registerOrganizationRoutes(app, services);
+  registerOrganizationRoutes(app, services, captureResolver('organizations-rbac'));
   registerBillingRoutes(app, db, config);
   /* earn→distill 闭环（WP-0）：任务完成 → 经 tenant OS 的 earningDistiller 把高质量 outcome
    * 蒸馏成 core value 候选（经蒸馏门，不绕过）。回调在此注入，因为这里能拿到 os + tenantFactory。 */
@@ -760,7 +823,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
     });
   };
   /* ③ 人格与成长 */
-  registerPersonaCoreRoutes(app, db, config, onMarketplaceTaskCompleted);
+  registerPersonaCoreRoutes(app, { resolver: captureResolver('persona-core'), db, config, onTaskCompleted: onMarketplaceTaskCompleted });
   registerConversationRoutes(app, {
     conversation: conversationService,
     personaCore: bulkImportPersonaCoreService,
@@ -826,48 +889,49 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   registerValueRoutes(app, deps.os, tenantFactory);
   registerMemoryRoutes(app, deps.os, tenantFactory, config);
   registerNarrativeRoutes(app, deps.os, tenantFactory);
-  registerCompanionRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionPerceiveStreamRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-me'), db, config });
+  registerCompanionPerceiveRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-perceive'), db, config });
+  registerCompanionPerceiveStreamRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-perceive-stream'), db, config });
   registerCompanionEnvironmentRoutes(app, deps.os, tenantFactory);
-  registerCompanionChatRoutes(app, deps.os, tenantFactory, db, config);
-  registerCompanionLearnGithubRoutes(app, deps.os, tenantFactory, db, config);
+  registerCompanionChatRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-chat'), db, config });
+  registerCompanionLearnGithubRoutes(app, { os: deps.os, tenantFactory, resolver: captureResolver('companion-learn-github'), db, config });
   /* Plan 4：draft-github-reply 端点含 publish（发布经 pipeline highRisk = 不可降级人工审批门）。
    * 传入共享 toolInvocationPipeline（已注册 github.comment/github.review 写工具）。 */
   registerCompanionDraftGithubRoutes(app, deps.os, tenantFactory, db, config, undefined, toolInvocationPipeline);
   /* GitHub webhook 接收器（可选系统入站入口，非用户动作 → 前缀 integrations/github）：
    * GitHub 发 issue/PR opened → HMAC 验签 + 反查租户 + 幂等 → 零-LLM 起草停 drafted（绝不发布）。 */
   registerGithubWebhookRoutes(app, deps.os, tenantFactory, db, config);
-  registerPersonaRoutes(app, deps.os, tenantFactory);
+  registerAdminGithubRoutes(app, { os: deps.os, tenantFactory, config });
+  registerPersonaRoutes(app, { os: deps.os, resolver: captureResolver('personas'), tenantFactory });
   registerSnapshotRoutes(app, deps.os, tenantFactory);
   registerOperationRoutes(app, deps.os, tenantFactory, config);
   /* ⑤ 治理与审计 */
   registerConflictRoutes(app, db, config);
-  registerMetricsRoutes(app, deps.os, config);
+  registerMetricsRoutes(app, deps.os, captureResolver('metrics'), config);
   registerAuditRoutes(app, db);
   registerAnalyticsRoutes(app, db);
   registerDashboardRoutes(app, db);
   registerPosRoutes(app, deps.os, tenantFactory);
-  registerDecisionRoutes(app, deps.os, config, db, tenantFactory);
-  registerOnboardingRoutes(app, deps.os, config, db, tenantFactory);
-  registerOnboardingV2Routes(app, config, db, services.organization);
+  registerDecisionRoutes(app, { os: deps.os, config, resolver: captureResolver('decisions'), db, tenantFactory });
+  registerOnboardingRoutes(app, { os: deps.os, config, resolver: captureResolver('onboarding'), db, tenantFactory });
+  registerOnboardingV2Routes(app, config, db, services.organization, captureResolver('onboarding-v2'));
   registerVisualizationRoutes(app, deps.os, tenantFactory);
   registerPrivacyRoutes(app, deps.os, tenantFactory, config);
   /* ⑥ 人生模拟（ADR-0047 确定性离线决策引擎载体；前端已降位，非首屏） */
-  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { queueEnabled: config.queue.enabled, db, config });
+  registerLifeSimulationRoutes(app, deps.os.lifeSimulation, { resolver: captureResolver('life-simulations'), queueEnabled: config.queue.enabled, db, config });
   registerLifeSimVizRoutes(app, deps.os.lifeSimulation);
-  registerSsoRoutes(app, db, config);
-  registerOidcRoutes(app, db, config);
+  registerSsoRoutes(app, db, captureResolver('auth-sso'), config);
+  registerOidcRoutes(app, db, captureResolver('auth-oidc'), config);
   registerScimRoutes(app, services);
   registerCollaborationRoutes(app, services);
   registerApiKeyRoutes(app, services);
   registerAdminConfigRoutes(app, db, config);
-  registerAdminTemplateRoutes(app, deps.os);
+  registerAdminTemplateRoutes(app, { resolver: captureResolver('admin-templates') });
   registerBulkKnowledgeImportRoutes(app, {
     bulkImport: bulkImportService,
     personaCore: bulkImportPersonaCoreService,
   });
-  registerAdminDeploymentRoutes(app, db, config);
+  registerAdminDeploymentRoutes(app, db, captureResolver('admin-deployment'), config);
   registerAdminControlPlaneRoutes(app, services);
   registerAdminToolsRoutes(app, db);
   registerMcpRoutes(app, mcpServer, oauthResolverFactory);
@@ -883,7 +947,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   });
   registerMobileRoutes(app, services);
   registerIdentityRoutes(app, services);
-  registerAvatarRoutes(app, db, deps.os, tenantFactory);
+  registerAvatarRoutes(app, db, deps.os, captureResolver('avatars'), tenantFactory);
   registerKnowledgeSourceRoutes(app, services);
   registerSseRoutes(app, deps.os, config);
   registerFeatureFlagRoutes(app, deps.os, config);
@@ -891,57 +955,57 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
 
   /* 队列未启用时仍注册自动运行路由（autorunService=undefined，手动触发将返回提示） */
   if (!config.queue.enabled) {
-    registerAvatarAutorunRoutes(app, db, undefined);
+    registerAvatarAutorunRoutes(app, db, captureResolver('avatar-autorun'), undefined);
   }
 
   registerDocsRoutes(app);
 
-  /* 定期清理过期刷新令牌（每 24 小时） */
+  /* 定期清理过期刷新令牌（每 24 小时）——分片 Plan 2 · Task 4：经 resolver 跨 shard fan-out
+   * （token 落用户所在 shard，coordinatorDb-only 会漏清非-coordinator shard）；坏 shard 不静默。 */
   if (config.jwt.enabled) {
     const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000;
     const cleanupTimer = setInterval(() => {
-      try { cleanupExpiredTokens(db); } catch { /* 清理失败不影响服务 */ }
+      try {
+        const { shardErrors } = cleanupExpiredTokens(resolver, deps.os.getLogger());
+        if (shardErrors.length > 0) {
+          deps.os.getLogger().error('AuthTokenCleanup', '过期令牌清理有 shard 失败（下周期重试）', { shardErrors });
+        }
+      } catch { /* 清理失败不影响服务 */ }
     }, CLEANUP_INTERVAL);
     cleanupTimer.unref();
     app.addHook('onClose', () => { clearInterval(cleanupTimer); });
   }
 
-  /* 定期清理过期数据（每 6 小时：usage_records 90 天、billing_outbox 30 天、webhook_events 7 天） */
+  /* 定期清理过期数据（每 6 小时：usage_records 90 天、billing_outbox 30 天、webhook_events 7 天）。
+   * 分片 Plan 2 · Task 4：抽为模块级可测 seam runDataRetentionOnce（跨租户表 allShardDbs fan-out /
+   * webhook_events 平台表 coordinatorDb）；timer 只调它 + 记 shardErrors 告警。 */
   const DATA_RETENTION_INTERVAL = 6 * 60 * 60 * 1000;
-  const RETENTION_BATCH_SIZE = 5000;
   const retentionTimer = setInterval(() => {
-    const now = Date.now();
     const log = deps.os.getLogger();
-    const pruneTable = (table: string, pkColumn: string, whereClause: string, ...params: SqlValue[]) => {
-      try {
-        let total = 0;
-        /* 批量删除：先 SELECT 主键再 DELETE，兼容 SQLite 和 PostgreSQL */
-        while (true) {
-          const ids = db.prepare<{ pk: SqlValue }>(
-            `SELECT ${pkColumn} AS pk FROM ${table} WHERE ${whereClause} LIMIT ${RETENTION_BATCH_SIZE}`,
-          ).all(...params);
-          if (ids.length === 0) break;
-          const placeholders = ids.map(() => '?').join(',');
-          db.prepare<void>(
-            `DELETE FROM ${table} WHERE ${pkColumn} IN (${placeholders})`,
-          ).run(...ids.map(r => r.pk));
-          total += ids.length;
-          if (ids.length < RETENTION_BATCH_SIZE) break;
-        }
-        if (total > 0) log.info('Retention', `清理 ${table}: 删除 ${total} 行`);
-      } catch { /* 表可能不存在 */ }
-    };
-    pruneTable('usage_records', 'id', 'recorded_at < ?', now - 90 * 24 * 60 * 60 * 1000);
-    pruneTable('billing_outbox', 'id', 'status = ? AND processed_at < ?', 'sent', now - 30 * 24 * 60 * 60 * 1000);
-    pruneTable('webhook_events', 'event_id', 'processed_at < ?', now - 7 * 24 * 60 * 60 * 1000);
-    pruneTable('idempotency_keys', 'id', 'expires_at < ?', now);
+    const r = runDataRetentionOnce({
+      resolver,
+      now: Date.now(),
+      retentionMs: {
+        usage: 90 * 24 * 60 * 60 * 1000,
+        billing: 30 * 24 * 60 * 60 * 1000,
+        idempotency: 0,
+        webhook: 7 * 24 * 60 * 60 * 1000,
+      },
+    });
+    if (r.usageDeleted > 0) log.info('Retention', `清理 usage_records: 删除 ${r.usageDeleted} 行`);
+    if (r.billingDeleted > 0) log.info('Retention', `清理 billing_outbox: 删除 ${r.billingDeleted} 行`);
+    if (r.idempotencyDeleted > 0) log.info('Retention', `清理 idempotency_keys: 删除 ${r.idempotencyDeleted} 行`);
+    if (r.webhookDeleted > 0) log.info('Retention', `清理 webhook_events: 删除 ${r.webhookDeleted} 行`);
+    if (r.shardErrors.length > 0) {
+      log.error('Retention', `数据 retention 有 shard 清理失败（下周期重试）`, { shardErrors: r.shardErrors });
+    }
   }, DATA_RETENTION_INTERVAL);
   retentionTimer.unref();
   app.addHook('onClose', () => { clearInterval(retentionTimer); });
 
   /* 定期刷新 Stripe 计量发件箱（每 60 秒） */
   if (config.stripe.enabled) {
-    const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(tx), config);
+    const billingOutbox = BillingOutbox.fromResolver(resolver, config);
     const FLUSH_INTERVAL_MS = 60_000;
     const flushTimer = setInterval(() => {
       void billingOutbox.flush().then((result) => {
@@ -960,4 +1024,97 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
   }
 
   return app;
+}
+
+/** runDataRetentionOnce 保留窗口（ms）——各表相对 now 的截止阈值。idempotency_keys 用绝对 expires_at（阈值 0）。 */
+export interface DataRetentionMs {
+  usage: number;
+  billing: number;
+  idempotency: number;
+  webhook: number;
+}
+
+/** runDataRetentionOnce 结果：四表各删除数 + 逐 shard 错误明细。 */
+export interface DataRetentionResult {
+  usageDeleted: number;
+  billingDeleted: number;
+  idempotencyDeleted: number;
+  webhookDeleted: number;
+  shardErrors: Array<{ shardKey: string; error: string }>;
+}
+
+const DATA_RETENTION_BATCH_SIZE = 5000;
+
+/**
+ * 单批范围删除 helper（先 SELECT 主键再 DELETE，兼容 SQLite 与 PostgreSQL）。返回本表删除总行数。
+ * 表不存在等异常由调用方的逐 shard try/catch 承接（不在此吞异常，避免坏 shard 静默）。
+ */
+function pruneTableOn(
+  db: IDatabase,
+  table: string,
+  pkColumn: string,
+  whereClause: string,
+  ...params: SqlValue[]
+): number {
+  let total = 0;
+  while (true) {
+    const ids = db.prepare<{ pk: SqlValue }>(
+      `SELECT ${pkColumn} AS pk FROM ${table} WHERE ${whereClause} LIMIT ${DATA_RETENTION_BATCH_SIZE}`,
+    ).all(...params);
+    if (ids.length === 0) break;
+    const placeholders = ids.map(() => '?').join(',');
+    db.prepare<void>(
+      `DELETE FROM ${table} WHERE ${pkColumn} IN (${placeholders})`,
+    ).run(...ids.map((r) => r.pk));
+    total += ids.length;
+    if (ids.length < DATA_RETENTION_BATCH_SIZE) break;
+  }
+  return total;
+}
+
+/**
+ * 周期性数据 retention 的可测 seam（分片 Plan 2 · Task 4）。
+ *
+ * 跨租户表（usage_records / billing_outbox / idempotency_keys 均含 tenant_id）经 `resolver.allShardDbs()`
+ * fan-out——只清一库会让非-home shard 的过期数据永不回收。webhook_events 是**平台表无 tenant_id**（Stripe
+ * 事件全局去重），只在 `resolver.coordinatorDb()` 清。逐 shard try/catch 隔离 + shardErrors 收集（坏 shard
+ * 不静默、不拖累其余 shard）。单库下 `allShardDbs()=[db]`、`coordinatorDb()=同一 db`，等价现状、零回归。
+ */
+export function runDataRetentionOnce(opts: {
+  resolver: TenantDbResolver;
+  now: number;
+  retentionMs: DataRetentionMs;
+}): DataRetentionResult {
+  const { resolver, now, retentionMs } = opts;
+  const keyer = makeShardKeyer();
+  let usageDeleted = 0;
+  let billingDeleted = 0;
+  let idempotencyDeleted = 0;
+  let webhookDeleted = 0;
+  const shardErrors: Array<{ shardKey: string; error: string }> = [];
+
+  /* 跨租户表：逐 shard fan-out。 */
+  for (const shardDb of resolver.allShardDbs()) {
+    const shardKey = keyer(shardDb);
+    try {
+      usageDeleted += pruneTableOn(shardDb, 'usage_records', 'id', 'recorded_at < ?', now - retentionMs.usage);
+      billingDeleted += pruneTableOn(shardDb, 'billing_outbox', 'id', 'status = ? AND processed_at < ?', 'sent', now - retentionMs.billing);
+      idempotencyDeleted += pruneTableOn(shardDb, 'idempotency_keys', 'id', 'expires_at < ?', now - retentionMs.idempotency);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      shardErrors.push({ shardKey, error });
+    }
+  }
+
+  /* webhook_events：平台表（无 tenant_id）——只在协调库清。 */
+  const coordinator = resolver.coordinatorDb();
+  const coordinatorKey = keyer(coordinator);
+  try {
+    webhookDeleted += pruneTableOn(coordinator, 'webhook_events', 'event_id', 'processed_at < ?', now - retentionMs.webhook);
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    shardErrors.push({ shardKey: coordinatorKey, error });
+  }
+
+  return { usageDeleted, billingDeleted, idempotencyDeleted, webhookDeleted, shardErrors };
 }

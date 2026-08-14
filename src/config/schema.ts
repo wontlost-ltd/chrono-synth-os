@@ -67,6 +67,19 @@ const authSchema = z.object({
   metricsApiKeys: z.array(z.string()).default([]),
   /** 生产环境强制使用 DB 存储的 API Key（禁用静态配置 Key 回退） */
   requireDbKeys: z.boolean().default(false),
+  /**
+   * 租户分片 Phase 0 · Plan 1c Task 8：过期 PENDING 预留的恢复 worker。
+   * graceMs 只回收 updated_at 早于 now-graceMs 的工单（避开正在进行的活跃预留）。
+   */
+  reservationRecovery: z.object({
+    enabled: z.boolean().default(false),
+    pollIntervalMs: z.coerce.number().int().min(1_000).default(5 * 60 * 1000),
+    graceMs: z.coerce.number().int().min(0).default(24 * 60 * 60 * 1000),
+  }).default({
+    enabled: false,
+    pollIntervalMs: 5 * 60 * 1000,
+    graceMs: 24 * 60 * 60 * 1000,
+  }),
 });
 
 /**
@@ -554,7 +567,10 @@ export const AppConfigSchema = z.object({
   rateLimit: rateLimitSchema.default({ max: 100, timeWindowMs: 60_000 }),
   websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000, eventLogRetentionMs: 60 * 60 * 1000, replayLimit: 1000 }),
   cors: corsSchema.default({ origin: false, credentials: false }),
-  auth: authSchema.default({ enabled: false, apiKeys: [], metricsApiKeys: [], requireDbKeys: false }),
+  auth: authSchema.default({
+    enabled: false, apiKeys: [], metricsApiKeys: [], requireDbKeys: false,
+    reservationRecovery: { enabled: false, pollIntervalMs: 5 * 60 * 1000, graceMs: 24 * 60 * 60 * 1000 },
+  }),
   jwt: jwtSchema.default({
     enabled: false, secret: 'change-me-in-production', issuer: 'chrono-synth-os',
     accessTtlMs: 15 * 60 * 1000, refreshTtlMs: 7 * 24 * 60 * 60 * 1000, algorithm: 'HS256',

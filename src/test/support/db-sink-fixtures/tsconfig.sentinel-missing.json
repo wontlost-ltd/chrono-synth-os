@@ -1,0 +1,13 @@
+{
+  // 只 include 一个无 sentinel（main.ts / main-desktop.ts / main-observability-worker.ts /
+  // server/app.ts 均不在内）的文件，用于测试 Program 健康门：
+  // Program 能建出来但 sentinel 缺失时，buildProgram 必须 fail-closed 抛「sentinel 缺失」，
+  // 而不是空扫报绿。此 tsconfig 不参与真实构建，仅供 db-sink-scanner 测试。
+  "extends": "../../../../tsconfig.src.json",
+  "compilerOptions": {
+    "composite": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["./type-alias.ts"]
+}

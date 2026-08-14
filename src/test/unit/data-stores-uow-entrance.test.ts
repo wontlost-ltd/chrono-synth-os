@@ -18,6 +18,7 @@ import { ConversationStore } from '../../conversation/conversation-store.js';
 import { BulkImportStore } from '../../knowledge/bulk-import-store.js';
 import { KnowledgeSourceService } from '../../knowledge/knowledge-source-service.js';
 import { SubscriptionGateService } from '../../billing/subscription-gate-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { ConsoleLogger } from '../../utils/logger.js';
 
 describe('Phase 2 批次 4：data stores 双入口', () => {
@@ -114,8 +115,9 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     try {
-      const fromDb = new KnowledgeSourceService(db);
-      const fromUow = new KnowledgeSourceService(db);
+      /* 分片 Plan 1b（Task 5）：KnowledgeSourceService ctor 收 resolver（不再接裸 db/uow）。 */
+      const fromDb = new KnowledgeSourceService(new SingleDbResolver(db));
+      const fromUow = new KnowledgeSourceService(new SingleDbResolver(db));
       assert.deepEqual(
         fromDb.list('default', 1, 10).pagination.total,
         fromUow.list('default', 1, 10).pagination.total,

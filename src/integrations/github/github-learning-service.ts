@@ -44,12 +44,43 @@ export interface LearnGithubResult {
 /** README 候选文件名（大小写/扩展变体），按序尝试第一个能读到的。 */
 const README_CANDIDATES = ['README.md', 'README', 'readme.md'];
 
+/**
+ * 组织轮转游标的哨兵 resource_type。与四类真实资源（code/issues/pulls/commits）区分，
+ * 复用 github_learn_state 存「下一个起始下标」（迁移 v126 已扩 CHECK 容纳该值）。
+ */
+export const ORG_ROTATION_RESOURCE_TYPE = '_org_rotation';
+
+/**
+ * 单轮最多处理几个仓库。轮转的意义就在这个上限——它使**单轮成本恒定**，不随组织规模膨胀，
+ * 从而不触发 GitHub 二级速率限制、不一次性烧光 LLM 老师额度。
+ */
+export const DEFAULT_MAX_REPOS_PER_RUN = 5;
+
+/** learnOrg 单轮结果。 */
+export interface LearnOrgResult {
+  /** 本轮实际学习的仓库全名（按处理顺序）。 */
+  reposProcessed: string[];
+  /** 本轮跨全部仓库新摄入条数。 */
+  ingested: number;
+  /** 本轮跨全部仓库跳过（已摄入过）条数。 */
+  skipped: number;
+  /** 本轮抛出不可预期异常的仓库（learn 内部已逐类吞异常，正常为空）。 */
+  failedRepos: string[];
+  /** 推进后的组织轮转游标（下一轮起始下标；已回绕）。 */
+  nextCursor: number;
+}
+
 export interface GitHubLearningServiceDeps {
   readPort: GitHubReadPort;
   store: GithubLearnStore;
   distiller: PerceptionDistiller;
   tenantId: string;
   personaId: string;
+  /**
+   * 记忆图句柄（演进式取代需删同讨论的旧记忆）。收窄成只含 deleteMemory 的结构类型——
+   * 本 service 无权做记忆图的其它任何操作，类型即权限边界。
+   */
+  memories: { deleteMemory(id: string): boolean };
 }
 
 export class GitHubLearningService {
@@ -58,6 +89,7 @@ export class GitHubLearningService {
   private readonly distiller: PerceptionDistiller;
   private readonly tenantId: string;
   private readonly personaId: string;
+  private readonly memories: { deleteMemory(id: string): boolean };
 
   constructor(deps: GitHubLearningServiceDeps) {
     this.readPort = deps.readPort;
@@ -65,6 +97,7 @@ export class GitHubLearningService {
     this.distiller = deps.distiller;
     this.tenantId = deps.tenantId;
     this.personaId = deps.personaId;
+    this.memories = deps.memories;
   }
 
   /**
@@ -84,6 +117,59 @@ export class GitHubLearningService {
     }
 
     return { ingested, skipped, cursorAdvanced };
+  }
+
+  /**
+   * 学一个组织（installation 授权范围）的仓库，**轮转推进**：每轮只处理 maxReposPerRun 个，
+   * 用组织游标记住下次从哪开始，绕完一圈回到开头。
+   *
+   * 为什么轮转而非一次学完：一个 50 仓库的组织单轮就是几百次 API 调用 + 几百次 LLM 老师调用，
+   * 会触发 GitHub 二级速率限制并烧光额度。轮转使**单轮成本恒定可预测**，大组织只是周期更长。
+   *
+   * 游标推进语义：无论各 repo 成败都推进——否则一个持续失败的 repo 会永久卡住整个组织的轮转。
+   * 已成功摄入的内容靠 digest 账本保证回绕后不重复灌。
+   */
+  async learnOrg(
+    orgKey: string,
+    resourceTypes: GitHubResourceType[],
+    maxReposPerRun: number = DEFAULT_MAX_REPOS_PER_RUN,
+  ): Promise<LearnOrgResult> {
+    const repos = await this.readPort.listInstallationRepos();
+    if (repos.length === 0) {
+      return { reposProcessed: [], ingested: 0, skipped: 0, failedRepos: [], nextCursor: 0 };
+    }
+
+    /* 读组织轮转游标（哨兵行）。非法/缺失 → 从 0 开始；越界（授权仓库变少）→ 收敛回 0。 */
+    const raw = this.store.getCursor(this.personaId, orgKey, ORG_ROTATION_RESOURCE_TYPE)?.cursor;
+    const parsed = raw === undefined || raw === null ? 0 : Number.parseInt(raw, 10);
+    const start = Number.isInteger(parsed) && parsed >= 0 && parsed < repos.length ? parsed : 0;
+
+    const slice = repos.slice(start, start + maxReposPerRun);
+
+    const reposProcessed: string[] = [];
+    const failedRepos: string[] = [];
+    let ingested = 0;
+    let skipped = 0;
+    for (const repo of slice) {
+      try {
+        const outcome = await this.learn(repo, resourceTypes);
+        ingested += outcome.ingested;
+        skipped += outcome.skipped;
+        reposProcessed.push(repo);
+      } catch {
+        /* 兜底：learn 内部已逐 resourceType 吞异常，此处防不可预期的异常中断整轮。 */
+        failedRepos.push(repo);
+      }
+    }
+
+    /* 推进游标：走到尾部则回绕到 0（下轮重新从头增量扫，未变内容靠 digest 全 skip）。 */
+    const advanced = start + slice.length;
+    const nextCursor = advanced >= repos.length ? 0 : advanced;
+    this.store.advanceCursor(
+      this.personaId, orgKey, ORG_ROTATION_RESOURCE_TYPE, String(nextCursor), Date.now(),
+    );
+
+    return { reposProcessed, ingested, skipped, failedRepos, nextCursor };
   }
 
   /**
@@ -117,13 +203,19 @@ export class GitHubLearningService {
           resourceType,
           mapped.contentSha,
           now,
+          mapped.discussionKey,
         );
         if (!claimed) {
           skipped += 1;
           continue;
         }
+        /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
+        const previousMemoryIds = mapped.discussionKey
+          ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
+          : [];
+
         /* 抢到才摄入：audio 壳范式喂进感知蒸馏管线（与 learn-topic 同款）。 */
-        await this.distiller.perceive({
+        const result = await this.distiller.perceive({
           personaId: this.personaId,
           tenantId: this.tenantId,
           media: {
@@ -133,6 +225,20 @@ export class GitHubLearningService {
             representation: mapped.representation,
           },
         });
+
+        /* 演进式取代：记新指针组 + 删旧记忆组，使同一 issue/PR 恒为最新一版共识。
+         * 仅当 perceive 真产出新记忆时才取代——空产出（老师失败/无事实）时保留旧记忆，
+         * 宁可留旧共识也不能把已有知识删成空白。
+         * 注意 perceive 把一条表征切成**多条**事实记忆（标题/正文/讨论各一条），故整组进出。 */
+        if (mapped.discussionKey && result.memoryIds.length > 0) {
+          this.store.recordMemoryIds(this.personaId, repo, resourceType, mapped.contentSha, result.memoryIds, Date.now());
+          const fresh = new Set(result.memoryIds);
+          for (const oldId of previousMemoryIds) {
+            /* 排除本轮刚产出的 ID（理论上不重叠，防御性守卫——绝不删刚写入的新记忆）。 */
+            if (!fresh.has(oldId)) this.memories.deleteMemory(oldId);
+          }
+        }
+
         this.store.markIngested(this.personaId, repo, resourceType, mapped.contentSha, Date.now());
         ingested += 1;
       }
@@ -161,13 +267,27 @@ export class GitHubLearningService {
     switch (resourceType) {
       case 'issues': {
         const issues = await this.readPort.listIssues(repo, since);
-        /* 讨论内容 ReadPort 不透传（只读精简 port），comments 传空，mapper 会填占位。 */
-        const items = issues.map((issue) => mapIssue(repo, issue, []));
+        const items: MappedLearning[] = [];
+        for (const issue of issues) {
+          /* 省配额闸二：评论计数为 0 直接跳过，不发请求（闸一是上面的增量游标 since——
+           * 只有本轮有更新的 issue 才走到这里）。组织级同步时这两道闸决定 API 调用量量级。 */
+          const comments = issue.comments > 0
+            ? await this.safeListIssueComments(repo, issue.number)
+            : [];
+          const mapped = mapIssue(repo, issue, comments);
+          items.push({ ...mapped, discussionKey: discussionKeyOf('issues', repo, issue.number) });
+        }
         return { items, newCursor: maxUpdatedAt(issues) };
       }
       case 'pulls': {
         const pulls = await this.readPort.listPulls(repo, since);
-        const items = pulls.map((pull) => mapPull(repo, pull, []));
+        const items: MappedLearning[] = [];
+        for (const pull of pulls) {
+          /* PR 列表响应无 review 评论计数字段，无法像 issue 那样零成本预判，故一律抓取。 */
+          const reviewComments = await this.safeListPullReviewComments(repo, pull.number);
+          const mapped = mapPull(repo, pull, reviewComments);
+          items.push({ ...mapped, discussionKey: discussionKeyOf('pulls', repo, pull.number) });
+        }
         return { items, newCursor: maxUpdatedAt(pulls) };
       }
       case 'commits': {
@@ -189,6 +309,27 @@ export class GitHubLearningService {
     }
   }
 
+  /**
+   * 抓 issue 讨论评论；失败降级为空数组——一条坏数据（权限/限流/删帖）不该阻塞整个 repo 的学习。
+   * 降级后该条记忆退回「（暂无讨论）」，下轮 issue 有更新时会重新尝试。
+   */
+  private async safeListIssueComments(repo: string, issueNumber: number): Promise<string[]> {
+    try {
+      return await this.readPort.listIssueComments(repo, issueNumber);
+    } catch {
+      return [];
+    }
+  }
+
+  /** 抓 PR review 意见；失败降级为空数组，理由同 safeListIssueComments。 */
+  private async safeListPullReviewComments(repo: string, pullNumber: number): Promise<string[]> {
+    try {
+      return await this.readPort.listPullReviewComments(repo, pullNumber);
+    } catch {
+      return [];
+    }
+  }
+
   /** 按候选文件名依序读 README；任一读失败/不存在则试下一个，全失败返回空串。 */
   private async readReadme(repo: string): Promise<string> {
     for (const name of README_CANDIDATES) {
@@ -203,6 +344,16 @@ export class GitHubLearningService {
     }
     return '';
   }
+}
+
+/**
+ * 讨论稳定标识：形如 `issues:acme/widget#42`。同一 issue/PR 跨轮次恒定，与表征 sha 无关。
+ *
+ * 为什么需要它：contentSha = sha256(representation)，讨论新增一条评论就换新 sha，
+ * 按 sha 无法认出「这还是那个 issue」。演进式取代必须有一个不随内容变化的锚。
+ */
+function discussionKeyOf(resourceType: GitHubResourceType, repo: string, num: number): string {
+  return `${resourceType}:${repo}#${num}`;
 }
 
 /** 取一批 issue/pull 的最大 updatedAt 作游标锚；空批返回 null（不推进）。 */

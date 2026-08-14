@@ -1,6 +1,13 @@
 /**
  * Admin Control Plane Application Service
  * 封装管理后台的分页查询与聚合逻辑
+ *
+ * 分片 Phase 0 · Plan 1b（Task 5）：
+ * - persona_core/marketplace_tasks/persona_wallets/governance_cases 全**有 tenant_id 列**，
+ *   故租户约束直接在 query/executor 层 `WHERE <alias>.tenant_id=? [AND status=?]`（本 Task 前 executor 已全含）。
+ * - 4 个 list 方法**已普遍带 tenantId**，本 Task 仅 ctor `(tx)`→`(resolver)` +
+ *   每方法 `const tx = this.txFor(tenantId)`（dbForTenant 选对 shard）。
+ * - 双重约束：`dbForTenant(tenantId)` 选对 shard + SQL tenant predicate 防同库跨租户读。只读查询，无 writer seam。
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
@@ -10,6 +17,7 @@ import {
   acpQueryWalletCount, acpQueryWalletList, acpQueryWalletSummary,
   acpQueryGovCount, acpQueryGovList, acpQueryGovSummary,
 } from '@chrono/kernel';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 
 function toIso(value: number | null): string | null {
@@ -38,17 +46,23 @@ function buildPagination(total: number, page: number, pageSize: number): Paginat
 }
 
 export class AdminControlPlaneService {
-  constructor(private readonly tx: SyncWriteUnitOfWork) {
+  constructor(private readonly resolver: TenantDbResolver) {
     registerCoreSelfExecutors();
   }
 
+  /** 每 tenant-scoped 调用现取该租户 shard 的 tx（dbForTenant 选 shard），不跨请求缓存。 */
+  private txFor(tenantId: string): SyncWriteUnitOfWork {
+    return this.resolver.dbForTenant(tenantId);
+  }
+
   listPersonas(tenantId: string, pagination: PaginationInput, status?: string) {
+    const tx = this.txFor(tenantId);
     const offset = (pagination.page - 1) * pagination.pageSize;
     const filterStatus = status ?? null;
 
-    const total = this.tx.queryOne(acpQueryPersonaCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryPersonaList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
-    const summary = this.tx.queryOne(acpQueryPersonaSummary(tenantId));
+    const total = tx.queryOne(acpQueryPersonaCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = tx.queryMany(acpQueryPersonaList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
+    const summary = tx.queryOne(acpQueryPersonaSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
@@ -77,12 +91,13 @@ export class AdminControlPlaneService {
   }
 
   listTasks(tenantId: string, pagination: PaginationInput, status?: string) {
+    const tx = this.txFor(tenantId);
     const offset = (pagination.page - 1) * pagination.pageSize;
     const filterStatus = status ?? null;
 
-    const total = this.tx.queryOne(acpQueryTaskCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryTaskList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
-    const summary = this.tx.queryOne(acpQueryTaskSummary(tenantId));
+    const total = tx.queryOne(acpQueryTaskCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = tx.queryMany(acpQueryTaskList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
+    const summary = tx.queryOne(acpQueryTaskSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
@@ -111,12 +126,13 @@ export class AdminControlPlaneService {
   }
 
   listWallets(tenantId: string, pagination: PaginationInput, status?: string) {
+    const tx = this.txFor(tenantId);
     const offset = (pagination.page - 1) * pagination.pageSize;
     const filterStatus = status ?? null;
 
-    const total = this.tx.queryOne(acpQueryWalletCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryWalletList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
-    const summary = this.tx.queryOne(acpQueryWalletSummary(tenantId));
+    const total = tx.queryOne(acpQueryWalletCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = tx.queryMany(acpQueryWalletList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
+    const summary = tx.queryOne(acpQueryWalletSummary(tenantId));
 
     return {
       data: rows.map((row) => ({
@@ -142,12 +158,13 @@ export class AdminControlPlaneService {
   }
 
   listGovernanceCases(tenantId: string, pagination: PaginationInput, status?: string) {
+    const tx = this.txFor(tenantId);
     const offset = (pagination.page - 1) * pagination.pageSize;
     const filterStatus = status ?? null;
 
-    const total = this.tx.queryOne(acpQueryGovCount({ tenantId, status: filterStatus }))?.count ?? 0;
-    const rows = this.tx.queryMany(acpQueryGovList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
-    const summary = this.tx.queryOne(acpQueryGovSummary(tenantId));
+    const total = tx.queryOne(acpQueryGovCount({ tenantId, status: filterStatus }))?.count ?? 0;
+    const rows = tx.queryMany(acpQueryGovList({ tenantId, status: filterStatus, limit: pagination.pageSize, offset }));
+    const summary = tx.queryOne(acpQueryGovSummary(tenantId));
 
     return {
       data: rows.map((row) => ({

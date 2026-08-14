@@ -9,8 +9,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import { makeShardKeyer } from '../../storage/shard-key.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
+import type { Logger } from '../../utils/logger.js';
 import { AuthenticationError, ErrorCode } from '../../errors/index.js';
 import { RegisterSchema, LoginSchema, LogoutSchema } from '../schemas/api-schemas.js';
 import { AuthService } from '../../identity/auth-service.js';
@@ -208,14 +212,18 @@ const authRateLimit = {
   },
 };
 
-export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
+export function registerAuthRoutes(app: FastifyInstance, resolver: TenantDbResolver, config: AppConfig): void {
   if (!config.jwt.enabled) return;
 
-  const authService = new AuthService(db, config);
+  const authService = new AuthService(resolver, config);
 
   app.post('/api/v1/auth/register', authRateLimit, async (request, reply) => {
     const { email, password } = RegisterSchema.parse(request.body);
-    const result = await authService.register(app, email, password);
+    /* 客户端幂等键透传：Idempotency-Key header → register 的 operationId（缺则 register 内一次性随机）。
+     * 私有属原客户端，是「重试收敛 vs 账号接管」的判据锚。 */
+    const rawIdemKey = request.headers['idempotency-key'];
+    const idempotencyKey = Array.isArray(rawIdemKey) ? rawIdemKey[0] : rawIdemKey;
+    const result = await authService.register(app, email, password, { idempotencyKey });
     setRefreshCookie(request, reply, config, result.refreshToken, config.jwt.refreshTtlMs);
     return reply.status(201).send({ data: result });
   });
@@ -268,7 +276,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: IDatabase, config: 
   });
 }
 
-/** 生成 access + refresh 令牌对（保留导出以兼容外部调用） */
+/** 生成 access + refresh 令牌对（保留导出以兼容 SSO/OIDC 单库调用；db 经 SingleDbResolver 适配新 ctor）。 */
 export async function generateTokenPair(
   app: FastifyInstance,
   db: IDatabase,
@@ -277,11 +285,37 @@ export async function generateTokenPair(
   tenantId: string,
   role: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
-  const authService = new AuthService(db, config);
+  const authService = new AuthService(new SingleDbResolver(db), config);
   return authService.generateTokenPair(app, userId, tenantId, role);
 }
 
-/** 清理过期和已吊销的刷新令牌 */
-export function cleanupExpiredTokens(db: IDatabase): number {
-  return AuthService.cleanupExpired(db);
+/**
+ * 清理过期和已吊销的刷新令牌——**跨 shard fan-out**（分片 Plan 2 · Task 4）。
+ *
+ * refresh_token 现落**用户所在 shard**（AuthService.generateTokenPair 经 dbForTenant 写），旧
+ * coordinatorDb-only 清理会漏掉非-coordinator shard 的过期 token（token 落 shard 却只清 coordinator 的
+ * 真 bug）。故遍历 `allShardDbs()` 逐 shard 各 `AuthService.cleanupExpired(shardDb)`。
+ *
+ * 逐 shard try/catch 隔离 + **失败不静默**：某 shard 抛错记 logger.error + push shardError 继续下一 shard，
+ * 不阻断其余 shard 清理。返回 `{ total, shardErrors }`（与其他 fan-out 错误结构一致）。
+ * 单库下 `allShardDbs()=[db]`，等价现状、零回归。
+ */
+export function cleanupExpiredTokens(
+  resolver: TenantDbResolver,
+  logger: Logger,
+): { total: number; shardErrors: Array<{ shardKey: string; error: string }> } {
+  const keyer = makeShardKeyer();
+  let total = 0;
+  const shardErrors: Array<{ shardKey: string; error: string }> = [];
+  for (const shardDb of resolver.allShardDbs()) {
+    const shardKey = keyer(shardDb);
+    try {
+      total += AuthService.cleanupExpired(shardDb);
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      shardErrors.push({ shardKey, error });
+      logger.error('AuthTokenCleanup', `shard ${shardKey} 过期令牌清理失败（隔离，不拖累其余 shard）: ${error}`);
+    }
+  }
+  return { total, shardErrors };
 }

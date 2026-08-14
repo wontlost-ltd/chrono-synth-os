@@ -59,9 +59,11 @@ export function registerKnowledgeSourceExecutors(): void {
   });
 
   registerCommand<KsrcUpdateStateParams>(KSRC_CMD_UPDATE_STATE, (db, p) => {
+    /* 分片 Plan 1b（Task 5）：补 AND tenant_id=? 收口隔离洞——原 WHERE id=? 缺 tenant predicate，
+     * 同 shard 内可越租户改别人的知识源摄入游标/状态。 */
     const result = db.prepare<void>(
-      'UPDATE knowledge_sources SET state_json = ?, last_ingested_at = ?, updated_at = ? WHERE id = ?',
-    ).run(p.stateJson, p.lastIngestedAt, p.now, p.id);
+      'UPDATE knowledge_sources SET state_json = ?, last_ingested_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
+    ).run(p.stateJson, p.lastIngestedAt, p.now, p.id, p.tenantId);
     return { rowsAffected: result.changes };
   });
 

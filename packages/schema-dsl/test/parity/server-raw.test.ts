@@ -28,7 +28,20 @@ describe('server-raw coverage', () => {
      * 两表含 tenant_id 纳入隔离/GDPR 清单）。 */
     /* v124 = v122_github_draft_published（pg-aliased v124，GitHub 反馈发布段地基：github_reply_drafts status
      * CHECK 加 published 终态 + published_at/github_ref 审计列，PG 原地 ALTER / SQLite 重建表）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124']);
+    /* v126 = v124_tenant_bootstrap_backfill（pg-aliased v126，租户分片 Phase 0 Plan 1c：tenant_bootstrap
+     * 完成标记表 + 历史身份回填至 tenant_identity_directory，含 email 归一化与 fail-closed 重复检测；
+     * 数据迁移故用 raw。该迁移加入 RAW_MIGRATIONS 时漏更新本覆盖列表——此处补齐，与实际一致）。 */
+    /* v127 = v125_github_digest_discussion_key（pg-aliased v127，GitHub 讨论内容摄入：github_ingest_digests
+     * 加 discussion_key（讨论稳定标识）+ memory_id（该讨论当前记忆指针）+ 二级索引，支撑演进式取代——
+     * contentSha 含评论后随讨论变化致去重账本失效，故以稳定讨论键定位并取代上一版记忆；纯加列不重建表）。 */
+    /* v128 = v126_github_learn_state_org_rotation（pg-aliased v128，GitHub 组织级驻留：
+     * github_learn_state.resource_type CHECK 扩加 _org_rotation 哨兵，供组织轮转游标复用该表
+     * 存「下一个起始下标」；新 CHECK 是旧取值超集，既有行全合法；SQLite 重建表（RENAME 后先
+     * DROP INDEX 防静默丢唯一索引），PG 原地 ALTER CONSTRAINT）。 */
+    /* v129 = v127_github_installation_suspended（pg-aliased v129，GitHub 安装入口产品化：
+     * github_installations 加 suspended_at 暂停状态列，由 installation.suspend/unsuspend
+     * webhook 事件维护；纯加列不重建表，既有唯一索引原地保留）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129']);
   });
 
   it('covers disabled raw migrations', () => {

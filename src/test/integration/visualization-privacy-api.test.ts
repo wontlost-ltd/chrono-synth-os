@@ -8,6 +8,7 @@ import { TestClock } from '../../utils/clock.js';
 import { loadConfig } from '../../config/schema.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { IdentityService } from '../../identity/identity-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { FieldEncryption } from '../../storage/encryption.js';
 import type { FastifyInstance } from 'fastify';
 
@@ -91,8 +92,8 @@ describe('可视化与隐私 API 集成测试', () => {
         `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run('user_privacy_export_target', 'privacy-export-target@example.com', 'hash', 'member', 'default', now, now);
-      const identityService = new IdentityService(db);
-      const identity = identityService.ensureForUser('user_privacy_export', 'default', 'privacy-export');
+      const identityService = new IdentityService(new SingleDbResolver(db));
+      const identity = identityService.ensureForUser('default', 'user_privacy_export', 'privacy-export');
       const defaultAvatar = db.prepare<{ id: string }>(
         'SELECT id FROM avatars WHERE identity_id = ? AND is_default = 1 LIMIT 1',
       ).get(identity.id);
@@ -346,8 +347,8 @@ describe('可视化与隐私 API 集成测试', () => {
         `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ).run('user_privacy_delete_target', 'privacy-delete-target@example.com', 'hash', 'member', 'default', now, now);
-      const identityService = new IdentityService(db);
-      const identity = identityService.ensureForUser('user_privacy_delete', 'default', 'privacy-delete');
+      const identityService = new IdentityService(new SingleDbResolver(db));
+      const identity = identityService.ensureForUser('default', 'user_privacy_delete', 'privacy-delete');
       const defaultAvatar = db.prepare<{ id: string }>(
         'SELECT id FROM avatars WHERE identity_id = ? AND is_default = 1 LIMIT 1',
       ).get(identity.id);

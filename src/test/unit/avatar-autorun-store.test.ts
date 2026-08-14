@@ -10,6 +10,7 @@ import { AvatarAutorunStore } from '../../storage/avatar-autorun-store.js';
 import { KnowledgeSourceStore } from '../../storage/knowledge-source-store.js';
 import { IdentityService } from '../../identity/identity-service.js';
 import { AvatarService } from '../../identity/avatar-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 
 describe('AvatarAutorunStore', () => {
   let db: IDatabase;
@@ -21,11 +22,11 @@ describe('AvatarAutorunStore', () => {
     runDslSqliteMigrations(db);
     store = new AvatarAutorunStore(db);
 
-    /* 创建 identity + avatar 满足外键约束 */
-    const identityService = new IdentityService(db);
-    const avatarService = new AvatarService(db);
-    const identity = identityService.create('user_1', 'tenant_1', '测试用户');
-    const avatar = avatarService.create(identity.id, { label: '测试分身', kind: 'work' });
+    /* 创建 identity + avatar 满足外键约束（分片 Plan 1b Task 2：AvatarService 收 resolver，方法带 tenantId）。 */
+    const identityService = new IdentityService(new SingleDbResolver(db));
+    const avatarService = new AvatarService(new SingleDbResolver(db));
+    const identity = identityService.create('tenant_1', 'user_1', '测试用户');
+    const avatar = avatarService.create('tenant_1', identity.id, { label: '测试分身', kind: 'work' });
     avatarId = avatar.id;
   });
 
@@ -352,10 +353,19 @@ describe('KnowledgeSourceStore', () => {
   it('updateState 更新状态和时间', () => {
     const source = store.create('tenant_1', { type: 'rss', name: 'test', configJson: '{}' });
     const now = Date.now();
-    store.updateState(source.id, JSON.stringify({ cursor: 'abc' }), now);
+    store.updateState(source.id, 'tenant_1', JSON.stringify({ cursor: 'abc' }), now);
 
     const updated = store.getById(source.id, 'tenant_1');
     assert.ok(updated);
     assert.equal(JSON.parse(updated!.stateJson!).cursor, 'abc');
+  });
+
+  it('updateState 带 tenant predicate：用错租户 id 不改别租户的行（分片 Plan 1b Task 5 隔离洞收口）', () => {
+    /* tenant_1 的知识源；用 tenant_2 调 updateState → WHERE id=? AND tenant_id=? 不命中，状态不变。 */
+    const source = store.create('tenant_1', { type: 'rss', name: 'iso', configJson: '{}' });
+    store.updateState(source.id, 'tenant_2', JSON.stringify({ cursor: 'HIJACK' }), Date.now());
+    const after = store.getById(source.id, 'tenant_1');
+    assert.ok(after);
+    assert.equal(after!.stateJson, null, 'tenant_2 越租户 updateState 未改到 tenant_1 的行（state 仍为初始 null）');
   });
 });

@@ -8,13 +8,16 @@ import { createMemoryDatabase } from '../../storage/database.js';
 import { runDslSqliteMigrations } from '../../storage/index.js';
 import { ToolPermissionService } from '../../agent/tool-permission-service.js';
 import { ToolInvocationsRetentionWorker } from '../../agent/tool-invocations-retention-worker.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { SilentLogger } from '../../utils/logger.js';
 
 function setup() {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
   const permissions = new ToolPermissionService(db);
-  const worker = new ToolInvocationsRetentionWorker(permissions, new SilentLogger(), {
+  /* 分片 Plan 2 · Task 4：worker ctor 由收 permissions 改收 resolver（内部逐 shard new ToolPermissionService）。
+   * 单库测试用 SingleDbResolver(db)——allShardDbs()=[db]，行为等价现状。 */
+  const worker = new ToolInvocationsRetentionWorker(new SingleDbResolver(db), new SilentLogger(), {
     intervalMs: 60_000,
     retentionMs: 90 * 24 * 60 * 60 * 1000,
     batchSize: 100,

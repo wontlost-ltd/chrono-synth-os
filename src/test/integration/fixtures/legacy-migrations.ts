@@ -1308,6 +1308,57 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "/* safe:if-table-exists:github_reply_drafts_old */ CREATE INDEX IF NOT EXISTS idx_github_reply_drafts_lookup ON github_reply_drafts (tenant_id, persona_id, status)",
       "/* safe:if-table-exists:github_reply_drafts_old */ DROP TABLE IF EXISTS github_reply_drafts_old"
     ]
+  },
+  {
+    "version": "v123",
+    "description": "Tenant sharding Phase 0 Plan 1c: coordinator tenant_identity_directory (email/token/key lookup → tenant; PENDING/ACTIVE mixed-scope state)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_identity_directory (\n    tenant_id TEXT NOT NULL,\n    user_id TEXT,\n    operation_id TEXT NOT NULL,\n    operation_kind TEXT NOT NULL CHECK(operation_kind IN ('REGISTER', 'EMAIL_CHANGE', 'TOKEN', 'API_KEY')),\n    previous_lookup_value TEXT,\n    pending_password_hash TEXT,\n    lookup_kind TEXT NOT NULL CHECK(lookup_kind IN ('email', 'refresh_token_hash', 'api_key_hash')),\n    lookup_value TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE')),\n    created_at INTEGER NOT NULL,\n    updated_at INTEGER NOT NULL,\n    UNIQUE(lookup_kind, lookup_value)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tid_tenant ON tenant_identity_directory(tenant_id)"
+    ]
+  },
+  {
+    "version": "v124",
+    "description": "Tenant sharding Phase 0 Plan 1c: tenant_bootstrap marker (PK tenant+op) + historical identity backfill into tenant_identity_directory (email normalized; duplicate-email fail-closed)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_bootstrap (\n      tenant_id TEXT NOT NULL,\n      operation_id TEXT NOT NULL,\n      status TEXT NOT NULL CHECK (status IN ('COMPLETE')),\n      created_at INTEGER NOT NULL,\n      PRIMARY KEY (tenant_id, operation_id)\n    )",
+      "DROP TABLE IF EXISTS _v124_duplicate_email_abort",
+      "CREATE TEMP TABLE _v124_duplicate_email_abort (must_be_unique_normalized_email TEXT NOT NULL UNIQUE)",
+      "INSERT INTO _v124_duplicate_email_abort (must_be_unique_normalized_email) SELECT LOWER(TRIM(email)) FROM users",
+      "DROP TABLE _v124_duplicate_email_abort",
+      "UPDATE users SET email = LOWER(TRIM(email))",
+      "INSERT OR IGNORE INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, id, 'backfill', 'REGISTER', NULL, NULL, 'email', LOWER(TRIM(email)), 'ACTIVE', created_at, updated_at\n     FROM users",
+      "/* safe:if-table-exists:refresh_tokens */ INSERT OR IGNORE INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT u.tenant_id, rt.user_id, 'backfill', 'TOKEN', NULL, NULL, 'refresh_token_hash', rt.token_hash, 'ACTIVE', rt.created_at, rt.created_at\n     FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id",
+      "/* safe:if-table-exists:api_keys */ INSERT OR IGNORE INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, NULL, 'backfill', 'API_KEY', NULL, NULL, 'api_key_hash', key_hash, 'ACTIVE', created_at, created_at\n     FROM api_keys"
+    ]
+  },
+  {
+    "version": "v125",
+    "description": "GitHub ingest digests: add discussion_key + memory_id columns for evolutionary supersede",
+    "sql": [
+      "ALTER TABLE github_ingest_digests ADD COLUMN discussion_key TEXT",
+      "ALTER TABLE github_ingest_digests ADD COLUMN memory_id TEXT",
+      "CREATE INDEX IF NOT EXISTS idx_github_ingest_digests_discussion\n      ON github_ingest_digests (tenant_id, persona_id, discussion_key)"
+    ]
+  },
+  {
+    "version": "v126",
+    "description": "GitHub org residency: github_learn_state resource_type CHECK adds _org_rotation sentinel",
+    "sql": [
+      "/* safe:if-table-exists:github_learn_state */ ALTER TABLE github_learn_state RENAME TO github_learn_state_old",
+      "/* safe:if-table-exists:github_learn_state_old */ DROP INDEX IF EXISTS idx_github_learn_state_key",
+      "/* safe:if-table-exists:github_learn_state_old */ CREATE TABLE IF NOT EXISTS github_learn_state (\n      id TEXT PRIMARY KEY,\n      tenant_id TEXT NOT NULL,\n      persona_id TEXT NOT NULL,\n      repo TEXT NOT NULL,\n      resource_type TEXT NOT NULL CHECK (resource_type IN ('code', 'issues', 'pulls', 'commits', '_org_rotation')),\n      cursor TEXT,\n      cursor_advanced_at INTEGER,\n      last_synced_at INTEGER,\n      created_at INTEGER NOT NULL,\n      updated_at INTEGER NOT NULL\n    )",
+      "/* safe:if-table-exists:github_learn_state_old */ INSERT OR IGNORE INTO github_learn_state (id, tenant_id, persona_id, repo, resource_type, cursor, cursor_advanced_at, last_synced_at, created_at, updated_at)\n     SELECT id, tenant_id, persona_id, repo, resource_type, cursor, cursor_advanced_at, last_synced_at, created_at, updated_at FROM github_learn_state_old",
+      "/* safe:if-table-exists:github_learn_state_old */ CREATE UNIQUE INDEX IF NOT EXISTS idx_github_learn_state_key\n      ON github_learn_state (tenant_id, persona_id, repo, resource_type)",
+      "/* safe:if-table-exists:github_learn_state_old */ DROP TABLE IF EXISTS github_learn_state_old"
+    ]
+  },
+  {
+    "version": "v127",
+    "description": "GitHub install entrypoint: github_installations adds suspended_at",
+    "sql": [
+      "ALTER TABLE github_installations ADD COLUMN suspended_at INTEGER"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2584,6 +2635,50 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
       "ALTER TABLE github_reply_drafts ADD CONSTRAINT github_reply_drafts_status_check CHECK (status IN ('drafted', 'approved', 'rejected', 'published'))",
       "ALTER TABLE github_reply_drafts ADD COLUMN IF NOT EXISTS published_at BIGINT",
       "ALTER TABLE github_reply_drafts ADD COLUMN IF NOT EXISTS github_ref TEXT"
+    ]
+  },
+  {
+    "version": "v125",
+    "description": "Tenant sharding Phase 0 Plan 1c: coordinator tenant_identity_directory (email/token/key lookup → tenant; PENDING/ACTIVE mixed-scope state)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_identity_directory (\n    tenant_id TEXT NOT NULL,\n    user_id TEXT,\n    operation_id TEXT NOT NULL,\n    operation_kind TEXT NOT NULL CHECK(operation_kind IN ('REGISTER', 'EMAIL_CHANGE', 'TOKEN', 'API_KEY')),\n    previous_lookup_value TEXT,\n    pending_password_hash TEXT,\n    lookup_kind TEXT NOT NULL CHECK(lookup_kind IN ('email', 'refresh_token_hash', 'api_key_hash')),\n    lookup_value TEXT NOT NULL,\n    status TEXT NOT NULL CHECK(status IN ('PENDING', 'ACTIVE')),\n    created_at BIGINT NOT NULL,\n    updated_at BIGINT NOT NULL,\n    UNIQUE(lookup_kind, lookup_value)\n  )",
+      "CREATE INDEX IF NOT EXISTS idx_tid_tenant ON tenant_identity_directory (tenant_id)"
+    ]
+  },
+  {
+    "version": "v126",
+    "description": "Tenant sharding Phase 0 Plan 1c: tenant_bootstrap marker (PK tenant+op) + historical identity backfill into tenant_identity_directory (email normalized; duplicate-email fail-closed)",
+    "sql": [
+      "CREATE TABLE IF NOT EXISTS tenant_bootstrap (\n      tenant_id TEXT NOT NULL,\n      operation_id TEXT NOT NULL,\n      status TEXT NOT NULL CHECK (status IN ('COMPLETE')),\n      created_at BIGINT NOT NULL,\n      PRIMARY KEY (tenant_id, operation_id)\n    )",
+      "DO $$\n     BEGIN\n       IF EXISTS (\n         SELECT 1 FROM users GROUP BY lower(trim(email)) HAVING count(*) > 1\n       ) THEN\n         RAISE EXCEPTION 'v124 tenant-bootstrap-backfill aborted: duplicate normalized email in users (LOWER(TRIM(email))); manual cleanup required before re-running (_v124_duplicate_email_abort)';\n       END IF;\n     END $$",
+      "UPDATE users SET email = lower(trim(email))",
+      "INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, id, 'backfill', 'REGISTER', NULL, NULL, 'email', lower(trim(email)), 'ACTIVE', created_at, updated_at\n     FROM users\n     ON CONFLICT (lookup_kind, lookup_value) DO NOTHING",
+      "INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT u.tenant_id, rt.user_id, 'backfill', 'TOKEN', NULL, NULL, 'refresh_token_hash', rt.token_hash, 'ACTIVE', rt.created_at, rt.created_at\n     FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id\n     ON CONFLICT (lookup_kind, lookup_value) DO NOTHING",
+      "INSERT INTO tenant_identity_directory (tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at)\n     SELECT tenant_id, NULL, 'backfill', 'API_KEY', NULL, NULL, 'api_key_hash', key_hash, 'ACTIVE', created_at, created_at\n     FROM api_keys\n     ON CONFLICT (lookup_kind, lookup_value) DO NOTHING"
+    ]
+  },
+  {
+    "version": "v127",
+    "description": "GitHub ingest digests: add discussion_key + memory_id columns for evolutionary supersede",
+    "sql": [
+      "ALTER TABLE github_ingest_digests ADD COLUMN IF NOT EXISTS discussion_key TEXT",
+      "ALTER TABLE github_ingest_digests ADD COLUMN IF NOT EXISTS memory_id TEXT",
+      "CREATE INDEX IF NOT EXISTS idx_github_ingest_digests_discussion\n      ON github_ingest_digests (tenant_id, persona_id, discussion_key)"
+    ]
+  },
+  {
+    "version": "v128",
+    "description": "GitHub org residency: github_learn_state resource_type CHECK adds _org_rotation sentinel",
+    "sql": [
+      "ALTER TABLE github_learn_state DROP CONSTRAINT IF EXISTS github_learn_state_resource_type_check",
+      "ALTER TABLE github_learn_state ADD CONSTRAINT github_learn_state_resource_type_check CHECK (resource_type IN ('code', 'issues', 'pulls', 'commits', '_org_rotation'))"
+    ]
+  },
+  {
+    "version": "v129",
+    "description": "GitHub install entrypoint: github_installations adds suspended_at",
+    "sql": [
+      "ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS suspended_at BIGINT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];

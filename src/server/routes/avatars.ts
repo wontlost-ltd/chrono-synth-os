@@ -14,6 +14,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import type { JwtPayload } from '../../types/auth.js';
@@ -28,10 +29,11 @@ import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index
 import { CreateAvatarSchema, UpdateAvatarSchema } from '../schemas/api-schemas.js';
 import { currentGlobalSeq } from '../plugins/websocket.js';
 
-export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
+export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: ChronoSynthOS, resolver: TenantDbResolver, tenantFactory?: TenantOSFactory): void {
   const tx = db;
-  const identityService = new IdentityService(tx);
-  const avatarService = new AvatarService(tx);
+  /* 分片 Plan 1b（Task 2 Avatar 组）：IdentityService/AvatarService 均经共享 resolver 按 tenantId 路由。 */
+  const identityService = new IdentityService(resolver);
+  const avatarService = new AvatarService(resolver);
   const snapshotService = new AvatarSnapshotService(tx, app.log);
 
   function getTenantOS(tenantId: string): ChronoSynthOS {
@@ -40,14 +42,14 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   }
 
   function requireIdentity(user: JwtPayload) {
-    const identity = identityService.getByUser(user.sub);
+    const identity = identityService.getByUser(user.tenantId, user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
     return identity;
   }
 
   function requireOwnedAvatar(user: JwtPayload, avatarId: string) {
     const identity = requireIdentity(user);
-    const avatar = avatarService.getByIdForIdentity(avatarId, identity.id);
+    const avatar = avatarService.getByIdForIdentity(user.tenantId, avatarId, identity.id);
     if (!avatar) throw new NotFoundError(`分身 ${avatarId} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
     return { identity, avatar };
   }
@@ -66,7 +68,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   app.get('/api/v1/avatars', async (request) => {
     const user = request.user as JwtPayload;
     const identity = requireIdentity(user);
-    const avatars = avatarService.listByIdentity(identity.id);
+    const avatars = avatarService.listByIdentity(user.tenantId, identity.id);
     return { data: avatars.map(toAvatarDto) };
   });
 
@@ -79,7 +81,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     /* 配额检查 */
     const limits = getPlanLimits(user.planId ?? 'free');
     if (limits.maxAvatars >= 0) {
-      const count = avatarService.countActive(identity.id);
+      const count = avatarService.countActive(user.tenantId, identity.id);
       if (count >= limits.maxAvatars) {
         throw new QuotaExceededError(
           `分身配额已满（${limits.maxAvatars}），请升级计划`,
@@ -88,7 +90,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
       }
     }
 
-    const avatar = avatarService.create(identity.id, body);
+    const avatar = avatarService.create(user.tenantId, identity.id, body);
     return reply.status(201).send({ data: toAvatarDto(avatar) });
   });
 
@@ -104,7 +106,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
     const user = request.user as JwtPayload;
     const { identity } = requireOwnedAvatar(user, request.params.id);
     const body = UpdateAvatarSchema.parse(request.body);
-    const avatar = avatarService.updateForIdentity(request.params.id, identity.id, body);
+    const avatar = avatarService.updateForIdentity(user.tenantId, request.params.id, identity.id, body);
     if (!avatar) throw new NotFoundError(`分身 ${request.params.id} 不存在`, ErrorCode.NOT_FOUND_AVATAR);
     return { data: avatar };
   });
@@ -113,7 +115,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   app.delete<{ Params: { id: string } }>('/api/v1/avatars/:id', async (request, reply) => {
     const user = request.user as JwtPayload;
     const { identity } = requireOwnedAvatar(user, request.params.id);
-    const deleted = avatarService.softDeleteForIdentity(request.params.id, identity.id);
+    const deleted = avatarService.softDeleteForIdentity(user.tenantId, request.params.id, identity.id);
     if (!deleted) throw new NotFoundError(`分身 ${request.params.id} 不存在或为默认分身`, ErrorCode.NOT_FOUND_AVATAR);
     return reply.status(204).send();
   });

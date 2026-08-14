@@ -7,14 +7,45 @@
 import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { getMetricsSnapshot, getTotalRequests } from '../plugins/metrics.js';
 import { getWsConnectionCount } from '../plugins/websocket.js';
 import { billingMetrics } from '../../billing/billing-outbox.js';
+import { mediaRetentionMetrics } from '../../perception/media/media-retention-worker.js';
 import { llmMetrics } from '../../intelligence/model-router.js';
 import { safetyMetrics } from '../../intelligence/llm-safety.js';
 import { calculatePercentile } from '../plugins/metrics.js';
 import { observabilityPipelineMetrics } from '../../observability/observability-outbox.js';
 import { MetricsQueryService } from '../../observability/metrics-query-service.js';
+import type { ShardAggregate } from '../../observability/shard-aggregate.js';
+
+/**
+ * 折叠一次 scrape 里多个 scatter-gather 聚合的降级信号：任一聚合有 shard 失败 → degraded，
+ * 各聚合的 shardErrors 汇总（同 shardKey 去重，避免同一坏 shard 在 5 个聚合里重复 5 次）。
+ */
+class ShardHealthCollector {
+  private readonly byShard = new Map<string, string>();
+
+  /** 记录一次聚合的降级明细，返回其 data（解包）。 */
+  take<T>(aggregate: ShardAggregate<T>): T {
+    for (const { shardKey, error } of aggregate.shardErrors) {
+      if (!this.byShard.has(shardKey)) this.byShard.set(shardKey, error);
+    }
+    return aggregate.data;
+  }
+
+  get degraded(): boolean {
+    return this.byShard.size > 0;
+  }
+
+  get failureCount(): number {
+    return this.byShard.size;
+  }
+
+  get shardErrors(): Array<{ shardKey: string; error: string }> {
+    return [...this.byShard.entries()].map(([shardKey, error]) => ({ shardKey, error }));
+  }
+}
 
 function llmLatencyPercentiles(arr: number[]): { p50: number; p90: number; p99: number } {
   if (arr.length === 0) return { p50: 0, p90: 0, p99: 0 };
@@ -38,14 +69,17 @@ function safeRate(numerator: number, denominator: number): number {
 
 const startTime = Date.now();
 
-export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, config?: AppConfig): void {
+export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, resolver: TenantDbResolver, config?: AppConfig): void {
   const retentionMs = config?.observability.metricsRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
-  const metricsService = new MetricsQueryService(os.getDatabase());
+  /* 跨租户聚合走 resolver.allShardDbs() scatter-gather（单库下=[db]，行为等价现状）。 */
+  const metricsService = new MetricsQueryService(resolver);
 
   app.get('/metrics', async () => {
     const mem = process.memoryUsage();
-    const outbox = metricsService.getBillingOutboxBacklog();
-    const observability = metricsService.getObservabilitySummary();
+    /* 本次 scrape 的 shard 健康折叠：解包各聚合 data，汇总 degraded/shardErrors。 */
+    const health = new ShardHealthCollector();
+    const outbox = health.take(metricsService.getBillingOutboxBacklog());
+    const observability = health.take(metricsService.getObservabilitySummary());
     const runtimeAvgDuration = safeAverage(observability.rollup.runtime_duration_total_ms, observability.rollup.runtime_completed_count);
     const taskSuccessRate = safeRate(observability.rollup.task_success_count, observability.rollup.task_terminal_count);
     const walletSettlementLatency = safeAverage(observability.rollup.wallet_settlement_latency_total_ms, observability.rollup.wallet_settlement_count);
@@ -61,7 +95,7 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         /* ①度量 surface：平台人群多样性（跨租户 decision_style 群体统计）。
          * initialized_population = 已写过决策风格 row 的租户数（懒默认租户不计入）。 */
         population_diversity: (() => {
-          const d = metricsService.getPopulationDiversity();
+          const d = health.take(metricsService.getPopulationDiversity());
           return {
             initialized_population: d.count,
             diversity_score: Math.round(d.diversityScore * 10_000) / 10_000,
@@ -76,6 +110,12 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         meter_events_failed: billingMetrics.meterEventsFailed,
         outbox_pending: outbox.pending,
         outbox_failed: outbox.failed,
+      },
+      /* 感知媒体 retention（GDPR Art.17 fan-out）：坏 shard 擦除失败计数 + 降级状态。
+       * 唯一来源=模块级 mediaRetentionMetrics（worker flushOnce 写、此处只读，不经 worker 实例）。 */
+      media_retention: {
+        shard_erase_failures: mediaRetentionMetrics.shardEraseFailures,
+        degraded: mediaRetentionMetrics.degraded,
       },
       llm: {
         chat_calls: llmMetrics.chatCalls,
@@ -130,13 +170,20 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         },
         last_updated_at: observability.rollup.updated_at > 0 ? new Date(observability.rollup.updated_at).toISOString() : null,
       },
-      queue: metricsService.getQueueBacklog(),
+      queue: health.take(metricsService.getQueueBacklog()),
       system: {
         memory_mb: {
           rss: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
           heapUsed: Math.round(mem.heapUsed / 1024 / 1024 * 100) / 100,
         },
         ws_connections_active: getWsConnectionCount(),
+      },
+      /* 跨 shard scatter-gather 健康：degraded=有 shard 失败（本次 scrape 是部分聚合）；
+       * shardErrors 逐坏-shard 明细（稳定 shardKey）。单库/全 shard 健康时 degraded=false、shardErrors=[]。 */
+      sharding: {
+        degraded: health.degraded,
+        shard_failures: health.failureCount,
+        shard_errors: health.shardErrors,
       },
     };
   });
@@ -149,7 +196,9 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     const personaCount = os.accelerated.getAllPersonas().length;
     const conflictCount = os.meta.conflicts.getUnresolved().length;
     const snapshotCount = os.snapshots.list().length;
-    const observability = metricsService.getObservabilitySummary();
+    /* 本次 scrape 的 shard 健康折叠（同 JSON 端点），最后暴露 degraded gauge + shard failure counter。 */
+    const health = new ShardHealthCollector();
+    const observability = health.take(metricsService.getObservabilitySummary());
     const runtimeAvgDuration = safeAverage(observability.rollup.runtime_duration_total_ms, observability.rollup.runtime_completed_count);
     const taskSuccessRate = safeRate(observability.rollup.task_success_count, observability.rollup.task_terminal_count);
     const walletSettlementLatency = safeAverage(observability.rollup.wallet_settlement_latency_total_ms, observability.rollup.wallet_settlement_count);
@@ -189,7 +238,7 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     lines.push('# TYPE chrono_snapshots_total gauge');
     lines.push(`chrono_snapshots_total ${snapshotCount}`);
     /* ①度量 surface：平台人群多样性（跨租户 decision_style 群体统计）。 */
-    const diversity = metricsService.getPopulationDiversity();
+    const diversity = health.take(metricsService.getPopulationDiversity());
     /* 口径：population = **已初始化 decision_style row** 的租户数，非全部租户——懒默认（从未写过
      * 决策风格）的租户不计入，也不参与多样性。指标名带 _initialized_ 明确这一口径，避免误读为总租户数。 */
     lines.push('# HELP chrono_persona_population_initialized_total 已初始化决策风格的人格数（跨租户，多样性度量基数；不含懒默认租户）');
@@ -212,11 +261,18 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     lines.push(`chrono_billing_meter_events_total{status="processed"} ${billingMetrics.meterEventsProcessed}`);
     lines.push(`chrono_billing_meter_events_total{status="failed"} ${billingMetrics.meterEventsFailed}`);
 
-    const outbox = metricsService.getBillingOutboxBacklog();
+    const outbox = health.take(metricsService.getBillingOutboxBacklog());
     lines.push('# HELP chrono_billing_outbox_backlog 计量发件箱积压');
     lines.push('# TYPE chrono_billing_outbox_backlog gauge');
     lines.push(`chrono_billing_outbox_backlog{status="pending"} ${outbox.pending}`);
     lines.push(`chrono_billing_outbox_backlog{status="failed"} ${outbox.failed}`);
+    /* 感知媒体 retention fan-out（GDPR Art.17）：坏 shard 擦除失败计数（可告警）+ 降级 gauge。 */
+    lines.push('# HELP chrono_media_retention_shard_erase_failures_total 媒体 retention shard 擦除失败累计（坏 shard 或 failed>0）');
+    lines.push('# TYPE chrono_media_retention_shard_erase_failures_total counter');
+    lines.push(`chrono_media_retention_shard_erase_failures_total ${mediaRetentionMetrics.shardEraseFailures}`);
+    lines.push('# HELP chrono_media_retention_degraded 媒体 retention 降级状态（0=健康，1=有 shard 连续失败）');
+    lines.push('# TYPE chrono_media_retention_degraded gauge');
+    lines.push(`chrono_media_retention_degraded ${mediaRetentionMetrics.degraded}`);
     lines.push('# HELP chrono_observability_events_total 异步观测事件处理统计');
     lines.push('# TYPE chrono_observability_events_total counter');
     lines.push(`chrono_observability_events_total{status="enqueued"} ${observabilityPipelineMetrics.eventsEnqueued}`);
@@ -294,14 +350,14 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
     lines.push('# TYPE chrono_llm_fallbacks_total counter');
     lines.push(`chrono_llm_fallbacks_total ${llmMetrics.fallbacks}`);
 
-    const queueBacklog = metricsService.getQueueBacklog();
+    const queueBacklog = health.take(metricsService.getQueueBacklog());
     lines.push('# HELP chrono_queue_backlog 任务队列积压');
     lines.push('# TYPE chrono_queue_backlog gauge');
     lines.push(`chrono_queue_backlog{status="pending"} ${queueBacklog.pending}`);
     lines.push(`chrono_queue_backlog{status="running"} ${queueBacklog.running}`);
     lines.push(`chrono_queue_backlog{status="failed"} ${queueBacklog.failed}`);
 
-    const tenantUsage = metricsService.getTenantUsage(retentionMs);
+    const tenantUsage = health.take(metricsService.getTenantUsage(retentionMs));
     if (tenantUsage.length > 0) {
       const retentionDays = Math.round(retentionMs / (24 * 60 * 60 * 1000));
       lines.push(`# HELP chrono_tenant_usage 每租户资源使用量（最近${retentionDays}天）`);
@@ -310,6 +366,15 @@ export function registerMetricsRoutes(app: FastifyInstance, os: ChronoSynthOS, c
         lines.push(`chrono_tenant_usage{tenant="${row.tenant_id}",resource="${row.resource}"} ${row.total}`);
       }
     }
+
+    /* 跨 shard scatter-gather 健康（Plan 2 · Task 5）：degraded gauge（0=全 shard 健康，1=有 shard 失败=部分
+     * 聚合）+ shard 失败数 counter。运维据此告警「本次 metrics 是降级值，勿据其做容量决策」——非静默当零。 */
+    lines.push('# HELP chrono_metrics_shard_degraded 跨租户指标聚合降级状态（0=全 shard 健康，1=有 shard 失败=部分聚合）');
+    lines.push('# TYPE chrono_metrics_shard_degraded gauge');
+    lines.push(`chrono_metrics_shard_degraded ${health.degraded ? 1 : 0}`);
+    lines.push('# HELP chrono_metrics_shard_failures 本次 scrape 中聚合失败的 shard 数（去重）');
+    lines.push('# TYPE chrono_metrics_shard_failures gauge');
+    lines.push(`chrono_metrics_shard_failures ${health.failureCount}`);
 
     return reply
       .header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')

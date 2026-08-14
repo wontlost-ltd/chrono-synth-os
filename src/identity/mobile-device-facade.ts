@@ -6,8 +6,9 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import type { JwtPayload } from '../types/auth.js';
 import type { PushService } from '../types/push.js';
-import { IdentityService } from './identity-service.js';
-import { AvatarService } from './avatar-service.js';
+import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
+import { IdentityWriter } from './identity-service.js';
+import { AvatarWriter } from './avatar-service.js';
 import { MobileDeviceService } from './mobile-device-service.js';
 import { DeviceAvatarService } from './device-avatar-service.js';
 import { NotFoundError, ErrorCode } from '../errors/index.js';
@@ -22,14 +23,30 @@ export interface RegisterDeviceInput {
 export class MobileDeviceFacade {
   private readonly deviceService: MobileDeviceService;
   private readonly deviceAvatarService: DeviceAvatarService;
-  private readonly identityService: IdentityService;
-  private readonly avatarService: AvatarService;
 
-  constructor(tx: SyncWriteUnitOfWork, private readonly pushService: PushService) {
-    this.deviceService = new MobileDeviceService(tx);
-    this.deviceAvatarService = new DeviceAvatarService(tx);
-    this.identityService = new IdentityService(tx);
-    this.avatarService = new AvatarService(tx);
+  /**
+   * 分片 Plan 1b：facade 持 `tx`，身份读/分身读经 tenant-bound `IdentityWriter`/`AvatarWriter(user.tenantId, tx)` seam
+   * （非 `new IdentityService/AvatarService(tx)`）。`DeviceAvatarService`（Task 2 Avatar 组）+
+   * `MobileDeviceService`（Task 3 Mobile 组，device 表有 tenant_id）均已 resolver 化，故都收 `resolver`。
+   * 一次调用解析一次 tx：device 读写走 `deviceService.<method>(user.tenantId, …)`（内部 dbForTenant）。
+   */
+  constructor(
+    private readonly tx: SyncWriteUnitOfWork,
+    resolver: TenantDbResolver,
+    private readonly pushService: PushService,
+  ) {
+    this.deviceService = new MobileDeviceService(resolver);
+    this.deviceAvatarService = new DeviceAvatarService(resolver);
+  }
+
+  /** 用调用方 JWT 的 tenantId 现造 tenant-bound 身份读内核（不缓存）。 */
+  private identityWriter(user: JwtPayload): IdentityWriter {
+    return new IdentityWriter(user.tenantId, this.tx);
+  }
+
+  /** 用调用方 JWT 的 tenantId 现造 tenant-bound 分身读内核（不缓存）。 */
+  private avatarWriter(user: JwtPayload): AvatarWriter {
+    return new AvatarWriter(user.tenantId, this.tx);
   }
 
   register(user: JwtPayload, input: RegisterDeviceInput) {
@@ -37,49 +54,49 @@ export class MobileDeviceFacade {
   }
 
   listDevices(user: JwtPayload) {
-    return this.deviceService.listByUser(user.sub);
+    return this.deviceService.listByUser(user.tenantId, user.sub);
   }
 
   updatePushToken(user: JwtPayload, deviceId: string, pushToken: string) {
-    return this.deviceService.updatePushToken(deviceId, user.sub, pushToken);
+    return this.deviceService.updatePushToken(user.tenantId, deviceId, user.sub, pushToken);
   }
 
   deleteDevice(user: JwtPayload, deviceId: string): void {
-    this.deviceService.delete(deviceId, user.sub);
+    this.deviceService.delete(user.tenantId, deviceId, user.sub);
   }
 
   installAvatar(user: JwtPayload, deviceId: string, avatarId: string) {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     this.requireOwnedAvatar(user, avatarId);
-    return this.deviceAvatarService.install(deviceId, avatarId);
+    return this.deviceAvatarService.install(user.tenantId, deviceId, avatarId);
   }
 
   uninstallAvatar(user: JwtPayload, deviceId: string, avatarId: string): boolean {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     this.requireOwnedAvatar(user, avatarId);
-    const ok = this.deviceAvatarService.uninstall(deviceId, avatarId);
+    const ok = this.deviceAvatarService.uninstall(user.tenantId, deviceId, avatarId);
     if (!ok) throw new NotFoundError('该分身未安装在此设备', ErrorCode.NOT_FOUND_AVATAR);
     return true;
   }
 
   activateAvatar(user: JwtPayload, deviceId: string, avatarId: string): { deviceId: string; avatarId: string; active: true } {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     this.requireOwnedAvatar(user, avatarId);
-    const ok = this.deviceAvatarService.activate(deviceId, avatarId);
+    const ok = this.deviceAvatarService.activate(user.tenantId, deviceId, avatarId);
     if (!ok) throw new NotFoundError('该分身未安装在此设备', ErrorCode.NOT_FOUND_AVATAR);
     return { deviceId, avatarId, active: true };
   }
 
   listDeviceAvatars(user: JwtPayload, deviceId: string) {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
-    const identity = this.identityService.getByUser(user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
+    const identity = this.identityWriter(user).getByUser(user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
-    const avatars = this.deviceAvatarService.listByDevice(deviceId);
+    const avatars = this.deviceAvatarService.listByDevice(user.tenantId, deviceId);
     return avatars.filter((avatar) => avatar.identityId === identity.id);
   }
 
   async sendPushTest(user: JwtPayload, deviceId: string, body?: { title?: string; body?: string }) {
-    this.deviceService.requireOwnedDevice(deviceId, user.sub);
+    this.deviceService.requireOwnedDeviceForTenant(user.tenantId, deviceId, user.sub);
     await this.pushService.send(user.tenantId, deviceId, {
       title: body?.title ?? 'ChronoSynthOS 测试推送',
       body: body?.body ?? '这是一条测试推送通知',
@@ -89,9 +106,9 @@ export class MobileDeviceFacade {
   }
 
   private requireOwnedAvatar(user: JwtPayload, avatarId: string) {
-    const identity = this.identityService.getByUser(user.sub);
+    const identity = this.identityWriter(user).getByUser(user.sub);
     if (!identity) throw new NotFoundError('身份不存在', ErrorCode.NOT_FOUND_IDENTITY);
-    const avatar = this.avatarService.getByIdForIdentity(avatarId, identity.id);
+    const avatar = this.avatarWriter(user).getByIdForIdentity(avatarId, identity.id);
     if (!avatar) throw new NotFoundError('分身不存在', ErrorCode.NOT_FOUND_AVATAR);
     return avatar;
   }

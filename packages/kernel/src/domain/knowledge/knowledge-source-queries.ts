@@ -76,6 +76,8 @@ export interface KsrcUpdateParams {
 
 export interface KsrcUpdateStateParams {
   id: string;
+  /* 分片 Phase 0 · Plan 1b（Task 5）：updateState 补 tenantId → UPDATE 加 AND tenant_id=? 隔离洞收口。 */
+  tenantId: string;
   stateJson: string | null;
   lastIngestedAt: number;
   now: number;

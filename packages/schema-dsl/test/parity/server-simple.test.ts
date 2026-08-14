@@ -38,6 +38,9 @@ describe('server-simple coverage', () => {
       'v119',
       /* life_simulations owner_user_id 安全修复（模拟归属权，owner-only 分享鉴权；pg alias v120）。 */
       'v120',
+      /* GitHub 讨论内容摄入：github_ingest_digests 加 discussion_key/memory_id
+         （演进式取代——同一 issue 恒为最新一版共识；simple v123 → pg alias v125）。 */
+      'v125',
     ]);
   });
 });

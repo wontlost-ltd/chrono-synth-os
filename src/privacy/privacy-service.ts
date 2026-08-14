@@ -9,6 +9,7 @@ import type { AppConfig } from '../config/schema.js';
 import type { IDatabase, SqlValue } from '../storage/database.js';
 import type { TenantOSFactory } from '../multi-tenant/tenant-os-factory.js';
 import { FieldEncryption } from '../storage/encryption.js';
+import { SingleDbResolver } from '../storage/tenant-db-resolver.js';
 import { TenantEnterpriseProfileService } from '../enterprise/tenant-enterprise-profile-service.js';
 import { generatePrefixedId } from '../utils/id-generator.js';
 import { compilePersonaState } from '../intelligence/persona-state.js';
@@ -121,6 +122,14 @@ const TENANT_TABLES = [
   /* GitHub 反馈起草段地基（Plan 3 Task 1）：github_reply_drafts 是回复草稿账本（起草停 drafted 待审批）；
      github_webhook_events 是 webhook 幂等账本（复合主键 tenant_id+delivery_id）。两表均含 tenant_id，须随租户导出/擦除 */
   'github_reply_drafts', 'github_webhook_events',
+  /* 租户分片 Phase 0 Plan 1c Task 1：tenant_identity_directory 是 coordinator 身份目录表（email/token/key
+     查找键→租户，含 pending_password_hash + 用户身份查找值）。行按 tenant_id 归属，须随租户导出/擦除（A 类）；
+     其全局查找语义只影响读路径（TenantDatabase），不影响此处按 tenant_id 的导出/擦除 */
+  'tenant_identity_directory',
+  /* 租户分片 Phase 0 Plan 1c Task 2：tenant_bootstrap 是 register 单事务的完成标记表（PK tenant_id+operation_id）。
+     行按 tenant_id 归属，须随租户导出/擦除（A 类）；与 tenant_identity_directory 不同，它按 tenant_id 查恢复、
+     无全局查找语义，可随 TenantDatabase 自动隔离，故不进 KNOWN_UNISOLATED */
+  'tenant_bootstrap',
 ] as const;
 
 /** 需要子查询关联的表 */
@@ -408,7 +417,12 @@ export class PrivacyService {
     const db = os.getDatabase();
     this.config = config;
     this.importTokenStore = importTokenStore ?? createImportTokenStore(db);
-    this.profileService = config ? new TenantEnterpriseProfileService(db, config) : undefined;
+    /* 分片 Plan 1b（Task 6）：TenantEnterpriseProfileService ctor 已改收 resolver。
+     * PrivacyService 本身是更大 carrier（其 resolver 化归后续 Plan/Task），此处用 SingleDbResolver(host db)
+     * 桥接——单库下 dbForTenant/coordinatorDb 均返回同一 host db，行为等价现状、零回归（本 carrier edge 仍 planned）。 */
+    this.profileService = config
+      ? new TenantEnterpriseProfileService(new SingleDbResolver(db), config)
+      : undefined;
     this.fallbackEncryption = config?.encryption.enabled ? new FieldEncryption(config.encryption) : undefined;
     this.signingKey = config?.encryption.masterKey ?? 'change-me-in-production-32chars!';
     this.presignTtlSeconds = config?.objectStorage.presignTtlSeconds ?? 3600;

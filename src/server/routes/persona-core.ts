@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { JwtPayload } from '../../types/auth.js';
 import { AuthorizationError, NotFoundError, StateError, ValidationError, ErrorCode } from '../../errors/index.js';
@@ -337,17 +337,24 @@ export interface MarketplaceTaskCompletedEvent {
   readonly payout: number;
 }
 
-export function registerPersonaCoreRoutes(
-  app: FastifyInstance,
-  db: IDatabase,
-  config?: AppConfig,
+/** 人格内核路由依赖（分片 Phase 0 · Plan 1：resolver 必填，PersonaCoreService 经它路由 shard）。 */
+export interface PersonaCoreRoutesDeps {
+  /** 共享 TenantDbResolver（组合根唯一实例）。 */
+  resolver: TenantDbResolver;
+  /** 直查用 host db（保留供组合根注入；Task 6 后 TenantEnterpriseProfileService 已改经 resolver 路由）。 */
+  db: IDatabase;
+  config?: AppConfig;
   /** 可选：任务完成回调（earn→distill 闭环）。app.ts 注入经 tenantFactory 调 earningDistiller。 */
-  onTaskCompleted?: (event: MarketplaceTaskCompletedEvent) => void,
-): void {
-  const tx = db;
-  const profileService = config ? new TenantEnterpriseProfileService(tx, config) : undefined;
+  onTaskCompleted?: (event: MarketplaceTaskCompletedEvent) => void;
+}
+
+export function registerPersonaCoreRoutes(app: FastifyInstance, deps: PersonaCoreRoutesDeps): void {
+  const { resolver, config, onTaskCompleted } = deps;
+  /* 分片 Plan 1b（Task 6）：TenantEnterpriseProfileService 经共享 resolver 按 tenantId 路由 shard
+   * （getTenantEncryption 是 tenant-scoped，PersonaCoreService 据此取每租户加密）。 */
+  const profileService = config ? new TenantEnterpriseProfileService(resolver, config) : undefined;
   const service = PersonaCoreService.fromResolver(
-    new SingleDbResolver(tx),
+    resolver,
     profileService?.getTenantEncryption('default'),
     config?.runtime.recovery.sessionTimeoutMs,
     profileService ? (tenantId) => profileService.getTenantEncryption(tenantId) : undefined,

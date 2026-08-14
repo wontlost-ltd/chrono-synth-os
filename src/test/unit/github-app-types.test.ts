@@ -149,10 +149,12 @@ describe('github-app-types kernel 契约', () => {
         repos: null,
         created_at: 1,
         updated_at: 2,
+        /* v127 安装入口产品化：暂停状态列（可空，NULL=未暂停）。 */
+        suspended_at: null,
       };
       assert.deepEqual(Object.keys(row).sort(), [
         'account', 'created_at', 'github_host', 'id',
-        'installation_id', 'repos', 'tenant_id', 'updated_at',
+        'installation_id', 'repos', 'suspended_at', 'tenant_id', 'updated_at',
       ]);
     });
   });

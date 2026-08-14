@@ -30,7 +30,7 @@ import { z } from 'zod';
 import type { ChronoSynthOS } from '../../../chrono-synth-os.js';
 import type { TenantOSFactory } from '../../../multi-tenant/tenant-os-factory.js';
 import type { IDatabase } from '../../../storage/database.js';
-import { SingleDbResolver } from '../../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../../config/schema.js';
 import type { JwtPayload } from '../../../types/auth.js';
 import { AuthorizationError, QuotaExceededError, ValidationError, ErrorCode } from '../../../errors/index.js';
@@ -39,14 +39,12 @@ import { PerceptionDistiller } from '../../../perception/perception-distiller.js
 import type { PerceptionProvider } from '../../../perception/perception-provider.js';
 import { tryByokEncryption } from '../../../storage/llm-credential-store.js';
 import { selectPerceptionProvider } from './perception-provider-factory.js';
-import { GithubAppCredentialStore } from '../../../storage/github-app-credential-store.js';
+import { assembleGitHubReadPort } from '../../../integrations/github/github-readport-factory.js';
 import { GithubLearnStore } from '../../../storage/github-learn-store.js';
-import { GitHubAuthManager } from '../../../integrations/github/github-auth-manager.js';
-import { GitHubReadPortImpl, type GitHubReadPort } from '../../../integrations/github/github-read-port.js';
+import type { GitHubReadPort } from '../../../integrations/github/github-read-port.js';
 import {
   GitHubLearningService, type GitHubResourceType, type LearnGithubResult,
 } from '../../../integrations/github/github-learning-service.js';
-import { githubInstallListByTenant } from '@chrono/kernel';
 
 /** companion 单 persona core-self 的 personaId（与 chat/perceive 一致）。 */
 const COMPANION_PERSONA_ID = 'default';
@@ -70,23 +68,28 @@ export interface LearnGithubInjected {
   provider?: PerceptionProvider;
 }
 
-export function registerCompanionLearnGithubRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  tenantFactory: TenantOSFactory | undefined,
-  /** BYOK 选 provider + 装配 credential store 需要 db + config；测试可省略并用 injected。 */
-  db?: IDatabase,
-  config?: AppConfig,
-  injected?: LearnGithubInjected,
-): void {
-  const sharedDb = db ?? os.getDatabase();
+/** Companion GitHub 学习路由依赖（分片 Phase 0 · Plan 1：resolver 必填）。 */
+export interface CompanionLearnGithubRoutesDeps {
+  os: ChronoSynthOS;
+  tenantFactory: TenantOSFactory | undefined;
+  /** 共享 TenantDbResolver（组合根唯一实例；quotaManager 经它路由 shard）。 */
+  resolver: TenantDbResolver;
+  /** BYOK 选 provider + 装配 credential store 需要 db + config；直查用 host db（Plan 2）；缺省回退 os.getDatabase()。 */
+  db?: IDatabase;
+  config?: AppConfig;
+  injected?: LearnGithubInjected;
+}
+
+export function registerCompanionLearnGithubRoutes(app: FastifyInstance, deps: CompanionLearnGithubRoutesDeps): void {
+  const { os, tenantFactory, resolver, config, injected } = deps;
+  const sharedDb = deps.db ?? os.getDatabase();
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）——感官老师用。 */
   const llmEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   /* GithubAppCredentialStore 强制启用的 FieldEncryption（私钥/webhook secret 拒绝明文落库）；
    * 加密未启用时无凭据 store 可用——凭据装配路径会明确报「未连接」。 */
   const credEncryption = config ? tryByokEncryption(config.encryption) : undefined;
   /* 学习配额（与 perception 同口径——每次经感官老师 perceive 有成本；未设限额默认无限）。 */
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedDb));
+  const quotaManager = QuotaManager.fromResolver(resolver);
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
@@ -128,29 +131,16 @@ export function registerCompanionLearnGithubRoutes(
     if (!credEncryption) {
       throw new ValidationError('尚未连接 GitHub（本机未启用凭据加密，无法读取 GitHub App 凭据）——请先在设置里连接 GitHub');
     }
-    const credStore = new GithubAppCredentialStore(tenantOS.getDatabase(), credEncryption, tenantId);
-    const appCred = credStore.getApp();
-    if (!appCred) {
+    /* 装配本身走共享工厂（与起草/发布/组织同步 worker 同一实现）；本端点只负责把
+     * failure 翻译成面向用户的明确 4xx 文案。 */
+    const result = assembleGitHubReadPort(tenantOS.getDatabase(), credEncryption, tenantId, now);
+    if (result.failure === 'no-credential') {
       throw new ValidationError('尚未连接 GitHub——请先在设置里安装并连接 GitHub App，再让它学 repo');
     }
-    /* 取本租户最近一个 installation（首版：一个租户第一个 installation；listByTenant 按 created_at DESC）。 */
-    const installations = tenantOS.getDatabase().queryMany(githubInstallListByTenant(tenantId));
-    const installation = installations[0];
-    if (!installation) {
+    if (result.failure === 'no-installation') {
       throw new ValidationError('已配置 GitHub App 但尚无 installation——请在 GitHub 上把 App 安装到目标仓库后再试');
     }
-
-    const auth = new GitHubAuthManager({
-      getApp: () => ({ appId: appCred.appId, privateKeyPem: appCred.privateKeyPem, gheBaseUrl: appCred.gheBaseUrl }),
-      installationId: installation.installation_id,
-      now,
-    });
-    /* GHE 自托管：ReadPort 走企业 API base，并把企业 host 放进 SSRF allowlist；公有云走默认。 */
-    if (appCred.gheBaseUrl) {
-      const host = new URL(appCred.gheBaseUrl).hostname;
-      return new GitHubReadPortImpl(auth, { apiBase: appCred.gheBaseUrl, hostAllowlist: [host] });
-    }
-    return new GitHubReadPortImpl(auth);
+    return result.readPort!;
   }
 
   /* POST /api/v1/companion/me/learn-github —「让 TA 学一个 GitHub repo」 */
@@ -180,6 +170,8 @@ export function registerCompanionLearnGithubRoutes(
     /* 编排：增量拉取 → digest 原子摄入 → 游标成功才推进。零新领域逻辑，只确定性编排。 */
     const service = new GitHubLearningService({
       readPort, store, distiller, tenantId: request.tenantId, personaId: COMPANION_PERSONA_ID,
+      /* 演进式取代需删同讨论旧记忆——注入本租户 OS 的记忆图。 */
+      memories: tenantOS.core.memories,
     });
     const result: LearnGithubResult = await service.learn(body.repo, resourceTypes);
 

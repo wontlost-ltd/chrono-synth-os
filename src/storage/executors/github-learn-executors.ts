@@ -25,10 +25,12 @@ import type {
   GithubLearnStateRow, GithubIngestDigestRow,
   GithubLearnStateKeyParams, GithubLearnStateUpsertCursorParams,
   GithubIngestDigestKeyParams, GithubDigestClaimParams, GithubDigestMarkIngestedParams,
+  GithubDigestByDiscussionKeyParams, GithubDigestSetMemoryIdParams,
 } from '@chrono/kernel';
 import {
   GITHUB_LEARN_STATE_QUERY, GITHUB_LEARN_STATE_CMD_UPSERT_CURSOR,
   GITHUB_INGEST_DIGEST_QUERY, GITHUB_INGEST_DIGEST_CMD_CLAIM, GITHUB_INGEST_DIGEST_CMD_MARK_INGESTED,
+  GITHUB_INGEST_DIGEST_QUERY_BY_DISCUSSION, GITHUB_INGEST_DIGEST_CMD_SET_MEMORY_ID,
 } from '@chrono/kernel';
 
 export function registerGithubLearnExecutors(): void {
@@ -90,11 +92,12 @@ export function registerGithubLearnExecutors(): void {
   registerCommand<GithubDigestClaimParams>(GITHUB_INGEST_DIGEST_CMD_CLAIM, (db, p) => {
     const result = db.prepare<void>(
       `INSERT INTO github_ingest_digests
-         (id, tenant_id, persona_id, repo, resource_type, content_sha, status, claimed_at, ingested_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'claimed', ?, NULL)
+         (id, tenant_id, persona_id, repo, resource_type, content_sha, status, claimed_at, ingested_at, discussion_key, memory_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'claimed', ?, NULL, ?, NULL)
        ON CONFLICT(tenant_id, persona_id, repo, resource_type, content_sha) DO NOTHING`,
     ).run(
       randomUUID(), p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha, p.now,
+      p.discussionKey ?? null,
     );
     return { rowsAffected: result.changes };
   });
@@ -109,6 +112,42 @@ export function registerGithubLearnExecutors(): void {
        WHERE tenant_id = ? AND persona_id = ? AND repo = ? AND resource_type = ? AND content_sha = ?`,
     ).run(
       p.now, p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha,
+    );
+    return { rowsAffected: result.changes };
+  });
+
+  /* ── 演进式取代（讨论键反查 + 记忆指针回写） ── */
+
+  /**
+   * 按 (tenant, persona, discussion_key) 反查该讨论当前的摘要行。tenant scoped。
+   *
+   * 只取 memory_id 非空的行：仅 claim 占位、尚未回写记忆指针的行没有可取代的记忆。
+   * 同一讨论跨轮次会留多行（每轮 content_sha 不同），按 ingested_at 降序取最新一条——
+   * 即「上一版记忆」。ingested_at 相同（同毫秒）时以 rowid 降序兜底，保证确定性。
+   */
+  registerQuery<GithubIngestDigestRow | null, GithubDigestByDiscussionKeyParams>(GITHUB_INGEST_DIGEST_QUERY_BY_DISCUSSION, (db, p) => {
+    return db.prepare<GithubIngestDigestRow>(
+      `SELECT * FROM github_ingest_digests
+        WHERE tenant_id = ? AND persona_id = ? AND discussion_key = ? AND memory_id IS NOT NULL
+        ORDER BY ingested_at DESC, rowid DESC
+        LIMIT 1`,
+    ).get(p.tenantId, p.personaId, p.discussionKey) ?? null;
+  });
+
+  /**
+   * 回写摘要行的记忆 ID 列表（perceive 产出记忆后调用）。五键定位。tenant scoped。
+   * 下一轮同讨论摄入时据此找到并删除这**整组**旧记忆，实现「每 issue 恒为最新一版共识」。
+   *
+   * 存 JSON 数组字符串：perceive 把一条表征切成多条事实记忆（标题/正文/讨论各一条），
+   * 只存单个 ID 会漏删其余、记忆仍堆积。列本就是 TEXT，无需改表。
+   */
+  registerCommand<GithubDigestSetMemoryIdParams>(GITHUB_INGEST_DIGEST_CMD_SET_MEMORY_ID, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE github_ingest_digests
+         SET memory_id = ?
+       WHERE tenant_id = ? AND persona_id = ? AND repo = ? AND resource_type = ? AND content_sha = ?`,
+    ).run(
+      JSON.stringify(p.memoryIds), p.tenantId, p.personaId, p.repo, p.resourceType, p.contentSha,
     );
     return { rowsAffected: result.changes };
   });

@@ -69,6 +69,8 @@ import { registerNotificationPreferenceExecutors } from './notification-preferen
 import { registerGithubAppExecutors } from './github-app-executors.js';
 import { registerGithubLearnExecutors } from './github-learn-executors.js';
 import { registerGithubDraftExecutors } from './github-draft-executors.js';
+import { registerDirectoryExecutors } from './directory-executors.js';
+import { registerBootstrapExecutors } from './bootstrap-executors.js';
 import {
   VALUE_QUERY_BY_ID, ANCHOR_QUERY_BY_ID,
   NARRATIVE_QUERY_GET, DECISION_STYLE_QUERY_GET, COGNITIVE_MODEL_QUERY_GET,
@@ -78,7 +80,7 @@ import {
   LSIM_QUERY_BY_ID, CFG_QUERY_ALL, BSVC_QUERY_LIST_PLANS, AUDIT_QUERY_BY_ID,
   EVIDENCE_QUERY_BY_ID,
   AVT_QUERY_BY_ID, QUOTA_QUERY_LIMIT,
-  IDENT_QUERY_BY_USER, UPROF_QUERY_BY_ID,
+  IDENT_QUERY_BY_TENANT_AND_USER, UPROF_QUERY_BY_ID,
   SNAP_QUERY_BY_ID, UGATE_QUERY_BY_ID, DISTILL_QUERY_BY_ID, CONFLICT_QUERY_UNRESOLVED,
   ADDON_QUERY_BY_CODE, ENTL_QUERY_PLAN_ID,
   SUBQ_QUERY_LATEST_PLAN, APIKEY_QUERY_LIST,
@@ -112,6 +114,8 @@ import {
   GITHUB_APPCRED_QUERY_BY_TENANT,
   GITHUB_LEARN_STATE_QUERY,
   GITHUB_REPLY_DRAFT_QUERY_BY_ID,
+  DIR_QUERY_BY_LOOKUP,
+  BOOT_QUERY_BY_OPERATION,
 } from '@chrono/kernel';
 import { resolveQueryExecutor, resolveCommandExecutor, clearRegistries } from '../legacy-sync-bridge.js';
 
@@ -136,7 +140,7 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(EVIDENCE_QUERY_BY_ID)) registerComplianceEvidenceExecutors();
   if (!resolveQueryExecutor(AVT_QUERY_BY_ID)) registerAvatarExecutors();
   if (!resolveQueryExecutor(QUOTA_QUERY_LIMIT)) registerQuotaExecutors();
-  if (!resolveQueryExecutor(IDENT_QUERY_BY_USER)) registerIdentityExecutors();
+  if (!resolveQueryExecutor(IDENT_QUERY_BY_TENANT_AND_USER)) registerIdentityExecutors();
   if (!resolveQueryExecutor(UPROF_QUERY_BY_ID)) registerUserProfileExecutors();
   if (!resolveQueryExecutor(SNAP_QUERY_BY_ID)) registerSnapshotExecutors();
   if (!resolveQueryExecutor(UGATE_QUERY_BY_ID)) registerUpdateGateExecutors();
@@ -187,6 +191,8 @@ export function registerCoreSelfExecutors(): void {
   if (!resolveQueryExecutor(GITHUB_APPCRED_QUERY_BY_TENANT)) registerGithubAppExecutors();
   if (!resolveQueryExecutor(GITHUB_LEARN_STATE_QUERY)) registerGithubLearnExecutors();
   if (!resolveQueryExecutor(GITHUB_REPLY_DRAFT_QUERY_BY_ID)) registerGithubDraftExecutors();
+  if (!resolveQueryExecutor(DIR_QUERY_BY_LOOKUP)) registerDirectoryExecutors();
+  if (!resolveQueryExecutor(BOOT_QUERY_BY_OPERATION)) registerBootstrapExecutors();
 }
 
 /** 重置注册状态（仅测试用途） */

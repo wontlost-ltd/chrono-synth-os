@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import { AuthenticationError, ConfigError, ValidationError, ErrorCode } from '../../errors/index.js';
 import { OidcAuthorizeQuerySchema, OidcCallbackQuerySchema } from '../schemas/api-schemas.js';
@@ -69,12 +70,14 @@ function createMemoryStateStore(): OidcStateStore {
   };
 }
 
-export function registerOidcRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
+export function registerOidcRoutes(app: FastifyInstance, db: IDatabase, resolver: TenantDbResolver, config: AppConfig): void {
   if (!config.jwt.enabled) return;
 
   const baseUrl = config.server.publicUrl;
-  const profileService = new TenantEnterpriseProfileService(db, config);
-  const ssoUserService = new SsoUserService(db);
+  /* 分片 Plan 1b（Task 6）：getEffectiveOidcConfig 是 tenant-scoped，经 resolver 按 tenantId 路由 shard。 */
+  const profileService = new TenantEnterpriseProfileService(resolver, config);
+  /* 分片 Plan 1c（Task 6）：SsoUserService 经协调库目录定位 email→tenant，再经 resolver 路由 shard。 */
+  const ssoUserService = new SsoUserService(resolver);
   const stateStore: OidcStateStore = app.redis
     ? createRedisStateStore(app.redis)
     : createMemoryStateStore();

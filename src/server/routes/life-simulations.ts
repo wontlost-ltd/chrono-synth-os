@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { LifeSimulationService } from '../../simulation/life-simulation-service.js';
 import type { LifeSimulationConfig } from '../../types/life-simulation.js';
 import type { IDatabase } from '../../storage/database.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { AppConfig } from '../../config/schema.js';
 import { QuotaManager } from '../../multi-tenant/quota-manager.js';
 import { UsageTracker } from '../../billing/usage-tracker.js';
@@ -27,19 +27,31 @@ function safeJsonParse(json: string | null | undefined, fallback: unknown = null
   catch { return fallback; }
 }
 
+/** 人生模拟路由依赖（分片 Phase 0 · Plan 1：resolver 必填；db 存在才启用配额/计量子服务，保持零回归）。 */
+export interface LifeSimulationRoutesDeps {
+  /** 共享 TenantDbResolver（组合根唯一实例；配额/计量子服务经它路由 shard）。 */
+  resolver: TenantDbResolver;
+  queueEnabled?: boolean;
+  /** 直查用 host db（SubscriptionQueryService 直用，Plan 2）；给定才启用配额/计量。 */
+  db?: IDatabase;
+  config?: AppConfig;
+}
+
 export function registerLifeSimulationRoutes(
   app: FastifyInstance,
   service: LifeSimulationService,
-  options?: { queueEnabled?: boolean; db?: IDatabase; config?: AppConfig },
+  deps: LifeSimulationRoutesDeps,
 ): void {
-  const asyncMode = options?.queueEnabled ?? false;
+  const asyncMode = deps.queueEnabled ?? false;
   if (!asyncMode && process.env.NODE_ENV === 'production') {
     throw new Error('生产环境禁止同步模拟。请设置 queue.enabled=true 启用异步任务队列以避免 CPU 反压。');
   }
-  const optTx = options?.db ? options.db : undefined;
-  const quotaManager = optTx ? QuotaManager.fromResolver(new SingleDbResolver(optTx)) : undefined;
-  const usageTracker = optTx ? UsageTracker.fromResolver(new SingleDbResolver(optTx)) : undefined;
-  const billingOutbox = optTx && options?.config ? BillingOutbox.fromResolver(new SingleDbResolver(optTx), options.config) : undefined;
+  const { resolver } = deps;
+  const optTx = deps.db ? deps.db : undefined;
+  /* db 存在才启用配额/计量（保持原「无 db→无配额」语义）；启用时经共享 resolver 按 tenantId 路由 shard。 */
+  const quotaManager = optTx ? QuotaManager.fromResolver(resolver) : undefined;
+  const usageTracker = optTx ? UsageTracker.fromResolver(resolver) : undefined;
+  const billingOutbox = optTx && deps.config ? BillingOutbox.fromResolver(resolver, deps.config) : undefined;
   const subscriptionQuery = optTx ? new SubscriptionQueryService(optTx) : undefined;
 
   /* GET /api/v1/simulations — 列出租户的所有模拟 */
@@ -88,7 +100,7 @@ export function registerLifeSimulationRoutes(
     const { simulationId, taskId } = service.enqueue(body, tenantId, undefined, ownerUserId);
     usageTracker?.record(tenantId, 'simulation', 1);
 
-    if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
+    if (billingOutbox && subscriptionQuery && deps.config?.stripe.enabled) {
       const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
       if (stripeCustomerId) {
         /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
@@ -202,7 +214,7 @@ export function registerLifeSimulationRoutes(
       const { simulationId, taskId } = service.enqueue(stressConfig, tenantId, id, ownerUserId);
       usageTracker?.record(tenantId, 'simulation', 1);
 
-      if (billingOutbox && subscriptionQuery && options?.config?.stripe.enabled) {
+      if (billingOutbox && subscriptionQuery && deps.config?.stripe.enabled) {
         const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
         if (stripeCustomerId) {
           /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */

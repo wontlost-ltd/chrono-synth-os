@@ -141,4 +141,111 @@ describe('GitHub 学习段 storage（GithubLearnStore）', () => {
       assert.equal(cursorForB, undefined, 'B 读不到 A 的游标（tenant scoped）');
     });
   });
+
+  /* 演进式取代（讨论内容摄入设计 §3.3）：讨论演进时新记忆取代旧记忆，靠稳定讨论键
+   * 反查上一版记忆指针。contentSha 随评论变化，故不能用它定位「同一个 issue 的上一版」。 */
+  describe('讨论键与记忆指针（演进式取代）', () => {
+    const DISCUSSION = 'issues:acme/repo#42';
+
+    it('claim 时带 discussionKey、回写 memoryId 后可按讨论键反查', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-v1', ['mem_first'], 1001);
+
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), ['mem_first']);
+    });
+
+    it('整组记忆 ID 往返：perceive 把一条表征切成多条事实记忆，须整组记录与反查', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-multi', 1000, DISCUSSION);
+      /* 真实形态：标题/正文/讨论结论各一条记忆——只记第一条会导致取代时漏删其余。 */
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-multi', ['mem_a', 'mem_b', 'mem_c'], 1001);
+
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), ['mem_a', 'mem_b', 'mem_c']);
+    });
+
+    it('空 ID 组不写入（保持 NULL，反查不命中）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-empty', 1000, DISCUSSION);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-empty', [], 1001);
+
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
+    });
+
+    it('未知讨论键返回 undefined', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, 'issues:acme/repo#999'), []);
+    });
+
+    it('尚未回写 memoryId 的占位行不被反查到（memory_id IS NULL 排除）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
+      /* 只 claim 未 recordMemoryId：还没有记忆可取代，反查应为空。 */
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
+    });
+
+    it('同讨论新版本：反查返回最新回写的 memoryId（取代语义的存储侧基础）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v1', 1000, DISCUSSION);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-v1', ['mem_first'], 1001);
+      /* 讨论新增评论 → 表征变 → 新 sha，同一讨论键。 */
+      store.claimDigest(PERSONA, REPO, 'issues', 'sha-v2', 2000, DISCUSSION);
+      store.recordMemoryIds(PERSONA, REPO, 'issues', 'sha-v2', ['mem_second'], 2001);
+
+      assert.deepEqual(store.findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), ['mem_second'], '取最新回写那条');
+    });
+
+    it('跨租户隔离：A 的讨论记忆指针不被 B 读到', () => {
+      new GithubLearnStore(db, 'tenant_A').claimDigest(PERSONA, REPO, 'issues', 'sha-a', 1000, DISCUSSION);
+      new GithubLearnStore(db, 'tenant_A').recordMemoryIds(PERSONA, REPO, 'issues', 'sha-a', ['mem_A'], 1001);
+
+      assert.deepEqual(new GithubLearnStore(db, 'tenant_B').findMemoryIdsByDiscussionKey(PERSONA, DISCUSSION), []);
+    });
+  });
+
+  /* 组织轮转游标（组织级驻留设计 §3.2）：组织级同步每轮只处理 N 个仓库，需一条
+   * 「下一个起始下标」游标记进度。该游标本质即学习进度游标，故复用本表——
+   * repo 存组织标识、resource_type 存哨兵 _org_rotation、cursor 存下标。 */
+  describe('组织轮转游标（_org_rotation 哨兵）', () => {
+    it('哨兵 resource_type 可写入并读回（CHECK 已扩容）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '5', 1000);
+
+      assert.deepEqual(
+        store.getCursor(PERSONA, 'acme', '_org_rotation'),
+        { cursor: '5', cursorAdvancedAt: 1000 },
+      );
+    });
+
+    it('四类真实资源类型仍可写入（CHECK 是超集，无回归）', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      for (const rt of ['code', 'issues', 'pulls', 'commits']) {
+        store.advanceCursor(PERSONA, REPO, rt, `cur-${rt}`, 1000);
+        assert.equal(store.getCursor(PERSONA, REPO, rt)?.cursor, `cur-${rt}`, `${rt} 应可写`);
+      }
+    });
+
+    it('重建表后唯一索引真实存在（PRAGMA 内省，防重建静默丢索引）', () => {
+      /* 独立于 parity 的直验：parity 的 legacy fixture 可能从同样 buggy 的迁移手抄，
+       * 两库同错仍 deepEqual 通过，抓不到丢索引。故此处直接内省 SQLite 元数据。 */
+      const indexes = db.prepare<{ name: string; unique: number }>(
+        `SELECT name, "unique" FROM pragma_index_list('github_learn_state')`,
+      ).all();
+      const key = indexes.find((i) => i.name === 'idx_github_learn_state_key');
+      assert.ok(key, 'idx_github_learn_state_key 必须存在（重建表后未丢）');
+      assert.equal(key.unique, 1, '该索引必须是唯一索引');
+    });
+
+    it('唯一约束仍生效：同四键重复 advance 覆盖不新增行', () => {
+      const store = new GithubLearnStore(db, TENANT);
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '5', 1000);
+      store.advanceCursor(PERSONA, 'acme', '_org_rotation', '10', 2000);
+
+      const cnt = db.prepare<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM github_learn_state WHERE tenant_id=? AND persona_id=? AND repo=? AND resource_type=?',
+      ).get(TENANT, PERSONA, 'acme', '_org_rotation')?.c;
+      assert.equal(cnt, 1, '唯一约束生效：覆盖不多行');
+      assert.equal(store.getCursor(PERSONA, 'acme', '_org_rotation')?.cursor, '10');
+    });
+  });
 });

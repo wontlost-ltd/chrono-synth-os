@@ -45,6 +45,11 @@ export interface GitHubIssue {
   title: string;
   body: string;
   updatedAt: string;
+  /**
+   * 讨论评论数（GitHub 列表响应自带，零额外成本）。
+   * 为 0 时跳过评论抓取——省一次 API 请求，是组织级同步的关键省配额闸。
+   */
+  comments: number;
 }
 
 /** 学习段消费的精简 PR。 */
@@ -84,6 +89,18 @@ export interface GitHubReadPort {
   getRepoTree(repo: string): Promise<GitHubTree>;
   /** 读单个文件内容（自动解 base64）。 */
   getFileContent(repo: string, path: string): Promise<string>;
+  /**
+   * 列某 issue 的讨论评论正文（丢弃空正文）。讨论串是组织信息密度最高的知识——
+   * 「这个问题最后怎么定的」只存在于评论里，标题正文答不了。
+   */
+  listIssueComments(repo: string, issueNumber: number): Promise<string[]>;
+  /** 列某 PR 的 review 意见正文（丢弃空正文）。 */
+  listPullReviewComments(repo: string, pullNumber: number): Promise<string[]>;
+  /**
+   * 列出本 installation 被授权访问的全部仓库全名（owner/name）。
+   * 返回值即「组织授权边界」——不用猜组织名，也不可能越权读到未授权仓库。
+   */
+  listInstallationRepos(): Promise<string[]>;
 }
 
 /** GitHubReadPortImpl 的可选依赖（默认走公有云 + 真 githubFetch）。 */
@@ -191,6 +208,42 @@ export class GitHubReadPortImpl implements GitHubReadPort {
     return typeof body.content === 'string' ? body.content : '';
   }
 
+  async listIssueComments(repo: string, issueNumber: number): Promise<string[]> {
+    return this.listComments(`${this.apiBase}/repos/${repo}/issues/${issueNumber}/comments`);
+  }
+
+  async listPullReviewComments(repo: string, pullNumber: number): Promise<string[]> {
+    return this.listComments(`${this.apiBase}/repos/${repo}/pulls/${pullNumber}/comments`);
+  }
+
+  async listInstallationRepos(): Promise<string[]> {
+    const url = new URL(`${this.apiBase}/installation/repositories`);
+    url.searchParams.set('per_page', String(PER_PAGE));
+    /* 该端点响应体是 {total_count, repositories:[...]} 而非裸数组，与既有 list 端点形状不同，
+     * 故不复用 fetchAllPages（它按裸数组展开每页）。
+     * 首版只取第一页（100 仓库）——单个 installation 授权超 100 仓库罕见，超出时轮转仍在
+     * 前 100 内正常工作、不报错。需要时再加 Link header 跟随。 */
+    const page = await this.fetchJson<{ repositories?: Array<{ full_name?: string }> }>(url.toString());
+    return (page.repositories ?? [])
+      .map((r) => r.full_name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
+  }
+
+  /**
+   * 评论抓取公共实现：带 per_page 沿 Link header 跟随分页拉全量，只取正文字符串。
+   *
+   * 丢弃空正文/缺 body 的条目——mapper 的 summarizeComments 只消费有内容的讨论要点，
+   * 空条目混进去会挤占 MAX_COMMENTS 名额，把真正的结论挤出表征。
+   */
+  private async listComments(baseUrl: string): Promise<string[]> {
+    const url = new URL(baseUrl);
+    url.searchParams.set('per_page', String(PER_PAGE));
+    const raw = await this.fetchAllPages(url.toString());
+    return raw
+      .map((item) => (item as Record<string, unknown>).body)
+      .filter((body): body is string => typeof body === 'string' && body.trim().length > 0);
+  }
+
   /** 拼 list 端点 URL（含 per_page、since、以及额外 query）。 */
   private buildListUrl(
     repo: string,
@@ -287,6 +340,7 @@ export class GitHubReadPortImpl implements GitHubReadPort {
       title: typeof o.title === 'string' ? o.title : '',
       body: typeof o.body === 'string' ? o.body : '',
       updatedAt: typeof o.updated_at === 'string' ? o.updated_at : '',
+      comments: typeof o.comments === 'number' ? o.comments : 0,
     };
   }
 

@@ -13,14 +13,22 @@ export interface FakeShardConfig {
   readonly shards: Record<string, IDatabase>;
   /** tenantId → shardId 映射。未映射的 tenantId 调 dbForTenant 抛错（防测试疏漏静默走错）。 */
   readonly tenantToShard: Record<string, string>;
+  /**
+   * 未映射 tenantId 的回退 shardId（可选）。缺省时未映射即抛（防测试疏漏）。
+   *
+   * 真实 `ShardRouter.dbForTenant` 对任意 tenantId 一致性哈希路由、**永不因未知租户抛错**——register
+   * 会为全新随机 tenantId 立即 dbForTenant 落 shard。需在「注册后才知 tenantId」的测试（如 injection-chain）
+   * 里模拟这一语义时，用本字段给未映射租户一个确定性默认 shard，与真实路由的「新租户即可路由」对齐。
+   */
+  readonly defaultShardId?: string;
 }
 
 export class FakeMultiShardResolver implements TenantDbResolver {
   constructor(private readonly cfg: FakeShardConfig) {}
 
   dbForTenant(tenantId: string): IDatabase {
-    const shardId = this.cfg.tenantToShard[tenantId];
-    if (!shardId) throw new Error(`FakeMultiShardResolver: tenantId '${tenantId}' 无 shard 映射（测试须显式声明）`);
+    const shardId = this.cfg.tenantToShard[tenantId] ?? this.cfg.defaultShardId;
+    if (!shardId) throw new Error(`FakeMultiShardResolver: tenantId '${tenantId}' 无 shard 映射（测试须显式声明或设 defaultShardId）`);
     const db = this.cfg.shards[shardId];
     if (!db) throw new Error(`FakeMultiShardResolver: shardId '${shardId}' 无 db`);
     return db;

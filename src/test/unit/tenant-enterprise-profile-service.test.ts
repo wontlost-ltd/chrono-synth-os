@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase } from '../../storage/database.js';
 import { runDslSqliteMigrations } from '../../storage/index.js';
 import { loadConfig } from '../../config/schema.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { TenantEnterpriseProfileService } from '../../enterprise/tenant-enterprise-profile-service.js';
 import { TenantManifestV1Schema } from '@chrono/contracts';
 
@@ -16,7 +17,7 @@ describe('TenantEnterpriseProfileService', () => {
         enabled: false,
       },
     });
-    const service = new TenantEnterpriseProfileService(db, config);
+    const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
 
     const profile = service.upsertProfile('tenant_local', {
       deploymentMode: 'dedicated_db',
@@ -40,7 +41,7 @@ describe('TenantEnterpriseProfileService', () => {
       const db = createMemoryDatabase();
       runDslSqliteMigrations(db);
       const config = loadConfig({ region: 'ap-east-1' });
-      const service = new TenantEnterpriseProfileService(db, config);
+      const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
 
       const manifest = service.getManifest('default');
 
@@ -61,7 +62,7 @@ describe('TenantEnterpriseProfileService', () => {
         region: 'us-east-1',
         encryption: { enabled: false },
       });
-      const service = new TenantEnterpriseProfileService(db, config);
+      const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
       service.upsertProfile('tenant_aws', {
         deploymentMode: 'dedicated_db',
         encryptionMode: 'tenant_dedicated',
@@ -81,7 +82,7 @@ describe('TenantEnterpriseProfileService', () => {
       const db = createMemoryDatabase();
       runDslSqliteMigrations(db);
       const config = loadConfig({ region: 'eu-central-1' });
-      const service = new TenantEnterpriseProfileService(db, config);
+      const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
       service.upsertProfile('tenant_shared', {
         deploymentMode: 'shared_cluster',
         encryptionMode: 'platform_managed',
@@ -111,7 +112,7 @@ describe('TenantEnterpriseProfileService', () => {
           connectionString: 'postgres://leaked.example.com:5432/chrono_test',
         },
       });
-      const service = new TenantEnterpriseProfileService(db, config);
+      const service = new TenantEnterpriseProfileService(new SingleDbResolver(db), config);
 
       const manifest = service.getManifest('default');
 

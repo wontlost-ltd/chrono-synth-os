@@ -17,11 +17,13 @@
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
 import type {
   GithubAppCredentialRow, GithubInstallationRow,
-  GithubAppCredUpsertParams, GithubInstallByHostIidParams, GithubInstallUpsertParams,
+  GithubAppCredUpsertParams, GithubInstallByHostIidParams, GithubInstallUpsertParams, GithubInstallKeyParams,
+  GithubInstallSetSuspendedParams, GithubInstallUpdateReposParams,
 } from '@chrono/kernel';
 import {
   GITHUB_APPCRED_QUERY_BY_TENANT, GITHUB_APPCRED_CMD_UPSERT, GITHUB_APPCRED_CMD_DELETE,
   GITHUB_INSTALL_QUERY_BY_HOST_IID, GITHUB_INSTALL_QUERY_LIST_BY_TENANT, GITHUB_INSTALL_CMD_UPSERT,
+  GITHUB_INSTALL_CMD_DELETE, GITHUB_INSTALL_CMD_SET_SUSPENDED, GITHUB_INSTALL_CMD_UPDATE_REPOS,
 } from '@chrono/kernel';
 
 export function registerGithubAppExecutors(): void {
@@ -103,6 +105,35 @@ export function registerGithubAppExecutors(): void {
     ).run(
       p.id, p.tenantId, p.installationId, p.githubHost, p.account, p.repos, p.now, p.now,
     );
+    return { rowsAffected: result.changes };
+  });
+
+  /* ── installation 生命周期（安装入口产品化） ── */
+
+  /**
+   * 删除 installation 映射（按全局唯一键，不带 tenant 过滤——平台级映射表）。
+   * rowsAffected=1 表示确有删除，0 表示本就不存在（store 层据此返 true/false，幂等）。
+   */
+  registerCommand<GithubInstallKeyParams>(GITHUB_INSTALL_CMD_DELETE, (db, p) => {
+    const result = db.prepare<void>(
+      'DELETE FROM github_installations WHERE github_host = ? AND installation_id = ?',
+    ).run(p.githubHost, p.installationId);
+    return { rowsAffected: result.changes };
+  });
+
+  /** 置/清暂停状态（suspendedAt=null 即恢复）。 */
+  registerCommand<GithubInstallSetSuspendedParams>(GITHUB_INSTALL_CMD_SET_SUSPENDED, (db, p) => {
+    const result = db.prepare<void>(
+      'UPDATE github_installations SET suspended_at = ?, updated_at = ? WHERE github_host = ? AND installation_id = ?',
+    ).run(p.suspendedAt, p.now, p.githubHost, p.installationId);
+    return { rowsAffected: result.changes };
+  });
+
+  /** 同步授权仓库列表（installation_repositories 事件维护）。 */
+  registerCommand<GithubInstallUpdateReposParams>(GITHUB_INSTALL_CMD_UPDATE_REPOS, (db, p) => {
+    const result = db.prepare<void>(
+      'UPDATE github_installations SET repos = ?, updated_at = ? WHERE github_host = ? AND installation_id = ?',
+    ).run(p.repos, p.now, p.githubHost, p.installationId);
     return { rowsAffected: result.changes };
   });
 }

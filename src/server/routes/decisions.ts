@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ChronoSynthOS } from '../../chrono-synth-os.js';
 import type { AppConfig } from '../../config/schema.js';
 import type { IDatabase } from '../../storage/database.js';
-import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
+import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { TenantOSFactory } from '../../multi-tenant/tenant-os-factory.js';
 import { NotFoundError, QuotaExceededError, ErrorCode } from '../../errors/index.js';
 import { generatePrefixedId } from '../../utils/id-generator.js';
@@ -55,22 +55,27 @@ interface DecisionRunRow {
   created_at: number;
 }
 
-export function registerDecisionRoutes(
-  app: FastifyInstance,
-  os: ChronoSynthOS,
-  config: AppConfig,
-  db?: IDatabase,
-  tenantFactory?: TenantOSFactory,
-): void {
-  const sharedDb = db ?? os.getDatabase();
-  const sharedTx = sharedDb;
-  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, new SingleDbResolver(sharedDb));
-  const costTracker = CostTracker.fromResolver(new SingleDbResolver(sharedDb));
+/** 决策路由依赖（分片 Phase 0 · Plan 1：resolver 必填，子服务经它按 tenantId 路由 shard）。 */
+export interface DecisionRoutesDeps {
+  os: ChronoSynthOS;
+  config: AppConfig;
+  /** 共享 TenantDbResolver（组合根唯一实例；子服务 fromResolver 用）。 */
+  resolver: TenantDbResolver;
+  /** 遗留 host db 入参（Plan 2 · Task 6 起 route 内 tenant-scoped 直查全下沉 resolver.dbForTenant，
+   * 本字段不再被 route 直查使用；仍接收以兼容 app.ts 现有装配调用点）。 */
+  db?: IDatabase;
+  tenantFactory?: TenantOSFactory;
+}
+
+export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoutesDeps): void {
+  const { os, config, resolver, tenantFactory } = deps;
+  const tokenBudget = TokenBudget.fromResolver(config.intelligence.budget, resolver);
+  const costTracker = CostTracker.fromResolver(resolver);
   /* BYOK：解析 per-tenant LLM key 用（缺失回退全局 config）。 */
   const llmEncryption = tryByokEncryption(config.encryption);
-  const usageTracker = UsageTracker.fromResolver(new SingleDbResolver(sharedTx));
-  const quotaManager = QuotaManager.fromResolver(new SingleDbResolver(sharedTx));
-  const billingOutbox = BillingOutbox.fromResolver(new SingleDbResolver(sharedTx), config);
+  const usageTracker = UsageTracker.fromResolver(resolver);
+  const quotaManager = QuotaManager.fromResolver(resolver);
+  const billingOutbox = BillingOutbox.fromResolver(resolver, config);
 
   function getOS(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
@@ -90,13 +95,16 @@ export function registerDecisionRoutes(
     }
 
     const tenantOS = getOS(tenantId);
+    /* 分片 Plan 2 · Task 6：subscriptions / tenant_llm_settings 直查下沉 resolver.dbForTenant(tenantId)
+     * （tenant-scoped，SQL 仍带 WHERE tenant_id；多 shard 下经它路由到租户所在 shard，单库等价现状）。 */
+    const tenantDb = resolver.dbForTenant(tenantId);
     const stripeCustomerId = config.stripe.enabled
-      ? sharedDb.prepare<{ stripe_customer_id: string | null }>(
+      ? tenantDb.prepare<{ stripe_customer_id: string | null }>(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId)?.stripe_customer_id ?? undefined
       : undefined;
     /* BYOK：解析本租户有效 LLM 配置（active provider + 该 provider 的加密 key，缺失回退全局 config）。 */
-    const effectiveLlm = resolveTenantLlmConfig(sharedDb, tenantId, config.intelligence, llmEncryption);
+    const effectiveLlm = resolveTenantLlmConfig(tenantDb, tenantId, config.intelligence, llmEncryption);
     const llm = new ModelRouter({
       provider: effectiveLlm.provider as LLMProviderName,
       model: effectiveLlm.model,
@@ -152,7 +160,7 @@ export function registerDecisionRoutes(
       context: body.context,
     };
 
-    sharedDb.prepare<void>(
+    resolver.dbForTenant(tenantId).prepare<void>(
       `INSERT INTO decision_cases (id, tenant_id, title, description, alternatives_json, constraints_json, context_json, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(id, tenantId, body.title, body.description, JSON.stringify(body.alternatives), body.constraints ? JSON.stringify(body.constraints) : null, body.context ? JSON.stringify(body.context) : null, now);
@@ -165,12 +173,13 @@ export function registerDecisionRoutes(
     const tenantId = request.tenantId;
     const { page, pageSize } = PaginationQuerySchema.parse(request.query);
     const offset = (page - 1) * pageSize;
+    const tenantDb = resolver.dbForTenant(tenantId);
 
-    const total = sharedDb.prepare<{ count: number }>(
+    const total = tenantDb.prepare<{ count: number }>(
       'SELECT COUNT(*) as count FROM decision_cases WHERE tenant_id = ?',
     ).get(tenantId)?.count ?? 0;
 
-    const rows = sharedDb.prepare<DecisionCaseRow>(
+    const rows = tenantDb.prepare<DecisionCaseRow>(
       'SELECT * FROM decision_cases WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
     ).all(tenantId, pageSize, offset);
 
@@ -194,8 +203,9 @@ export function registerDecisionRoutes(
   }, async (request) => {
     const { id } = request.params;
     const tenantId = request.tenantId;
+    const tenantDb = resolver.dbForTenant(tenantId);
 
-    const row = sharedDb.prepare<DecisionCaseRow>(
+    const row = tenantDb.prepare<DecisionCaseRow>(
       'SELECT * FROM decision_cases WHERE id = ? AND tenant_id = ?',
     ).get(id, tenantId);
     if (!row) {
@@ -225,7 +235,7 @@ export function registerDecisionRoutes(
       });
 
       const now = Date.now();
-      sharedDb.prepare<void>(
+      tenantDb.prepare<void>(
         'INSERT INTO decision_runs (id, case_id, tenant_id, result_json, created_at) VALUES (?, ?, ?, ?, ?)',
       ).run(runId, id, tenantId, JSON.stringify(result), now);
 
@@ -234,7 +244,7 @@ export function registerDecisionRoutes(
 
       /* Stripe 计量上报（通过发件箱持久化） */
       if (config.stripe.enabled) {
-        const sub = sharedDb.prepare<{ stripe_customer_id: string | null }>(
+        const sub = tenantDb.prepare<{ stripe_customer_id: string | null }>(
           'SELECT stripe_customer_id FROM subscriptions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).get(tenantId);
         if (sub?.stripe_customer_id) {
@@ -261,7 +271,7 @@ export function registerDecisionRoutes(
     const { id, runId } = request.params;
     const tenantId = request.tenantId;
 
-    const row = sharedDb.prepare<DecisionRunRow>(
+    const row = resolver.dbForTenant(tenantId).prepare<DecisionRunRow>(
       'SELECT * FROM decision_runs WHERE id = ? AND case_id = ? AND tenant_id = ?',
     ).get(runId, id, tenantId);
     if (!row) {
@@ -275,8 +285,9 @@ export function registerDecisionRoutes(
     const { id } = request.params;
     const tenantId = request.tenantId;
     const body = DecisionFeedbackSchema.parse(request.body);
+    const tenantDb = resolver.dbForTenant(tenantId);
 
-    const row = sharedDb.prepare<DecisionRunRow>(
+    const row = tenantDb.prepare<DecisionRunRow>(
       'SELECT * FROM decision_runs WHERE id = ? AND case_id = ? AND tenant_id = ?',
     ).get(body.runId, id, tenantId);
     if (!row) {
@@ -284,7 +295,7 @@ export function registerDecisionRoutes(
     }
 
     const feedbackId = generatePrefixedId('fb');
-    sharedDb.prepare<void>(
+    tenantDb.prepare<void>(
       `INSERT INTO decision_feedbacks (id, run_id, tenant_id, selected_alternative, satisfaction, notes, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(feedbackId, body.runId, tenantId, body.selectedAlternative, body.satisfaction, body.notes ?? null, Date.now());

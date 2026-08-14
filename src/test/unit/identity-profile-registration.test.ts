@@ -1,15 +1,18 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  IDENT_QUERY_BY_USER, IDENT_QUERY_BY_ID, IDENT_QUERY_BY_TENANT,
+  IDENT_QUERY_BY_TENANT_AND_USER, IDENT_QUERY_BY_TENANT_AND_ID, IDENT_QUERY_BY_TENANT,
   IDENT_CMD_CREATE, IDENT_CMD_CREATE_DEFAULT_AVATAR, IDENT_CMD_UPDATE,
   UPROF_QUERY_BY_ID, UPROF_QUERY_BY_EMAIL_EXCLUDE, UPROF_QUERY_FULL_BY_ID,
   UPROF_CMD_UPDATE_EMAIL, UPROF_CMD_UPDATE_PASSWORD,
+  dirCmdReserve,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage/executors/index.js';
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import { UserProfileService } from '../../identity/user-profile-service.js';
+import { UserEmailDirectoryService } from '../../identity/user-email-directory-service.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import type { IDatabase } from '../../storage/database.js';
 import { hash } from '@node-rs/argon2';
 
@@ -28,8 +31,8 @@ describe('IdentityService 执行器注册', () => {
   it('全部 Identity query/command 执行器注册完整', () => {
     registerCoreSelfExecutors();
 
-    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_USER));
-    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_ID));
+    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_TENANT_AND_USER));
+    assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_TENANT_AND_ID));
     assert.ok(resolveQueryExecutor(IDENT_QUERY_BY_TENANT));
     assert.ok(resolveCommandExecutor(IDENT_CMD_CREATE));
     assert.ok(resolveCommandExecutor(IDENT_CMD_CREATE_DEFAULT_AVATAR));
@@ -52,46 +55,59 @@ describe('UserProfileService 执行器注册', () => {
     assert.ok(resolveCommandExecutor(UPROF_CMD_UPDATE_PASSWORD));
   });
 
-  it('getProfile 通过 data plane 契约工作', () => {
+  it('getProfile 通过 data plane 契约工作（tenant-scoped，穿 tenantId）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'test@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(new SingleDbResolver(db));
 
-    const profile = service.getProfile('user-1');
+    const profile = service.getProfile('tenant-test', 'user-1');
     assert.equal(profile.userId, 'user-1');
     assert.equal(profile.email, 'test@example.com');
     assert.equal(profile.role, 'member');
   });
 
-  it('updateEmail 通过 data plane 契约工作', () => {
+  it('updateEmail 通过 UserEmailDirectoryService 跨库状态机工作（coordinator 目录 changeEmail trio + shard users.email）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'old@example.com', 'hash');
-    const service = new UserProfileService(db);
+    /* ctor 注册全部 core executors（含 directory.reserve），随后种目录项。 */
+    const dir = new UserEmailDirectoryService(new SingleDbResolver(db));
+    /* register/backfill 落地态：旧 email 有 ACTIVE 目录项。 */
+    db.execute(dirCmdReserve({
+      tenantId: 'tenant-test', userId: 'user-1', operationId: 'reg:1', operationKind: 'REGISTER',
+      previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'old@example.com', status: 'ACTIVE', now: Date.now(),
+    }));
 
-    const updated = service.updateEmail('user-1', 'new@example.com');
+    const updated = dir.updateEmail('tenant-test', 'user-1', 'new@example.com');
     assert.equal(updated.email, 'new@example.com');
   });
 
-  it('updateEmail 重复邮箱抛出错误', () => {
+  it('updateEmail 跨租户重复邮箱抛出错误（目录级唯一性拦截）', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     seedUser(db, 'user-1', 'a@example.com', 'hash');
     seedUser(db, 'user-2', 'b@example.com', 'hash');
-    const service = new UserProfileService(db);
+    const dir = new UserEmailDirectoryService(new SingleDbResolver(db));
+    /* 为触发目录级唯一性，把 user-2 的 b@ 归到另一租户，模拟他租户占用（ctor 已注册 executors）。 */
+    db.execute(dirCmdReserve({
+      tenantId: 'tenant-other', userId: 'user-2', operationId: 'reg:2', operationKind: 'REGISTER',
+      previousLookupValue: null, pendingPasswordHash: null,
+      lookupKind: 'email', lookupValue: 'b@example.com', status: 'ACTIVE', now: Date.now(),
+    }));
 
-    assert.throws(() => service.updateEmail('user-1', 'b@example.com'), /已被使用/);
+    assert.throws(() => dir.updateEmail('tenant-test', 'user-1', 'b@example.com'), /已被使用/);
   });
 
-  it('changePassword 验证旧密码并更新', async () => {
+  it('changePassword 验证旧密码并更新（tenant-scoped，穿 tenantId）', async () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);
     const pwHash = await hash('oldPassword123');
     seedUser(db, 'user-1', 'test@example.com', pwHash);
-    const service = new UserProfileService(db);
+    const service = new UserProfileService(new SingleDbResolver(db));
 
-    const result = await service.changePassword('user-1', 'oldPassword123', 'newPassword456');
+    const result = await service.changePassword('tenant-test', 'user-1', 'oldPassword123', 'newPassword456');
     assert.deepEqual(result, { success: true });
   });
 });

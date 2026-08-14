@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * 一次性脚本：把一个 GitHub App 凭据 + installation 配进运行库（验收用，Plan 1-2 尚无管理端点）。
+ * 一次性脚本：把一个 GitHub App 凭据 + installation 配进运行库。
+ *
+ * **注意：生产环境请改用管理端点**——POST /api/v1/admin/github/app 录凭据 +
+ * 在 GitHub 安装 App 后经 setup_url 回调（GET /api/v1/integrations/github/setup）
+ * 自动记映射，见 src/server/routes/admin-github.ts。本脚本保留用于本地验收 /
+ * 离线环境 / 批量脚本化配置。
  *
  * 与 server 用**同一个** CHRONO_DB_PATH 文件库运行，凭据落 default 租户，server 进程即可读到。
  * 私钥经 FieldEncryption(AES-256-GCM) 加密落库——须 CHRONO_ENCRYPTION_ENABLED=true + 32 字节 master key。

@@ -23,6 +23,7 @@ import { registerCoreSelfExecutors, resetCoreSelfExecutors } from '../../storage
 import { resolveQueryExecutor, resolveCommandExecutor } from '../../storage/legacy-sync-bridge.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { StripeWebhookService } from '../../billing/stripe-webhook-service.js';
 import { EntitlementService } from '../../billing/entitlement-service.js';
 import { SsoUserService } from '../../identity/sso-user-service.js';
@@ -257,7 +258,7 @@ describe('SsoUserService 数据平面契约', () => {
     resetCoreSelfExecutors();
     db = createMemoryDatabase();
     runDslSqliteMigrations(db);
-    service = new SsoUserService(db);
+    service = new SsoUserService(new SingleDbResolver(db));
   });
 
   it('OIDC 首次用户创建 admin 角色', () => {

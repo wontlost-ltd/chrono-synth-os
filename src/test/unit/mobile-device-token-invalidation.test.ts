@@ -13,12 +13,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/index.js';
+import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { MobileDeviceService } from '../../identity/mobile-device-service.js';
+
+/** 分片 Plan 1b（Task 3）：MobileDeviceService 已 resolver 化；单库测试用 SingleDbResolver + 显式 tenantId。 */
+const TENANT = 'tenant_1';
 
 function makeService(): { db: IDatabase; svc: MobileDeviceService } {
   const db = createMemoryDatabase();
   runDslSqliteMigrations(db);
-  const svc = new MobileDeviceService(db);
+  const svc = new MobileDeviceService(new SingleDbResolver(db));
   return { db, svc };
 }
 
@@ -44,7 +48,7 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
         platform: 'ios',
         pushToken: 'TOKEN_A',
       });
-      const row = svc.findById(reg.id);
+      const row = svc.findById(TENANT, reg.id);
       assert.ok(row, 'device should be findable by id');
       assert.equal(row!.is_invalid_at, null);
       assert.equal(row!.push_token, 'TOKEN_A');
@@ -61,8 +65,8 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
         platform: 'ios',
         pushToken: 'TOKEN_B',
       });
-      svc.markTokenInvalid(reg.id, 'BadDeviceToken');
-      const row = svc.findById(reg.id);
+      svc.markTokenInvalid(TENANT, reg.id, 'BadDeviceToken');
+      const row = svc.findById(TENANT, reg.id);
       assert.ok(row);
       assert.ok(typeof row!.is_invalid_at === 'number' && row!.is_invalid_at > 0);
     } finally {
@@ -78,13 +82,13 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
         platform: 'ios',
         pushToken: 'TOKEN_C',
       });
-      svc.markTokenInvalid(reg.id, 'first');
-      const first = svc.findById(reg.id)!.is_invalid_at;
+      svc.markTokenInvalid(TENANT, reg.id, 'first');
+      const first = svc.findById(TENANT, reg.id)!.is_invalid_at;
       /* Real wall-clock advancement so the second timestamp would
        * differ if we accidentally overwrote on idempotent re-mark. */
       await new Promise((r) => setTimeout(r, 5));
-      svc.markTokenInvalid(reg.id, 'second');
-      const second = svc.findById(reg.id)!.is_invalid_at;
+      svc.markTokenInvalid(TENANT, reg.id, 'second');
+      const second = svc.findById(TENANT, reg.id)!.is_invalid_at;
       assert.equal(second, first, 'COALESCE should preserve the earliest timestamp');
     } finally {
       db.close();
@@ -99,11 +103,11 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
         platform: 'ios',
         pushToken: 'TOKEN_OLD',
       });
-      svc.markTokenInvalid(reg.id);
-      assert.ok(svc.findById(reg.id)!.is_invalid_at !== null);
+      svc.markTokenInvalid(TENANT, reg.id);
+      assert.ok(svc.findById(TENANT, reg.id)!.is_invalid_at !== null);
 
-      svc.updatePushToken(reg.id, 'user_1', 'TOKEN_NEW');
-      const row = svc.findById(reg.id)!;
+      svc.updatePushToken(TENANT, reg.id, 'user_1', 'TOKEN_NEW');
+      const row = svc.findById(TENANT, reg.id)!;
       assert.equal(row.is_invalid_at, null, 'new token should clear the invalidation marker');
       assert.equal(row.push_token, 'TOKEN_NEW');
     } finally {
@@ -123,15 +127,15 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
         platform: 'ios',
         pushToken: 'TOKEN_X',
       });
-      svc.markTokenInvalid(reg.id);
-      assert.ok(svc.findById(reg.id)!.is_invalid_at !== null, '先确认已标失效');
+      svc.markTokenInvalid(TENANT, reg.id);
+      assert.ok(svc.findById(TENANT, reg.id)!.is_invalid_at !== null, '先确认已标失效');
       /* 重注册同 deviceUid 带新 token（模拟重装）→ 走 updateOnRegister 分支。 */
       svc.register('tenant_1', 'user_1', {
         deviceUid: 'uid-5',
         platform: 'ios',
         pushToken: 'TOKEN_Y',
       });
-      const row = svc.findById(reg.id)!;
+      const row = svc.findById(TENANT, reg.id)!;
       assert.equal(row.is_invalid_at, null, '带新 token 的重注册清除失效标记（push 可恢复）');
       assert.equal(row.push_token, 'TOKEN_Y');
     } finally {
@@ -144,9 +148,9 @@ describe('MobileDeviceService — token invalidation (EP-3.5)', () => {
     const { db, svc } = makeService();
     try {
       const reg = svc.register('tenant_1', 'user_1', { deviceUid: 'uid-6', platform: 'ios', pushToken: 'TOKEN_Z' });
-      svc.markTokenInvalid(reg.id);
+      svc.markTokenInvalid(TENANT, reg.id);
       svc.register('tenant_1', 'user_1', { deviceUid: 'uid-6', platform: 'android' }); // 无 pushToken
-      assert.notEqual(svc.findById(reg.id)!.is_invalid_at, null, '无新 token 的元数据重注册保留失效标记');
+      assert.notEqual(svc.findById(TENANT, reg.id)!.is_invalid_at, null, '无新 token 的元数据重注册保留失效标记');
     } finally {
       db.close();
     }
