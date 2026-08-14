@@ -17,6 +17,7 @@ export const SETTLE_CMD_DELETE_SETTLEMENT_TRANSACTIONS = 'settlement.delete-sett
 export const SETTLE_CMD_INSERT_TRANSACTION = 'settlement.insert-transaction' as const;
 export const SETTLE_CMD_DELETE_ORPHAN_TRANSACTIONS = 'settlement.delete-orphan-transactions' as const;
 export const SETTLE_CMD_INSERT_RUN = 'settlement.insert-run' as const;
+export const SETTLE_CMD_ACQUIRE_LOCK = 'settlement.acquire-lock' as const;
 
 /* ── 行类型 ── */
 
@@ -54,6 +55,12 @@ export interface ReconciliationRunRow {
 /* ── 参数类型 ── */
 
 export interface SettlementTransactionsParams {
+  tenantId: string;
+  settlementId: string;
+}
+
+/** 对账串行化锁参数：按 settlement 粒度（同一结算的修复互斥即可，无需锁整租户）。 */
+export interface SettlementAcquireLockParams {
   tenantId: string;
   settlementId: string;
 }
@@ -130,4 +137,17 @@ export function settleCmdDeleteOrphanTransactions(params: DeleteOrphanTransactio
 
 export function settleCmdInsertRun(params: InsertRunParams): Command<InsertRunParams> {
   return { kind: SETTLE_CMD_INSERT_RUN, params };
+}
+
+/**
+ * 取对账串行化锁（事务级，随事务结束自动释放）。
+ *
+ * 为什么必须有：对账的修复是「复核 → DELETE → 重插」。PG 默认 READ COMMITTED，
+ * 复核的 SELECT **不加行锁**，复核与 DELETE 之间存在真实 TOCTOU 窗口——并发结算
+ * 在此间隙写入的合法流水会被 DELETE 掉。
+ * 实现按方言分流（见 executor）：PG 用 pg_advisory_xact_lock，SQLite 靠单写者
+ * BEGIN 天然互斥、无需额外语句。
+ */
+export function settleCmdAcquireLock(params: SettlementAcquireLockParams): Command<SettlementAcquireLockParams> {
+  return { kind: SETTLE_CMD_ACQUIRE_LOCK, params };
 }

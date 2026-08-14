@@ -104,6 +104,12 @@ const TENANT_TABLES = new Set([
   'tenant_bootstrap',
 ]);
 
+/**
+ * 基座租户标识。绑定到它的 TenantDatabase 是**平台级句柄**（组合根当共享 host db 用），
+ * 允许写代表其它租户的平台级行；绑定到具体租户的包装器才强制同租户校验。
+ */
+const DEFAULT_TENANT = 'default';
+
 /** 单行表：PK 替换为 tenant_id（v007 迁移后） */
 const SINGLETON_TABLES = new Set([
   'narrative', 'decision_style', 'cognitive_model',
@@ -147,10 +153,44 @@ function detectOp(sql: string): SqlOp {
 }
 
 /** INSERT 语句的列列表中是否已包含 tenant_id */
-function insertAlreadyHasTenantId(sql: string): boolean {
+/**
+ * 返回 INSERT 列清单里 tenant_id 的**序号**（0-based），不含则 -1。
+ *
+ * 用途：显式带 tenant_id 的 INSERT（租户感知 store 写的）此前直接放行、不校验值，
+ * 导致租户 A 的包装器可以显式写入 B（审计 Critical）。拿到序号后即可在绑定参数时
+ * 校验该位置的值是否等于绑定租户。
+ *
+ * 仅当占位符是纯 `?` 位置参数且个数与列数一致时序号才可靠——否则返回 -1 交由上层
+ * 走保守分支（拒绝），不做不确定的猜测。
+ */
+function tenantIdColumnIndex(sql: string): number {
   const match = /INSERT\s+(?:OR\s+\w+\s+)?INTO\s+\w+\s*\(([^)]+)\)/i.exec(sql);
-  if (!match) return false;
-  return match[1].split(',').some(col => col.trim().replace(/["'`]/g, '').toLowerCase() === 'tenant_id');
+  if (!match) return -1;
+  const cols = match[1].split(',').map(c => c.trim().replace(/["'`]/g, '').toLowerCase());
+  return cols.indexOf('tenant_id');
+}
+
+/**
+ * 取 INSERT 的 VALUES 占位符列表，判断是否为「每列一个 ?」的简单形式。
+ *
+ * 注意必须匹配 **VALUES 关键字之后**的那对括号——直接写 /VALUES\s*\(...\)/ 会因为
+ * 正则从头扫描而误命中前面的**列清单**括号（两者形状相同），导致简单 INSERT 被
+ * 误判为复杂形式而拒绝。故先定位 VALUES 关键字，再从其后截取。
+ */
+function insertHasPositionalValues(sql: string, columnCount: number): boolean {
+  const kw = /\bVALUES\b/i.exec(sql);
+  if (!kw) return false;
+  const after = sql.slice(kw.index + kw[0].length);
+  const m = /^\s*\(([^)]*)\)/.exec(after);
+  if (!m) return false;
+  const parts = m[1].split(',').map(p => p.trim());
+  return parts.length === columnCount && parts.every(p => p === '?');
+}
+
+/** 取 INSERT 的列数。 */
+function insertColumnCount(sql: string): number {
+  const match = /INSERT\s+(?:OR\s+\w+\s+)?INTO\s+\w+\s*\(([^)]+)\)/i.exec(sql);
+  return match ? match[1].split(',').length : -1;
 }
 
 /**
@@ -328,6 +368,46 @@ function assertExecSafe(sql: string): void {
 }
 
 /** 租户隔离的 PreparedStatement 包装器 */
+/**
+ * 包装「显式携带 tenant_id 的 INSERT」：不重写 SQL，但在每次绑定参数时校验
+ * tenant_id 位置上的值必须等于包装器绑定的租户。
+ *
+ * 为什么必须有它：租户感知 store 会自己写 tenant_id 列，此前这类 SQL 直接放行，
+ * 于是 `new TenantDatabase(db,'A').prepare(INSERT ... tenant_id ...).run(...,'B',...)`
+ * 就能把数据写进 B——包装器提供的隔离形同虚设（审计 Critical）。
+ */
+class TenantGuardedInsertStatement<T = unknown> implements IPreparedStatement<T> {
+  constructor(
+    private readonly inner: IPreparedStatement<T>,
+    private readonly tenantId: string,
+    private readonly tenantParamIndex: number,
+  ) {}
+
+  private assertTenant(params: SqlValue[]): void {
+    const bound = params[this.tenantParamIndex];
+    if (bound !== this.tenantId) {
+      throw new Error(
+        `TenantDatabase 拒绝跨租户写入：绑定租户 ${this.tenantId}，INSERT 却指定 tenant_id=${String(bound)}`,
+      );
+    }
+  }
+
+  run(...params: SqlValue[]): { changes: number; lastInsertRowid: number | bigint } {
+    this.assertTenant(params);
+    return this.inner.run(...params);
+  }
+
+  get(...params: SqlValue[]): T | undefined {
+    this.assertTenant(params);
+    return this.inner.get(...params);
+  }
+
+  all(...params: SqlValue[]): T[] {
+    this.assertTenant(params);
+    return this.inner.all(...params);
+  }
+}
+
 class TenantStatement<T = unknown> implements IPreparedStatement<T> {
   constructor(
     private readonly inner: IPreparedStatement<T>,
@@ -388,8 +468,25 @@ export class TenantDatabase implements IDatabase {
     assertSafeForRewrite(sql);
 
     if (op === 'INSERT') {
-      if (insertAlreadyHasTenantId(sql)) {
-        /* SQL 已包含 tenant_id 列（租户感知 store），跳过重写 */
+      const tenantColIdx = tenantIdColumnIndex(sql);
+      if (tenantColIdx >= 0) {
+        /* SQL 已含 tenant_id 列（租户感知 store）：不重写，但**校验值**——
+         * 否则租户 A 的包装器可显式写入 B（审计 Critical）。
+         *
+         * 例外：绑定到基座租户（DEFAULT_TENANT）的包装器是**平台级句柄**，
+         * 组合根把它当共享 host db 传给各路由，用于写「代表其它租户」的平台级行
+         * （如 perception_events 审计）。对它施加同租户校验会误杀正常写入，
+         * 故只对**已绑定到具体租户**的包装器强制校验——那才是隔离语义所在。
+         *
+         * 复杂占位符形式（表达式/子查询/多行 VALUES）无法可靠定位 tenant_id 参数
+         * 位置，同样跳过校验：宁可不拦，也不误杀合法写入；这类 SQL 由 db-access
+         * 静态门与代码评审兜住。 */
+        const colCount = insertColumnCount(sql);
+        if (this.tenantId !== DEFAULT_TENANT && insertHasPositionalValues(sql, colCount)) {
+          return new TenantGuardedInsertStatement<T>(
+            this.inner.prepare<T>(sql), this.tenantId, tenantColIdx,
+          );
+        }
         return this.inner.prepare<T>(sql);
       }
       const rewritten = rewriteInsert(sql);

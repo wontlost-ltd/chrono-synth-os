@@ -90,7 +90,10 @@ export function registerPrivacyRoutes(
     if (!row || row.tenant_id !== request.tenantId) {
       return reply.code(404).send({ error: 'Export job not found' });
     }
-    if (row.state !== 'completed') {
+    /* partial 与 completed 同为**终态且有产物**（privacy-service 对 partial 同样下发
+     * downloadUrl），区别只在数据不完整——用户理应能取走已导出的部分。
+     * 原先只放行 completed，使 partial 的下载入口必得 409。 */
+    if (row.state !== 'completed' && row.state !== 'partial') {
       return reply.code(409).send({ error: 'Export not yet completed' });
     }
 

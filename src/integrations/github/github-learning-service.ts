@@ -25,6 +25,7 @@
 import type { GitHubReadPort, GitHubCommit } from './github-read-port.js';
 import type { GithubLearnStore } from '../../storage/github-learn-store.js';
 import type { PerceptionDistiller } from '../../perception/perception-distiller.js';
+import { PartialPerceptionError } from '../../perception/perception-distiller.js';
 import type { MappedLearning } from './github-learning-mapper.js';
 import { mapIssue, mapPull, mapCommits, mapCodeAndReadme } from './github-learning-mapper.js';
 
@@ -81,6 +82,11 @@ export interface GitHubLearningServiceDeps {
    * 本 service 无权做记忆图的其它任何操作，类型即权限边界。
    */
   memories: { deleteMemory(id: string): boolean };
+  /**
+   * 可选日志。唯一用途：占位释放彻底失败时留痕——那意味着一条内容将被永久跳过，
+   * 静默发生比失败本身更糟。收窄成只含 error 的结构类型（类型即权限边界）。
+   */
+  logger?: { error?(scope: string, message: string): void };
 }
 
 export class GitHubLearningService {
@@ -90,6 +96,7 @@ export class GitHubLearningService {
   private readonly tenantId: string;
   private readonly personaId: string;
   private readonly memories: { deleteMemory(id: string): boolean };
+  private readonly logger?: { error?(scope: string, message: string): void };
 
   constructor(deps: GitHubLearningServiceDeps) {
     this.readPort = deps.readPort;
@@ -98,6 +105,7 @@ export class GitHubLearningService {
     this.tenantId = deps.tenantId;
     this.personaId = deps.personaId;
     this.memories = deps.memories;
+    this.logger = deps.logger;
   }
 
   /**
@@ -193,29 +201,39 @@ export class GitHubLearningService {
 
     let ingested = 0;
     let skipped = 0;
-    try {
-      for (const mapped of batch.items) {
-        const now = Date.now();
-        /* 原子占位：claim=false 表示已摄入过 → 跳过，绝不再 perceive（增量去重核心）。 */
-        const claimed = this.store.claimDigest(
-          this.personaId,
-          repo,
-          resourceType,
-          mapped.contentSha,
-          now,
-          mapped.discussionKey,
-        );
-        if (!claimed) {
-          skipped += 1;
-          continue;
-        }
+    for (const mapped of batch.items) {
+      const now = Date.now();
+      /* 原子占位：claim=false 表示已摄入过 → 跳过，绝不再 perceive（增量去重核心）。 */
+      const claimed = this.store.claimDigest(
+        this.personaId,
+        repo,
+        resourceType,
+        mapped.contentSha,
+        now,
+        mapped.discussionKey,
+      );
+      if (!claimed) {
+        skipped += 1;
+        continue;
+      }
+
+      /* 释放占位的窗口 = claim 之后、**记忆落库之前**的全部步骤，这是分界线：
+       *   - 本窗口内抛错 → 尚无任何记忆落库，释放占位是安全的，否则该内容永久跳过；
+       *   - perceive 成功之后的任何步骤抛错 → 记忆**已经写入**，此时释放占位会让下一轮
+       *     重新 perceive，凭空生成第二套记忆。宁可留下 claimed 占位（该条本轮不再
+       *     重学，但已有记忆完好），也不能制造重复知识。
+       * 故绝不可把整段循环体裹进同一个 catch；旧记忆查询虽在 perceive 之前，
+       * 也必须落在本窗口内——它同样发生在 claim 之后，抛错会同样泄漏占位。 */
+      let result: Awaited<ReturnType<typeof this.distiller.perceive>>;
+      let previousMemoryIds: readonly string[];
+      try {
         /* 取代前先记下旧记忆 ID 组——**新记忆沉淀成功后才删**，中途失败不致知识净损失。 */
-        const previousMemoryIds = mapped.discussionKey
+        previousMemoryIds = mapped.discussionKey
           ? this.store.findMemoryIdsByDiscussionKey(this.personaId, mapped.discussionKey)
           : [];
 
         /* 抢到才摄入：audio 壳范式喂进感知蒸馏管线（与 learn-topic 同款）。 */
-        const result = await this.distiller.perceive({
+        result = await this.distiller.perceive({
           personaId: this.personaId,
           tenantId: this.tenantId,
           media: {
@@ -225,7 +243,32 @@ export class GitHubLearningService {
             representation: mapped.representation,
           },
         });
+      } catch (err) {
+        /* 只有**确无记忆落库**时才释放占位。perceive 的记忆写入逐条独立、无事务，
+         * 中途失败会留下部分记忆——此时释放占位等于允许下一轮重新摄入，为已落库的
+         * 部分再生成一套重复记忆。PartialPerceptionError 正是用来区分这两种失败。 */
+        const partial = err instanceof PartialPerceptionError && err.writtenMemoryIds.length > 0;
+        if (!partial) {
+          this.releaseClaimDurably(repo, resourceType, mapped.contentSha);
+        }
+        /* 不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
+        return { ingested, skipped, cursorAdvanced: false };
+      }
 
+      /* 老师瞬时故障（analyze 抛错）→ perceive 降级返回空结果 + teacherFailed=true。
+       * 此时**没有任何记忆落库**，若照常 markIngested，该内容会被永久标为已摄入，
+       * 下一轮 claim=false 而永远学不到——一次网关抖动就能静默烧掉一条内容。
+       * 故与「无记忆落库」的其它失败同等对待：释放占位，留待下一轮重试。
+       * 注意与「老师成功但无有效事实」区分：那是正常无沉淀（teacherFailed=false），
+       * 内容确实没有可记的东西，应当标记 ingested 以免每轮重复询问老师。 */
+      if (result.teacherFailed) {
+        this.releaseClaimDurably(repo, resourceType, mapped.contentSha);
+        return { ingested, skipped, cursorAdvanced: false };
+      }
+
+      /* 以下为 perceive 成功后的收尾——记忆已落库，**不再释放占位**。
+       * 收尾失败时占位保持 claimed：内容不重复灌入，且已写入的记忆完整保留。 */
+      try {
         /* 演进式取代：记新指针组 + 删旧记忆组，使同一 issue/PR 恒为最新一版共识。
          * 仅当 perceive 真产出新记忆时才取代——空产出（老师失败/无事实）时保留旧记忆，
          * 宁可留旧共识也不能把已有知识删成空白。
@@ -241,10 +284,10 @@ export class GitHubLearningService {
 
         this.store.markIngested(this.personaId, repo, resourceType, mapped.contentSha, Date.now());
         ingested += 1;
+      } catch {
+        /* 收尾失败：记忆已在库，占位保持 claimed（不释放）。不推进游标。 */
+        return { ingested, skipped, cursorAdvanced: false };
       }
-    } catch {
-      /* perceive（或 markIngested）抛错：不推进游标。下次重拉，已 ingested 条靠 digest claim=false 跳过。 */
-      return { ingested, skipped, cursorAdvanced: false };
     }
 
     /* 全批成功才推进游标（spec ⑦）。newCursor 为空（空批）则不推进。 */
@@ -253,6 +296,40 @@ export class GitHubLearningService {
       return { ingested, skipped, cursorAdvanced: true };
     }
     return { ingested, skipped, cursorAdvanced: false };
+  }
+
+  /**
+   * 释放摘要占位（无记忆落库的失败路径统一走这里）。
+   *
+   * 为什么要重试：占位释放失败的后果是该条内容**永久跳过**（下一轮 claim=false，
+   * 且账本没有 lease/超时回收机制）。释放是幂等的单条 DELETE，短暂故障（锁竞争、
+   * 瞬时 I/O）重试即可收敛，因此不接受一次失败就放弃。
+   *
+   * 仍然不抛出：调用方已经在失败路径上，释放失败不应掩盖原始故障。改为写 error 日志，
+   * 让「永久跳过」至少是**可观测**的，而不是静默发生。
+   */
+  private releaseClaimDurably(repo: string, resourceType: string, contentSha: string): void {
+    const MAX_ATTEMPTS = 3;
+    let lastFailure = '未知原因';
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        /* 返回 false = 没有删到 claimed 行。这**不是**成功：占位仍在，内容照样会被
+         * 永久跳过。必须与抛错同等对待（继续重试，最终告警），否则「释放失败」会
+         * 悄悄退化成静默丢内容——正是本次要消除的问题。 */
+        if (this.store.releaseDigestClaim(this.personaId, repo, resourceType, contentSha)) return;
+        lastFailure = '未删到 claimed 行（占位可能已被并发改写）';
+      } catch (err) {
+        lastFailure = err instanceof Error ? err.message : String(err);
+      }
+    }
+    /* 三次仍失败：该条内容将被永久跳过。必须留下可检索的痕迹。
+     * 日志后端自身也可能故障——它绝不能再把异常抛回失败路径、掩盖原始故障。 */
+    try {
+      this.logger?.error?.(
+        'GitHubLearningService',
+        `释放摘要占位失败，内容将被永久跳过（repo=${repo} type=${resourceType} sha=${contentSha}）：${lastFailure}`,
+      );
+    } catch { /* 日志后端故障：已无处上报，绝不向上传播 */ }
   }
 
   /**

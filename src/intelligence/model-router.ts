@@ -156,6 +156,12 @@ export class ModelRouter implements LLMProvider {
     this.embeddingModel = config.embeddingModel;
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl;
+    /* 程序化构造同样绕过 config schema 的 .min(1)，在此把非正值挡在构造期——
+     * 比等到第一次 chat 调用才炸更早暴露，也更容易定位到错误的构造点。 */
+    if (config.maxTokens !== undefined
+      && (!Number.isInteger(config.maxTokens) || config.maxTokens <= 0)) {
+      throw new Error(`ModelRouter maxTokens 必须为正整数，收到: ${config.maxTokens}`);
+    }
     this.maxTokens = config.maxTokens ?? 4096;
     this.temperature = config.temperature ?? 0.7;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -183,7 +189,14 @@ export class ModelRouter implements LLMProvider {
   }
 
   async chat(messages: readonly ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
+    /* maxTokens 直接作为配额消费量。config schema 的 .min(1) 只约束**配置来源**——
+     * 调用方可经 options 逐次传入，也可在代码里直接构造 Router，两条路都绕过 schema。
+     * 非正值传进计量层会被拒（负数还能反向降低已用量），故在此把关：token 上限
+     * 本就没有 ≤0 的合理语义，拒绝比让它在配额层炸开更早、也更好定位。 */
     const estimatedTokens = options?.maxTokens ?? this.maxTokens;
+    if (!Number.isInteger(estimatedTokens) || estimatedTokens <= 0) {
+      throw new Error(`maxTokens 必须为正整数，收到: ${estimatedTokens}`);
+    }
 
     /* 安全检查：提示注入检测（mock 模式跳过，避免影响测试） */
     if (this.provider !== 'mock') {
@@ -251,7 +264,11 @@ export class ModelRouter implements LLMProvider {
       this.usageTracker.record(this.tenantId, 'llm_tokens', totalTokens);
     }
 
-    /* Stripe 计量上报 */
+    /* Stripe 计量上报。
+     * ⚠️ 残留（审计 Warning B4-6）：此处没有可用的业务因果 ID——token 用量按调用累计，
+     * 不对应任何持久化实体。故 outbox 退化为「tenant:event:时间戳:进程序号」，
+     * 跨进程/跨重试无去重能力。要真正闭合需把请求级 ID 贯穿 ModelRouter 公开 API，
+     * 属独立改造；conversation / simulation / decision 三条路径已传 sourceId。 */
     if (this.stripeConfig?.stripe.enabled && this.stripeCustomerId && totalTokens > 0) {
       if (this.billingOutbox) {
         /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
@@ -282,8 +299,12 @@ export class ModelRouter implements LLMProvider {
       if (!check.allowed) throw new QuotaExceededError(`Token 预算不足: ${check.reason}`);
     }
 
-    /* 原子性配额预消费 */
-    if (this.quotaManager && !this.quotaManager.consumeQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
+    /* 原子性配额预消费。
+     * estimatedTokens 可能为 0（空批次，或全是空字符串）——零消费是无操作，不该进入
+     * 计量层：配额接口要求正整数（负数会反向降低已用量，是真实绕过），把 0 也一并
+     * 挡在外面才能既保持该约束、又不让空批次退化成报错。 */
+    if (estimatedTokens > 0 && this.quotaManager
+      && !this.quotaManager.consumeQuota(this.tenantId, 'llm_tokens', estimatedTokens)) {
       throw new QuotaExceededError('LLM token 配额已用尽，请升级计划');
     }
 

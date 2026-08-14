@@ -170,13 +170,37 @@ class PlatformTenantVault implements TenantVault {
   }
 }
 
+/**
+ * 加载平台根密钥（用于派生每租户的 wrap/sign 子密钥）。
+ *
+ * **绝不能在缺失时随机生成**（审计 Critical）：根密钥进程内随机 → 首次启动能正常
+ * wrap 数据密钥，重启后根密钥变了，历史密文的 GCM 校验必然失败且**永久不可恢复**。
+ * 这是静默的数据损毁——启动看起来成功，损失在下一次读取时才暴露。
+ *
+ * 故：生产/预发环境缺失即拒绝启动（fail-closed）。仅在**测试运行器进程内**允许回退到
+ * 固定测试密钥——固定而非随机，保证同进程多次实例化行为一致，也不会掩盖生产配置缺失。
+ * 用 NODE_TEST_CONTEXT（node --test 自动注入）判定，不依赖调用方设置 NODE_ENV。
+ */
+function isNodeTestRunner(): boolean {
+  return process.env.NODE_TEST_CONTEXT !== undefined || process.env.NODE_ENV === 'test';
+}
+
 function loadPlatformKey(): Buffer {
   const envKey = process.env.CHRONO_PLATFORM_KEY;
-  if (!envKey) return randomBytes(32);
-  if (!/^[0-9a-fA-F]{64}$/.test(envKey)) {
-    throw new Error('CHRONO_PLATFORM_KEY must be a 32-byte hex string');
+  if (envKey) {
+    if (!/^[0-9a-fA-F]{64}$/.test(envKey)) {
+      throw new Error('CHRONO_PLATFORM_KEY must be a 32-byte hex string');
+    }
+    return Buffer.from(envKey, 'hex');
   }
-  return Buffer.from(envKey, 'hex');
+  if (isNodeTestRunner()) {
+    /* 固定测试密钥：可复现、跨重启一致；绝不用于生产（无 env 时生产直接拒启）。 */
+    return Buffer.from('test'.repeat(16), 'utf8').subarray(0, 32);
+  }
+  throw new Error(
+    'CHRONO_PLATFORM_KEY 未设置：平台根密钥缺失时若随机生成，重启后既有密文将永久不可解密。'
+    + '请提供持久化的 32 字节 hex 根密钥（或由 KMS 注入）后再启动。',
+  );
 }
 
 function derivePlatformKey(tenantId: string, keyRef: string, keyVersion: number, purpose: 'wrap' | 'sign'): Buffer {

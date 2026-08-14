@@ -183,7 +183,8 @@ export class ScimProvisioningService {
       });
     }
 
-    this.directory.activateTenant({ email: canonEmail, operationId });
+    /* 同注册路径：CAS 失败且目录未收敛 → 抛错要求重试，不返回未确认的 provisioning 结果。 */
+    this.directory.activateTenantOrThrow({ email: canonEmail, operationId, expectedTenantId: tenantId });
 
     const row = shardDb.queryOne(scimQueryUserById(userId));
     if (!row) {

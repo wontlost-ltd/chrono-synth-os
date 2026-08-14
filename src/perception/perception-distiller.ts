@@ -63,6 +63,29 @@ export interface PerceptionDistillResult {
   readonly teacherFailed: boolean;
 }
 
+/**
+ * 记忆已部分（或全部）落库后失败。
+ *
+ * 存在意义：perceive 的记忆写入是逐条独立的，没有外层事务包裹。若调用方把任何
+ * 抛错都当作「零写入」而安全重试，就会为已经落库的那部分再生成一套重复记忆。
+ * 该异常把已写入的 ID 显式暴露出来，使调用方能区分：
+ *   - 普通异常（无本类型）→ 记忆未落库，重试安全；
+ *   - 本异常 → 已有 memoryIds 落库，**不可**当作未摄入重试。
+ */
+export class PartialPerceptionError extends Error {
+  constructor(
+    /** 抛错前已成功写入的记忆 ID（可能为空数组：写第一条时即失败）。 */
+    readonly writtenMemoryIds: readonly string[],
+    override readonly cause: unknown,
+  ) {
+    super(
+      `感知摄入中途失败，已写入 ${writtenMemoryIds.length} 条记忆（不可当作未摄入重试）：` +
+      `${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'PartialPerceptionError';
+  }
+}
+
 export class PerceptionDistiller {
   constructor(
     private readonly provider: PerceptionProvider,
@@ -94,12 +117,37 @@ export class PerceptionDistiller {
 
     /* ③ 事实 → memory node（episodic/semantic）。 */
     const memoryIds: string[] = [];
-    for (const fact of facts) {
-      const node = this.memoryGraph.addMemory(fact.memoryKind, fact.summary, fact.valence, fact.salience);
-      memoryIds.push(node.id);
+    /* 记忆逐条写入、无外层事务：任一条抛错时前面几条**已经落库**。
+     * 调用方（如 GitHub 摄入）需据此决定能否重试——若把"抛错"一律当作零写入而
+     * 重新摄入，就会为已落库的部分再生成一套重复记忆。故失败时把已写入的 ID
+     * 附在异常上，让调用方看得见部分成功。 */
+    try {
+      for (const fact of facts) {
+        const node = this.memoryGraph.addMemory(fact.memoryKind, fact.summary, fact.valence, fact.salience);
+        memoryIds.push(node.id);
+      }
+    } catch (err) {
+      throw new PartialPerceptionError(memoryIds, err);
     }
-    this.logger?.info('PerceptionDistiller', `感知沉淀 ${memoryIds.length} 条记忆（${input.media.modality}）`);
 
+    /* 记忆已落库。此后**任何**语句抛错都属于「部分成功」，必须携带已写入的 ID——
+     * 包括看似无害的日志调用（注入的 logger 同样可能抛错）。故用单一 try 覆盖
+     * 落库之后的全部代码，而不是逐段包装：留任何一行在窗口外，该行抛错就会被
+     * 调用方误判为「零写入可安全重试」，进而重复灌记忆。 */
+    try {
+      this.logger?.info('PerceptionDistiller', `感知沉淀 ${memoryIds.length} 条记忆（${input.media.modality}）`);
+      return this.buildCandidates(input, analysis, memoryIds);
+    } catch (err) {
+      throw new PartialPerceptionError(memoryIds, err);
+    }
+  }
+
+  /** 记忆落库后的候选构建（边候选 + 身份提案）。抽出以便统一包装部分成功语义。 */
+  private buildCandidates(
+    input: PerceptionDistillInput,
+    analysis: PerceptionAnalysis,
+    memoryIds: readonly string[],
+  ): PerceptionDistillResult {
     const candidates: IngestResult[] = [];
     /* provenance：以 media hash 为锚的证据。type 暂用 'memory'（指向刚写的真实记忆 id）。 */
     const evidence: ArtifactEvidence[] = memoryIds.slice(0, 3).map((id) => ({ type: 'memory', id, score: 0.7 }));
@@ -130,7 +178,7 @@ export class PerceptionDistiller {
       this.logger?.info('PerceptionDistiller', `身份提案 ${hint.kind} → status=${r.status}`);
     }
 
-    return { memoryIds, candidates, teacherFailed: false };
+    return { memoryIds: [...memoryIds], candidates, teacherFailed: false };
   }
 
   /**

@@ -67,6 +67,12 @@ export class SiemDelivery {
   private transientFailures = 0;
   private overflowDrops = 0;
   private timer: NodeJS.Timeout | undefined;
+  /** 进行中的 drain；并发 flush() 复用它而非另起一轮（见 flush 注释）。 */
+  private inFlight: Promise<void> | undefined;
+  /** 单调入队计数。flush 用它区分「有新事件」与「重试残留」，避免并发等待者放大重试。 */
+  private enqueueSeq = 0;
+  /** 当前 drain 启动时的入队序号快照——等待者以它为基准判断期间有无新事件。 */
+  private inFlightSeq = 0;
 
   constructor(
     private readonly transport: SiemTransport,
@@ -94,11 +100,40 @@ export class SiemDelivery {
       }
     }
     this.buffer.push({ payload, retries: 0, enqueuedAtMs: Date.now() });
+    this.enqueueSeq += 1;
   }
 
   /** Attempt to drain the buffer. Stops on first transient failure
-   * to preserve event ordering — SIEM expects sequenced delivery. */
+   * to preserve event ordering — SIEM expects sequenced delivery.
+   *
+   * 单飞：定时器与外部调用天然并发，而 drain 循环在 peek 与 shift 之间有 await
+   * 断点。若允许并发进入，两个 flush 会读到同一条目→重复投递，随后两次 shift
+   * 各删一条→后一条从未投递却消失。故并发调用复用同一次 drain 的 Promise。 */
   async flush(): Promise<void> {
+    if (this.inFlight) {
+      /* 复用进行中的 drain。但**不能就此返回**：调用方可能在上一轮 drain 判空之后、
+       * finally 清除 inFlight 之前入队（drain 为空时同步走完，这个窗口必然存在）。
+       * 那样新事件既没被上一轮看到，又因复用旧 Promise 而无人处理，将无限期滞留。
+       *
+       * 判据必须是「**该轮 drain 之后有没有新入队**」而不是「队列非空」：瞬态失败会
+       * 让条目留在队首，若以队列非空为准，N 个并发等待者就会各自再拉一轮 → 一轮之内
+       * 烧掉 N 次重试预算（实测 8 个等待者 = 8 次 transport 调用），SIEM 端故障时会把
+       * 事件过早打进死信。
+       *
+       * 基准必须取 drain **启动时**的序号（inFlightSeq），而非等待者进入时的序号：
+       * 竞态窗口里 enqueue 恰好发生在等待者调用 flush 之前，用后者做基准会看不到
+       * 那次入队，事件重新滞留。 */
+      const startedAt = this.inFlightSeq;
+      await this.inFlight;
+      if (this.enqueueSeq === startedAt) return;
+      return this.flush();
+    }
+    this.inFlightSeq = this.enqueueSeq;
+    this.inFlight = this.drain().finally(() => { this.inFlight = undefined; });
+    return this.inFlight;
+  }
+
+  private async drain(): Promise<void> {
     while (this.buffer.length > 0) {
       const entry = this.buffer[0]!;
       let result: Awaited<ReturnType<SiemTransport['deliver']>>;

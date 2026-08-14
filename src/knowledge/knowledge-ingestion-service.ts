@@ -15,6 +15,12 @@ export interface IngestionResult {
   readonly imported: number;
   readonly skipped: number;
   readonly memoryIds: string[];
+  /**
+   * 游标推进失败的 source id。这些 source 的记忆**已经落库**，但游标停在旧位置，
+   * 下一轮会重新拉同一批内容重复摄入（fingerprint 去重只在单次运行内有效）。
+   * 调用方据此告警/人工介入；空数组表示本轮游标全部正常推进。
+   */
+  readonly cursorAdvanceFailures: string[];
 }
 
 export class KnowledgeIngestionService {
@@ -44,6 +50,7 @@ export class KnowledgeIngestionService {
     let imported = 0;
     let skipped = 0;
     const memoryIds: string[] = [];
+    const cursorAdvanceFailures: string[] = [];
     const seenFingerprints = new Set<string>();
 
     for (const source of sources) {
@@ -101,14 +108,34 @@ export class KnowledgeIngestionService {
         memoryIds.push(...sourceMemoryIds);
         skipped += Math.max(0, items.length - batch.length);
 
-        /* 仅在未截断时推进游标，避免跳过未处理的条目 */
+        /* 仅在未截断时推进游标，避免跳过未处理的条目。
+         *
+         * 游标推进失败是**静默重复摄入**的根因（审计 Warning B4-12）：记忆已写入，
+         * 但游标停在旧位置 → 下一轮重新拉同一批内容。而 fingerprint 去重只是本次
+         * 运行内的内存 Set（第 47 行），跨运行完全不设防，于是同一内容被重复灌进记忆图。
+         * 记忆节点没有持久化 fingerprint 列，真正的跨运行去重需要加表 + 迁移，
+         * 超出本次范围；此处至少把该失败**显式暴露**，不让它混在通用 warn 里被忽略。 */
         if (!truncated) {
-          this.store.updateState(
-            source.id,
-            tenantId,
-            nextState ? JSON.stringify(nextState) : source.stateJson,
-            this.clock.now(),
-          );
+          try {
+            this.store.updateState(
+              source.id,
+              tenantId,
+              nextState ? JSON.stringify(nextState) : source.stateJson,
+              this.clock.now(),
+            );
+          } catch (err) {
+            this.logger.error(
+              'KnowledgeIngestion',
+              `游标推进失败——已写入 ${sourceMemoryIds.length} 条记忆但游标未前移，` +
+              `下一轮将重复摄入这批内容（source=${source.id} tenant=${tenantId}）：` +
+              `${err instanceof Error ? err.message : String(err)}`,
+            );
+            /* 不 rethrow：throw 会被本函数 per-source 的 catch 接住，进而**跳过**下方的
+             * knowledge:ingested 事件发射——已落库的记忆从此对下游不可见，并让 skipped
+             * 计数把一批成功摄入的条目误计为跳过。游标失败的正确处理是「记录并继续」，
+             * 而不是把一个已完成的摄入伪装成失败。 */
+            cursorAdvanceFailures.push(source.id);
+          }
         }
 
         /* 发射摄入事件 */
@@ -126,6 +153,6 @@ export class KnowledgeIngestionService {
       }
     }
 
-    return { imported, skipped, memoryIds };
+    return { imported, skipped, memoryIds, cursorAdvanceFailures };
   }
 }

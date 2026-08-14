@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ApiNotConfiguredError, apiFetch } from '@/bridge/http-client';
+import { openExternal } from '@/utils/external-url';
 
 interface UserOauthTokenMeta {
   id: string;
@@ -38,6 +39,8 @@ function formatTs(ms: number | null): string {
 
 export function AgentOauthGooglePage() {
   const queryClient = useQueryClient();
+  /* 服务端返回的授权 URL 非法时置位（见按钮 onClick）。 */
+  const [redirectError, setRedirectError] = useState(false);
 
   const tokens = useQuery({
     queryKey: ['agentOauthGoogle'],
@@ -105,8 +108,10 @@ export function AgentOauthGooglePage() {
                   disabled={granted || startAuthorize.isPending}
                   onClick={async () => {
                     const r = await startAuthorize.mutateAsync(s.value);
-                    if (typeof window !== 'undefined') {
-                      window.open(r.authorizeUrl, '_blank', 'noopener,noreferrer');
+                    /* 授权 URL 来自服务端，打开前校验协议——noopener 挡不住
+                     * javascript: 伪协议（打开即执行）。 */
+                    if (!openExternal(r.authorizeUrl)) {
+                      setRedirectError(true);
                     }
                   }}
                 >
@@ -119,6 +124,11 @@ export function AgentOauthGooglePage() {
         {startAuthorize.error && !(startAuthorize.error instanceof ApiNotConfiguredError) && (
           <p className="text-xs text-red-300">
             授权启动失败：{(startAuthorize.error as Error).message}
+          </p>
+        )}
+        {redirectError && (
+          <p className="text-xs text-red-300" role="alert">
+            授权服务返回的跳转地址不合法，已阻止打开。请重试。
           </p>
         )}
       </section>

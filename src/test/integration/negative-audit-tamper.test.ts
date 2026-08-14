@@ -229,4 +229,33 @@ describe('P0-E negative — audit hash chain tamper detection', () => {
     assert.equal(resultA2.ok, false);
     assert.equal(resultB2.ok, true);
   });
+
+  /* 审计 Critical：完整链验证遇到「首个可见 seq > 1 且 predecessor 不存在」时，
+   * 把该行**自称的** prevHash 当作可信起点——删掉 seq 1..k 后剩余链仍验证通过，
+   * 前缀篡改（删除历史记录）变得不可检测。 */
+  it('删除链前缀后完整验证必须失败（不得以本行 prevHash 自建信任锚）', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    ensureAuditLogColumns(db);
+    seedAuditRows(db, 5);
+
+    /* 攻击者直接删掉 seq 1、2（抹除历史），保留 3..5。 */
+    db.prepare<void>('DELETE FROM audit_log WHERE tenant_id = ? AND chain_seq <= ?').run('tenant-a', 2);
+
+    const result = verifyAuditChain(db, 'tenant-a');
+
+    assert.equal(result.ok, false, '删前缀后完整验证必须判为不 ok');
+    assert.ok(result.breaks.length >= 1, '必须报告链断裂');
+  });
+
+  it('显式指定 fromSeq 的范围验证仍可正常工作（不误杀合法分段校验）', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    ensureAuditLogColumns(db);
+    seedAuditRows(db, 5);
+
+    /* 数据完整，只验 3..5：predecessor（seq 2）存在 → 可建立可信锚，应通过。 */
+    const result = verifyAuditChain(db, 'tenant-a', { fromSeq: 3 });
+    assert.equal(result.ok, true, '完整数据的范围验证不应被误杀');
+  });
 });

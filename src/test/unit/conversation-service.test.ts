@@ -156,6 +156,49 @@ describe('ConversationService (生产级)', () => {
     assert.equal(llm.chatCallCount, 1);
   });
 
+  /* 审计 Warning B4-11：携**原 messageId** + token 重投时，Step 1 幂等缓存会在
+   * token 被检查之前把旧挑战原样返回 → token 永远消费不掉，用户陷入
+   * 「反复确认却不生效」的死循环，且无任何错误提示。
+   *
+   * messageId 是这条消息的幂等键，续做的连续性由 confirmationToken 承载。
+   * 上一条用例（m-c2-1 → m-c2-2）已体现正确用法；此处钉死**错误用法必须显式报错**。 */
+  it('携原 messageId + token 重投 → 显式报错（不静默返回旧挑战）', async () => {
+    const first = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-c-dup', messageId: 'm-dup', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+    });
+    assert.equal(first.guardAction, 'needs_confirmation');
+    const token = first.confirmationToken!;
+
+    await assert.rejects(
+      () => service.submit({
+        tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+        sessionId: 's-c-dup', messageId: 'm-dup', /* 复用原 messageId —— 错误用法 */
+        externalUserId: 'eu',
+        content: '修改账户绑定信息',
+        confirmationToken: token,
+      }),
+      /必须使用新的 messageId/,
+      '必须明确告知调用方用错了幂等键，而不是返回旧挑战',
+    );
+  });
+
+  it('不带 token 重投原 messageId → 正常幂等返回旧挑战（不受上条影响）', async () => {
+    const first = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-c-idem', messageId: 'm-idem', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+    });
+    const again = await service.submit({
+      tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,
+      sessionId: 's-c-idem', messageId: 'm-idem', externalUserId: 'eu',
+      content: '修改账户绑定信息',
+    });
+    assert.equal(again.guardAction, 'needs_confirmation');
+    assert.equal(again.messageId, first.messageId, '同一条消息应拿回同一结果');
+  });
+
   it('require_confirmation token 改写 input 后失效', async () => {
     const first = await service.submit({
       tenantId: TEST_TENANT_ID, personaId, ownerUserId: TEST_USER_ID,

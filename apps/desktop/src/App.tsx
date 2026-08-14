@@ -5,6 +5,7 @@ import { EnterpriseRoutes } from './routers/EnterpriseRoutes';
 import { CompanionRoutes } from './routers/CompanionRoutes';
 import { getFirstRunCompleted, markFirstRunCompleted, openDatabase } from './bridge/tauri-commands';
 import { bootstrapLocalSession, settleLocalSync } from './bridge/bootstrap-local';
+import { hydrateApiToken } from './bridge/http-client';
 import { resolveAccountPlan } from './plan/account-plan-runtime';
 import type { AccountPlan } from './plan/account-plan';
 import { useTrayStatusSync } from './tray/useTrayStatusSync';
@@ -46,6 +47,10 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      /* 先从 OS 密钥库填充令牌缓存（审计 Critical 9：token 不再落磁盘明文）。
+       * 必须早于任何 apiFetch——否则请求会因缓存为空而误判「未配置」。
+       * 内含旧版 localStorage 明文令牌的一次性迁移，升级用户无需重新登录。 */
+      await hydrateApiToken();
       try {
         await openDatabase();
       } catch (err) {

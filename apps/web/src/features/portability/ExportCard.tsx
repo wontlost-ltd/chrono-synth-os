@@ -2,6 +2,16 @@ import { useExportFlow } from '../../hooks/usePortability';
 
 export function ExportCard() {
   const { state, start, reset } = useExportFlow();
+  /* 下载**始终**走同源 API 端点，而不是把 downloadUrl 原样渲染成 href：
+   *   - 默认的本地对象存储返回的是 `file://<服务器路径>`，浏览器既取不到，
+   *     还会把服务端目录结构暴露给用户；
+   *   - 配了 S3 时该端点会 302 到预签名 URL，行为不变；
+   *   - 同源地址无需协议白名单，也就没有伪协议注入面。
+   * downloadUrl 仍用于判断「是否已有可下载产物」。 */
+  /* 同时要求 exportId 与 downloadUrl 存在，收窄成非空字符串供 href 直接使用。 */
+  const downloadHref = state.exportId !== null && state.downloadUrl !== null
+    ? `/api/v1/privacy/export/${encodeURIComponent(state.exportId)}/download`
+    : null;
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -33,17 +43,48 @@ export function ExportCard() {
           </div>
         )}
 
-        {state.phase === 'ready' && state.downloadUrl && (
+        {state.phase === 'ready' && downloadHref && (
           <div className="flex flex-col gap-3">
             <p className="text-sm text-green-700 font-medium">✓ Export complete</p>
             <div className="flex gap-2">
               <a
-                href={state.downloadUrl}
+                href={downloadHref}
                 download
                 className="inline-flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-sm font-medium text-white hover:opacity-90"
               >
                 Download Pack
               </a>
+              <button
+                type="button"
+                onClick={reset}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                New Export
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* partial：导出完成但有数据缺失。既给下载入口，也必须把缺了什么讲清楚——
+            当作 ready 会让用户误以为数据完整，当作 error 又会藏起已可用的部分。 */}
+        {state.phase === 'partial' && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-medium text-amber-700">⚠ Export completed with warnings</p>
+            <ul className="list-disc pl-5 text-sm text-amber-700">
+              {state.warnings.map((w) => (
+                <li key={w.code}>{w.messageId}</li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              {downloadHref && (
+                <a
+                  href={downloadHref}
+                  download
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-warning px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                >
+                  Download Partial Pack
+                </a>
+              )}
               <button
                 type="button"
                 onClick={reset}

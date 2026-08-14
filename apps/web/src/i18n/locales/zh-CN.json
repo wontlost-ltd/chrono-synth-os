@@ -212,6 +212,7 @@
     "currentPlanBadge": "当前计划",
     "loadError": "加载计费数据失败：{{message}}",
     "portalError": "打开计费入口失败：{{message}}",
+    "invalidRedirect": "支付服务返回的跳转地址不合法，已阻止跳转。请重试或联系支持。",
     "addOnsTitle": "附加服务",
     "addOnOwned": "已购买",
     "purchaseAddOn": "购买",
@@ -979,7 +980,8 @@
       "authorize": "授权",
       "authorizing": "准备中…",
       "authorized": "已授权",
-      "startError": "授权启动失败：{{message}}"
+      "startError": "授权启动失败：{{message}}",
+      "invalidRedirect": "授权服务返回的跳转地址不合法，已阻止跳转。请重试。"
     },
     "list": {
       "heading": "已授权 scope",

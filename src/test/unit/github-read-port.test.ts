@@ -360,6 +360,29 @@ describe('GitHubReadPort', () => {
     assert.ok(calls[0]!.url.includes('per_page=100'), '带分页参数');
   });
 
+  /* 审计 Warning B4-17：原实现只取第一页。授权超过 100 个仓库时，第 101 个之后
+   * 的仓库**永远**不会进入组织轮转，且不报错、无痕迹——静默丢失授权范围。 */
+  it('listInstallationRepos：沿 Link header 翻页拉全量（不止第一页）', async () => {
+    const { calls, impl } = makeFetchSpy([
+      {
+        body: JSON.stringify({ total_count: 3, repositories: [{ full_name: 'acme/p1' }] }),
+        headers: { link: '<https://api.github.com/installation/repositories?page=2>; rel="next"' },
+      },
+      {
+        body: JSON.stringify({ total_count: 3, repositories: [{ full_name: 'acme/p2' }] }),
+        headers: { link: '<https://api.github.com/installation/repositories?page=3>; rel="next"' },
+      },
+      /* 末页无 link → 停止翻页。 */
+      { body: JSON.stringify({ total_count: 3, repositories: [{ full_name: 'acme/p3' }] }) },
+    ]);
+    const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });
+
+    const repos = await port.listInstallationRepos();
+
+    assert.deepEqual(repos, ['acme/p1', 'acme/p2', 'acme/p3'], '三页仓库都要拿到');
+    assert.equal(calls.length, 3, '应真的翻了三页');
+  });
+
   it('listInstallationRepos：空授权返回空数组', async () => {
     const { impl } = makeFetchSpy([{ body: JSON.stringify({ total_count: 0, repositories: [] }) }]);
     const port = new GitHubReadPortImpl(makeAuth('tok-1'), { fetchImpl: impl });

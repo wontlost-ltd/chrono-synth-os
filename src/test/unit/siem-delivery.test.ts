@@ -133,3 +133,124 @@ describe('SiemDelivery — drainDeadLetter', () => {
     assert.equal(s.snapshot().deadLettered, 0);
   });
 });
+
+/* ── 审计 Warning B1-9：并发 flush 的重复投递 + 事件丢失 ────────────────
+ * flush() 原实现「peek buffer[0] → await deliver → shift()」，peek 与 shift 之间
+ * 有 await 断点。两个 flush 并发时都读到同一条 A：A 被投递两次，随后两次 shift
+ * 分别删掉 A 和 B——B 从未投递却永久消失。定时器与外部调用天然并发，非理论风险。 */
+class GatedTransport implements SiemTransport {
+  delivered: string[] = [];
+  private release!: () => void;
+  readonly firstCallEntered: Promise<void>;
+  private signalEntered!: () => void;
+  private entered = false;
+
+  constructor() {
+    this.firstCallEntered = new Promise((r) => { this.signalEntered = r; });
+    /* 第一次 deliver 会挂起，直到测试显式放行，以此制造稳定的交错窗口。 */
+    this.gate = new Promise((r) => { this.release = r; });
+  }
+  private gate: Promise<void>;
+
+  async deliver(payload: string): Promise<{ ok: true }> {
+    if (!this.entered) {
+      this.entered = true;
+      this.signalEntered();
+      await this.gate;
+    }
+    this.delivered.push(payload);
+    return { ok: true };
+  }
+  releaseGate(): void { this.release(); }
+}
+
+describe('SiemDelivery — 并发 flush', () => {
+  it('并发 flush 不重复投递、不丢事件', async () => {
+    const t = new GatedTransport();
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0 });
+    s.enqueue('A'); s.enqueue('B');
+
+    /* flush #1 进入 transport 并挂在 A 上，此时 flush #2 启动。 */
+    const f1 = s.flush();
+    await t.firstCallEntered;
+    const f2 = s.flush();
+    t.releaseGate();
+    await Promise.all([f1, f2]);
+
+    /* A、B 各恰好一次，顺序保持。 */
+    assert.deepEqual(t.delivered, ['A', 'B']);
+    assert.equal(s.snapshot().pending, 0);
+    assert.equal(s.snapshot().delivered, 2);
+  });
+});
+
+/* Codex 交叉审查补口：单飞的正确性不仅是「并发不重复」，还须保证
+ * drain 等待期间入队的事件不会被漏掉（drain 循环读实时 buffer.length 而非启动快照）。 */
+describe('SiemDelivery — drain 期间入队', () => {
+  it('投递挂起期间入队的新事件仍会被同一轮 drain 处理', async () => {
+    const t = new GatedTransport();
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0 });
+    s.enqueue('A');
+
+    const f = s.flush();
+    await t.firstCallEntered;   /* 此刻 A 正挂在 transport 里 */
+    s.enqueue('B');             /* drain 进行中入队 */
+    t.releaseGate();
+    await f;
+
+    assert.deepEqual(t.delivered, ['A', 'B'], 'B 不得被漏掉');
+    assert.equal(s.snapshot().pending, 0);
+  });
+});
+
+/* Codex 第六轮抓到的真缺陷（我在单飞修复中引入）：drain 为空时同步走完，
+ * 但 inFlight 要到 finally 的微任务才清除。在这个必然存在的窗口里入队，
+ * 新事件既没被上一轮看到，又因复用旧 Promise 而无人处理 → 无限期滞留。 */
+describe('SiemDelivery — 单飞的微任务竞态', () => {
+  it('空 drain 完成后、finally 之前入队：事件仍被投递（不滞留）', async () => {
+    const t = new StubTransport();
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0 });
+
+    const f1 = s.flush();   /* 空队列：drain 同步走完，inFlight 尚未清除 */
+    s.enqueue('late');      /* 正落在窗口内 */
+    const f2 = s.flush();   /* 若直接复用已完成的旧 Promise，该事件永不投递 */
+    await Promise.all([f1, f2]);
+
+    assert.deepEqual(t.delivered, ['late']);
+    assert.equal(s.snapshot().pending, 0, '事件不得滞留在队列');
+  });
+
+  it('瞬态失败下不无限递归（保留重试语义，不自旋）', async () => {
+    const t = new StubTransport();
+    t.mode = 'transient';
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0, maxRetries: 3 });
+    s.enqueue('A');
+    const f1 = s.flush();
+    s.enqueue('B');
+    const f2 = s.flush();
+    /* 关键：必须落定。递归若无终止条件，这里会挂死。 */
+    await Promise.all([f1, f2]);
+    assert.equal(s.snapshot().pending, 2, '瞬态失败保留在队列待下轮重试');
+  });
+});
+
+/* Codex 第七轮：以「队列非空」为补轮判据会让 N 个并发等待者各拉一轮，
+ * 一轮之内烧掉 N 次重试预算 —— SIEM 端故障时事件被过早打进死信。
+ * 判据须为「该轮 drain 之后有无**新入队**」。 */
+describe('SiemDelivery — 并发等待者不放大重试', () => {
+  it('N 个并发 flush 对同一瞬态失败条目只消耗一次重试', async () => {
+    const t = new StubTransport();
+    t.mode = 'transient';
+    const s = new SiemDelivery(t, { ...DEFAULT_SIEM_OPTIONS, flushIntervalMs: 0, maxRetries: 10 });
+    s.enqueue('A');
+
+    await Promise.all(Array.from({ length: 8 }, () => s.flush()));
+
+    assert.equal(
+      s.snapshot().transientFailures, 1,
+      '8 个等待者只应产生 1 次投递尝试，否则重试预算被并发放大',
+    );
+    assert.equal(s.snapshot().pending, 1, '条目保留待下轮重试');
+    assert.equal(s.snapshot().deadLettered, 0, '不得因放大而过早进死信');
+  });
+});

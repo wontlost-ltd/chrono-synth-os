@@ -72,21 +72,76 @@ export function isPrivateIPv4(ip: string): boolean {
   return PRIVATE_V4_RANGES.some(([lo, hi]) => n >= lo && n <= hi);
 }
 
-/** Conservative IPv6 private / loopback / link-local detection. */
-export function isPrivateIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  if (lower === '::1' || lower === '::') return true;
-  /* ::ffff:a.b.c.d — IPv4-mapped IPv6; reuse the v4 check. */
-  if (lower.startsWith('::ffff:')) {
-    const v4 = lower.slice(7);
-    if (isIP(v4) === 4) return isPrivateIPv4(v4);
+/**
+ * 把 IPv6 文本展开成 8 组 16 位整数（完整 128 位）。不可解析返回 undefined。
+ *
+ * 为什么必须归一化而非字符串前缀匹配：IPv4-mapped 地址有**多种等价写法**——
+ * `::ffff:127.0.0.1` 与 `::ffff:7f00:1` 是同一个地址，但后者不含点分形式。
+ * 早期实现只认前者，导致 `::ffff:a9fe:a9fe`（=169.254.169.254 云元数据端点）
+ * 被判为公网地址而放行（审计 Critical）。
+ */
+function expandIPv6(ip: string): number[] | undefined {
+  let s = ip.toLowerCase().trim();
+  /* 去掉 zone id（fe80::1%eth0）与可能的方括号。 */
+  const pct = s.indexOf('%');
+  if (pct >= 0) s = s.slice(0, pct);
+  if (s.startsWith('[') && s.endsWith(']')) s = s.slice(1, -1);
+
+  /* 尾部若是点分 IPv4（::ffff:1.2.3.4 / ::1.2.3.4），先换算成两组 16 位。 */
+  const lastColon = s.lastIndexOf(':');
+  const tail = lastColon >= 0 ? s.slice(lastColon + 1) : '';
+  if (tail.includes('.')) {
+    if (isIP(tail) !== 4) return undefined;
+    const n = intFromV4(tail);
+    if (n < 0) return undefined;
+    s = `${s.slice(0, lastColon + 1)}${((n >>> 16) & 0xffff).toString(16)}:${(n & 0xffff).toString(16)}`;
   }
-  /* fc00::/7 unique-local */
-  if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
-  /* fe80::/10 link-local */
-  if (/^fe[89ab][0-9a-f]:/.test(lower)) return true;
-  /* ff00::/8 multicast */
-  if (/^ff[0-9a-f]{2}:/.test(lower)) return true;
+
+  /* 展开 :: 省略段。 */
+  const dbl = s.indexOf('::');
+  let head: string[];
+  let rest: string[];
+  if (dbl >= 0) {
+    head = s.slice(0, dbl).split(':').filter((p) => p.length > 0);
+    rest = s.slice(dbl + 2).split(':').filter((p) => p.length > 0);
+    if (head.length + rest.length > 8) return undefined;
+  } else {
+    head = s.split(':');
+    rest = [];
+    if (head.length !== 8) return undefined;
+  }
+  const zeros = 8 - head.length - rest.length;
+  const groups = [...head, ...Array<string>(zeros).fill('0'), ...rest];
+
+  const out: number[] = [];
+  for (const g of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(g)) return undefined;
+    out.push(Number.parseInt(g, 16));
+  }
+  return out.length === 8 ? out : undefined;
+}
+
+/**
+ * IPv6 私有 / 环回 / 链路本地检测。**先归一化成 128 位再判定**，
+ * 使各种等价写法（点分、十六进制、补零、IPv4-compatible）得到一致结果。
+ */
+export function isPrivateIPv6(ip: string): boolean {
+  const g = expandIPv6(ip);
+  if (!g) return false;
+
+  /* 前 6 组全 0 时，末 2 组是嵌入的 IPv4（IPv4-compatible ::a.b.c.d）；
+   * 前 5 组 0 + 第 6 组 0xffff 是 IPv4-mapped ::ffff:a.b.c.d。两者都要按 v4 规则判。 */
+  const firstFiveZero = g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0;
+  if (firstFiveZero && (g[5] === 0xffff || g[5] === 0)) {
+    const embedded = ((g[6]! << 16) >>> 0) + g[7]!;
+    /* ::0 与 ::1 由嵌入值 0/1 覆盖（0.0.0.0 与 0.0.0.1 都在 "this network" 段内）。 */
+    return PRIVATE_V4_RANGES.some(([lo, hi]) => embedded >= lo && embedded <= hi);
+  }
+
+  const h = g[0]!;
+  if (h >= 0xfc00 && h <= 0xfdff) return true;   /* fc00::/7  unique-local */
+  if (h >= 0xfe80 && h <= 0xfebf) return true;   /* fe80::/10 link-local */
+  if (h >= 0xff00) return true;                  /* ff00::/8  multicast */
   return false;
 }
 

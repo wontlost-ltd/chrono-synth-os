@@ -203,7 +203,9 @@ if (!isMainThread && parentPort) {
   });
 
   /** pool.connect() 返回的 client 具有 query + release 方法 */
-  type PgClient = { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>; release: () => void };
+  /* release(destroy?)：pg 的 PoolClient 支持传 true 销毁连接而非归还池——
+   * 事务语句失败后连接处于未知状态，还池会把脏连接传染给后续请求。 */
+  type PgClient = { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[]; rowCount: number | null }>; release: (destroy?: boolean) => void };
 
   /** 事务中持有的专用 client（按 txId 索引） */
   const txClients = new Map<number, PgClient>();
@@ -242,8 +244,16 @@ if (!isMainThread && parentPort) {
         case 'begin-tx': {
           const client = await pool.connect() as PgClient;
           const txId = nextTxId++;
+          /* BEGIN 可能失败（连接已断、服务端拒绝）。此时若 client 已登记进
+           * txClients 就再也无人释放——连接池被逐次蚕食直至耗尽。故先执行
+           * BEGIN，成功后才登记；失败则销毁连接（状态不可信，不还池）。 */
+          try {
+            await client.query('BEGIN');
+          } catch (err) {
+            client.release(true); /* true = destroy，不把可疑连接放回池 */
+            throw err;
+          }
           txClients.set(txId, client);
-          await client.query('BEGIN');
           response = { id, ok: true, rows: [], rowCount: 0, txId };
           break;
         }
@@ -251,9 +261,17 @@ if (!isMainThread && parentPort) {
         case 'commit-tx': {
           const client = txClients.get(msg.txId!);
           if (!client) throw new Error(`事务 ${msg.txId} 不存在`);
-          await client.query('COMMIT');
-          client.release();
-          txClients.delete(msg.txId!);
+          /* 无论 COMMIT 成功与否都必须摘除登记并归还连接，否则失败一次就永久
+           * 泄漏一个连接。COMMIT 失败时连接处于未知事务状态，销毁而非还池。 */
+          try {
+            await client.query('COMMIT');
+            client.release();
+          } catch (err) {
+            client.release(true);
+            throw err;
+          } finally {
+            txClients.delete(msg.txId!);
+          }
           response = { id, ok: true, rows: [], rowCount: 0 };
           break;
         }
@@ -261,20 +279,36 @@ if (!isMainThread && parentPort) {
         case 'rollback-tx': {
           const client = txClients.get(msg.txId!);
           if (!client) throw new Error(`事务 ${msg.txId} 不存在`);
-          await client.query('ROLLBACK');
-          client.release();
-          txClients.delete(msg.txId!);
+          /* 同 commit：ROLLBACK 失败同样要摘登记 + 销毁连接。 */
+          try {
+            await client.query('ROLLBACK');
+            client.release();
+          } catch (err) {
+            client.release(true);
+            throw err;
+          } finally {
+            txClients.delete(msg.txId!);
+          }
           response = { id, ok: true, rows: [], rowCount: 0 };
           break;
         }
 
         case 'close': {
-          /* 释放所有事务 client */
+          /* 释放所有事务 client。
+           * ROLLBACK 失败也**必须**释放：原实现把 release 放在 try 内，回滚一旦抛错
+           * 就整个跳过释放，随后 pool.end() 会卡在未归还的连接上。故释放移入 finally，
+           * 且失败路径以 destroy 归还（连接状态已不可信）。 */
           for (const [, client] of txClients) {
+            let rollbackFailed = false;
             try {
               await client.query('ROLLBACK');
-              client.release();
-            } catch { /* 忽略 */ }
+            } catch {
+              rollbackFailed = true;
+            } finally {
+              try {
+                client.release(rollbackFailed);
+              } catch { /* 释放本身失败：已在关闭路径，无处可上报 */ }
+            }
           }
           txClients.clear();
           await pool.end();

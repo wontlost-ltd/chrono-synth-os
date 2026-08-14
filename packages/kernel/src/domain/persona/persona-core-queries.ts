@@ -65,7 +65,7 @@ export const PCORE_CMD_CREATE_FORK = 'pcore.createFork' as const;
 export const PCORE_CMD_UPDATE_PERSONA_KNOWLEDGE_SYNC = 'pcore.updatePersonaKnowledgeSync' as const;
 export const PCORE_CMD_APPLY_GOVERNANCE_EVENT = 'pcore.applyGovernanceEvent' as const;
 export const PCORE_CMD_CREATE_WALLET_PAYOUT_REQUEST = 'pcore.createWalletPayoutRequest' as const;
-export const PCORE_CMD_UPDATE_WALLET_BALANCE = 'pcore.updateWalletBalance' as const;
+export const PCORE_CMD_DEBIT_WALLET_BALANCE = 'pcore.debitWalletBalance' as const;
 export const PCORE_CMD_CREATE_WALLET_SETTLEMENT = 'pcore.createWalletSettlement' as const;
 export const PCORE_CMD_SETTLE_PERSONA_WALLET = 'pcore.settlePersonaWallet' as const;
 export const PCORE_CMD_CREATE_TASK_APPLICATION = 'pcore.createTaskApplication' as const;
@@ -715,8 +715,13 @@ export interface PcoreCreateWalletPayoutRequestParams {
   now: number;
 }
 
-export interface PcoreUpdateWalletBalanceParams extends PcoreWalletByIdParams {
-  balance: number;
+/**
+ * 条件原子扣减参数：按**当前**余额相对扣减，并在同一语句内校验余额充足。
+ * 钱包余额的**唯一**写路径：相对扣减 + 同语句校验，结构上排除丢更新。
+ */
+export interface PcoreDebitWalletBalanceParams extends PcoreWalletByIdParams {
+  /** 扣减金额（整数 minor units，必须为正）。 */
+  amountMinor: number;
   now: number;
 }
 
@@ -1438,8 +1443,18 @@ export function pcoreCmdCreateWalletPayoutRequest(params: PcoreCreateWalletPayou
   return { kind: PCORE_CMD_CREATE_WALLET_PAYOUT_REQUEST, params };
 }
 
-export function pcoreCmdUpdateWalletBalance(params: PcoreUpdateWalletBalanceParams): Command<PcoreUpdateWalletBalanceParams> {
-  return { kind: PCORE_CMD_UPDATE_WALLET_BALANCE, params };
+/**
+ * 条件原子扣减余额：`UPDATE ... SET balance = balance - ? WHERE ROUND(balance*100) >= ?`。
+ *
+ * 为什么不提供「写绝对值」的变体：那要求调用方在事务**外**读余额再算出
+ * 绝对值。两个并发提现（余额 100，各提 80）都读到 100、都算出 20、都写 20——账面只扣
+ * 一次，却产生两条 80 的提现记录。相对扣减 + 同语句余额校验使二者只有一个能成功
+ * （rowsAffected=0 即余额不足，调用方据此回滚）。
+ *
+ * 比较用 minor units：balance 是 real 列，直接比小数会有浮点漂移。
+ */
+export function pcoreCmdDebitWalletBalance(params: PcoreDebitWalletBalanceParams): Command<PcoreDebitWalletBalanceParams> {
+  return { kind: PCORE_CMD_DEBIT_WALLET_BALANCE, params };
 }
 
 export function pcoreCmdCreateWalletSettlement(params: PcoreCreateWalletSettlementParams): Command<PcoreCreateWalletSettlementParams> {

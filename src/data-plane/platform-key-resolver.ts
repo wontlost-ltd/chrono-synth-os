@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import type { KeyResolver, KeyHandle, KeyRotationResult } from '@chrono/kernel';
 import type { IDatabase } from '../storage/database.js';
 
@@ -40,11 +39,23 @@ export class PlatformKeyResolver implements KeyResolver {
     return { keyRef, algorithm: 'aes-256-gcm' };
   }
 
+  /**
+   * 轮换密钥——本实现**不支持**，显式拒绝。
+   *
+   * 为什么不是「先实现再说」：本 resolver 的 keyring 来自静态 AppConfig，进程内
+   * 没有任何持久化写入路径。原实现生成 32 字节随机材料后**直接丢弃**，只返回一个
+   * `${keyRef}.v${时间戳}` 的新引用——调用方若信任该返回值去加密数据，之后
+   * resolve(newKeyRef) 必然抛「未知的密钥引用」，数据永久不可解。
+   *
+   * 静默返回不可用的引用比明确拒绝危险得多：前者要等到解密时才暴露，那时密文
+   * 已经写下。故在此 fail-closed，把轮换交给真正持有密钥生命周期的外部 KMS。
+   */
   async rotate(keyRef: string): Promise<KeyRotationResult> {
-    randomBytes(32); // generate new key material (caller must update AppConfig to activate)
-    const newKeyRef = `${keyRef}.v${Date.now()}`;
     this.writeAudit(keyRef, 'rotate', undefined);
-    return { previousKeyRef: keyRef, newKeyRef, algorithm: 'aes-256-gcm' };
+    throw new Error(
+      `PlatformKeyResolver 不支持密钥轮换（keyRef=${keyRef}）：` +
+      '密钥环由静态配置提供，没有持久化新密钥的路径。请通过外部 KMS 轮换后更新 AppConfig.keyring。',
+    );
   }
 
   async revoke(keyRef: string): Promise<void> {

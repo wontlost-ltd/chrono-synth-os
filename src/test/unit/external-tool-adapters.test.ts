@@ -7,7 +7,7 @@
  *  - EmailTool：mock/dryRun 模式；附件大小校验；非法邮箱抛错；RFC2047 编码
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSearchTool } from '../../agent/tools/web-search-tool.js';
 import { CalendarTool } from '../../agent/tools/calendar-tool.js';
@@ -193,5 +193,107 @@ describe('EmailTool', () => {
       })),
       /非法邮箱/,
     );
+  });
+});
+
+/* 审计 Warning B4-4：create 只把 idempotencyKey **写进** extendedProperties 就直接
+ * POST，从不回查。请求已到达但响应丢失时（网络中断/超时重试），下一次调用会创建
+ * **第二个**日历事件——日历是对外可见的副作用，重复事件会直接打扰真人。 */
+describe('CalendarTool — create 幂等回查', () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  /** 用 oauthAccessToken 走 google 分支（避开 service account 签名）。 */
+  function googleTool(): CalendarTool {
+    return new CalendarTool(
+      { provider: 'google', defaultTimezone: 'UTC', oauthAccessToken: 'tok-test' },
+      new SilentLogger(),
+    );
+  }
+
+  it('带 idempotencyKey 且已存在 → 返回既有事件，不再 POST 创建', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method ?? 'GET' });
+      /* 回查命中：返回一条既有事件。 */
+      return new Response(JSON.stringify({ items: [{ id: 'evt_existing', summary: 'Test event' }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const result = await googleTool().invoke(makeCtx({
+      action: 'create', calendarId: 'primary',
+      event: { summary: 'Test event' }, idempotencyKey: 'key-dup',
+    }));
+
+    const json = (result.content[0] as { type: 'json'; json: { id: string } }).json;
+    assert.equal(json.id, 'evt_existing', '应返回既有事件');
+    assert.equal(calls.length, 1, '只应发一次回查请求');
+    assert.equal(calls[0]!.method, 'GET', '不得再发 POST 创建');
+    assert.ok(
+      calls[0]!.url.includes('privateExtendedProperty=chrono.idempotencyKey%3Dkey-dup'),
+      `回查须按幂等键过滤，实际 URL: ${calls[0]!.url}`,
+    );
+  });
+
+  it('带 idempotencyKey 但不存在 → 回查未命中后正常创建', async () => {
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ url: String(url), method });
+      if (method === 'GET') {
+        return new Response(JSON.stringify({ items: [] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ id: 'evt_new' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const result = await googleTool().invoke(makeCtx({
+      action: 'create', calendarId: 'primary',
+      event: { summary: 'New event' }, idempotencyKey: 'key-fresh',
+    }));
+
+    const json = (result.content[0] as { type: 'json'; json: { id: string } }).json;
+    assert.equal(json.id, 'evt_new');
+    assert.deepEqual(calls.map((c) => c.method), ['GET', 'POST'], '先回查再创建');
+  });
+
+  it('回查本身失败 → 不阻断创建（去重是优化，不该因瞬时故障挡住正常创建）', async () => {
+    const methods: string[] = [];
+    globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      methods.push(method);
+      if (method === 'GET') return new Response('boom', { status: 500 });
+      return new Response(JSON.stringify({ id: 'evt_after_failed_probe' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const result = await googleTool().invoke(makeCtx({
+      action: 'create', calendarId: 'primary',
+      event: { summary: 'X' }, idempotencyKey: 'key-probe-fails',
+    }));
+
+    const json = (result.content[0] as { type: 'json'; json: { id: string } }).json;
+    assert.equal(json.id, 'evt_after_failed_probe');
+    assert.deepEqual(methods, ['GET', 'POST']);
+  });
+
+  it('不带 idempotencyKey → 不做回查，直接创建（不引入额外请求）', async () => {
+    const methods: string[] = [];
+    globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET');
+      return new Response(JSON.stringify({ id: 'evt_plain' }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await googleTool().invoke(makeCtx({
+      action: 'create', calendarId: 'primary', event: { summary: 'Y' },
+    }));
+    assert.deepEqual(methods, ['POST'], '无幂等键时不应多发回查请求');
   });
 });

@@ -102,7 +102,28 @@ export class IntegrationEngine {
       const updated = current
         ? `${current}\n---\n${proposal.narrativeUpdate}`
         : proposal.narrativeUpdate;
-      coreLayer.updateNarrative(updated);
+
+      /* 叙事是「我是谁」，外部提案改它必须与价值同等对待——此前这里**无条件**
+       * 直接 updateNarrative()，完全绕过 UpdateGate，生产已注入 gate 也挡不住
+       * （审计 Critical）。现在与价值路径同款走门。 */
+      if (updateGate) {
+        const result = updateGate.tryApply(
+          'L1',
+          'system_integration',
+          'narrative',
+          current ?? '',
+          updated,
+          /* 叙事无数值 delta；用 1 表示「整体改写」，确保达到任何确认阈值。 */
+          1,
+          `集成提案 ${proposal.id} 改写人格叙事`,
+          () => { coreLayer.updateNarrative(updated); },
+        );
+        if (result.pendingUpdate) {
+          pendingUpdates.push(result.pendingUpdate);
+        }
+      } else {
+        coreLayer.updateNarrative(updated);
+      }
     }
 
     return { pendingUpdates };

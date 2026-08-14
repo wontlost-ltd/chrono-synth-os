@@ -74,6 +74,10 @@ export function createGithubLearnTaskHandlerForProduction(
         tenantId,
         personaId: COMPANION_PERSONA_ID,
         memories: tenantOS.core.memories,
+        /* 占位释放彻底失败＝该条内容永久跳过，必须可观测。
+         * 用租户 OS 的 logger 而非 deps.os，与本函数其余依赖同源（当前二者是同一实例，
+         * 但语义上这里属于该租户的学习流程）。 */
+        logger: tenantOS.getLogger(),
       });
       await service.learn(repo, resourceTypes);
     },

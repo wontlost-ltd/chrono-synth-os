@@ -17,6 +17,7 @@
  */
 
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
+import { ValidationError, ErrorCode } from '../errors/index.js';
 import type { LLMProvider, ChatMessage } from '../intelligence/llm-provider.js';
 import type { Logger } from '../utils/logger.js';
 import type { PersonaCoreService } from '../persona-core/persona-core-service.js';
@@ -62,6 +63,10 @@ export const DEFAULT_LLM_TIMEOUT_MS = 30_000;
 export const DEFAULT_LLM_RETRY_LIMIT = 2;
 export const DEFAULT_LLM_RETRY_BACKOFF_MS = 500;
 export const DEFAULT_QUOTA_RESOURCE = 'conversation_message';
+
+/** 计费锚各段的分隔符：US（Unit Separator, U+001F）。
+ *  用控制字符而非 ':' 等可见符号——ID 里若含该符号会导致不同锚拼成同一个键。 */
+const BILLING_ANCHOR_SEP = '\u001f';
 
 export const FALLBACK_RESPONSE = '抱歉，当前服务遇到瞬时问题，已记录此请求并将由人工同事跟进。';
 export const QUOTA_EXCEEDED_RESPONSE = '当前对话流量已达上限，请稍后重试或联系管理员。';
@@ -184,7 +189,23 @@ export class ConversationService {
       sessionId: input.sessionId,
       messageId: input.messageId,
     });
+    /* 幂等缓存命中即返回既有结果。
+     *
+     * ⚠️ needs_confirmation 的续做契约（审计 Warning B4-11）：
+     * 该状态返回的是「请先确认」的挑战。调用方拿到 token 后重投时**必须换一个
+     * messageId**——messageId 是这条消息的幂等键，携原键重投在语义上就是「重放同一条
+     * 消息」，理应拿回同一个结果。续做的连续性由 confirmationToken 承载，不是 messageId。
+     *
+     * 若携原 messageId + token 重投，会命中此处缓存并拿回旧挑战，token 永远消费不掉。
+     * 这既非缓存的错也非 token 的错，而是调用方用错了幂等键；故此处**显式报错**指出
+     * 该用法，而不是静默返回旧挑战让调用方陷入「反复确认却不生效」的死循环。 */
     if (existing) {
+      if (existing.guardAction === 'needs_confirmation' && input.confirmationToken) {
+        throw new ValidationError(
+          '携 confirmationToken 重投时必须使用新的 messageId（原 messageId 已绑定那次待确认挑战）',
+          ErrorCode.VALIDATION_FORMAT,
+        );
+      }
       this.recordMetric(existing.guardAction, Date.now() - startedAt);
       return toConversationResponse(existing);
     }
@@ -700,13 +721,27 @@ export class ConversationService {
       || outcome.guardAction === 'llm_fallback'
       || outcome.guardAction === 'autonomous_response';
     if (billable) {
-      this.recordBillableUsage(input.tenantId, 1);
+      /* 计费因果锚必须用**调用方给的 messageId**，不能用服务端行 id：
+       * 后者是 generatePrefixedId → randomUUID()，每次调用都是新值，
+       * 重试时锚也变，outbox 的 `tenant:event:sourceId` 键永远不碰撞 = 幂等为零。
+       *
+       * 锚必须覆盖**完整唯一域**：v065 的约束是
+       * UNIQUE(tenant_id, persona_id, session_id, message_id) —— 四列。
+       * 少写 personaId 会让同租户同会话下的两个 persona 撞成同一个键，
+       * 第二条计费事件被 outbox 当作重复丢弃 → **少计费**。
+       * tenantId 已在 outbox 键前缀里（`tenant:event:sourceId`），故此处补 persona/session/message 三段。
+       * 用不可见控制字符 US 分隔而非 ':'：会话/消息 ID 里若含冒号，'a:b'+'c' 与
+       * 'a'+'b:c' 会拼成同一个键（分隔符碰撞）；控制字符不可能出现在这些 ID 中。 */
+      this.recordBillableUsage(
+        input.tenantId, 1,
+        [input.personaId, input.sessionId, input.messageId].join(BILLING_ANCHOR_SEP),
+      );
     }
 
     return message;
   }
 
-  private recordBillableUsage(tenantId: string, quantity: number): void {
+  private recordBillableUsage(tenantId: string, quantity: number, sourceId?: string): void {
     try {
       this.deps.usageTracker?.record(tenantId, 'conversation_message', quantity);
     } catch (err) {
@@ -716,7 +751,7 @@ export class ConversationService {
       try {
         const customerId = this.deps.stripeCustomerLookup(tenantId);
         if (customerId) {
-          this.deps.billingOutbox.enqueue(tenantId, customerId, 'chrono_conversation_message', quantity);
+          this.deps.billingOutbox.enqueue(tenantId, customerId, 'chrono_conversation_message', quantity, sourceId);
         }
       } catch (err) {
         this.deps.logger.warn('ConversationService', `billing outbox enqueue failed: ${err instanceof Error ? err.message : String(err)}`);

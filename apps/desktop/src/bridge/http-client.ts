@@ -22,9 +22,45 @@ export function getApiBaseUrl(): string | null {
   return localStorage.getItem(STORAGE_BASE);
 }
 
+/**
+ * 进程内令牌缓存（审计 Critical 9）。
+ *
+ * token **不再落 localStorage**——那是用户可读的磁盘文件，其它进程/备份/同步盘都能拿到
+ * 明文令牌。改存 OS 平台密钥库（Tauri credentials 命令），进程内只保留一份内存副本，
+ * 使 getApiToken() 保持同步语义、调用方零改造。
+ *
+ * null = 尚未 hydrate 或确无令牌；hydrateApiToken() 在应用启动时从密钥库填充。
+ */
+let cachedToken: string | null = null;
+
 export function getApiToken(): string | null {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem(STORAGE_TOKEN);
+  return cachedToken;
+}
+
+/**
+ * 从 OS 密钥库读取令牌填充内存缓存。应用启动时调用一次。
+ *
+ * 兼容旧版本：若密钥库为空但 localStorage 里有历史明文令牌，则**迁移**——
+ * 写入密钥库后立即擦除磁盘明文，使升级用户不必重新登录也能消除残留。
+ */
+export async function hydrateApiToken(): Promise<void> {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const fromKeyring = await invoke<string | null>('get_api_token');
+    if (fromKeyring) { cachedToken = fromKeyring; return; }
+
+    /* 旧版明文令牌迁移路径（一次性）。 */
+    const legacy = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_TOKEN) : null;
+    if (legacy) {
+      await invoke('set_api_token', { token: legacy });
+      localStorage.removeItem(STORAGE_TOKEN);
+      cachedToken = legacy;
+    }
+  } catch {
+    /* 密钥库不可用（如 Linux 无 Secret Service）：保持未登录状态，
+     * 由调用方走正常「未配置」路径要求重新登录——绝不回退明文磁盘存储。 */
+    cachedToken = null;
+  }
 }
 
 /* 同步 setter 只写 localStorage（纯、可预测）。它们**不**自己清 plan 缓存——清缓存是异步的
@@ -38,10 +74,23 @@ export function setApiBaseUrl(url: string | null): void {
   else localStorage.removeItem(STORAGE_BASE);
 }
 
+/**
+ * 设置令牌：同步更新内存缓存（调用方立即可见），异步持久化到 OS 密钥库。
+ * 持久化失败不影响本次会话可用性——但令牌不会落磁盘明文。
+ */
 export function setApiToken(token: string | null): void {
-  if (typeof localStorage === 'undefined') return;
-  if (token) localStorage.setItem(STORAGE_TOKEN, token);
-  else localStorage.removeItem(STORAGE_TOKEN);
+  cachedToken = token;
+  /* 顺手清掉可能存在的旧版磁盘明文（升级路径）。 */
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(STORAGE_TOKEN);
+  void (async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_api_token', { token: token ?? '' });
+    } catch {
+      /* 密钥库写入失败：本次会话仍可用（内存中有），重启后需重新登录。
+       * 刻意不回退到 localStorage——那正是本次要消除的明文落盘。 */
+    }
+  })();
 }
 
 /**

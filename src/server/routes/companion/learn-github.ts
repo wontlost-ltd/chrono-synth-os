@@ -172,6 +172,8 @@ export function registerCompanionLearnGithubRoutes(app: FastifyInstance, deps: C
       readPort, store, distiller, tenantId: request.tenantId, personaId: COMPANION_PERSONA_ID,
       /* 演进式取代需删同讨论旧记忆——注入本租户 OS 的记忆图。 */
       memories: tenantOS.core.memories,
+      /* 占位释放彻底失败＝该条内容永久跳过，必须可观测。 */
+      logger: tenantOS.getLogger(),
     });
     const result: LearnGithubResult = await service.learn(body.repo, resourceTypes);
 

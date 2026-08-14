@@ -104,7 +104,12 @@ export function registerLifeSimulationRoutes(
       const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
       if (stripeCustomerId) {
         /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
-        if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1)) {
+        /* ⚠️ simulationId 每次 enqueue 新生成（randomUUID），故它**不提供**跨重试幂等——
+         * 它只保证同一次请求内不重复入队。真正的重放防护由全局 Idempotency-Key
+         * 插件承担（src/server/plugins/idempotency.ts，默认启用、24h TTL）：
+         * 客户端带该 header 时整个 handler（含配额、实体创建、计费）只执行一次。
+         * 不带 header 的重放会重复计费——这是**契约要求**，非本层可修。 */
+        if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1, simulationId)) {
           billingMetrics.meterEventsEnqueued++;
         }
       }
@@ -217,8 +222,12 @@ export function registerLifeSimulationRoutes(
       if (billingOutbox && subscriptionQuery && deps.config?.stripe.enabled) {
         const stripeCustomerId = subscriptionQuery.getActiveStripeCustomerId(tenantId);
         if (stripeCustomerId) {
-          /* 仅在实际落库（非幂等去重）时计数，避免重复事件膨胀 meterEventsEnqueued */
-          if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1)) {
+          /* ⚠️ simulationId 每次 enqueue 新生成（randomUUID），故它**不提供**跨重试幂等——
+           * 它只保证同一次请求内不重复入队。真正的重放防护由全局 Idempotency-Key
+           * 插件承担（src/server/plugins/idempotency.ts，默认启用、24h TTL）：
+           * 客户端带该 header 时整个 handler（含配额、实体创建、计费）只执行一次。
+           * 不带 header 的重放会重复计费——这是**契约要求**，非本层可修。 */
+          if (billingOutbox.enqueue(tenantId, stripeCustomerId, 'simulation', 1, simulationId)) {
             billingMetrics.meterEventsEnqueued++;
           }
         }

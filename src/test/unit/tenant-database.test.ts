@@ -27,6 +27,41 @@ describe('TenantDatabase', () => {
     assert.equal(row?.label, '诚信');
   });
 
+  /* 审计 Critical：显式带 tenant_id 的 INSERT 此前直接返回底层 statement，
+   * 不校验参数值是否等于包装器绑定的租户——租户 A 的 TenantDatabase 可显式写入 B。 */
+  it('显式 tenant_id 与绑定租户不符时必须拒绝（跨租户写入防护）', () => {
+    const tenantDb = new TenantDatabase(baseDb, 'tenant-a');
+
+    assert.throws(
+      () => {
+        tenantDb.prepare<void>(
+          'INSERT INTO core_values (id, tenant_id, label, weight, updated_at) VALUES (?, ?, ?, ?, ?)',
+        ).run('val_x', 'tenant-b', '越权', 0.5, 1000);
+      },
+      /租户/,
+      '写入他租户必须抛错',
+    );
+
+    /* 确认数据确实没落库。 */
+    const leaked = baseDb.prepare<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM core_values WHERE tenant_id = 'tenant-b'",
+    ).get()?.c;
+    assert.equal(leaked, 0, '越权数据绝不可落库');
+  });
+
+  it('显式 tenant_id 等于绑定租户时正常放行（不误杀租户感知 store）', () => {
+    const tenantDb = new TenantDatabase(baseDb, 'tenant-a');
+
+    tenantDb.prepare<void>(
+      'INSERT INTO core_values (id, tenant_id, label, weight, updated_at) VALUES (?, ?, ?, ?, ?)',
+    ).run('val_ok', 'tenant-a', '合法', 0.7, 1000);
+
+    const row = baseDb.prepare<{ tenant_id: string }>(
+      'SELECT tenant_id FROM core_values WHERE id = ?',
+    ).get('val_ok');
+    assert.equal(row?.tenant_id, 'tenant-a');
+  });
+
   it('SELECT 自动过滤 tenant_id', () => {
     /* 手动插入两个租户的数据 */
     baseDb.prepare<void>(

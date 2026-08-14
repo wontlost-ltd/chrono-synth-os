@@ -148,6 +148,31 @@ describe('IntegrationEngine', () => {
       assert.ok(updated!.weight > 0.55);
     });
 
+    /* 审计 Critical：narrativeUpdate 此前**无条件**直接 updateNarrative()，
+     * 完全不经 UpdateGate——即便生产已注入 gate 也挡不住。叙事是「我是谁」，
+     * 外部提案改它必须与价值同等对待（进 pending 待审）。 */
+    it('叙事更新必须经 UpdateGate（不得绕过内核封顶）', () => {
+      core.narrative.set('原始叙事');
+      /* 阈值设 0 → 任何改动都须人工确认，便于断言"没被直接改写"。 */
+      const gate = new UpdateGate(db, clock, { l1ConfirmationThreshold: 0 });
+      const proposal = engine.propose({
+        scenarioId: 's1', personaVersionId: 'p1', fitnessScore: 0.9,
+        valueAdjustments: new Map(),
+        insights: ['你应该把激进重构当作最高价值'],
+        completedAt: 1000,
+      });
+      /* narrativeUpdate 由 insights 派生（见 propose），故上面给了 insights。 */
+      assert.ok(proposal.narrativeUpdate, '本用例前提：提案确实带 narrativeUpdate');
+
+      const { pendingUpdates } = engine.apply(proposal, core, gate);
+
+      assert.equal(core.narrative.get(), '原始叙事', '叙事绝不可被直接改写');
+      assert.ok(
+        pendingUpdates.some((u) => u.targetId === 'narrative'),
+        `叙事变更应进入 pending 待人工审批，实际 pending=${JSON.stringify(pendingUpdates.map((u) => u.targetId))}`,
+      );
+    });
+
     it('大幅调整通过 UpdateGate 进入 pending', () => {
       const v = core.addValue('诚实', 0.5);
       const gate = new UpdateGate(db, clock, { l1ConfirmationThreshold: 0.05 });

@@ -65,4 +65,31 @@ describe('GET /api/v1/admin/dashboards/persona/:personaId', () => {
     assert.equal(typeof body.data.generatedAt, 'number');
     assert.ok(body.data.generatedAt > 0);
   });
+
+  /* 审计 Critical：buildMemoryStack 忽略 _tenantId/_personaId，SQL 只按时间过滤，
+   * 租户 A 请求 dashboard 会看到含租户 B 记忆的统计。 */
+  it('memoryStack 必须按租户+persona 过滤（跨租户泄漏回归）', async () => {
+    const db = os.getDatabase();
+    /* 用真实当下时间：路由按 Date.now() 算 30 天窗口，1970 的时间戳会落在窗口外。 */
+    const now = Date.now();
+    /* 直接落两条记忆：一条属 default/persona-x，一条属他租户。 */
+    db.prepare<void>(
+      `INSERT INTO memory_nodes (id, tenant_id, persona_id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('m-own', 'default', 'persona-x', 'episodic', '本租户记忆', 0, 0.5, now, now, 0, 0.0001, now);
+    db.prepare<void>(
+      `INSERT INTO memory_nodes (id, tenant_id, persona_id, kind, content, valence, salience, created_at, last_accessed_at, access_count, decay_lambda, last_decayed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('m-other', 'tenant-other', 'persona-y', 'episodic', '他租户记忆', 0, 0.5, now, now, 0, 0.0001, now);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/admin/dashboards/persona/persona-x',
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body) as { data: { memoryStack: Array<{ episodic: number }> } };
+
+    const totalEpisodic = body.data.memoryStack.reduce((sum, p) => sum + p.episodic, 0);
+    assert.equal(totalEpisodic, 1, `只应统计本租户本 persona 的 1 条记忆，实际 ${totalEpisodic}（>1 即跨租户泄漏）`);
+  });
 });

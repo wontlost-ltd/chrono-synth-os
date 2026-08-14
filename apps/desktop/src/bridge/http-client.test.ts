@@ -101,10 +101,19 @@ describe('storage helpers', () => {
     expect(getApiBaseUrl()).toBeNull();
   });
 
-  it('round-trips token', () => {
+  /* 审计 Critical 9：token 改存 OS 密钥库，**绝不落 localStorage 明文**。
+   * 进程内保留内存缓存以维持同步 getApiToken() 语义（调用方零改造）。 */
+  it('round-trips token in memory without writing plaintext to disk', () => {
     setApiToken('jwt-x');
     expect(getApiToken()).toBe('jwt-x');
-    expect(localStorage.getItem(STORAGE_TOKEN)).toBe('jwt-x');
+    expect(localStorage.getItem(STORAGE_TOKEN)).toBeNull();
+  });
+
+  it('never leaves a plaintext token on disk even after repeated sets', () => {
+    setApiToken('jwt-a');
+    setApiToken('jwt-b');
+    expect(getApiToken()).toBe('jwt-b');
+    expect(localStorage.getItem(STORAGE_TOKEN)).toBeNull();
   });
 
   it('clears token when null', () => {

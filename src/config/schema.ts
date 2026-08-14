@@ -255,7 +255,10 @@ const intelligenceSchema = z.object({
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
   })).default([]),
-  maxTokens: z.coerce.number().int().default(4096),
+  /* 必须为正：该值会作为 quantity 进入配额计量（model-router 以 estimatedTokens
+   * 调 checkQuota/consumeQuota），0 或负数在计量层已被拒绝——与其等到运行期抛错，
+   * 不如在配置解析期就失败，把错误留在启动而非请求路径上。 */
+  maxTokens: z.coerce.number().int().min(1).default(4096),
   temperature: z.coerce.number().min(0).max(2).default(0.7),
   /** LLM 单次请求超时（ms）。默认 30s；接慢网关（如自建 OpenAI 兼容代理）可经
    * CHRONO_INTELLIGENCE_TIMEOUT_MS 调大。0=用 ModelRouter 内置默认。 */
@@ -367,13 +370,16 @@ const observabilityWorkerSchema = z.object({
   batchSize: z.coerce.number().int().min(1).default(100),
   maxAttempts: z.coerce.number().int().min(1).default(5),
   staleProcessingMs: z.coerce.number().int().min(1000).default(5 * 60 * 1000),
+  /* 运维面（/readyz、/metrics）默认只绑回环：这些端点无鉴权，却会暴露 backlog
+   * 深度、运行模式与版本号。默认 0.0.0.0 意味着同网段任意主机可直接读取。
+   * 需要被 Prometheus 跨主机抓取时，显式配置 host 并自行置于网络策略之后。 */
   http: z.object({
     enabled: z.boolean().default(true),
-    host: z.string().default('0.0.0.0'),
+    host: z.string().default('127.0.0.1'),
     port: z.coerce.number().int().min(1).max(65535).default(3100),
   }).default({
     enabled: true,
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 3100,
   }),
 }).default({
@@ -384,7 +390,7 @@ const observabilityWorkerSchema = z.object({
   staleProcessingMs: 5 * 60 * 1000,
   http: {
     enabled: true,
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 3100,
   },
 });
@@ -988,6 +994,27 @@ export function loadConfig(overrides?: DeepPartial<AppConfig>, configPath?: stri
   }
 
   const parsed = AppConfigSchema.parse(merged);
+
+  /* 生产 fail-closed（审计 Critical 10）：认证与字段加密默认关闭，且 masterKey 有公开占位值——
+   * 生产环境**漏配**环境变量时服务会「成功启动」但处于无认证、无字段加密状态，是静默失败。
+   * 既有校验只在 enabled=true 时检查密钥强度，挡不住「忘了开」。
+   *
+   * 判据用显式部署信号 NODE_ENV=production（容器/进程管理器标准做法），不猜测：
+   * 本地开发与测试不受影响；生产漏配立即拒启并指明缺哪一项。
+   * 可用 CHRONO_ALLOW_INSECURE_PRODUCTION=true 显式豁免（仅限受控演示环境，
+   * 名字即警告——不给沉默的后门）。 */
+  if (process.env.NODE_ENV === 'production' && process.env.CHRONO_ALLOW_INSECURE_PRODUCTION !== 'true') {
+    const insecure: string[] = [];
+    if (!parsed.jwt.enabled) insecure.push('jwt.enabled=false（服务将无认证对外提供）');
+    if (!parsed.encryption.enabled) insecure.push('encryption.enabled=false（凭据/私钥将明文落库）');
+    if (insecure.length > 0) {
+      throw new Error(
+        `拒绝以不安全配置启动生产环境：\n  - ${insecure.join('\n  - ')}\n`
+        + '请设置 CHRONO_JWT_ENABLED=true / CHRONO_ENCRYPTION_ENABLED=true 及对应密钥；'
+        + '若确为受控演示环境，可显式设 CHRONO_ALLOW_INSECURE_PRODUCTION=true 豁免。',
+      );
+    }
+  }
 
   const jwtIsAsymmetric = parsed.jwt.algorithm.startsWith('RS') || parsed.jwt.algorithm.startsWith('ES');
   if (parsed.jwt.enabled && !jwtIsAsymmetric && parsed.jwt.secret === 'change-me-in-production') {

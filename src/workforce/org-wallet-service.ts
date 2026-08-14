@@ -46,6 +46,9 @@ export class OrgWalletService {
      * （getOrCreate 幂等：金库不存在则建 active，下一行不会因此误判冻结。） */
     const probe = this.store.getOrgWallet(input.orgId);
     if (probe && probe.status !== 'active') return null;
+    /* 币种不符同样在事务前判定并返回 null（与冻结同款语义）——settleInTx 里那道
+     * 校验是给已在事务中的调用方（acceptOrgTask）兜底，会抛错由外层回滚。 */
+    if (probe && probe.currency !== input.currency) return null;
     return this.store.transaction(() => this.settleInTx(input));
   }
 
@@ -64,6 +67,17 @@ export class OrgWalletService {
     const now = this.now();
     const wallet = this.store.getOrCreateOrgWallet(input.orgId, this.idgen(), now, input.currency);
     if (wallet.status !== 'active') throw new Error(`org wallet 冻结，禁结算：org=${input.orgId}`);
+
+    /* 币种一致性：getOrCreateOrgWallet 只在**新建**时用 input.currency，已有金库直接返回，
+     * 请求币种被静默忽略。若不校验，一笔 USD 结算会把 USD 的 minor units 直接加进
+     * CRED 余额——金额数字看起来正常，实际余额已被污染且无任何错误痕迹。
+     * 组织金库当前是单币种模型（每 org 一行），故币种不符只能拒绝；
+     * 需要多币种时应改为按 (org, currency) 分钱包，而不是在这里放行。 */
+    if (wallet.currency !== input.currency) {
+      throw new Error(
+        `org wallet 币种不符，禁结算：org=${input.orgId} 金库=${wallet.currency} 结算=${input.currency}`,
+      );
+    }
 
     /* 两方分账（确定性算术）：platform 向下取整，org 拿余下（保证 platform+org=total，无尾差丢失）。 */
     const platformAmount = Math.floor(total * platformPct / 100);
