@@ -246,12 +246,18 @@ jobs:
       # simulations route refuses to start unless the async task queue
       # is on (CPU-pressure guardrail). TaskQueue itself only needs the
       # SQLite db, no Redis.
+      #
+      # CHRONO_ALLOW_INSECURE_PRODUCTION=true: 审计 Critical 10 加了生产 fail-closed
+      # 门——NODE_ENV=production 且 jwt/encryption 关闭时拒绝启动。DAST 正是**故意**
+      # 关认证来扫未授权面，属该门文档里写明的「受控演示环境」豁免场景。
+      # 这个容器只活在 CI job 内、跑完即销毁，不对外暴露。
       - name: Start chrono-synth-os
         run: |
           docker run -d \
             --name chrono-os-dast \
             --network host \
             -e CHRONO_AUTH_ENABLED=false \
+            -e CHRONO_ALLOW_INSECURE_PRODUCTION=true \
             -e CHRONO_QUEUE_ENABLED=true \
             -e CHRONO_DB_PATH=/app/data/chrono.db \
             -e NODE_ENV=production \
