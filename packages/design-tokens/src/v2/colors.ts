@@ -241,6 +241,14 @@ export const colorTokensDark: SemanticColors = {
  *
  * 只覆盖与 colorTokensDark 真正不同的 6 个值，其余（含 brand/status/chart）
  * 一律继承，避免第二处需要同步维护的清单。
+ *
+ * ⚠️ 一处**行为变更**（收编时连带发生，非纯重构）：原手写块的选择器是
+ * `:root[data-theme='dark']`，够不着 themes.css 里的
+ * `@media (prefers-color-scheme: dark) { :root:not([data-theme]) }` 块——
+ * 于是「选 system 且 OS 为暗色」与「显式选 dark」长期是**两套颜色**。
+ * 现在两个块都由本 token 生成，二者统一（即修掉了这处不一致）。
+ * 受影响的 6 个变量对比度实测无一跌破阈值，多数反而改善
+ * （如 text.tertiary 3.75 → 4.38）。
  */
 export const colorTokensDarkWeb: SemanticColors = {
   ...colorTokensDark,

@@ -128,7 +128,7 @@ const STEPS: readonly StepDecl[] = [
     repoPath: OS_ROOT,
     command: 'npm',
     args: ['run', 'lint:contrast', '--silent'],
-    desc: 'WCAG AA/AAA contrast lint across all three themes',
+    desc: 'WCAG AA/AAA contrast lint across all five themes (light / dark / dark-web / high-contrast / companion)',
   },
 
   /* web/desktop 已是本仓 apps/*（ADR-0049 融合）——必过，不再 optional。 */
