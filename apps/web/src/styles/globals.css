@@ -141,17 +141,15 @@ button:disabled,
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-:root[data-theme='dark'] {
-  /* 3-tier depth so the gradient accents pop and the eye finds anchors. */
-  --color-surface: #050914;            /* deepest — page background  */
-  --color-surface-elevated: #131B2E;    /* mid — cards / sidebar      */
-  --color-surface-raised: #1A2238;      /* highest — table-header row */
-  --color-border: #2A3753;              /* slightly brighter for visible card edges */
-  --color-border-default: #3A4870;
-  --color-text-primary: #F8FAFC;
-  --color-text-secondary: #A8B3CC;
-  --color-text-tertiary: #6B7691;
-}
+/* 此处原有一组手写的 dark 覆盖（surface/border/text 共 8 个变量），已收编进
+ * token 源的 colorTokensDarkWeb，改由 themes.css 的 codegen 区生成。
+ *
+ * 收编的动机不是整洁，是消除一处真实脱节：这组手写值在 codegen 标记**之外**，
+ * 于是「token 值」与「浏览器实际渲染值」是两套——contrast lint 读前者、用户看
+ * 后者，门测出的数字并非线上真相。现已同源。
+ *
+ * 顺带删掉两个死变量：--color-surface-raised 与本块内的 --color-border-default
+ * 全仓无任何引用（后者仍由 codegen 从 border.default 正常生成，删的只是这处覆盖）。 */
 
 /* Card elevation polish for dark mode */
 :root[data-theme='dark'] [class*="rounded-xl"][class*="border-border"] {
