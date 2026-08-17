@@ -156,6 +156,34 @@ jobs:
           tags: chrono-synth-os:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # 冒烟启动：仅「构建成功」不足以证明镜像可用。npm ci 用了 --ignore-scripts
+      # （见 Dockerfile 注释），若将来新增一个真的依赖安装脚本产出产物的原生生产
+      # 依赖，镜像仍能构建成功，却会在**运行时**才崩——那时已经进了部署。
+      # 这一步把该类故障拦在 CI。
+      #
+      # 两个环境变量都是必需的：缺任一都会命中应用自身的 fail-closed 配置门
+      # （分别是 JWT/加密密钥校验与生产环境禁止同步模拟），容器直接退出 1。
+      - name: Boot smoke test (image must actually run)
+        run: |
+          set -euo pipefail
+          docker run -d --name chrono-smoke -p 3000:3000 \
+            -e CHRONO_ALLOW_INSECURE_PRODUCTION=true \
+            -e CHRONO_QUEUE_ENABLED=true \
+            -e CHRONO_DB_PATH=/app/data/smoke.db \
+            chrono-synth-os:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/healthz 2>/dev/null; then
+              echo "" && echo "✓ 镜像启动并通过 /healthz"
+              docker rm -f chrono-smoke >/dev/null
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "✗ 镜像 60s 内未通过 /healthz —— 容器日志："
+          docker logs chrono-smoke 2>&1 | tail -50
+          docker rm -f chrono-smoke >/dev/null
+          exit 1
+
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:

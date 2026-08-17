@@ -5,10 +5,16 @@ WORKDIR /app
 # Install deps (workspace symlinks require packages/ to exist first)
 #
 # --ignore-scripts：builder 阶段只跑 `npx tsc` 编译 workspace 包，不需要任何
-# 原生模块的安装脚本。而 npm ci 会对含 binding.gyp 的包推导出隐式 gyp 构建
-# （即便该包已自带预编译产物、且 gypfile:false），在无 Python 的 alpine 镜像
-# 里直接失败。典型例子：better-sqlite3——它只是 packages/schema-dsl 的
-# devDependency，却因裸 npm ci 被拉进镜像构建。
+# 原生模块的安装脚本。
+#
+# 必须显式加此标志的原因：npm 对**未声明 install 脚本但仍带 binding.gyp** 的包
+# 会回退到隐式 gyp 推导（`sh -c node-gyp rebuild`），而这条路径**不受
+# allowScripts 允许列表管辖**——即 npm 11 默认「不跑安装脚本」也拦不住它，
+# 在无 Python 的 alpine 镜像里直接失败。
+#
+# 典型例子 better-sqlite3（只是 packages/schema-dsl 的 devDependency，却因裸
+# npm ci 被拉进镜像构建）：12.10.0 声明了 `install: prebuild-install || node-gyp
+# rebuild` 故走允许列表被跳过；13.x **删掉了 install 脚本**，反而触发隐式推导。
 #
 # 注意不能改用 --omit=dev：本阶段需要 devDependency 里的 typescript 编译
 # 10 个 workspace 包，省掉 devDeps 会让后续所有 `npx tsc` 失败。
