@@ -148,7 +148,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: TruffleHog filesystem scan
-        uses: trufflesecurity/trufflehog@v3.96.0
+        uses: trufflesecurity/trufflehog@v3.97.0
         with:
           path: ./
           extra_args: --results=verified,unknown
