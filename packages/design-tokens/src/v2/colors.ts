@@ -223,6 +223,45 @@ export const colorTokensDark: SemanticColors = {
 };
 
 /**
+ * apps/web 专用的暗色变体——比 colorTokensDark 更深的三层景深。
+ *
+ * 存在的理由（不是重复定义，是消除一处真实脱节）：
+ * apps/web 的 globals.css 长期在 codegen 标记**之外**手写了一组 dark 覆盖，
+ * 于是「token 值」与「浏览器实际渲染值」分成两套——contrast lint 读前者，
+ * 用户看后者，门测出的数字并非线上真相（当前方向有利：lint 测 primaryText
+ * 5.75，实际渲染 6.75，但方向随时可能反过来）。
+ *
+ * 这里把那组手写值收编为一等公民，themes.css 由它生成、lint 也检查它，
+ * 二者重新同源。
+ *
+ * 为什么不直接改 colorTokensDark：desktop 的 --color-chrono-* 有 6 个变量
+ * 派生自 colorTokensDark（见 codegen 的 desktopVars），直接改会连带把桌面端
+ * 外观调暗。两套值实测均过 WCAG，故属纯视觉取舍而非对错问题——保持 desktop
+ * 现状，只让 web 用自己的值。
+ *
+ * 只覆盖与 colorTokensDark 真正不同的 6 个值，其余（含 brand/status/chart）
+ * 一律继承，避免第二处需要同步维护的清单。
+ */
+export const colorTokensDarkWeb: SemanticColors = {
+  ...colorTokensDark,
+  surface: {
+    ...colorTokensDark.surface,
+    canvas: '#050914',    // 最深——页面背景
+    elevated: '#131B2E',  // 中层——卡片 / 侧边栏
+  },
+  text: {
+    ...colorTokensDark.text,
+    secondary: '#A8B3CC',
+    tertiary: '#6B7691',
+  },
+  border: {
+    ...colorTokensDark.border,
+    subtle: '#2A3753',   // 略亮，让卡片边缘可见
+    default: '#3A4870',
+  },
+};
+
+/**
  * High-contrast variant — meets WCAG AAA for body text on the canvas
  * surface (≥7:1 contrast). Use as a tertiary theme behind a user
  * preference toggle.
@@ -339,8 +378,12 @@ export const colorTokensCompanion: SemanticColors = {
     success: '#4fc08d',    // --c-pos
     successFill: '#4fc08d',
     warning: '#e7796b',    // companion 无独立 warning，复用 neg 暖红（P1b 可分化）
-    danger: '#e7796b',     // --c-neg
-    dangerFill: '#e7796b',
+    danger: '#e7796b',     // --c-neg（作徽章/文本用，落在暗底上 5.68 过 AA）
+    /* 实色按钮填充另用更深一档：#e7796b 压白字仅 2.86 不达 AA(3.0)，而
+     * .perceive__mic--on（听写中的实心红麦克风）正是 background: --c-neg
+     * + color: #fff。加深到 #d95a49 后白字 3.81 达标，色相基本不变。
+     * 与 dark 主题「danger 亮给徽章、dangerFill 深给按钮」的拆分一致。 */
+    dangerFill: '#d95a49',
     info: '#5b8def',
     active: '#4fc08d',
     paused: '#e7796b',

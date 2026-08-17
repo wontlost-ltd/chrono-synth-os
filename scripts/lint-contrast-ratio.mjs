@@ -33,7 +33,7 @@ if (!existsSync(tokensModule)) {
   console.error('✖ design-tokens dist not found; run `npm run build` first');
   process.exit(2);
 }
-const { colorTokensLight, colorTokensDark, colorTokensHighContrast } =
+const { colorTokensLight, colorTokensDark, colorTokensDarkWeb, colorTokensHighContrast, colorTokensCompanion } =
   await import(tokensModule);
 
 /* ── WCAG math ────────────────────────────────────────────────────── */
@@ -105,6 +105,7 @@ function compositeOver(fg, bg, alpha) {
  *               theme (default 7.0). Set to 0 to skip AAA gate.
  *   bgAlpha     if present, treat `bg` as `fg`-coloured paint at this
  *               alpha composited onto canvas — models bg-*\/10 utilities
+ *   onlyForTheme  inverse of skipForTheme — pair applies ONLY to these themes
  *   skipForTheme  array of theme names where this pair doesn't apply
  *                 (e.g. "tertiary text on canvas" is purely decorative
  *                 in high-contrast theme and never used)
@@ -143,14 +144,21 @@ const PAIRS = [
    * across ALL themes — they do NOT use the theme's `text.inverse` (which is near-black
    * in dark mode). So the gate must measure white-on-fill, not inverse-on-fill, or it
    * would flag the dark primary button (#FFFFFF on #2563EB = 5.17 AA) as a false 3.45 fail. */
-  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'brand.primary', label: 'white text on brand-primary button', minAA: 4.5, minAAA: 7.0 },
+  /* companion 的白字按钮一律压在 --c-brand-strong（= brand.primaryActive，5.28 过 AA）
+   * 而非 --c-brand，见 apps/companion-web/src/styles.css 的 .tabs__btn--active /
+   * .chat__send 等；--c-brand 只作进度条填充/边框/焦点环等非文本用途。故此对
+   * 在 companion 上换成 primaryActive 单独检，避免测错底色报假阳。 */
+  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'brand.primary', label: 'white text on brand-primary button', minAA: 4.5, minAAA: 7.0, skipForTheme: ['companion'] },
+  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'brand.primaryActive', label: 'white text on brand-strong button (companion)', minAA: 4.5, minAAA: 7.0, onlyForTheme: ['companion'] },
   /* 品牌色**作为文本**（链接 / 小标签 / 强调标题，web 全站 37 处 text-primary-text）。
    * 这一对此前缺检：门只查了「白字压在 brand.primary 上」（按钮），没查「brand 色当文字
    * 压在 surface 上」，导致 dark 主题 #2563EB 作文本仅 2.83 长期漏网，靠 axe 才发现。
    * primaryText 与 primary 解耦正是为了让这两个方向相反的要求各自达标。 */
   { fg: 'brand.primaryText', bg: 'surface.canvas', label: 'brand text on page', minAA: 4.5, minAAA: 7.0 },
   { fg: 'brand.primaryText', bg: 'surface.elevated', label: 'brand text on card', minAA: 4.5, minAAA: 7.0 },
-  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.successFill', label: 'white text on success-fill button', minAA: 3.0, minAAA: 4.5 },
+  /* companion 没有 success 实色按钮——--c-pos 只用于 .memory__dot--pos 这类
+   * 纯装饰圆点，其上不承载任何文本，故该对在 companion 不成立。 */
+  { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.successFill', label: 'white text on success-fill button', minAA: 3.0, minAAA: 4.5, skipForTheme: ['companion'] },
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.dangerFill', label: 'white text on danger-fill button', minAA: 3.0, minAAA: 4.5 },
   /* Status colours as USED IN StatusBadge: status-coloured text on a
    * 10% tint of the SAME status colour over canvas. The tint moves the
@@ -181,8 +189,15 @@ function lookup(theme, path) {
 
 const themes = {
   light: { tokens: colorTokensLight, aaa: false },
+  /* desktop 的 --color-chrono-* 由这套值派生（见 codegen desktopVars）。 */
   dark: { tokens: colorTokensDark, aaa: false },
+  /* apps/web 实际渲染的暗色值——此前是 globals.css 里 codegen 标记之外的手写
+   * 覆盖，本门读不到，于是「门测的」与「用户看的」是两套。收编进 token 源后
+   * 在此纳入检查，盲区消除。 */
+  'dark-web': { tokens: colorTokensDarkWeb, aaa: false },
   'high-contrast': { tokens: colorTokensHighContrast, aaa: true },
+  /* ChronoCompanion C 端暖调主题；此前完全未被本门覆盖。 */
+  companion: { tokens: colorTokensCompanion, aaa: false },
 };
 
 let failures = 0;
@@ -192,6 +207,9 @@ for (const [themeName, themeMeta] of Object.entries(themes)) {
   console.log(`\n=== theme: ${themeName} ===`);
   for (const pair of PAIRS) {
     if (pair.skipForTheme?.includes(themeName)) continue;
+    /* onlyForTheme：该对仅在特定主题成立（如 companion 的白字按钮压在
+     * brand-strong 而非 brand.primary），与 skipForTheme 互为反向。 */
+    if (pair.onlyForTheme && !pair.onlyForTheme.includes(themeName)) continue;
     /* fgLiteral overrides the per-theme token: models components that hardcode a colour. */
     const fg = pair.fgLiteral ?? lookup(themeMeta.tokens, pair.fg);
     const bg = lookup(themeMeta.tokens, pair.bg);

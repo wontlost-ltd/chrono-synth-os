@@ -243,8 +243,9 @@ body {
 .perceive__mic:disabled { opacity: 0.6; cursor: not-allowed; } /* 统一禁用态 */
 /* 听写中：实心红，脉冲提示「正在录」。 */
 .perceive__mic--on {
-  background: var(--c-neg);
-  border-color: var(--c-neg);
+  /* 白字压在实色红上需 ≥3.0；--c-neg 仅 2.86，故填充用更深的 --c-neg-fill（3.81）。 */
+  background: var(--c-neg-fill);
+  border-color: var(--c-neg-fill);
   color: #fff;
   animation: perceive-pulse 1.4s ease-in-out infinite;
 }

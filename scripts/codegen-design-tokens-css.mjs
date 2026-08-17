@@ -59,7 +59,7 @@ for (const p of [tokensModulePath, spacingModulePath]) {
     process.exit(2);
   }
 }
-const { colorTokensLight, colorTokensDark, colorTokensHighContrast, colorTokensCompanion } =
+const { colorTokensLight, colorTokensDark, colorTokensDarkWeb, colorTokensHighContrast, colorTokensCompanion } =
   await import(tokensModulePath);
 const { size: sizeTokens } = await import(spacingModulePath);
 
@@ -240,7 +240,11 @@ function renderWebThemesOverrides() {
    * is indented one level relative to the selector; we emit declarations
    * flush-left within the block since the surrounding indent is the
    * marker's own column (typically 0 at the top of themes.css). */
-  const dark = flattenColors(colorTokensDark);
+  /* web 用 colorTokensDarkWeb（更深的三层景深）——这组值此前是 globals.css 里
+   * codegen 标记之外的手写覆盖，现已收编进 token 源，故此处直接生成，
+   * 手写块随之删除，token 值与浏览器实际渲染值重新同源。
+   * desktop 仍用 colorTokensDark（见 renderDesktopVars），外观不变。 */
+  const dark = flattenColors(colorTokensDarkWeb);
   const hc = flattenColors(colorTokensHighContrast);
 
   const indentBlock = (text, prefix = '  ') =>
@@ -319,6 +323,9 @@ function renderCompanionTheme() {
     '--c-brand-text': c.text.link,
     '--c-pos': c.status.success,
     '--c-neg': c.status.danger,
+    /* 实色按钮填充专用（白字需 ≥3.0）：--c-neg 压白字仅 2.86 不达标。
+     * 与 --c-brand / --c-brand-text 是同一套「填充 vs 文本」拆分手法。 */
+    '--c-neg-fill': c.status.dangerFill,
   };
   return formatDeclarations(vars);
 }
