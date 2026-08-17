@@ -8,7 +8,10 @@ ARG NODE_VERSION=24
 FROM node:${NODE_VERSION}-slim AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# --ignore-scripts：与根 Dockerfile 同源同因——npm 对未声明 install 脚本但仍带
+# binding.gyp 的包会回退到隐式 gyp 推导（不受 allowScripts 管辖），slim 基础镜像
+# 无 Python 会直接失败。两个 Dockerfile 必须保持一致，否则 NAS 构建会掉队。
+RUN npm ci --ignore-scripts
 COPY tsconfig.json ./
 COPY src/ src/
 RUN npm run build
@@ -17,7 +20,7 @@ FROM node:${NODE_VERSION}-slim
 RUN groupadd -r chrono && useradd -r -g chrono chrono
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=builder /app/dist/ dist/
 RUN mkdir -p /app/data && chown -R chrono:chrono /app
 VOLUME /app/data

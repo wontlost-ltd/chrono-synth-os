@@ -3,6 +3,21 @@ RUN apk upgrade --no-cache
 WORKDIR /app
 
 # Install deps (workspace symlinks require packages/ to exist first)
+#
+# --ignore-scripts：builder 阶段只跑 `npx tsc` 编译 workspace 包，不需要任何
+# 原生模块的安装脚本。
+#
+# 必须显式加此标志的原因：npm 对**未声明 install 脚本但仍带 binding.gyp** 的包
+# 会回退到隐式 gyp 推导（`sh -c node-gyp rebuild`），而这条路径**不受
+# allowScripts 允许列表管辖**——即 npm 11 默认「不跑安装脚本」也拦不住它，
+# 在无 Python 的 alpine 镜像里直接失败。
+#
+# 典型例子 better-sqlite3（只是 packages/schema-dsl 的 devDependency，却因裸
+# npm ci 被拉进镜像构建）：12.10.0 声明了 `install: prebuild-install || node-gyp
+# rebuild` 故走允许列表被跳过；13.x **删掉了 install 脚本**，反而触发隐式推导。
+#
+# 注意不能改用 --omit=dev：本阶段需要 devDependency 里的 typescript 编译
+# 10 个 workspace 包，省掉 devDeps 会让后续所有 `npx tsc` 失败。
 COPY package.json package-lock.json ./
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/kernel/package.json packages/kernel/
@@ -16,7 +31,7 @@ COPY packages/adapter-react-native/package.json packages/adapter-react-native/
 COPY packages/schema-dsl/package.json packages/schema-dsl/
 COPY packages/tsconfig.base.json packages/
 COPY tsconfig.src.json tsconfig.scripts.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 # Build workspace packages in dependency order
 COPY packages/contracts/src packages/contracts/src
@@ -84,7 +99,9 @@ COPY packages/sync-engine/package.json packages/sync-engine/
 # 容器一启动就 ERR_MODULE_NOT_FOUND 然后崩。npm ci 需要 package.json
 # 才会建工作区软链。
 COPY packages/schema-dsl/package.json packages/schema-dsl/
-RUN npm ci --omit=dev && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# --ignore-scripts 同上：运行时阶段全部依赖为纯 JS，无需安装脚本产出产物
+# （唯一带 postinstall 的生产依赖 protobufjs 只打印版本方案告警，不生成文件）。
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Copy built package dists so workspace symlinks resolve at runtime
 COPY --from=builder /app/packages/contracts/dist packages/contracts/dist
 COPY --from=builder /app/packages/kernel/dist packages/kernel/dist
