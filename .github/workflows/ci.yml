@@ -280,6 +280,14 @@ jobs:
           node-version-file: '.nvmrc'
           cache: npm
       - run: npm ci
+      # apps/web 直接 import @chrono/contracts 与 @chrono/sync-engine 的**产物**。
+      # 干净检出时这些 dist/ 不存在，vite dev server 会报
+      # 「Failed to resolve import "@chrono/contracts"」，页面直接白屏，
+      # axe 随即把整页判为违规——本地因为 dist 早已存在而看不到，是纯 CI-only 故障。
+      # 只建这两个：grep 确认 apps/web 仅 import @chrono/contracts 与
+      # @chrono/sync-engine，而后者只依赖前者（tsc -b 会自动按引用顺序构建）。
+      - name: Build workspace packages consumed by apps/web
+        run: npx tsc -b packages/contracts/tsconfig.json packages/sync-engine/tsconfig.json
       - name: Install Playwright chromium
         working-directory: apps/web
         run: npx playwright install --with-deps chromium
