@@ -111,6 +111,18 @@ function compositeOver(fg, bg, alpha) {
  *
  * Pairs that include `surface.overlay` (semi-transparent) are not
  * checked — their effective contrast depends on what's underneath.
+ *
+ * ⚠️ 已知盲区（既有债，非本门引入）——本门读的是 colors.ts 的 **token 值**，
+ * 而 apps/web 的 globals.css 在 codegen 标记**之外**手写了一组 dark 覆盖：
+ *
+ *     :root[data-theme='dark'] { --color-surface: #050914;          (token: #0F172A)
+ *                                --color-surface-elevated: #131B2E;  (token: #1E293B)
+ *                                --color-surface-raised:  #1A2238;   (token 里没有这一层) }
+ *
+ * 所以「token 过了」不等于「浏览器里过了」。当前方向恰好有利（实际渲染的底色更
+ * 暗 → 对比度更宽松，如 brand.primaryText 门测 5.75 而实测 6.75），故结论不变；
+ * 但 surface-raised（表头行）这一层**完全没有任何检查对**，text.tertiary 落在
+ * 其上实测仅 3.48。根治办法是把手写覆盖回写进 token 源，让二者重新同源。
  */
 const PAIRS = [
   /* Primary text on canvas — the single most load-bearing pair. */

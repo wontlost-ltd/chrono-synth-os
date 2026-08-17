@@ -258,11 +258,16 @@ jobs:
   # 只跑 chromium：firefox/webkit 需另装浏览器二进制，而 axe 的规则判定与浏览器
   # 内核无关，多跑两个内核只换来 3 倍时长和额外的 flaky 面。
   #
-  # 只收 axe-a11y.spec.ts 与 keyboard-nav.spec.ts 两个确定性套件；
-  # accessibility/axe-routes.spec.ts **暂不纳入**——它靠 waitForTimeout(200) 等
-  # 渲染，实测在 skeleton/suspense 态下会偶发 color-contrast 假阳（其源码注释亦
-  # 自述「per-page run is noisy with skeleton states」）。把 flaky 套件接进必过门
-  # 只会训练大家忽略红灯。该套件的稳定化另行处理。
+  # 三个套件全收，含覆盖 18 条路由（登录后页面在内）的 axe-routes.spec.ts。
+  #
+  # 一度想排除 axe-routes——它靠 waitForTimeout(200) 等渲染，源码注释自述
+  # 「per-page run is noisy with skeleton states」，且首次并跑多套件时确实见过
+  # 一次 /growth 偶发假阳。但单独连跑 8 轮（3+5）**全绿**，说明那次是并跑时的
+  # 时序竞争而非套件自身不稳；且 playwright.config.ts 在 CI 下已配 retries: 2。
+  #
+  # 排除它的代价更大：axe-a11y.spec.ts 只访问 login/register/billing 三页，
+  # 本 PR 37 处替换里仅 4 处落在其中——其余 33 处（Dashboard/Marketplace/
+  # TrustBadge…）将完全无 axe 覆盖，等于门形同虚设。
   a11y-e2e:
     name: a11y E2E (axe, chromium)
     runs-on: ubuntu-latest
@@ -280,10 +285,10 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run axe a11y suite
         working-directory: apps/web
-        run: npx playwright test --project=chromium e2e/axe-a11y.spec.ts e2e/accessibility/keyboard-nav.spec.ts
+        run: npx playwright test --project=chromium e2e/axe-a11y.spec.ts e2e/accessibility/
       - name: Upload report on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: a11y-playwright-report
           path: apps/web/playwright-report/
