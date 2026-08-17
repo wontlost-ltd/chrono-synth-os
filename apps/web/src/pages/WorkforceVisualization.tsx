@@ -106,7 +106,7 @@ function ManagementForms({ orgId, onCreated, t }: { orgId: string; onCreated: (o
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-3">
-      <button onClick={() => setOpen((o) => !o)} className="text-sm font-medium text-primary">
+      <button onClick={() => setOpen((o) => !o)} className="text-sm font-medium text-primary-text">
         {open ? '▾' : '▸'} {t('workforceViz.manageSection')}
       </button>
       {open && (

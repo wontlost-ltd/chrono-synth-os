@@ -132,6 +132,12 @@ const PAIRS = [
    * in dark mode). So the gate must measure white-on-fill, not inverse-on-fill, or it
    * would flag the dark primary button (#FFFFFF on #2563EB = 5.17 AA) as a false 3.45 fail. */
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'brand.primary', label: 'white text on brand-primary button', minAA: 4.5, minAAA: 7.0 },
+  /* 品牌色**作为文本**（链接 / 小标签 / 强调标题，web 全站 37 处 text-primary-text）。
+   * 这一对此前缺检：门只查了「白字压在 brand.primary 上」（按钮），没查「brand 色当文字
+   * 压在 surface 上」，导致 dark 主题 #2563EB 作文本仅 2.83 长期漏网，靠 axe 才发现。
+   * primaryText 与 primary 解耦正是为了让这两个方向相反的要求各自达标。 */
+  { fg: 'brand.primaryText', bg: 'surface.canvas', label: 'brand text on page', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'brand.primaryText', bg: 'surface.elevated', label: 'brand text on card', minAA: 4.5, minAAA: 7.0 },
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.successFill', label: 'white text on success-fill button', minAA: 3.0, minAAA: 4.5 },
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.dangerFill', label: 'white text on danger-fill button', minAA: 3.0, minAAA: 4.5 },
   /* Status colours as USED IN StatusBadge: status-coloured text on a

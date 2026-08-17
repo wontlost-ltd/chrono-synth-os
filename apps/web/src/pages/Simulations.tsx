@@ -98,7 +98,7 @@ export function Simulations() {
                           onClick={() => {
                             try { localStorage.setItem('last-sim-id', sim.simulationId); } catch { /* ignored */ }
                           }}
-                          className="text-sm text-primary hover:underline"
+                          className="text-sm text-primary-text hover:underline"
                         >
                           {t('simulations.view')}
                         </Link>

@@ -133,7 +133,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       onClick={onClick}
-      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${active ? 'border-primary text-primary' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${active ? 'border-primary text-primary-text' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
     >
       {children}
     </button>

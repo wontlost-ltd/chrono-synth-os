@@ -33,7 +33,7 @@ export function NotFound() {
     >
       <div
         aria-hidden
-        className="select-none text-[7rem] font-bold leading-none tracking-tight text-primary/15"
+        className="select-none text-[7rem] font-bold leading-none tracking-tight text-primary-text/15"
       >
         404
       </div>

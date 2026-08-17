@@ -116,7 +116,7 @@ export function Onboarding() {
     <div className="flex min-h-screen items-center justify-center bg-surface px-4">
       <div className="w-full max-w-lg">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-primary">ChronoSynth</h1>
+          <h1 className="text-2xl font-bold text-primary-text">ChronoSynth</h1>
         </div>
 
         <div className="mb-6 flex gap-1" role="progressbar" aria-valuenow={stepIndex + 1} aria-valuemin={1} aria-valuemax={STEPS.length} aria-label={t('onboarding.progressLabel', { step: stepIndex + 1, total: STEPS.length })}>
@@ -184,7 +184,7 @@ export function Onboarding() {
                 <button
                   type="button"
                   onClick={() => setValues(prev => [...prev, { label: '', weight: 0.5 }])}
-                  className="text-sm text-primary"
+                  className="text-sm text-primary-text"
                 >
                   {t('onboarding.addValue')}
                 </button>

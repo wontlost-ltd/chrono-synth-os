@@ -75,7 +75,7 @@ export default function KnowledgeSourceCreatePage() {
               key={t2}
               onClick={() => { setType(t2); setConfig({}); }}
               className={`rounded-lg border-2 p-4 text-center text-sm font-medium transition-colors ${
-                type === t2 ? 'border-primary bg-primary/5 text-primary' : 'border-border hover:border-primary/50'
+                type === t2 ? 'border-primary bg-primary/5 text-primary-text' : 'border-border hover:border-primary/50'
               }`}
             >
               <span className="block text-2xl mb-1">

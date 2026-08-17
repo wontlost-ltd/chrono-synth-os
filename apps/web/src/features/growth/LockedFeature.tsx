@@ -44,7 +44,7 @@ export function LockedFeature({ requires, children, hideWhenLocked }: LockedFeat
       className="rounded-xl border border-dashed border-border bg-surface px-6 py-12 text-center"
     >
       <div aria-hidden className="mx-auto mb-3 h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary-text">
           <rect x="5" y="11" width="14" height="9" rx="2" />
           <path d="M8 11V7a4 4 0 0 1 8 0v4" />
         </svg>

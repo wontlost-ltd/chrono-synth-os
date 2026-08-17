@@ -249,3 +249,42 @@ jobs:
         # integration tests that are skipped in the sqlite job above.
         run: npm run test
       - run: npm run test:ops
+
+  # a11y E2E —— 此前**没有任何 job 跑 Playwright/axe**（apps/web/playwright.config.ts
+  # 的注释提到的 .github/workflows/e2e.yml 从未存在过），导致：
+  #   1. dark 主题品牌色作文本对比度仅 2.83 的真实违规长期无人发现；
+  #   2. @axe-core/playwright 升级（引擎跨 minor 会新增规则）不会被任何门拦截。
+  #
+  # 只跑 chromium：firefox/webkit 需另装浏览器二进制，而 axe 的规则判定与浏览器
+  # 内核无关，多跑两个内核只换来 3 倍时长和额外的 flaky 面。
+  #
+  # 只收 axe-a11y.spec.ts 与 keyboard-nav.spec.ts 两个确定性套件；
+  # accessibility/axe-routes.spec.ts **暂不纳入**——它靠 waitForTimeout(200) 等
+  # 渲染，实测在 skeleton/suspense 态下会偶发 color-contrast 假阳（其源码注释亦
+  # 自述「per-page run is noisy with skeleton states」）。把 flaky 套件接进必过门
+  # 只会训练大家忽略红灯。该套件的稳定化另行处理。
+  a11y-e2e:
+    name: a11y E2E (axe, chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Run axe a11y suite
+        working-directory: apps/web
+        run: npx playwright test --project=chromium e2e/axe-a11y.spec.ts e2e/accessibility/keyboard-nav.spec.ts
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: a11y-playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7

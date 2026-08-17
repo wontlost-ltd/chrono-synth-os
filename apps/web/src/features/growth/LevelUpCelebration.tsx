@@ -65,7 +65,7 @@ export function LevelUpCelebration() {
       )}
 
       <div className="relative max-w-md rounded-2xl bg-surface-elevated p-8 shadow-xl">
-        <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
+        <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary-text">
           {t('growth.celebration.eyebrow')}
         </div>
         <h2 id="levelup-title" className="mb-2 text-2xl font-semibold text-text-primary">
@@ -78,7 +78,7 @@ export function LevelUpCelebration() {
         <ul className="mb-6 space-y-1 text-sm text-text-primary" aria-label={t('growth.celebration.unlocksLabel')}>
           {def.unlocks.map((feature) => (
             <li key={feature} className="flex items-center gap-2">
-              <span aria-hidden="true" className="text-primary">●</span>
+              <span aria-hidden="true" className="text-primary-text">●</span>
               {t(`growth.unlocks.${feature}`, feature)}
             </li>
           ))}

@@ -174,7 +174,7 @@ export default function PersonaCorePage() {
             <button
               type="button"
               onClick={() => setSelectedPersonaId(row.id)}
-              className="text-sm text-primary hover:underline"
+              className="text-sm text-primary-text hover:underline"
             >
               {row.id === selectedPersonaId ? t('personaCore.selected') : t('personaCore.view')}
             </button>

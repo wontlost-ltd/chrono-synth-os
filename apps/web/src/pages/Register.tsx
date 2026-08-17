@@ -26,7 +26,7 @@ export function Register() {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-surface p-4">
       <div className="w-full max-w-sm rounded-xl border border-border bg-surface-elevated p-8 shadow-sm">
-        <h1 className="mb-6 text-center text-2xl font-bold text-primary">{t('register.title')}</h1>
+        <h1 className="mb-6 text-center text-2xl font-bold text-primary-text">{t('register.title')}</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="mb-1 block text-sm font-medium text-text-secondary">
@@ -90,7 +90,7 @@ export function Register() {
         </form>
         <p className="mt-4 text-center text-sm text-text-secondary">
           {t('register.hasAccount')}
-          <Link to="/login" className="ml-1 font-medium text-primary hover:underline">
+          <Link to="/login" className="ml-1 font-medium text-primary-text hover:underline">
             {t('register.login')}
           </Link>
         </p>

@@ -75,7 +75,7 @@ function RowActions({ source, onDelete, navigate }: { source: KnowledgeSource; o
       <button onClick={() => sync.mutate()} disabled={sync.isPending} className="text-sm text-info hover:underline">
         {sync.isPending ? t('knowledgeSources.syncing') : t('knowledgeSources.sync')}
       </button>
-      <button onClick={() => navigate(`/knowledge-sources/${source.id}`)} className="text-sm text-primary hover:underline">
+      <button onClick={() => navigate(`/knowledge-sources/${source.id}`)} className="text-sm text-primary-text hover:underline">
         {t('knowledgeSources.view')}
       </button>
       <button
