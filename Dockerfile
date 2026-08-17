@@ -3,6 +3,15 @@ RUN apk upgrade --no-cache
 WORKDIR /app
 
 # Install deps (workspace symlinks require packages/ to exist first)
+#
+# --ignore-scripts：builder 阶段只跑 `npx tsc` 编译 workspace 包，不需要任何
+# 原生模块的安装脚本。而 npm ci 会对含 binding.gyp 的包推导出隐式 gyp 构建
+# （即便该包已自带预编译产物、且 gypfile:false），在无 Python 的 alpine 镜像
+# 里直接失败。典型例子：better-sqlite3——它只是 packages/schema-dsl 的
+# devDependency，却因裸 npm ci 被拉进镜像构建。
+#
+# 注意不能改用 --omit=dev：本阶段需要 devDependency 里的 typescript 编译
+# 10 个 workspace 包，省掉 devDeps 会让后续所有 `npx tsc` 失败。
 COPY package.json package-lock.json ./
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/kernel/package.json packages/kernel/
@@ -16,7 +25,7 @@ COPY packages/adapter-react-native/package.json packages/adapter-react-native/
 COPY packages/schema-dsl/package.json packages/schema-dsl/
 COPY packages/tsconfig.base.json packages/
 COPY tsconfig.src.json tsconfig.scripts.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 # Build workspace packages in dependency order
 COPY packages/contracts/src packages/contracts/src
@@ -84,7 +93,9 @@ COPY packages/sync-engine/package.json packages/sync-engine/
 # 容器一启动就 ERR_MODULE_NOT_FOUND 然后崩。npm ci 需要 package.json
 # 才会建工作区软链。
 COPY packages/schema-dsl/package.json packages/schema-dsl/
-RUN npm ci --omit=dev && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+# --ignore-scripts 同上：运行时阶段全部依赖为纯 JS，无需安装脚本产出产物
+# （唯一带 postinstall 的生产依赖 protobufjs 只打印版本方案告警，不生成文件）。
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 # Copy built package dists so workspace symlinks resolve at runtime
 COPY --from=builder /app/packages/contracts/dist packages/contracts/dist
 COPY --from=builder /app/packages/kernel/dist packages/kernel/dist
