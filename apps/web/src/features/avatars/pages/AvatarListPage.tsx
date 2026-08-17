@@ -62,7 +62,7 @@ export default function AvatarListPage() {
           }
           rowActions={row => (
             <div className="flex gap-2">
-              <button onClick={() => navigate(`/avatars/${row.id}`)} className="text-sm text-primary hover:underline">
+              <button onClick={() => navigate(`/avatars/${row.id}`)} className="text-sm text-primary-text hover:underline">
                 {t('avatars.view')}
               </button>
               <button

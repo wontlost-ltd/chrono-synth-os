@@ -249,3 +249,55 @@ jobs:
         # integration tests that are skipped in the sqlite job above.
         run: npm run test
       - run: npm run test:ops
+
+  # a11y E2E —— 此前**没有任何 job 跑 Playwright/axe**（apps/web/playwright.config.ts
+  # 的注释提到的 .github/workflows/e2e.yml 从未存在过），导致：
+  #   1. dark 主题品牌色作文本对比度仅 2.83 的真实违规长期无人发现；
+  #   2. @axe-core/playwright 升级（引擎跨 minor 会新增规则）不会被任何门拦截。
+  #
+  # 只跑 chromium：firefox/webkit 需另装浏览器二进制，而 axe 的规则判定与浏览器
+  # 内核无关，多跑两个内核只换来 3 倍时长和额外的 flaky 面。
+  #
+  # 三个套件全收，含覆盖 18 条路由（登录后页面在内）的 axe-routes.spec.ts。
+  #
+  # 一度想排除 axe-routes——它靠 waitForTimeout(200) 等渲染，源码注释自述
+  # 「per-page run is noisy with skeleton states」，且首次并跑多套件时确实见过
+  # 一次 /growth 偶发假阳。但单独连跑 8 轮（3+5）**全绿**，说明那次是并跑时的
+  # 时序竞争而非套件自身不稳；且 playwright.config.ts 在 CI 下已配 retries: 2。
+  #
+  # 排除它的代价更大：axe-a11y.spec.ts 只访问 login/register/billing 三页，
+  # 本 PR 37 处替换里仅 4 处落在其中——其余 33 处（Dashboard/Marketplace/
+  # TrustBadge…）将完全无 axe 覆盖，等于门形同虚设。
+  a11y-e2e:
+    name: a11y E2E (axe, chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+      - run: npm ci
+      # apps/web 直接 import @chrono/contracts 与 @chrono/sync-engine 的**产物**。
+      # 干净检出时这些 dist/ 不存在，vite dev server 会报
+      # 「Failed to resolve import "@chrono/contracts"」，页面直接白屏，
+      # axe 随即把整页判为违规——本地因为 dist 早已存在而看不到，是纯 CI-only 故障。
+      # 只建这两个：grep 确认 apps/web 仅 import @chrono/contracts 与
+      # @chrono/sync-engine，而后者只依赖前者（tsc -b 会自动按引用顺序构建）。
+      - name: Build workspace packages consumed by apps/web
+        run: npx tsc -b packages/contracts/tsconfig.json packages/sync-engine/tsconfig.json
+      - name: Install Playwright chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      - name: Run axe a11y suite
+        working-directory: apps/web
+        run: npx playwright test --project=chromium e2e/axe-a11y.spec.ts e2e/accessibility/
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: a11y-playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7

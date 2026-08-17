@@ -857,6 +857,7 @@
     },
     "filters": {
       "personaPlaceholder": "Filter by personaId",
+      "statusLabel": "Filter by status",
       "statusAll": "All",
       "statusActive": "Active only",
       "statusRevoked": "Revoked only",

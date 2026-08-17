@@ -196,11 +196,18 @@ for (const route of ROUTES) {
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa'])
-      /* Skip rules that fight Tailwind utility patterns or our shell layout:
-       * - region: every node should be in a landmark — we use main/header/nav
-       *   already, but lazy-loaded suspense fallbacks briefly violate this.
-       * - color-contrast: validated separately by Lighthouse against the
-       *   baked color tokens; per-page run is noisy with skeleton states. */
+      /* region: every node should be in a landmark — we use main/header/nav
+       * already, but lazy-loaded suspense fallbacks briefly violate this.
+       *
+       * 注意：此处**只**禁用 region。原注释还声称 color-contrast 也被跳过
+       * （「validated separately by Lighthouse」），但代码从来只传了 region
+       * ——注释与实现不符，已删除该误导性说明。color-contrast 是启用的，
+       * 且正是它抓出了 dark 主题品牌色作文本 2.83 的真实违规。
+       *
+       * 覆盖面限制（实测）：本套件用 mockApisEmpty 造空态，因此只有**默认
+       * 渲染出来的**节点会被检查。`group-hover:` 等交互态类名、以及依赖数据
+       * 才出现的分支，axe 走不到——变异测试确认改坏 Dashboard 的
+       * group-hover 类不会让门变红，而改坏 Billing 的常显节点会。 */
       .disableRules(['region'])
       .analyze();
 

@@ -53,7 +53,9 @@
 
 .growth-tree-node-current {
   border-color: var(--color-primary, #3b82f6);
-  color: var(--color-primary, #3b82f6);
+  /* 文本用 --color-primary-text：品牌色作文本在 dark 底上仅 3.45 不达 AA，
+   * 而 border-color 是非文本元素（AA 3:1）可继续用 --color-primary。 */
+  color: var(--color-primary-text, #60a5fa);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 20%, transparent);
   animation: growth-tree-pulse 2s ease-in-out infinite;
 }
@@ -130,7 +132,10 @@
   margin: 0 0 8px;
   padding-left: 16px;
   font-size: 13px;
-  color: var(--color-text-tertiary, #9ca3af);
+  /* 这里是真实正文（解锁功能清单，如「Persona 管理」），13px 需 AA 4.5:1。
+   * tertiary 在 dark canvas 上仅 3.75——contrast lint 对 tertiary 按「装饰性」
+   * 放宽到 minAA 3.0 故未拦下，axe 按文本 4.5 判定则会红。改用 secondary（12.02）。 */
+  color: var(--color-text-secondary, #9ca3af);
 }
 
 .growth-tree-unlocks li {
@@ -140,6 +145,6 @@
 .growth-tree-progress {
   margin: 0;
   font-size: 13px;
-  color: var(--color-primary, #3b82f6);
+  color: var(--color-primary-text, #60a5fa);
   font-weight: 500;
 }

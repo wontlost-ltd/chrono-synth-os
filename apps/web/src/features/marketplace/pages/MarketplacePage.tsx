@@ -305,7 +305,7 @@ function TaskActions({
         type="button"
         onClick={() => acceptTask.mutate({ personaId: selectedPersonaId })}
         disabled={acceptTask.isPending || !selectedPersonaId}
-        className="text-sm text-primary hover:underline disabled:opacity-50"
+        className="text-sm text-primary-text hover:underline disabled:opacity-50"
       >
         {t('marketplace.accept')}
       </button>
@@ -317,7 +317,7 @@ function TaskActions({
       <button
         type="button"
         onClick={onOpenComplete}
-        className="text-sm text-primary hover:underline"
+        className="text-sm text-primary-text hover:underline"
       >
         {t('marketplace.complete')}
       </button>

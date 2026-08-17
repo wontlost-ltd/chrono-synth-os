@@ -12,7 +12,7 @@ interface TrustBadgeProps {
 
 const BADGE_CONFIG: Record<InitiatorType, { bg: string; text: string; key: string }> = {
   ai: { bg: 'bg-accent/10 border-accent/30', text: 'text-accent', key: 'trustBadge.ai' },
-  user: { bg: 'bg-primary/10 border-primary/30', text: 'text-primary', key: 'trustBadge.user' },
+  user: { bg: 'bg-primary/10 border-primary/30', text: 'text-primary-text', key: 'trustBadge.user' },
   system: { bg: 'bg-text-secondary/10 border-border', text: 'text-text-secondary', key: 'trustBadge.system' },
 };
 

@@ -224,7 +224,7 @@ export function SimulationWizard() {
                   </button>
                 </div>
               ))}
-              <button type="button" onClick={() => addBranch(pi)} className="text-sm text-primary">{t('wizard.addBranch')}</button>
+              <button type="button" onClick={() => addBranch(pi)} className="text-sm text-primary-text">{t('wizard.addBranch')}</button>
             </div>
           ))}
         </div>

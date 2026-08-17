@@ -54,7 +54,7 @@ export function Dashboard() {
               to={c.to}
               className="group rounded-xl border border-border bg-surface-elevated p-5 transition-colors hover:border-primary"
             >
-              <h3 className="text-base font-semibold text-text-primary group-hover:text-primary">{t(c.titleKey)}</h3>
+              <h3 className="text-base font-semibold text-text-primary group-hover:text-primary-text">{t(c.titleKey)}</h3>
               <p className="mt-1 text-sm text-text-secondary">{t(c.descKey)}</p>
             </Link>
           ))}
@@ -84,7 +84,7 @@ export function Dashboard() {
         <EmptyState
           variant={error ? 'error' : 'empty'}
           message={error ? t('dashboard.loadError', { message: error.message }) : t('dashboard.noData')}
-          action={<button type="button" onClick={() => setSimId('')} className="text-sm text-primary underline">{t('dashboard.reselect')}</button>}
+          action={<button type="button" onClick={() => setSimId('')} className="text-sm text-primary-text underline">{t('dashboard.reselect')}</button>}
         />
       </>
     );
@@ -118,7 +118,7 @@ export function Dashboard() {
         <div className="mb-6 rounded-xl border border-primary/20 bg-primary/5 p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between">
             <div>
-              <span className="text-xs font-medium text-primary">{t('dashboard.recommendedPath')}</span>
+              <span className="text-xs font-medium text-primary-text">{t('dashboard.recommendedPath')}</span>
               <h2 className="text-lg font-bold">{recommended.pathId}</h2>
             </div>
             <div className="sm:text-right">

@@ -161,7 +161,7 @@ function AuthorizationCard({ auth, onSuspend, onResume, onRevoke }: CardProps) {
             </button>
           )}
           {isSuspended && (
-            <button type="button" className="text-xs text-primary hover:underline" onClick={onResume}>
+            <button type="button" className="text-xs text-primary-text hover:underline" onClick={onResume}>
               {t('agencyAuthorizations.actions.resume')}
             </button>
           )}

@@ -46,7 +46,7 @@ export function StrategyAdvisorPanel({ orgId }: { orgId: string }) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-text-secondary">{t('collab.strategy.initiatives')}</span>
-            <button onClick={() => setInitiatives(prev => [...prev, blankInitiative(prev.length + 1)])} className="text-xs text-primary hover:underline">+ {t('collab.strategy.addInitiative')}</button>
+            <button onClick={() => setInitiatives(prev => [...prev, blankInitiative(prev.length + 1)])} className="text-xs text-primary-text hover:underline">+ {t('collab.strategy.addInitiative')}</button>
           </div>
           {initiatives.map((it, idx) => (
             <div key={it.id} className="space-y-1 rounded-lg border border-border p-2">

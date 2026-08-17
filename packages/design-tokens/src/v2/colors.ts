@@ -39,6 +39,14 @@ interface SemanticColors {
   /** Brand */
   brand: {
     primary: string;
+    /**
+     * 品牌色**作为文本**落在 surface 上时专用（链接、小标签、强调标题）。
+     * 与 primary 解耦的原因：primary 承担实色按钮填充，需保证**白字**压在其上
+     * ≥4.5；而同一个值作为文本压在深色 surface 上时对比度恰好相反——两者不可能
+     * 由一个值同时满足（dark 主题下 #2563EB 白字 5.17 达标、作文本仅 2.83 不达标）。
+     * 与 status.successFill / dangerFill 是同一套拆分手法。
+     */
+    primaryText: string;
     primaryHover: string;
     primaryActive: string;
     secondary: string;
@@ -102,6 +110,9 @@ export const colorTokensLight: SemanticColors = {
   },
   brand: {
     primary: '#1E3A8A',
+    /* light 主题下 primary 本就够深，作文本落在 canvas(#F8FAFC) 9.90 / elevated(#FFFFFF) 10.36，
+     * 已过 AAA，故与 primary 同值——拆 token 是为了语义清晰与 dark 主题的实际需要。 */
+    primaryText: '#1E3A8A',
     primaryHover: '#3B82F6',
     primaryActive: '#1E3A8A',
     secondary: '#0F766E',
@@ -167,6 +178,11 @@ export const colorTokensDark: SemanticColors = {
      * active 再深一档 #1D4ED8（6.70:1 AAA，保留按压区分）。desktop --color-chrono-primary 同源同步受益。
      * （此前该 a11y 值只手改在 themes.css 生成区，未回写源——codegen 会还原，故在此源头落实。） */
     primary: '#2563EB',
+    /* dark 主题下 primary(#2563EB) 作文本压在 surface 上仅 2.83，达不到 AA——但它不能改深，
+     * 否则白字按钮（上方注释所述 75 处）会跌破 4.5。故文本另用亮一档的 #60A5FA：
+     * canvas(#0F172A) 7.02 过 AAA、elevated(#1E293B) 5.75 过 AA。
+     * 该值与 primaryHover 相同属巧合（hover 是背景语义），两者不可合并。 */
+    primaryText: '#60A5FA',
     primaryHover: '#60A5FA',
     primaryActive: '#1D4ED8',
     secondary: '#14B8A6',
@@ -233,6 +249,8 @@ export const colorTokensHighContrast: SemanticColors = {
   },
   brand: {
     primary: '#1E3A8A',
+    /* high-contrast 的 canvas 是纯白，#1E3A8A 作文本 10.36 过 AAA。 */
+    primaryText: '#1E3A8A',
     primaryHover: '#1E40AF',
     primaryActive: '#1E3A8A',
     secondary: '#1E3A8A',
@@ -307,6 +325,9 @@ export const colorTokensCompanion: SemanticColors = {
   },
   brand: {
     primary: '#c2691e',        // --c-brand 暖琥珀（active-tab/进度/气泡/bar；白字 3.94）
+    /* brand 暖琥珀作文本压在 elevated(#1a2030) 仅 4.12，差一点到 AA；沿用已有的亮调
+     * 链接色 #e8924a（canvas 7.57 / elevated 6.68），与 text.link 同值即同语义。 */
+    primaryText: '#e8924a',
     primaryHover: '#a85518',
     primaryActive: '#a85518',  // --c-brand-strong 深琥珀（白字按钮 5.28 过 AA）
     secondary: '#4fc08d',

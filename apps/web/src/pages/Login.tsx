@@ -33,7 +33,7 @@ export function Login() {
   return (
     <main className="flex min-h-dvh items-center justify-center bg-surface p-4">
       <div className="w-full max-w-sm rounded-xl border border-border bg-surface-elevated p-8 shadow-sm">
-        <h1 className="mb-6 text-center text-2xl font-bold text-primary">ChronoSynth</h1>
+        <h1 className="mb-6 text-center text-2xl font-bold text-primary-text">ChronoSynth</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="mb-1 block text-sm font-medium text-text-secondary">
@@ -98,7 +98,7 @@ export function Login() {
         </div>
         <p className="mt-4 text-center text-sm text-text-secondary">
           {t('login.noAccount')}
-          <Link to="/register" className="ml-1 font-medium text-primary hover:underline">
+          <Link to="/register" className="ml-1 font-medium text-primary-text hover:underline">
             {t('login.register')}
           </Link>
         </p>

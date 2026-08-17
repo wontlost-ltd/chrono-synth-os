@@ -54,7 +54,7 @@ export function Billing() {
 
       <div className="rounded-xl border border-border bg-surface-elevated p-6">
         <h2 className="text-lg font-semibold text-text-primary">{t('billing.currentPlanTitle')}</h2>
-        <p className="mt-1 text-2xl font-bold text-primary">{currentPlan?.name ?? t('billing.freePlan')}</p>
+        <p className="mt-1 text-2xl font-bold text-primary-text">{currentPlan?.name ?? t('billing.freePlan')}</p>
         <p className="mt-1 text-sm text-text-secondary">
           {t('billing.statusLabel')}
           <span className="ml-1">
@@ -203,7 +203,7 @@ function PlanCard({ plan, isCurrent, onUpgrade, isUpgrading }: { plan: Plan; isC
         <li>{t('billing.llmTokensLabel')}: {plan.limits.llmTokensPerMonth === -1 ? t('billing.unlimited') : plan.limits.llmTokensPerMonth.toLocaleString()}</li>
       </ul>
       {isCurrent ? (
-        <span className="mt-2 inline-block rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+        <span className="mt-2 inline-block rounded bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary-text">
           {t('billing.currentPlanBadge')}
         </span>
       ) : canUpgrade ? (

@@ -19,7 +19,7 @@ export function Breadcrumbs({ items }: BreadcrumbsProps) {
           <li key={i} className="flex items-center gap-1">
             {i > 0 && <span aria-hidden="true">/</span>}
             {crumb.to ? (
-              <Link to={crumb.to} className="hover:text-primary hover:underline">
+              <Link to={crumb.to} className="hover:text-primary-text hover:underline">
                 {crumb.label}
               </Link>
             ) : (

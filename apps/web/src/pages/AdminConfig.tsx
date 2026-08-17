@@ -123,7 +123,7 @@ export function AdminConfig() {
                       <code className="max-w-xs truncate rounded bg-surface px-2 py-0.5 text-xs text-text-secondary" title={displayValue}>
                         {displayValue}
                       </code>
-                      <button onClick={() => startEdit(item.key, item.value, secret)} className="text-xs text-primary hover:underline">
+                      <button onClick={() => startEdit(item.key, item.value, secret)} className="text-xs text-primary-text hover:underline">
                         {t('adminConfig.edit')}
                       </button>
                     </div>

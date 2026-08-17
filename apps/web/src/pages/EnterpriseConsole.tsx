@@ -1302,7 +1302,7 @@ function AuditPanel({
           emptyState={<EmptyState message={t('enterpriseConsole.empty.audit')} />}
           rowActions={(row) => (
             <details className="max-w-[24rem] text-left">
-              <summary className="cursor-pointer text-xs text-primary">Payload</summary>
+              <summary className="cursor-pointer text-xs text-primary-text">Payload</summary>
               <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-surface p-3 text-xs text-text-secondary">
                 {formatJson(row.payload ?? {})}
               </pre>

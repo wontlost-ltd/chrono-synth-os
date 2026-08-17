@@ -134,6 +134,7 @@ export function AdminToolPermissions() {
         />
         <select
           className="rounded border border-border bg-surface px-2 py-1"
+          aria-label={t('toolPermissions.filters.statusLabel')}
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
         >

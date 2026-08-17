@@ -111,6 +111,18 @@ function compositeOver(fg, bg, alpha) {
  *
  * Pairs that include `surface.overlay` (semi-transparent) are not
  * checked — their effective contrast depends on what's underneath.
+ *
+ * ⚠️ 已知盲区（既有债，非本门引入）——本门读的是 colors.ts 的 **token 值**，
+ * 而 apps/web 的 globals.css 在 codegen 标记**之外**手写了一组 dark 覆盖：
+ *
+ *     :root[data-theme='dark'] { --color-surface: #050914;          (token: #0F172A)
+ *                                --color-surface-elevated: #131B2E;  (token: #1E293B)
+ *                                --color-surface-raised:  #1A2238;   (token 里没有这一层) }
+ *
+ * 所以「token 过了」不等于「浏览器里过了」。当前方向恰好有利（实际渲染的底色更
+ * 暗 → 对比度更宽松，如 brand.primaryText 门测 5.75 而实测 6.75），故结论不变；
+ * 但 surface-raised（表头行）这一层**完全没有任何检查对**，text.tertiary 落在
+ * 其上实测仅 3.48。根治办法是把手写覆盖回写进 token 源，让二者重新同源。
  */
 const PAIRS = [
   /* Primary text on canvas — the single most load-bearing pair. */
@@ -132,6 +144,12 @@ const PAIRS = [
    * in dark mode). So the gate must measure white-on-fill, not inverse-on-fill, or it
    * would flag the dark primary button (#FFFFFF on #2563EB = 5.17 AA) as a false 3.45 fail. */
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'brand.primary', label: 'white text on brand-primary button', minAA: 4.5, minAAA: 7.0 },
+  /* 品牌色**作为文本**（链接 / 小标签 / 强调标题，web 全站 37 处 text-primary-text）。
+   * 这一对此前缺检：门只查了「白字压在 brand.primary 上」（按钮），没查「brand 色当文字
+   * 压在 surface 上」，导致 dark 主题 #2563EB 作文本仅 2.83 长期漏网，靠 axe 才发现。
+   * primaryText 与 primary 解耦正是为了让这两个方向相反的要求各自达标。 */
+  { fg: 'brand.primaryText', bg: 'surface.canvas', label: 'brand text on page', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'brand.primaryText', bg: 'surface.elevated', label: 'brand text on card', minAA: 4.5, minAAA: 7.0 },
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.successFill', label: 'white text on success-fill button', minAA: 3.0, minAAA: 4.5 },
   { fg: 'text.inverse', fgLiteral: '#FFFFFF', bg: 'status.dangerFill', label: 'white text on danger-fill button', minAA: 3.0, minAAA: 4.5 },
   /* Status colours as USED IN StatusBadge: status-coloured text on a

@@ -208,7 +208,7 @@ export function OnboardingV2() {
       <div className="w-full max-w-2xl">
         <header className="mb-8 flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-primary">ChronoSynth</h1>
+            <h1 className="text-2xl font-bold text-primary-text">ChronoSynth</h1>
             <p className="text-sm text-text-secondary">{t('onboardingV2.subtitle')}</p>
           </div>
           {displayStep < 5 && (

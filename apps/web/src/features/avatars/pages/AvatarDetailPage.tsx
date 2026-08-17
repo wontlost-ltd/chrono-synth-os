@@ -98,7 +98,7 @@ export default function AvatarDetailPage() {
                     ? t('avatars.autorunStatus', { interval: autorun.data.intervalMinutes })
                     : t('avatars.autorunDisabled')}
                 </p>
-                <a href={`/avatars/${id}/autorun`} className="mt-2 inline-block text-sm text-primary hover:underline">
+                <a href={`/avatars/${id}/autorun`} className="mt-2 inline-block text-sm text-primary-text hover:underline">
                   {t('avatars.configAutorun')}
                 </a>
               </div>

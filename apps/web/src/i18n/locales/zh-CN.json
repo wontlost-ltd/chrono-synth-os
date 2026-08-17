@@ -857,6 +857,7 @@
     },
     "filters": {
       "personaPlaceholder": "按 personaId 过滤",
+      "statusLabel": "按状态过滤",
       "statusAll": "全部",
       "statusActive": "仅活跃",
       "statusRevoked": "仅已撤销",

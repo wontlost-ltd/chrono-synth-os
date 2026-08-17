@@ -94,7 +94,7 @@ function PersonaActions({ persona }: { persona: Persona }) {
     <button
       onClick={() => updateStatus.mutate(nextStatus as Persona['status'])}
       disabled={updateStatus.isPending}
-      className="text-sm text-primary hover:underline"
+      className="text-sm text-primary-text hover:underline"
     >
       {persona.status === 'active' ? t('personas.pause') : t('personas.resume')}
     </button>

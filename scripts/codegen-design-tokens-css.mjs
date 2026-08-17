@@ -71,6 +71,7 @@ const { size: sizeTokens } = await import(spacingModulePath);
  *    surface.elevated     → --color-surface-elevated
  *    text.primary         → --color-text-primary
  *    brand.primary        → --color-primary
+ *    brand.primaryText    → --color-primary-text
  *    brand.primaryHover   → --color-primary-hover
  *    status.success       → --color-success
  *    status.successFill   → --color-success-fill
@@ -106,6 +107,9 @@ function flattenColors(theme) {
   /* brand (mapped to current CSS variable names; primaryHover = "light"
    * is a legacy alias the components use to mean "hover/focus shade") */
   out['--color-primary'] = theme.brand.primary;
+  /* 品牌色作文本专用（Tailwind 生成 text-primary-text）；与 --color-primary 解耦，
+   * 因为后者要承担实色按钮填充的白字对比度，二者要求方向相反。 */
+  out['--color-primary-text'] = theme.brand.primaryText;
   out['--color-primary-light'] = theme.brand.primaryHover;
   out['--color-primary-active'] = theme.brand.primaryActive;
   out['--color-secondary'] = theme.brand.secondary;

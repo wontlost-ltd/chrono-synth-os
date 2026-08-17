@@ -52,7 +52,7 @@ export function SafetyErrorBanner({ kind, message, retryAfter, onDismiss }: Safe
           </p>
         )}
         {kind === 'quota' && (
-          <a href="/billing" className="mt-1 inline-block text-xs font-medium text-primary hover:underline">
+          <a href="/billing" className="mt-1 inline-block text-xs font-medium text-primary-text hover:underline">
             {t('safetyError.upgradePlan')}
           </a>
         )}

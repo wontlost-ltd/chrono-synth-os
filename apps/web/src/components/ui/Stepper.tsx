@@ -31,7 +31,7 @@ export function Stepper({ steps, currentId }: StepperProps) {
               <div className="flex items-center gap-2">
                 <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-medium
                   ${status === 'complete' ? 'bg-primary text-white' : ''}
-                  ${status === 'current' ? 'border-2 border-primary text-primary' : ''}
+                  ${status === 'current' ? 'border-2 border-primary text-primary-text' : ''}
                   ${status === 'upcoming' ? 'border-2 border-neutral-2 text-neutral-3' : ''}`}
                 >
                   {status === 'complete' ? '✓' : idx + 1}

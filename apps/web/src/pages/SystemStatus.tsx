@@ -69,7 +69,7 @@ export function SystemStatus() {
             href="/api/v1/docs"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-primary underline"
+            className="text-sm text-primary-text underline"
           >
             /api/v1/docs
           </a>
