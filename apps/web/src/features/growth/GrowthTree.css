@@ -48,9 +48,11 @@
 .growth-tree-node-completed {
   background: var(--color-primary, #3b82f6);
   border-color: var(--color-primary, #3b82f6);
-  /* --color-on-primary 全仓从未定义，实际渲染的一直是 fallback。
-   * 白字压在 --color-primary 实底上是全站按钮的既有约定（另 96 处 text-white），
-   * 各主题实测 5.17~10.36 均过 AA，故直接写死白色、不再引用死 token。 */
+  /* --color-on-primary 全仓从未定义，此前实际渲染的一直是 fallback。
+   * 这里**刻意**写字面白色而非 var(--color-text-inverse)：后者随主题翻转
+   * （light #F8FAFC / dark #0F172A），在实色按钮上会变成近黑字。全站实色
+   * 按钮（Button.tsx 及另 96 处 text-white）一律用字面白色，lint-contrast
+   * 的 fgLiteral:"#FFFFFF" 检查对正是为此而设。各主题实测 5.17~10.36。 */
   color: #fff;
 }
 
