@@ -181,7 +181,7 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps = {}) {
                   />
                 </div>
               )}
-              {error && <p className="mt-3 text-sm text-amber-400" role="alert">{error}</p>}
+              {error && <p className="mt-3 text-sm text-chrono-warning" role="alert">{error}</p>}
               <div className="mt-4 flex gap-2">
                 <button
                   onClick={() => setStep('welcome')}
@@ -208,7 +208,7 @@ export function OnboardingPage({ onComplete }: OnboardingPageProps = {}) {
                   ? 'On launch the app will sync with your server in the background. The Sync badge in the title bar shows live status.'
                   : 'The app starts in local-only mode. You can connect a server later in Settings.'}
               </p>
-              {error && <p className="mb-3 text-sm text-amber-400" role="alert">{error}</p>}
+              {error && <p className="mb-3 text-sm text-chrono-warning" role="alert">{error}</p>}
               <button
                 onClick={handleFinish}
                 disabled={busy}

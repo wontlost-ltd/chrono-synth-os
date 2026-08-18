@@ -2,9 +2,9 @@ import clsx from 'clsx';
 import type { PersonaRow } from '@/bridge/tauri-commands';
 
 const statusClasses: Record<string, string> = {
-  active: 'border-green-500/30 bg-green-500/10 text-green-300',
-  restricted: 'border-yellow-400/30 bg-yellow-400/10 text-yellow-200',
-  deceased: 'border-gray-400/30 bg-gray-400/10 text-gray-300',
+  active: 'border-chrono-success/30 bg-chrono-success/10 text-chrono-success',
+  restricted: 'border-chrono-warning/30 bg-chrono-warning/10 text-chrono-warning',
+  deceased: 'border-chrono-border/30 bg-chrono-elevated/10 text-chrono-text-secondary',
 };
 
 function formatWalletBalance(balance: number | null): string | null {

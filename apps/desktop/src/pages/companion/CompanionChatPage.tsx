@@ -140,7 +140,7 @@ export function CompanionChatPage(): JSX.Element {
       </section>
 
       {error && (
-        <p role="alert" className="text-sm text-red-200">
+        <p role="alert" className="text-sm text-chrono-error">
           {error}
         </p>
       )}
