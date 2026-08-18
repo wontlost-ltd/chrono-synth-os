@@ -38,7 +38,15 @@ const ALLOW = new Map([
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
-    const st = statSync(p);
+    /* 断掉的符号链接会让 statSync 抛 ENOENT——若不接住，这道门就变成
+     * 「崩出一段堆栈」而不是「给出检查结论」，属于 fail-open 的坏形态。 */
+    let st;
+    try {
+      st = statSync(p);
+    } catch (err) {
+      console.warn(`  ⚠ 跳过无法访问的路径（${err.code}）：${relative(ROOT, p)}`);
+      continue;
+    }
     if (st.isDirectory()) walk(p, out);
     else if (/\.(tsx?|css)$/.test(name)) out.push(p);
   }
