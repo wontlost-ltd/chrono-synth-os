@@ -21,7 +21,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-subtle, #f3f4f6);
+  /* --color-surface-subtle **从未被定义过**（全仓零处定义），所以这里实际
+   * 渲染的一直是 fallback 的 #f3f4f6——在 dark 主题下就是一块浅灰面板嵌在
+   * 深色卡片(#131B2E)里，实测 DOM 确认 rgb(243,244,246)。
+   * 卡片本身是 surface-elevated，插画面板退一层用 surface 才是对的层级。 */
+  background: var(--color-surface);
 }
 
 .welcome-intro-svg {
@@ -97,7 +101,10 @@
 
 .welcome-intro-next {
   background: var(--color-primary, #3b82f6);
-  color: var(--color-on-primary, #fff);
+  /* --color-on-primary 全仓从未定义，实际渲染的一直是 fallback。
+   * 白字压在 --color-primary 实底上是全站按钮的既有约定（另 96 处 text-white），
+   * 各主题实测 5.17~10.36 均过 AA，故直接写死白色、不再引用死 token。 */
+  color: #fff;
   border: none;
   padding: 8px 18px;
   border-radius: 8px;

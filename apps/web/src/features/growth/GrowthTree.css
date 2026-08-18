@@ -48,7 +48,10 @@
 .growth-tree-node-completed {
   background: var(--color-primary, #3b82f6);
   border-color: var(--color-primary, #3b82f6);
-  color: var(--color-on-primary, #fff);
+  /* --color-on-primary 全仓从未定义，实际渲染的一直是 fallback。
+   * 白字压在 --color-primary 实底上是全站按钮的既有约定（另 96 处 text-white），
+   * 各主题实测 5.17~10.36 均过 AA，故直接写死白色、不再引用死 token。 */
+  color: #fff;
 }
 
 .growth-tree-node-current {
