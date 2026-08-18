@@ -17,10 +17,13 @@ import {
 import { loadCompanionGrowth, type GrowthSource } from '@/companion/growth-data';
 
 /** 探索强度 → 中文标签 + 配色（成长语气，不是告警，与企业版 alert 配色刻意不同）。 */
+/* 成长强度是**并列的分类**（不是状态好坏），故用分类编码色 chart-* 而非
+ * status 语义色——套 status 会把 exploring/leaping 塌成同一个 info，
+ * 丢掉原设计里 sky vs violet 的区分。三档色相互异，实测 7.86~5.38 均过 AA。 */
 const INTENSITY_META: Record<ExplorationIntensityV1, { label: string; style: string }> = {
-  steady: { label: '平稳', style: 'bg-chrono-success/15 text-chrono-success border-chrono-success/40' },
-  exploring: { label: '探索中', style: 'bg-chrono-info/15 text-chrono-info border-chrono-info/40' },
-  leaping: { label: '跃迁', style: 'bg-chrono-info/15 text-chrono-info border-chrono-info/40' },
+  steady: { label: '平稳', style: 'bg-chrono-chart-2/15 text-chrono-chart-2 border-chrono-chart-2/40' },
+  exploring: { label: '探索中', style: 'bg-chrono-chart-1/15 text-chrono-chart-1 border-chrono-chart-1/40' },
+  leaping: { label: '跃迁', style: 'bg-chrono-chart-4/15 text-chrono-chart-4 border-chrono-chart-4/40' },
 };
 
 const DIRECTION_LABEL: Record<ExplorationDirectionV1['direction'], string> = {

@@ -16,7 +16,10 @@ const syncStateViews: Record<RuntimeSyncStateV2, SyncStateView> = {
   online_dirty: { color: 'bg-chrono-warning', icon: '●', label: 'Pending' },
   syncing: { color: 'bg-chrono-info', icon: '↻', label: 'Syncing…', pulse: true },
   offline_queueing: { color: 'bg-chrono-warning', icon: '↯', label: 'Offline' },
-  offline_readonly: { color: 'bg-chrono-elevated', icon: '🔒', label: 'Read-only' },
+  /* 迁移脚本把原 bg-gray-400 机械映射成了 elevated——那正是徽章自身的底色，
+   * 圆点直接隐形。改用 text-tertiary（相对徽章底 3.07，过非文本 AA 3.0），
+   * 语义上也正好表达「静默/只读」。 */
+  offline_readonly: { color: 'bg-chrono-text-tertiary', icon: '🔒', label: 'Read-only' },
   conflict_inbox: { color: 'bg-chrono-error', icon: '⚠', label: 'Conflicts' },
   degraded_remote: { color: 'bg-chrono-warning', icon: '⚡', label: 'Degraded' },
   reauth_required: { color: 'bg-chrono-error', icon: '✕', label: 'Re-auth' },

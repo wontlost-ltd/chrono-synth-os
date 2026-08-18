@@ -305,6 +305,13 @@ function renderDesktopTheme() {
     '--color-chrono-info': dark['--color-info'],
     '--color-chrono-error-fill': dark['--color-error-fill'],
     '--color-chrono-success-fill': dark['--color-success-fill'],
+    /* 分类编码色（chart series）：用于「同一维度下互相并列的若干类别」，
+     * 如成长强度 平稳/探索中/跃迁——它们不是状态好坏，不该套 status 语义
+     * （套了会把不同类别塌成同色）。六档色相互异，dark 下实测 5.29~8.76。 */
+    '--color-chrono-chart-1': dark['--color-chart-1'],
+    '--color-chrono-chart-2': dark['--color-chart-2'],
+    '--color-chrono-chart-3': dark['--color-chart-3'],
+    '--color-chrono-chart-4': dark['--color-chart-4'],
   };
   return formatDeclarations(desktopVars);
 }
