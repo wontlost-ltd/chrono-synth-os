@@ -28,11 +28,40 @@ const UTIL = 'text|bg|border|ring|from|to|via|divide|outline|decoration|shadow|f
 const RE = new RegExp(`\\b(?:${UTIL})-(?:${PALETTE.join('|')})-\\d{2,3}\\b`, 'g');
 
 /**
+ * 任意值语法 `text-[#818CF8]` / `bg-[rgba(...)]`——绕开调色板类名，
+ * 但同样是硬编码色，两道既有门都看不见。
+ */
+const ARBITRARY_RE = new RegExp(`\\b(?:${UTIL})-\\[(?:#[0-9a-fA-F]{3,8}|rgba?\\([^\\]]*\\))\\]`, 'g');
+
+/**
+ * 组件源码里的裸 hex（`.tsx`/`.ts` 才查；`.css` 里主要是 codegen 产物与
+ * 主题定义，本就该是 hex）。
+ *
+ * 合法例外**不算违规**，直接在匹配阶段排除：
+ *   - `var(--token, #fallback)` 的兜底值——token 缺失时的降级，是推荐写法
+ *   - 注释里提到的色值——写迁移说明时必然要引用旧值
+ */
+const HEX_RE = /#[0-9a-fA-F]{3,8}\b/g;
+const VAR_FALLBACK_RE = /var\(\s*--[\w-]+\s*,\s*#[0-9a-fA-F]{3,8}\s*\)/g;
+
+/**
  * 例外清单：`文件相对路径 → 原因`。
  * 空清单即「零容忍」；确需例外时在此登记，让下一个人看得到理由。
  */
 const ALLOW = new Map([
-  // 例：['src/features/x/Chart.tsx', '图表系列色需固定色相，不随主题变化'],
+  /* 图表/可视化系列色：需要固定且**互相可区分**的色相来编码类别，
+   * 随主题漂移反而会让「同一状态两次看起来不同」。节点底与文字已改用
+   * 语义 token（见文件内注释），此处豁免的只是编码用的系列色。
+   * 实测均为装饰性描边/填充，不承载文本。 */
+  ['src/pages/WorkforceVisualization.tsx', '组织树的负载/状态/处置编码色，需固定色相区分类别'],
+  /* 品牌渐变与强调色：为 dark 主题挑选的装饰色，实测 4.45~13.8 全部达标
+   * （indigo #6366F1 = 4.45、violet #A855F7 = 5.03、cyan #22D3EE = 11.01）。 */
+  ['src/pages/EnterpriseConsole.tsx', '品牌渐变/圆点装饰色，非文本，实测均达标'],
+  ['src/pages/AdminToolPermissions.tsx', '作用域徽章配色（read/write/execute），实测 11.25~13.8'],
+  ['src/components/ui/EmptyState.tsx', '空态插画着色 #818CF8（6.67），与 EnterpriseConsole indigo 同源'],
+  /* 侧边栏 hover/active 的 indigo 微弱高亮：rgba 低透明度叠加，
+   * 属纯装饰层，不承载文本对比度。 */
+  ['src/components/layout/Sidebar.tsx', '导航 hover/active 的低透明度 indigo 叠加层，纯装饰'],
 ]);
 
 function walk(dir, out = []) {
@@ -60,13 +89,37 @@ for (const file of walk(TARGET)) {
   scanned += 1;
   if (ALLOW.has(rel)) continue;
   const text = readFileSync(file, 'utf8');
+  const isComponent = /\.tsx?$/.test(file);
+  /* 逐行剥注释：块注释要跨行跟踪状态，否则多行迁移说明里引用的旧色值
+   * （如「原 neutral-3(#64748B)」）会被误报。 */
+  let inBlockComment = false;
   const lines = text.split('\n');
   lines.forEach((line, i) => {
-    const hits = line.match(RE);
-    if (!hits) return;
-    for (const hit of hits) {
+    let code = line;
+    if (inBlockComment) {
+      const end = code.indexOf('*/');
+      if (end === -1) return;              // 整行仍在注释里
+      code = code.slice(end + 2);
+      inBlockComment = false;
+    }
+    /* 去掉本行内成对的块注释与行尾注释 */
+    code = code.replace(/\/\*[\s\S]*?\*\//g, ' ');
+    const open = code.indexOf('/*');
+    if (open !== -1) { code = code.slice(0, open); inBlockComment = true; }
+    const line1 = code.indexOf('//');
+    if (line1 !== -1) code = code.slice(0, line1);
+
+    const report = (hit) => {
       violations += 1;
       console.error(`  ✖ ${rel}:${i + 1}  ${hit}`);
+    };
+
+    for (const hit of code.match(RE) ?? []) report(hit);
+    for (const hit of code.match(ARBITRARY_RE) ?? []) report(hit);
+    if (isComponent) {
+      /* 先挖掉 var(--token, #fallback) 里的兜底色，再找剩下的裸 hex */
+      const stripped = code.replace(VAR_FALLBACK_RE, ' ');
+      for (const hit of stripped.match(HEX_RE) ?? []) report(hit);
     }
   });
 }

@@ -75,11 +75,30 @@ export default function OrgMarketplace() {
 
 type T = (k: string) => string;
 const card = 'rounded-lg border border-border bg-surface-elevated p-3 text-sm';
-const badge = (color: string) => ({ backgroundColor: color, color: '#fff', borderRadius: 6, padding: '1px 8px', fontSize: 12 });
-const STATUS_COLOR: Record<string, string> = {
-  open: '#3b82f6', accepted: '#f59e0b', completed: '#10b981', cancelled: '#9ca3af',
-  submitted: '#34d399', assigned: '#f59e0b', in_progress: '#60a5fa', rejected: '#f87171',
+/**
+ * 状态徽章：改用「10% 同色底 + 同色文字」，与 components/ui/StatusBadge 同款。
+ *
+ * 原实现是**白字压在浅色实底上**，7 种状态实测全部不达 AA 4.5——
+ * submitted 最差仅 1.92，open 3.68、completed/cancelled/in_progress 2.54、
+ * rejected 2.77、accepted 2.15。且写死 hex 不随主题切换，
+ * `lint:raw-palette`（按类名匹配）与 `lint:contrast`（按 token 对计算）
+ * 两道门都看不见它。
+ *
+ * 新写法的对比度由 lint:contrast 的 `badge text: * on tinted page` 系列
+ * 检查对覆盖（bgAlpha=0.10 精确模拟这里的 bg-*\/10 合成）。
+ */
+const badgeClass = 'inline-block rounded-md px-2 py-px text-xs font-medium';
+const STATUS_BADGE: Record<string, string> = {
+  open:        'bg-info/10 text-info',
+  accepted:    'bg-warning/10 text-warning',
+  assigned:    'bg-warning/10 text-warning',
+  in_progress: 'bg-syncing/10 text-syncing',
+  submitted:   'bg-success/10 text-success',
+  completed:   'bg-completed/10 text-completed',
+  cancelled:   'bg-offline/10 text-offline',
+  rejected:    'bg-error/10 text-error',
 };
+const FALLBACK_BADGE = 'bg-offline/10 text-offline';
 
 /* ① 接单视角：可领的 open 工单。两种接单方——组织领取 / 数字人格申请（ADR-0058 双边）。 */
 function OpenTasks({ orgId, t }: { orgId: string; t: T }) {
@@ -103,7 +122,7 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
     <div className={card}>
       <div className="flex items-center justify-between">
         <span className="font-medium">{task.title}</span>
-        <span style={badge(STATUS_COLOR[task.status] ?? '#9ca3af')}>{task.status}</span>
+        <span className={`${badgeClass} ${STATUS_BADGE[task.status] ?? FALLBACK_BADGE}`}>{task.status}</span>
       </div>
       <p className="mt-1 text-text-secondary">{task.description}</p>
       <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary">
@@ -136,8 +155,8 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
 
 function PublisherVerifiedBadge({ verified, t }: { verified?: boolean; t: T }) {
   return verified
-    ? <span style={badge('#10b981')}>{t('orgMarket.verified')}</span>
-    : <span style={badge('#9ca3af')}>{t('orgMarket.unverified')}</span>;
+    ? <span className={`${badgeClass} bg-success/10 text-success`}>{t('orgMarket.verified')}</span>
+    : <span className={`${badgeClass} ${FALLBACK_BADGE}`}>{t('orgMarket.unverified')}</span>;
 }
 
 /* 组织视角：我的申请（领取的工单）。 */
@@ -151,7 +170,7 @@ function MyApplications({ orgId, t }: { orgId: string; t: T }) {
       {list.map((a) => (
         <div key={a.id} className={`${card} flex items-center justify-between`}>
           <span className="font-mono text-xs">{a.taskId}</span>
-          <span style={badge(STATUS_COLOR[a.status] ?? '#9ca3af')}>{a.status}</span>
+          <span className={`${badgeClass} ${STATUS_BADGE[a.status] ?? FALLBACK_BADGE}`}>{a.status}</span>
         </div>
       ))}
     </div>
@@ -179,7 +198,7 @@ function MyAssignments({ orgId, t }: { orgId: string; t: T }) {
         <div key={a.id} className={card}>
           <div className="flex items-center justify-between">
             <span className="font-mono text-xs">{a.taskId}</span>
-            <span style={badge(STATUS_COLOR[a.status] ?? '#9ca3af')}>{a.status}</span>
+            <span className={`${badgeClass} ${STATUS_BADGE[a.status] ?? FALLBACK_BADGE}`}>{a.status}</span>
           </div>
           {a.status === 'assigned' && (
             <div className="mt-2 flex flex-wrap items-end gap-2">
@@ -250,7 +269,7 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
                   <div key={a.id} className={`${card} flex items-center justify-between`}>
                     <span>🏢 {a.orgId} · {t('orgMarket.score')}: {a.rankingScore}</span>
                     <div className="flex items-center gap-2">
-                      <span style={badge(STATUS_COLOR[a.status] ?? '#9ca3af')}>{a.status}</span>
+                      <span className={`${badgeClass} ${STATUS_BADGE[a.status] ?? FALLBACK_BADGE}`}>{a.status}</span>
                       {a.status === 'submitted' && (
                         <Button size="sm" onClick={() => confirmAssignOrg.mutate({ taskId: committedTaskId, orgId: a.orgId })} disabled={confirmAssignOrg.isPending}>
                           {t('orgMarket.assignToOrg')}
@@ -274,7 +293,7 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
                   <div key={a.id} className={`${card} flex items-center justify-between`}>
                     <span>🧠 {a.personaName ?? a.personaId} · {t('orgMarket.score')}: {a.rankingScore}</span>
                     <div className="flex items-center gap-2">
-                      <span style={badge(STATUS_COLOR[a.status] ?? '#9ca3af')}>{a.status}</span>
+                      <span className={`${badgeClass} ${STATUS_BADGE[a.status] ?? FALLBACK_BADGE}`}>{a.status}</span>
                       {a.status === 'submitted' && (
                         <Button size="sm" onClick={() => assignPersona.mutate({ personaId: a.personaId })} disabled={assignPersona.isPending}>
                           {t('orgMarket.assignToPersona')}

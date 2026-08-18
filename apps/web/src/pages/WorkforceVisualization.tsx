@@ -289,10 +289,13 @@ function OrgTree({ nodes, edges }: { nodes: OrgTreeNode[]; edges: OrgTreeEdge[] 
           const color = LOAD_COLOR[p.node.load] ?? '#9ca3af';
           return (
             <g key={p.node.workerId}>
-              <rect x={x} y={y} width={NODE_W} height={NODE_H} rx={8} fill="#fff" stroke={color} strokeWidth={p.node.needsAttention ? 3 : 1.5} />
-              {p.node.needsAttention && <circle cx={x + NODE_W - 10} cy={y + 10} r={4} fill="#ef4444" />}
-              <text x={x + 10} y={y + 22} fontSize={13} fontWeight={600} fill="#111827">{truncate(p.node.displayName, 16)}</text>
-              <text x={x + 10} y={y + 40} fontSize={11} fill="#6b7280">{p.node.roleCode || p.node.title}</text>
+              {/* 节点底与文字走语义 token：原先写死 #fff / #111827 / #6b7280，
+                * 在 dark 主题下是一块块白色矩形浮在 #131B2E 的卡片上，且不随
+                * 主题切换。描边与堆叠条保留固定色相（见上方 LOAD_COLOR 等注释）。 */}
+              <rect x={x} y={y} width={NODE_W} height={NODE_H} rx={8} fill="var(--color-surface)" stroke={color} strokeWidth={p.node.needsAttention ? 3 : 1.5} />
+              {p.node.needsAttention && <circle cx={x + NODE_W - 10} cy={y + 10} r={4} fill="var(--color-error)" />}
+              <text x={x + 10} y={y + 22} fontSize={13} fontWeight={600} fill="var(--color-text-primary)">{truncate(p.node.displayName, 16)}</text>
+              <text x={x + 10} y={y + 40} fontSize={11} fill="var(--color-text-secondary)">{p.node.roleCode || p.node.title}</text>
               <text x={x + NODE_W - 10} y={y + 40} fontSize={10} textAnchor="end" fill={color}>{p.node.activeTaskCount}★</text>
             </g>
           );
