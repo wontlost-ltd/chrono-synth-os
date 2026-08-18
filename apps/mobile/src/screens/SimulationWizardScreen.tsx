@@ -222,9 +222,13 @@ const styles = StyleSheet.create({
   backButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1' },
   backButtonText: { fontSize: 15, color: '#64748B', fontWeight: '500' },
   nextButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: '#1E3A8A' },
-  // lint-mobile-contrast-ignore-next-line 该文字落在 nextButton 的 #1E3A8A 实色底上（白字 10.36），非屏幕底
+  /* ⚠️ 本样式被**两个**按钮共用，豁免理由必须列全部候选底色——只写通过的那个
+   * 会把另一个的违规一并静默（原注释就犯了这个错，藏住了 #16A34A 的 3.30）。 */
+  // lint-mobile-contrast-ignore-next-line 白字落在 nextButton #1E3A8A(10.36) 与 submitButton #15803D(5.02) 两个实色底上，均达标
   nextButtonText: { fontSize: 15, color: '#FFFFFF', fontWeight: '600' },
-  submitButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: '#16A34A' },
+  /* nextButtonText（白字）被 nextButton 与本按钮**共用**：压在 #16A34A 上只有
+   * 3.30，不达 15px 所需的 AA 4.5。加深到 #15803D 后为 5.02。 */
+  submitButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: '#15803D' },
   disabledButton: { opacity: 0.5 },
   summaryCard: { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0' },
   summaryLabel: { fontSize: 15, fontWeight: '600', color: '#1E293B', marginBottom: 6 },

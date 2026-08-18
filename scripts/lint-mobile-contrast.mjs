@@ -69,23 +69,44 @@ for (const file of walk(TARGET)) {
         violations += 1;
         console.error(`  ✖ ${rel}:${i + 1}  豁免标记缺原因说明（需 ≥6 个非标点字符）`);
       }
-      exempt.add(i + 1);
+      /* `i` 是 0-based 行下标，故 `i + 1` 是**标记自身**的 1-based 行号；
+       * 要豁免的是它下面那一行（或那一行起始的样式块），所以是 `i + 2`。 */
+      exempt.add(i + 2);
     }
   });
 
-  /* 该文件的容器底色：优先 container 的 backgroundColor */
-  const cm = text.match(/container:\s*\{[^}]*backgroundColor:\s*'(#[0-9a-fA-F]{6})'/s);
+  /* 该文件的根容器底色。根样式命名不统一——实测有 `container` 也有 `screen`
+   * （ConflictInboxScreen 用后者，且它是全仓唯一的暗色屏 #0F172A）。
+   * 只认 `container` 会让暗色屏回退到浅色默认底，把该屏所有文字误判成不达标。 */
+  const cm = text.match(/(?:container|screen|root|wrapper):\s*\{[^}]*backgroundColor:\s*'(#[0-9a-fA-F]{6})'/s);
   const fileBg = cm ? cm[1] : DEFAULT_BG;
 
-  lines.forEach((line, i) => {
-    if (exempt.has(i)) return;
-    /* 同一条样式里同时出现 fontSize 与 color 才判定——只有这样才能确定
-     * 它是文本、以及字号阈值。 */
-    const size = line.match(/fontSize:\s*(\d+)/);
-    const color = line.match(/(?<!background)(?<!border)[Cc]olor:\s*'(#[0-9a-fA-F]{6})'/);
-    if (!size || !color) return;
-    /* 同一条样式自带 backgroundColor 时以它为底 */
-    const ownBg = line.match(/backgroundColor:\s*'(#[0-9a-fA-F]{6})'/);
+  /* 按**样式块**（最内层 `{ … }`）解析，而不是按行——RN 的 StyleSheet 既有
+   * 单行写法 `meta: { fontSize: 12, color: '#94A3B8' }`，也有跨行写法：
+   *     meta: {
+   *       fontSize: 12,
+   *       color: '#94A3B8',
+   *     }
+   * 只按行匹配会**静默漏掉后者**（本仓实测 15 处），漏报比误报更危险。 */
+  for (const m of text.matchAll(/\{[^{}]*\}/gs)) {
+    const block = m[0];
+    const size = block.match(/fontSize:\s*(\d+)/);
+    /* 排除非文本色属性：backgroundColor / borderColor / tintColor /
+     * shadowColor / placeholderTextColor 都不是正文前景色。 */
+    const color = block.match(/(?<!background)(?<!border)(?<!tint)(?<!shadow)(?<!placeholderText)[Cc]olor:\s*'(#[0-9a-fA-F]{6})'/);
+    if (!size || !color) continue;
+
+    const lineNo = text.slice(0, m.index).split('\n').length;
+    const endLine = lineNo + block.split('\n').length - 1;
+    /* 豁免写在块内任意一行上方均生效 */
+    let skipped = false;
+    for (let ln = lineNo; ln <= endLine; ln += 1) {
+      if (exempt.has(ln)) { skipped = true; break; }
+    }
+    if (skipped) continue;
+
+    /* 样式块自带 backgroundColor 时以它为底 */
+    const ownBg = block.match(/backgroundColor:\s*'(#[0-9a-fA-F]{6})'/);
     const bg = ownBg ? ownBg[1] : fileBg;
     const need = +size[1] >= 18 ? 3.0 : 4.5;
     const c = ratio(color[1], bg);
@@ -93,10 +114,10 @@ for (const file of walk(TARGET)) {
     if (c < need) {
       violations += 1;
       console.error(
-        `  ✖ ${rel}:${i + 1}  ${color[1]} on ${bg} @${size[1]}px = ${c}（需 ${need}）`,
+        `  ✖ ${rel}:${lineNo}  ${color[1]} on ${bg} @${size[1]}px = ${c}（需 ${need}）`,
       );
     }
-  });
+  }
 }
 
 if (violations > 0) {
@@ -105,4 +126,8 @@ if (violations > 0) {
   console.error('请在该行上方加 `// lint-mobile-contrast-ignore-next-line <原因>` 并写明真实底色与实测值。');
   process.exit(1);
 }
-console.log(`✓ mobile 对比度门：${checked} 处带字号的文本色，全部达标。`);
+/* 显式声明分母与跳过原因——只报 checked 会制造虚假安全感：
+ * 无 fontSize 的文本样式、JSX 的 color= prop、borderColor 的 1.4.11
+ * 非文本对比度，本门都看不到。 */
+console.log(`✓ mobile 对比度门：${checked} 处「同时带 fontSize 与 color」的样式全部达标。`);
+console.log('  未覆盖：无 fontSize 的文本样式 / JSX color= prop / borderColor 的非文本对比度 / 跨组件底色组合（后者靠行级豁免人工标注）。');
