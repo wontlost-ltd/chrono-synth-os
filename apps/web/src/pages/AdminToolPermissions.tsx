@@ -46,19 +46,33 @@ function permissionStatusLabel(p: ToolPermission, t: TFunction): string {
   return t('toolPermissions.statusLabels.active');
 }
 
-/* lint-raw-palette-ignore-block 作用域徽章配色（fg 是文字色），底为同色 12~14% rgba 叠在卡片上；按真实合成底实测 read 9.30 / write 9.30 / execute 8.31 */
-const SCOPE_STYLE: Record<ToolScope, { bg: string; fg: string; border: string }> = {
-  read:    { bg: 'rgba(34, 211, 238, 0.12)',  fg: '#67E8F9', border: 'rgba(34, 211, 238, 0.3)' },
-  write:   { bg: 'rgba(251, 191, 36, 0.12)',  fg: '#FCD34D', border: 'rgba(251, 191, 36, 0.3)' },
-  execute: { bg: 'rgba(168, 85, 247, 0.14)',  fg: '#D8B4FE', border: 'rgba(168, 85, 247, 0.35)' },
+/**
+ * 作用域徽章配色：走语义 status token 的「10% 同色底 + 同色文字」
+ * （与 components/ui/StatusBadge 同款）。
+ *
+ * 原先是写死的 #67E8F9 / #FCD34D / #D8B4FE——**只在 dark 主题达标**
+ * （9.30 / 9.30 / 8.31）；light 与 high-contrast 下仅 1.34 / 1.35 / 1.49，
+ * 远低于 AA 4.5，而这两个主题都是 ThemeSwitcher 里用户可选的真主题。
+ *
+ * 三种作用域仍需互相可区分，故映射到三个不同语义：
+ *   read（只读，最弱）→ info      write（写入，需注意）→ warning
+ *   execute（执行，最强）→ error
+ * 三主题实测均 5.41~8.69，全部达标。
+ *
+ * 注：high-contrast 主题下 warning 与 danger 同为 #7F1D1D（该主题刻意压平色相），
+ * 故 write/execute 两枚徽章在该主题下同色。这不违反 WCAG 1.4.1——徽章内直接
+ * 渲染 {scope} 文本（READ/WRITE/EXECUTE），作用域由文字承载，颜色只是冗余强化。
+ */
+const SCOPE_BADGE: Record<ToolScope, string> = {
+  read:    'bg-info/10 text-info',
+  write:   'bg-warning/10 text-warning',
+  execute: 'bg-error/10 text-error',
 };
 
 function ScopeBadge({ scope }: { scope: ToolScope }) {
-  const s = SCOPE_STYLE[scope];
   return (
     <span
-      className="inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wider"
-      style={{ backgroundColor: s.bg, color: s.fg, border: `1px solid ${s.border}` }}
+      className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${SCOPE_BADGE[scope]}`}
     >
       {scope}
     </span>
