@@ -57,22 +57,31 @@ function permissionStatusLabel(p: ToolPermission, t: TFunction): string {
  * 三种作用域仍需互相可区分，故映射到三个不同语义：
  *   read（只读，最弱）→ info      write（写入，需注意）→ warning
  *   execute（执行，最强）→ error
- * 三主题实测均 5.41~8.69，全部达标。
+ *
+ * 对比度以 `lint:contrast` 的 `badge text: * on tinted card` 检查对为准
+ * （它按 bgAlpha=0.10 精确模拟 bg-*\/10 在卡片上的合成）：全部 token 集
+ * 实测 4.61~8.71，均过 AA 4.5；high-contrast 那组还过了该主题额外要求的 AAA 7.0。
+ * 注：gate 迭代 5 个 token 集，但 apps/web 的 ThemeSwitcher 只暴露
+ * light / dark / high-contrast 三个（外加跟随系统）。
+ *
+ * 保留原设计的 30% 同色描边（`border-*\/30`）——10% 的底 tint 相对卡片只有
+ * 1.17~1.19 的明度差，没有描边时徽章边界几乎不可见（该弱对比是全站徽章的
+ * 既有形态，但此处原本就有描边，不应在迁移中丢掉）。
  *
  * 注：high-contrast 主题下 warning 与 danger 同为 #7F1D1D（该主题刻意压平色相），
  * 故 write/execute 两枚徽章在该主题下同色。这不违反 WCAG 1.4.1——徽章内直接
  * 渲染 {scope} 文本（READ/WRITE/EXECUTE），作用域由文字承载，颜色只是冗余强化。
  */
 const SCOPE_BADGE: Record<ToolScope, string> = {
-  read:    'bg-info/10 text-info',
-  write:   'bg-warning/10 text-warning',
-  execute: 'bg-error/10 text-error',
+  read:    'bg-info/10 text-info border-info/30',
+  write:   'bg-warning/10 text-warning border-warning/30',
+  execute: 'bg-error/10 text-error border-error/30',
 };
 
 function ScopeBadge({ scope }: { scope: ToolScope }) {
   return (
     <span
-      className={`inline-block rounded px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${SCOPE_BADGE[scope]}`}
+      className={`inline-block rounded border px-2 py-0.5 text-xs font-semibold uppercase tracking-wider ${SCOPE_BADGE[scope]}`}
     >
       {scope}
     </span>

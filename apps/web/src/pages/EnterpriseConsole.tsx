@@ -127,7 +127,8 @@ function MetricTile({
             * 「10% 同色底 + 同色文字」）。原先写死 #22C55E / #F87171 **只在 dark
             * 主题达标**（6.19 / 5.57）；light 与 high-contrast 下仅 2.05 / 2.37，
             * 远低于 AA 4.5——而这两个主题都是 ThemeSwitcher 里用户可选的真主题。
-            * 换 token 后三主题分别 6.14/6.41/7.74 与 6.96/5.41/8.34，全部达标。 */}
+            * 换 token 后由 `lint:contrast` 的 `badge text: * on tinted card`
+            * 检查对覆盖，全部 token 集实测 4.61~8.71，均过 AA 4.5。 */}
           {typeof trend === 'number' && (
             <span
               className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums ${
