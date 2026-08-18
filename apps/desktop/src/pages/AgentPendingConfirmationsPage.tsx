@@ -91,7 +91,7 @@ export function AgentPendingConfirmationsPage() {
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    className="rounded bg-chrono-info/30 px-3 py-1 text-xs text-chrono-info hover:bg-chrono-info/50"
+                    className="rounded bg-chrono-info/30 px-3 py-1 text-xs text-chrono-text-primary hover:bg-chrono-info/50"
                     onClick={() => setActiveApproval(c)}
                   >
                     审批

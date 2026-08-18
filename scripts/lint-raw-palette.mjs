@@ -17,9 +17,18 @@ import { join, relative } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 /**
- * 扫描范围：web 与 desktop（companion-web 实测 0 处裸色，暂不纳入以省 IO）。
- * desktop 用 `--color-chrono-*` 独立命名空间，但「禁止硬编码调色板色」这条
- * 规则与命名空间无关，故同一道门即可覆盖。
+ * 扫描范围：web 与 desktop。desktop 用 `--color-chrono-*` 独立命名空间，
+ * 但「禁止硬编码调色板色」这条规则与命名空间无关，故同一道门即可覆盖。
+ *
+ * **已知未纳入**（如实记录，不要误以为已无问题）：
+ *   - `apps/companion-web`：1 处动态 `hsl(${hue} …)`（HomeView 的渐变，
+ *     色相由计算得出，静态分析本就抓不到，纳入只会得到一条必然的豁免）。
+ *   - `apps/mobile`：**190 处硬编码 hex**（React Native，既无 Tailwind 类名
+ *     也不在 lint:contrast 覆盖内，等于零色彩 a11y 门）。纳入需要另一套
+ *     针对 RN StyleSheet 的检查思路，属独立工作。
+ *
+ * ⚠️ ALLOW 的 key 需带 app 前缀（`web:src/...` / `desktop:src/...`）——
+ * 旧式无前缀 key 会静默失配（违规照报，不会有提示）。
  */
 const TARGETS = ['apps/web', 'apps/desktop'];
 
