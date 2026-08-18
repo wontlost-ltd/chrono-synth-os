@@ -126,9 +126,10 @@ function MetricTile({
           {typeof trend === 'number' && (
             <span
               className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums"
-              /* lint-raw-palette-ignore-block trend 徽章文字色+同色 12% tint 底，落在卡片上实测 7.53 / 6.20 过 AA */
               style={{
+                /* lint-raw-palette-ignore-next-line trend 徽章底：同色 12% tint 叠在卡片上 */
                 background: trend >= 0 ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                /* lint-raw-palette-ignore-next-line trend 徽章文字色，落在上述 tint 底上实测 7.53 / 6.20 过 AA */
                 color: trend >= 0 ? '#22C55E' : '#F87171',
               }}
             >

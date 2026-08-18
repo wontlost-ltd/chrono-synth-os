@@ -103,6 +103,17 @@ function walk(dir, out = []) {
  * 的硬编码色仍会被拦下（整文件豁免会静默放过——已用变异测试实证）。
  * 原因必须写在标记后面，让下一个人看得到为什么。
  */
+/** ignore-block 单次最多覆盖的行数——当前最大的实际块是 9 行（EnterpriseConsole 渐变表）。 */
+const BLOCK_MAX = 12;
+/**
+ * 原因是否「像个原因」——只判非空的话，`x` / `.` / `,,,,` 都能过关，
+ * 达不到「让下一个人看得到为什么」的目的。要求 ≥6 个非标点字符。
+ */
+function hasRealReason(raw) {
+  const t = (raw || '').replace(/\*\/\s*$/, '').trim();
+  return t.replace(/[\s\p{P}\p{S}]/gu, '').length >= 6;
+}
+
 const IGNORE_LINE = /\/\/\s*lint-raw-palette-ignore-next-line\b(.*)$|\/\*\s*lint-raw-palette-ignore-next-line\b([^*]*)\*\//;
 const IGNORE_BLOCK = /\/\/\s*lint-raw-palette-ignore-block\b(.*)$|\/\*\s*lint-raw-palette-ignore-block\b([^*]*)\*\//;
 
@@ -123,21 +134,48 @@ for (const file of walk(TARGET)) {
    * 下面剥注释时会被抹掉，故必须在剥之前采集）。 */
   const exempt = new Set();
   lines.forEach((line, i) => {
+    /* 标记必须是**真注释**：`"// lint-raw-palette-ignore-next-line"` 这种
+     * 写在字符串字面量里的假指令不算数，否则任何人都能用一行字符串关掉门。
+     * 判据——标记前面若出现未闭合的引号，说明它落在字符串内。 */
+    const markerAt = line.search(/\/[/*]\s*lint-raw-palette-ignore-/);
+    if (markerAt >= 0) {
+      const before = line.slice(0, markerAt);
+      const odd = (q) => (before.split(q).length - 1) % 2 === 1;
+      if (odd("'") || odd('"') || odd('`')) return; // 在字符串里，忽略
+    }
     const mb = line.match(IGNORE_BLOCK);
     if (mb) {
-      if (!((mb[1] || mb[2] || '').trim())) {
+      if (!hasRealReason(mb[1] || mb[2])) {
         missingReason += 1;
-        console.error(`  ✖ ${rel}:${i + 1}  ignore-block 缺原因说明`);
+        console.error(`  ✖ ${rel}:${i + 1}  ignore-block 缺原因说明（需 ≥6 个非标点字符）`);
       }
-      /* 覆盖到下一个空行为止——正好对应「一个声明块」。 */
-      for (let j = i + 1; j < lines.length && lines[j].trim() !== ''; j++) exempt.add(j);
+      /* 覆盖到下一个空行为止——正好对应「一个声明块」。
+       *
+       * ⚠️ 上限 BLOCK_MAX 行：没有空行的长文件（压缩代码、超大对象）会让
+       * 「到下一个空行」一路吞到文件尾，把无关声明也豁免掉——那比整文件豁免
+       * 更隐蔽。实测无上限时一个 60 行对象后面紧跟的独立声明也被吞掉。
+       * 超限即报错，逼使用者改用逐行标记或把块拆开。 */
+      let covered = 0;
+      let j = i + 1;
+      for (; j < lines.length && lines[j].trim() !== ''; j++) {
+        if (covered >= BLOCK_MAX) {
+          missingReason += 1;
+          console.error(
+            `  ✖ ${rel}:${i + 1}  ignore-block 覆盖超过 ${BLOCK_MAX} 行仍未遇空行——` +
+            '范围过大，请改用逐行标记或在块后补空行',
+          );
+          break;
+        }
+        exempt.add(j);
+        covered += 1;
+      }
       return;
     }
     const ml = line.match(IGNORE_LINE);
     if (ml) {
-      if (!((ml[1] || ml[2] || '').trim())) {
+      if (!hasRealReason(ml[1] || ml[2])) {
         missingReason += 1;
-        console.error(`  ✖ ${rel}:${i + 1}  ignore-next-line 缺原因说明`);
+        console.error(`  ✖ ${rel}:${i + 1}  ignore-next-line 缺原因说明（需 ≥6 个非标点字符）`);
       }
       exempt.add(i + 1);
     }

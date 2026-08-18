@@ -173,11 +173,11 @@ export function Sidebar({ collapsed, onToggle, onClose }: SidebarProps) {
 
   return (
     <aside className={`flex h-full flex-col border-r border-border bg-surface-elevated transition-[width] duration-200 ease-out motion-reduce:transition-none ${collapsed ? 'w-16' : 'w-60'}`}>
-      /* lint-raw-palette-ignore-next-line 导航 hover/active 的低透明度 indigo 叠加层，纯装饰不承载文本 */
+      {/* lint-raw-palette-ignore-next-line 导航 hover/active 的低透明度 indigo 叠加层，纯装饰不承载文本 */}
       <div className="flex h-14 items-center justify-between border-b border-border px-4" style={{ background: 'linear-gradient(180deg, rgba(99, 102, 241, 0.04) 0%, transparent 100%)' }}>
         {!collapsed && (
           <div className="flex items-center gap-2.5">
-            /* lint-raw-palette-ignore-next-line 导航 hover/active 的低透明度 indigo 叠加层，纯装饰不承载文本 */
+            {/* lint-raw-palette-ignore-next-line 导航 hover/active 的低透明度 indigo 叠加层，纯装饰不承载文本 */}
             <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: 'var(--gradient-brand)', boxShadow: '0 0 16px rgba(99, 102, 241, 0.5)' }} aria-hidden="true">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3h14v3l-8 8 8 8v3H5v-3l8-8L5 6z"/></svg>
             </span>
