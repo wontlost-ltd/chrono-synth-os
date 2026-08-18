@@ -288,11 +288,26 @@ jobs:
       # @chrono/sync-engine，而后者只依赖前者（tsc -b 会自动按引用顺序构建）。
       - name: Build workspace packages consumed by apps/web
         run: npx tsc -b packages/contracts/tsconfig.json packages/sync-engine/tsconfig.json
+      # 缓存浏览器二进制：install 步骤实测会偶发挂死（一次跑了 14.5 分钟
+      # 无任何输出，直接把 15 分钟的 job 预算耗光并被取消，测试一条没跑）。
+      # 命中缓存时可完全跳过下载。key 绑 playwright 版本，升级自动失效。
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "v=$(node -p "require('./apps/web/package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g,'')")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-chromium-${{ runner.os }}-${{ steps.pw.outputs.v }}
       - name: Install Playwright chromium
         working-directory: apps/web
+        # 步骤级超时：宁可这一步明确失败，也不要静默拖垮整个 job——
+        # 后者的表象是「a11y 门被 cancel」，很容易被误读成测试有问题。
+        timeout-minutes: 6
         run: npx playwright install --with-deps chromium
       - name: Run axe a11y suite
         working-directory: apps/web
+        timeout-minutes: 8
         run: npx playwright test --project=chromium e2e/axe-a11y.spec.ts e2e/accessibility/
       - name: Upload report on failure
         if: failure()

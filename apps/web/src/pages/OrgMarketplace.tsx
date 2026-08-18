@@ -33,13 +33,13 @@ export default function OrgMarketplace() {
 
       <div className="mb-6 flex items-end gap-2">
         <label className="flex flex-col text-sm">
-          <span className="mb-1 text-gray-600">{t('orgMarket.orgIdLabel')}</span>
+          <span className="mb-1 text-text-secondary">{t('orgMarket.orgIdLabel')}</span>
           <input
             value={orgId}
             onChange={(e) => setOrgId(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') setCommittedOrgId(orgId.trim()); }}
             placeholder="chrono-digital-org"
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="rounded-lg border border-border px-3 py-2 text-sm"
           />
         </label>
         <Button onClick={() => setCommittedOrgId(orgId.trim())}>
@@ -74,7 +74,7 @@ export default function OrgMarketplace() {
 }
 
 type T = (k: string) => string;
-const card = 'rounded-lg border border-gray-200 bg-white p-3 text-sm';
+const card = 'rounded-lg border border-border bg-surface-elevated p-3 text-sm';
 const badge = (color: string) => ({ backgroundColor: color, color: '#fff', borderRadius: 6, padding: '1px 8px', fontSize: 12 });
 const STATUS_COLOR: Record<string, string> = {
   open: '#3b82f6', accepted: '#f59e0b', completed: '#10b981', cancelled: '#9ca3af',
@@ -84,7 +84,7 @@ const STATUS_COLOR: Record<string, string> = {
 /* ① 接单视角：可领的 open 工单。两种接单方——组织领取 / 数字人格申请（ADR-0058 双边）。 */
 function OpenTasks({ orgId, t }: { orgId: string; t: T }) {
   const tasks = useMarketplaceTasks('open');
-  if (tasks.isLoading) return <p className="text-sm text-gray-400">{t('orgMarket.loading')}</p>;
+  if (tasks.isLoading) return <p className="text-sm text-text-secondary">{t('orgMarket.loading')}</p>;
   const list = tasks.data ?? [];
   if (list.length === 0) return <EmptyState message={t('orgMarket.noOpenTasks')} />;
   return (
@@ -105,8 +105,8 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
         <span className="font-medium">{task.title}</span>
         <span style={badge(STATUS_COLOR[task.status] ?? '#9ca3af')}>{task.status}</span>
       </div>
-      <p className="mt-1 text-gray-600">{task.description}</p>
-      <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+      <p className="mt-1 text-text-secondary">{task.description}</p>
+      <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary">
         <span>{t('orgMarket.reward')}: {task.reward} {task.currency}</span>
         <PublisherVerifiedBadge verified={task.publisherVerified} t={t} />
       </div>
@@ -114,10 +114,10 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
       <Button size="sm" className="mt-2" onClick={() => orgApply.mutate({ taskId: task.id })} disabled={orgApply.isPending}>
         {t('orgMarket.claimAsOrg')}
       </Button>
-      {orgApply.isError && <p className="mt-1 text-xs text-red-500">{orgApply.error.message}</p>}
+      {orgApply.isError && <p className="mt-1 text-xs text-error">{orgApply.error.message}</p>}
       {/* 数字人格申请 */}
       <div className="mt-2 flex items-center gap-2">
-        <select value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="rounded border border-gray-300 px-2 py-1 text-xs">
+        <select value={personaId} onChange={(e) => setPersonaId(e.target.value)} className="rounded border border-border px-2 py-1 text-xs">
           <option value="">{t('orgMarket.selectPersona')}</option>
           {(personas.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.displayName}</option>)}
         </select>
@@ -129,7 +129,7 @@ function OpenTaskCard({ task, orgId, t }: { task: { id: string; title: string; d
           {t('orgMarket.claimAsPersona')}
         </Button>
       </div>
-      {personaApply.isError && <p className="mt-1 text-xs text-red-500">{personaApply.error.message}</p>}
+      {personaApply.isError && <p className="mt-1 text-xs text-error">{personaApply.error.message}</p>}
     </div>
   );
 }
@@ -143,7 +143,7 @@ function PublisherVerifiedBadge({ verified, t }: { verified?: boolean; t: T }) {
 /* 组织视角：我的申请（领取的工单）。 */
 function MyApplications({ orgId, t }: { orgId: string; t: T }) {
   const apps = useOrgBidApplications(orgId);
-  if (apps.isLoading) return <p className="text-sm text-gray-400">{t('orgMarket.loading')}</p>;
+  if (apps.isLoading) return <p className="text-sm text-text-secondary">{t('orgMarket.loading')}</p>;
   const list = apps.data ?? [];
   if (list.length === 0) return <EmptyState message={t('orgMarket.noApplications')} />;
   return (
@@ -168,7 +168,7 @@ function MyAssignments({ orgId, t }: { orgId: string; t: T }) {
   const [goalType, setGoalType] = useState('');
   const [managerId, setManagerId] = useState('');
 
-  if (assigns.isLoading) return <p className="text-sm text-gray-400">{t('orgMarket.loading')}</p>;
+  if (assigns.isLoading) return <p className="text-sm text-text-secondary">{t('orgMarket.loading')}</p>;
   const list = assigns.data ?? [];
   if (list.length === 0) return <EmptyState message={t('orgMarket.noAssignments')} />;
   const managers = (chart.data?.workers ?? []).filter((w) => w.employmentStatus === 'active');
@@ -183,11 +183,11 @@ function MyAssignments({ orgId, t }: { orgId: string; t: T }) {
           </div>
           {a.status === 'assigned' && (
             <div className="mt-2 flex flex-wrap items-end gap-2">
-              <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className="rounded border border-gray-300 px-2 py-1 text-xs">
+              <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className="rounded border border-border px-2 py-1 text-xs">
                 <option value="">{t('orgMarket.selectManager')}</option>
                 {managers.map((w) => <option key={w.id} value={w.id}>{w.displayName}</option>)}
               </select>
-              <select value={goalType} onChange={(e) => setGoalType(e.target.value)} className="rounded border border-gray-300 px-2 py-1 text-xs">
+              <select value={goalType} onChange={(e) => setGoalType(e.target.value)} className="rounded border border-border px-2 py-1 text-xs">
                 <option value="">{t('orgMarket.selectGoalType')}</option>
                 {(goalTypes.data ?? []).map((g) => <option key={g.goalType} value={g.goalType}>{g.goalType}</option>)}
               </select>
@@ -201,8 +201,8 @@ function MyAssignments({ orgId, t }: { orgId: string; t: T }) {
               {t('orgMarket.submit')}
             </Button>
           )}
-          {start.isError && <p className="mt-1 text-xs text-red-500">{start.error.message}</p>}
-          {submit.isError && <p className="mt-1 text-xs text-red-500">{submit.error.message}</p>}
+          {start.isError && <p className="mt-1 text-xs text-error">{start.error.message}</p>}
+          {submit.isError && <p className="mt-1 text-xs text-error">{submit.error.message}</p>}
         </div>
       ))}
     </div>
@@ -223,8 +223,8 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
     <div className="space-y-3">
       <div className="flex items-end gap-2">
         <label className="flex flex-col text-sm">
-          <span className="mb-1 text-gray-600">{t('orgMarket.taskIdLabel')}</span>
-          <input value={taskId} onChange={(e) => setTaskId(e.target.value)} placeholder="mkt_…" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+          <span className="mb-1 text-text-secondary">{t('orgMarket.taskIdLabel')}</span>
+          <input value={taskId} onChange={(e) => setTaskId(e.target.value)} placeholder="mkt_…" className="rounded-lg border border-border px-3 py-2 text-sm" />
         </label>
         <Button onClick={() => setCommittedTaskId(taskId.trim())}>
           {t('orgMarket.viewApplicants')}
@@ -234,16 +234,16 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
         </Button>
       </div>
       {accept.isSuccess && accept.data.settlement && (
-        <p className="text-xs text-green-600">{t('orgMarket.settled')}: {accept.data.settlement.orgAmountMinor} ({t('orgMarket.walletBalance')}: {accept.data.walletBalance})</p>
+        <p className="text-xs text-success">{t('orgMarket.settled')}: {accept.data.settlement.orgAmountMinor} ({t('orgMarket.walletBalance')}: {accept.data.walletBalance})</p>
       )}
-      {accept.isError && <p className="text-xs text-red-500">{accept.error.message}</p>}
+      {accept.isError && <p className="text-xs text-error">{accept.error.message}</p>}
       {committedTaskId && (
         <div className="space-y-4">
           {/* 组织申请者 */}
           <div>
-            <h3 className="mb-1 text-sm font-medium text-gray-700">{t('orgMarket.orgApplicants')}</h3>
+            <h3 className="mb-1 text-sm font-medium text-text-primary">{t('orgMarket.orgApplicants')}</h3>
             {(orgApplicants.data ?? []).length === 0 ? (
-              <p className="text-xs text-gray-400">{t('orgMarket.noOrgApplicants')}</p>
+              <p className="text-xs text-text-secondary">{t('orgMarket.noOrgApplicants')}</p>
             ) : (
               <div className="space-y-2">
                 {(orgApplicants.data ?? []).map((a) => (
@@ -261,13 +261,13 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
                 ))}
               </div>
             )}
-            {confirmAssignOrg.isError && <p className="text-xs text-red-500">{confirmAssignOrg.error.message}</p>}
+            {confirmAssignOrg.isError && <p className="text-xs text-error">{confirmAssignOrg.error.message}</p>}
           </div>
           {/* 数字人格申请者 */}
           <div>
-            <h3 className="mb-1 text-sm font-medium text-gray-700">{t('orgMarket.personaApplicants')}</h3>
+            <h3 className="mb-1 text-sm font-medium text-text-primary">{t('orgMarket.personaApplicants')}</h3>
             {(personaApplicants.data ?? []).length === 0 ? (
-              <p className="text-xs text-gray-400">{t('orgMarket.noPersonaApplicants')}</p>
+              <p className="text-xs text-text-secondary">{t('orgMarket.noPersonaApplicants')}</p>
             ) : (
               <div className="space-y-2">
                 {(personaApplicants.data ?? []).map((a) => (
@@ -285,7 +285,7 @@ function PublisherView({ orgId, t }: { orgId: string; t: T }) {
                 ))}
               </div>
             )}
-            {assignPersona.isError && <p className="text-xs text-red-500">{assignPersona.error.message}</p>}
+            {assignPersona.isError && <p className="text-xs text-error">{assignPersona.error.message}</p>}
           </div>
         </div>
       )}

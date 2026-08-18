@@ -8,10 +8,10 @@ import { useSimulationList } from '../api/queries/simulations';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 const STATUS_COLORS: Record<string, string> = {
-  completed: 'bg-green-100 text-green-800',
-  running: 'bg-blue-100 text-blue-800',
-  pending: 'bg-yellow-100 text-yellow-800',
-  failed: 'bg-red-100 text-red-800',
+  completed: 'bg-success/10 text-success',
+  running: 'bg-info/10 text-info',
+  pending: 'bg-warning/10 text-warning',
+  failed: 'bg-error/10 text-error',
 };
 
 function formatDate(ts: number | null): string {
@@ -85,7 +85,7 @@ export function Simulations() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[sim.status] ?? 'bg-gray-100 text-gray-800'}`}>
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLORS[sim.status] ?? 'bg-surface-elevated text-text-primary'}`}>
                         {t(`simulations.status.${sim.status}`)}
                       </span>
                     </td>
