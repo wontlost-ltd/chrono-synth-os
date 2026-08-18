@@ -1,0 +1,105 @@
+#!/usr/bin/env node
+/**
+ * `lint-mobile-contrast` 的自测。
+ *
+ * 为什么必须有：这道门的两个严重缺陷（跨行样式漏报、暗色屏底色推错）
+ * **都不会让任何检查变红**——门自己坏了，却依然打印「全部达标」并 exit 0，
+ * 比没有门更危险。交叉审查用变异测试抓到后固化为自测。
+ *
+ * 关键用例是「跨行 + 单行**同时**注入等价劣化」：只测单行会重演那次假绿。
+ */
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+
+const SCRIPT = new URL('./lint-mobile-contrast.mjs', import.meta.url).pathname;
+const SRC = readFileSync(SCRIPT, 'utf8');
+
+function runOn(files) {
+  const root = mkdtempSync(join(tmpdir(), 'mobile-lint-selftest-'));
+  const src = join(root, 'apps/mobile/src');
+  mkdirSync(src, { recursive: true });
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(src, name), body);
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  writeFileSync(join(root, 'scripts/l.mjs'), SRC);
+  let code = 0;
+  let out = '';
+  try {
+    out = execFileSync(process.execPath, [join(root, 'scripts/l.mjs')], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (e) {
+    code = e.status ?? 1;
+    out = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+  }
+  rmSync(root, { recursive: true, force: true });
+  return { code, out };
+}
+
+const CASES = [
+  {
+    name: '单行样式不达标 → 应报',
+    files: { 'a.tsx': "const s = { container: { backgroundColor: '#F8FAFC' },\n  bad: { fontSize: 12, color: '#CBD5E1' } };\n" },
+    expect: 1,
+  },
+  {
+    name: '★跨行样式不达标 → 应报（曾静默漏掉 15 处）',
+    files: {
+      'a.tsx': "const s = {\n  container: { backgroundColor: '#F8FAFC' },\n  bad: {\n    fontSize: 12,\n    color: '#CBD5E1',\n  },\n};\n",
+    },
+    expect: 1,
+  },
+  {
+    name: '★暗色屏用 screen 命名根样式 → 浅色文字应判达标（曾误报整屏）',
+    files: {
+      'a.tsx': "const s = {\n  screen: { backgroundColor: '#0F172A' },\n  ok: {\n    fontSize: 12,\n    color: '#94A3B8',\n  },\n};\n",
+    },
+    expect: 0,
+  },
+  {
+    name: '样式块自带 backgroundColor → 以它为底判定',
+    files: {
+      'a.tsx': "const s = { container: { backgroundColor: '#F8FAFC' },\n  ok: { fontSize: 15, color: '#FFFFFF', backgroundColor: '#1E3A8A' } };\n",
+    },
+    expect: 0,
+  },
+  {
+    name: '≥18px 用 3.0 阈值（大字放宽）',
+    files: { 'a.tsx': "const s = { container: { backgroundColor: '#FFFFFF' },\n  big: { fontSize: 20, color: '#767676' } };\n" },
+    expect: 0,
+  },
+  {
+    name: '带原因的豁免 → 放行',
+    files: {
+      'a.tsx': "const s = { container: { backgroundColor: '#F8FAFC' },\n  // lint-mobile-contrast-ignore-next-line 该文字落在深色按钮底上，实测 6.29 达标\n  ok: { fontSize: 12, color: '#CBD5E1' } };\n",
+    },
+    expect: 0,
+  },
+  {
+    name: '无原因的豁免 → 应报',
+    files: {
+      'a.tsx': "const s = { container: { backgroundColor: '#F8FAFC' },\n  // lint-mobile-contrast-ignore-next-line\n  ok: { fontSize: 12, color: '#CBD5E1' } };\n",
+    },
+    expect: 1,
+  },
+  {
+    name: 'backgroundColor/borderColor 不当文本色',
+    files: { 'a.tsx': "const s = { container: { backgroundColor: '#F8FAFC' },\n  x: { fontSize: 12, borderColor: '#CBD5E1', color: '#1E293B' } };\n" },
+    expect: 0,
+  },
+];
+
+let failed = 0;
+for (const c of CASES) {
+  const { code } = runOn(c.files);
+  const ok = code === c.expect;
+  if (!ok) failed += 1;
+  console.log(`  ${ok ? '✓' : '✖'} ${c.name}（期望 exit=${c.expect}，实得 ${code}）`);
+}
+
+if (failed > 0) {
+  console.error(`\nlint-mobile-contrast 自测：${failed}/${CASES.length} 条不通过。`);
+  process.exit(1);
+}
+console.log(`✓ lint-mobile-contrast 自测：${CASES.length}/${CASES.length} 通过。`);

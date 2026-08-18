@@ -182,7 +182,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   typeBadgeText: {
-    color: '#94A3B8',
+    /* 该文字落在 typeBadge 的 #334155 底上（非屏幕底）：#94A3B8 仅 4.04，
+     * 低于 11px 所需的 AA 4.5。改用 #CBD5E1（6.97）。 */
+    color: '#CBD5E1',
     fontSize: 11,
     fontWeight: '600',
     textTransform: 'uppercase',
