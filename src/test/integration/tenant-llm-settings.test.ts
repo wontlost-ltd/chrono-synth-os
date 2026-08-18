@@ -21,7 +21,7 @@ const ENC = { enabled: true, masterKey: Buffer.alloc(32, 7).toString('base64'), 
 /* 全局 config（active provider=anthropic）。 */
 const GLOBAL: GlobalLlmConfig = {
   provider: 'anthropic',
-  model: 'claude-sonnet-4-5-20250929',
+  model: 'claude-sonnet-5',
   embeddingModel: 'text-embedding-3-small',
   apiKey: 'sk-global-anthropic',
   baseUrl: undefined,

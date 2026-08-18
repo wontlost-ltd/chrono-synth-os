@@ -21,10 +21,21 @@ export interface TokenPrice {
   readonly output: number;
 }
 
-/** 默认 token 定价表（每 1K token 美元价格，深度冻结） */
+/**
+ * 默认 token 定价表（每 1K token 美元价格，深度冻结）。
+ *
+ * 当前代模型 ID **不带日期后缀**（`claude-sonnet-5` 而非
+ * `claude-sonnet-4-5-20250929`）。旧的带日期 key 保留不删——历史成本记录
+ * 按当时的 model 字符串落库，删掉会让它们回退到 FALLBACK 价而算错账。
+ */
 export const TOKEN_PRICES: Readonly<Record<string, TokenPrice>> = Object.freeze({
   'gpt-4o': Object.freeze({ input: 0.0025, output: 0.01 }),
   'gpt-4o-mini': Object.freeze({ input: 0.00015, output: 0.0006 }),
+  /* 当前代（Claude 5 家族）。 */
+  'claude-opus-5': Object.freeze({ input: 0.005, output: 0.025 }),
+  'claude-sonnet-5': Object.freeze({ input: 0.003, output: 0.015 }),
+  'claude-haiku-4-5': Object.freeze({ input: 0.001, output: 0.005 }),
+  /* 历史 ID（仅供旧成本记录回查，勿用于新配置）。 */
   'claude-sonnet-4-5-20250929': Object.freeze({ input: 0.003, output: 0.015 }),
   'claude-haiku-4-5-20251001': Object.freeze({ input: 0.0008, output: 0.004 }),
   'mock': Object.freeze({ input: 0, output: 0 }),

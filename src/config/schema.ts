@@ -227,7 +227,8 @@ const intelligenceBudgetSchema = z.object({
 
 const intelligenceSchema = z.object({
   provider: z.enum(['openai', 'anthropic', 'ollama', 'mock']).default('mock'),
-  model: z.string().default('claude-sonnet-4-5-20250929'),
+  /* 当前代模型 ID 不带日期后缀；旧的 claude-sonnet-4-5-20250929 已停用。 */
+  model: z.string().default('claude-sonnet-5'),
   embeddingModel: z.string().default('text-embedding-3-small'),
   /** Vector dimension for the configured embeddingModel. text-embedding-3-small=1536. */
   embeddingDims: z.coerce.number().int().positive().default(1536),
@@ -586,7 +587,7 @@ export const AppConfigSchema = z.object({
   stripe: stripeSchema.default({ enabled: false, secretKey: '', webhookSecret: '', publishableKey: '' }),
   billing: billingSchema,
   intelligence: intelligenceSchema.default({
-    provider: 'mock', model: 'claude-sonnet-4-5-20250929', embeddingModel: 'text-embedding-3-small',
+    provider: 'mock', model: 'claude-sonnet-5', embeddingModel: 'text-embedding-3-small',
     embeddingDims: 1536, useVectorExtension: false, vectorExtensionTenants: [], fallbacks: [],
     maxTokens: 4096, temperature: 0.7, timeoutMs: 30_000, simulation: { rollouts: 3, maxOptions: 4 },
     budget: { monthlyTokenLimit: 1_000_000, dailyTokenLimit: 100_000, alertThreshold: 0.8 },

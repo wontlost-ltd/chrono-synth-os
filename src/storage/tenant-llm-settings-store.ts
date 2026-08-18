@@ -34,7 +34,7 @@ const VALID_PROVIDERS: ReadonlySet<string> = new Set(['openai', 'anthropic', 'ol
  */
 const PROVIDER_DEFAULT_MODELS: Readonly<Record<string, { chat: string; embedding: string }>> = {
   openai: { chat: 'gpt-4o', embedding: 'text-embedding-3-small' },
-  anthropic: { chat: 'claude-sonnet-4-5-20250929', embedding: 'text-embedding-3-small' },
+  anthropic: { chat: 'claude-sonnet-5', embedding: 'text-embedding-3-small' },
   ollama: { chat: 'llama3', embedding: 'nomic-embed-text' },
   mock: { chat: 'mock', embedding: 'mock' },
 };
