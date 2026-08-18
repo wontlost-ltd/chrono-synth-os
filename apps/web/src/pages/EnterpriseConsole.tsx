@@ -123,15 +123,17 @@ function MetricTile({
         <p className="text-xs font-semibold uppercase tracking-[0.1em] text-text-secondary">{label}</p>
         <div className="mt-2 flex items-baseline gap-2">
           <p className="text-2xl font-bold text-text-primary tabular-nums">{value}</p>
+          {/* trend 徽章走语义 status token（与 components/ui/StatusBadge 同款的
+            * 「10% 同色底 + 同色文字」）。原先写死 #22C55E / #F87171 **只在 dark
+            * 主题达标**（6.19 / 5.57）；light 与 high-contrast 下仅 2.05 / 2.37，
+            * 远低于 AA 4.5——而这两个主题都是 ThemeSwitcher 里用户可选的真主题。
+            * 换 token 后由 `lint:contrast` 的 `badge text: * on tinted card`
+            * 检查对覆盖，全部 token 集实测 4.61~8.71，均过 AA 4.5。 */}
           {typeof trend === 'number' && (
             <span
-              className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums"
-              style={{
-                /* lint-raw-palette-ignore-next-line trend 徽章底：同色 12% tint 叠在卡片上 */
-                background: trend >= 0 ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-                /* lint-raw-palette-ignore-next-line trend 徽章文字色，落在上述 tint 底上实测 7.53 / 6.20 过 AA */
-                color: trend >= 0 ? '#22C55E' : '#F87171',
-              }}
+              className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs font-semibold tabular-nums ${
+                trend >= 0 ? 'bg-success/10 text-success' : 'bg-error/10 text-error'
+              }`}
             >
               {trend >= 0 ? '↑' : '↓'} {Math.abs(trend).toFixed(1)}%
             </span>
