@@ -93,9 +93,18 @@ test.describe('交互态（hover）下的颜色对比度', () => {
      * 悬停在卡片（而非标题）上才会触发 group-hover。 */
     const card = page.locator('a.group').first();
     await expect(card).toBeVisible();
+    const title = card.locator('h3').first();
+    const restColor = await title.evaluate(el => getComputedStyle(el).color);
+
     await card.hover();
     /* 等 transition-colors 走完，否则 axe 读到的是过渡中间色。 */
     await page.waitForTimeout(400);
+
+    /* 断言 hover 确实生效（颜色相对静息态变了）。没有这条的话，一旦
+     * hover 因时序没落上，axe 测的就是静息色——用例照样绿，等于空转；
+     * CI 又配了 retries: 2，更容易把这种空转重试成绿。 */
+    const hoverColor = await title.evaluate(el => getComputedStyle(el).color);
+    expect(hoverColor, 'hover 未生效：标题颜色与静息态相同，本用例将退化为空转').not.toBe(restColor);
 
     const violations = await contrastViolations(page);
     expect(violations, `Dashboard 卡片 hover 态对比度违规：\n${summarize(violations)}`).toEqual([]);
@@ -107,16 +116,24 @@ test.describe('交互态（hover）下的颜色对比度', () => {
     /* /knowledge-sources/create 渲染 Breadcrumbs，且首项是带 to 的链接
      * （Breadcrumbs 对有 to 的项用 hover:text-primary-text）。 */
     await page.goto('/knowledge-sources/create');
-    await page.waitForLoadState('domcontentloaded');
+    /* 该路由是 lazy() 懒加载：只等 domcontentloaded 时 chunk 往往还没到，
+     * 页面停在 Suspense fallback，面包屑自然找不到。等到 networkidle
+     * （dev server 按需 transform 完毕）再往下走。 */
+    await page.waitForLoadState('networkidle');
     await dismissChangelog(page);
 
     /* 断言而非 skip：面包屑链接必须存在。用 skip 会让「路由改了、
      * 测试再也没跑过」变成静默通过——那正是本套件要消灭的假绿。 */
     const crumb = page.locator('nav[aria-label] ol a').first();
     await expect(crumb).toBeVisible();
+    const restColor = await crumb.evaluate(el => getComputedStyle(el).color);
 
     await crumb.hover();
     await page.waitForTimeout(400);
+
+    /* 同上：确认 hover 真的落上了，否则用例退化为空转。 */
+    const hoverColor = await crumb.evaluate(el => getComputedStyle(el).color);
+    expect(hoverColor, 'hover 未生效：链接颜色与静息态相同，本用例将退化为空转').not.toBe(restColor);
 
     const violations = await contrastViolations(page);
     expect(violations, `Breadcrumbs hover 态对比度违规：\n${summarize(violations)}`).toEqual([]);
