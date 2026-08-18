@@ -153,14 +153,14 @@ function LlmTeacherSection(): JSX.Element {
           </label>
         )}
         {provider !== 'ollama' && !canStoreKey && (
-          <p className="text-xs text-orange-300">
+          <p className="text-xs text-chrono-warning">
             本机未启用凭据加密——无法保存 API key。可改用 Ollama（本机零凭据），或填一个**无需鉴权**的自定义端点。
           </p>
         )}
       </div>
 
-      {save.isError && <p role="alert" className="text-sm text-red-200">{readableError(save.error)}</p>}
-      {saved && !save.isPending && <p className="text-sm text-green-300">已保存。</p>}
+      {save.isError && <p role="alert" className="text-sm text-chrono-error">{readableError(save.error)}</p>}
+      {saved && !save.isPending && <p className="text-sm text-chrono-success">已保存。</p>}
 
       <div className="flex gap-2">
         <button
@@ -178,7 +178,7 @@ function LlmTeacherSection(): JSX.Element {
         {hasKey && (
           <button
             type="button" onClick={() => revokeKey.mutate()} disabled={revokeKey.isPending}
-            className="rounded-lg border border-red-500/40 px-4 py-2 text-sm font-medium text-red-200 transition hover:bg-red-500/10 disabled:opacity-50"
+            className="rounded-lg border border-chrono-error/40 px-4 py-2 text-sm font-medium text-chrono-error transition hover:bg-chrono-error/10 disabled:opacity-50"
           >
             {revokeKey.isPending ? '撤销中…' : '撤销已存 key'}
           </button>
@@ -224,10 +224,10 @@ function LearnTopicSection(): JSX.Element {
           {run.isPending ? '学习中…' : '让它学'}
         </button>
       </div>
-      {run.isError && <p role="alert" className="text-sm text-red-200">{readableError(run.error)}</p>}
+      {run.isError && <p role="alert" className="text-sm text-chrono-error">{readableError(run.error)}</p>}
       {r && (
         <div className="text-sm">
-          <p className="text-green-300">
+          <p className="text-chrono-success">
             就「{r.topic}」学到 {r.learnedMemoryCount} 条记忆
             {r.groundedBy === 'web_search' ? '（来自真实网络搜索）' : '（LLM 老师凭知识讲——未配搜索 key）'}
             {r.teacherFailed ? '（⚠ 老师调用失败——检查 LLM 配置/网关）' : ''}
@@ -262,9 +262,9 @@ function ReflectSection(): JSX.Element {
       >
         {run.isPending ? '反思中…' : '让它反思一次'}
       </button>
-      {run.isError && <p role="alert" className="text-sm text-red-200">{readableError(run.error)}</p>}
+      {run.isError && <p role="alert" className="text-sm text-chrono-error">{readableError(run.error)}</p>}
       {r && (
-        <p className="text-sm text-green-300">
+        <p className="text-sm text-chrono-success">
           {r.reason === 'no_material' ? '还没有可反思的记忆——先跟它聊聊或喂点材料。'
             : r.reason === 'no_values' ? '还没有价值内核可强化。'
             : `产出 ${r.candidatesIngested} 条成长候选（自动内化 ${r.compiled ?? 0}，待审批 ${r.pending ?? 0}）。`}
@@ -309,10 +309,10 @@ function FeedSection(): JSX.Element {
       >
         {run.isPending ? '消化中…' : '喂给它'}
       </button>
-      {run.isError && <p role="alert" className="text-sm text-red-200">{readableError(run.error)}</p>}
+      {run.isError && <p role="alert" className="text-sm text-chrono-error">{readableError(run.error)}</p>}
       {r && (
         <div className="text-sm">
-          <p className="text-green-300">
+          <p className="text-chrono-success">
             沉淀了 {r.perceivedMemories.length} 条记忆
             {r.perceivedBy === 'teacher' ? '（真 LLM 老师解读）' : '（确定性回退——未接 LLM 老师，非真语义）'}
           </p>

@@ -64,7 +64,9 @@ export function Sidebar() {
             {item.to === '/conflicts' && conflictCount > 0 ? (
               <span
                 aria-label={`${conflictCount} conflicts pending`}
-                className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+                /* 原为 bg-red-500：白字压其上仅 3.81，低于 10px 小字所需的 AA 4.5。
+                 * 改用语义的 error-fill（实色底承载白字专用，实测 4.83 达标）。 */
+                className="rounded-full bg-chrono-error-fill px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
               >
                 {conflictCount}
               </span>

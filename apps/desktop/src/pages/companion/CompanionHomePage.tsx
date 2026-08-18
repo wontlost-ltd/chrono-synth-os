@@ -46,7 +46,7 @@ export function CompanionHomePage() {
     return (
       <div
         role="alert"
-        className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200"
+        className="rounded-xl border border-chrono-error/30 bg-chrono-error/10 p-4 text-sm text-chrono-error"
       >
         读取本地数据失败：{personas.error instanceof Error ? personas.error.message : '未知错误'}
       </div>
@@ -86,7 +86,7 @@ export function CompanionHomePage() {
         <h2 className="text-lg font-semibold text-chrono-text-primary">最近的记忆</h2>
         {memories.isLoading && <p className="text-sm text-chrono-text-muted">加载中…</p>}
         {memories.isError && (
-          <p role="alert" className="text-sm text-red-200">
+          <p role="alert" className="text-sm text-chrono-error">
             读取记忆失败：{memories.error instanceof Error ? memories.error.message : '未知错误'}
           </p>
         )}

@@ -44,7 +44,7 @@ export function PersonaListPage() {
   function renderPersonaContent() {
     if (personas.isError) {
       return (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+        <div className="rounded-xl border border-chrono-error/30 bg-chrono-error/10 p-4 text-sm text-chrono-error">
           Failed to load personas — database may not be open yet.
         </div>
       );
@@ -93,7 +93,7 @@ export function PersonaListPage() {
                 : 'Force Sync'}
           </button>
           {forceSyncMutation.isError ? (
-            <p className="text-xs text-red-300">Sync failed — check connection.</p>
+            <p className="text-xs text-chrono-error">Sync failed — check connection.</p>
           ) : null}
         </div>
       </div>

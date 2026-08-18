@@ -61,14 +61,14 @@ export function AgentPendingConfirmationsPage() {
       </header>
 
       {isApiMissing && (
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+        <div className="rounded-xl border border-chrono-warning/40 bg-chrono-warning/10 p-4 text-sm text-chrono-warning">
           未配置 chrono-synth-os API；在 Settings → API 中填入 base URL 和 JWT。
         </div>
       )}
 
       {list.isLoading && <p className="text-sm text-chrono-text-muted">加载中…</p>}
       {list.error && !isApiMissing && (
-        <p className="text-sm text-red-300">加载失败：{(list.error as Error).message}</p>
+        <p className="text-sm text-chrono-error">加载失败：{(list.error as Error).message}</p>
       )}
       {!list.isLoading && !list.error && (list.data ?? []).length === 0 && (
         <p className="text-sm text-chrono-text-muted">没有待审批的工具调用。</p>
@@ -84,21 +84,21 @@ export function AgentPendingConfirmationsPage() {
               <header className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs">{c.toolId}</span>
-                  <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-200">
+                  <span className="rounded-full border border-chrono-warning/40 bg-chrono-warning/10 px-2 py-0.5 text-xs text-chrono-warning">
                     待确认
                   </span>
                 </div>
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    className="rounded bg-blue-500/30 px-3 py-1 text-xs text-blue-50 hover:bg-blue-500/50"
+                    className="rounded bg-chrono-info/30 px-3 py-1 text-xs text-chrono-info hover:bg-chrono-info/50"
                     onClick={() => setActiveApproval(c)}
                   >
                     审批
                   </button>
                   <button
                     type="button"
-                    className="text-xs text-red-300 hover:underline"
+                    className="text-xs text-chrono-error hover:underline"
                     disabled={reject.isPending}
                     onClick={() => {
                       if (!c.confirmationTokenId) return;
@@ -194,8 +194,8 @@ function ApproveDialog({ item, onClose, onSuccess }: ApproveDialogProps) {
           value={argsJson}
           onChange={(e) => setArgsJson(e.target.value)}
         />
-        {parseError && <p className="text-xs text-red-300">{parseError}</p>}
-        {submitError && <p className="text-xs text-red-300">提交失败：{submitError}</p>}
+        {parseError && <p className="text-xs text-chrono-error">{parseError}</p>}
+        {submitError && <p className="text-xs text-chrono-error">提交失败：{submitError}</p>}
         <div className="flex justify-end gap-2">
           <button
             type="button"
@@ -206,7 +206,7 @@ function ApproveDialog({ item, onClose, onSuccess }: ApproveDialogProps) {
           </button>
           <button
             type="button"
-            className="rounded bg-blue-500/40 px-3 py-1.5 text-sm text-white hover:bg-blue-500/60 disabled:opacity-60"
+            className="rounded bg-chrono-info/40 px-3 py-1.5 text-sm text-white hover:bg-chrono-info/60 disabled:opacity-60"
             disabled={submitting}
             onClick={handleSubmit}
           >

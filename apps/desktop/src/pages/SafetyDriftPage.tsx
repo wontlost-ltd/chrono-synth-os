@@ -15,9 +15,9 @@ import {
 } from '@/bridge/tauri-commands';
 
 const ALERT_STYLE: Record<DriftAlertLevel, string> = {
-  ok: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/40',
-  warning: 'bg-amber-500/15 text-amber-200 border-amber-500/40',
-  critical: 'bg-red-500/15 text-red-200 border-red-500/40',
+  ok: 'bg-chrono-success/15 text-chrono-success border-chrono-success/40',
+  warning: 'bg-chrono-warning/15 text-chrono-warning border-chrono-warning/40',
+  critical: 'bg-chrono-error/15 text-chrono-error border-chrono-error/40',
 };
 
 const ALERT_LABEL: Record<DriftAlertLevel, string> = {
@@ -78,7 +78,7 @@ export function SafetyDriftPage() {
       )}
 
       {latest.isError && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+        <div className="rounded-xl border border-chrono-error/30 bg-chrono-error/10 p-4 text-sm text-chrono-error">
           加载漂移报告失败：{latest.error instanceof Error ? latest.error.message : '未知错误'}
         </div>
       )}

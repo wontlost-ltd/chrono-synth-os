@@ -294,6 +294,17 @@ function renderDesktopTheme() {
     '--color-chrono-text-secondary': dark['--color-text-secondary'],
     '--color-chrono-text-tertiary': dark['--color-text-tertiary'],
     '--color-chrono-text-muted': dark['--color-text-tertiary'],
+    /* 状态色：desktop 此前完全没有语义 status token，88 处状态相关配色
+     * 一律写死 Tailwind 刻度（text-red-300 / bg-green-500/10 …）。
+     * 补齐四档后可迁移到语义类，将来若 desktop 加浅色主题即自动适配。
+     * *Fill 是实色按钮/徽章底专用（承载白字，需 ≥4.5），与作文本的
+     * 亮调解耦——与 web 端 status.danger / dangerFill 同一套拆分手法。 */
+    '--color-chrono-success': dark['--color-success'],
+    '--color-chrono-warning': dark['--color-warning'],
+    '--color-chrono-error': dark['--color-error'],
+    '--color-chrono-info': dark['--color-info'],
+    '--color-chrono-error-fill': dark['--color-error-fill'],
+    '--color-chrono-success-fill': dark['--color-success-fill'],
   };
   return formatDeclarations(desktopVars);
 }

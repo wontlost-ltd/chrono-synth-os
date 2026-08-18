@@ -16,7 +16,12 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
-const TARGET = join(ROOT, 'apps/web/src');
+/**
+ * 扫描范围：web 与 desktop（companion-web 实测 0 处裸色，暂不纳入以省 IO）。
+ * desktop 用 `--color-chrono-*` 独立命名空间，但「禁止硬编码调色板色」这条
+ * 规则与命名空间无关，故同一道门即可覆盖。
+ */
+const TARGETS = ['apps/web', 'apps/desktop'];
 
 /** Tailwind 默认调色板色名——语义 token（surface/text/border/primary…）不在此列。 */
 const PALETTE = [
@@ -120,8 +125,15 @@ const IGNORE_BLOCK = /\/\/\s*lint-raw-palette-ignore-block\b(.*)$|\/\*\s*lint-ra
 let violations = 0;
 let scanned = 0;
 let missingReason = 0;
-for (const file of walk(TARGET)) {
-  const rel = relative(join(ROOT, 'apps/web'), file);
+const allFiles = TARGETS.flatMap((app) => {
+  try {
+    return walk(join(ROOT, app, 'src')).map((f) => [app, f]);
+  } catch {
+    return [];  // 该 app 不存在
+  }
+});
+for (const [app, file] of allFiles) {
+  const rel = `${app.replace('apps/', '')}:${relative(join(ROOT, app), file)}`;
   scanned += 1;
   if (ALLOW.has(rel)) continue;
   const text = readFileSync(file, 'utf8');

@@ -106,7 +106,7 @@ export function CompanionSettingsPage({ plan }: CompanionSettingsPageProps) {
           />
         </div>
         {error && (
-          <p role="alert" className="text-sm text-amber-400">
+          <p role="alert" className="text-sm text-chrono-warning">
             {error}
           </p>
         )}

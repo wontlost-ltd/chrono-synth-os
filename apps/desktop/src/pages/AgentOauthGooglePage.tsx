@@ -122,12 +122,12 @@ export function AgentOauthGooglePage() {
           })}
         </ul>
         {startAuthorize.error && !(startAuthorize.error instanceof ApiNotConfiguredError) && (
-          <p className="text-xs text-red-300">
+          <p className="text-xs text-chrono-error">
             授权启动失败：{(startAuthorize.error as Error).message}
           </p>
         )}
         {redirectError && (
-          <p className="text-xs text-red-300" role="alert">
+          <p className="text-xs text-chrono-error" role="alert">
             授权服务返回的跳转地址不合法，已阻止打开。请重试。
           </p>
         )}
@@ -137,7 +137,7 @@ export function AgentOauthGooglePage() {
         <h2 className="text-base font-semibold">已授权 scope</h2>
         {tokens.isLoading && <p className="text-sm text-chrono-text-muted">加载中…</p>}
         {tokens.error && !isApiMissing && (
-          <p className="text-sm text-red-300">加载失败：{(tokens.error as Error).message}</p>
+          <p className="text-sm text-chrono-error">加载失败：{(tokens.error as Error).message}</p>
         )}
         {!tokens.isLoading && !tokens.error && (tokens.data ?? []).length === 0 && (
           <p className="text-sm text-chrono-text-muted">还没有授权任何 Google scope。</p>
@@ -162,7 +162,7 @@ export function AgentOauthGooglePage() {
                     {t.revokedAt === null && (
                       <button
                         type="button"
-                        className="text-xs text-red-300 hover:underline"
+                        className="text-xs text-chrono-error hover:underline"
                         disabled={revoke.isPending}
                         onClick={() => {
                           if (!window.confirm(`撤销 ${shortenScope(t.scope)} 授权？`)) return;
@@ -185,7 +185,7 @@ export function AgentOauthGooglePage() {
 
 function NotConfiguredBanner() {
   return (
-    <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
+    <div className="rounded-xl border border-chrono-warning/40 bg-chrono-warning/10 p-4 text-sm text-chrono-warning">
       <p className="font-medium">未配置 chrono-synth-os API</p>
       <p className="mt-1 text-xs">
         在 Settings → API 中填入 base URL 和 JWT；本页面通过 HTTP 调用 OAuth 端点。

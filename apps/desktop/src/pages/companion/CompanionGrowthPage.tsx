@@ -18,9 +18,9 @@ import { loadCompanionGrowth, type GrowthSource } from '@/companion/growth-data'
 
 /** 探索强度 → 中文标签 + 配色（成长语气，不是告警，与企业版 alert 配色刻意不同）。 */
 const INTENSITY_META: Record<ExplorationIntensityV1, { label: string; style: string }> = {
-  steady: { label: '平稳', style: 'bg-emerald-500/15 text-emerald-200 border-emerald-500/40' },
-  exploring: { label: '探索中', style: 'bg-sky-500/15 text-sky-200 border-sky-500/40' },
-  leaping: { label: '跃迁', style: 'bg-violet-500/15 text-violet-200 border-violet-500/40' },
+  steady: { label: '平稳', style: 'bg-chrono-success/15 text-chrono-success border-chrono-success/40' },
+  exploring: { label: '探索中', style: 'bg-chrono-info/15 text-chrono-info border-chrono-info/40' },
+  leaping: { label: '跃迁', style: 'bg-chrono-info/15 text-chrono-info border-chrono-info/40' },
 };
 
 const DIRECTION_LABEL: Record<ExplorationDirectionV1['direction'], string> = {
