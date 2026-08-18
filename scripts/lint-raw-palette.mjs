@@ -41,8 +41,22 @@ const ARBITRARY_RE = new RegExp(`\\b(?:${UTIL})-\\[(?:#[0-9a-fA-F]{3,8}|rgba?\\(
  *   - `var(--token, #fallback)` 的兜底值——token 缺失时的降级，是推荐写法
  *   - 注释里提到的色值——写迁移说明时必然要引用旧值
  */
-const HEX_RE = /#[0-9a-fA-F]{3,8}\b/g;
-const VAR_FALLBACK_RE = /var\(\s*--[\w-]+\s*,\s*#[0-9a-fA-F]{3,8}\s*\)/g;
+/* 只认「合法长度」的 hex（3/4/6/8 位），并排除非颜色写法：
+ *   - HTML 实体 `&#8203;`（零宽空格等，排版常见，4 位数字恰好像 hex）
+ *   - 前面紧跟字母/数字的片段（URL fragment、DOM id 选择器）
+ *
+ * ⚠️ `#a1b2c3` 这种既是合法 hex 又是合法 commit sha 前缀，纯靠字面无法区分。
+ * 故要求它出现在**引号紧邻处**——即真正当色值写的形态
+ * （`'#abc'` / `"#abc"` / `` `#abc` `` / `: '#abc'`）；散在自由文本里的
+ * sha、issue 号一律不报。代价是 `` `${x}#abc` `` 这类拼接会漏，
+ * 但那本就是动态值、静态分析抓不到。 */
+const HEX_RE = /(?<=['"`])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA-F]{3})(?=['"`])/g;
+const VAR_FALLBACK_RE = /var\(\s*--[\w-]+\s*,\s*[^)]*\)/g;
+
+/* 函数式色值：hsl/oklch/lab/lch/裸 rgb——不是 hex 也不是调色板类名，
+ * 两道既有门都看不见。CLAUDE.md 的 frontend-design 域推荐 OKLCH，
+ * 不补这条的话将来写 oklch() 会完全绕过本门。 */
+const COLOR_FN_RE = /\b(?:hsla?|oklch|oklab|lch|lab)\(|(?<!\w)rgba?\(\s*\d/g;
 
 /**
  * 例外清单：`文件相对路径 → 原因`。
@@ -54,14 +68,22 @@ const ALLOW = new Map([
    * 语义 token（见文件内注释），此处豁免的只是编码用的系列色。
    * 实测均为装饰性描边/填充，不承载文本。 */
   ['src/pages/WorkforceVisualization.tsx', '组织树的负载/状态/处置编码色，需固定色相区分类别'],
-  /* 品牌渐变与强调色：为 dark 主题挑选的装饰色，实测 4.45~13.8 全部达标
-   * （indigo #6366F1 = 4.45、violet #A855F7 = 5.03、cyan #22D3EE = 11.01）。 */
-  ['src/pages/EnterpriseConsole.tsx', '品牌渐变/圆点装饰色，非文本，实测均达标'],
-  ['src/pages/AdminToolPermissions.tsx', '作用域徽章配色（read/write/execute），实测 11.25~13.8'],
-  ['src/components/ui/EmptyState.tsx', '空态插画着色 #818CF8（6.67），与 EnterpriseConsole indigo 同源'],
+  /* EnterpriseConsole：既有品牌渐变/圆点（装饰，indigo 4.45 / violet 5.03 /
+   * cyan 11.01），**也有 trend 徽章的文字色** #22C55E / #F87171——
+   * 后者落在卡片(#131B2E)上实测 7.53 / 6.20 过 AA。
+   * （早期注释误写成「非文本」，且数字是对着纯黑底算的、没算 tint 合成，已更正。） */
+  ['src/pages/EnterpriseConsole.tsx', '品牌渐变/圆点装饰 + trend 徽章文字色，实测 4.45~11.01'],
+  /* AdminToolPermissions：SCOPE_STYLE.fg 是**徽章文字色**（非装饰），
+   * 底为同色 12~14% rgba 叠在卡片上。按真实合成底色实测：
+   * read 9.30 / write 9.30 / execute 8.31，全部过 AA。 */
+  ['src/pages/AdminToolPermissions.tsx', '作用域徽章文字色，按真实 tint 合成底实测 8.31~9.30'],
+  ['src/components/ui/EmptyState.tsx', '空态插画着色 #818CF8（canvas 6.67 / elevated 5.75）'],
   /* 侧边栏 hover/active 的 indigo 微弱高亮：rgba 低透明度叠加，
    * 属纯装饰层，不承载文本对比度。 */
   ['src/components/layout/Sidebar.tsx', '导航 hover/active 的低透明度 indigo 叠加层，纯装饰'],
+  /* 激活 tab 下划线的 indigo 辉光（box-shadow）——纯装饰、2px 高、
+   * aria-hidden，不承载文本也不传达状态（状态由 aria-selected 承担）。 */
+  ['src/components/ui/Tabs.tsx', '激活 tab 下划线的 indigo 辉光 box-shadow，aria-hidden 纯装饰'],
 ]);
 
 function walk(dir, out = []) {
@@ -117,9 +139,10 @@ for (const file of walk(TARGET)) {
     for (const hit of code.match(RE) ?? []) report(hit);
     for (const hit of code.match(ARBITRARY_RE) ?? []) report(hit);
     if (isComponent) {
-      /* 先挖掉 var(--token, #fallback) 里的兜底色，再找剩下的裸 hex */
+      /* 先挖掉 var(--token, <fallback>) 整体，再找剩下的裸色值 */
       const stripped = code.replace(VAR_FALLBACK_RE, ' ');
       for (const hit of stripped.match(HEX_RE) ?? []) report(hit);
+      for (const hit of stripped.match(COLOR_FN_RE) ?? []) report(hit.replace(/\s*\d$/, ''));
     }
   });
 }
