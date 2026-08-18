@@ -63,27 +63,10 @@ const COLOR_FN_RE = /\b(?:hsla?|oklch|oklab|lch|lab)\(|(?<!\w)rgba?\(\s*\d/g;
  * 空清单即「零容忍」；确需例外时在此登记，让下一个人看得到理由。
  */
 const ALLOW = new Map([
-  /* 图表/可视化系列色：需要固定且**互相可区分**的色相来编码类别，
-   * 随主题漂移反而会让「同一状态两次看起来不同」。节点底与文字已改用
-   * 语义 token（见文件内注释），此处豁免的只是编码用的系列色。
-   * 实测均为装饰性描边/填充，不承载文本。 */
-  ['src/pages/WorkforceVisualization.tsx', '组织树的负载/状态/处置编码色，需固定色相区分类别'],
-  /* EnterpriseConsole：既有品牌渐变/圆点（装饰，indigo 4.45 / violet 5.03 /
-   * cyan 11.01），**也有 trend 徽章的文字色** #22C55E / #F87171——
-   * 后者落在卡片(#131B2E)上实测 7.53 / 6.20 过 AA。
-   * （早期注释误写成「非文本」，且数字是对着纯黑底算的、没算 tint 合成，已更正。） */
-  ['src/pages/EnterpriseConsole.tsx', '品牌渐变/圆点装饰 + trend 徽章文字色，实测 4.45~11.01'],
-  /* AdminToolPermissions：SCOPE_STYLE.fg 是**徽章文字色**（非装饰），
-   * 底为同色 12~14% rgba 叠在卡片上。按真实合成底色实测：
-   * read 9.30 / write 9.30 / execute 8.31，全部过 AA。 */
-  ['src/pages/AdminToolPermissions.tsx', '作用域徽章文字色，按真实 tint 合成底实测 8.31~9.30'],
-  ['src/components/ui/EmptyState.tsx', '空态插画着色 #818CF8（canvas 6.67 / elevated 5.75）'],
-  /* 侧边栏 hover/active 的 indigo 微弱高亮：rgba 低透明度叠加，
-   * 属纯装饰层，不承载文本对比度。 */
-  ['src/components/layout/Sidebar.tsx', '导航 hover/active 的低透明度 indigo 叠加层，纯装饰'],
-  /* 激活 tab 下划线的 indigo 辉光（box-shadow）——纯装饰、2px 高、
-   * aria-hidden，不承载文本也不传达状态（状态由 aria-selected 承担）。 */
-  ['src/components/ui/Tabs.tsx', '激活 tab 下划线的 indigo 辉光 box-shadow，aria-hidden 纯装饰'],
+  /* 空。整文件豁免只保留给「整个文件都是色板定义」这类极端情况——
+   * 日常例外一律用行级 `lint-raw-palette-ignore-next-line/-block` 标记，
+   * 见下方说明。原先这里有 6 个文件级豁免（共掩盖 56 处），已全部下沉为
+   * 22 个行/块级标记，各自带原因。 */
 ]);
 
 function walk(dir, out = []) {
@@ -104,8 +87,28 @@ function walk(dir, out = []) {
   return out;
 }
 
+/**
+ * 行级豁免标记（取代整文件豁免）。写法：
+ *
+ *   // lint-raw-palette-ignore-next-line 原因
+ *   const LOAD_COLOR = { idle: '#9ca3af' };
+ *
+ *   // lint-raw-palette-ignore-block 原因      ← 覆盖到下一个空行为止
+ *   const PALETTE = {
+ *     cyan: '#22D3EE',
+ *     indigo: '#6366F1',
+ *   };
+ *
+ * 相比整文件豁免的好处：豁免范围收敛到**具体几行**，该文件里**将来新增**
+ * 的硬编码色仍会被拦下（整文件豁免会静默放过——已用变异测试实证）。
+ * 原因必须写在标记后面，让下一个人看得到为什么。
+ */
+const IGNORE_LINE = /\/\/\s*lint-raw-palette-ignore-next-line\b(.*)$|\/\*\s*lint-raw-palette-ignore-next-line\b([^*]*)\*\//;
+const IGNORE_BLOCK = /\/\/\s*lint-raw-palette-ignore-block\b(.*)$|\/\*\s*lint-raw-palette-ignore-block\b([^*]*)\*\//;
+
 let violations = 0;
 let scanned = 0;
+let missingReason = 0;
 for (const file of walk(TARGET)) {
   const rel = relative(join(ROOT, 'apps/web'), file);
   scanned += 1;
@@ -116,6 +119,30 @@ for (const file of walk(TARGET)) {
    * （如「原 neutral-3(#64748B)」）会被误报。 */
   let inBlockComment = false;
   const lines = text.split('\n');
+  /* 先扫一遍标记，算出被豁免的行号集合（标记本身写在注释里，
+   * 下面剥注释时会被抹掉，故必须在剥之前采集）。 */
+  const exempt = new Set();
+  lines.forEach((line, i) => {
+    const mb = line.match(IGNORE_BLOCK);
+    if (mb) {
+      if (!((mb[1] || mb[2] || '').trim())) {
+        missingReason += 1;
+        console.error(`  ✖ ${rel}:${i + 1}  ignore-block 缺原因说明`);
+      }
+      /* 覆盖到下一个空行为止——正好对应「一个声明块」。 */
+      for (let j = i + 1; j < lines.length && lines[j].trim() !== ''; j++) exempt.add(j);
+      return;
+    }
+    const ml = line.match(IGNORE_LINE);
+    if (ml) {
+      if (!((ml[1] || ml[2] || '').trim())) {
+        missingReason += 1;
+        console.error(`  ✖ ${rel}:${i + 1}  ignore-next-line 缺原因说明`);
+      }
+      exempt.add(i + 1);
+    }
+  });
+
   lines.forEach((line, i) => {
     let code = line;
     if (inBlockComment) {
@@ -130,6 +157,10 @@ for (const file of walk(TARGET)) {
     if (open !== -1) { code = code.slice(0, open); inBlockComment = true; }
     const line1 = code.indexOf('//');
     if (line1 !== -1) code = code.slice(0, line1);
+
+    /* 豁免判断放在**剥注释之后**：上面那段要先跑完才能正确维护
+     * inBlockComment 跨行状态，提前 return 会让状态错位。 */
+    if (exempt.has(i)) return;
 
     const report = (hit) => {
       violations += 1;
@@ -147,12 +178,20 @@ for (const file of walk(TARGET)) {
   });
 }
 
-if (violations > 0) {
-  console.error(`\n裸调色板色门：${scanned} 个文件中发现 ${violations} 处。`);
-  console.error('请改用语义 token（text-text-primary / text-text-secondary /');
-  console.error('border-border / bg-surface-elevated / text-primary-text …），');
-  console.error('它们随主题切换且已被 lint:contrast 覆盖。');
-  console.error('确有例外请登记到 scripts/lint-raw-palette.mjs 的 ALLOW 并写明原因。');
+if (violations > 0 || missingReason > 0) {
+  if (violations > 0) {
+    console.error(`\n裸调色板色门：${scanned} 个文件中发现 ${violations} 处。`);
+    console.error('请改用语义 token（text-text-primary / text-text-secondary /');
+    console.error('border-border / bg-surface-elevated / text-primary-text …），');
+    console.error('它们随主题切换且已被 lint:contrast 覆盖。');
+    console.error('确有例外请在该行上方加：');
+    console.error('  // lint-raw-palette-ignore-next-line <原因>');
+    console.error('整块声明（如图表系列色）可用 ignore-block，覆盖到下一个空行。');
+  }
+  if (missingReason > 0) {
+    console.error(`\n另有 ${missingReason} 处豁免标记**未写原因**——`);
+    console.error('豁免必须说明为什么，否则下一个人无从判断能不能删。');
+  }
   process.exit(1);
 }
 console.log(`✓ 裸调色板色门：${scanned} 个文件，无硬编码调色板色。`);

@@ -87,6 +87,7 @@ export function EmptyState({
          * 为一个插画色扩 3 套主题的类型化契约+codegen 不成比例）。非主题化但语义稳定。 */
         <Illustration
           name={showIllustration}
+          /* lint-raw-palette-ignore-next-line 空态插画 indigo 着色，canvas 6.67 / elevated 5.75 达标 */
           className={`relative ${isError ? 'text-warning' : 'text-[#818CF8]'}`}
         />
       )}

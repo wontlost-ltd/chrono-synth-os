@@ -46,6 +46,7 @@ function permissionStatusLabel(p: ToolPermission, t: TFunction): string {
   return t('toolPermissions.statusLabels.active');
 }
 
+/* lint-raw-palette-ignore-block 作用域徽章配色（fg 是文字色），底为同色 12~14% rgba 叠在卡片上；按真实合成底实测 read 9.30 / write 9.30 / execute 8.31 */
 const SCOPE_STYLE: Record<ToolScope, { bg: string; fg: string; border: string }> = {
   read:    { bg: 'rgba(34, 211, 238, 0.12)',  fg: '#67E8F9', border: 'rgba(34, 211, 238, 0.3)' },
   write:   { bg: 'rgba(251, 191, 36, 0.12)',  fg: '#FCD34D', border: 'rgba(251, 191, 36, 0.3)' },
