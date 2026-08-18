@@ -14,7 +14,7 @@ export function ExportCard() {
     : null;
 
   return (
-    <div className="rounded-xl border border-border bg-white p-6 shadow-sm">
+    <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-sm">
       <h2 className="text-lg font-semibold text-text-primary">Export Your Data</h2>
       <p className="mt-1 text-sm text-text-secondary">
         Download a portable backup of all your personas, memories, and timeline data.

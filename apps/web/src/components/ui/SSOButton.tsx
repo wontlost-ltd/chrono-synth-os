@@ -28,7 +28,7 @@ export function SSOButton({ tenantId }: { tenantId: string }) {
       type="button"
       onClick={handleClick}
       disabled={!normalizedTenantId}
-      className="w-full rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
+      className="w-full rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
     >
       {normalizedTenantId ? t('sso.signInWithSSO') : t('sso.enterTenantFirst')}
     </button>

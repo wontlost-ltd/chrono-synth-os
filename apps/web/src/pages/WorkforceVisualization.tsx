@@ -139,7 +139,7 @@ function CreateOrgForm({ onCreated, t }: { onCreated: (orgId: string) => void; t
   const [archetype, setArchetype] = useState<Archetype>('doer');
   const canSubmit = orgId.trim() && roleCode.trim() && title.trim() && displayName.trim() && !createOrg.isPending;
   return (
-    <div className="rounded border border-border bg-white p-3">
+    <div className="rounded border border-border bg-surface-elevated p-3">
       <h3 className="mb-2 text-sm font-semibold">{t('workforceViz.createOrg')}</h3>
       <div className="grid grid-cols-2 gap-2 text-sm">
         <input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder={t('workforceViz.fOrgId')} className="rounded border border-border px-2 py-1" />
@@ -170,7 +170,7 @@ function HireWorkerForm({ orgId, t }: { orgId: string; t: (k: string) => string 
   const [archetype, setArchetype] = useState<Archetype>('explorer');
   const canSubmit = !!orgId && managerWorkerId.trim() && roleCode.trim() && title.trim() && displayName.trim() && !hire.isPending;
   return (
-    <div className="rounded border border-border bg-white p-3">
+    <div className="rounded border border-border bg-surface-elevated p-3">
       <h3 className="mb-2 text-sm font-semibold">{t('workforceViz.hireWorker')}</h3>
       {!orgId && <p className="mb-2 text-xs text-text-secondary">{t('workforceViz.hireNeedOrg')}</p>}
       <div className="grid grid-cols-2 gap-2 text-sm">
@@ -211,7 +211,7 @@ function RestructureForms({ orgId, t }: { orgId: string; t: (k: string) => strin
   const okOf = (m: { isSuccess: boolean }) => (m.isSuccess ? <span className="ml-2 text-xs text-success">✓</span> : null);
 
   return (
-    <div className="rounded border border-border bg-white p-3">
+    <div className="rounded border border-border bg-surface-elevated p-3">
       <h3 className="mb-3 text-sm font-semibold">{t('workforceViz.restructureSection')}</h3>
       <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
         {/* 吸收 */}
@@ -270,7 +270,7 @@ function OrgTree({ nodes, edges }: { nodes: OrgTreeNode[]; edges: OrgTreeEdge[] 
   const posOf = new Map(layout.positioned.map((p) => [p.node.workerId, p]));
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-white p-4">
+    <div className="overflow-x-auto rounded-lg border border-border bg-surface-elevated p-4">
       <svg width={width} height={height} role="img" aria-label="org-tree">
         {/* 汇报边 */}
         {edges.map((e) => {
@@ -310,7 +310,7 @@ function GoalFlow({ goals, t }: { goals: GoalFlowItem[]; t: (k: string) => strin
       {goals.map((g) => {
         const total = Math.max(1, g.taskCount);
         return (
-          <div key={g.goalId} className="rounded-lg border border-border bg-white p-3">
+          <div key={g.goalId} className="rounded-lg border border-border bg-surface-elevated p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-medium">{g.title}</span>
               <span className="text-xs text-text-secondary">{g.status} · {g.taskCount} {t('workforceViz.tasks')}{g.blockedCount > 0 ? ` · ⛔ ${g.blockedCount}` : ''}</span>
@@ -335,7 +335,7 @@ function SignalGrid({ signals, t }: { signals: WorkerSignalItem[]; t: (k: string
         const op = s.operating;
         const load = op?.load ?? 'idle';
         return (
-          <div key={s.workerId} className="rounded-lg border border-border bg-white p-3">
+          <div key={s.workerId} className="rounded-lg border border-border bg-surface-elevated p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-medium">{s.displayName}</span>
               <span className="rounded px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: LOAD_COLOR[load] }}>{t(`workforceViz.load_${load}`)}</span>
@@ -368,7 +368,7 @@ function LearningLoop({ items, t }: { items: LearningLoopItem[]; t: (k: string) 
   return (
     <div className="space-y-3">
       {items.filter((i) => i.learnedCapabilities.length > 0 || i.activeLearning.length > 0 || i.blockedTasks.length > 0).map((i) => (
-        <div key={i.workerId} className="rounded-lg border border-border bg-white p-3">
+        <div key={i.workerId} className="rounded-lg border border-border bg-surface-elevated p-3">
           <div className="mb-2 font-medium">{i.displayName}</div>
           <div className="space-y-2 text-xs">
             {i.learnedCapabilities.length > 0 && (

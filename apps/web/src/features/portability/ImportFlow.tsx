@@ -19,7 +19,7 @@ export function ImportFlow() {
   }
 
   return (
-    <div className="rounded-xl border border-border bg-white p-6 shadow-sm">
+    <div className="rounded-xl border border-border bg-surface-elevated p-6 shadow-sm">
       <h2 className="text-lg font-semibold text-text-primary">Import Data</h2>
       <p className="mt-1 text-sm text-text-secondary">
         Restore from a previously exported portable pack.
@@ -39,7 +39,7 @@ export function ImportFlow() {
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-elevated px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
             >
               Select Export Pack
             </button>

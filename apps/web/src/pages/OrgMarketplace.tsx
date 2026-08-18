@@ -74,7 +74,7 @@ export default function OrgMarketplace() {
 }
 
 type T = (k: string) => string;
-const card = 'rounded-lg border border-border bg-white p-3 text-sm';
+const card = 'rounded-lg border border-border bg-surface-elevated p-3 text-sm';
 const badge = (color: string) => ({ backgroundColor: color, color: '#fff', borderRadius: 6, padding: '1px 8px', fontSize: 12 });
 const STATUS_COLOR: Record<string, string> = {
   open: '#3b82f6', accepted: '#f59e0b', completed: '#10b981', cancelled: '#9ca3af',

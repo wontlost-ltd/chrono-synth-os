@@ -1192,7 +1192,7 @@ function VaultPanel({
                     type="button"
                     disabled={rotating}
                     onClick={() => onRotate(row.keyRef)}
-                    className="inline-flex items-center min-h-touch rounded px-3 py-1 text-xs font-medium bg-surface border border-border hover:bg-surface disabled:opacity-50"
+                    className="inline-flex items-center min-h-touch rounded px-3 py-1 text-xs font-medium bg-surface border border-border hover:bg-surface-elevated disabled:opacity-50"
                   >
                     {rotating ? t('enterpriseConsole.buttons.rotating') : t('enterpriseConsole.buttons.rotate')}
                   </button>
@@ -1219,7 +1219,7 @@ function VaultPanel({
                 type="button"
                 disabled={rotating}
                 onClick={() => onRotate(ref)}
-                className="inline-flex items-center min-h-touch rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface disabled:opacity-50"
+                className="inline-flex items-center min-h-touch rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-surface-elevated disabled:opacity-50"
               >
                 {rotating
                   ? t('enterpriseConsole.buttons.rotating')
