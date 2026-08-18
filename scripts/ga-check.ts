@@ -141,6 +141,17 @@ const STEPS: readonly StepDecl[] = [
      * 路由清单且默认渲染的节点。这道静态门补的是两者之间的缝。 */
     desc: 'apps/web 禁止硬编码 Tailwind 调色板色，须用语义 token',
   },
+  {
+    id: 'os.lint-dead-css-tokens',
+    repo: 'os',
+    repoPath: OS_ROOT,
+    command: 'npm',
+    args: ['run', 'lint:dead-css-tokens', '--silent'],
+    /* `var(--x, #fff)` 若 --x 从未定义，fallback 就不是降级、而是**实际渲染色**，
+     * 且写死不随主题切换。这恰落在三道门的缝里：raw-palette 主动豁免 var() 兜底、
+     * contrast 只算 token 对、axe 只覆盖已入清单且默认渲染的节点。 */
+    desc: 'apps/web 禁止 var() 引用从未定义的 CSS 自定义属性',
+  },
 
   /* web/desktop 已是本仓 apps/*（ADR-0049 融合）——必过，不再 optional。 */
   {

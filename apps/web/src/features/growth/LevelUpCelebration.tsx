@@ -88,7 +88,7 @@ export function LevelUpCelebration() {
           <button
             type="button"
             ref={closeRef}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-on-primary hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             onClick={acknowledge}
           >
             {t('growth.celebration.dismiss')}
