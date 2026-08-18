@@ -82,8 +82,8 @@ const styles = StyleSheet.create({
   muted: { fontSize: 14, color: '#64748B', textAlign: 'center' },
   card: { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 1, borderColor: '#E2E8F0' },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  kind: { fontSize: 11, color: '#6366F1', fontWeight: '600', textTransform: 'uppercase' },
-  meta: { fontSize: 12, color: '#94A3B8' },
+  kind: { fontSize: 11, color: '#4338CA', fontWeight: '600', textTransform: 'uppercase' },
+  meta: { fontSize: 12, color: '#64748B' },
   body: { fontSize: 14, color: '#1E293B' },
   footer: { paddingVertical: 16 },
 });

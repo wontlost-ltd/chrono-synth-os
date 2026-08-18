@@ -152,6 +152,17 @@ const STEPS: readonly StepDecl[] = [
      * contrast 只算 token 对、axe 只覆盖已入清单且默认渲染的节点。 */
     desc: 'apps/web 禁止 var() 引用从未定义的 CSS 自定义属性',
   },
+  {
+    id: 'os.lint-mobile-contrast',
+    repo: 'os',
+    repoPath: OS_ROOT,
+    command: 'npm',
+    args: ['run', 'lint:mobile-contrast', '--silent'],
+    /* mobile 是 RN：既无 Tailwind 类名（raw-palette 够不着）也无 token 体系
+     * （contrast 够不着），axe 又只跑 web——190 处硬编码 hex 此前零门覆盖。
+     * 本门直接解析 StyleSheet 里的 fontSize+color 组合判 WCAG。 */
+    desc: 'apps/mobile StyleSheet 文本色对比度（RN 无类名/无 token，其余门够不着）',
+  },
 
   /* web/desktop 已是本仓 apps/*（ADR-0049 融合）——必过，不再 optional。 */
   {

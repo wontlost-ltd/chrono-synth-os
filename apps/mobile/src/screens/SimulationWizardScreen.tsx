@@ -222,6 +222,7 @@ const styles = StyleSheet.create({
   backButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, borderWidth: 1, borderColor: '#CBD5E1' },
   backButtonText: { fontSize: 15, color: '#64748B', fontWeight: '500' },
   nextButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: '#1E3A8A' },
+  // lint-mobile-contrast-ignore-next-line 该文字落在 nextButton 的 #1E3A8A 实色底上（白字 10.36），非屏幕底
   nextButtonText: { fontSize: 15, color: '#FFFFFF', fontWeight: '600' },
   submitButton: { paddingVertical: 12, paddingHorizontal: 24, borderRadius: 10, backgroundColor: '#16A34A' },
   disabledButton: { opacity: 0.5 },

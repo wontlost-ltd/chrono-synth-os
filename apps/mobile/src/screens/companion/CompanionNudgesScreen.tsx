@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   badge: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3 },
   badgeText: { fontSize: 12, fontWeight: '600' },
-  time: { fontSize: 12, color: '#94A3B8' },
+  time: { fontSize: 12, color: '#64748B' },
   body: { fontSize: 15, lineHeight: 22, color: '#1E293B' },
   readBtn: { alignSelf: 'flex-start', marginTop: 10, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: '#E2E8F0' },
   readBtnText: { fontSize: 13, color: '#64748B' },

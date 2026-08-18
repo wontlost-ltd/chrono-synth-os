@@ -93,15 +93,17 @@ const styles = StyleSheet.create({
   logContent: { padding: 16, gap: 10 },
   empty: { fontSize: 14, color: '#64748B', textAlign: 'center', marginTop: 32 },
   bubble: { maxWidth: '82%', borderRadius: 14, padding: 12 },
-  bubbleUser: { alignSelf: 'flex-end', backgroundColor: '#6366F1', borderBottomRightRadius: 4 },
+  bubbleUser: { alignSelf: 'flex-end', backgroundColor: '#4F46E5', borderBottomRightRadius: 4 },
   bubblePersona: { alignSelf: 'flex-start', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0', borderBottomLeftRadius: 4 },
+  // lint-mobile-contrast-ignore-next-line 该文字落在 bubbleUser 的 #4F46E5 底上（白字 6.29），非屏幕底
   textUser: { fontSize: 15, color: '#FFFFFF' },
   textPersona: { fontSize: 15, color: '#1E293B' },
-  meta: { fontSize: 12, color: '#94A3B8', marginTop: 6 },
+  meta: { fontSize: 12, color: '#64748B', marginTop: 6 },
   error: { fontSize: 14, color: '#DC2626', textAlign: 'center', marginTop: 8 },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 12, borderTopWidth: 1, borderTopColor: '#E2E8F0', backgroundColor: '#FFFFFF' },
   input: { flex: 1, minHeight: 40, maxHeight: 120, borderWidth: 1, borderColor: '#C7D2FE', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15, color: '#1E293B', backgroundColor: '#F8FAFC' },
-  send: { backgroundColor: '#6366F1', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 18 },
+  send: { backgroundColor: '#4F46E5', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 18 },
   sendDisabled: { opacity: 0.5 },
+  // lint-mobile-contrast-ignore-next-line 该文字落在 send 按钮的 #4F46E5 底上（白字 6.29），非屏幕底
   sendText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
 });

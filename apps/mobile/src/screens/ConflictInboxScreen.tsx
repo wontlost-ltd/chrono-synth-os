@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   timestamp: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 12,
   },
   conflictType: {
@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   objectId: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 12,
     fontFamily: 'monospace',
   },
@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   versionSep: {
-    color: '#475569',
+    color: '#94A3B8',
     fontSize: 12,
   },
   actions: {
@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   emptySubtext: {
-    color: '#64748B',
+    color: '#94A3B8',
     fontSize: 14,
   },
 });

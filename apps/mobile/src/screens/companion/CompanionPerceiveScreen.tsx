@@ -109,9 +109,10 @@ const styles = StyleSheet.create({
     padding: 12, fontSize: 15, color: '#1E293B', backgroundColor: '#F8FAFC', textAlignVertical: 'top',
   },
   actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
-  counter: { fontSize: 13, color: '#94A3B8' },
-  submit: { backgroundColor: '#6366F1', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20 },
+  counter: { fontSize: 13, color: '#64748B' },
+  submit: { backgroundColor: '#4F46E5', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 20 },
   submitDisabled: { opacity: 0.5 },
+  // lint-mobile-contrast-ignore-next-line 该文字落在 submit 按钮的 #4F46E5 底上（白字 6.29），非屏幕底
   submitText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
   error: { fontSize: 14, color: '#DC2626', marginTop: 8 },
   memoryCard: { backgroundColor: '#EEF2FF', borderRadius: 12, padding: 14, marginTop: 8, borderWidth: 1, borderColor: '#C7D2FE' },
