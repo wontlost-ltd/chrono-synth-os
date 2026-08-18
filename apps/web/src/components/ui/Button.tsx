@@ -4,7 +4,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
  * 统一按钮组件。
  *
  * 此前全站 162 个 <button> 全是 inline class，主/次/危险/成功各页各写一套，
- * 还散落 bg-green-600 / bg-indigo-600 等**硬编码彩虹色**（绕过设计 token，破坏品牌一致性，
+ * 还散落 bg-success-fill / bg-primary 等**硬编码彩虹色**（绕过设计 token，破坏品牌一致性，
  * 用户无法建立「哪种按钮=什么语义」的心智）。本组件收敛为 5 个语义 variant + 3 档 size，
  * 全部走设计 token（--color-primary/error/success 等），消灭硬编码颜色。
  *

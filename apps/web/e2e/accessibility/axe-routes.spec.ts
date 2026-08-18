@@ -180,6 +180,15 @@ const ROUTES: Route[] = [
   { name: 'persona-core', path: '/persona-core', authed: true },
   { name: 'conflicts', path: '/conflicts', authed: true },
   { name: 'growth', path: '/growth', authed: true },
+  /* 这四条路由此前无 axe 覆盖，且正是裸调色板色（text-gray-*）的重灾区——
+   * gray-500/600/700 落在 dark canvas 上只有 4.11/2.63/1.93，全都不达 AA。
+   * 迁移到语义 token 后纳入门，防止再退回去。 */
+  { name: 'workforce-console', path: '/workforce', authed: true },
+  { name: 'workforce-viz', path: '/workforce/viz', authed: true },
+  { name: 'org-marketplace', path: '/workforce/marketplace', authed: true },
+  /* 注：portability 的 ExportCard/ImportFlow 也做了同样迁移，但它们当前
+   * **没有任何路由挂载**（全仓仅 features/portability/ 内部互相引用），
+   * 故无法纳入本门；等接入路由后再补。 */
 ];
 
 for (const route of ROUTES) {
@@ -189,10 +198,16 @@ for (const route of ROUTES) {
       await mockApisEmpty(page);
     }
     await page.goto(route.path);
-    /* networkidle is brittle on streaming/SSE pages; domcontentloaded +
-     * a brief settle is enough for axe to walk the rendered DOM. */
+    /* networkidle 在 streaming/SSE 页面上不稳，故不用它。但只等
+     * domcontentloaded + 200ms **不够**：所有路由都是 lazy() 懒加载，
+     * 此时页面往往还停在 Suspense 的 common.loading 上，axe 走的是加载态
+     * 而非真实页面——实测把 WorkforceConsole 的颜色改坏，门竟然不红。
+     * 故显式等 loading 文案消失，再给一点渲染余量。 */
     await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(200);
+    await page.getByText('common.loading', { exact: true })
+      .waitFor({ state: 'detached', timeout: 10_000 })
+      .catch(() => { /* 该路由没有 loading 占位则直接继续 */ });
+    await page.waitForTimeout(300);
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa'])

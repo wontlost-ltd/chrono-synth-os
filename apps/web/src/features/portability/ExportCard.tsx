@@ -14,9 +14,9 @@ export function ExportCard() {
     : null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-      <h2 className="text-lg font-semibold text-gray-900">Export Your Data</h2>
-      <p className="mt-1 text-sm text-gray-500">
+    <div className="rounded-xl border border-border bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-semibold text-text-primary">Export Your Data</h2>
+      <p className="mt-1 text-sm text-text-secondary">
         Download a portable backup of all your personas, memories, and timeline data.
       </p>
 
@@ -25,27 +25,27 @@ export function ExportCard() {
           <button
             type="button"
             onClick={() => void start()}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-active focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           >
             Start Export
           </button>
         )}
 
         {state.phase === 'starting' && (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
+          <div className="flex items-center gap-2 text-sm text-text-secondary">
             <Spinner /> Preparing export…
           </div>
         )}
 
         {state.phase === 'polling' && (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
+          <div className="flex items-center gap-2 text-sm text-text-secondary">
             <Spinner /> Export in progress — this may take a few minutes.
           </div>
         )}
 
         {state.phase === 'ready' && downloadHref && (
           <div className="flex flex-col gap-3">
-            <p className="text-sm text-green-700 font-medium">✓ Export complete</p>
+            <p className="text-sm text-success font-medium">✓ Export complete</p>
             <div className="flex gap-2">
               <a
                 href={downloadHref}
@@ -57,7 +57,7 @@ export function ExportCard() {
               <button
                 type="button"
                 onClick={reset}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
               >
                 New Export
               </button>
@@ -69,8 +69,8 @@ export function ExportCard() {
             当作 ready 会让用户误以为数据完整，当作 error 又会藏起已可用的部分。 */}
         {state.phase === 'partial' && (
           <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-amber-700">⚠ Export completed with warnings</p>
-            <ul className="list-disc pl-5 text-sm text-amber-700">
+            <p className="text-sm font-medium text-warning">⚠ Export completed with warnings</p>
+            <ul className="list-disc pl-5 text-sm text-warning">
               {state.warnings.map((w) => (
                 <li key={w.code}>{w.messageId}</li>
               ))}
@@ -88,7 +88,7 @@ export function ExportCard() {
               <button
                 type="button"
                 onClick={reset}
-                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
               >
                 New Export
               </button>
@@ -98,13 +98,13 @@ export function ExportCard() {
 
         {state.phase === 'error' && (
           <div className="flex flex-col gap-2">
-            <p className="text-sm text-red-600">
+            <p className="text-sm text-error">
               Export failed{state.errorMessage ? `: ${state.errorMessage}` : '.'}
             </p>
             <button
               type="button"
               onClick={reset}
-              className="w-fit rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
             >
               Try Again
             </button>
@@ -118,7 +118,7 @@ export function ExportCard() {
 function Spinner() {
   return (
     <svg
-      className="h-4 w-4 animate-spin text-gray-400"
+      className="h-4 w-4 animate-spin text-text-secondary"
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24"

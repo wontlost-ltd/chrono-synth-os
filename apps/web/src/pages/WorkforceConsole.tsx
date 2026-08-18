@@ -38,7 +38,7 @@ export default function WorkforceConsole() {
     {
       id: 'position', header: t('workforce.colPosition'), cell: r => {
         const pos = positionById.get(r.positionId);
-        return pos ? <span className="text-sm">{pos.title}<span className="ml-1 text-xs text-gray-400">{pos.roleCode}</span></span> : <span className="text-xs text-gray-400">—</span>;
+        return pos ? <span className="text-sm">{pos.title}<span className="ml-1 text-xs text-text-secondary">{pos.roleCode}</span></span> : <span className="text-xs text-text-secondary">—</span>;
       },
     },
     { id: 'status', header: t('workforce.colStatus'), cell: r => <StatusBadge status={r.employmentStatus === 'active' ? 'active' : 'paused'} label={r.employmentStatus} /> },
@@ -47,7 +47,7 @@ export default function WorkforceConsole() {
 
   const goalColumns: Column<OrgGoal>[] = [
     { id: 'title', header: t('workforce.colGoal'), cell: r => <span className="font-medium">{r.title}</span> },
-    { id: 'type', header: t('workforce.colType'), cell: r => <span className="text-sm text-gray-500">{r.goalType}</span> },
+    { id: 'type', header: t('workforce.colType'), cell: r => <span className="text-sm text-text-secondary">{r.goalType}</span> },
     { id: 'status', header: t('workforce.colStatus'), cell: r => <StatusBadge status={r.status === 'completed' ? 'completed' : 'active'} label={r.status} /> },
   ];
 
@@ -57,13 +57,13 @@ export default function WorkforceConsole() {
 
       <div className="mb-6 flex items-end gap-2">
         <label className="flex flex-col text-sm">
-          <span className="mb-1 text-gray-600">{t('workforce.orgIdLabel')}</span>
+          <span className="mb-1 text-text-secondary">{t('workforce.orgIdLabel')}</span>
           <input
             value={orgId}
             onChange={e => setOrgId(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') setCommittedOrgId(orgId.trim()); }}
             placeholder={t('workforce.orgIdPlaceholder')}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="rounded-lg border border-border px-3 py-2 text-sm"
           />
         </label>
         <button
@@ -79,7 +79,7 @@ export default function WorkforceConsole() {
       ) : (
         <>
           {/* tab 切换：查看（只读）/ 操作（admin）。 */}
-          <div className="mb-6 flex gap-2 border-b border-gray-200">
+          <div className="mb-6 flex gap-2 border-b border-border">
             <TabButton active={tab === 'view'} onClick={() => setTab('view')}>{t('workforce.viewTab')}</TabButton>
             <TabButton active={tab === 'actions'} onClick={() => setTab('actions')}>{t('workforce.actionsTab')}</TabButton>
           </div>
@@ -118,7 +118,7 @@ export default function WorkforceConsole() {
             </div>
           ) : (
             <div className="space-y-8">
-              <p className="text-xs text-gray-400">{t('workforce.adminOnlyHint')}</p>
+              <p className="text-xs text-text-secondary">{t('workforce.adminOnlyHint')}</p>
               <InitiateGoalSection orgId={committedOrgId} />
               <PendingApprovalsSection orgId={committedOrgId} />
             </div>
@@ -133,7 +133,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
   return (
     <button
       onClick={onClick}
-      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${active ? 'border-primary text-primary-text' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+      className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${active ? 'border-primary text-primary-text' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
     >
       {children}
     </button>
@@ -155,26 +155,26 @@ function InitiateGoalSection({ orgId }: { orgId: string }) {
   return (
     <section>
       <h2 className="mb-1 text-lg font-semibold">{t('workforce.initiateGoalSection')}</h2>
-      <p className="mb-3 text-xs text-gray-500">{t('workforce.initiateGoalHint')}</p>
+      <p className="mb-3 text-xs text-text-secondary">{t('workforce.initiateGoalHint')}</p>
       <div className="flex flex-col gap-3 sm:max-w-lg">
         <input
           value={managerWorkerId} onChange={e => setManagerWorkerId(e.target.value)}
           placeholder={t('workforce.managerWorkerIdLabel')}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="rounded-lg border border-border px-3 py-2 text-sm"
         />
         <input
           value={title} onChange={e => setTitle(e.target.value)}
           placeholder={t('workforce.goalTitleLabel')}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="rounded-lg border border-border px-3 py-2 text-sm"
         />
         <input
           value={description} onChange={e => setDescription(e.target.value)}
           placeholder={t('workforce.goalDescLabel')}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="rounded-lg border border-border px-3 py-2 text-sm"
         />
         <select
           value={goalType} onChange={e => setGoalType(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="rounded-lg border border-border px-3 py-2 text-sm"
         >
           <option value="">{t('workforce.goalTypeLabel')}</option>
           {(goalTypes.data ?? []).map(gt => <option key={gt.goalType} value={gt.goalType}>{gt.goalType}</option>)}
@@ -186,9 +186,9 @@ function InitiateGoalSection({ orgId }: { orgId: string }) {
         >
           {runGoal.isPending ? t('workforce.running') : t('workforce.runGoal')}
         </button>
-        {runGoal.isError && <span className="text-sm text-red-600">{t('workforce.actionFailedWithMessage', { message: (runGoal.error as Error).message })}</span>}
+        {runGoal.isError && <span className="text-sm text-error">{t('workforce.actionFailedWithMessage', { message: (runGoal.error as Error).message })}</span>}
         {runGoal.isSuccess && (
-          <span className="text-sm text-green-600">
+          <span className="text-sm text-success">
             {runGoal.data.pendingRealExecution > 0
               ? t('workforce.goalStartedWithPending', { count: runGoal.data.taskCount, pending: runGoal.data.pendingRealExecution })
               : t('workforce.goalStartedWithCount', { count: runGoal.data.taskCount })}
@@ -205,7 +205,7 @@ function PendingApprovalsSection({ orgId }: { orgId: string }) {
   const pending = usePendingApprovals(orgId);
   const decide = useDecideApproval(orgId);
 
-  const riskColor = (r: string) => r === 'high' ? 'text-red-600' : r === 'medium' ? 'text-amber-600' : 'text-gray-500';
+  const riskColor = (r: string) => r === 'high' ? 'text-error' : r === 'medium' ? 'text-warning' : 'text-text-secondary';
 
   /* 高后果防误点：approve high 风险 + 所有 reject 都二次确认（批准=放行真实执行）。 */
   const onApprove = (r: OrgApproval) => {
@@ -220,9 +220,9 @@ function PendingApprovalsSection({ orgId }: { orgId: string }) {
 
   const columns: Column<OrgApproval>[] = [
     { id: 'risk', header: t('workforce.colRisk'), cell: r => <span className={`font-medium ${riskColor(r.effectiveRisk)}`}>{r.effectiveRisk}</span> },
-    { id: 'subject', header: t('workforce.colSubject'), cell: r => <span className="text-xs">{r.subjectType}<span className="ml-1 text-gray-400">{r.subjectId}</span></span> },
-    { id: 'requester', header: t('workforce.colRequester'), cell: r => <span className="text-xs text-gray-500">{r.requesterWorkerId}</span> },
-    { id: 'reason', header: t('workforce.colReason'), cell: r => <span className="text-xs text-gray-500">{r.reason}</span> },
+    { id: 'subject', header: t('workforce.colSubject'), cell: r => <span className="text-xs">{r.subjectType}<span className="ml-1 text-text-secondary">{r.subjectId}</span></span> },
+    { id: 'requester', header: t('workforce.colRequester'), cell: r => <span className="text-xs text-text-secondary">{r.requesterWorkerId}</span> },
+    { id: 'reason', header: t('workforce.colReason'), cell: r => <span className="text-xs text-text-secondary">{r.reason}</span> },
     {
       id: 'actions', header: t('workforce.colActions'), cell: r => (
         <div className="flex gap-2">
@@ -236,7 +236,7 @@ function PendingApprovalsSection({ orgId }: { orgId: string }) {
   return (
     <section>
       <h2 className="mb-1 text-lg font-semibold">{t('workforce.pendingApprovalsSection')}</h2>
-      <p className="mb-3 text-xs text-gray-500">{t('workforce.pendingApprovalsHint')}</p>
+      <p className="mb-3 text-xs text-text-secondary">{t('workforce.pendingApprovalsHint')}</p>
       {pending.error ? (
         <EmptyState variant="error" message={pending.error.message} />
       ) : (
@@ -248,7 +248,7 @@ function PendingApprovalsSection({ orgId }: { orgId: string }) {
           emptyState={<EmptyState title={t('workforce.noPendingTitle')} message={t('workforce.noPendingMessage')} />}
         />
       )}
-      {decide.isError && <span className="mt-2 block text-sm text-red-600">{t('workforce.actionFailedWithMessage', { message: (decide.error as Error).message })}</span>}
+      {decide.isError && <span className="mt-2 block text-sm text-error">{t('workforce.actionFailedWithMessage', { message: (decide.error as Error).message })}</span>}
     </section>
   );
 }
@@ -257,24 +257,24 @@ function PendingApprovalsSection({ orgId }: { orgId: string }) {
 function WorkerSignalCell({ orgId, workerId }: { orgId: string; workerId: string }) {
   const { t } = useTranslation();
   const { data, isLoading, error } = useWorkerPersonaSignal(orgId, workerId);
-  if (isLoading) return <span className="text-xs text-gray-400">{t('workforce.loading')}</span>;
-  if (error || !data) return <span className="text-xs text-gray-400">—</span>;
+  if (isLoading) return <span className="text-xs text-text-secondary">{t('workforce.loading')}</span>;
+  if (error || !data) return <span className="text-xs text-text-secondary">—</span>;
 
   const confidenceColor =
-    data.decisionConfidence === 'high' ? 'text-green-600'
-      : data.decisionConfidence === 'low' ? 'text-red-600'
-        : 'text-amber-600';
+    data.decisionConfidence === 'high' ? 'text-success'
+      : data.decisionConfidence === 'low' ? 'text-error'
+        : 'text-warning';
 
   return (
     <div className="flex flex-col gap-0.5 text-xs">
       <span>
         {t('workforce.decisionConfidenceLabel')}<span className={`font-medium ${confidenceColor}`}>{data.decisionConfidence}</span>
-        <span className="ml-2 text-gray-500">{t('workforce.load')} {data.operating.load}</span>
-        <span className="ml-2 text-gray-500">{t('workforce.collaboration')} {data.collaborationReach}</span>
-        {data.operating.overdueTaskCount > 0 && <span className="ml-2 font-medium text-red-600">{t('workforce.overdue')} {data.operating.overdueTaskCount}</span>}
-        {data.operating.dueSoonTaskCount > 0 && <span className="ml-2 text-amber-600">{t('workforce.dueSoon')} {data.operating.dueSoonTaskCount}</span>}
+        <span className="ml-2 text-text-secondary">{t('workforce.load')} {data.operating.load}</span>
+        <span className="ml-2 text-text-secondary">{t('workforce.collaboration')} {data.collaborationReach}</span>
+        {data.operating.overdueTaskCount > 0 && <span className="ml-2 font-medium text-error">{t('workforce.overdue')} {data.operating.overdueTaskCount}</span>}
+        {data.operating.dueSoonTaskCount > 0 && <span className="ml-2 text-warning">{t('workforce.dueSoon')} {data.operating.dueSoonTaskCount}</span>}
       </span>
-      {data.shouldReport && <span className="font-medium text-red-600">⚠ {t('workforce.needsAttentionLabel')}{data.confidenceRationale}</span>}
+      {data.shouldReport && <span className="font-medium text-error">⚠ {t('workforce.needsAttentionLabel')}{data.confidenceRationale}</span>}
     </div>
   );
 }

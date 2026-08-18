@@ -46,13 +46,13 @@ export default function WorkforceVisualization() {
 
       <div className="mb-6 flex items-end gap-2">
         <label className="flex flex-col text-sm">
-          <span className="mb-1 text-gray-600">{t('workforceViz.orgIdLabel')}</span>
+          <span className="mb-1 text-text-secondary">{t('workforceViz.orgIdLabel')}</span>
           <input
             value={orgId}
             onChange={(e) => setOrgId(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') setCommittedOrgId(orgId.trim()); }}
             placeholder="org-1"
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="rounded-lg border border-border px-3 py-2 text-sm"
           />
         </label>
         <button
@@ -71,7 +71,7 @@ export default function WorkforceVisualization() {
       ) : viz.error ? (
         <EmptyState variant="error" message={viz.error.message} />
       ) : viz.isLoading ? (
-        <p className="text-sm text-gray-400">{t('workforceViz.loading')}</p>
+        <p className="text-sm text-text-secondary">{t('workforceViz.loading')}</p>
       ) : !viz.data || viz.data.orgTree.nodes.length === 0 ? (
         <EmptyState title={t('workforceViz.noDataTitle')} message={t('workforceViz.noDataMessage')} />
       ) : (
@@ -105,7 +105,7 @@ export default function WorkforceVisualization() {
 function ManagementForms({ orgId, onCreated, t }: { orgId: string; onCreated: (orgId: string) => void; t: (k: string) => string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-3">
+    <div className="mb-6 rounded-lg border border-border bg-surface-elevated p-3">
       <button onClick={() => setOpen((o) => !o)} className="text-sm font-medium text-primary-text">
         {open ? '▾' : '▸'} {t('workforceViz.manageSection')}
       </button>
@@ -124,7 +124,7 @@ function ManagementForms({ orgId, onCreated, t }: { orgId: string; onCreated: (o
 
 function ArchetypeSelect({ value, onChange }: { value: Archetype; onChange: (a: Archetype) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value as Archetype)} className="rounded border border-gray-300 px-2 py-1 text-sm">
+    <select value={value} onChange={(e) => onChange(e.target.value as Archetype)} className="rounded border border-border px-2 py-1 text-sm">
       {ARCHETYPES.map((a) => <option key={a} value={a}>{a}</option>)}
     </select>
   );
@@ -139,13 +139,13 @@ function CreateOrgForm({ onCreated, t }: { onCreated: (orgId: string) => void; t
   const [archetype, setArchetype] = useState<Archetype>('doer');
   const canSubmit = orgId.trim() && roleCode.trim() && title.trim() && displayName.trim() && !createOrg.isPending;
   return (
-    <div className="rounded border border-gray-200 bg-white p-3">
+    <div className="rounded border border-border bg-white p-3">
       <h3 className="mb-2 text-sm font-semibold">{t('workforceViz.createOrg')}</h3>
       <div className="grid grid-cols-2 gap-2 text-sm">
-        <input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder={t('workforceViz.fOrgId')} className="rounded border border-gray-300 px-2 py-1" />
-        <input value={roleCode} onChange={(e) => setRoleCode(e.target.value)} placeholder={t('workforceViz.fRoleCode')} className="rounded border border-gray-300 px-2 py-1" />
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('workforceViz.fTitle')} className="rounded border border-gray-300 px-2 py-1" />
-        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('workforceViz.fName')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder={t('workforceViz.fOrgId')} className="rounded border border-border px-2 py-1" />
+        <input value={roleCode} onChange={(e) => setRoleCode(e.target.value)} placeholder={t('workforceViz.fRoleCode')} className="rounded border border-border px-2 py-1" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('workforceViz.fTitle')} className="rounded border border-border px-2 py-1" />
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('workforceViz.fName')} className="rounded border border-border px-2 py-1" />
         <ArchetypeSelect value={archetype} onChange={setArchetype} />
       </div>
       <button
@@ -155,8 +155,8 @@ function CreateOrgForm({ onCreated, t }: { onCreated: (orgId: string) => void; t
       >
         {createOrg.isPending ? t('workforceViz.submitting') : t('workforceViz.createOrgBtn')}
       </button>
-      {createOrg.isError && <span className="ml-2 text-xs text-red-600">{(createOrg.error as Error).message}</span>}
-      {createOrg.isSuccess && <span className="ml-2 text-xs text-green-600">✓</span>}
+      {createOrg.isError && <span className="ml-2 text-xs text-error">{(createOrg.error as Error).message}</span>}
+      {createOrg.isSuccess && <span className="ml-2 text-xs text-success">✓</span>}
     </div>
   );
 }
@@ -170,14 +170,14 @@ function HireWorkerForm({ orgId, t }: { orgId: string; t: (k: string) => string 
   const [archetype, setArchetype] = useState<Archetype>('explorer');
   const canSubmit = !!orgId && managerWorkerId.trim() && roleCode.trim() && title.trim() && displayName.trim() && !hire.isPending;
   return (
-    <div className="rounded border border-gray-200 bg-white p-3">
+    <div className="rounded border border-border bg-white p-3">
       <h3 className="mb-2 text-sm font-semibold">{t('workforceViz.hireWorker')}</h3>
-      {!orgId && <p className="mb-2 text-xs text-gray-400">{t('workforceViz.hireNeedOrg')}</p>}
+      {!orgId && <p className="mb-2 text-xs text-text-secondary">{t('workforceViz.hireNeedOrg')}</p>}
       <div className="grid grid-cols-2 gap-2 text-sm">
-        <input value={managerWorkerId} onChange={(e) => setManagerWorkerId(e.target.value)} placeholder={t('workforceViz.fManagerId')} className="rounded border border-gray-300 px-2 py-1" />
-        <input value={roleCode} onChange={(e) => setRoleCode(e.target.value)} placeholder={t('workforceViz.fRoleCode')} className="rounded border border-gray-300 px-2 py-1" />
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('workforceViz.fTitle')} className="rounded border border-gray-300 px-2 py-1" />
-        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('workforceViz.fName')} className="rounded border border-gray-300 px-2 py-1" />
+        <input value={managerWorkerId} onChange={(e) => setManagerWorkerId(e.target.value)} placeholder={t('workforceViz.fManagerId')} className="rounded border border-border px-2 py-1" />
+        <input value={roleCode} onChange={(e) => setRoleCode(e.target.value)} placeholder={t('workforceViz.fRoleCode')} className="rounded border border-border px-2 py-1" />
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t('workforceViz.fTitle')} className="rounded border border-border px-2 py-1" />
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t('workforceViz.fName')} className="rounded border border-border px-2 py-1" />
         <ArchetypeSelect value={archetype} onChange={setArchetype} />
       </div>
       <button
@@ -187,8 +187,8 @@ function HireWorkerForm({ orgId, t }: { orgId: string; t: (k: string) => string 
       >
         {hire.isPending ? t('workforceViz.submitting') : t('workforceViz.hireBtn')}
       </button>
-      {hire.isError && <span className="ml-2 text-xs text-red-600">{(hire.error as Error).message}</span>}
-      {hire.isSuccess && <span className="ml-2 text-xs text-green-600">✓</span>}
+      {hire.isError && <span className="ml-2 text-xs text-error">{(hire.error as Error).message}</span>}
+      {hire.isSuccess && <span className="ml-2 text-xs text-success">✓</span>}
     </div>
   );
 }
@@ -207,54 +207,54 @@ function RestructureForms({ orgId, t }: { orgId: string; t: (k: string) => strin
   const [offReparentTo, setOffReparentTo] = useState('');
   const [offReassignTo, setOffReassignTo] = useState('');
 
-  const errOf = (m: { isError: boolean; error: unknown }) => (m.isError ? <span className="ml-2 text-xs text-red-600">{(m.error as Error).message}</span> : null);
-  const okOf = (m: { isSuccess: boolean }) => (m.isSuccess ? <span className="ml-2 text-xs text-green-600">✓</span> : null);
+  const errOf = (m: { isError: boolean; error: unknown }) => (m.isError ? <span className="ml-2 text-xs text-error">{(m.error as Error).message}</span> : null);
+  const okOf = (m: { isSuccess: boolean }) => (m.isSuccess ? <span className="ml-2 text-xs text-success">✓</span> : null);
 
   return (
-    <div className="rounded border border-gray-200 bg-white p-3">
+    <div className="rounded border border-border bg-white p-3">
       <h3 className="mb-3 text-sm font-semibold">{t('workforceViz.restructureSection')}</h3>
       <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-3">
         {/* 吸收 */}
         <div>
           <div className="mb-1 font-medium">{t('workforceViz.absorb')}</div>
-          <input value={sourceOrgId} onChange={(e) => setSourceOrgId(e.target.value)} placeholder={t('workforceViz.fSourceOrg')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
-          <input value={mountUnderWorkerId} onChange={(e) => setMountUnderWorkerId(e.target.value)} placeholder={t('workforceViz.fMountUnder')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={sourceOrgId} onChange={(e) => setSourceOrgId(e.target.value)} placeholder={t('workforceViz.fSourceOrg')} className="mb-1 w-full rounded border border-border px-2 py-1" />
+          <input value={mountUnderWorkerId} onChange={(e) => setMountUnderWorkerId(e.target.value)} placeholder={t('workforceViz.fMountUnder')} className="mb-1 w-full rounded border border-border px-2 py-1" />
           <button disabled={!sourceOrgId.trim() || !mountUnderWorkerId.trim() || absorb.isPending} onClick={() => absorb.mutate({ sourceOrgId: sourceOrgId.trim(), mountUnderWorkerId: mountUnderWorkerId.trim() })} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50">{t('workforceViz.absorbBtn')}</button>
           {errOf(absorb)}{okOf(absorb)}
         </div>
         {/* reparent */}
         <div>
           <div className="mb-1 font-medium">{t('workforceViz.reparent')}</div>
-          <input value={reWorkerId} onChange={(e) => setReWorkerId(e.target.value)} placeholder={t('workforceViz.fWorkerId')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
-          <input value={reNewMgr} onChange={(e) => setReNewMgr(e.target.value)} placeholder={t('workforceViz.fNewMgr')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={reWorkerId} onChange={(e) => setReWorkerId(e.target.value)} placeholder={t('workforceViz.fWorkerId')} className="mb-1 w-full rounded border border-border px-2 py-1" />
+          <input value={reNewMgr} onChange={(e) => setReNewMgr(e.target.value)} placeholder={t('workforceViz.fNewMgr')} className="mb-1 w-full rounded border border-border px-2 py-1" />
           <button disabled={!reWorkerId.trim() || !reNewMgr.trim() || reparent.isPending} onClick={() => reparent.mutate({ workerId: reWorkerId.trim(), newManagerWorkerId: reNewMgr.trim() })} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50">{t('workforceViz.reparentBtn')}</button>
           {errOf(reparent)}{okOf(reparent)}
         </div>
         {/* offboard */}
         <div>
           <div className="mb-1 font-medium">{t('workforceViz.offboard')}</div>
-          <input value={offWorkerId} onChange={(e) => setOffWorkerId(e.target.value)} placeholder={t('workforceViz.fWorkerId')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
-          <input value={offReparentTo} onChange={(e) => setOffReparentTo(e.target.value)} placeholder={t('workforceViz.fReparentReportsTo')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
-          <input value={offReassignTo} onChange={(e) => setOffReassignTo(e.target.value)} placeholder={t('workforceViz.fReassignTasksTo')} className="mb-1 w-full rounded border border-gray-300 px-2 py-1" />
+          <input value={offWorkerId} onChange={(e) => setOffWorkerId(e.target.value)} placeholder={t('workforceViz.fWorkerId')} className="mb-1 w-full rounded border border-border px-2 py-1" />
+          <input value={offReparentTo} onChange={(e) => setOffReparentTo(e.target.value)} placeholder={t('workforceViz.fReparentReportsTo')} className="mb-1 w-full rounded border border-border px-2 py-1" />
+          <input value={offReassignTo} onChange={(e) => setOffReassignTo(e.target.value)} placeholder={t('workforceViz.fReassignTasksTo')} className="mb-1 w-full rounded border border-border px-2 py-1" />
           <button disabled={!offWorkerId.trim() || offboard.isPending} onClick={() => offboard.mutate({ workerId: offWorkerId.trim(), ...(offReparentTo.trim() ? { reparentReportsTo: offReparentTo.trim() } : {}), ...(offReassignTo.trim() ? { reassignTasksTo: offReassignTo.trim() } : {}) })} className="rounded bg-primary px-3 py-1 text-white disabled:opacity-50">{t('workforceViz.offboardBtn')}</button>
           {errOf(offboard)}{okOf(offboard)}
         </div>
       </div>
       {/* 建议 */}
-      <div className="mt-3 border-t border-gray-100 pt-2">
-        <div className="mb-1 text-xs font-medium text-gray-500">{t('workforceViz.suggestions')}</div>
+      <div className="mt-3 border-t border-border pt-2">
+        <div className="mb-1 text-xs font-medium text-text-secondary">{t('workforceViz.suggestions')}</div>
         {suggestions.data && suggestions.data.suggestions.length > 0 ? (
           <ul className="space-y-1 text-xs">
             {suggestions.data.suggestions.map((s) => (
               <li key={s.workerId}>
-                <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">{s.suggestedAction}</span>
+                <span className="rounded bg-warning/10 px-2 py-0.5 text-warning">{s.suggestedAction}</span>
                 <span className="ml-2 font-medium">{s.displayName}</span>
-                <span className="ml-2 text-gray-500">{s.reason}</span>
-                <span className="ml-1 text-gray-300">({s.workerId})</span>
+                <span className="ml-2 text-text-secondary">{s.reason}</span>
+                <span className="ml-1 text-text-secondary">({s.workerId})</span>
               </li>
             ))}
           </ul>
-        ) : <p className="text-xs text-gray-400">{t('workforceViz.noSuggestions')}</p>}
+        ) : <p className="text-xs text-text-secondary">{t('workforceViz.noSuggestions')}</p>}
       </div>
     </div>
   );
@@ -270,7 +270,7 @@ function OrgTree({ nodes, edges }: { nodes: OrgTreeNode[]; edges: OrgTreeEdge[] 
   const posOf = new Map(layout.positioned.map((p) => [p.node.workerId, p]));
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-4">
+    <div className="overflow-x-auto rounded-lg border border-border bg-white p-4">
       <svg width={width} height={height} role="img" aria-label="org-tree">
         {/* 汇报边 */}
         {edges.map((e) => {
@@ -310,10 +310,10 @@ function GoalFlow({ goals, t }: { goals: GoalFlowItem[]; t: (k: string) => strin
       {goals.map((g) => {
         const total = Math.max(1, g.taskCount);
         return (
-          <div key={g.goalId} className="rounded-lg border border-gray-200 bg-white p-3">
+          <div key={g.goalId} className="rounded-lg border border-border bg-white p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-medium">{g.title}</span>
-              <span className="text-xs text-gray-400">{g.status} · {g.taskCount} {t('workforceViz.tasks')}{g.blockedCount > 0 ? ` · ⛔ ${g.blockedCount}` : ''}</span>
+              <span className="text-xs text-text-secondary">{g.status} · {g.taskCount} {t('workforceViz.tasks')}{g.blockedCount > 0 ? ` · ⛔ ${g.blockedCount}` : ''}</span>
             </div>
             <div className="flex h-4 overflow-hidden rounded">
               {Object.entries(g.tasksByStatus).filter(([, n]) => n > 0).map(([status, n]) => (
@@ -335,21 +335,21 @@ function SignalGrid({ signals, t }: { signals: WorkerSignalItem[]; t: (k: string
         const op = s.operating;
         const load = op?.load ?? 'idle';
         return (
-          <div key={s.workerId} className="rounded-lg border border-gray-200 bg-white p-3">
+          <div key={s.workerId} className="rounded-lg border border-border bg-white p-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="font-medium">{s.displayName}</span>
               <span className="rounded px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: LOAD_COLOR[load] }}>{t(`workforceViz.load_${load}`)}</span>
             </div>
             {op ? (
-              <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-gray-600">
+              <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-text-secondary">
                 <dt>{t('workforceViz.active')}</dt><dd className="text-right">{op.activeTaskCount}</dd>
                 <dt>{t('workforceViz.blocked')}</dt><dd className="text-right">{op.blockedTaskCount}</dd>
                 <dt>{t('workforceViz.overdue')}</dt><dd className="text-right">{op.overdueTaskCount}</dd>
                 <dt>{t('workforceViz.highRisk')}</dt><dd className="text-right">{op.highRiskTaskCount}</dd>
               </dl>
-            ) : <p className="text-xs text-gray-400">—</p>}
+            ) : <p className="text-xs text-text-secondary">—</p>}
             {s.persona && (
-              <p className="mt-2 text-xs text-gray-500">
+              <p className="mt-2 text-xs text-text-secondary">
                 {t('workforceViz.confidence')}: <span className="font-medium">{s.persona.decisionConfidence}</span>
                 {' · '}{t('workforceViz.collab')}: {s.persona.collaborationReach}
               </p>
@@ -368,28 +368,28 @@ function LearningLoop({ items, t }: { items: LearningLoopItem[]; t: (k: string) 
   return (
     <div className="space-y-3">
       {items.filter((i) => i.learnedCapabilities.length > 0 || i.activeLearning.length > 0 || i.blockedTasks.length > 0).map((i) => (
-        <div key={i.workerId} className="rounded-lg border border-gray-200 bg-white p-3">
+        <div key={i.workerId} className="rounded-lg border border-border bg-white p-3">
           <div className="mb-2 font-medium">{i.displayName}</div>
           <div className="space-y-2 text-xs">
             {i.learnedCapabilities.length > 0 && (
               <div>
-                <span className="mr-2 text-gray-500">{t('workforceViz.learned')}:</span>
+                <span className="mr-2 text-text-secondary">{t('workforceViz.learned')}:</span>
                 {i.learnedCapabilities.map((c) => (
-                  <span key={c.capability} className="mr-1 inline-block rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">{c.capability} ({Math.round(c.examScore * 100)})</span>
+                  <span key={c.capability} className="mr-1 inline-block rounded bg-success/10 px-2 py-0.5 text-success">{c.capability} ({Math.round(c.examScore * 100)})</span>
                 ))}
               </div>
             )}
             {i.activeLearning.length > 0 && (
               <div>
-                <span className="mr-2 text-gray-500">{t('workforceViz.learning')}:</span>
+                <span className="mr-2 text-text-secondary">{t('workforceViz.learning')}:</span>
                 {i.activeLearning.map((a) => (
-                  <span key={a.capability} className="mr-1 inline-block rounded bg-blue-100 px-2 py-0.5 text-blue-700">{a.capability} · {a.status}</span>
+                  <span key={a.capability} className="mr-1 inline-block rounded bg-info/10 px-2 py-0.5 text-info">{a.capability} · {a.status}</span>
                 ))}
               </div>
             )}
             {i.blockedTasks.length > 0 && (
               <div>
-                <span className="mr-2 text-gray-500">{t('workforceViz.blockedTasks')}:</span>
+                <span className="mr-2 text-text-secondary">{t('workforceViz.blockedTasks')}:</span>
                 {i.blockedTasks.map((b) => (
                   <span key={b.taskId} className="mr-1 inline-block rounded px-2 py-0.5 text-white" style={{ backgroundColor: DISPOSITION_COLOR[b.disposition] }}>
                     {b.title} · {t(`workforceViz.disp_${b.disposition}`)}

@@ -130,6 +130,17 @@ const STEPS: readonly StepDecl[] = [
     args: ['run', 'lint:contrast', '--silent'],
     desc: 'WCAG AA/AAA contrast lint across all five themes (light / dark / dark-web / high-contrast / companion)',
   },
+  {
+    id: 'os.lint-raw-palette',
+    repo: 'os',
+    repoPath: OS_ROOT,
+    command: 'npm',
+    args: ['run', 'lint:raw-palette', '--silent'],
+    /* lint-contrast 基于语义 token 对计算，结构上看不见硬编码的调色板色
+     * （如 text-gray-600 在 dark canvas 上只有 2.63）；axe E2E 只覆盖已入
+     * 路由清单且默认渲染的节点。这道静态门补的是两者之间的缝。 */
+    desc: 'apps/web 禁止硬编码 Tailwind 调色板色，须用语义 token',
+  },
 
   /* web/desktop 已是本仓 apps/*（ADR-0049 融合）——必过，不再 optional。 */
   {

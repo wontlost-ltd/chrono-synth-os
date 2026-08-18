@@ -1154,7 +1154,7 @@ function VaultPanel({
   return (
     <div className="space-y-6">
       {(rotateError ?? revokeError) && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-error/30 bg-error/10 px-4 py-3 text-sm text-error">
           {rotateError ?? revokeError}
         </div>
       )}
@@ -1176,7 +1176,7 @@ function VaultPanel({
                 id: 'status',
                 header: t('enterpriseConsole.columns.status'),
                 cell: (row) => (
-                  <span className={row.status === 'active' ? 'text-green-600 font-medium' : 'text-red-500'}>
+                  <span className={row.status === 'active' ? 'text-success font-medium' : 'text-error'}>
                     {row.status}
                   </span>
                 ),
@@ -1200,7 +1200,7 @@ function VaultPanel({
                     type="button"
                     disabled={revoking}
                     onClick={() => onRevoke(row.keyRef)}
-                    className="inline-flex items-center min-h-touch rounded px-3 py-1 text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 disabled:opacity-50"
+                    className="inline-flex items-center min-h-touch rounded px-3 py-1 text-xs font-medium text-error border border-error/30 hover:bg-error/10 disabled:opacity-50"
                   >
                     {revoking ? t('enterpriseConsole.buttons.revoking') : t('enterpriseConsole.buttons.revoke')}
                   </button>
@@ -1244,7 +1244,7 @@ function VaultPanel({
               id: 'outcome',
               header: t('enterpriseConsole.columns.outcome'),
               cell: (row) => (
-                <span className={row.outcome === 'ok' ? 'text-green-600' : 'text-red-500 font-medium'}>
+                <span className={row.outcome === 'ok' ? 'text-success' : 'text-error font-medium'}>
                   {row.outcome}
                 </span>
               ),
@@ -1255,7 +1255,7 @@ function VaultPanel({
           emptyState={<EmptyState message={t('enterpriseConsole.empty.vaultAudit')} />}
           rowActions={(row) =>
             row.errorMessage ? (
-              <span className="text-xs text-red-500">{row.errorMessage}</span>
+              <span className="text-xs text-error">{row.errorMessage}</span>
             ) : null
           }
         />
