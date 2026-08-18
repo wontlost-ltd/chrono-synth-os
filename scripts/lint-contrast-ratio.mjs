@@ -166,6 +166,18 @@ const PAIRS = [
    * worse than text-vs-canvas. bgAlpha=0.10 tells the lint to alpha-
    * composite the status colour at 10% onto the canvas before measuring
    * — this matches what bg-*\/10 renders in the DOM. */
+  /* ⚠️ 上面这组以 canvas 为底，但徽章**多数落在卡片里**（bg-surface-elevated），
+   * elevated 比 canvas 亮 → 合成后离文字更近 → 实际对比度**更低**，
+   * 实测差 1.3~1.8（如 status.info 门测 8.14、卡片上只有 6.71）。
+   * 只测 canvas 会系统性高估，故补一组 elevated 底的同款检查——
+   * 它才是更严的那个真实场景（OrgMarketplace 的状态徽章即在卡片内）。 */
+  { fg: 'status.active', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: active on tinted card', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'status.syncing', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: syncing on tinted card', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'status.danger', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: danger on tinted card', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'status.offline', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: offline on tinted card', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'status.completed', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: completed on tinted card', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'status.warning', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: warning on tinted card', minAA: 4.5, minAAA: 7.0 },
+  { fg: 'status.info', bg: 'surface.elevated', bgAlpha: 0.10, label: 'badge text: info on tinted card', minAA: 4.5, minAAA: 7.0 },
   { fg: 'status.active', bg: 'surface.canvas', bgAlpha: 0.10, label: 'badge text: active on tinted page', minAA: 4.5, minAAA: 7.0 },
   { fg: 'status.paused', bg: 'surface.canvas', bgAlpha: 0.10, label: 'badge text: paused on tinted page', minAA: 4.5, minAAA: 7.0 },
   { fg: 'status.syncing', bg: 'surface.canvas', bgAlpha: 0.10, label: 'badge text: syncing on tinted page', minAA: 4.5, minAAA: 7.0 },

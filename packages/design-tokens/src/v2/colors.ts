@@ -392,10 +392,14 @@ export const colorTokensCompanion: SemanticColors = {
      * + color: #fff。加深到 #d95a49 后白字 3.81 达标，色相基本不变。
      * 与 dark 主题「danger 亮给徽章、dangerFill 深给按钮」的拆分一致。 */
     dangerFill: '#d95a49',
-    info: '#5b8def',
+    /* info/syncing 原为 #5b8def：落在 canvas 上 5.02 达标，但徽章多数在
+     * 卡片（#1a2030）里，合成后仅 4.37 不达 AA——这正是新增的
+     * `badge text: * on tinted card` 检查对抓出来的（只测 canvas 会系统性
+     * 高估 1.3~1.8）。提亮到 #6f9df3：卡片 5.15 / 页面 5.90，色相基本不变。 */
+    info: '#6f9df3',
     active: '#4fc08d',
     paused: '#e7796b',
-    syncing: '#5b8def',
+    syncing: '#6f9df3',
     offline: '#8a94ab',
     completed: '#4fc08d',
   },
