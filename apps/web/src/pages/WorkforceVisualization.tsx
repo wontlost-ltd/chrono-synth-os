@@ -23,6 +23,7 @@ import {
 
 const ARCHETYPES: Archetype[] = ['explorer', 'guardian', 'analyst', 'doer'];
 
+/* lint-raw-palette-ignore-block 组织树的负载/状态/处置编码色——需固定且互相可区分的色相来编码类别，随主题漂移会让「同一状态两次看起来不同」；均为装饰性描边/填充，不承载文本 */
 /* 负载 → 节点配色（确定性）。 */
 const LOAD_COLOR: Record<string, string> = { idle: '#9ca3af', normal: '#3b82f6', heavy: '#f97316' };
 /* 任务状态 → 堆叠条配色。 */
@@ -280,12 +281,14 @@ function OrgTree({ nodes, edges }: { nodes: OrgTreeNode[]; edges: OrgTreeEdge[] 
           const y1 = a.depth * (NODE_H + GAP_Y) + GAP_Y + NODE_H;
           const x2 = b.col * (NODE_W + GAP_X) + GAP_X + NODE_W / 2;
           const y2 = b.depth * (NODE_H + GAP_Y) + GAP_Y;
+          /* lint-raw-palette-ignore-next-line 汇报边描边编码色，装饰性 */
           return <path key={`${e.from}-${e.to}`} d={`M${x1},${y1} C${x1},${(y1 + y2) / 2} ${x2},${(y1 + y2) / 2} ${x2},${y2}`} stroke={e.edgeType === 'solid' ? '#9ca3af' : '#d1d5db'} strokeDasharray={e.edgeType === 'solid' ? undefined : '4'} fill="none" />;
         })}
         {/* 节点 */}
         {layout.positioned.map((p) => {
           const x = p.col * (NODE_W + GAP_X) + GAP_X;
           const y = p.depth * (NODE_H + GAP_Y) + GAP_Y;
+          /* lint-raw-palette-ignore-next-line 同上编码色的兜底值 */
           const color = LOAD_COLOR[p.node.load] ?? '#9ca3af';
           return (
             <g key={p.node.workerId}>
@@ -320,6 +323,7 @@ function GoalFlow({ goals, t }: { goals: GoalFlowItem[]; t: (k: string) => strin
             </div>
             <div className="flex h-4 overflow-hidden rounded">
               {Object.entries(g.tasksByStatus).filter(([, n]) => n > 0).map(([status, n]) => (
+                /* lint-raw-palette-ignore-next-line 堆叠条编码色兜底 */
                 <div key={status} style={{ width: `${(n / total) * 100}%`, backgroundColor: STATUS_COLOR[status] ?? '#d1d5db' }} title={`${status}: ${n}`} />
               ))}
             </div>

@@ -35,7 +35,7 @@
     "codegen:design-tokens": "npm run build:design-tokens --silent && node scripts/codegen-design-tokens-css.mjs",
     "codegen:design-tokens:check": "npm run build:design-tokens --silent && node scripts/codegen-design-tokens-css.mjs --check",
     "lint:contrast": "npm run build:design-tokens --silent && node scripts/lint-contrast-ratio.mjs",
-    "lint:raw-palette": "node scripts/lint-raw-palette.mjs",
+    "lint:raw-palette": "node scripts/lint-raw-palette.selftest.mjs && node scripts/lint-raw-palette.mjs",
     "lint:dead-css-tokens": "node scripts/lint-dead-css-tokens.mjs",
     "check:licenses": "node scripts/check-license-boundary.mjs",
     "check:db-access": "node scripts/check-db-access-ratchet.mjs",

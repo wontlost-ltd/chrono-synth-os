@@ -70,6 +70,7 @@ export function Tabs({ value, onChange, items, renderPanel }: TabsProps) {
                 <span
                   aria-hidden="true"
                   className="absolute inset-x-3 -bottom-px h-[2px] rounded-t"
+                  /* lint-raw-palette-ignore-next-line 激活 tab 下划线 indigo 辉光，aria-hidden 纯装饰 */
                   style={{ background: 'var(--gradient-brand)', boxShadow: '0 0 8px rgba(99, 102, 241, 0.6)' }}
                 />
               )}
