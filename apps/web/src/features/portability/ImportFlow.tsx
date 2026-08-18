@@ -39,7 +39,7 @@ export function ImportFlow() {
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-white px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
             >
               Select Export Pack
             </button>
@@ -107,7 +107,7 @@ export function ImportFlow() {
               <button
                 type="button"
                 onClick={() => { reset(); setTokenInput(''); }}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
               >
                 Cancel
               </button>
@@ -135,7 +135,7 @@ export function ImportFlow() {
             <button
               type="button"
               onClick={() => { reset(); setTokenInput(''); }}
-              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
             >
               Done
             </button>
@@ -150,7 +150,7 @@ export function ImportFlow() {
             <button
               type="button"
               onClick={() => { reset(); setTokenInput(''); }}
-              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
             >
               Try Again
             </button>

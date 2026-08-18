@@ -53,7 +53,7 @@ export function NotFound() {
             <li key={s.to}>
               <Link
                 to={s.to}
-                className="rounded-full border border-border bg-surface px-3 py-1.5 text-text-primary hover:bg-surface-elevated focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                className="rounded-full border border-border bg-surface px-3 py-1.5 text-text-primary hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
               >
                 {t(s.labelKey)}
               </Link>

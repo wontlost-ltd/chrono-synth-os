@@ -57,7 +57,7 @@ export function ExportCard() {
               <button
                 type="button"
                 onClick={reset}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
               >
                 New Export
               </button>
@@ -88,7 +88,7 @@ export function ExportCard() {
               <button
                 type="button"
                 onClick={reset}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
               >
                 New Export
               </button>
@@ -104,7 +104,7 @@ export function ExportCard() {
             <button
               type="button"
               onClick={reset}
-              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface-elevated"
+              className="w-fit rounded-lg border border-border px-4 py-2 text-sm font-medium text-text-primary hover:bg-surface"
             >
               Try Again
             </button>

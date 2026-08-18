@@ -204,9 +204,14 @@ for (const route of ROUTES) {
      * 而非真实页面——实测把 WorkforceConsole 的颜色改坏，门竟然不红。
      * 故显式等 loading 文案消失，再给一点渲染余量。 */
     await page.waitForLoadState('domcontentloaded');
-    await page.getByText('common.loading', { exact: true })
+    /* 等 Suspense 的骨架屏消失。判据用**结构类名** `.skeleton-shimmer`
+     * （routes.tsx 的 fallback 是 <Skeleton variant="chart" />），而不是
+     * loading 文案——文案走 i18n，测试里之所以显示成 `common.loading` 原文
+     * 只是因为 i18n 尚未初始化；一旦初始化时机变化，按文案匹配就会立刻
+     * 匹配不到、静默跳过，退回上面描述的假绿。 */
+    await page.locator('.skeleton-shimmer').first()
       .waitFor({ state: 'detached', timeout: 10_000 })
-      .catch(() => { /* 该路由没有 loading 占位则直接继续 */ });
+      .catch(() => { /* 该路由无骨架屏占位则直接继续 */ });
     await page.waitForTimeout(300);
 
     const results = await new AxeBuilder({ page })
