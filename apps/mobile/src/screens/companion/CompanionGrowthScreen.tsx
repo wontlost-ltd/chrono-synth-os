@@ -105,5 +105,5 @@ const styles = StyleSheet.create({
   cardLabel: { fontSize: 15, fontWeight: '600', color: '#1E293B' },
   direction: { fontSize: 13, color: '#64748B', marginTop: 6 },
   barTrack: { height: 6, borderRadius: 3, backgroundColor: '#E2E8F0', overflow: 'hidden', marginTop: 8 },
-  barFill: { height: 6, borderRadius: 3, backgroundColor: '#6366F1' },
+  barFill: { height: 6, borderRadius: 3, backgroundColor: '#4F46E5' },
 });
