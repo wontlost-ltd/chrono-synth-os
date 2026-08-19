@@ -76,27 +76,34 @@ export function registerBackpressure(
     (request as FastifyRequest & { _backpressureTenant?: string })._backpressureTenant = tenantId;
   });
 
-  app.addHook('onResponse', async (request: FastifyRequest) => {
-    const tenantId = (request as FastifyRequest & { _backpressureTenant?: string })._backpressureTenant;
+  /**
+   * 释放 slot —— **exactly-once**。
+   *
+   * ⚠️ 必须清掉 `_backpressureTenant` 标记：handler 抛错时 Fastify 会**先跑
+   * onError、再跑 onResponse**，两个钩子都命中同一请求。不清标记就会**减两次**，
+   * 把**别的在途请求**的 slot 也一并释放掉（`Math.max(0, …)` 只防负数，
+   * 防不住这个）。后果是并发计数偏低、租户可以突破 cap —— 滥用保护静默失效。
+   *
+   * 清标记后谁先跑谁释放，后到的那个 `!tenantId` 直接返回。
+   */
+  const release = (request: FastifyRequest): void => {
+    const marked = request as FastifyRequest & { _backpressureTenant?: string };
+    const tenantId = marked._backpressureTenant;
     if (!tenantId) return;
+    marked._backpressureTenant = undefined;
     const state = inFlight.get(tenantId);
     if (!state) return;
     state.count = Math.max(0, state.count - 1);
     if (state.count === 0) inFlight.delete(tenantId);
-  });
+  };
 
-  /* If the response never reaches onResponse (handler threw, connection
-   * dropped mid-flight), Fastify's onTimeout / onError hooks still need
-   * to release the slot. Otherwise a single client closing connections
-   * during a burst could pin the counter at the cap forever. */
-  app.addHook('onError', async (request: FastifyRequest) => {
-    const tenantId = (request as FastifyRequest & { _backpressureTenant?: string })._backpressureTenant;
-    if (!tenantId) return;
-    const state = inFlight.get(tenantId);
-    if (!state) return;
-    state.count = Math.max(0, state.count - 1);
-    if (state.count === 0) inFlight.delete(tenantId);
-  });
+  app.addHook('onResponse', async (request: FastifyRequest) => release(request));
+
+  /* 响应走不到 onResponse 的路径（handler 抛错、连接中途断开、请求超时）
+   * 同样要还 slot，否则一个客户端在 burst 中不断断连就能把计数器永久顶在
+   * cap 上。三个钩子共用 release()，由标记保证只减一次。 */
+  app.addHook('onError', async (request: FastifyRequest) => release(request));
+  app.addHook('onTimeout', async (request: FastifyRequest) => release(request));
 
   return {
     snapshot(): BackpressureSnapshot {

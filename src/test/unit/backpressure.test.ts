@@ -98,6 +98,43 @@ describe('backpressure', () => {
     } finally { await app.close(); }
   });
 
+  it('抛错的请求只释放一次 slot——不得连带释放别人的（exactly-once）', async () => {
+    /* 回归测试：onError 与 onResponse 都会为**同一个**抛错请求触发。
+     * 若释放时不清 `_backpressureTenant` 标记，就会减两次，把仍在途的
+     * X 的 slot 一并释放掉——计数偏低、租户可突破 cap，滥用保护静默失效。
+     * `Math.max(0, …)` 只防负数，防不住这个，所以必须并发地测。
+     *
+     * 既有的 error 测试是**串行**的（只验证 slot 有被还回来），检不出多还。 */
+    const { app, ctrl } = makeApp(2);
+    let releaseHeld: (() => void) | undefined;
+    app.get('/hold', async () => {
+      await new Promise<void>(resolve => { releaseHeld = resolve; });
+      return { ok: true };
+    });
+    app.get('/boom', async () => { throw new Error('boom'); });
+    try {
+      /* X 一直在途，稳稳占住 1 个 slot */
+      const held = app.inject({ method: 'GET', url: '/hold', headers: { 'x-tenant-id': 't1' } });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(ctrl.snapshot().inFlightByTenant.get('t1'), 1, 'X 应占住 1 个 slot');
+
+      /* Y 抛错：onError + onResponse 双触发 */
+      const boom = await app.inject({ method: 'GET', url: '/boom', headers: { 'x-tenant-id': 't1' } });
+      assert.equal(boom.statusCode, 500);
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      assert.equal(
+        ctrl.snapshot().inFlightByTenant.get('t1') ?? 0,
+        1,
+        'Y 抛错后 X 仍在途，计数必须仍为 1；若为 0 说明 Y 释放了两次、连带释放了 X 的 slot',
+      );
+
+      releaseHeld?.();
+      await held;
+      assert.equal(ctrl.snapshot().totalInFlight, 0, '全部结束后计数应归零');
+    } finally { await app.close(); }
+  });
+
   it('snapshot reports in-flight counts per tenant', async () => {
     const { app, ctrl } = makeApp(5);
     try {

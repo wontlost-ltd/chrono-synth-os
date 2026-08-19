@@ -69,11 +69,13 @@ function makeApp(): {
  * 轮询到某租户占满 cap 为止。
  *
  * ⚠️ 两个细节都来自实测（否则 25 次里仍会偶发挂一次）：
- *   - 用 `setTimeout(0)` 而不是 `setImmediate`：后者停在 check 阶段，
- *     **不让出 timer 阶段**；而 A 的 handler 正卡在 `setTimeout` 上，
- *     于是轮询会空转烧完预算，却始终等不到 A 推进。
+ *   - 用 `setTimeout(0)` 而不是 `setImmediate`：**降低忙轮询强度**。
+ *     （注：`setImmediate` 回调结束后事件循环仍会进入下一轮 timer 阶段，
+ *     并不会「饿死」timer；紧密的 check 阶段轮询是在和 50 个 inject 抢
+ *     调度，实测把整轮拖慢。）
  *   - 超时给到 5s：50 个 inject 同时排队时，事件循环调度延迟实测可达 455ms，
- *     1s 预算在慢机器/繁忙 CI 上余量不足。这是纯等待上限，不影响正常路径耗时。
+ *     1s 预算在慢机器/繁忙 CI 上余量不足。这是纯等待上限，不影响正常路径耗时；
+ *     真 hang 仍会失败，只是从约 1s 变成最多 5s 才报出来。
  */
 async function pollUntilFull(ctrl: BackpressureController, tenant: string, target: number, timeoutMs = 5_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -116,30 +118,32 @@ describe('P1-O-abuse — backpressure under noisy-neighbor load', () => {
        * 而不是排在 A 后面等。实测该偏移恒为 0~1ms；若准入层真的跨租户阻塞，
        * B 会被迫等 A 的 slot 释放，偏移将至少是一个 SLOW_DELAY_MS 量级。
        *
-       * 阈值取 SLOW_DELAY_MS/2：远高于实测值（留足调度余量），
-       * 又远低于「等一轮 A」所需的 50ms，能真正区分两种情形。
-       * 依据：onRequest 准入路径**不含 await**，同一微任务内同步完成，
-       * 故 B 要么立即准入（~0ms），要么必须等 A 的 setTimeout(50) 释放 slot——
-       * 两个区间之间是空的，25ms 落在空隙里。
+       * 阈值取 SLOW_DELAY_MS/2 = 25ms，是**经验性检测边界**，不是从控制流推出的
+       * 二分证明：实测偏移恒为 0~1ms（留足调度余量），而「被迫等一轮 A」需要约
+       * 50ms，25ms 落在这两个实测量级之间。
+       *
+       * ⚠️ 别把它读成「0~25ms 之间不可能有值」——那只对「全局 slot、必须等 A
+       * 完整释放」这一种故障模型成立。共享锁提前释放、准入前几毫秒同步阻塞等
+       * 部分等待，都会落在 25ms 以内（见下方盲区）。
        *
        * 已知盲区（变异实测）：
        *   - 跨租户延迟 <25ms 的缺陷只有约 2/5 概率检出；
-       *   - slot 泄漏（计数器只增不减）本测试看不到——旧版同样看不到，非本次引入。 */
+       *   - slot 泄漏（计数器只增不减）本测试看不到——由 backpressure 单测
+       *     的 exactly-once 用例覆盖。 */
       const bEntryOffsets = entries.filter(e => e.tenant === 'B').map(e => e.at - startB);
-      /* ⚠️ 这条 length 断言必须排在 Math.max 之前，且不可删。
-       * `Math.max(...[])` 是 -Infinity，**恒小于任何阈值**——若 B 一个都没进
-       * handler（例如被全量 429），下面那条断言会**空集通过**。
-       * 实测：移掉本条后，「B 永远 429」的注入缺陷可以骗过整个测试。 */
+      /* 这条 length 断言不可删：若 B 一个都没进 handler（例如被全量 429），
+       * 下面基于偏移的断言在**空集上恒真**，缺陷会被静默放过。
+       * （下面改用 every() 而非 `Math.max(...[])`，避免再依赖 -Infinity 的
+       * 空集语义——但空集本身仍需本条来拦。） */
       assert.equal(
         bEntryOffsets.length,
         QUIET_BURST,
         `tenant B 应有 ${QUIET_BURST} 个请求进入 handler，实际 ${bEntryOffsets.length} 个`,
       );
-      const worstEntryMs = Math.max(...bEntryOffsets);
       assert.ok(
-        worstEntryMs < SLOW_DELAY_MS / 2,
-        `tenant B 最慢一个请求等了 ${worstEntryMs}ms 才进入 handler（阈值 ${SLOW_DELAY_MS / 2}ms），`
-        + '说明准入层存在跨租户阻塞',
+        bEntryOffsets.every(ms => ms < SLOW_DELAY_MS / 2),
+        `tenant B 进入 handler 的偏移 [${bEntryOffsets.join(', ')}]ms 中存在 ≥ `
+        + `${SLOW_DELAY_MS / 2}ms 的样本，说明准入层存在跨租户阻塞`,
       );
 
       const aResults = await Promise.all(noisyResponses);
