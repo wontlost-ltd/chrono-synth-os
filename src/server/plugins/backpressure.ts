@@ -76,27 +76,40 @@ export function registerBackpressure(
     (request as FastifyRequest & { _backpressureTenant?: string })._backpressureTenant = tenantId;
   });
 
-  app.addHook('onResponse', async (request: FastifyRequest) => {
-    const tenantId = (request as FastifyRequest & { _backpressureTenant?: string })._backpressureTenant;
+  /**
+   * 释放 slot —— **exactly-once**。
+   *
+   * ⚠️ 必须清掉 `_backpressureTenant` 标记：handler 抛错时 Fastify 会**先跑
+   * onError、再跑 onResponse**，两个钩子都命中同一请求。不清标记就会**减两次**，
+   * 把**别的在途请求**的 slot 也一并释放掉（`Math.max(0, …)` 只防负数，
+   * 防不住这个）。后果是并发计数偏低、租户可以突破 cap —— 滥用保护静默失效。
+   *
+   * 清标记后谁先跑谁释放，后到的那个 `!tenantId` 直接返回。
+   */
+  const release = (request: FastifyRequest): void => {
+    const marked = request as FastifyRequest & { _backpressureTenant?: string };
+    const tenantId = marked._backpressureTenant;
     if (!tenantId) return;
+    marked._backpressureTenant = undefined;
     const state = inFlight.get(tenantId);
     if (!state) return;
     state.count = Math.max(0, state.count - 1);
     if (state.count === 0) inFlight.delete(tenantId);
-  });
+  };
 
-  /* If the response never reaches onResponse (handler threw, connection
-   * dropped mid-flight), Fastify's onTimeout / onError hooks still need
-   * to release the slot. Otherwise a single client closing connections
-   * during a burst could pin the counter at the cap forever. */
-  app.addHook('onError', async (request: FastifyRequest) => {
-    const tenantId = (request as FastifyRequest & { _backpressureTenant?: string })._backpressureTenant;
-    if (!tenantId) return;
-    const state = inFlight.get(tenantId);
-    if (!state) return;
-    state.count = Math.max(0, state.count - 1);
-    if (state.count === 0) inFlight.delete(tenantId);
-  });
+  app.addHook('onResponse', async (request: FastifyRequest) => release(request));
+
+  /* handler 抛错时响应走 onError 而非只走 onResponse，同样要还 slot，
+   * 否则错误请求会把计数器永久顶在 cap 上。两个钩子共用 release()，
+   * 由标记保证只减一次。
+   *
+   * ⚠️ 刻意**不**注册 onTimeout：它是 socket 级超时（且需配 connectionTimeout，
+   * 本仓当前未配置，默认 0 = 禁用），触发时 Fastify **并不会取消仍在执行的
+   * handler**。在那里还 slot 会让新请求进来，而旧请求还在占数据库/CPU——
+   * 恰好破坏 cap 想守住的资源上限。客户端中途断连是另一个钩子
+   * （onRequestAbort），语义也不同。两者都需要先定义「slot 代表连接还是
+   * 后端工作」再单独处理，不在本次修复范围内。 */
+  app.addHook('onError', async (request: FastifyRequest) => release(request));
 
   return {
     snapshot(): BackpressureSnapshot {

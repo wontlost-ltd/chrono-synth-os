@@ -98,6 +98,59 @@ describe('backpressure', () => {
     } finally { await app.close(); }
   });
 
+  it('抛错的请求只释放一次 slot——不得连带释放别人的（exactly-once）', async () => {
+    /* 回归测试：onError 与 onResponse 都会为**同一个**抛错请求触发。
+     * 若释放时不清 `_backpressureTenant` 标记，就会减两次，把仍在途的
+     * X 的 slot 一并释放掉——计数偏低、租户可突破 cap，滥用保护静默失效。
+     * `Math.max(0, …)` 只防负数，防不住这个，所以必须并发地测。
+     *
+     * 既有的 error 测试是**串行**的（只验证 slot 有被还回来），检不出多还。 */
+    const { app, ctrl } = makeApp(2);
+    let releaseHeld: (() => void) | undefined;
+    /* 用 barrier 而不是 sleep：等「X 真的进了 handler」「Y 的 onResponse 真的跑完」，
+     * 而不是猜多少毫秒够。否则这个测试自己就成了墙钟依赖的 flaky 测试。 */
+    let heldEntered: () => void;
+    const xInHandler = new Promise<void>(resolve => { heldEntered = resolve; });
+    app.get('/hold', async () => {
+      heldEntered();
+      await new Promise<void>(resolve => { releaseHeld = resolve; });
+      return { ok: true };
+    });
+    app.get('/boom', async () => { throw new Error('boom'); });
+    /* 注册在 backpressure 的 onResponse **之后**，故它跑到时释放已完成。 */
+    let boomSettled: () => void;
+    const yReleased = new Promise<void>(resolve => { boomSettled = resolve; });
+    app.addHook('onResponse', async (request) => {
+      if (request.url === '/boom') boomSettled();
+    });
+    try {
+      /* X 一直在途，稳稳占住 1 个 slot */
+      const held = app.inject({ method: 'GET', url: '/hold', headers: { 'x-tenant-id': 't1' } });
+      await xInHandler;
+      assert.equal(ctrl.snapshot().inFlightByTenant.get('t1'), 1, 'X 应占住 1 个 slot');
+
+      /* Y 抛错：onError + onResponse 双触发 */
+      const boom = await app.inject({ method: 'GET', url: '/boom', headers: { 'x-tenant-id': 't1' } });
+      assert.equal(boom.statusCode, 500);
+      await yReleased;
+
+      assert.equal(
+        ctrl.snapshot().inFlightByTenant.get('t1') ?? 0,
+        1,
+        'Y 抛错后 X 仍在途，计数必须仍为 1；若为 0 说明 Y 释放了两次、连带释放了 X 的 slot',
+      );
+
+      /* 不止看诊断 snapshot，还要验**对外行为**：cap=2 且 X 仍占 1，
+       * 那么再来一个请求应当被放行（占满），而第四个必须 429。 */
+      const boom2 = await app.inject({ method: 'GET', url: '/boom', headers: { 'x-tenant-id': 't1' } });
+      assert.equal(boom2.statusCode, 500, 'cap 还剩 1 个位，Z 应被放行（500 而非 429）');
+
+      releaseHeld?.();
+      await held;
+      assert.equal(ctrl.snapshot().totalInFlight, 0, '全部结束后计数应归零');
+    } finally { await app.close(); }
+  });
+
   it('snapshot reports in-flight counts per tenant', async () => {
     const { app, ctrl } = makeApp(5);
     try {
