@@ -99,11 +99,17 @@ export function registerBackpressure(
 
   app.addHook('onResponse', async (request: FastifyRequest) => release(request));
 
-  /* 响应走不到 onResponse 的路径（handler 抛错、连接中途断开、请求超时）
-   * 同样要还 slot，否则一个客户端在 burst 中不断断连就能把计数器永久顶在
-   * cap 上。三个钩子共用 release()，由标记保证只减一次。 */
+  /* handler 抛错时响应走 onError 而非只走 onResponse，同样要还 slot，
+   * 否则错误请求会把计数器永久顶在 cap 上。两个钩子共用 release()，
+   * 由标记保证只减一次。
+   *
+   * ⚠️ 刻意**不**注册 onTimeout：它是 socket 级超时（且需配 connectionTimeout，
+   * 本仓当前未配置，默认 0 = 禁用），触发时 Fastify **并不会取消仍在执行的
+   * handler**。在那里还 slot 会让新请求进来，而旧请求还在占数据库/CPU——
+   * 恰好破坏 cap 想守住的资源上限。客户端中途断连是另一个钩子
+   * （onRequestAbort），语义也不同。两者都需要先定义「slot 代表连接还是
+   * 后端工作」再单独处理，不在本次修复范围内。 */
   app.addHook('onError', async (request: FastifyRequest) => release(request));
-  app.addHook('onTimeout', async (request: FastifyRequest) => release(request));
 
   return {
     snapshot(): BackpressureSnapshot {

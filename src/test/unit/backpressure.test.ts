@@ -107,27 +107,43 @@ describe('backpressure', () => {
      * 既有的 error 测试是**串行**的（只验证 slot 有被还回来），检不出多还。 */
     const { app, ctrl } = makeApp(2);
     let releaseHeld: (() => void) | undefined;
+    /* 用 barrier 而不是 sleep：等「X 真的进了 handler」「Y 的 onResponse 真的跑完」，
+     * 而不是猜多少毫秒够。否则这个测试自己就成了墙钟依赖的 flaky 测试。 */
+    let heldEntered: () => void;
+    const xInHandler = new Promise<void>(resolve => { heldEntered = resolve; });
     app.get('/hold', async () => {
+      heldEntered();
       await new Promise<void>(resolve => { releaseHeld = resolve; });
       return { ok: true };
     });
     app.get('/boom', async () => { throw new Error('boom'); });
+    /* 注册在 backpressure 的 onResponse **之后**，故它跑到时释放已完成。 */
+    let boomSettled: () => void;
+    const yReleased = new Promise<void>(resolve => { boomSettled = resolve; });
+    app.addHook('onResponse', async (request) => {
+      if (request.url === '/boom') boomSettled();
+    });
     try {
       /* X 一直在途，稳稳占住 1 个 slot */
       const held = app.inject({ method: 'GET', url: '/hold', headers: { 'x-tenant-id': 't1' } });
-      await new Promise(resolve => setTimeout(resolve, 20));
+      await xInHandler;
       assert.equal(ctrl.snapshot().inFlightByTenant.get('t1'), 1, 'X 应占住 1 个 slot');
 
       /* Y 抛错：onError + onResponse 双触发 */
       const boom = await app.inject({ method: 'GET', url: '/boom', headers: { 'x-tenant-id': 't1' } });
       assert.equal(boom.statusCode, 500);
-      await new Promise(resolve => setTimeout(resolve, 20));
+      await yReleased;
 
       assert.equal(
         ctrl.snapshot().inFlightByTenant.get('t1') ?? 0,
         1,
         'Y 抛错后 X 仍在途，计数必须仍为 1；若为 0 说明 Y 释放了两次、连带释放了 X 的 slot',
       );
+
+      /* 不止看诊断 snapshot，还要验**对外行为**：cap=2 且 X 仍占 1，
+       * 那么再来一个请求应当被放行（占满），而第四个必须 429。 */
+      const boom2 = await app.inject({ method: 'GET', url: '/boom', headers: { 'x-tenant-id': 't1' } });
+      assert.equal(boom2.statusCode, 500, 'cap 还剩 1 个位，Z 应被放行（500 而非 429）');
 
       releaseHeld?.();
       await held;
