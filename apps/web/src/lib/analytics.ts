@@ -30,26 +30,20 @@ const BATCH_SIZE = 20;
 const FLUSH_ENDPOINT = '/api/v1/analytics/events';
 
 const queue: AnalyticsEvent[] = [];
-let flushScheduled = false;
-
-function nowMs(): number {
-  return typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? Date.now()
-    : Date.now();
-}
+/** 已排期但尚未触发的 flush 定时器；null 表示当前没有排期。 */
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleFlush(): void {
-  if (flushScheduled) return;
-  flushScheduled = true;
+  if (flushTimer !== null) return;
   /* setTimeout 0 batches events fired in the same tick into one POST. */
-  setTimeout(() => {
-    flushScheduled = false;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
     void flush();
   }, 0);
 }
 
 export function track(name: string, properties?: AnalyticsEvent['properties']): void {
-  queue.push({ name, properties, ts: nowMs() });
+  queue.push({ name, properties, ts: Date.now() });
   if (import.meta.env.DEV) {
     /* eslint-disable-next-line no-console */
     console.debug('[analytics]', name, properties ?? {});
@@ -123,6 +117,12 @@ export function initAnalytics(): void {
 /* Test hook — exported only for vitest, not intended for application use. */
 export function _resetAnalyticsForTest(): void {
   queue.length = 0;
-  flushScheduled = false;
+  /* ⚠️ 必须真的 clearTimeout，而不是只把标志位置回 false：
+   * 否则上一个用例排期的 flush 会在**下一个**用例里触发，
+   * 让它看到本不属于自己的一次 POST（跨用例污染）。 */
+  if (flushTimer !== null) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   lifecycleAttached = false;
 }
