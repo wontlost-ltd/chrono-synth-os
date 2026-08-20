@@ -74,7 +74,8 @@ export function registerAdminToolsRoutes(app: FastifyInstance, db: IDatabase): v
     { preHandler: requireRole('admin') },
     async (request) => {
       const body = RevokeReasonSchema.parse(request.body);
-      const ok = permService.revoke(request.params.id, body.reason);
+      /* 审计 P0：按 id 撤销必须限定当前租户，否则可撤销别的租户的授权。 */
+      const ok = permService.revoke(request.params.id, request.tenantId, body.reason);
       if (!ok) {
         throw new NotFoundError('权限不存在或已撤销', ErrorCode.NOT_FOUND_VALUE);
       }

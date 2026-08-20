@@ -58,6 +58,31 @@ describe('ToolPermissionService', () => {
     } finally { db.close(); }
   });
 
+  it('不能按 ID 撤销别的租户的授权（审计 P0：跨租户 IDOR）', () => {
+    /* 回归用例：执行器此前只有 `WHERE id = ?`，租户 A 的管理员拿到 B 的权限 ID
+     * 即可撤销 B 的工具授权。现在 tenant_id 谓词与 id 同在，跨租户撤销应为空操作。 */
+    const { db, service } = makeService();
+    try {
+      const { id } = service.grant({
+        tenantId: 'tenant-b', personaId: 'p1', toolId: 'web_search',
+        scope: 'execute', constraints: {}, grantedBy: 'admin',
+      });
+
+      /* 租户 A 冒用 B 的权限 ID 撤销 → 必须无效 */
+      const crossTenant = service.revoke(id, 'tenant-a', 'attacker');
+      assert.equal(crossTenant, false, '跨租户撤销必须失败');
+
+      /* B 的授权仍然有效 */
+      const stillOk = service.check({
+        tenantId: 'tenant-b', personaId: 'p1', toolId: 'web_search', now: Date.now(),
+      });
+      assert.equal(stillOk.allowed, true, 'B 的授权不得被 A 撤销');
+
+      /* 本租户撤销仍然正常 */
+      assert.equal(service.revoke(id, 'tenant-b', 'ok'), true, '同租户撤销应成功');
+    } finally { db.close(); }
+  });
+
   it('revoke 后 check 返回 revoked', () => {
     const { db, service } = makeService();
     try {
@@ -66,7 +91,7 @@ describe('ToolPermissionService', () => {
         scope: 'execute', constraints: {}, grantedBy: 'admin',
       });
 
-      const ok = service.revoke(id, 'no longer needed');
+      const ok = service.revoke(id, 'default', 'no longer needed');
       assert.equal(ok, true);
 
       const check = service.check({

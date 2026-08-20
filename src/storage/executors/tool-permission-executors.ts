@@ -117,11 +117,13 @@ export function registerToolPermissionExecutors(): void {
   });
 
   registerCommand<TpermRevokeParams>(TPERM_CMD_REVOKE, (db, p) => {
+    /* ⚠️ 审计 P0：此前只有 `WHERE id = ?`，租户 A 的管理员拿到 B 的权限 ID
+     * 即可撤销 B 的工具授权（跨租户 IDOR）。tenant_id 谓词必须与 id 同在。 */
     const result = db.prepare<void>(
       `UPDATE tool_permissions
           SET revoked_at = ?, revocation_reason = ?
-        WHERE id = ? AND revoked_at IS NULL`,
-    ).run(p.now, p.reason, p.id);
+        WHERE id = ? AND tenant_id = ? AND revoked_at IS NULL`,
+    ).run(p.now, p.reason, p.id, p.tenantId);
     return { rowsAffected: result.changes };
   });
 

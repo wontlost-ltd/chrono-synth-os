@@ -73,6 +73,8 @@ export interface TpermDailyUsageParams {
 
 export interface TpermRevokeParams {
   readonly id: string;
+  /** 必传：按 id 撤销同样要限定租户，否则构成跨租户 IDOR（审计 P0）。 */
+  readonly tenantId: string;
   readonly reason: string;
   readonly now: number;
 }
