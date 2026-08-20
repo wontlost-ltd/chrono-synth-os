@@ -26,11 +26,12 @@ export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, c
    * 而 admin 是租户内角色 → 任一租户管理员可读写全平台配置。改为平台运营密钥。 */
   app.get('/api/v1/admin/config', {
     preHandler: requirePlatformOperator(config),
-  }, async (request) => {
-    const user = request.user as JwtPayload | undefined;
-    const role = user?.role ?? 'admin';
-    const items = configService.getConfigItems(role);
-    const effective = configService.getEffectiveConfig(role);
+  }, async () => {
+    /* 能走到这里说明已通过平台运营密钥校验（见上方 preHandler），因此按最高
+     * 可见度取配置。此前是 `user?.role ?? 'admin'`——而平台身份的 user.role 是
+     * 'member'，会把配置项过滤空；平台运营者本就该看到全部。 */
+    const items = configService.getConfigItems('admin');
+    const effective = configService.getEffectiveConfig('admin');
     return { data: { items, effective } };
   });
 
