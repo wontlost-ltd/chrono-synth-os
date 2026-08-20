@@ -5,6 +5,24 @@ vi.mock('./tauri-commands', () => ({
   setAppSetting: vi.fn(async () => undefined),
 }));
 
+/**
+ * ⚠️ 必须 mock：`clearAccountScopedCaches()` 里 `await import('@/companion/growth-data')`
+ * 是**测试期**才发生的动态导入，而 growth-data 又静态 import 回 `@/bridge/http-client`
+ * （成环），vitest 得在用例执行中途现场解析+转译整条依赖链。
+ *
+ * 实测这次导入在**空闲机器**上就要 **3845ms**，而单用例超时是 5000ms —— 只剩
+ * 约 1.1s 余量，机器一忙就超时。golden 全量跑里 `baseUrl 变化 → …` 这条
+ * （文件里第一个用例，承担冷启动导入成本）就是这么挂的：报的是
+ * `Test timed out in 5000ms`，**不是断言失败**。
+ *
+ * mock 掉后这条链在测试里根本不会被加载。注意**原来并没有**针对 growth 缓存的
+ * 断言 —— 直接 mock 会把「换凭据必须清 growth」这条要求变成零覆盖，
+ * 故一并补上调用断言（见下方 'growth 缓存也被清' 用例）。
+ */
+vi.mock('@/companion/growth-data', () => ({
+  clearCachedCompanionGrowth: vi.fn(async () => undefined),
+}));
+
 /* ADR-0061 S2：mock sidecar 端点桥，验 apiFetch 的本地 sidecar 优先 + 陈旧重试逻辑（Codex 复审补测试）。 */
 const sidecarEp = vi.hoisted(() => ({
   endpoint: null as { baseUrl: string; handshakeToken: string; instanceNonce: string } | null,
@@ -26,6 +44,7 @@ import {
   setApiCredentials,
 } from './http-client';
 import { setAppSetting } from './tauri-commands';
+import { clearCachedCompanionGrowth } from '@/companion/growth-data';
 import { APP_SETTING_ACCOUNT_PLAN } from '@/plan/account-plan';
 
 const STORAGE_BASE = 'chrono.api.baseUrl';
@@ -57,6 +76,14 @@ describe('setApiCredentials — 事务式凭据更新 + plan 缓存作废（Code
     await setApiCredentials({ token: 'jwt-new' });
     expect(getApiToken()).toBe('jwt-new');
     expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_ACCOUNT_PLAN, '');
+  });
+
+  it('凭据变化也要清 companion growth 缓存（换账号不得串显旧用户成长）', async () => {
+    /* growth 是用户画像数据，必须跟凭据生命周期一起清。
+     * 这条断言在 mock 掉 growth-data 之前是缺失的——补上，避免为了消除
+     * 慢导入而把这条要求变成零覆盖。 */
+    await setApiCredentials({ token: 'jwt-another' });
+    expect(clearCachedCompanionGrowth).toHaveBeenCalled();
   });
 
   it('值未变化 → 不清缓存（避免无谓写）', async () => {
