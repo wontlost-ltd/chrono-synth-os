@@ -6,18 +6,18 @@ vi.mock('./tauri-commands', () => ({
 }));
 
 /**
- * ⚠️ 必须 mock：`clearAccountScopedCaches()` 里 `await import('@/companion/growth-data')`
- * 是**测试期**才发生的动态导入，而 growth-data 又静态 import 回 `@/bridge/http-client`
- * （成环），vitest 得在用例执行中途现场解析+转译整条依赖链。
+ * ⚠️ 必须 mock：`clearAccountScopedCaches()` 里有
+ * `await import('@/companion/growth-data')`。不 mock 时 vitest 要在**用例执行
+ * 中途**现场解析并转译 growth-data 的整张依赖图，实测这一步是**秒级**的
+ * （远超同目录小模块的毫秒级），逼近 5000ms 单用例超时——文件里第一个用例
+ * 承担这份冷成本，机器一忙就报 `Test timed out in 5000ms`（**超时，不是断言失败**）。
+ * 具体测量数字见本次提交说明，不写进源码以免随机器过时。
  *
- * 实测这次导入在**空闲机器**上就要 **3845ms**，而单用例超时是 5000ms —— 只剩
- * 约 1.1s 余量，机器一忙就超时。golden 全量跑里 `baseUrl 变化 → …` 这条
- * （文件里第一个用例，承担冷启动导入成本）就是这么挂的：报的是
- * `Test timed out in 5000ms`，**不是断言失败**。
+ * mock 掉后这条链在测试里根本不会被加载；本文件只需验证「凭据变化会去调
+ * 清理入口」这一协调行为，清理**本身**的副作用由 `growth-data.test.ts` 覆盖。
  *
- * mock 掉后这条链在测试里根本不会被加载。注意**原来并没有**针对 growth 缓存的
- * 断言 —— 直接 mock 会把「换凭据必须清 growth」这条要求变成零覆盖，
- * 故一并补上调用断言（见下方 'growth 缓存也被清' 用例）。
+ * 注意**原来并没有**针对 growth 缓存的断言 —— 直接 mock 会把「换凭据必须清
+ * growth」这条要求变成零覆盖，故一并补上调用断言。
  */
 vi.mock('@/companion/growth-data', () => ({
   clearCachedCompanionGrowth: vi.fn(async () => undefined),
@@ -83,8 +83,11 @@ describe('setApiCredentials — 事务式凭据更新 + plan 缓存作废（Code
      * 这条断言在 mock 掉 growth-data 之前是缺失的——补上，避免为了消除
      * 慢导入而把这条要求变成零覆盖。 */
     await setApiCredentials({ token: 'jwt-another' });
-    expect(clearCachedCompanionGrowth).toHaveBeenCalled();
+    expect(clearCachedCompanionGrowth).toHaveBeenCalledTimes(1);
+    /* plan 与 growth 都要清，缺一不可（两者都绑当前账号）。 */
+    expect(setAppSettingMock).toHaveBeenCalledWith(APP_SETTING_ACCOUNT_PLAN, '');
   });
+
 
   it('值未变化 → 不清缓存（避免无谓写）', async () => {
     setApiBaseUrl('https://same.example.com');
@@ -92,6 +95,8 @@ describe('setApiCredentials — 事务式凭据更新 + plan 缓存作废（Code
     setAppSettingMock.mockClear();
     await setApiCredentials({ baseUrl: 'https://same.example.com', token: 'jwt-same' });
     expect(setAppSettingMock).not.toHaveBeenCalled();
+    /* 用例名说的是「不清缓存」，那 growth 也必须没被清——否则名不副实。 */
+    expect(clearCachedCompanionGrowth).not.toHaveBeenCalled();
   });
 
   it('清除凭据（null）也算变化 → 清缓存', async () => {
