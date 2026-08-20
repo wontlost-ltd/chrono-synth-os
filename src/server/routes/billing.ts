@@ -75,9 +75,17 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     };
   });
 
-  /* POST /api/v1/admin/billing/refund — admin 退款 */
+  /* POST /api/v1/admin/billing/refund — **平台级**退款。
+   * ⚠️ 审计 P0（交叉审查补漏）：此前 requireRole('admin') + 请求体直接给
+   * paymentIntent/charge，整条链（route → facade.refundPayment → stripe-client）
+   * **完全没有 tenantId**，也不校验该笔支付属于哪个租户。攻击路径：注册新租户
+   * 自动成为 admin → 拿到别的租户的 payment/charge ID → 对平台 Stripe 账户里
+   * 那笔交易发起退款 = 跨租户资金完整性破坏。
+   * 退款本质是平台客服操作（要动平台 Stripe 账户），故改用平台运营密钥；
+   * 若日后要让租户管理员自助退款，必须先建立「支付对象 → 租户」的可信归属
+   * 映射并在此校验，而不是放开守卫。 */
   app.post('/api/v1/admin/billing/refund', {
-    preHandler: requireRole('admin'),
+    preHandler: requirePlatformOperator(config),
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request) => {
     const body = BillingRefundSchema.parse(request.body);

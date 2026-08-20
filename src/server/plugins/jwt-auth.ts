@@ -11,7 +11,7 @@ import { createHash, createPublicKey } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
 import type { AppConfig } from '../../config/schema.js';
-import { requirePlatformOperator, matchesPlatformKey } from './platform-operator.js';
+import { requirePlatformOperator, matchesPlatformKey, isPlatformOperatorPath, markPlatformOperator } from './platform-operator.js';
 import type { JwtPayload } from '../../types/auth.js';
 import {
   KeyRing,
@@ -491,15 +491,20 @@ export async function registerJwtAuth(
     if (request.user) return;
 
     /* 平台运营密钥（审计 P0）：持此密钥者是**平台运营者**，不属于任何租户，
-     * 因而没有、也不该有 JWT。这里先行放行以便到达路由的
-     * `requirePlatformOperator` 守卫——真正的授权判定在那里做（本处只认身份，
-     * 不授权任何具体端点；非平台端点仍会因 tenantId 语义受限）。
-     * 与 metrics scrape key 同一范式：带外密钥证明平台身份。 */
-    if (platformKeys.length > 0 && matchesPlatformKey(request, platformKeys)) {
-      request.user = {
-        sub: 'platform:operator', tenantId: 'default', role: 'member',
-        planId: 'free', iat: 0, exp: 0,
-      } as NonNullable<FastifyRequest['user']>;
+     * 因而没有、也不该有 JWT。
+     *
+     * ⚠️ 交叉审查纠正：**只在平台端点上放行**，且**不伪造 request.user**。
+     * 早先的写法给它塞了一个 `{tenantId:'default', role:'member'}` 的假租户用户，
+     * 等于让平台密钥能以 default 租户成员身份访问**任意**普通端点
+     * （例如 `/api/v1/audit` 无角色守卫、只看 `request.tenantId`），
+     * 把「9 个平台端点」的授权边界捅开了。
+     *
+     * 现在打的是能力标记 `platformOperator`，由 `requirePlatformOperator` 校验；
+     * 非平台路径不放行 —— 请求继续走常规 JWT/API Key 流程，没有凭据就是 401。 */
+    if (isPlatformOperatorPath(request.url)
+      && platformKeys.length > 0
+      && matchesPlatformKey(request, platformKeys)) {
+      markPlatformOperator(request);
       return;
     }
 

@@ -15,6 +15,7 @@ import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { TenantIdentityDirectory } from '../../identity/tenant-identity-directory.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
+import { isPlatformOperatorPath, matchesPlatformKey, markPlatformOperator } from './platform-operator.js';
 
 /** 不需要认证的路径前缀（仅健康检查 + JWKS 端点豁免，指标端点需认证）。
  *  ⚠️ 必须与 jwt-auth.ts 的 PUBLIC_PATHS 保持一致 — 一个豁免另一个不豁免
@@ -81,6 +82,17 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, resolver?:
     const path = request.url.split('?')[0];
     const metricsRoute = isMetricsPath(path);
 
+    /* 平台运营密钥（审计 P0 · 交叉审查补）：本 hook 注册在 jwt-auth **之前**，
+     * 若不在此识别，平台请求会先被「缺少 X-API-Key」401 掉，根本走不到
+     * jwt-auth 与路由守卫（auth.enabled=true 的生产组合下必现）。
+     * 仅对平台端点放行，且只打能力标记、不伪造租户身份。 */
+    if (isPlatformOperatorPath(path)
+      && config.auth.platformOperatorKeys.length > 0
+      && matchesPlatformKey(request, config.auth.platformOperatorKeys)) {
+      markPlatformOperator(request);
+      return done();
+    }
+
     /* 平台指标收紧：/metrics 暴露的是**跨租户聚合**（人群多样性、计费/观测平台 rollup、
      * 逐租户用量与租户 ID），不该被单个租户的 key/JWT 看到。接受两类平台凭据：
      * 专用 scrape key（metricsApiKeys）或平台运营密钥（platformOperatorKeys）——
@@ -101,8 +113,10 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, resolver?:
         : bearer;
       /* 专用 scrape key 或平台运营密钥，任一匹配即可。 */
       const platformKeys = config.auth.platformOperatorKeys;
-      const accepted = [...metricsKeys, ...platformKeys];
-      const isPlatformCredential = typeof presented === 'string'
+      /* 滤空串：配置成 [''] 时不得让「出示空 key」匹配成功。 */
+      const accepted = [...metricsKeys, ...platformKeys]
+        .map((k) => k.trim()).filter((k) => k.length > 0);
+      const isPlatformCredential = typeof presented === 'string' && presented.length > 0
         && accepted.some((k) => safeCompare(presented, k));
       if (!isPlatformCredential) {
         return reply.status(403).send({

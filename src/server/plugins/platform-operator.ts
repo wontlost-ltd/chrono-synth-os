@@ -27,6 +27,42 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { timingSafeEqual, createHash } from 'node:crypto';
 import type { AppConfig } from '../../config/schema.js';
 
+/**
+ * 受平台运营密钥保护的路径。**认证层只在这些路径上认平台密钥**——
+ * 否则该密钥会变成一把「以 default 租户身份访问任意端点」的万能钥匙
+ * （交叉审查发现：`/api/v1/audit` 等端点没有角色守卫，只看 `request.tenantId`）。
+ *
+ * 与各路由自己挂的 `requirePlatformOperator` 是**双重**判定：
+ * 这里决定「认证层认不认」，那里决定「这个端点放不放」。
+ */
+const PLATFORM_OPERATOR_PATHS: readonly string[] = [
+  '/api/v1/auth/keys',            /* 轮换 / deny-jti / 密钥视图（全局信任根） */
+  '/api/v1/admin/config',         /* 全局 config_items */
+  '/api/v1/billing/add-ons',      /* 全局商品目录 */
+  '/api/v1/admin/billing/refund', /* 平台 Stripe 账户退款 */
+];
+
+/** 该 URL 是否属于平台运营端点。 */
+export function isPlatformOperatorPath(url: string): boolean {
+  const path = url.split('?')[0] ?? '';
+  return PLATFORM_OPERATOR_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
+/** 请求上的平台运营者能力标记（不是租户身份，故不写 `request.user`）。 */
+const PLATFORM_FLAG = '_platformOperator';
+
+type MaybeMarked = FastifyRequest & { [PLATFORM_FLAG]?: boolean };
+
+/** 认证层确认平台密钥有效后打标。 */
+export function markPlatformOperator(request: FastifyRequest): void {
+  (request as MaybeMarked)[PLATFORM_FLAG] = true;
+}
+
+/** 该请求是否已被认证层确认为平台运营者。 */
+function isMarkedPlatformOperator(request: FastifyRequest): boolean {
+  return (request as MaybeMarked)[PLATFORM_FLAG] === true;
+}
+
 /** 定长比较，避免按字节提前返回泄漏前缀信息。先 SHA-256 归一化长度。 */
 function safeCompare(a: string, b: string): boolean {
   const hashA = createHash('sha256').update(a).digest();
@@ -55,9 +91,12 @@ function presentedKey(request: FastifyRequest): string | undefined {
  * 「能不能调这个端点」由 `requirePlatformOperator` 判定。
  */
 export function matchesPlatformKey(request: FastifyRequest, keys: readonly string[]): boolean {
-  if (keys.length === 0) return false;
+  /* 与 requirePlatformOperator 同样滤掉空串：否则出示空 key 会意外匹配。 */
+  const usable = keys.map((k) => k.trim()).filter((k) => k.length > 0);
+  if (usable.length === 0) return false;
   const presented = presentedKey(request);
-  return typeof presented === 'string' && keys.some((k) => safeCompare(presented, k));
+  return typeof presented === 'string' && presented.length > 0
+    && usable.some((k) => safeCompare(presented, k));
 }
 
 /**
@@ -68,9 +107,15 @@ export function matchesPlatformKey(request: FastifyRequest, keys: readonly strin
  *  2. 未出示 / 不匹配 → 403，且**不区分**两者的错误文案，避免探测出「密钥是否已配置」。
  */
 export function requirePlatformOperator(config: AppConfig) {
-  const keys = config.auth.platformOperatorKeys;
+  /* 过滤空串：`platformOperatorKeys: ['']` 这类配置若原样使用，会让
+   * 「出示空 key」意外匹配成功（交叉审查发现）。env 解析本就会滤空，
+   * 这里对程序化/配置文件传入的值补上同样的收敛。 */
+  const keys = config.auth.platformOperatorKeys.map((k) => k.trim()).filter((k) => k.length > 0);
 
   return async function guard(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    /* 认证层已确认过平台密钥（且路径在白名单内）→ 直接放行。 */
+    if (isMarkedPlatformOperator(request)) return;
+
     if (keys.length === 0) {
       return reply.status(503).send({
         error: 'ConfigurationError',
