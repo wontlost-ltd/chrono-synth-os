@@ -8,10 +8,14 @@ vi.mock('./tauri-commands', () => ({
 /**
  * ⚠️ 必须 mock：`clearAccountScopedCaches()` 里有
  * `await import('@/companion/growth-data')`。不 mock 时 vitest 要在**用例执行
- * 中途**现场解析并转译 growth-data 的整张依赖图，实测这一步是**秒级**的
- * （远超同目录小模块的毫秒级），逼近 5000ms 单用例超时——文件里第一个用例
- * 承担这份冷成本，机器一忙就报 `Test timed out in 5000ms`（**超时，不是断言失败**）。
- * 具体测量数字见本次提交说明，不写进源码以免随机器过时。
+ * 中途**现场解析并转译它的整张依赖图，实测是**秒级**的（同目录的
+ * `account-plan`/`sidecar-endpoint` 都只要个位数毫秒），逼近 5000ms 单用例超时
+ * ——文件里第一个用例承担这份冷成本，机器一忙就报
+ * `Test timed out in 5000ms`（**超时，不是断言失败**）。
+ *
+ * 成本主要来自 growth-data 静态 import 的 **`@chrono/contracts`**（整个 workspace
+ * 包），实测它单独就占大头；不是 growth-data↔http-client 那个环。
+ * 具体测量数字见提交说明，不写进源码以免随机器过时。
  *
  * mock 掉后这条链在测试里根本不会被加载；本文件只需验证「凭据变化会去调
  * 清理入口」这一协调行为，清理**本身**的副作用由 `growth-data.test.ts` 覆盖。
