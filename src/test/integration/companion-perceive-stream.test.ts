@@ -26,14 +26,15 @@ type Frame = Record<string, unknown>;
  * 正是 golden 全量跑里观察到的症状。
  *
  * 现在：`createReader(ws)` 在 open 之前就挂好监听并把所有帧存进队列；
- * `next()` 优先从队列取，队列空才等新帧。配合 `waitFor(pred)` 按**内容**匹配，
- * 摆脱「第几帧」的假设；失败信息里带上已收到的全部帧，便于诊断。
+ * `next()` 优先从队列取，队列空才等新帧。配合 `waitFor(pred, label, skippable)`
+ * 按**内容**匹配，摆脱「第几帧」的假设；失败信息带上已收到的全部帧便于诊断。
  *
- * 注：曾怀疑还有「先 send 后挂监听」的丢帧竞态，写探针实测**不成立**——
- * `ws.send()` 是异步的，帧不可能在当前同步块结束前到达，而监听器就在同一个
- * 同步块里挂上。只有在 send 与挂监听之间**让出事件循环**才会丢（实测 20/20 丢），
- * 而本文件所有调用点都是紧挨着的，不构成该竞态。缓冲式读取器顺带消除了这个
- * 隐患，但它不是本次改动的理由。
+ * 注：曾怀疑还有「先 send 后挂监听」的丢帧竞态，写探针实测**不成立**。
+ * 原因不是「send 是异步的」，而是 **JS 的 run-to-completion**：message 事件
+ * 不会插进正在执行的调用栈，与网络字节何时到达无关。所以只要 send 与
+ * addEventListener 在**同一个同步块**里就不会丢（实测 0/30）；只有中间
+ * 让出事件循环才会丢（实测 20/20）。本文件所有调用点都是紧挨着的，
+ * 不构成该竞态——缓冲式读取器顺带消除了这个隐患，但它不是本次改动的理由。
  */
 interface FrameReader {
   /** 取下一帧（已缓冲的优先），不关心内容。 */
@@ -51,8 +52,6 @@ interface FrameReader {
     skippable: readonly string[],
     timeoutMs?: number,
   ): Promise<Frame>;
-  /** 迄今收到的全部帧，断言失败时用于诊断。 */
-  seen(): readonly Frame[];
 }
 
 function createReader(ws: WebSocket): FrameReader {
@@ -116,7 +115,6 @@ function createReader(ws: WebSocket): FrameReader {
         }
       }
     },
-    seen: () => all,
   };
 }
 
