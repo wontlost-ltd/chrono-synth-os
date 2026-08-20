@@ -52,6 +52,49 @@ function hashKey(key: string): string {
 }
 
 /**
+ * /metrics 平台凭据门 —— **独立于 `auth.enabled` 注册**。
+ *
+ * /metrics 暴露的是跨租户聚合（逐租户用量、租户 ID、人群多样性 rollup），
+ * 不该被单个租户的 key/JWT 看到，更不该在 auth 关闭时裸奔。
+ * 接受两类平台凭据：专用 scrape key（metricsApiKeys）或平台运营密钥
+ * （platformOperatorKeys）；**两者都没配 → 403 fail-closed**。
+ */
+function registerMetricsGate(app: FastifyInstance, config: AppConfig): void {
+  const metricsKeys = config.auth.metricsApiKeys;
+  app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
+    const path = request.url.split('?')[0];
+    if (!isMetricsPath(path)) return done();
+    const headerKey = request.headers['x-api-key'];
+    const queryKey = (request.query as Record<string, string>)?.apiKey;
+    const authz = request.headers.authorization;
+    const bearer = typeof authz === 'string' && authz.startsWith('Bearer ')
+      ? authz.slice('Bearer '.length).trim() : undefined;
+    const presented = typeof headerKey === 'string' ? headerKey
+      : typeof queryKey === 'string' ? queryKey
+      : bearer;
+    /* 滤空串：配置成 [''] 时不得让「出示空 key」匹配成功。 */
+    const accepted = [...metricsKeys, ...config.auth.platformOperatorKeys]
+      .map((k) => k.trim()).filter((k) => k.length > 0);
+    const ok = typeof presented === 'string' && presented.length > 0
+      && accepted.some((k) => safeCompare(presented, k));
+    if (!ok) {
+      return reply.status(403).send({
+        error: 'AuthorizationError',
+        code: 'AUTH_INVALID_KEY',
+        message: accepted.length === 0
+          ? '平台指标已 fail-closed：需先配置 metricsApiKeys 或 platformOperatorKeys'
+          : '平台指标仅接受平台凭据（metricsApiKeys / platformOperatorKeys）',
+      });
+    }
+    /* 平台凭据校验通过：绑定平台运营者身份（非任一租户），放行。 */
+    request.user = {
+      sub: 'metrics:scrape', tenantId: 'default', role: 'member', planId: 'free', iat: 0, exp: 0,
+    };
+    return done();
+  });
+}
+
+/**
  * API Key 认证插件（分片 Plan 1c Task 7）。
  *
  * 收 `resolver`（TenantDbResolver）而非裸 db：DB Key 校验走 **api_key_hash→tenant 目录定位**（协调库）
@@ -60,6 +103,12 @@ function hashKey(key: string): string {
  * （单库下 coordinator === shard；多库老 key 无目录项时的过渡查询，仍受 shard is_revoked 权威约束）。
  */
 export function registerAuth(app: FastifyInstance, config: AppConfig, resolver?: TenantDbResolver): void {
+  /* ⚠️ 审计 P0（交叉审查补）：/metrics 的平台凭据门**不能**挂在
+   * `auth.enabled` 这个总开关下面。auth 关闭时整个 hook 不注册，
+   * 跨租户聚合指标（逐租户用量 + 租户 ID）就**裸奔**——实测无任何凭据返回 200。
+   * 故先单独注册 metrics 门，再按 auth.enabled 决定要不要注册通用 API-Key 认证。 */
+  registerMetricsGate(app, config);
+
   if (!config.auth.enabled) return;
 
   const validKeys = config.auth.apiKeys;
@@ -93,46 +142,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, resolver?:
       return done();
     }
 
-    /* 平台指标收紧：/metrics 暴露的是**跨租户聚合**（人群多样性、计费/观测平台 rollup、
-     * 逐租户用量与租户 ID），不该被单个租户的 key/JWT 看到。接受两类平台凭据：
-     * 专用 scrape key（metricsApiKeys）或平台运营密钥（platformOperatorKeys）——
-     * 后者让只配了一把平台密钥的部署不必再单独配 scrape key。
-     *
-     * ⚠️ 审计 P0：两者**都未配置**时改为 fail-closed 403（此前是放行，
-     * 于是任何租户的 JWT/API Key 都能读到跨租户指标）。指标不可用是运维问题，
-     * 跨租户泄漏是安全问题——前者可修，后者已发生。
-     * 此 gate 放在 JWT/APIKey 分支之前，确保 JWT 租户用户也被挡在跨租户指标之外。 */
-    if (metricsRoute) {
-      const headerKey = request.headers['x-api-key'];
-      const queryKey = (request.query as Record<string, string>)?.apiKey;
-      const authz = request.headers.authorization;
-      const bearer = typeof authz === 'string' && authz.startsWith('Bearer ')
-        ? authz.slice('Bearer '.length).trim() : undefined;
-      const presented = typeof headerKey === 'string' ? headerKey
-        : typeof queryKey === 'string' ? queryKey
-        : bearer;
-      /* 专用 scrape key 或平台运营密钥，任一匹配即可。 */
-      const platformKeys = config.auth.platformOperatorKeys;
-      /* 滤空串：配置成 [''] 时不得让「出示空 key」匹配成功。 */
-      const accepted = [...metricsKeys, ...platformKeys]
-        .map((k) => k.trim()).filter((k) => k.length > 0);
-      const isPlatformCredential = typeof presented === 'string' && presented.length > 0
-        && accepted.some((k) => safeCompare(presented, k));
-      if (!isPlatformCredential) {
-        return reply.status(403).send({
-          error: 'AuthorizationError',
-          code: 'AUTH_INVALID_KEY',
-          message: accepted.length === 0
-            ? '平台指标已 fail-closed：需先配置 metricsApiKeys 或 platformOperatorKeys'
-            : '平台指标仅接受平台凭据（metricsApiKeys / platformOperatorKeys）',
-        });
-      }
-      /* scrape key 校验通过：绑定平台运营者身份（非任一租户），放行。 */
-      request.user = {
-        sub: 'metrics:scrape', tenantId: 'default', role: 'member', planId: 'free', iat: 0, exp: 0,
-      };
-      return done();
-    }
+
 
     /* 如果已经通过 JWT 认证（由 jwt-auth 插件设置），跳过 API Key 检查 */
     if (request.user) {

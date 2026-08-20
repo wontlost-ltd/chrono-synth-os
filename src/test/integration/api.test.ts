@@ -13,9 +13,13 @@ describe('API 集成测试', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
 
+  /* 审计 P0：/metrics 现在是平台凭据门（且独立于 auth.enabled 注册），
+   * 内容型用例需带平台密钥才拿得到 payload。 */
+  const METRICS_KEY = 'test-metrics-scrape-key';
   const config = loadConfig({
     rateLimit: { max: 10000, timeWindowMs: 60_000 },
     websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    auth: { metricsApiKeys: [METRICS_KEY] },
   });
 
   beforeEach(async () => {
@@ -351,7 +355,7 @@ describe('API 集成测试', () => {
 
   describe('指标端点', () => {
     it('GET /metrics 返回 JSON 指标数据', async () => {
-      const res = await app.inject({ method: 'GET', url: '/metrics' });
+      const res = await app.inject({ method: 'GET', url: '/metrics', headers: { 'x-api-key': METRICS_KEY } });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.body);
       assert.equal(typeof body.uptime_seconds, 'number');
@@ -364,7 +368,7 @@ describe('API 集成测试', () => {
     });
 
     it('GET /metrics/prometheus 返回 Prometheus 格式', async () => {
-      const res = await app.inject({ method: 'GET', url: '/metrics/prometheus' });
+      const res = await app.inject({ method: 'GET', url: '/metrics/prometheus', headers: { 'x-api-key': METRICS_KEY } });
       assert.equal(res.statusCode, 200);
       assert.ok(res.headers['content-type']?.toString().includes('text/plain'));
       const body = res.body;

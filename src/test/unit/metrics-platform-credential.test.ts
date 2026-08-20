@@ -19,15 +19,19 @@ type Hook = (req: FastifyRequest, reply: FastifyReply, done: () => void) => unkn
 
 /** 装配 auth 插件并捕获它注册的 onRequest 钩子。 */
 function captureHook(authOverrides: Record<string, unknown>): Hook {
-  let hook: Hook | undefined;
+  /* ⚠️ registerAuth 现在注册**两个** onRequest hook：先 metrics 门，
+   * 再（可选的）通用 API-Key 认证。这里要的是**第一个**（metrics 门）——
+   * 取最后一个会拿到 API-Key hook，断言全部失真。 */
+  const hooks: Hook[] = [];
   const fakeApp = {
-    addHook: (_name: string, fn: unknown) => { hook = fn as Hook; },
+    addHook: (_name: string, fn: unknown) => { hooks.push(fn as Hook); },
     log: { warn: () => { /* noop */ } },
   } as unknown as Parameters<typeof registerAuth>[0];
   const config = loadConfig({
     auth: { enabled: true, apiKeys: [], metricsApiKeys: [], requireDbKeys: false, ...authOverrides },
   });
   registerAuth(fakeApp, config);
+  const hook = hooks[0];
   if (!hook) throw new Error('registerAuth 未注册 onRequest hook');
   return hook;
 }
@@ -73,6 +77,29 @@ describe('审计 P0 — /metrics 平台凭据门', () => {
     const hook = captureHook({ platformOperatorKeys: ['platform-key'] });
     assert.equal(callMetrics(hook, { 'x-api-key': 'platform-key' }).passed, true);
     assert.equal(callMetrics(hook, { 'x-api-key': 'tenant-key' }).passed, false);
+  });
+
+  it('⚠️ auth.enabled=false 时门仍然生效（此前整个 hook 不注册 → 指标裸奔）', async () => {
+    /* 交叉审查发现：metrics 门原先挂在 `registerAuth` 里，而该函数开头就
+     * `if (!config.auth.enabled) return`。于是 auth 关闭的部署下 /metrics
+     * **无任何凭据即 200**——实测确认过。现在门独立注册，不受该开关影响。 */
+    const { ChronoSynthOS } = await import('../../chrono-synth-os.js');
+    const { createApp } = await import('../../server/index.js');
+    const { SilentLogger } = await import('../../utils/logger.js');
+    const { TestClock } = await import('../../utils/clock.js');
+    const cfg = loadConfig({
+      rateLimit: { max: 10_000, timeWindowMs: 60_000 },
+      websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      auth: { enabled: false, apiKeys: [], metricsApiKeys: [], requireDbKeys: false },
+      jwt: { enabled: false, secret: 'x'.repeat(40), issuer: 'test' },
+    });
+    const os = new ChronoSynthOS({ clock: new TestClock(1000), logger: new SilentLogger() });
+    os.start();
+    const app = await createApp({ os, config: cfg });
+    try {
+      const res = await app.inject({ method: 'GET', url: '/metrics' });
+      assert.equal(res.statusCode, 403, `auth 关闭时也必须 fail-closed，实际 ${res.statusCode}`);
+    } finally { await app.close(); os.close(); }
   });
 
   it('Bearer 形式的平台凭据同样接受（Prometheus 常用 bearer_token）', () => {
