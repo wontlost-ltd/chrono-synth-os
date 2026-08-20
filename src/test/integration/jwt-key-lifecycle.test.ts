@@ -17,6 +17,9 @@ import { KeyRing, type JwtKeyEntry } from '../../server/plugins/jwt-keyring.js';
 import { createJtiDenyList } from '../../server/plugins/jwt-deny-list.js';
 import type { FastifyInstance } from 'fastify';
 
+/** 测试用平台运营密钥（真实部署经 CHRONO_AUTH_PLATFORM_OPERATOR_KEYS 注入）。 */
+const PLATFORM_KEY = 'test-platform-operator-key';
+
 function rsa(): { priv: string; pub: string } {
   const { privateKey, publicKey } = generateKeyPairSync('rsa', {
     modulusLength: 2048,
@@ -150,6 +153,8 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
     const config = loadConfig({
       rateLimit: { max: 10000, timeWindowMs: 60_000 },
       websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+      /* 审计 P0：密钥轮换等平台级端点改由**平台运营密钥**守卫，不再认租户内 admin。 */
+      auth: { platformOperatorKeys: [PLATFORM_KEY] },
       jwt: {
         enabled: true,
         algorithm: 'RS256',
@@ -200,6 +205,32 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
     assert.equal(header.kid, 'kid-1');
   });
 
+  it('租户 admin 也不能轮换全局密钥（审计 P0：admin 是租户内角色，首用户自动 admin）', async () => {
+    /* 回归用例：此前守卫是 `role === 'admin'`，而注册新租户的首个用户自动成为
+     * admin（sso-user-service.ts「首用户 admin、后续 member」）→ 任何人都能替换
+     * 全局 JWT 信任根、伪造任意租户 admin 令牌。现在必须持平台运营密钥。 */
+    const reg = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: 'tenant-admin-rotate@example.com', password: 'password123' },
+    });
+    assert.ok(reg.statusCode >= 200 && reg.statusCode < 300, `register: ${reg.statusCode} ${reg.body}`);
+    const adminToken = JSON.parse(reg.body).data.accessToken as string;
+    /* 确认这个 token 的确是 admin —— 否则本用例会因「本就不是 admin」而假通过。 */
+    const claims = JSON.parse(
+      Buffer.from(adminToken.split('.')[1]!, 'base64url').toString('utf-8'),
+    ) as { role?: string };
+    assert.equal(claims.role, 'admin', '前提：注册用户应为 admin，否则本回归用例无意义');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/keys/rotate',
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { newActiveKid: 'whatever' },
+    });
+    assert.equal(res.statusCode, 403, `租户 admin 必须被拒，实际 ${res.statusCode}: ${res.body}`);
+  });
+
   it('non-admin POST /api/v1/auth/keys/rotate is rejected', async () => {
     /* Auth service defaults new users to 'admin' role (P0-D #1 limitation —
      * see auth-service.ts:77). Downgrade to viewer to test the role guard. */
@@ -232,7 +263,7 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
     assert.equal(res.statusCode, 403, `expected 403 not ${res.statusCode}: ${res.body}`);
   });
 
-  it('admin POST /api/v1/auth/keys/rotate hot-rotates signing key + new tokens verify under the new kid', async () => {
+  it('平台运营密钥 POST /api/v1/auth/keys/rotate 可热换签发密钥 + 新 token 用新 kid 验证', async () => {
     /* GA §8 #1: 取消 AUTH_ROTATE_RESTART_REQUIRED 硬关后，rotate 现在
      * 应当在进程内热换签发密钥。验证步骤：
      *   1) 旋转到一个新的 kid（addNew）。
@@ -240,20 +271,11 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
      *   3) 解码 token header，确认 kid 已是新 active。
      *   4) 用该 token 调用受保护接口，dynamicVerify 应当接受。 */
     const newPair = rsa();
-    const db = (os as unknown as { getDatabase(): { prepare(s: string): { run(...args: unknown[]): unknown } } }).getDatabase();
-    db.prepare(`UPDATE users SET role = 'admin' WHERE email = 'multi-kid-1@example.com'`).run();
-    const login = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/login',
-      payload: { email: 'multi-kid-1@example.com', password: 'password123' },
-    });
-    assert.ok(login.statusCode >= 200 && login.statusCode < 300, `login: ${login.statusCode} ${login.body}`);
-    const adminToken = JSON.parse(login.body).data.accessToken as string;
-
+    /* 不再需要提权某个用户 —— 轮换现在由平台运营密钥授权，与租户角色无关。 */
     const rotate = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/keys/rotate',
-      headers: { authorization: `Bearer ${adminToken}` },
+      headers: { 'x-platform-key': PLATFORM_KEY },
       payload: {
         newActiveKid: 'kid-2',
         addNew: [{
@@ -289,24 +311,16 @@ describe('P0-D #1 — Integration: multi-kid app + rotate endpoint', () => {
       `protected endpoint rejected new-kid token: ${me.statusCode} ${me.body}`);
   });
 
-  it('admin POST /api/v1/auth/keys/rotate ACCEPTS a no-op rotate that only changes oldActiveNewState', async () => {
+  it('平台运营密钥 POST /api/v1/auth/keys/rotate 接受仅改 oldActiveNewState 的 no-op 轮换', async () => {
     /* The legitimate Phase-1A use case: mark the current active key's state
      * (rotate where newActiveKid === current active, no signing change).
      * This is useful for adjusting grace/retired metadata without restart. */
-    const db = (os as unknown as { getDatabase(): { prepare(s: string): { run(...args: unknown[]): unknown } } }).getDatabase();
-    db.prepare(`UPDATE users SET role = 'admin' WHERE email = 'multi-kid-1@example.com'`).run();
-    const login = await app.inject({
-      method: 'POST',
-      url: '/api/v1/auth/login',
-      payload: { email: 'multi-kid-1@example.com', password: 'password123' },
-    });
-    const adminToken = JSON.parse(login.body).data.accessToken as string;
 
-    /* No-op rotate: newActiveKid = bootActiveKid (kid-1). */
+    /* No-op rotate: newActiveKid = bootActiveKid (kid-1)。授权同样走平台运营密钥。 */
     const rotate = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/keys/rotate',
-      headers: { authorization: `Bearer ${adminToken}` },
+      headers: { 'x-platform-key': PLATFORM_KEY },
       payload: { newActiveKid: 'kid-1' },
     });
     assert.ok(rotate.statusCode >= 200 && rotate.statusCode < 300, `rotate: ${rotate.statusCode} ${rotate.body}`);

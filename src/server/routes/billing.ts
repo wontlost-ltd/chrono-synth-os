@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
+import { requirePlatformOperator } from '../plugins/platform-operator.js';
 import { BillingRouteFacade } from '../../billing/billing-route-facade.js';
 import { BillingRefundSchema, CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
@@ -113,9 +114,12 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     }
   });
 
-  /* ── 附加组件管理路由（admin） ── */
+  /* ── 附加组件**目录**管理（平台级） ──
+   * ⚠️ 审计 P0：add_ons 无 tenant_id 且 code 全局 unique，是**平台商品目录**
+   * （per-tenant 关系在 tenant_add_ons）。此前 requireRole('admin') 让任一租户
+   * 管理员都能改全平台目录。读取（GET）保持开放——租户需浏览目录才能购买。 */
 
-  app.post('/api/v1/billing/add-ons', { preHandler: requireRole('admin') }, async (request) => {
+  app.post('/api/v1/billing/add-ons', { preHandler: requirePlatformOperator(config) }, async (request) => {
     const data = request.body as {
       code: string; name: string; description?: string; stripePriceId?: string;
       resource: string; quotaAmount: number;
@@ -123,12 +127,12 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     return { data: await facade.createAddOn(data) };
   });
 
-  app.patch('/api/v1/billing/add-ons/:id', { preHandler: requireRole('admin') }, async (request) => {
+  app.patch('/api/v1/billing/add-ons/:id', { preHandler: requirePlatformOperator(config) }, async (request) => {
     const { id } = request.params as { id: string };
     return { data: await facade.updateAddOn(id, request.body as Record<string, unknown>) };
   });
 
-  app.delete('/api/v1/billing/add-ons/:id', { preHandler: requireRole('admin') }, async (request) => {
+  app.delete('/api/v1/billing/add-ons/:id', { preHandler: requirePlatformOperator(config) }, async (request) => {
     const { id } = request.params as { id: string };
     return { data: await facade.deactivateAddOn(id) };
   });
