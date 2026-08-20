@@ -38,8 +38,19 @@ type Frame = Record<string, unknown>;
 interface FrameReader {
   /** 取下一帧（已缓冲的优先），不关心内容。 */
   next(timeoutMs?: number): Promise<Frame>;
-  /** 等到**满足条件**的帧为止，中途不匹配的帧会被跳过（但保留在已读列表里）。 */
-  waitFor(pred: (f: Frame) => boolean,label: string, timeoutMs?: number): Promise<Frame>;
+  /**
+   * 等到**满足条件**的帧为止。
+   *
+   * ⚠️ 中途遇到的帧只有在 `skippable` 里明确列出的类型才允许跳过；
+   * 出现协议里不该出现的帧（例如配额拒绝流程中冒出 `perceived`）会**立即失败**。
+   * 不能无脑吞掉所有非目标帧——那样等于把协议异常当噪声，断言就废了。
+   */
+  waitFor(
+    pred: (f: Frame) => boolean,
+    label: string,
+    skippable: readonly string[],
+    timeoutMs?: number,
+  ): Promise<Frame>;
   /** 迄今收到的全部帧，断言失败时用于诊断。 */
   seen(): readonly Frame[];
 }
@@ -47,21 +58,35 @@ interface FrameReader {
 function createReader(ws: WebSocket): FrameReader {
   const buffered: Frame[] = [];
   const all: Frame[] = [];
-  let notify: (() => void) | null = null;
+  /* 等待者用**数组**而不是单个回调：单个回调时若有两处同时在等，
+   * 后者会覆盖前者，前者永远不被唤醒、只能等超时。当前用例都是
+   * `await` 紧跟、不存在并发等待，但这属于「靠调用方守纪律」的隐患，
+   * 用数组从结构上消掉。 */
+  const waiters: Array<() => void> = [];
 
   ws.addEventListener('message', (event: MessageEvent) => {
     const frame = JSON.parse(String(event.data)) as Frame;
     buffered.push(frame);
     all.push(frame);
-    notify?.();
+    /* 全部唤醒；各自重新检查队列。 */
+    const pending = waiters.splice(0, waiters.length);
+    for (const wake of pending) wake();
   });
 
   /** 等到队列非空或超时；返回是否还有帧可取。 */
   async function awaitFrame(timeoutMs: number): Promise<boolean> {
     if (buffered.length > 0) return true;
     return await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => { notify = null; resolve(false); }, timeoutMs);
-      notify = () => { clearTimeout(timer); notify = null; resolve(true); };
+      const wake = (): void => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        const i = waiters.indexOf(wake);
+        if (i >= 0) waiters.splice(i, 1);
+        resolve(false);
+      }, timeoutMs);
+      waiters.push(wake);
     });
   }
 
@@ -72,12 +97,18 @@ function createReader(ws: WebSocket): FrameReader {
       }
       return buffered.shift() as Frame;
     },
-    async waitFor(pred, label, timeoutMs = 4000): Promise<Frame> {
+    async waitFor(pred, label, skippable, timeoutMs = 4000): Promise<Frame> {
       const deadline = Date.now() + timeoutMs;
       for (;;) {
         while (buffered.length > 0) {
           const frame = buffered.shift() as Frame;
           if (pred(frame)) return frame;
+          if (!skippable.includes(String(frame.type))) {
+            throw new Error(
+              `等「${label}」时收到不该出现的帧 ${JSON.stringify(frame)}`
+              + `（可跳过的仅 ${skippable.join('/')}）；已收到：${JSON.stringify(all)}`,
+            );
+          }
         }
         const left = deadline - Date.now();
         if (left <= 0 || !(await awaitFrame(left))) {
@@ -262,12 +293,18 @@ describe('实时流感知 WS', () => {
       assert.equal((await reader.next()).type, 'perceived', '第一段成功');
 
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '第二段内容。' }));
-      await reader.waitFor(f => f.type === 'ack', '第二段 chunk 的 ack');
+      await reader.waitFor(f => f.type === 'ack', '第二段 chunk 的 ack', []);
       ws.send(JSON.stringify({ type: 'finalize' }));
-      /* 按**内容**等这一帧，而不是假定它恰好是「下一帧」——中间若混入任何
-       * 其它帧（迟到的 perceived、蒸馏进度），位置断言就会读到错帧，
-       * 表现为 `undefined !== 'QUOTA_EXCEEDED'`。 */
-      const quota = await reader.waitFor(f => f.type === 'error', '超额错误帧');
+      /* 按**内容**等这一帧，而不是假定它恰好是「下一帧」——中间若混入迟到的
+       * ack，位置断言就会读到错帧，表现为 `undefined !== 'QUOTA_EXCEEDED'`。
+       *
+       * 只允许跳过 ack：此处若冒出 `perceived`，说明配额没拦住、真去蒸馏了，
+       * 那是必须炸出来的协议异常，不能当噪声跳过。 */
+      const quota = await reader.waitFor(
+        f => f.type === 'error' && f.code === 'QUOTA_EXCEEDED',
+        'QUOTA_EXCEEDED 错误帧',
+        ['ack'],
+      );
       assert.equal(quota.code, 'QUOTA_EXCEEDED', `第二段应超额，实收：${JSON.stringify(quota)}`);
     } finally {
       ws.close(); await ctx.app.close(); ctx.os.close();
