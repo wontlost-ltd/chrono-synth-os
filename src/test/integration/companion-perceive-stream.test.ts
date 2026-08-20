@@ -15,16 +15,78 @@ import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { loadConfig } from '../../config/schema.js';
 
-function nextMessage(ws: WebSocket, timeoutMs = 4000): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('WS 消息超时')), timeoutMs);
-    const handler = (event: MessageEvent): void => {
-      clearTimeout(timer);
-      ws.removeEventListener('message', handler);
-      resolve(JSON.parse(String(event.data)) as Record<string, unknown>);
-    };
-    ws.addEventListener('message', handler);
+type Frame = Record<string, unknown>;
+
+/**
+ * WS 帧读取器 —— **从连接建立起就持续缓冲**，不漏帧。
+ *
+ * ⚠️ 旧的 `nextMessage(ws)` 是**位置依赖**的：它假定「下一帧」就是想要的那帧。
+ * 中间只要多出任何一帧（迟到的 perceived、蒸馏进度、其它 ack），断言就会读到
+ * 错帧——表现为 `undefined !== 'QUOTA_EXCEEDED'` 这种**「值不对」而非「超时」**，
+ * 正是 golden 全量跑里观察到的症状。
+ *
+ * 现在：`createReader(ws)` 在 open 之前就挂好监听并把所有帧存进队列；
+ * `next()` 优先从队列取，队列空才等新帧。配合 `waitFor(pred)` 按**内容**匹配，
+ * 摆脱「第几帧」的假设；失败信息里带上已收到的全部帧，便于诊断。
+ *
+ * 注：曾怀疑还有「先 send 后挂监听」的丢帧竞态，写探针实测**不成立**——
+ * `ws.send()` 是异步的，帧不可能在当前同步块结束前到达，而监听器就在同一个
+ * 同步块里挂上。只有在 send 与挂监听之间**让出事件循环**才会丢（实测 20/20 丢），
+ * 而本文件所有调用点都是紧挨着的，不构成该竞态。缓冲式读取器顺带消除了这个
+ * 隐患，但它不是本次改动的理由。
+ */
+interface FrameReader {
+  /** 取下一帧（已缓冲的优先），不关心内容。 */
+  next(timeoutMs?: number): Promise<Frame>;
+  /** 等到**满足条件**的帧为止，中途不匹配的帧会被跳过（但保留在已读列表里）。 */
+  waitFor(pred: (f: Frame) => boolean,label: string, timeoutMs?: number): Promise<Frame>;
+  /** 迄今收到的全部帧，断言失败时用于诊断。 */
+  seen(): readonly Frame[];
+}
+
+function createReader(ws: WebSocket): FrameReader {
+  const buffered: Frame[] = [];
+  const all: Frame[] = [];
+  let notify: (() => void) | null = null;
+
+  ws.addEventListener('message', (event: MessageEvent) => {
+    const frame = JSON.parse(String(event.data)) as Frame;
+    buffered.push(frame);
+    all.push(frame);
+    notify?.();
   });
+
+  /** 等到队列非空或超时；返回是否还有帧可取。 */
+  async function awaitFrame(timeoutMs: number): Promise<boolean> {
+    if (buffered.length > 0) return true;
+    return await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => { notify = null; resolve(false); }, timeoutMs);
+      notify = () => { clearTimeout(timer); notify = null; resolve(true); };
+    });
+  }
+
+  return {
+    async next(timeoutMs = 4000): Promise<Frame> {
+      if (!(await awaitFrame(timeoutMs))) {
+        throw new Error(`WS 消息超时；已收到的帧：${JSON.stringify(all)}`);
+      }
+      return buffered.shift() as Frame;
+    },
+    async waitFor(pred, label, timeoutMs = 4000): Promise<Frame> {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        while (buffered.length > 0) {
+          const frame = buffered.shift() as Frame;
+          if (pred(frame)) return frame;
+        }
+        const left = deadline - Date.now();
+        if (left <= 0 || !(await awaitFrame(left))) {
+          throw new Error(`等不到「${label}」；已收到的帧：${JSON.stringify(all)}`);
+        }
+      }
+    },
+    seen: () => all,
+  };
 }
 
 function open(ws: WebSocket): Promise<void> {
@@ -62,20 +124,21 @@ describe('实时流感知 WS', () => {
     const ctx = await setup();
     if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    const reader = createReader(ws);
     try {
       await open(ws);
       /* 分两片送。 */
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '今天开会很累。' }));
-      let m = await nextMessage(ws);
+      let m = await reader.next();
       assert.equal(m.type, 'ack');
       assert.equal(m.accumulatedLength, '今天开会很累。'.length);
 
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '回家想安静。' }));
-      m = await nextMessage(ws);
+      m = await reader.next();
       assert.equal(m.accumulatedLength, '今天开会很累。回家想安静。'.length);
 
       ws.send(JSON.stringify({ type: 'finalize' }));
-      m = await nextMessage(ws);
+      m = await reader.next();
       assert.equal(m.type, 'perceived', JSON.stringify(m));
       const result = m.result as { perceivedMemories: unknown[]; schemaVersion: string };
       assert.equal(result.schemaVersion, 'companion-perceive-result.v1');
@@ -89,10 +152,11 @@ describe('实时流感知 WS', () => {
     const ctx = await setup();
     if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    const reader = createReader(ws);
     try {
       await open(ws);
       ws.send(JSON.stringify({ type: 'finalize' }));
-      const m = await nextMessage(ws);
+      const m = await reader.next();
       assert.equal(m.type, 'error');
       assert.equal(m.code, 'EMPTY_FINALIZE');
     } finally {
@@ -104,16 +168,17 @@ describe('实时流感知 WS', () => {
     const ctx = await setup();
     if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    const reader = createReader(ws);
     try {
       await open(ws);
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '一些内容' }));
-      await nextMessage(ws);
+      await reader.next();
       ws.send(JSON.stringify({ type: 'reset' }));
-      let m = await nextMessage(ws);
+      let m = await reader.next();
       assert.equal(m.type, 'ack');
       assert.equal(m.accumulatedLength, 0);
       ws.send(JSON.stringify({ type: 'finalize' }));
-      m = await nextMessage(ws);
+      m = await reader.next();
       assert.equal(m.code, 'EMPTY_FINALIZE', 'reset 后无累积');
     } finally {
       ws.close(); await ctx.app.close(); ctx.os.close();
@@ -124,14 +189,15 @@ describe('实时流感知 WS', () => {
     const ctx = await setup();
     if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    const reader = createReader(ws);
     try {
       await open(ws);
       ws.send('not json');
-      let m = await nextMessage(ws);
+      let m = await reader.next();
       assert.equal(m.code, 'INVALID_FRAME');
       /* 连接仍活：发合法 chunk 仍 ack。 */
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '内容' }));
-      m = await nextMessage(ws);
+      m = await reader.next();
       assert.equal(m.type, 'ack');
     } finally {
       ws.close(); await ctx.app.close(); ctx.os.close();
@@ -164,6 +230,7 @@ describe('实时流感知 WS', () => {
     const ctx = await setup();
     if (!ctx) { t.skip('sandbox 不允许监听端口'); return; }
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    const reader = createReader(ws);
     try {
       await open(ws);
       /* 累积上限 4000；每片 1000（chunk 上限），第 5 片 1000 会越界（4000+1000>4000）。 */
@@ -171,7 +238,7 @@ describe('实时流感知 WS', () => {
       let last: Record<string, unknown> = {};
       for (let i = 0; i < 5; i++) {
         ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: big }));
-        last = await nextMessage(ws);
+        last = await reader.next();
       }
       assert.equal(last.code, 'BUFFER_FULL', '第 5 片越界 4000 上限');
     } finally {
@@ -186,17 +253,22 @@ describe('实时流感知 WS', () => {
     const { QuotaManager } = await import('../../multi-tenant/quota-manager.js');
     QuotaManager.fromUnitOfWork(ctx.os.getDatabase()).setLimit('default', 'perception', 1, 60_000);
     const ws = new WebSocket(`${ctx.wsUrl}${STREAM}`);
+    const reader = createReader(ws);
     try {
       await open(ws);
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '第一段内容。' }));
-      await nextMessage(ws);
+      await reader.next();
       ws.send(JSON.stringify({ type: 'finalize' }));
-      assert.equal((await nextMessage(ws)).type, 'perceived', '第一段成功');
+      assert.equal((await reader.next()).type, 'perceived', '第一段成功');
 
       ws.send(JSON.stringify({ type: 'chunk', modality: 'audio', chunk: '第二段内容。' }));
-      await nextMessage(ws);
+      await reader.waitFor(f => f.type === 'ack', '第二段 chunk 的 ack');
       ws.send(JSON.stringify({ type: 'finalize' }));
-      assert.equal((await nextMessage(ws)).code, 'QUOTA_EXCEEDED', '第二段超额');
+      /* 按**内容**等这一帧，而不是假定它恰好是「下一帧」——中间若混入任何
+       * 其它帧（迟到的 perceived、蒸馏进度），位置断言就会读到错帧，
+       * 表现为 `undefined !== 'QUOTA_EXCEEDED'`。 */
+      const quota = await reader.waitFor(f => f.type === 'error', '超额错误帧');
+      assert.equal(quota.code, 'QUOTA_EXCEEDED', `第二段应超额，实收：${JSON.stringify(quota)}`);
     } finally {
       ws.close(); await ctx.app.close(); ctx.os.close();
     }
