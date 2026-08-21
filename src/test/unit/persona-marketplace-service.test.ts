@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
+import { pcoreCmdCompleteMarketplaceTask } from '@chrono/kernel';
 
 interface Fixture {
   db: IDatabase;
@@ -92,6 +93,55 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     /* The memory write should be visible. */
     const mems = fx.service.listPersonaMemories(fx.tenantId, fx.ownerUserId, fx.personaId);
     assert.ok(mems?.some((m) => m.kind === 'task'));
+  });
+
+  it('并发完成同一任务不得重复结算（审计 P1：状态迁移 CAS）', () => {
+    /* 服务层在**事务外**读任务并判 `status !== 'accepted'`，两个并发调用会都读到
+     * 'accepted' 并都通过判定。真正的互斥点必须在 SQL 上：
+     * `UPDATE ... WHERE ... AND status = 'accepted'`。
+     *
+     * 实测（无 CAS 时）：reward=100 的任务交错完成两次 → 钱包 90 变 **180**。
+     * 这里直接驱动执行器模拟交错，验证第二次 rowsAffected=0（调用方据此中止）。 */
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'CAS', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.acceptTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+
+    const now = Date.now();
+    const claimOnce = (): number => fx.db.execute(pcoreCmdCompleteMarketplaceTask({
+      tenantId: fx.tenantId, taskId: task.id, qualityScore: 0.9, growthDelta: 1, now,
+    })).rowsAffected;
+
+    assert.equal(claimOnce(), 1, '第一次应抢到状态迁移');
+    assert.equal(claimOnce(), 0, '第二次必须抢不到（否则可重复结算）');
+  });
+
+  it('completeTask 二次调用返回 null 且不再加钱', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Twice', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.acceptTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    const first = fx.service.completeTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, qualityScore: 0.9,
+    });
+    assert.ok(first, '首次完成应成功');
+    const balanceAfterFirst = first!.wallet.balance;
+
+    const second = fx.service.completeTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, qualityScore: 0.9,
+    });
+    assert.equal(second, null, '二次完成必须返回 null');
+
+    const detail = fx.service.getPersonaDetail(fx.tenantId, fx.ownerUserId, fx.personaId)!;
+    assert.equal(detail.wallet?.balance, balanceAfterFirst, '余额不得因二次调用增加');
   });
 
   it('completeTask awards growth + drops task into completed state', () => {

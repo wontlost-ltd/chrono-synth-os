@@ -991,6 +991,7 @@ export class PersonaMarketplaceService {
     } = this.computeSettlementSplit(totalAmountMinor, split.ownerPct, split.personaPct, split.platformPct);
 
     const db = this.source.forTenant(input.tenantId);
+    let claimedAccept = true;
     db.transaction(() => {
       db.execute(pcoreCmdAcceptTaskResult({
         tenantId: input.tenantId,
@@ -1006,13 +1007,21 @@ export class PersonaMarketplaceService {
         now,
       }));
 
-      db.execute(pcoreCmdCompleteMarketplaceTask({
+      /* 与 completeTask 同一道 CAS：`pcoreCmdCompleteMarketplaceTask` 带
+       * `AND status = 'accepted'` 谓词。两个并发的验收都能通过事务外的
+       * `assignment.status !== 'submitted'` 判定，只有抢到状态迁移的那个
+       * 才可以继续分账，否则**重复结算**。 */
+      const claim = db.execute(pcoreCmdCompleteMarketplaceTask({
         tenantId: input.tenantId,
         taskId: input.taskId,
         qualityScore,
         growthDelta,
         now,
       }));
+      if (claim.rowsAffected !== 1) {
+        claimedAccept = false;
+        return;
+      }
 
       db.execute(pcoreCmdUpdatePersonaTaskAccepted({
         tenantId: input.tenantId,
@@ -1114,6 +1123,10 @@ export class PersonaMarketplaceService {
         },
       });
     });
+
+    /* CAS 失败（并发下别人先验收了）→ 验收事务无副作用，**绝不能继续结算**，
+     * 否则同一笔任务会被分账两次。 */
+    if (!claimedAccept) return null;
 
     /* 零回归：保持两阶段时序——先提交上面的验收事务，再独立调 public settleTaskPayment
      * （另开事务结算）。settleTaskPaymentInTx 变体本 task 仅为契约完整存在，此处不改调它。 */
@@ -1379,14 +1392,24 @@ export class PersonaMarketplaceService {
     const tokenReward = round(growthDelta * 8, 2);
 
     const db = this.source.forTenant(input.tenantId);
+    let claimed = true;
     db.transaction(() => {
-      db.execute(pcoreCmdCompleteMarketplaceTask({
+      /* ⚠️ 审计 P1：状态迁移必须是 CAS —— 上面的 `task.status !== 'accepted'` 判定发生在
+       * **事务之外**，两个并发调用会都读到 'accepted' 并都通过。真正的互斥点在这条
+       * `WHERE ... AND status = 'accepted'` 上：只有抢到的那次 rowsAffected=1。
+       * 没抢到就**必须中止**，否则钱包/成长/声誉等副作用照样执行 → 重复结算
+       * （实测：reward=100 交错完成两次 → 余额 90 变 180）。 */
+      const claim = db.execute(pcoreCmdCompleteMarketplaceTask({
         tenantId: input.tenantId,
         taskId: input.taskId,
         qualityScore,
         growthDelta,
         now,
       }));
+      if (claim.rowsAffected !== 1) {
+        claimed = false;
+        return;
+      }
 
       db.execute(pcoreCmdCompleteTaskWalletUpdate({
         tenantId: input.tenantId,
@@ -1475,6 +1498,10 @@ export class PersonaMarketplaceService {
         },
       });
     });
+
+    /* CAS 失败（并发下别人先完成了这个任务）→ 整个事务无副作用，返回 null。
+     * 与「任务不存在 / 状态不对」走同一条返回路径，调用方无需区分。 */
+    if (!claimed) return null;
 
     const nextTask = this.getMarketplaceTask(input.tenantId, task.id);
     /* Reach wallet via walletHook.getWalletByPersonaId since the

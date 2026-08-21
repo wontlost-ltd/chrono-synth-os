@@ -1149,10 +1149,15 @@ export function registerPersonaCoreExecutors(): void {
   });
 
   registerCommand<PcoreCompleteMarketplaceTaskParams>(PCORE_CMD_COMPLETE_MARKETPLACE_TASK, (db, p) => {
+    /* ⚠️ 审计 P1：`AND status = 'accepted'` 是**乐观并发控制（CAS）**，不是冗余条件。
+     * 服务层在事务**外**读任务、判 status，两个并发调用会都读到 'accepted' 都通过判定；
+     * 若 UPDATE 不带 status 谓词，两者都会 rowsAffected=1，于是**重复结算**
+     * （实测：reward=100 的任务交错完成两次 → 钱包 90 变 180）。
+     * 加上谓词后，后到的那次 rowsAffected=0，调用方据此中止并回滚整个事务。 */
     const result = db.prepare<void>(
       `UPDATE marketplace_tasks
        SET status = 'completed', quality_score = ?, growth_delta = ?, completed_at = ?, updated_at = ?
-       WHERE tenant_id = ? AND id = ?`,
+       WHERE tenant_id = ? AND id = ? AND status = 'accepted'`,
     ).run(p.qualityScore, p.growthDelta, p.now, p.now, p.tenantId, p.taskId);
     return { rowsAffected: result.changes };
   });
