@@ -294,3 +294,51 @@ describe('DistillationService 不确定性预算 TOCTOU（锁内权威判定）'
     assert.equal(store.getById('default', r.artifact.id)?.status, 'candidate', 'DB 实际状态仍是 candidate');
   });
 });
+
+describe('ADR-0047 · 租约 fencing（审计 P1）', () => {
+  /** 编译中途租约被他人接管：refresh 返回 null（holder_token 不再匹配）。 */
+  class ExpiringLease {
+    refreshCalls = 0;
+    acquire(): { tenantId: string; personaId: string; purpose: string; holderToken: string; expiresAt: number } {
+      return { tenantId: 'default', personaId: 'default', purpose: 'compile', holderToken: 'tok-A', expiresAt: 9_999 };
+    }
+    release(): boolean { return true; }
+    /* 真实 PersonaLeaseStore.refresh 的 SQL 带 holder_token 谓词 + 未过期校验，
+     * 锁已被他人接管时 rowsAffected=0 → 返回 null。 */
+    refresh(): null { this.refreshCalls += 1; return null; }
+  }
+
+  function buildWithLease(lease: ExpiringLease, rollbackSpy: { called: boolean }) {
+    const store = new MockStore();
+    store.compiledBehavior = 'false';   /* 触发补偿路径 */
+    const compiler = { compile: () => ({ ok: true, applied: 1 }) } as unknown as ArtifactCompiler;
+    const guard: SnapshotGuard = {
+      snapshot: () => 'snap',
+      rollback: () => { rollbackSpy.called = true; return true; },
+    };
+    return new DistillationService({
+      store: store as unknown as DistilledArtifactStore,
+      compiler, snapshotGuard: guard,
+      bus: new EventBus(), clock: new TestClock(1000), logger: new SilentLogger(),
+      leaseStore: lease as never,
+    });
+  }
+
+  it('租约已被他人接管时**放弃回滚**（否则会覆盖新持有者的编译成果）', () => {
+    /* 失败场景：A 持锁编译中卡住 → TTL 过期 → B 抢锁并编译成功 →
+     * A 恢复走补偿，用进入临界区前的快照 rollback → 覆盖掉 B 的成果，
+     * 而工件仍是 compiled ⇒ 「工件说已编译、核心却是旧的」静默不一致。 */
+    const lease = new ExpiringLease();
+    const rollbackSpy = { called: false };
+    const svc = buildWithLease(lease, rollbackSpy);
+
+    svc.ingest('default', {
+      kind: 'value_shift', source: 'reflection', payload: VALID_PAYLOAD,
+      confidence: 0.9,
+      evidence: [{ type: 'pattern', id: 'e1', score: 0.8 }, { type: 'memory', id: 'm1', score: 0.6 }],
+    });
+
+    assert.ok(lease.refreshCalls > 0, '补偿前必须校验租约仍在手（fencing）');
+    assert.equal(rollbackSpy.called, false, '租约已失效时不得回滚——那会覆盖新持有者的编译');
+  });
+});
