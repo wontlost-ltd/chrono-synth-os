@@ -35,17 +35,62 @@ import type { AppConfig } from '../../config/schema.js';
  * 与各路由自己挂的 `requirePlatformOperator` 是**双重**判定：
  * 这里决定「认证层认不认」，那里决定「这个端点放不放」。
  */
-const PLATFORM_OPERATOR_PATHS: readonly string[] = [
-  '/api/v1/auth/keys',            /* 轮换 / deny-jti / 密钥视图（全局信任根） */
-  '/api/v1/admin/config',         /* 全局 config_items */
-  '/api/v1/billing/add-ons',      /* 全局商品目录 */
-  '/api/v1/admin/billing/refund', /* 平台 Stripe 账户退款 */
+/**
+ * ⚠️ **必须逐路由精确列举，不能用前缀**（独立审查发现的 Critical）。
+ *
+ * 前一版把 `/api/v1/billing/add-ons` 当前缀匹配，而该前缀下还挂着
+ * `POST /api/v1/billing/add-ons/:id/purchase` —— 一个**面向租户、没有任何
+ * 守卫**的端点。于是认证层放行了它，`requirePlatformOperator` 又不在它上面，
+ * 结果：平台密钥 + 任意 `X-Tenant-Id` → 给**别的租户**写 entitlement，
+ * 实测返回 `200 {"purchased":true}`（无凭据同请求是 401，证明正是平台密钥
+ * 在放行）。这正是本分支想关掉的「万能钥匙」类缺陷换了个入口。
+ *
+ * 根因：**用路径前缀做认证判定，却不保证该前缀下每条路由都挂了授权守卫**。
+ * 故改为「方法 + 精确路径」白名单，并由 `platform-operator-guard-parity`
+ * 用例锁死「白名单里的每一条都真的挂了 requirePlatformOperator」。
+ */
+interface PlatformRoute { readonly method: string; readonly path: string }
+
+const PLATFORM_OPERATOR_ROUTES: readonly PlatformRoute[] = [
+  /* 全局 JWT 信任根 */
+  { method: 'POST', path: '/api/v1/auth/keys/rotate' },
+  { method: 'POST', path: '/api/v1/auth/keys/deny-jti' },
+  { method: 'GET', path: '/api/v1/auth/keys' },
+  /* 全局 config_items */
+  { method: 'GET', path: '/api/v1/admin/config' },
+  { method: 'PATCH', path: '/api/v1/admin/config' },
+  { method: 'GET', path: '/api/v1/admin/config/audit' },
+  /* 全局商品目录 —— 注意**不含** /:id/purchase（那是租户端点） */
+  { method: 'POST', path: '/api/v1/billing/add-ons' },
+  { method: 'PATCH', path: '/api/v1/billing/add-ons/:id' },
+  { method: 'DELETE', path: '/api/v1/billing/add-ons/:id' },
+  /* 平台 Stripe 账户退款 */
+  { method: 'POST', path: '/api/v1/admin/billing/refund' },
 ];
 
-/** 该 URL 是否属于平台运营端点。 */
-export function isPlatformOperatorPath(url: string): boolean {
-  const path = url.split('?')[0] ?? '';
-  return PLATFORM_OPERATOR_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+/** 供测试断言「白名单 ↔ 实际守卫」一致性。 */
+export const PLATFORM_OPERATOR_ROUTE_LIST = PLATFORM_OPERATOR_ROUTES;
+
+/** 把 `/api/v1/billing/add-ons/addon_123` 归一成 `/api/v1/billing/add-ons/:id`。 */
+function normalizeParams(path: string, pattern: string): string {
+  const ps = path.split('/');
+  const qs = pattern.split('/');
+  if (ps.length !== qs.length) return path;
+  return qs.map((seg, i) => (seg.startsWith(':') ? seg : ps[i])).join('/');
+}
+
+/**
+ * 该请求是否命中平台运营端点。**方法 + 精确路径**双重匹配，
+ * 不做前缀匹配 —— 前缀会把未加守卫的子路由一并放行。
+ */
+export function isPlatformOperatorRoute(method: string, url: string): boolean {
+  const raw = (url.split('?')[0] ?? '').replace(/\/+$/, '') || '/';
+  const m = method.toUpperCase();
+  return PLATFORM_OPERATOR_ROUTES.some((r) => {
+    if (r.method !== m) return false;
+    if (!r.path.includes(':')) return raw === r.path;
+    return normalizeParams(raw, r.path) === r.path;
+  });
 }
 
 /** 请求上的平台运营者能力标记（不是租户身份，故不写 `request.user`）。 */

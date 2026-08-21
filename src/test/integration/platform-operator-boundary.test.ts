@@ -23,6 +23,7 @@ import { createApp } from '../../server/index.js';
 import { SilentLogger } from '../../utils/logger.js';
 import { TestClock } from '../../utils/clock.js';
 import { loadConfig } from '../../config/schema.js';
+import { PLATFORM_OPERATOR_ROUTE_LIST } from '../../server/plugins/platform-operator.js';
 
 const PLATFORM_KEY = 'test-platform-operator-key';
 const TENANT_KEY = 'test-tenant-api-key';
@@ -162,6 +163,40 @@ describe('审计 P0 — 平台运营者边界（auth.enabled=true 生产组合�
       method: 'GET', url: '/api/v1/admin/config', headers: { 'x-platform-key': PLATFORM_KEY },
     });
     assert.equal(ok.statusCode, 200, '真平台密钥应仍可用');
+  });
+
+  it('⛔ 不变量：白名单每条路由都必须拒绝租户凭据（防「认证放行但无授权守卫」）', async () => {
+    /* 这条是**类别级**防线，来自独立审查的建议。
+     *
+     * 上一版用**路径前缀**做认证判定：`/api/v1/billing/add-ons` 前缀下还挂着
+     * `POST /:id/purchase` —— 一个面向租户、**没有任何守卫**的端点。认证层放行了它，
+     * 授权层又不在它上面，于是平台密钥 + 任意 X-Tenant-Id 能给**别的租户**写
+     * entitlement（实测 200 {"purchased":true}，无凭据同请求 401）。
+     *
+     * 光修那一条不够——只要「认证白名单」与「实际挂守卫的路由」会漂移，同类缺陷
+     * 就会再来。这里对白名单里的**每一条**发一个带租户凭据的请求，断言全部被拒：
+     * 若某条只被认证层放行、却没挂 requirePlatformOperator，它就会返回 2xx 而暴露。 */
+    for (const r of PLATFORM_OPERATOR_ROUTE_LIST) {
+      const url = r.path.replace(':id', 'probe-id');
+      const res = await app.inject({
+        method: r.method as 'GET', url,
+        headers: { 'x-api-key': TENANT_KEY },
+        ...(r.method === 'GET' ? {} : { payload: {} }),
+      });
+      assert.ok(res.statusCode === 403 || res.statusCode === 401,
+        `${r.method} ${r.path} 应拒绝租户凭据（401/403），实际 ${res.statusCode}：`
+        + `该路由可能在认证白名单里却没挂 requirePlatformOperator`);
+    }
+  });
+
+  it('租户端点 /add-ons/:id/purchase 不得被平台密钥认证（Critical 回归）', async () => {
+    /* 直接锁死那条被利用的路径：它在旧前缀白名单覆盖范围内，但**不是**平台端点。 */
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/billing/add-ons/probe-id/purchase',
+      headers: { 'x-platform-key': PLATFORM_KEY, 'x-tenant-id': 'victim-tenant' },
+    });
+    assert.equal(res.statusCode, 401,
+      `平台密钥不得认证租户端点，实际 ${res.statusCode}（修复前是 200 {"purchased":true}）`);
   });
 
   it('白名单是前缀匹配，但不得被相似路径蒙混（config-evil 不是平台端点）', async () => {

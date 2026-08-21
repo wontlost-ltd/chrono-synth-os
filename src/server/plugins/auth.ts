@@ -15,7 +15,7 @@ import type { TenantDbResolver } from '../../storage/tenant-db-resolver.js';
 import { TenantIdentityDirectory } from '../../identity/tenant-identity-directory.js';
 import { registerCoreSelfExecutors } from '../../storage/executors/index.js';
 import { timingSafeEqual, createHash } from 'node:crypto';
-import { isPlatformOperatorPath, matchesPlatformKey, markPlatformOperator } from './platform-operator.js';
+import { isPlatformOperatorRoute, matchesPlatformKey, markPlatformOperator } from './platform-operator.js';
 
 /** 不需要认证的路径前缀（仅健康检查 + JWKS 端点豁免，指标端点需认证）。
  *  ⚠️ 必须与 jwt-auth.ts 的 PUBLIC_PATHS 保持一致 — 一个豁免另一个不豁免
@@ -64,12 +64,17 @@ function registerMetricsGate(app: FastifyInstance, config: AppConfig): void {
   app.addHook('onRequest', (request: FastifyRequest, reply: FastifyReply, done) => {
     const path = request.url.split('?')[0];
     if (!isMetricsPath(path)) return done();
+    /* ⚠️ 必须也认 `x-platform-key`：它是平台运营密钥的**规范 header**
+     * （见 platform-operator.presentedKey）。此前这里只读 x-api-key/?apiKey/Bearer，
+     * 运维照文档用 X-Platform-Key 打 /metrics 会拿到硬 403。 */
+    const platformHeader = request.headers['x-platform-key'];
     const headerKey = request.headers['x-api-key'];
     const queryKey = (request.query as Record<string, string>)?.apiKey;
     const authz = request.headers.authorization;
     const bearer = typeof authz === 'string' && authz.startsWith('Bearer ')
       ? authz.slice('Bearer '.length).trim() : undefined;
-    const presented = typeof headerKey === 'string' ? headerKey
+    const presented = typeof platformHeader === 'string' ? platformHeader
+      : typeof headerKey === 'string' ? headerKey
       : typeof queryKey === 'string' ? queryKey
       : bearer;
     /* 滤空串：配置成 [''] 时不得让「出示空 key」匹配成功。 */
@@ -135,7 +140,7 @@ export function registerAuth(app: FastifyInstance, config: AppConfig, resolver?:
      * 若不在此识别，平台请求会先被「缺少 X-API-Key」401 掉，根本走不到
      * jwt-auth 与路由守卫（auth.enabled=true 的生产组合下必现）。
      * 仅对平台端点放行，且只打能力标记、不伪造租户身份。 */
-    if (isPlatformOperatorPath(path)
+    if (isPlatformOperatorRoute(request.method, path)
       && config.auth.platformOperatorKeys.length > 0
       && matchesPlatformKey(request, config.auth.platformOperatorKeys)) {
       markPlatformOperator(request);

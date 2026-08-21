@@ -11,7 +11,7 @@ import { createHash, createPublicKey } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
 import type { AppConfig } from '../../config/schema.js';
-import { requirePlatformOperator, matchesPlatformKey, isPlatformOperatorPath, markPlatformOperator } from './platform-operator.js';
+import { requirePlatformOperator, matchesPlatformKey, isPlatformOperatorRoute, markPlatformOperator } from './platform-operator.js';
 import type { JwtPayload } from '../../types/auth.js';
 import {
   KeyRing,
@@ -501,7 +501,7 @@ export async function registerJwtAuth(
      *
      * 现在打的是能力标记 `platformOperator`，由 `requirePlatformOperator` 校验；
      * 非平台路径不放行 —— 请求继续走常规 JWT/API Key 流程，没有凭据就是 401。 */
-    if (isPlatformOperatorPath(request.url)
+    if (isPlatformOperatorRoute(request.method, request.url)
       && platformKeys.length > 0
       && matchesPlatformKey(request, platformKeys)) {
       markPlatformOperator(request);
