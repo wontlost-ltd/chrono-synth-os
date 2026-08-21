@@ -17,6 +17,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { FastifyInstance } from 'fastify';
+import type { InjectOptions } from 'light-my-request';
 import { ChronoSynthOS } from '../../chrono-synth-os.js';
 import { createApp } from '../../server/index.js';
 import { SilentLogger } from '../../utils/logger.js';
@@ -131,6 +132,36 @@ describe('审计 P0 — 平台运营者边界（auth.enabled=true 生产组合�
     /* 关键是**没有**被 403/401 挡在授权层；用的是假 Stripe key，下游必然失败。 */
     assert.notEqual(res.statusCode, 403, '平台密钥不应被授权层拒绝');
     assert.notEqual(res.statusCode, 401, '平台密钥不应被认证层拒绝');
+  });
+
+  it('能力标记不可被客户端污染（body / __proto__ / query / header 均无效）', async () => {
+    /* `markPlatformOperator` 往 request 上写 `_platformOperator`，`requirePlatformOperator`
+     * 读它就放行。若客户端能通过任意途径把该属性置真，整套守卫即告失效。
+     * 逐一实测：body 直塞、body 原型污染、query 参数、同名 header，
+     * 以及「原型污染之后再发一个干净请求」（验证无全局残留）。 */
+    const attempts: Array<[string, InjectOptions]> = [
+      ['body 直塞', { method: 'PATCH', url: '/api/v1/admin/config',
+        headers: { 'x-api-key': TENANT_KEY },
+        payload: { _platformOperator: true, 'safety.drift.warningThreshold': 0.1 } }],
+      ['body 原型污染', { method: 'PATCH', url: '/api/v1/admin/config',
+        headers: { 'x-api-key': TENANT_KEY },
+        payload: { __proto__: { _platformOperator: true }, 'safety.drift.warningThreshold': 0.1 } }],
+      ['query 参数', { method: 'GET', url: '/api/v1/admin/config?_platformOperator=true',
+        headers: { 'x-api-key': TENANT_KEY } }],
+      ['同名 header', { method: 'GET', url: '/api/v1/admin/config',
+        headers: { 'x-api-key': TENANT_KEY, _platformOperator: 'true' } }],
+      ['污染后的干净请求', { method: 'GET', url: '/api/v1/admin/config',
+        headers: { 'x-api-key': TENANT_KEY } }],
+    ];
+    for (const [label, opts] of attempts) {
+      const res = await app.inject(opts);
+      assert.equal(res.statusCode, 403, `${label} 不得绕过平台守卫，实际 ${res.statusCode}`);
+    }
+    /* 对照：真平台密钥仍然可用（确保上面不是「一律拒绝」的假通过）。 */
+    const ok = await app.inject({
+      method: 'GET', url: '/api/v1/admin/config', headers: { 'x-platform-key': PLATFORM_KEY },
+    });
+    assert.equal(ok.statusCode, 200, '真平台密钥应仍可用');
   });
 
   it('白名单是前缀匹配，但不得被相似路径蒙混（config-evil 不是平台端点）', async () => {
