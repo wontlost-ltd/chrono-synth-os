@@ -242,6 +242,44 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     assert.ok(applicants[0]!.personaName, '带 persona display_name');
   });
 
+  it('reward=0 的任务验收后不得停在「已验收未结算」（审计 P1）', () => {
+    /* API 允许 reward=0（`z.number().min(0)`），但 settleTaskPaymentInTx 有
+     * `if (totalAmountMinor <= 0) return null`。旧时序是「先提交验收事务、再另开
+     * 事务结算」，于是 reward=0 会**验收成功但永久无结算记录**，重试又被终态拒绝。
+     * 这条锁死：要么验收就被拒（零奖励不可验收），要么验收成功且状态自洽。 */
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Zero reward', description: 'desc', category: 'general', reward: 0,
+    });
+    fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    const assignment = fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    assert.ok(assignment);
+    fx.service.submitTaskResult({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id,
+      assignmentId: assignment!.id, resultUri: 's3://t/r', evaluation: { quality: 0.9 },
+    });
+
+    const accepted = fx.service.acceptSubmittedTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+      taskId: task.id, clientRating: 5, qualityScore: 0.9,
+    });
+
+    const after = fx.service.getMarketplaceTaskById(fx.tenantId, task.id);
+    if (accepted) {
+      /* 若允许验收，则必须真的完成了——不能是「completed 但没结算」的悬空态。 */
+      assert.equal(after?.status, 'completed', '验收成功则任务应为 completed');
+    } else {
+      /* 若拒绝验收，任务不得被改成终态——否则同样卡死（重试会被终态拒）。 */
+      assert.notEqual(after?.status, 'completed', '验收被拒时任务不得停在 completed');
+    }
+  });
+
   it('submitTaskResult + acceptSubmittedTask round-trips through the facade', () => {
     const task = fx.service.publishTask({
       tenantId: fx.tenantId,

@@ -983,6 +983,14 @@ export class PersonaMarketplaceService {
     const growthDelta = round(rewardSignal * (0.6 + qualityScore));
     const reputationDelta = round((qualityScore - 0.5) * 8 + rewardSignal * 3 + (clientRating - 3) * 0.8);
     const totalAmountMinor = toMinor(task.reward);
+    /* ⚠️ 审计 P1：零金额必须**在任何写入之前**拒绝。
+     * 发布接口允许 `reward = 0`（`z.number().min(0)`），而 `settleTaskPaymentInTx`
+     * 有 `if (totalAmountMinor <= 0) return null`。旧时序是「先提交验收事务、
+     * 再另开事务结算」，于是 reward=0 会**验收提交、结算失败**，任务永久停在
+     * `completed` 却没有结算记录；重试又被终态拒绝 —— 实测复现过这个死状态。
+     * 在这里前置拒绝，任务保持 submitted，发布者可改价后重新验收。 */
+    if (totalAmountMinor <= 0) return null;
+
     const split = { ownerPct: 60, personaPct: 20, platformPct: 20 };
     const {
       ownerAmountMinor,
