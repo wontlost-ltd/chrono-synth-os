@@ -28,9 +28,12 @@ describe('AI 安全治理集成测试', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
 
+  /* 审计 P0：/admin/config 操作的是**全局** config_items 表，改由平台运营密钥守卫。 */
+  const PLATFORM_KEY = 'test-platform-operator-key';
   const config = loadConfig({
     rateLimit: { max: 10000, timeWindowMs: 60_000 },
     websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    auth: { platformOperatorKeys: [PLATFORM_KEY] },
     jwt: { enabled: true, secret: JWT_SECRET, issuer: 'test' },
   });
 
@@ -211,9 +214,22 @@ describe('AI 安全治理集成测试', () => {
     assert.equal(bodyB.memoryConfidence.totalCount, 1, '租户 B 应只看到自己的 1 条记忆');
   });
 
+  it('租户 admin 不能改全局配置（审计 P0：config_items 无 tenant_id）', async () => {
+    /* 回归用例：此前守卫是 requireRole('admin')，而注册新租户的首个用户自动成为
+     * admin → 任一租户管理员可 PATCH 全局 rateLimit 等配置，影响所有租户。 */
+    const { accessToken, tenantId } = await registerAndGetAuth(app, 'tenant-admin-cfg@test.com');
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/v1/admin/config',
+      headers: { authorization: `Bearer ${accessToken}`, 'x-tenant-id': tenantId },
+      payload: { 'safety.drift.warningThreshold': 0.42 },
+    });
+    assert.equal(res.statusCode, 403, `租户 admin 必须被拒，实际 ${res.statusCode}: ${res.body}`);
+  });
+
   it('PATCH /admin/config 调整 safety.drift 阈值后立即生效', async () => {
-    const { accessToken, tenantId } = await registerAndGetAuth(app, 'drift-threshold@test.com');
-    const headers = { authorization: `Bearer ${accessToken}`, 'x-tenant-id': tenantId };
+    /* config_items 是全局表 → 需平台运营密钥，租户 JWT 不再有权（审计 P0）。 */
+    const headers = { 'x-platform-key': PLATFORM_KEY };
 
     // 调整阈值（warning=0.05 / critical=0.10，比默认值低很多）
     const patchRes = await app.inject({

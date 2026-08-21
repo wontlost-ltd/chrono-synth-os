@@ -15,25 +15,29 @@ import type { JwtPayload } from '../../types/auth.js';
 import { PersonaDriftAnalyzer, resolveDriftThresholds } from '../../safety/persona-drift-analyzer.js';
 import { DriftAlertService } from '../../safety/drift-alert-service.js';
 import { ConsoleLogger } from '../../utils/logger.js';
+import { requirePlatformOperator } from '../plugins/platform-operator.js';
 
 export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, config: AppConfig): void {
   const redis = app.redis;
   const configService = new ConfigService(db, config, redis);
 
   /* GET /api/v1/admin/config — 按角色获取配置 */
+  /* ⚠️ 审计 P0：config_items 是**全局**表（cfgQueryAll/cfgCmdUpsert 均不带 tenantId），
+   * 而 admin 是租户内角色 → 任一租户管理员可读写全平台配置。改为平台运营密钥。 */
   app.get('/api/v1/admin/config', {
-    preHandler: requireRole('admin'),
-  }, async (request) => {
-    const user = request.user as JwtPayload | undefined;
-    const role = user?.role ?? 'admin';
-    const items = configService.getConfigItems(role);
-    const effective = configService.getEffectiveConfig(role);
+    preHandler: requirePlatformOperator(config),
+  }, async () => {
+    /* 能走到这里说明已通过平台运营密钥校验（见上方 preHandler），因此按最高
+     * 可见度取配置。此前是 `user?.role ?? 'admin'`——而平台身份的 user.role 是
+     * 'member'，会把配置项过滤空；平台运营者本就该看到全部。 */
+    const items = configService.getConfigItems('admin');
+    const effective = configService.getEffectiveConfig('admin');
     return { data: { items, effective } };
   });
 
   /* PATCH /api/v1/admin/config — 批量更新配置（限流: 10 次/分钟） */
   app.patch('/api/v1/admin/config', {
-    preHandler: requireRole('admin'),
+    preHandler: requirePlatformOperator(config),
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
   }, async (request) => {
     const body = request.body as Record<string, unknown> | null;
@@ -55,7 +59,7 @@ export function registerAdminConfigRoutes(app: FastifyInstance, db: IDatabase, c
 
   /* GET /api/v1/admin/config/audit — 审计日志 */
   app.get('/api/v1/admin/config/audit', {
-    preHandler: requireRole('admin'),
+    preHandler: requirePlatformOperator(config),
   }, async (request) => {
     const query = request.query as { limit?: string; offset?: string };
     const limit = Math.min(parseInt(query.limit ?? '50', 10) || 50, 200);

@@ -68,12 +68,12 @@ export class ToolPermissionService {
     return { id, revocationKey };
   }
 
-  /** 撤销（按 id），返回是否成功 */
-  revoke(id: string, reason: string): boolean {
+  /** 撤销（按 id），返回是否成功。租户隔离：须传 tenantId，防跨租户按 ID 撤销（审计 P0）。 */
+  revoke(id: string, tenantId: string, reason: string): boolean {
     if (!reason || reason.trim().length === 0) {
       throw new ValidationError('撤销原因必填', ErrorCode.VALIDATION_REQUIRED);
     }
-    const result = this.tx.execute(tpermCmdRevoke({ id, reason: reason.trim(), now: Date.now() }));
+    const result = this.tx.execute(tpermCmdRevoke({ id, tenantId, reason: reason.trim(), now: Date.now() }));
     return result.rowsAffected > 0;
   }
 

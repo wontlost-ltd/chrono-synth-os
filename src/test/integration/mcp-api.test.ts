@@ -274,7 +274,7 @@ describe('MCP API 集成测试', () => {
     });
 
     /* 撤销 */
-    perm.revoke(grant.id, 'test revocation');
+    perm.revoke(grant.id, tenantId, 'test revocation');
 
     const res = await app.inject({
       method: 'POST',

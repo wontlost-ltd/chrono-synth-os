@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { IDatabase } from '../../storage/database.js';
 import type { AppConfig } from '../../config/schema.js';
+import { requirePlatformOperator } from '../plugins/platform-operator.js';
 import { BillingRouteFacade } from '../../billing/billing-route-facade.js';
 import { BillingRefundSchema, CheckoutSchema, PortalSchema, SubscribeBillingSchema } from '../schemas/api-schemas.js';
 import { requireRole } from '../plugins/rbac.js';
@@ -74,9 +75,17 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     };
   });
 
-  /* POST /api/v1/admin/billing/refund — admin 退款 */
+  /* POST /api/v1/admin/billing/refund — **平台级**退款。
+   * ⚠️ 审计 P0（交叉审查补漏）：此前 requireRole('admin') + 请求体直接给
+   * paymentIntent/charge，整条链（route → facade.refundPayment → stripe-client）
+   * **完全没有 tenantId**，也不校验该笔支付属于哪个租户。攻击路径：注册新租户
+   * 自动成为 admin → 拿到别的租户的 payment/charge ID → 对平台 Stripe 账户里
+   * 那笔交易发起退款 = 跨租户资金完整性破坏。
+   * 退款本质是平台客服操作（要动平台 Stripe 账户），故改用平台运营密钥；
+   * 若日后要让租户管理员自助退款，必须先建立「支付对象 → 租户」的可信归属
+   * 映射并在此校验，而不是放开守卫。 */
   app.post('/api/v1/admin/billing/refund', {
-    preHandler: requireRole('admin'),
+    preHandler: requirePlatformOperator(config),
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request) => {
     const body = BillingRefundSchema.parse(request.body);
@@ -113,9 +122,12 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     }
   });
 
-  /* ── 附加组件管理路由（admin） ── */
+  /* ── 附加组件**目录**管理（平台级） ──
+   * ⚠️ 审计 P0：add_ons 无 tenant_id 且 code 全局 unique，是**平台商品目录**
+   * （per-tenant 关系在 tenant_add_ons）。此前 requireRole('admin') 让任一租户
+   * 管理员都能改全平台目录。读取（GET）保持开放——租户需浏览目录才能购买。 */
 
-  app.post('/api/v1/billing/add-ons', { preHandler: requireRole('admin') }, async (request) => {
+  app.post('/api/v1/billing/add-ons', { preHandler: requirePlatformOperator(config) }, async (request) => {
     const data = request.body as {
       code: string; name: string; description?: string; stripePriceId?: string;
       resource: string; quotaAmount: number;
@@ -123,12 +135,12 @@ export function registerBillingRoutes(app: FastifyInstance, db: IDatabase, confi
     return { data: await facade.createAddOn(data) };
   });
 
-  app.patch('/api/v1/billing/add-ons/:id', { preHandler: requireRole('admin') }, async (request) => {
+  app.patch('/api/v1/billing/add-ons/:id', { preHandler: requirePlatformOperator(config) }, async (request) => {
     const { id } = request.params as { id: string };
     return { data: await facade.updateAddOn(id, request.body as Record<string, unknown>) };
   });
 
-  app.delete('/api/v1/billing/add-ons/:id', { preHandler: requireRole('admin') }, async (request) => {
+  app.delete('/api/v1/billing/add-ons/:id', { preHandler: requirePlatformOperator(config) }, async (request) => {
     const { id } = request.params as { id: string };
     return { data: await facade.deactivateAddOn(id) };
   });

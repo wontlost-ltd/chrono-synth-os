@@ -11,6 +11,7 @@ import { createHash, createPublicKey } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyJwt from '@fastify/jwt';
 import type { AppConfig } from '../../config/schema.js';
+import { requirePlatformOperator, matchesPlatformKey, isPlatformOperatorRoute, markPlatformOperator } from './platform-operator.js';
 import type { JwtPayload } from '../../types/auth.js';
 import {
   KeyRing,
@@ -137,6 +138,9 @@ export async function registerJwtAuth(
 ): Promise<void> {
   app.decorate('jwtEnabled', config.jwt.enabled);
   if (!config.jwt.enabled) return;
+
+  /* 平台运营密钥（审计 P0）：用于在认证层识别平台运营者身份。 */
+  const platformKeys = config.auth.platformOperatorKeys;
 
   const multiKid = config.jwt.keys.length > 0;
   const isAsymmetric = config.jwt.algorithm.startsWith('RS') || config.jwt.algorithm.startsWith('ES');
@@ -360,17 +364,10 @@ export async function registerJwtAuth(
    *
    * In-memory only — see acceptance doc for why DB persistence is P1-M scope. */
   app.post('/api/v1/auth/keys/rotate', {
-    preHandler: async (request, reply) => {
-      const user = (request as FastifyRequest & { user?: { role?: string } }).user;
-      const role = user?.role;
-      if (role !== 'admin') {
-        return reply.status(403).send({
-          error: 'AuthorizationError',
-          code: 'AUTH_INSUFFICIENT_ROLE',
-          message: 'This operation requires admin role.',
-        });
-      }
-    },
+    /* ⚠️ 审计 P0：此前只校验 `role === 'admin'`，而 admin 是**租户内**角色
+     * （首用户自动 admin），任何人注册租户即可轮换**全局 JWT 签名密钥**，
+     * 进而伪造任意租户的 admin 令牌 —— 完整认证绕过。改为平台运营密钥。 */
+    preHandler: requirePlatformOperator(config),
   }, async (request, reply) => {
     const parseResult = JwtRotateBodySchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -462,16 +459,8 @@ export async function registerJwtAuth(
    *   - expiresAtMs: timestamp when this entry can be evicted (typically
    *     the access token's exp; deny-list LRU evicts after this). */
   app.post('/api/v1/auth/keys/deny-jti', {
-    preHandler: async (request, reply) => {
-      const user = (request as FastifyRequest & { user?: { role?: string } }).user;
-      if (user?.role !== 'admin') {
-        return reply.status(403).send({
-          error: 'AuthorizationError',
-          code: 'AUTH_INSUFFICIENT_ROLE',
-          message: 'requires admin role',
-        });
-      }
-    },
+    /* 审计 P0：deny-list / 密钥视图同属**平台全局**资源，同样不能由租户 admin 操作。 */
+    preHandler: requirePlatformOperator(config),
   }, async (request, reply) => {
     const parseResult = JwtDenyJtiBodySchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -487,16 +476,8 @@ export async function registerJwtAuth(
 
   /* GET /api/v1/auth/keys — diagnostic; admin only. */
   app.get('/api/v1/auth/keys', {
-    preHandler: async (request, reply) => {
-      const user = (request as FastifyRequest & { user?: { role?: string } }).user;
-      if (user?.role !== 'admin') {
-        return reply.status(403).send({
-          error: 'AuthorizationError',
-          code: 'AUTH_INSUFFICIENT_ROLE',
-          message: 'GET /api/v1/auth/keys requires admin role',
-        });
-      }
-    },
+    /* 审计 P0：暴露的是**全局**密钥集合视图，租户 admin 无权查看。 */
+    preHandler: requirePlatformOperator(config),
   }, async () => {
     /* snapshot() returns JwtKeyView only — privateKey/publicKey/secret never
      * leave KeyRing. The type system enforces redaction; no manual stripping. */
@@ -508,6 +489,24 @@ export async function registerJwtAuth(
 
     /* 允许上游认证插件（如 metrics scrape key）提前完成认证 */
     if (request.user) return;
+
+    /* 平台运营密钥（审计 P0）：持此密钥者是**平台运营者**，不属于任何租户，
+     * 因而没有、也不该有 JWT。
+     *
+     * ⚠️ 交叉审查纠正：**只在平台端点上放行**，且**不伪造 request.user**。
+     * 早先的写法给它塞了一个 `{tenantId:'default', role:'member'}` 的假租户用户，
+     * 等于让平台密钥能以 default 租户成员身份访问**任意**普通端点
+     * （例如 `/api/v1/audit` 无角色守卫、只看 `request.tenantId`），
+     * 把「9 个平台端点」的授权边界捅开了。
+     *
+     * 现在打的是能力标记 `platformOperator`，由 `requirePlatformOperator` 校验；
+     * 非平台路径不放行 —— 请求继续走常规 JWT/API Key 流程，没有凭据就是 401。 */
+    if (isPlatformOperatorRoute(request.method, request.url)
+      && platformKeys.length > 0
+      && matchesPlatformKey(request, platformKeys)) {
+      markPlatformOperator(request);
+      return;
+    }
 
     const authHeader = request.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {

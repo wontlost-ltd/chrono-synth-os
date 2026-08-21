@@ -122,6 +122,7 @@ describe('@chrono/adapter-web PoC', () => {
     });
     const result = tx.execute(tpermCmdRevoke({
       id: 'tperm_rev',
+      tenantId: 'default',
       reason: 'no longer needed',
       now: 1700000900000,
     }));

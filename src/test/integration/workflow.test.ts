@@ -11,9 +11,12 @@ describe('端到端工作流', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
 
+  /* 审计 P0：/metrics 现为平台凭据门（且独立于 auth.enabled 注册）。 */
+  const METRICS_KEY = 'test-metrics-scrape-key';
   const config = loadConfig({
     rateLimit: { max: 10000, timeWindowMs: 60_000 },
     websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    auth: { metricsApiKeys: [METRICS_KEY] },
   });
 
   beforeEach(async () => {
@@ -152,7 +155,7 @@ describe('端到端工作流', () => {
     assert.equal(conflictsRes.statusCode, 200);
 
     /* 14. 验证指标端点可用 */
-    const metricsRes = await app.inject({ method: 'GET', url: '/metrics' });
+    const metricsRes = await app.inject({ method: 'GET', url: '/metrics', headers: { 'x-api-key': METRICS_KEY } });
     assert.equal(metricsRes.statusCode, 200);
     const metrics = JSON.parse(metricsRes.body);
     assert.ok(metrics.requests.total > 0);

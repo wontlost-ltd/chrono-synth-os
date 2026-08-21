@@ -13,9 +13,13 @@ describe('API 集成测试', () => {
   let os: ChronoSynthOS;
   let app: FastifyInstance;
 
+  /* 审计 P0：/metrics 现在是平台凭据门（且独立于 auth.enabled 注册），
+   * 内容型用例需带平台密钥才拿得到 payload。 */
+  const METRICS_KEY = 'test-metrics-scrape-key';
   const config = loadConfig({
     rateLimit: { max: 10000, timeWindowMs: 60_000 },
     websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    auth: { metricsApiKeys: [METRICS_KEY] },
   });
 
   beforeEach(async () => {
@@ -351,7 +355,7 @@ describe('API 集成测试', () => {
 
   describe('指标端点', () => {
     it('GET /metrics 返回 JSON 指标数据', async () => {
-      const res = await app.inject({ method: 'GET', url: '/metrics' });
+      const res = await app.inject({ method: 'GET', url: '/metrics', headers: { 'x-api-key': METRICS_KEY } });
       assert.equal(res.statusCode, 200);
       const body = JSON.parse(res.body);
       assert.equal(typeof body.uptime_seconds, 'number');
@@ -364,7 +368,7 @@ describe('API 集成测试', () => {
     });
 
     it('GET /metrics/prometheus 返回 Prometheus 格式', async () => {
-      const res = await app.inject({ method: 'GET', url: '/metrics/prometheus' });
+      const res = await app.inject({ method: 'GET', url: '/metrics/prometheus', headers: { 'x-api-key': METRICS_KEY } });
       assert.equal(res.statusCode, 200);
       assert.ok(res.headers['content-type']?.toString().includes('text/plain'));
       const body = res.body;
@@ -961,16 +965,18 @@ describe('API Key 认证', () => {
     assert.notEqual(jwksRes.statusCode, 401, 'JWKS 不应被 API Key 拦截');
   });
 
-  it('/metrics 端点需要 API Key', async () => {
+  it('/metrics 端点需要**平台凭据**（普通租户 key 不再放行）', async () => {
+    /* 审计 P0：此前普通租户 key 即可读到跨租户聚合指标（逐租户用量 + 租户 ID）。
+     * 现在无论有没有出示 key，非平台凭据一律 403。 */
     const noKeyRes = await app.inject({ method: 'GET', url: '/metrics' });
-    assert.equal(noKeyRes.statusCode, 401);
+    assert.equal(noKeyRes.statusCode, 403, '无凭据应被 metrics 门直接拒绝');
 
-    const withKeyRes = await app.inject({
+    const withTenantKey = await app.inject({
       method: 'GET',
       url: '/metrics',
       headers: { 'x-api-key': 'test-key-123' },
     });
-    assert.equal(withKeyRes.statusCode, 200);
+    assert.equal(withTenantKey.statusCode, 403, '普通租户 key 不得读取跨租户指标');
   });
 
   it('/metrics 支持 Bearer scrape key 且不放宽普通 Bearer API 访问', async () => {
@@ -1050,7 +1056,11 @@ describe('API Key 认证', () => {
     assert.equal(promTenant.statusCode, 403, 'prometheus 端点同样仅平台 key');
   });
 
-  it('/metrics 未配平台 scrape key 时保持既有行为（向后兼容，普通 key 仍可访问）', async () => {
+  it('/metrics 未配平台凭据时 fail-closed：合法租户 key 也读不到跨租户指标', async () => {
+    /* ⚠️ 本用例语义**已反转**（审计 P0）。此前断言的是「未配 scrape key 时普通 key
+     * 仍可访问（向后兼容）」——那把**漏洞写成了预期行为**：/metrics 输出逐租户用量
+     * 与租户 ID，默认部署下任何持合法租户 key 者都能读到别人的数据。
+     * 现在两类平台凭据（metricsApiKeys / platformOperatorKeys）都没配 → 一律 403。 */
     await app.close();
     const legacyConfig = loadConfig({
       rateLimit: { max: 10_000, timeWindowMs: 60_000 },
@@ -1059,10 +1069,9 @@ describe('API Key 认证', () => {
     });
     app = await createApp({ os, config: legacyConfig });
 
-    /* metricsApiKeys 空 → 普通 key 仍能访问 /metrics（不破坏未设 scrape key 的部署）。 */
     const res = await app.inject({
       method: 'GET', url: '/metrics', headers: { 'x-api-key': 'legacy-key' },
     });
-    assert.equal(res.statusCode, 200, '未配 scrape key 时普通 key 应保持可访问（向后兼容）');
+    assert.equal(res.statusCode, 403, '未配平台凭据时，合法租户 key 也不得读到跨租户指标');
   });
 });

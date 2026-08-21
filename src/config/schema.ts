@@ -65,6 +65,10 @@ const authSchema = z.object({
   apiKeys: z.array(z.string()).default([]),
   /** 仅用于 /metrics 与 /metrics/prometheus 的静态 scrape key，可与 requireDbKeys 共存 */
   metricsApiKeys: z.array(z.string()).default([]),
+  /* 平台运营密钥：证明「平台运营者」身份，与租户内 role 无关。
+   * 守护影响全平台的端点（JWT 信任根轮换、全局配置、全局商品目录）。
+   * 未配置时这些端点 fail-closed 返回 503——绝不退回「租户 admin 也行」。 */
+  platformOperatorKeys: z.array(z.string()).default([]),
   /** 生产环境强制使用 DB 存储的 API Key（禁用静态配置 Key 回退） */
   requireDbKeys: z.boolean().default(false),
   /**
@@ -575,7 +579,7 @@ export const AppConfigSchema = z.object({
   websocket: websocketSchema.default({ enabled: true, heartbeatIntervalMs: 30_000, eventLogRetentionMs: 60 * 60 * 1000, replayLimit: 1000 }),
   cors: corsSchema.default({ origin: false, credentials: false }),
   auth: authSchema.default({
-    enabled: false, apiKeys: [], metricsApiKeys: [], requireDbKeys: false,
+    enabled: false, apiKeys: [], metricsApiKeys: [], platformOperatorKeys: [], requireDbKeys: false,
     reservationRecovery: { enabled: false, pollIntervalMs: 5 * 60 * 1000, graceMs: 24 * 60 * 60 * 1000 },
   }),
   jwt: jwtSchema.default({
@@ -743,6 +747,7 @@ function fromEnv(): Record<string, unknown> {
     CHRONO_AUTH_ENABLED:            (v) => { deepSet(env, 'auth.enabled', v === 'true'); },
     CHRONO_AUTH_API_KEYS:           (v) => { deepSet(env, 'auth.apiKeys', v.split(',')); },
     CHRONO_AUTH_METRICS_API_KEYS:   (v) => { deepSet(env, 'auth.metricsApiKeys', v.split(',').map((item) => item.trim()).filter(Boolean)); },
+  CHRONO_AUTH_PLATFORM_OPERATOR_KEYS: (v) => { deepSet(env, 'auth.platformOperatorKeys', v.split(',').map((item) => item.trim()).filter(Boolean)); },
     CHRONO_AUTH_REQUIRE_DB_KEYS:    (v) => { deepSet(env, 'auth.requireDbKeys', v === 'true'); },
     CHRONO_INTELLIGENCE_PROVIDER:           (v) => { deepSet(env, 'intelligence.provider', v); },
     CHRONO_INTELLIGENCE_MODEL:              (v) => { deepSet(env, 'intelligence.model', v); },
