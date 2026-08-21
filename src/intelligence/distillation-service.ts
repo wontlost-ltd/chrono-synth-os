@@ -296,7 +296,7 @@ export class DistillationService {
       return 'lease_busy';
     }
     try {
-      return this.compileApprovedLocked(personaId, artifact, via, checkBudget);
+      return this.compileApprovedLocked(personaId, artifact, via, checkBudget, handle);
     } finally {
       this.deps.leaseStore.release(handle);
     }
@@ -310,7 +310,7 @@ export class DistillationService {
    * 传入的 artifact 为 candidate（自动路径）时，candidate→approved 推进也在锁内做（预算通过后），保证
    * {复核预算 → approve → compile} 三步对其他编译者原子。
    */
-  private compileApprovedLocked(personaId: string, artifact: DistilledArtifact, via: CompiledVia, checkBudget = false): DistilledArtifact | 'budget_exceeded' | undefined {
+  private compileApprovedLocked(personaId: string, artifact: DistilledArtifact, via: CompiledVia, checkBudget = false, handle?: LeaseHandle): DistilledArtifact | 'budget_exceeded' | undefined {
     /* 锁内预算权威复核（仅自动路径）：并发实例可能在本次抢锁前已把额度用满。 */
     if (checkBudget && this.unverifiedGrowthBudgetExceeded(personaId)) {
       return 'budget_exceeded';
@@ -330,7 +330,7 @@ export class DistillationService {
 
     if (!outcome.ok) {
       /* 编译失败：与编译后失败走同一安全补偿（rollback/reject 各自 try/catch） */
-      this.compensateAfterCompile(personaId, approved.id, snapshotId, `compile failed: ${outcome.reason}`);
+      this.compensateAfterCompile(personaId, approved.id, snapshotId, `compile failed: ${outcome.reason}`, handle);
       return undefined;
     }
 
@@ -342,11 +342,11 @@ export class DistillationService {
     try {
       advanced = this.deps.store.setStatus(personaId, approved.id, 'approved', 'compiled', `compiled: ${outcome.applied}`, compiledAt, via);
     } catch (err) {
-      this.compensateAfterCompile(personaId, approved.id, snapshotId, `status advance threw: ${err instanceof Error ? err.message : String(err)}`);
+      this.compensateAfterCompile(personaId, approved.id, snapshotId, `status advance threw: ${err instanceof Error ? err.message : String(err)}`, handle);
       return undefined;
     }
     if (!advanced) {
-      this.compensateAfterCompile(personaId, approved.id, snapshotId, 'status advance not applied (concurrent change)');
+      this.compensateAfterCompile(personaId, approved.id, snapshotId, 'status advance not applied (concurrent change)', handle);
       return undefined;
     }
 
@@ -367,7 +367,32 @@ export class DistillationService {
    * 作为**可见的待修信号**，并计 step='rollback' 指标；只有回滚成功后才标 rejected 收尾。
    * 回滚成功但标记失败 → 工件悬挂 approved（可重试/巡检），计 step='reject' 指标——这是安全侧不一致。
    */
-  private compensateAfterCompile(personaId: string, artifactId: string, snapshotId: string, why: string): void {
+  private compensateAfterCompile(
+    personaId: string, artifactId: string, snapshotId: string, why: string, handle?: LeaseHandle,
+  ): void {
+    /* ⚠️ 审计 P1（fencing）：回滚前必须确认**本持有者仍持有租约**。
+     *
+     * 失败场景：A 拿到 compile 锁后卡住（GC / 慢 IO / 被挂起）→ 锁 TTL 到期 →
+     * B 抢到锁并成功编译、推进工件到 compiled → A 恢复，走补偿路径，用它
+     * **进入临界区前**拍的快照 rollback → **把 B 的编译成果覆盖掉**，而工件
+     * 仍是 compiled ⇒ 「工件说已编译、核心却是旧的」的静默不一致。
+     *
+     * `refresh` 的 SQL 带 `holder_token` 谓词且校验未过期，返回 null 即
+     * 「锁已不是我的」。此时**放弃回滚**：核心归 B 管，A 无权改。
+     * 单进程语义（未注入 leaseStore → handle 为 undefined）不受影响。 */
+    if (handle && this.deps.leaseStore) {
+      const still = this.deps.leaseStore.refresh(handle, this.deps.clock.now(), COMPILE_LEASE_TTL_MS);
+      if (!still) {
+        distillationCompensationFailures.add(1, { step: 'lease_lost' });
+        this.deps.logger.error(
+          LAYER,
+          `补偿放弃：persona=${personaId} 的 compile 租约已失效（TTL 过期后被他人接管），`
+          + `不回滚以免覆盖新持有者的编译成果。artifact=${artifactId} why=${why}`,
+        );
+        return;
+      }
+    }
+
     let restored = false;
     try {
       restored = this.deps.snapshotGuard.rollback(snapshotId);
