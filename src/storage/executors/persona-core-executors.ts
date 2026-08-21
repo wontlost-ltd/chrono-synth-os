@@ -1143,7 +1143,7 @@ export function registerPersonaCoreExecutors(): void {
     const result = db.prepare<void>(
       `UPDATE task_assignments
        SET status = 'accepted', completed_at = ?
-       WHERE tenant_id = ? AND id = ?`,
+       WHERE tenant_id = ? AND id = ? AND status = 'submitted'`,
     ).run(p.now, p.tenantId, p.assignmentId);
     return { rowsAffected: result.changes };
   });
@@ -1184,7 +1184,7 @@ export function registerPersonaCoreExecutors(): void {
     const result = db.prepare<void>(
       `UPDATE task_assignments
        SET status = 'rejected'
-       WHERE tenant_id = ? AND id = ?`,
+       WHERE tenant_id = ? AND id = ? AND status = 'submitted'`,
     ).run(p.tenantId, p.assignmentId);
     return { rowsAffected: result.changes };
   });
@@ -1200,10 +1200,17 @@ export function registerPersonaCoreExecutors(): void {
   });
 
   registerCommand<PcoreReopenMarketplaceTaskParams>(PCORE_CMD_REOPEN_MARKETPLACE_TASK, (db, p) => {
+    /* ⚠️ 审计 P1（独立审查补漏）：`AND status = 'accepted'` 是必需的 CAS。
+     * 没有它时，`rejectSubmittedTask` 与 `acceptSubmittedTask` 都只在事务外判
+     * `assignment.status !== 'submitted'`，两者可同时通过；accept 侧完成 CAS、
+     * **付了钱**、任务变 completed 后，reject 侧的 reopen 会把**已付款的任务**
+     * 重新置为 open 并清空 assignee ⇒ 钱已付出、任务重回市场可被再次承接。
+     * 实测：结算记录=1 的任务 reopen 后 status 变回 'open'。
+     * 加谓词后，completed 任务的 reopen rowsAffected=0，调用方据此中止。 */
     const result = db.prepare<void>(
       `UPDATE marketplace_tasks
        SET status = 'open', assignee_persona_id = NULL, assignee_fork_id = NULL, accepted_at = NULL, updated_at = ?
-       WHERE tenant_id = ? AND id = ?`,
+       WHERE tenant_id = ? AND id = ? AND status = 'accepted'`,
     ).run(p.now, p.tenantId, p.taskId);
     return { rowsAffected: result.changes };
   });

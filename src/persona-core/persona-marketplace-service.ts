@@ -91,6 +91,7 @@ import {
   type PcoreTaskResultRow,
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
+import { ValidationError, ErrorCode } from '../errors/index.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { clamp, fromMinor, round, safeJsonParse, toMinor } from './persona-core-utils.js';
@@ -131,6 +132,22 @@ import type {
   WalletTransaction,
   WalletTransactionType,
 } from './types.js';
+
+/**
+ * CAS 抢占失败的哨兵异常。
+ *
+ * ⚠️ 必须**抛出**而不是从事务回调里 `return` —— `IDatabase.transaction()` 只在
+ * 回调**抛异常**时 ROLLBACK，提前 return 会照常 COMMIT（已实测：回调里先 INSERT
+ * 再 return，行数仍为 1）。`acceptSubmittedTask` 在 CAS **之前**已经写了
+ * acceptTaskResult / acceptTaskAssignment 两条，若靠 return 退出，这两条会留在库里
+ * ⇒ result/assignment 是 accepted、任务却没 completed 也没结算，制造新的不一致。
+ */
+class LeaseLostError extends Error {
+  constructor() {
+    super('CAS_CLAIM_LOST');
+    this.name = 'LeaseLostError';
+  }
+}
 
 /* ── Row mappers (exported so disputeTask + completeTask in the
  * facade can still synthesize results when needed) ───────────────── */
@@ -983,12 +1000,19 @@ export class PersonaMarketplaceService {
     const growthDelta = round(rewardSignal * (0.6 + qualityScore));
     const reputationDelta = round((qualityScore - 0.5) * 8 + rewardSignal * 3 + (clientRating - 3) * 0.8);
     const totalAmountMinor = toMinor(task.reward);
-    /* ⚠️ 审计 P1：零金额必须**在任何写入之前**拒绝。
-     * 发布接口允许 `reward = 0`（`z.number().min(0)`），而 `settleTaskPaymentInTx`
-     * 有 `if (totalAmountMinor <= 0) return null`。旧时序是「先提交验收事务、
-     * 再另开事务结算」，于是 reward=0 会**验收提交、结算失败**，任务永久停在
-     * `completed` 却没有结算记录；重试又被终态拒绝 —— 实测复现过这个死状态。
-     * 在这里前置拒绝，任务保持 submitted，发布者可改价后重新验收。 */
+    /* 纵深防御：零金额在**任何写入之前**拒绝。
+     *
+     * 主防线已上移到 `publishTask`（零/负奖励任务根本发不出来），这里保留是为了
+     * 挡住历史数据 —— 修复前入库的 reward=0 任务仍可能存在。
+     *
+     * 为什么必须前置：`settleTaskPaymentInTx` 有 `if (totalAmountMinor <= 0)
+     * return null`，而验收是「先提交验收事务、再另开事务结算」的两阶段时序，
+     * 若放到写入之后，reward=0 会**验收提交、结算失败**，任务永久停在
+     * `completed` 却没有结算记录，重试又被终态拒绝（实测复现过）。
+     *
+     * ⚠️ 此处拒绝后任务保持 submitted。本服务**没有改价接口**（已核对：
+     * 无 updateTask/editTask，5 条 `UPDATE marketplace_tasks` 无一改 reward），
+     * 历史零奖励任务的唯一出路是 `rejectSubmittedTask` 退回重开。 */
     if (totalAmountMinor <= 0) return null;
 
     const split = { ownerPct: 60, personaPct: 20, platformPct: 20 };
@@ -1000,7 +1024,8 @@ export class PersonaMarketplaceService {
 
     const db = this.source.forTenant(input.tenantId);
     let claimedAccept = true;
-    db.transaction(() => {
+    try {
+      db.transaction(() => {
       db.execute(pcoreCmdAcceptTaskResult({
         tenantId: input.tenantId,
         resultId: result.id,
@@ -1028,7 +1053,7 @@ export class PersonaMarketplaceService {
       }));
       if (claim.rowsAffected !== 1) {
         claimedAccept = false;
-        return;
+        throw new LeaseLostError();
       }
 
       db.execute(pcoreCmdUpdatePersonaTaskAccepted({
@@ -1130,10 +1155,14 @@ export class PersonaMarketplaceService {
           clientRating,
         },
       });
-    });
+      });
+    } catch (err) {
+      /* 只吞哨兵：CAS 抢占失败 → 事务已 ROLLBACK，无任何副作用。其余异常照常上抛。 */
+      if (!(err instanceof LeaseLostError)) throw err;
+    }
 
-    /* CAS 失败（并发下别人先验收了）→ 验收事务无副作用，**绝不能继续结算**，
-     * 否则同一笔任务会被分账两次。 */
+    /* CAS 失败（并发下别人先验收了）→ 事务已整体回滚（result/assignment 的
+     * accepted 写入也一并撤销），**绝不能继续结算**，否则同一笔分账两次。 */
     if (!claimedAccept) return null;
 
     /* 零回归：保持两阶段时序——先提交上面的验收事务，再独立调 public settleTaskPayment
@@ -1326,6 +1355,17 @@ export class PersonaMarketplaceService {
    * write path stays single-sourced. */
 
   publishTask(input: PublishMarketplaceTaskInput): MarketplaceTask {
+    /* ⚠️ 审计 P1（独立审查补漏）：零/负奖励任务**从源头拒绝**。
+     *
+     * 此前 API 允许 `reward = 0`（`z.number().min(0)`），而结算路径有
+     * `totalAmountMinor <= 0 → return null`。我第一版只在 acceptSubmittedTask
+     * 入口前置拒绝，**漏了 completeTask**——审查实测：`completeTask(reward=0)`
+     * 仍能把任务推到 completed 且零结算记录（它走 wallet 直更、不产生结算行）。
+     * 逐个入口打补丁必然漏，故改在源头消灭这种任务：不存在零奖励任务，
+     * 两个入口就都不用特判。 */
+    if (!Number.isFinite(input.reward) || input.reward <= 0) {
+      throw new ValidationError('任务奖励必须为正数', ErrorCode.VALIDATION_RANGE);
+    }
     const now = Date.now();
     const taskId = generatePrefixedId('mkt');
     this.source.forTenant(input.tenantId).execute(pcoreCmdPublishMarketplaceTask({
@@ -1401,7 +1441,8 @@ export class PersonaMarketplaceService {
 
     const db = this.source.forTenant(input.tenantId);
     let claimed = true;
-    db.transaction(() => {
+    try {
+      db.transaction(() => {
       /* ⚠️ 审计 P1：状态迁移必须是 CAS —— 上面的 `task.status !== 'accepted'` 判定发生在
        * **事务之外**，两个并发调用会都读到 'accepted' 并都通过。真正的互斥点在这条
        * `WHERE ... AND status = 'accepted'` 上：只有抢到的那次 rowsAffected=1。
@@ -1416,7 +1457,7 @@ export class PersonaMarketplaceService {
       }));
       if (claim.rowsAffected !== 1) {
         claimed = false;
-        return;
+        throw new LeaseLostError();
       }
 
       db.execute(pcoreCmdCompleteTaskWalletUpdate({
@@ -1505,9 +1546,12 @@ export class PersonaMarketplaceService {
           updatedAt: now,
         },
       });
-    });
+      });
+    } catch (err) {
+      if (!(err instanceof LeaseLostError)) throw err;
+    }
 
-    /* CAS 失败（并发下别人先完成了这个任务）→ 整个事务无副作用，返回 null。
+    /* CAS 失败（并发下别人先完成了这个任务）→ 事务已 ROLLBACK，无副作用，返回 null。
      * 与「任务不存在 / 状态不对」走同一条返回路径，调用方无需区分。 */
     if (!claimed) return null;
 

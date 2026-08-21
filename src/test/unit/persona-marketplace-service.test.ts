@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
-import { pcoreCmdCompleteMarketplaceTask } from '@chrono/kernel';
+import { pcoreCmdCompleteMarketplaceTask, pcoreCmdReopenMarketplaceTask } from '@chrono/kernel';
 
 interface Fixture {
   db: IDatabase;
@@ -242,14 +242,17 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     assert.ok(applicants[0]!.personaName, '带 persona display_name');
   });
 
-  it('reward=0 的任务验收后不得停在「已验收未结算」（审计 P1）', () => {
-    /* API 允许 reward=0（`z.number().min(0)`），但 settleTaskPaymentInTx 有
-     * `if (totalAmountMinor <= 0) return null`。旧时序是「先提交验收事务、再另开
-     * 事务结算」，于是 reward=0 会**验收成功但永久无结算记录**，重试又被终态拒绝。
-     * 这条锁死：要么验收就被拒（零奖励不可验收），要么验收成功且状态自洽。 */
+  it('验收 CAS 抢占失败时必须整体回滚（不得留下 accepted 的 result/assignment）', () => {
+    /* ⚠️ 这条防的是**我自己第一版修复引入的**缺陷：
+     * `IDatabase.transaction()` 只在回调**抛异常**时 ROLLBACK，提前 `return`
+     * 会照常 COMMIT（已实测：回调里先 INSERT 再 return，行数仍为 1）。
+     * 而 acceptSubmittedTask 在 CAS **之前**已写了 acceptTaskResult /
+     * acceptTaskAssignment 两条 —— 靠 return 退出会把它们留在库里，
+     * 造成「result/assignment 是 accepted，任务却没 completed 也没结算」。
+     * 故 CAS 失败必须**抛哨兵异常**让事务整体回滚。 */
     const task = fx.service.publishTask({
       tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
-      title: 'Zero reward', description: 'desc', category: 'general', reward: 0,
+      title: 'CAS rollback', description: 'd', category: 'general', reward: 100,
     });
     fx.service.applyToTask({
       tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
@@ -265,19 +268,96 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
       assignmentId: assignment!.id, resultUri: 's3://t/r', evaluation: { quality: 0.9 },
     });
 
+    /* 制造 CAS 必败：抢先把任务推进到 completed（模拟并发对手先赢）。 */
+    fx.db.execute(pcoreCmdCompleteMarketplaceTask({
+      tenantId: fx.tenantId, taskId: task.id, qualityScore: 0.5, growthDelta: 0, now: Date.now(),
+    }));
+
     const accepted = fx.service.acceptSubmittedTask({
       tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
       taskId: task.id, clientRating: 5, qualityScore: 0.9,
     });
+    assert.equal(accepted, null, 'CAS 失败应返回 null');
+
+    const asgRow = fx.db.prepare<{ status: string }>(
+      'SELECT status FROM task_assignments WHERE id = ?',
+    ).all(assignment!.id)[0];
+    const resRow = fx.db.prepare<{ status: string }>(
+      'SELECT status FROM task_results WHERE assignment_id = ?',
+    ).all(assignment!.id)[0];
+    assert.equal(asgRow?.status, 'submitted', 'assignment 不得被留在 accepted');
+    assert.equal(resRow?.status, 'submitted', 'result 不得被留在 accepted');
+  });
+
+  it('已付款（completed）的任务不得被 reopen 退回市场（审计 P1：accept/reject 竞态）', () => {
+    /* 独立审查发现：`acceptSubmittedTask` 与 `rejectSubmittedTask` 都只在事务外判
+     * `assignment.status !== 'submitted'`，两者可同时通过。accept 侧完成 CAS、
+     * **付了钱**、任务变 completed 后，reject 侧的 `REOPEN_MARKETPLACE_TASK`
+     * （原本无谓词）会把已付款任务重新置为 open 并清空 assignee
+     * ⇒ 钱已付出、任务重回市场可被再次承接。
+     * 实测（修复前）：结算记录=1 的任务 reopen 后 status 变回 'open'。 */
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Paid', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    const assignment = fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    fx.service.submitTaskResult({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id,
+      assignmentId: assignment!.id, resultUri: 's3://t/r', evaluation: { quality: 0.9 },
+    });
+    const accepted = fx.service.acceptSubmittedTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+      taskId: task.id, clientRating: 5, qualityScore: 0.9,
+    });
+    assert.ok(accepted, '验收应成功并付款');
+
+    /* 模拟并发 reject 侧随后执行 reopen —— 必须无效。 */
+    const reopened = fx.db.execute(pcoreCmdReopenMarketplaceTask({
+      tenantId: fx.tenantId, taskId: task.id, now: Date.now(),
+    }));
+    assert.equal(reopened.rowsAffected, 0, '已付款任务的 reopen 必须抢不到（rowsAffected=0）');
 
     const after = fx.service.getMarketplaceTaskById(fx.tenantId, task.id);
-    if (accepted) {
-      /* 若允许验收，则必须真的完成了——不能是「completed 但没结算」的悬空态。 */
-      assert.equal(after?.status, 'completed', '验收成功则任务应为 completed');
-    } else {
-      /* 若拒绝验收，任务不得被改成终态——否则同样卡死（重试会被终态拒）。 */
-      assert.notEqual(after?.status, 'completed', '验收被拒时任务不得停在 completed');
-    }
+    assert.equal(after?.status, 'completed', '任务必须仍是 completed，不得退回 open');
+  });
+
+  it('零/负奖励任务从源头拒绝发布（审计 P1：消除特殊情况而非逐个入口打补丁）', () => {
+    /* 背景：API 曾允许 `reward = 0`（`z.number().min(0)`），而结算路径有
+     * `totalAmountMinor <= 0 → return null`。我第一版只在 acceptSubmittedTask
+     * 前置拒绝，**漏了 completeTask** —— 独立审查实测：`completeTask(reward=0)`
+     * 仍能把任务推到 completed 且零结算记录（它走 wallet 直更、不产生结算行）。
+     *
+     * 逐个入口打补丁必然漏，故在**源头**消灭这类任务：零奖励任务不存在，
+     * 两个完成入口就都不必特判。 */
+    assert.throws(
+      () => fx.service.publishTask({
+        tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+        title: 'Zero', description: 'd', category: 'general', reward: 0,
+      }),
+      /奖励必须为正数/,
+      'reward=0 必须在发布时就被拒绝',
+    );
+    assert.throws(
+      () => fx.service.publishTask({
+        tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+        title: 'Negative', description: 'd', category: 'general', reward: -5,
+      }),
+      /奖励必须为正数/,
+      '负奖励同样必须被拒绝',
+    );
+    /* 对照：正常奖励仍可发布（避免「一律抛错」的假通过）。 */
+    const ok = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Normal', description: 'd', category: 'general', reward: 10,
+    });
+    assert.equal(ok.reward, 10);
   });
 
   it('submitTaskResult + acceptSubmittedTask round-trips through the facade', () => {
