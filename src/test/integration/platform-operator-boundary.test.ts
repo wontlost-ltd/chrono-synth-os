@@ -133,6 +133,34 @@ describe('审计 P0 — 平台运营者边界（auth.enabled=true 生产组合�
     assert.notEqual(res.statusCode, 401, '平台密钥不应被认证层拒绝');
   });
 
+  it('白名单是前缀匹配，但不得被相似路径蒙混（config-evil 不是平台端点）', async () => {
+    /* `path === p || path.startsWith(p + '/')` —— 校验 `-evil` 这类相似前缀
+     * 不会意外落进平台白名单（否则平台密钥会在非平台路径上被认）。 */
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/admin/config-evil', headers: { 'x-platform-key': PLATFORM_KEY },
+    });
+    assert.notEqual(res.statusCode, 200, '相似前缀不得被当作平台端点放行');
+  });
+
+  it('JWT 密钥端点：平台密钥可用、租户凭据一律 403（认证绕过链已闭合）', async () => {
+    /* 这是整条漏洞链的终点：能轮换全局签名密钥就能伪造任意租户 admin 令牌。 */
+    const rotateAsTenant = await app.inject({
+      method: 'POST', url: '/api/v1/auth/keys/rotate',
+      headers: { 'x-api-key': TENANT_KEY }, payload: { newActiveKid: 'x' },
+    });
+    assert.equal(rotateAsTenant.statusCode, 403, '租户凭据不得轮换全局密钥');
+
+    const listAsTenant = await app.inject({
+      method: 'GET', url: '/api/v1/auth/keys', headers: { 'x-api-key': TENANT_KEY },
+    });
+    assert.equal(listAsTenant.statusCode, 403, '租户凭据不得查看全局密钥集合');
+
+    const listAsPlatform = await app.inject({
+      method: 'GET', url: '/api/v1/auth/keys', headers: { 'x-platform-key': PLATFORM_KEY },
+    });
+    assert.equal(listAsPlatform.statusCode, 200, '平台密钥应可查看');
+  });
+
   it('出示空 key 不得匹配（防 platformOperatorKeys 配成 [""] 时的意外放行）', async () => {
     const res = await app.inject({
       method: 'GET', url: '/api/v1/admin/config', headers: { 'x-platform-key': '' },
