@@ -15,9 +15,12 @@ describe('Observability Metrics 集成测试', () => {
   let worker: ObservabilityWorker;
   let service: PersonaCoreService;
 
+  /* 审计 P0：/metrics 现为平台凭据门（且独立于 auth.enabled 注册）。 */
+  const METRICS_KEY = 'test-metrics-scrape-key';
   const config = loadConfig({
     rateLimit: { max: 10000, timeWindowMs: 60_000 },
     websocket: { enabled: false, heartbeatIntervalMs: 30_000 },
+    auth: { metricsApiKeys: [METRICS_KEY] },
     observability: {
       worker: {
         enabled: false,
@@ -135,7 +138,7 @@ describe('Observability Metrics 集成测试', () => {
     const flush = await worker.flush();
     assert.ok(flush.processed >= 6);
 
-    const res = await app.inject({ method: 'GET', url: '/metrics' });
+    const res = await app.inject({ method: 'GET', url: '/metrics', headers: { 'x-api-key': METRICS_KEY } });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.observability.runtime.completed_count, 1);
@@ -147,7 +150,7 @@ describe('Observability Metrics 集成测试', () => {
     assert.ok(body.observability.persona.growth_event_count >= 2);
     assert.equal(typeof body.observability.pipeline.outbox_pending, 'number');
 
-    const prometheus = await app.inject({ method: 'GET', url: '/metrics/prometheus' });
+    const prometheus = await app.inject({ method: 'GET', url: '/metrics/prometheus', headers: { 'x-api-key': METRICS_KEY } });
     assert.equal(prometheus.statusCode, 200);
     assert.ok(prometheus.body.includes('chrono_observability_events_total'));
     assert.ok(prometheus.body.includes('chrono_runtime_completed_total 1'));
