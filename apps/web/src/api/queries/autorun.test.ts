@@ -11,7 +11,13 @@ import {
 } from './autorun';
 
 const mockApiFetch = vi.fn();
-vi.mock('../client', () => ({ apiFetch: (...args: unknown[]) => mockApiFetch(...args) }));
+/* ⚠️ 必须一并提供真实的 `unwrapList`：这些 hook 现在链式调用它来解开
+ * 分页信封 {data,pagination}。整模块 mock 时若漏掉它，运行时会 undefined 报错，
+ * 表现为 isSuccess 恒 false（而不是断言值不符），很容易误判成别的问题。 */
+vi.mock('../client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../client')>();
+  return { apiFetch: (...args: unknown[]) => mockApiFetch(...args), unwrapList: actual.unwrapList };
+});
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -77,9 +83,12 @@ describe('useTriggerAutorun', () => {
 });
 
 describe('useAutorunRuns', () => {
-  it('fetches runs with encoded avatarId', async () => {
+  it('fetches runs with encoded avatarId（分页信封被解包 —— 修复前运行历史恒空）', async () => {
+    /* ⚠️ 审计 P3：服务端返回 {data,pagination}。此前 hook 当数组用 →
+     * AutorunRunsPage **永远显示「暂无运行记录」**，用户会以为 autorun 坏了
+     * 并反复手动触发。mock 真实信封形态，断言拿到的是解包后的数组。 */
     const runs = [{ id: 'r1', status: 'completed' }];
-    mockApiFetch.mockResolvedValue(runs);
+    mockApiFetch.mockResolvedValue({ data: runs, pagination: { page: 1, pageSize: 20, total: 1 } });
     const { result } = renderHook(() => useAutorunRuns('av1'), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(runs);
