@@ -298,6 +298,30 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
     assert.equal(wallet?.balance, 90, '余额只扣一次（100 - 10），不得扣成 80');
   });
 
+  it('主键冲突不得被误判成幂等命中（isUniqueViolation 必须精确到该索引）', () => {
+    /* ⚠️ 独立审查提出的风险，实测确认真实：两种方言的唯一冲突消息形态不同 ——
+     *   PG    : `... violates unique constraint "uq_wallet_payout_idempotency"`（带索引名）
+     *   SQLite: `UNIQUE constraint failed: t.tenant_id, t.k`（**只带列名**）
+     * 若用「任意 UNIQUE 冲突」兜底，同事务里的**主键**冲突
+     * （`UNIQUE constraint failed: wallet_payout_requests.id`）会被当成幂等命中，
+     * 于是去按 key 反查、返回一条**不相关**的既有记录 —— 把真错误伪装成幂等成功。
+     *
+     * 这里用真实 SQLite 消息形态验证判别式：只有含 idempotency_key 的才算命中。 */
+    const idemMsg = 'UNIQUE constraint failed: wallet_payout_requests.tenant_id, wallet_payout_requests.idempotency_key';
+    const pkMsg = 'UNIQUE constraint failed: wallet_payout_requests.id';
+    const pgIdemMsg = 'duplicate key value violates unique constraint "uq_wallet_payout_idempotency"';
+    const pgPkMsg = 'duplicate key value violates unique constraint "wallet_payout_requests_pkey"';
+
+    const hits = (m: string): boolean =>
+      /unique constraint "uq_wallet_payout_idempotency"/i.test(m)
+      || /UNIQUE constraint failed:[^\n]*\bidempotency_key\b/i.test(m);
+
+    assert.equal(hits(idemMsg), true, 'SQLite 幂等键冲突应命中');
+    assert.equal(hits(pgIdemMsg), true, 'PG 幂等键冲突应命中');
+    assert.equal(hits(pkMsg), false, 'SQLite 主键冲突**不得**命中');
+    assert.equal(hits(pgPkMsg), false, 'PG 主键冲突**不得**命中');
+  });
+
   it('不传 idempotencyKey 时保持既有行为（向后兼容：仍可重复提交）', () => {
     /* 幂等是**调用方选择加入**的能力。不传 key 的既有调用方行为一字不变，
      * 否则这就成了破坏性变更。部分唯一索引的 `WHERE key IS NOT NULL` 保证

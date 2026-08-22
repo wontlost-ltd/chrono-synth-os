@@ -148,9 +148,20 @@ export interface PersonaWalletContext {
  */
 function isUniqueViolation(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /uq_wallet_payout_idempotency/i.test(msg)
-    || /UNIQUE constraint failed/i.test(msg)                        /* SQLite */
-    || /duplicate key value violates unique constraint/i.test(msg); /* PostgreSQL */
+  /* ⚠️ 必须**精确到这一个索引**，不能用「任意 UNIQUE 冲突」兜底。
+   * 两种方言的消息形态不同（均已实测）：
+   *   PG    : `duplicate key value violates unique constraint "uq_wallet_payout_idempotency"`
+   *           —— 带**索引名**，可直接匹配。
+   *   SQLite: `UNIQUE constraint failed: wallet_payout_requests.tenant_id, ...idempotency_key`
+   *           —— **只带列名、不带索引名**，故必须匹配列组合。
+   *
+   * 为什么不能宽松匹配：同一事务里主键 `id` 冲突的消息是
+   * `UNIQUE constraint failed: wallet_payout_requests.id`（实测），
+   * 宽松匹配会把它当成幂等命中 → 去查 idempotency_key 反查、
+   * 返回一条**不相关**的既有提现记录，把真错误伪装成幂等成功。 */
+  const pgIndexHit = /unique constraint "uq_wallet_payout_idempotency"/i.test(msg);
+  const sqliteColumnHit = /UNIQUE constraint failed:[^\n]*\bidempotency_key\b/i.test(msg);
+  return pgIndexHit || sqliteColumnHit;
 }
 
 export class PersonaWalletService {
