@@ -41,7 +41,12 @@ describe('server-raw coverage', () => {
     /* v129 = v127_github_installation_suspended（pg-aliased v129，GitHub 安装入口产品化：
      * github_installations 加 suspended_at 暂停状态列，由 installation.suspend/unsuspend
      * webhook 事件维护；纯加列不重建表，既有唯一索引原地保留）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129']);
+    /* v130 = v128_wallet_payout_idempotency（pg-aliased v130，钱包提现领域幂等锚：
+     * wallet_payout_requests 加可空 idempotency_key + (tenant_id, key) 部分唯一索引。
+     * 此前提现只收 (walletId, amountMinor) 无幂等键，客户端重试或 HTTP 幂等键 TTL 过期后
+     * 重放会各扣一次（实测余额 1000→800）；纯加列+建索引不重建表，NULL 行不参与唯一性
+     * 故既有调用方行为不变）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129', 'v130']);
   });
 
   it('covers disabled raw migrations', () => {

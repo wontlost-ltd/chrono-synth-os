@@ -34,6 +34,7 @@ import {
   pcoreQueryWalletByPersona,
   pcoreQueryWalletByPersonaId,
   pcoreQueryWalletPayoutRequestById,
+  pcoreQueryWalletPayoutByIdempotencyKey,
   pcoreQueryWalletSettlementByAssignmentId,
   pcoreQueryWalletTransactions,
   type PcoreWalletPayoutRequestRow,
@@ -140,6 +141,18 @@ export interface PersonaWalletContext {
   personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean;
 }
 
+/**
+ * 是否为提现幂等索引冲突 —— 只认这一类做 catch-and-refetch 收敛，其余约束/故障照抛。
+ * 匹配索引名或通用 UNIQUE 冲突文案（SQLite/PG 措辞不同，兼容两者）。
+ * 与 `learning-request-service.isActiveUniqueConflict` 同款范式。
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /uq_wallet_payout_idempotency/i.test(msg)
+    || /UNIQUE constraint failed/i.test(msg)                        /* SQLite */
+    || /duplicate key value violates unique constraint/i.test(msg); /* PostgreSQL */
+}
+
 export class PersonaWalletService {
   /**
    * Constructor accepts optional encryption args for shape parity with
@@ -179,6 +192,16 @@ export class PersonaWalletService {
     return this.source.forTenant(tenantId).queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })).map(walletTransactionFromRow);
   }
 
+  /**
+   * 幂等键反查（catch-and-refetch）。与 learning-request-service 的
+   * `isActiveUniqueConflict` 同款范式：只认唯一索引冲突做收敛，其余照抛。
+   */
+  private findPayoutByIdempotencyKey(tenantId: string, idempotencyKey: string): WalletPayoutRequest | null {
+    const row = this.source.forTenant(tenantId)
+      .queryOne(pcoreQueryWalletPayoutByIdempotencyKey({ tenantId, idempotencyKey }));
+    return row ? walletPayoutRequestFromRow(row) : null;
+  }
+
   requestWalletPayout(input: RequestWalletPayoutInput): WalletPayoutRequest | null {
     const wallet = this.getWalletByIdForOwner(input.tenantId, input.ownerUserId, input.walletId);
     if (!wallet || wallet.status !== 'active') return null;
@@ -206,6 +229,7 @@ export class PersonaWalletService {
           currency,
           requestedByUserId: input.ownerUserId,
           now,
+          idempotencyKey: input.idempotencyKey ?? null,
         }));
 
         /* 条件原子扣减：相对扣减 + 同语句余额校验。
@@ -233,6 +257,18 @@ export class PersonaWalletService {
       });
     } catch (err) {
       if (err === INSUFFICIENT) return null;
+      /* ⚠️ 审计 P4：领域幂等。带 idempotencyKey 重复提交时，
+       * `(tenant_id, idempotency_key)` 部分唯一索引会在**数据库层**拒绝插入，
+       * 整个事务回滚 → **余额不会二次扣减**。此时返回**既有**的那条提现请求，
+       * 让重试对调用方表现为幂等成功（而不是抛 500 或再扣一次）。
+       *
+       * 为什么必须锚在领域数据上：HTTP 幂等插件把 claim 与业务写入放在两个事务，
+       * claim 后崩溃、或 TTL（默认 24h）过期清理后重放，业务侧没有任何东西能识别
+       * 「这笔已经处理过」。实测（无锚时）：同一笔提现连发两次 → 余额 1000 → 800。 */
+      if (input.idempotencyKey && isUniqueViolation(err)) {
+        const existing = this.findPayoutByIdempotencyKey(input.tenantId, input.idempotencyKey);
+        if (existing) return existing;
+      }
       throw err;
     }
 

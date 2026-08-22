@@ -262,6 +262,64 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
     assert.equal(wallet?.balance, 0);
   });
 
+  it('同一 idempotencyKey 重复提现只扣一次（审计 P4：领域幂等锚）', () => {
+    /* 缺陷：`requestWalletPayout` 只收 (walletId, amountMinor)，**没有任何幂等键**。
+     * 客户端重试、或 HTTP `Idempotency-Key` 的 TTL（默认 24h）过期后重放，会各扣一次。
+     * 实测（无锚时）：余额 1000 的钱包连发两次 10000 分提现 → 两条请求、余额 **1000 → 800**。
+     *
+     * HTTP 幂等插件不够：它把 claim 与业务写入放在**两个**事务里 —— claim 后崩溃、
+     * 或 TTL 清理后重放，业务侧没有任何东西能识别「这笔已处理过」。
+     * 金融幂等必须锚在领域数据上，由 `(tenant_id, idempotency_key)` 唯一索引兜底。 */
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    const key = 'idem-payout-1';
+    const first = fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 1000, idempotencyKey: key,
+    });
+    assert.ok(first, '首次提现应成功');
+
+    const second = fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 1000, idempotencyKey: key,
+    });
+    assert.ok(second, '重复提交应幂等成功（返回既有请求），而不是抛错');
+    assert.equal(second?.id, first?.id, '必须返回**同一条**提现请求');
+
+    const rows = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_payout_requests WHERE wallet_id = ?',
+    ).all(fx.walletId);
+    assert.equal(rows[0]?.c, 1, '只应有一条提现请求');
+
+    const wallet = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.balance, 90, '余额只扣一次（100 - 10），不得扣成 80');
+  });
+
+  it('不传 idempotencyKey 时保持既有行为（向后兼容：仍可重复提交）', () => {
+    /* 幂等是**调用方选择加入**的能力。不传 key 的既有调用方行为一字不变，
+     * 否则这就成了破坏性变更。部分唯一索引的 `WHERE key IS NOT NULL` 保证
+     * 多条 NULL 可共存。 */
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    assert.ok(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, walletId: fx.walletId, amountMinor: 1000,
+    }));
+    assert.ok(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, walletId: fx.walletId, amountMinor: 1000,
+    }));
+
+    const rows = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_payout_requests WHERE wallet_id = ?',
+    ).all(fx.walletId);
+    assert.equal(rows[0]?.c, 2, '无 key 时两次提交应各留一条（既有行为）');
+  });
+
   it('facade and sub-service return byte-equal wallets for the same persona', () => {
     const viaFacade = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
     const viaSub = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
