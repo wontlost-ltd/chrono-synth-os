@@ -44,10 +44,14 @@ export const v128_wallet_payout_idempotency: RawMigration = defineRaw({
        WHERE idempotency_key IS NOT NULL`,
   ]),
   sqlite: rawSql([
+    /* ⚠️ `safe:if-table-exists` 标记必需：legacy-migrations 测试模拟「从 v047 起步」的
+     * 部分 schema，那里 wallet_payout_requests 尚未建表，裸 ALTER 会抛
+     * `no such table`（实测踩到）。SQLite runner 认这个标记跳过不存在的表；
+     * PG 侧无需——它跑的是完整 schema。同款用法见 runner 里 v063/v072 的处理。 */
     /* SQLite 无 ADD COLUMN IF NOT EXISTS；版本号全新不会重复执行，直接加列。 */
-    `ALTER TABLE wallet_payout_requests ADD COLUMN idempotency_key TEXT`,
+    `/* safe:if-table-exists:wallet_payout_requests */ ALTER TABLE wallet_payout_requests ADD COLUMN idempotency_key TEXT`,
     /* SQLite 3.8+ 支持部分索引，语法与 PG 一致。 */
-    `CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_payout_idempotency
+    `/* safe:if-table-exists:wallet_payout_requests */ CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_payout_idempotency
        ON wallet_payout_requests (tenant_id, idempotency_key)
        WHERE idempotency_key IS NOT NULL`,
   ]),
