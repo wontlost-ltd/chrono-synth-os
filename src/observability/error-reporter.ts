@@ -29,6 +29,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { redactPii } from '../conversation/pii-redactor.js';
+import { realClock, type Clock } from '../utils/clock.js';
 
 export interface ErrorEvent {
   /** Free-form error message; PII-scrubbed before transport. */
@@ -87,6 +88,15 @@ export interface HttpReporterOptions {
   maxEventsPerSecond: number;
   /** HTTP request timeout. */
   timeoutMs: number;
+  /**
+   * 限流窗口用的时钟（可选，默认真实时钟）。
+   *
+   * 存在的理由是**可测性**：限流窗口是 1 秒墙钟，而 `report()` 内部要 await 真实网络尝试。
+   * 用真实时钟时，「发 N 条、断言丢弃 M 条」这类断言的成败取决于前几条耗时是否跨过 1 秒边界
+   * —— 实测同一用例 4 次运行：469ms→dropped 3、974ms→3、**1139ms→2**、832ms→3，
+   * 跨过 1000ms 的那次窗口翻转、多放行一条。注入固定时钟即可让窗口行为确定。
+   */
+  clock?: Clock;
 }
 
 export class HttpErrorReporter implements ErrorReporter {
@@ -94,8 +104,11 @@ export class HttpErrorReporter implements ErrorReporter {
   private windowStartMs = 0;
   private eventsInWindow = 0;
   private dropped = 0;
+  /** 限流窗口时钟；未注入则用真实时钟（生产行为一字不变）。 */
+  private readonly clock: Clock;
 
   constructor(private readonly opts: HttpReporterOptions) {
+    this.clock = opts.clock ?? realClock;
     if (!opts.endpoint.startsWith('https://')) {
       throw new Error('error reporter endpoint must be HTTPS');
     }
@@ -104,7 +117,7 @@ export class HttpErrorReporter implements ErrorReporter {
 
   async report(event: ErrorEvent): Promise<boolean> {
     /* Rate limit: 1-second sliding window. */
-    const now = Date.now();
+    const now = this.clock.now();
     if (now - this.windowStartMs >= 1000) {
       this.windowStartMs = now;
       this.eventsInWindow = 0;
