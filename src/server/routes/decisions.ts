@@ -85,6 +85,9 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
   /** 懒加载决策引擎（按租户，LRU 驱逐上限 64） */
   const MAX_ENGINES = 64;
   const engines = new Map<string, DecisionEngine>();
+  /* 该租户是否**真的**有可用 LLM。与 engines 同生命周期（同建同逐）。
+   * 判据在 effectiveLlm 解析处计算 —— 那里才看得到 BYOK 覆盖后的真实 provider/key。 */
+  const llmUsable = new Map<string, boolean>();
   function getEngine(tenantId: string): DecisionEngine {
     const cached = engines.get(tenantId);
     if (cached) {
@@ -105,6 +108,15 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
       : undefined;
     /* BYOK：解析本租户有效 LLM 配置（active provider + 该 provider 的加密 key，缺失回退全局 config）。 */
     const effectiveLlm = resolveTenantLlmConfig(tenantDb, tenantId, config.intelligence, llmEncryption);
+    /* ⚠️ 审计 P2（审查补漏）：不能只看 provider==='mock'。
+     * 实测 `provider:'openai' + apiKey:''` 时仍走 growth 分支：真去发请求、失败，
+     * 再落到 explain 的兜底文案「该选项在当前人格与记忆上下文中表现相对稳定」，
+     * 结果同样**没有任何降级标记**却被计费 —— 与 mock 同一类问题，只是触发方式不同。
+     * 而生产误配（配了 provider 忘了 key）比默认 mock 更常见。
+     * ollama 本地部署无需 key，故不要求它有 apiKey。 */
+    const needsKey = effectiveLlm.provider !== 'mock' && effectiveLlm.provider !== 'ollama';
+    llmUsable.set(tenantId, effectiveLlm.provider !== 'mock'
+      && (!needsKey || Boolean(effectiveLlm.apiKey)));
     const llm = new ModelRouter({
       provider: effectiveLlm.provider as LLMProviderName,
       model: effectiveLlm.model,
@@ -138,7 +150,9 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
     /* LRU 驱逐最旧条目 */
     if (engines.size >= MAX_ENGINES) {
       const oldest = engines.keys().next().value;
-      if (oldest) engines.delete(oldest);
+      /* llmUsable 必须与 engines 同生同灭：只删 engines 会留下过期的能力标记，
+         该租户下次重建引擎前会读到旧判据（审查指出）。 */
+      if (oldest) { engines.delete(oldest); llmUsable.delete(oldest); }
     }
     engines.set(tenantId, engine);
     return engine;
@@ -244,10 +258,12 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
      *
      * 修法：provider 为 mock 时显式传 `mode: 'autonomous'`，走纯规则引擎
      * ——真实的确定性结果，可以计费；而不是把占位符当推理卖。 */
-    const deterministicOnly = config.intelligence.provider === 'mock';
+    /* 先确保引擎（及其 llmUsable 记录）已建好，再读能力标记。 */
+    const engine = getEngine(tenantId);
+    const deterministicOnly = llmUsable.get(tenantId) !== true;
 
     try {
-      const result = await getEngine(tenantId).evaluate(decisionCase, {
+      const result = await engine.evaluate(decisionCase, {
         ...(deterministicOnly ? { mode: 'autonomous' as const } : {}),
         onProgress: (p) => os.bus.emit('decision:simulation-progress', { tenantId, caseId: id, runId, ...p }),
       });

@@ -383,9 +383,9 @@ test('Task 9 诚实性互斥：verified mixed-scope 清单与 CARRIER_MUST_STAY_
  * 一条升 verified（admin-deployment vault rotate 的 tenantDb 捕获进事务闭包——route-direct-query-sharding.test.ts
  * 2-shard 覆盖）。decisions/onboarding 的 dbForTenant(tenantId) 直查是**ephemeral（用后即弃，不产
  * must-register edge）**——scanner 不为其产 flow contract，故无「route 直查 edge」可升（下沉本身由行为测钉死，
- * 见 route-direct-query-sharding.test.ts）。onboarding-v2 的 persona_versions 直查已下沉，但目标表列与迁移
- * schema 不匹配（persona_id/version/name 等列迁移未建——pre-existing 缺陷，非本 task 修），该端点在当前
- * schema 下 INSERT 必抛、无法端到端 2-shard 覆盖，故**保持 planned**（诚实：无行为覆盖不升）。
+ * 见 route-direct-query-sharding.test.ts）。onboarding-v2 曾有一条 persona_versions 直查，其目标列与迁移
+ * schema 完全不匹配、端点必抛；**该 INSERT 已在审计 P2 删除**（无人读回那行数据）。该 edge 保持 planned 的
+ * 理由随之变更：现在对应的是 route 的 db 参数遗留声明绑定，而非已不存在的直查。
  * 六 worker/timer/metrics 的 per-shard-worker edge 覆盖的是残留逃逸终点（keyer::db / SqliteEventLedger::db），
  * 其 proofObligation 明标「待 Plan 3 验证逃逸终点仍在正确 shard」——fan-out 本身虽有 2-shard 测，但**该 edge**
  * 的逃逸终点未证，故**保持 wired 不升 verified**（Task 1-5 的正确校准，Task 6 不反向 mass-upgrade）。
@@ -398,7 +398,7 @@ const ROUTE_DIRECT_QUERY_VERIFIED_FLOW_IDS = [
 
 /**
  * Task 6 诚实性保留 planned/wired 的 route/worker edge：
- *  - onboarding-v2 route（persona_versions 直查已下沉但目标表列缺失，无法端到端 2-shard 覆盖）→ planned；
+ *  - onboarding-v2 route（persona_versions 直查已删除；余 db 参数遗留声明绑定 edge）→ planned；
  *  - decisions/onboarding registerXRoutes flow（仅余 deps.db 遗留声明绑定 edge，非 resolver 直查）→ planned；
  *  - 六 worker/timer/metrics 的 per-shard-worker edge（覆盖残留逃逸终点，Plan 3 才证）→ 保持 wired。
  * 任何一条被静默升 verified 即违反逐 edge 诚实性判据。

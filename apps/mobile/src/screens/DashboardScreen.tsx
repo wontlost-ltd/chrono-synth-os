@@ -27,13 +27,18 @@ export function DashboardScreen() {
   const { data: sims, isLoading: simsLoading, error: simsError } = useQuery({
     queryKey: ['simulations'],
     queryFn: async () => {
-      const raw = await apiFetch<unknown>('/api/v1/simulations?page=1&pageSize=1');
+      /* ⚠️ 必须多取几条并筛 completed：overview 端点在 status !== 'completed' 时
+       * 抛 StateError（life-simulation-viz.ts:50）。若只取最新 1 条，用户刚创建
+       * 模拟（pending/running）时本屏会退回「还没有模拟」空态 —— 明明有已完成的。
+       * 这是把「必 404」换成「经常空」，不算修好。 */
+      const raw = await apiFetch<unknown>('/api/v1/simulations?page=1&pageSize=20');
       const list = (raw as { data?: SimulationListItem[] })?.data;
       return Array.isArray(list) ? list : [];
     },
   });
 
-  const latestId = sims?.[0]?.simulationId;
+  /* 列表已按 created_at DESC 排序（life-sim-executors.ts:52），故首个 completed 即最新完成。 */
+  const latestId = sims?.find(s => s.status === 'completed')?.simulationId;
 
   const { data, isLoading: overviewLoading, error: overviewError } = useQuery({
     queryKey: ['overview', latestId],

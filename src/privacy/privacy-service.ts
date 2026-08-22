@@ -902,10 +902,21 @@ export class PrivacyService {
         ? db.prepare<{ name: string; pk: number }>(
             /* information_schema 给列名；pg_index 给主键序号（1-based，与 PRAGMA 的 pk 对齐）。
              * 非主键列 pk=0，与 SQLite 语义一致，故下游过滤/排序逻辑不用改。 */
+            /* ⚠️ `pg_class` 必须**按 namespace 限定**（审查抓到的自引入缺陷）：
+             * 只按 relname 连接时，任何 schema 里的同名表都会参与 JOIN，导致每列
+             * 重复出现、且 pk 序号从**别的 schema** 的主键泄漏过来。
+             * 实测（PG 17，s1 单列 PK / s2 复合 PK）：返回 4 行而非 2 行，
+             * `b` 同时拿到 pk=0 和 pk=2。
+             * 后果：pkColumns 变成 ["a","a"] → 下游 `pkColumns.length === 1` 判定
+             * 失效 → `excluded.updated_at > t.updated_at` 版本守卫被静默关掉
+             * → **导入会用旧数据覆盖新行，还计入 imported、不报错**。
+             * 本仓的 PG 测试夹具 `createIsolatedPgSchema` 正是「同库多 schema」，
+             * 必然踩中。 */
             `SELECT c.column_name AS name,
                     COALESCE(array_position(i.indkey_arr, a.attnum), 0)::int AS pk
                FROM information_schema.columns c
-               JOIN pg_class t ON t.relname = c.table_name
+               JOIN pg_class t ON t.relname = c.table_name AND t.relkind = 'r'
+               JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = c.table_schema
                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attname = c.column_name
                LEFT JOIN (
                  SELECT indrelid, string_to_array(indkey::text, ' ')::int[] AS indkey_arr
@@ -916,10 +927,11 @@ export class PrivacyService {
         : db.prepare<{ name: string; pk: number }>(
             `PRAGMA table_info(${quoteIdent(table)})`,
           ).all();
-      const pkColumns = rows
-        .filter((r) => r.pk > 0)
-        .sort((a, b) => a.pk - b.pk)
-        .map((r) => r.name);
+      /* 去重是纵深防御：即便将来自省 SQL 又漏了限定，也不会让重复列悄悄
+       * 把 `pkColumns.length === 1` 判定翻掉（那会静默关掉版本守卫）。 */
+      const pkColumns = [...new Set(
+        rows.filter((r) => r.pk > 0).sort((a, b) => a.pk - b.pk).map((r) => r.name),
+      )];
       const columns = new Set(rows.map((r) => r.name));
       const hasUpdatedAt = columns.has('updated_at');
       const hasTenantId = columns.has('tenant_id');
