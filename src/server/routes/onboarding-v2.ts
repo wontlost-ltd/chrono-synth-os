@@ -35,7 +35,10 @@ export function registerOnboardingV2Routes(
   /* 分片 Phase 0 · Plan 2 · Task 6：注入共享 TenantDbResolver——agent 步的 persona_versions 直查
    * （tenant-scoped）经 resolver.dbForTenant(tenantId) 路由到租户所在 shard。session 状态机
    * （OnboardingV2Service）+ 工具权限 + LLM 凭据 store 仍走 host db（各自独立子域，非本 task 范围）。 */
-  resolver: TenantDbResolver,
+  /* 保留参数：删掉那条坏 INSERT 后本路由不再直查 shard，但签名是装配契约的一部分
+   * （app.ts 传 `captureResolver('onboarding-v2')`，该名字参与 db-access 门的归类）。
+   * 故保留形参并显式标注未使用，而不是改签名。 */
+  _resolver: TenantDbResolver,
 ): void {
   const service = new OnboardingV2Service(db);
   const permissions = new ToolPermissionService(db);
@@ -105,24 +108,18 @@ export function registerOnboardingV2Routes(
 
     const agentId = `agent_${randomUUID()}`;
     const now = Date.now();
-    /* persona_versions 是 agent 主体表：写入最小可用的 v1 版本。
-     * agent 名字进 description；详细字段在 dashboard 完善。
-     * 分片 Plan 2 · Task 6：tenant-scoped 直查下沉 resolver.dbForTenant(tenantId)（多 shard 路由到租户所在 shard）。 */
-    resolver.dbForTenant(request.tenantId).prepare(
-      `INSERT INTO persona_versions
-         (id, tenant_id, persona_id, version, parent_version, name, description,
-          decision_style_json, cognitive_model_json, knowledge_base_json,
-          author, created_at, snapshot_uri, is_current)
-       VALUES (?, ?, ?, 1, NULL, ?, ?, '{}', '{}', '{}', ?, ?, NULL, 1)`,
-    ).run(
-      `pv_${randomUUID()}`,
-      request.tenantId,
-      agentId,
-      body.agentName,
-      `Agent registered during onboarding by ${userId}`,
-      userId,
-      now,
-    );
+
+    /* ⚠️ 审计 P2：这里原本有一条写 `persona_versions` 的 INSERT，**列名与真实表
+     * 完全对不上** —— 它写 14 列（persona_id/version/name/decision_style_json…），
+     * 而该表只有 9 列（id/label/values_json/status/results_json/resource_quota/
+     * created_at/updated_at + tenant_id），且 5 个 NOT NULL 无默认值的列一个没给。
+     * 实测：`table persona_versions has no column named persona_id` —— 
+     * **本端点每次调用必 500**，onboarding 第 2 步完全不可用，且零测试覆盖。
+     *
+     * 直接删除而非修列：`agentId` 只被写进 onboarding 会话自身
+     * （`recordAgentStep`）并用作 `buildSyntheticInvocations` 的哈希种子，
+     * **没有任何代码从 persona_versions 读回它**。那是一行写了没人看的数据，
+     * 修好列名也只是让一条无用写入不再报错。 */
 
     /* BYOK：加密落库 llmApiKey（明文绝不持久化）。同租户同 provider 覆盖更新。
      * ModelRouter 构造时优先取本租户 key，缺失回退全局 config。
