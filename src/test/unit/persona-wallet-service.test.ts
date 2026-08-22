@@ -24,6 +24,7 @@ import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   PersonaWalletService,
+  isUniqueViolation,
   type PersonaWalletContext,
 } from '../../persona-core/persona-wallet-service.js';
 
@@ -260,6 +261,128 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
     }), '提现恰好等于余额应成功');
     const wallet = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
     assert.equal(wallet?.balance, 0);
+  });
+
+  it('同一 idempotencyKey 重复提现只扣一次（审计 P4：领域幂等锚）', () => {
+    /* 缺陷：`requestWalletPayout` 只收 (walletId, amountMinor)，**没有任何幂等键**。
+     * 客户端重试、或 HTTP `Idempotency-Key` 的 TTL（默认 24h）过期后重放，会各扣一次。
+     * 实测（无锚时）：余额 1000 的钱包连发两次 10000 分提现 → 两条请求、余额 **1000 → 800**。
+     *
+     * HTTP 幂等插件不够：它把 claim 与业务写入放在**两个**事务里 —— claim 后崩溃、
+     * 或 TTL 清理后重放，业务侧没有任何东西能识别「这笔已处理过」。
+     * 金融幂等必须锚在领域数据上，由 `(tenant_id, idempotency_key)` 唯一索引兜底。 */
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    const key = 'idem-payout-1';
+    const first = fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 1000, idempotencyKey: key,
+    });
+    assert.ok(first, '首次提现应成功');
+
+    const second = fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, amountMinor: 1000, idempotencyKey: key,
+    });
+    assert.ok(second, '重复提交应幂等成功（返回既有请求），而不是抛错');
+    assert.equal(second?.id, first?.id, '必须返回**同一条**提现请求');
+
+    const rows = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_payout_requests WHERE wallet_id = ?',
+    ).all(fx.walletId);
+    assert.equal(rows[0]?.c, 1, '只应有一条提现请求');
+
+    const wallet = fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.balance, 90, '余额只扣一次（100 - 10），不得扣成 80');
+  });
+
+  it('同一 idempotencyKey 用于**不同金额**必须拒绝（不得谎报成功）', () => {
+    /* ⚠️ 独立审查发现、我在领域层复现：修复前第二次调用返回 200 +
+     * `amountMinor: 10`（第一笔的金额）——调用方要提 50000，却被告知「成功了」。
+     * 钱没多扣（余额只减 10），故非 Critical；但这是**错误信号**，
+     * 比抛错更危险：调用方会以为大额提现已受理。
+     *
+     * 幂等的正确语义是「同一请求重放收敛」，不是「同一 key 无条件复用第一笔」。 */
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    const base = {
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, idempotencyKey: 'idem-payout-amount',
+    };
+
+    const first = fx.walletService.requestWalletPayout({ ...base, amountMinor: 1000 });
+    assert.equal(first?.amountMinor, 1000, '首次应按请求金额受理');
+
+    assert.throws(
+      () => fx.walletService.requestWalletPayout({ ...base, amountMinor: 5000 }),
+      (err: unknown) => err instanceof Error && /不能用于不同请求/.test(err.message),
+      '同 key 不同金额必须抛冲突错，而不是返回第一笔',
+    );
+
+    /* 对照：拒绝路径不得动账（既不多扣，也不回滚掉第一笔）。 */
+    assert.equal(fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId)?.balance, 90,
+      '拒绝路径不得影响余额（仍为 100 - 10）');
+
+    /* 对照：同 key + **相同**金额仍必须幂等成功——别把幂等一起修没了。 */
+    const replay = fx.walletService.requestWalletPayout({ ...base, amountMinor: 1000 });
+    assert.equal(replay?.id, first?.id, '同 key 同金额应收敛到同一笔');
+    assert.equal(fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId)?.balance, 90,
+      '幂等重放不得二次扣款');
+  });
+
+  it('主键冲突不得被误判成幂等命中（isUniqueViolation 必须精确到该索引）', () => {
+    /* ⚠️ 独立审查提出的风险，实测确认真实：两种方言的唯一冲突消息形态不同 ——
+     *   PG    : `... violates unique constraint "uq_wallet_payout_idempotency"`（带索引名）
+     *   SQLite: `UNIQUE constraint failed: t.tenant_id, t.k`（**只带列名**）
+     * 若用「任意 UNIQUE 冲突」兜底，同事务里的**主键**冲突
+     * （`UNIQUE constraint failed: wallet_payout_requests.id`）会被当成幂等命中，
+     * 于是去按 key 反查、返回一条**不相关**的既有记录 —— 把真错误伪装成幂等成功。
+     *
+     * 这里用真实 SQLite 消息形态验证判别式：只有含 idempotency_key 的才算命中。
+     *
+     * ⚠️ 必须断言**生产函数本身**。本用例初版在此复制了一份正则去断言，独立审查
+     * 用变异实测拆穿：把生产函数体改成 `return false`，该用例**仍然全绿** ——
+     * 它断言的是自己的副本，生产分支零覆盖。故 `isUniqueViolation` 现已导出。 */
+    const idemMsg = 'UNIQUE constraint failed: wallet_payout_requests.tenant_id, wallet_payout_requests.idempotency_key';
+    const pkMsg = 'UNIQUE constraint failed: wallet_payout_requests.id';
+    const pgIdemMsg = 'duplicate key value violates unique constraint "uq_wallet_payout_idempotency"';
+    const pgPkMsg = 'duplicate key value violates unique constraint "wallet_payout_requests_pkey"';
+
+    assert.equal(isUniqueViolation(new Error(idemMsg)), true, 'SQLite 幂等键冲突应命中');
+    assert.equal(isUniqueViolation(new Error(pgIdemMsg)), true, 'PG 幂等键冲突应命中');
+    assert.equal(isUniqueViolation(new Error(pkMsg)), false, 'SQLite 主键冲突**不得**命中');
+    assert.equal(isUniqueViolation(new Error(pgPkMsg)), false, 'PG 主键冲突**不得**命中');
+    /* 非 Error 入参（驱动有时抛字符串）也必须走同一判别，不得崩。 */
+    assert.equal(isUniqueViolation(pkMsg), false, '字符串形态的主键冲突同样不得命中');
+    assert.equal(isUniqueViolation(undefined), false, 'undefined 不得命中');
+  });
+
+  it('不传 idempotencyKey 时保持既有行为（向后兼容：仍可重复提交）', () => {
+    /* 幂等是**调用方选择加入**的能力。不传 key 的既有调用方行为一字不变，
+     * 否则这就成了破坏性变更。部分唯一索引的 `WHERE key IS NOT NULL` 保证
+     * 多条 NULL 可共存。 */
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    assert.ok(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, walletId: fx.walletId, amountMinor: 1000,
+    }));
+    assert.ok(fx.walletService.requestWalletPayout({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, walletId: fx.walletId, amountMinor: 1000,
+    }));
+
+    const rows = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_payout_requests WHERE wallet_id = ?',
+    ).all(fx.walletId);
+    assert.equal(rows[0]?.c, 2, '无 key 时两次提交应各留一条（既有行为）');
   });
 
   it('facade and sub-service return byte-equal wallets for the same persona', () => {

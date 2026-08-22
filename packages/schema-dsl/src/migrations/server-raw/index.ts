@@ -20,6 +20,7 @@ import { v124_tenant_bootstrap_backfill } from './v124.js';
 import { v125_github_digest_discussion_key } from './v125.js';
 import { v126_github_learn_state_org_rotation } from './v126.js';
 import { v127_github_installation_suspended } from './v127.js';
+import { v128_wallet_payout_idempotency } from './v128.js';
 
 export { v007_tenant_id } from './v007.js';
 export { v027_identities_avatars_backfill } from './v027.js';
@@ -64,6 +65,7 @@ export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v125_github_digest_discussion_key,
   v126_github_learn_state_org_rotation,
   v127_github_installation_suspended,
+  v128_wallet_payout_idempotency,
 ];
 
 export const DISABLED_MIGRATIONS: readonly RawMigration[] = [

@@ -670,6 +670,13 @@ export interface RequestWalletPayoutInput {
   ownerUserId: string;
   walletId: string;
   amountMinor: number;
+  /**
+   * 领域幂等键（可选）。传入后同一 key 的重复提现会被
+   * `(tenant_id, idempotency_key)` 部分唯一索引在**数据库层**拒绝，
+   * 整个事务回滚 → 余额不会二次扣减，方法返回既有的那条请求。
+   * 不传 = 与既有行为一致（可重复提交）。
+   */
+  idempotencyKey?: string | null;
 }
 
 export interface SettleTaskPaymentInput {

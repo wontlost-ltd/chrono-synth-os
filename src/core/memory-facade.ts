@@ -106,7 +106,7 @@ export class MemoryFacade {
   }
 
   private getOS(tenantId: string): ChronoSynthOS {
-    if (this.tenantFactory && tenantId && tenantId !== 'default') return this.tenantFactory.getTenantOS(tenantId);
+    if (this.tenantFactory && tenantId) return this.tenantFactory.getTenantOS(tenantId);
     return this.os;
   }
 

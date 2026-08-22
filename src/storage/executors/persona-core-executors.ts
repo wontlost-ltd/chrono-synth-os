@@ -105,6 +105,7 @@ import {
   PCORE_QUERY_PERSONA_BY_ID,
   PCORE_QUERY_WALLET_BY_PERSONA_ID,
   PCORE_QUERY_WALLET_PAYOUT_REQUEST_BY_ID,
+  PCORE_QUERY_WALLET_PAYOUT_BY_IDEMPOTENCY_KEY,
   PCORE_QUERY_WALLET_SETTLEMENT_BY_ASSIGNMENT_ID,
   PCORE_QUERY_TRANSFER_ACCESS,
   PCORE_QUERY_USER_EXISTS,
@@ -233,6 +234,7 @@ import type {
   PcoreGovernanceActionByIdParams,
   PcorePersonaByIdParams,
   PcoreWalletPayoutRequestByIdParams,
+  PcoreWalletPayoutByIdemParams,
   PcoreWalletSettlementByAssignmentIdParams,
   PcoreTransferAccessParams,
   PcoreUserExistsParams,
@@ -917,9 +919,12 @@ export function registerPersonaCoreExecutors(): void {
     const result = db.prepare<void>(
       `INSERT INTO wallet_payout_requests (
         id, tenant_id, wallet_id, amount_minor, currency, status,
-        requested_by_user_id, created_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?)`,
-    ).run(p.id, p.tenantId, p.walletId, p.amountMinor, p.currency, p.requestedByUserId, p.now, p.now);
+        requested_by_user_id, created_at, completed_at, idempotency_key
+      ) VALUES (?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?)`,
+    ).run(
+      p.id, p.tenantId, p.walletId, p.amountMinor, p.currency,
+      p.requestedByUserId, p.now, p.now, p.idempotencyKey ?? null,
+    );
     return { rowsAffected: result.changes };
   });
 
@@ -1389,6 +1394,13 @@ export function registerPersonaCoreExecutors(): void {
       'SELECT * FROM wallet_payout_requests WHERE tenant_id = ? AND id = ? LIMIT 1',
     ).get(p.tenantId, p.payoutId) ?? null;
   });
+
+  registerQuery<PcoreWalletPayoutRequestRow | null, PcoreWalletPayoutByIdemParams>(
+    PCORE_QUERY_WALLET_PAYOUT_BY_IDEMPOTENCY_KEY,
+    (db, p) => db.prepare<PcoreWalletPayoutRequestRow>(
+      'SELECT * FROM wallet_payout_requests WHERE tenant_id = ? AND idempotency_key = ? LIMIT 1',
+    ).get(p.tenantId, p.idempotencyKey) ?? null,
+  );
 
   registerQuery<PcoreWalletSettlementRow | null, PcoreWalletSettlementByAssignmentIdParams>(PCORE_QUERY_WALLET_SETTLEMENT_BY_ASSIGNMENT_ID, (db, p) => {
     return db.prepare<PcoreWalletSettlementRow>(

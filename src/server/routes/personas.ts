@@ -43,7 +43,7 @@ export function registerPersonaRoutes(app: FastifyInstance, deps: PersonaRoutesD
 
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
-    if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
+    if (tenantFactory && tid) return tenantFactory.getTenantOS(tid);
     return os;
   }
 

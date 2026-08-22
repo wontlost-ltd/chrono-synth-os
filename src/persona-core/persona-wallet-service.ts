@@ -34,6 +34,7 @@ import {
   pcoreQueryWalletByPersona,
   pcoreQueryWalletByPersonaId,
   pcoreQueryWalletPayoutRequestById,
+  pcoreQueryWalletPayoutByIdempotencyKey,
   pcoreQueryWalletSettlementByAssignmentId,
   pcoreQueryWalletTransactions,
   type PcoreWalletPayoutRequestRow,
@@ -45,7 +46,7 @@ import {
   type WalletDirection,
 } from '@chrono/kernel';
 import { generatePrefixedId } from '../utils/id-generator.js';
-import { ValidationError, ErrorCode } from '../errors/index.js';
+import { ValidationError, StateError, ErrorCode } from '../errors/index.js';
 import { toMinor } from './persona-core-utils.js';
 import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import type {
@@ -140,6 +141,33 @@ export interface PersonaWalletContext {
   personaExists(tenantId: string, ownerUserId: string, personaId: string): boolean;
 }
 
+/**
+ * 是否为提现幂等索引冲突 —— 只认这一类做 catch-and-refetch 收敛，其余约束/故障照抛。
+ *
+ * ⚠️ 刻意**不**兜底通用 UNIQUE 文案：那会把主键冲突误判成幂等命中（见函数体注释）。
+ *
+ * 导出仅为可测性：测试必须断言**这个函数本身**。此前测试在用例内复制了一份正则，
+ * 结果断言的是副本 —— 独立审查用变异实测证明：把本函数改成 `return false`，
+ * 那条用例仍全绿，等于零覆盖。
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  /* ⚠️ 必须**精确到这一个索引**，不能用「任意 UNIQUE 冲突」兜底。
+   * 两种方言的消息形态不同（均已实测）：
+   *   PG    : `duplicate key value violates unique constraint "uq_wallet_payout_idempotency"`
+   *           —— 带**索引名**，可直接匹配。
+   *   SQLite: `UNIQUE constraint failed: wallet_payout_requests.tenant_id, ...idempotency_key`
+   *           —— **只带列名、不带索引名**，故必须匹配列组合。
+   *
+   * 为什么不能宽松匹配：同一事务里主键 `id` 冲突的消息是
+   * `UNIQUE constraint failed: wallet_payout_requests.id`（实测），
+   * 宽松匹配会把它当成幂等命中 → 去查 idempotency_key 反查、
+   * 返回一条**不相关**的既有提现记录，把真错误伪装成幂等成功。 */
+  const pgIndexHit = /unique constraint "uq_wallet_payout_idempotency"/i.test(msg);
+  const sqliteColumnHit = /UNIQUE constraint failed:[^\n]*\bidempotency_key\b/i.test(msg);
+  return pgIndexHit || sqliteColumnHit;
+}
+
 export class PersonaWalletService {
   /**
    * Constructor accepts optional encryption args for shape parity with
@@ -179,6 +207,16 @@ export class PersonaWalletService {
     return this.source.forTenant(tenantId).queryMany(pcoreQueryWalletTransactions({ tenantId, walletId })).map(walletTransactionFromRow);
   }
 
+  /**
+   * 幂等键反查（catch-and-refetch）。与 learning-request-service 的
+   * `isActiveUniqueConflict` 同款范式：只认唯一索引冲突做收敛，其余照抛。
+   */
+  private findPayoutByIdempotencyKey(tenantId: string, idempotencyKey: string): WalletPayoutRequest | null {
+    const row = this.source.forTenant(tenantId)
+      .queryOne(pcoreQueryWalletPayoutByIdempotencyKey({ tenantId, idempotencyKey }));
+    return row ? walletPayoutRequestFromRow(row) : null;
+  }
+
   requestWalletPayout(input: RequestWalletPayoutInput): WalletPayoutRequest | null {
     const wallet = this.getWalletByIdForOwner(input.tenantId, input.ownerUserId, input.walletId);
     if (!wallet || wallet.status !== 'active') return null;
@@ -206,6 +244,7 @@ export class PersonaWalletService {
           currency,
           requestedByUserId: input.ownerUserId,
           now,
+          idempotencyKey: input.idempotencyKey ?? null,
         }));
 
         /* 条件原子扣减：相对扣减 + 同语句余额校验。
@@ -233,6 +272,30 @@ export class PersonaWalletService {
       });
     } catch (err) {
       if (err === INSUFFICIENT) return null;
+      /* ⚠️ 审计 P4：领域幂等。带 idempotencyKey 重复提交时，
+       * `(tenant_id, idempotency_key)` 部分唯一索引会在**数据库层**拒绝插入，
+       * 整个事务回滚 → **余额不会二次扣减**。此时返回**既有**的那条提现请求，
+       * 让重试对调用方表现为幂等成功（而不是抛 500 或再扣一次）。
+       *
+       * 为什么必须锚在领域数据上：HTTP 幂等插件把 claim 与业务写入放在两个事务，
+       * claim 后崩溃、或 TTL（默认 24h）过期清理后重放，业务侧没有任何东西能识别
+       * 「这笔已经处理过」。实测（无锚时）：同一笔提现连发两次 → 余额 1000 → 800。 */
+      if (input.idempotencyKey && isUniqueViolation(err)) {
+        const existing = this.findPayoutByIdempotencyKey(input.tenantId, input.idempotencyKey);
+        if (existing) {
+          /* ⚠️ 幂等 ≠ 无条件复用第一笔。同一 key 复用于**不同请求**必须拒绝，
+           * 否则「要提 50000」会拿到「已成功，金额 10」——钱虽没多扣，
+           * 调用方收到的却是错误信号（实测：返回 200 + amountMinor=10）。
+           *
+           * HTTP 幂等插件用 requestHash 做过同款校验，但它只在 claim 行存活期内有效；
+           * TTL 过期后的重放正是本领域锚要覆盖的窗口，故这里必须给出等价校验。
+           * 措辞/错误码与插件对齐（StateError + STATE_ALREADY_EXISTS）。 */
+          if (existing.amountMinor !== amountMinor || existing.walletId !== input.walletId) {
+            throw new StateError('同一个 Idempotency-Key 不能用于不同请求', ErrorCode.STATE_ALREADY_EXISTS);
+          }
+          return existing;
+        }
+      }
       throw err;
     }
 

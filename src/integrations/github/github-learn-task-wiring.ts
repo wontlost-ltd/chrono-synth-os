@@ -48,7 +48,7 @@ export function createGithubLearnTaskHandlerForProduction(
 ): TaskHandler {
   /** 按租户取 OS——安全不变量的落点。 */
   const osFor = (tenantId: string): ChronoSynthOS =>
-    deps.tenantFactory && tenantId !== 'default'
+    deps.tenantFactory && tenantId
       ? deps.tenantFactory.getTenantOS(tenantId)
       : deps.os;
 

@@ -686,8 +686,10 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * learn-github 的 assembleReadPort），故注入按 ctx.tenantId 解析的 resolver。
    * 本组合根 + 这两个工具是 WritePort 的唯一持有者（Task 6 架构测试锁死）。 */
   const resolveGithubWritePort = (tenantId: string): GitHubWritePort => {
-    /* 与 companion 路由同款：'default' 或无租户工厂时用根 OS，否则取租户 OS。 */
-    const tenantOS = (tenantFactory && tenantId && tenantId !== 'default')
+    /* 与 companion 路由同款：有租户工厂就一律走它取租户 OS（**含 default** ——
+     * default 也是普通租户，绕开工厂会拿到未包装的裸库、看得到全租户数据）；
+     * 仅在无工厂（单租户部署）时退回根 OS。 */
+    const tenantOS = (tenantFactory && tenantId)
       ? tenantFactory.getTenantOS(tenantId)
       : deps.os;
     /* 凭据加密未启用则无凭据 store 可用——明确报「未连接」（与 read 侧对称）。 */
@@ -802,7 +804,7 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * 蒸馏成 core value 候选（经蒸馏门，不绕过）。回调在此注入，因为这里能拿到 os + tenantFactory。 */
   const onMarketplaceTaskCompleted = (event: import('./routes/persona-core.js').MarketplaceTaskCompletedEvent): void => {
     const tenantOS =
-      tenantFactory && event.tenantId && event.tenantId !== 'default'
+      tenantFactory && event.tenantId
         ? tenantFactory.getTenantOS(event.tenantId)
         : deps.os;
     /* ADR-0056 K5b：读**该 worker persona 自己的**价值（value 已按 persona 隔离），蒸馏强化也落它自己的核心，

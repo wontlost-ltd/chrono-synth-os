@@ -114,6 +114,7 @@ export const PCORE_QUERY_GOVERNANCE_ACTION_BY_ID = 'pcore.governanceActionById' 
 export const PCORE_QUERY_PERSONA_BY_ID = 'pcore.personaById' as const;
 export const PCORE_QUERY_WALLET_BY_PERSONA_ID = 'pcore.walletByPersonaId' as const;
 export const PCORE_QUERY_WALLET_PAYOUT_REQUEST_BY_ID = 'pcore.walletPayoutRequestById' as const;
+export const PCORE_QUERY_WALLET_PAYOUT_BY_IDEMPOTENCY_KEY = 'pcore.walletPayoutByIdempotencyKey' as const;
 export const PCORE_QUERY_WALLET_SETTLEMENT_BY_ASSIGNMENT_ID = 'pcore.walletSettlementByAssignmentId' as const;
 export const PCORE_QUERY_TRANSFER_ACCESS = 'pcore.transferAccess' as const;
 export const PCORE_QUERY_USER_EXISTS = 'pcore.userExists' as const;
@@ -713,6 +714,12 @@ export interface PcoreCreateWalletPayoutRequestParams {
   currency: string;
   requestedByUserId: string;
   now: number;
+  /**
+   * 领域幂等键（可选）。传入时由 `(tenant_id, idempotency_key)` 部分唯一索引兜底：
+   * 同一 key 的第二次提现在**数据库层**被拒，从而整个事务回滚、余额不会二次扣减。
+   * 不传（NULL）= 与既有行为完全一致（仍可重复提交）——幂等是调用方选择加入的能力。
+   */
+  idempotencyKey?: string | null;
 }
 
 /**
@@ -1356,6 +1363,18 @@ export function pcoreQueryWalletByPersonaId(params: PcoreTenantPersonaParams): Q
 export function pcoreQueryWalletPayoutRequestById(params: PcoreWalletPayoutRequestByIdParams): Query<PcoreWalletPayoutRequestRow | null, PcoreWalletPayoutRequestByIdParams> {
   return { kind: PCORE_QUERY_WALLET_PAYOUT_REQUEST_BY_ID, params };
 }
+/** 幂等键反查：重复提现被唯一索引拒后，用它取回既有那条请求（catch-and-refetch）。 */
+export interface PcoreWalletPayoutByIdemParams {
+  readonly tenantId: string;
+  readonly idempotencyKey: string;
+}
+
+export function pcoreQueryWalletPayoutByIdempotencyKey(
+  params: PcoreWalletPayoutByIdemParams,
+): Query<PcoreWalletPayoutRequestRow | null, PcoreWalletPayoutByIdemParams> {
+  return { kind: PCORE_QUERY_WALLET_PAYOUT_BY_IDEMPOTENCY_KEY, params };
+}
+
 
 export function pcoreQueryWalletSettlementByAssignmentId(params: PcoreWalletSettlementByAssignmentIdParams): Query<PcoreWalletSettlementRow | null, PcoreWalletSettlementByAssignmentIdParams> {
   return { kind: PCORE_QUERY_WALLET_SETTLEMENT_BY_ASSIGNMENT_ID, params };

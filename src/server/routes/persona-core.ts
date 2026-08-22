@@ -581,11 +581,19 @@ export function registerPersonaCoreRoutes(app: FastifyInstance, deps: PersonaCor
   app.post<{ Params: { id: string } }>('/api/v1/wallets/:id/payout', async (request) => {
     const user = requireJwtUser(request);
     const body = WalletPayoutSchema.parse(request.body);
+    /* ⚠️ 审计 P4：把客户端的 `Idempotency-Key` 头**下沉为领域幂等键**。
+     * HTTP 幂等插件只把 claim 与业务写入放在两个事务里 —— claim 后崩溃、
+     * 或其 TTL（默认 24h）过期清理后重放，业务侧无从识别「这笔已处理过」，
+     * 会再扣一次钱（实测：同一笔提现连发两次 → 余额 1000 → 800）。
+     * 传下去后由 `(tenant_id, idempotency_key)` 唯一索引在数据库层兜底。
+     * 未提供该头时行为与既有一致（可重复提交），不破坏现有调用方。 */
+    const idemHeader = request.headers['idempotency-key'];
     const payout = service.requestWalletPayout({
       tenantId: request.tenantId,
       ownerUserId: user.sub,
       walletId: request.params.id,
       amountMinor: body.amountMinor,
+      idempotencyKey: typeof idemHeader === 'string' && idemHeader.trim() ? idemHeader.trim() : null,
     });
     if (!payout) {
       throw new NotFoundError(`Wallet ${request.params.id} 不存在或余额不足`, ErrorCode.NOT_FOUND_WALLET);

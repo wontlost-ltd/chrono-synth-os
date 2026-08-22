@@ -1359,6 +1359,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
     "sql": [
       "ALTER TABLE github_installations ADD COLUMN suspended_at INTEGER"
     ]
+  },
+  {
+    "version": "v128",
+    "description": "Wallet payout: wallet_payout_requests adds idempotency_key + unique index",
+    "sql": [
+      "ALTER TABLE wallet_payout_requests ADD COLUMN idempotency_key TEXT",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_payout_idempotency\n       ON wallet_payout_requests (tenant_id, idempotency_key)\n       WHERE idempotency_key IS NOT NULL"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2679,6 +2687,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "description": "GitHub install entrypoint: github_installations adds suspended_at",
     "sql": [
       "ALTER TABLE github_installations ADD COLUMN IF NOT EXISTS suspended_at BIGINT"
+    ]
+  },
+  {
+    "version": "v130",
+    "description": "Wallet payout: wallet_payout_requests adds idempotency_key + unique index",
+    "sql": [
+      "ALTER TABLE wallet_payout_requests ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
+      "CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_payout_idempotency\n       ON wallet_payout_requests (tenant_id, idempotency_key)\n       WHERE idempotency_key IS NOT NULL"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
