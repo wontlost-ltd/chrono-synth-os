@@ -78,7 +78,7 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
   const billingOutbox = BillingOutbox.fromResolver(resolver, config);
 
   function getOS(tenantId: string): ChronoSynthOS {
-    if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
+    if (tenantFactory) return tenantFactory.getTenantOS(tenantId);
     return os;
   }
 

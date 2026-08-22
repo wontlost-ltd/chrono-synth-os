@@ -207,7 +207,7 @@ export function registerCompanionRoutes(app: FastifyInstance, deps: CompanionRou
   const { os, tenantFactory, resolver, db, config } = deps;
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
-    if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
+    if (tenantFactory && tid) return tenantFactory.getTenantOS(tid);
     return os;
   }
 

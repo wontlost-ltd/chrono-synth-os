@@ -77,7 +77,7 @@ export function registerCompanionPerceiveStreamRoutes(app: FastifyInstance, deps
   const quotaManager = QuotaManager.fromResolver(resolver);
 
   function getOS(tenantId: string): ChronoSynthOS {
-    if (tenantFactory && tenantId && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
+    if (tenantFactory && tenantId) return tenantFactory.getTenantOS(tenantId);
     return os;
   }
 

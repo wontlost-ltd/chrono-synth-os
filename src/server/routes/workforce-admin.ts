@@ -61,7 +61,7 @@ export function registerWorkforceAdminRoutes(app: FastifyInstance, db: IDatabase
    */
   const osFor = (request: FastifyRequest): ChronoSynthOS => {
     const tid = request.tenantId;
-    if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
+    if (tenantFactory && tid) return tenantFactory.getTenantOS(tid);
     return os;
   };
 

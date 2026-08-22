@@ -37,7 +37,7 @@ export function registerAvatarRoutes(app: FastifyInstance, db: IDatabase, os: Ch
   const snapshotService = new AvatarSnapshotService(tx, app.log);
 
   function getTenantOS(tenantId: string): ChronoSynthOS {
-    if (tenantFactory && tenantId && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
+    if (tenantFactory && tenantId) return tenantFactory.getTenantOS(tenantId);
     return os;
   }
 

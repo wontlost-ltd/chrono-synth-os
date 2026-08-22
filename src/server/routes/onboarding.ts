@@ -83,7 +83,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
   const questionnaire = new QuestionnaireEngine();
 
   function getOS(tenantId: string): ChronoSynthOS {
-    if (tenantFactory && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
+    if (tenantFactory) return tenantFactory.getTenantOS(tenantId);
     return os;
   }
 

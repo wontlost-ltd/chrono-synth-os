@@ -23,7 +23,7 @@ interface ValueEdge {
 export function registerVisualizationRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory): void {
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
-    if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
+    if (tenantFactory && tid) return tenantFactory.getTenantOS(tid);
     return os;
   }
 

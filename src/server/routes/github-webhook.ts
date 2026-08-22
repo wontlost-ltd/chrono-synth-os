@@ -111,7 +111,7 @@ export function registerGithubWebhookRoutes(
 
   /** 取指定租户的 OS（非-default 走 tenantFactory；无 factory / default → 基座 os）。 */
   function tenantOSFor(tenantId: string): ChronoSynthOS {
-    if (tenantFactory && tenantId && tenantId !== 'default') return tenantFactory.getTenantOS(tenantId);
+    if (tenantFactory && tenantId) return tenantFactory.getTenantOS(tenantId);
     return os;
   }
 

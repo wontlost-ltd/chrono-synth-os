@@ -15,7 +15,7 @@ import { ConsoleLogger } from '../../utils/logger.js';
 export function registerOperationRoutes(app: FastifyInstance, os: ChronoSynthOS, tenantFactory?: TenantOSFactory, config?: AppConfig): void {
   function getOS(request: FastifyRequest): ChronoSynthOS {
     const tid = request.tenantId;
-    if (tenantFactory && tid && tid !== 'default') return tenantFactory.getTenantOS(tid);
+    if (tenantFactory && tid) return tenantFactory.getTenantOS(tid);
     return os;
   }
 
