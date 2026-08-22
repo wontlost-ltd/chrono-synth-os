@@ -229,8 +229,26 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
     const runId = generatePrefixedId('run');
     os.bus.emit('decision:simulation-progress', { tenantId, caseId: id, runId, progress: 0, stage: 'started' });
 
+    /* ⚠️ 审计 P2：未配置真实 LLM 时**必须走确定性内核**，不能让 mock 冒充推理结果。
+     *
+     * `evaluate()` 默认走 growth（LLM）分支，而 `intelligence.provider` 默认是
+     * `'mock'` —— `chatMock` 返回硬编码的 `Option A/B/C, riskScore 0.35,
+     * confidence 0.6`。这些编造结果此前会 HTTP 200 返回、落 `decision_runs`、
+     * 并经 `billingOutbox.enqueue` **计费**，且 `DecisionResult` 没有任何
+     * degraded/fallback 字段，调用方无从分辨。
+     *
+     * 这直接违反「零-LLM 内核」论点：对话链路做对了（返回
+     * `{fallback:true, failureReason:'no_llm_configured'}` 并转确定性回复器），
+     * 决策链路是漏改的一支。engine 自己的注释（decision-engine.ts:105-108）
+     * 早就预言了这个 footgun。
+     *
+     * 修法：provider 为 mock 时显式传 `mode: 'autonomous'`，走纯规则引擎
+     * ——真实的确定性结果，可以计费；而不是把占位符当推理卖。 */
+    const deterministicOnly = config.intelligence.provider === 'mock';
+
     try {
       const result = await getEngine(tenantId).evaluate(decisionCase, {
+        ...(deterministicOnly ? { mode: 'autonomous' as const } : {}),
         onProgress: (p) => os.bus.emit('decision:simulation-progress', { tenantId, caseId: id, runId, ...p }),
       });
 

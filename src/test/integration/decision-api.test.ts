@@ -103,6 +103,19 @@ describe('决策 API 集成测试', () => {
       assert.ok(simBody.data.result.recommendedAlternative);
       assert.ok(Array.isArray(simBody.data.result.rankedOptions));
       assert.equal(simBody.data.result.rankedOptions.length, 2);
+
+      /* ⚠️ 审计 P2：上面全是**形状断言** —— 无论引擎真推理了、还是 chatMock
+       * 返回了硬编码的 `Option A/B/C, riskScore 0.35`，它们都会通过。
+       * 未配置真实 LLM（provider 默认 'mock'）时必须走确定性规则引擎，
+       * 否则编造结果会被 HTTP 200 返回、落 decision_runs、并经 billingOutbox 计费。
+       * 规则引擎的 explanation.summary 带「规则引擎评估」前缀，是可判别的证据。
+       * 负向对照实测：去掉该修复后本断言转红（响应里没有这个标记）。 */
+      const summary = simBody.data.result.rankedOptions[0]?.explanation?.summary ?? '';
+      assert.ok(summary.includes('规则引擎评估'),
+        `provider=mock 时必须走确定性内核，实际 summary=${JSON.stringify(summary)}`);
+      /* 推荐项必须是**调用方给的**备选，而不是 mock 的 'Option A'。 */
+      assert.ok(['投资', '观望'].includes(simBody.data.result.recommendedAlternative),
+        `推荐项应来自实际备选，实际 ${simBody.data.result.recommendedAlternative}`);
     });
 
     it('不存在的决策返回 404', async () => {
