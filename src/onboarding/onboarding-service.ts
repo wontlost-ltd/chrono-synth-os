@@ -54,6 +54,9 @@ export class OnboardingService {
     private readonly logger: Logger,
     private readonly createSnapshot: (reason: SystemSnapshot['reason']) => SystemSnapshot,
     private readonly tenantId?: string,
+    /* 审计 P2：未配置真实 LLM（provider='mock'）时置 true → evaluate 走确定性内核，
+     * 不让 chatMock 的硬编码结果冒充推理产物写进 onboarding 会话。 */
+    private readonly deterministicOnly = false,
   ) {}
 
   /** 创建新的引导会话 */
@@ -150,7 +153,12 @@ export class OnboardingService {
     if (!session.decision) {
       throw new StateError('请先完成步骤 1 (描述决策问题)', ErrorCode.STATE_INVALID_TRANSITION);
     }
-    const result = await this.engine.evaluate(session.decision);
+    /* ⚠️ 审计 P2：同 decisions 路由 —— provider 为 mock 时走确定性内核，
+     * 不让 `chatMock` 的硬编码 Option A/B/C 冒充推理结果写进 onboarding 会话。 */
+    const result = await this.engine.evaluate(
+      session.decision,
+      this.deterministicOnly ? { mode: 'autonomous' } : undefined,
+    );
     session.simulationResult = result;
   }
 

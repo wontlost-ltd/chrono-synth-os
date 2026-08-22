@@ -87,9 +87,17 @@ jobs:
       - name: schema-dsl parity (desktop sqlite-rust)
         run: npm run test:schema-dsl-parity:desktop
 
-  # GA aggregate gate. Mirrors what `npm run test:golden` runs at the
-  # end of its chain — the ga:check script handles §8 #1-28 artifact
-  # presence + cross-cutting lints. In CI we run it WITHOUT
+  # GA aggregate gate. Covers §8 #1-28 artifact presence + cross-cutting
+  # lints via the ga:check script.
+  #
+  # NOTE (audit P3): this comment previously claimed ga:check "mirrors
+  # what `npm run test:golden` runs at the end of its chain" — that was
+  # false. test:golden ends with `... && check:licenses && check:db-access
+  # && check:sql-layering`, and the latter two had ZERO references anywhere
+  # in .github/. A PR could add raw SQL to a route layer, or an
+  # unclassified DB sink, and CI would stay green — which is exactly how
+  # the broken `onboarding-v2.ts` INSERT survived. They now run explicitly
+  # as their own steps below. In CI we run ga:check WITHOUT
   # --require-siblings because OS-only checkouts can't pull the three
   # sibling repos; their lints run in their own CI workflows.
   #
@@ -130,6 +138,13 @@ jobs:
         # not appropriate here because OS-only checkouts don't fetch
         # the sibling repos.
         run: node dist/scripts/ga-check.js --out=ga-check.json
+      # These two are the tail of `npm run test:golden` but were never
+      # wired into CI (audit P3). Both pass today, so adding them is
+      # non-breaking; they exist to keep it that way.
+      - name: check:db-access — DB sink classification ratchet
+        run: npm run check:db-access
+      - name: check:sql-layering — no raw SQL outside executors
+        run: npm run check:sql-layering
       - name: Upload ga:check report
         if: always()
         uses: actions/upload-artifact@v7

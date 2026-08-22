@@ -11,10 +11,11 @@
  * 租户 A → s1；os 用 s0 作 host（=coordinator，模拟旧 host 行为）。忘下沉（route 仍用 sharedDb=host db）
  * → 行落 s0、s1 无 → 反向断言红（这是「resolver 真穿透」的变异自证锚点）。
  *
- * onboarding-v2 的 `POST /agent` persona_versions INSERT 目标列（persona_id/version/name/…）与迁移
- * 渲染的 persona_versions 表（id/label/values_json/…）不匹配——该端点在当前 schema 下 INSERT 必抛
- * （先于分片路由的 pre-existing 缺陷，非本 task 修）。故本文件不对其做端到端落 shard 断言（无法与
- * 「行落错 shard」区分）；sinking 仍照 brief 落地，inventory 该 edge 诚实保持 planned（见报告）。
+ * onboarding-v2 的 `POST /agent` 曾有一条 persona_versions INSERT，目标列与迁移渲染的表完全不匹配
+ * （端点必抛）。**该 INSERT 已在审计 P2 中删除**——agentId 只写进 onboarding 会话自身、无人从
+ * persona_versions 读回，那是一行写了没人看的数据。故本文件不再对其做端到端落 shard 断言：
+ * 不是「无法与行落错 shard 区分」，而是**已经没有这条直查了**。
+ * inventory 该 edge 仍为 planned（对应的是 route 的 db 参数，非已删的 INSERT）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

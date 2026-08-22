@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../client';
+import { apiFetch, unwrapList } from '../client';
 
 export interface AutorunConfig {
   enabled: boolean;
@@ -63,7 +63,12 @@ export function useTriggerAutorun(avatarId: string) {
 export function useAutorunRuns(avatarId: string) {
   return useQuery({
     queryKey: ['autorun-runs', avatarId],
-    queryFn: ({ signal }) => apiFetch<AutorunRun[]>(`/api/v1/avatars/${encodeURIComponent(avatarId)}/autorun/runs`, { signal }),
+    /* ⚠️ 审计 P3：同 knowledgeSources —— 服务端返回 {data,pagination}，
+     * apiFetch 只对单键 {data} 自动解包。此前直接标注成 AutorunRun[]，
+     * 运行时拿到对象 → AutorunRunsPage **永远显示「暂无运行记录」**，
+     * 用户会误以为 autorun 坏了并反复手动触发。 */
+    queryFn: ({ signal }) => apiFetch<unknown>(`/api/v1/avatars/${encodeURIComponent(avatarId)}/autorun/runs`, { signal })
+      .then(unwrapList<AutorunRun>),
     enabled: !!avatarId,
   });
 }

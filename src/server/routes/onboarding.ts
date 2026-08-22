@@ -172,6 +172,7 @@ export function registerOnboardingRoutes(app: FastifyInstance, deps: OnboardingR
       tenantOS.getLogger(),
       (reason) => tenantOS.createSnapshot(reason),
       tenantId,
+      config.intelligence.provider === 'mock',
     );
     onboardings.set(tenantId, svc);
     return svc;

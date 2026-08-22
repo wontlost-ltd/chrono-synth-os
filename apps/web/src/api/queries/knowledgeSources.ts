@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '../client';
+import { apiFetch, unwrapList } from '../client';
 
 export type KnowledgeSourceType = 'rss' | 'api' | 'file' | 'manual' | 'llm';
 
@@ -32,7 +32,17 @@ interface UpdateKnowledgeSourceDto {
 export function useKnowledgeSources() {
   return useQuery({
     queryKey: ['knowledge-sources'],
-    queryFn: ({ signal }) => apiFetch<KnowledgeSource[]>('/api/v1/knowledge-sources', { signal }),
+    /* ⚠️ 审计 P3：服务端返回分页信封 {data,pagination}，而 apiFetch **只对单键
+     * {data} 自动解包**（多键要保留 pagination）。此前直接标注成 KnowledgeSource[]
+     * 是编译期谎言（apiFetch<T> 无校验强转），运行时拿到的是对象：
+     *   - KnowledgeSourceListPage → DataTable 判 `!rows.length` → undefined 为假
+     *     → **有数据也渲染「暂无来源」空状态**
+     *   - AutorunConfigPage 的来源选择器**永不渲染**，用户无法挂载来源
+     *   - useContextualSuggestions 的「添加第一个来源」提示**永远显示**
+     *   - useSetupProgress 的引导清单**永远到不了 100%**
+     * 四处全部静默，无报错无告警。用 unwrapList 修（与 values/personas/conflicts 同款）。 */
+    queryFn: ({ signal }) => apiFetch<unknown>('/api/v1/knowledge-sources', { signal })
+      .then(unwrapList<KnowledgeSource>),
   });
 }
 

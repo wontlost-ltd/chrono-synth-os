@@ -13,11 +13,43 @@ interface OverviewData {
   meta: { horizonYears: number };
 }
 
+interface SimulationListItem {
+  simulationId: string;
+  status: string;
+  createdAt: number;
+}
+
 export function DashboardScreen() {
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['overview'],
-    queryFn: () => apiFetch<OverviewData>('/api/v1/visualization/overview'),
+  /* ⚠️ 审计 P3：此前直接请求 `/api/v1/visualization/overview` —— **该路由不存在**。
+   * 真实路由是 `/api/v1/simulations/:id/visualization/overview`（需要模拟 ID），
+   * 于是本屏**永久渲染错误分支**（404）。
+   * 修法：先列模拟取最新一条，再按其 ID 取 overview。无模拟时走空态而非报错。 */
+  const { data: sims, isLoading: simsLoading, error: simsError } = useQuery({
+    queryKey: ['simulations'],
+    queryFn: async () => {
+      /* ⚠️ 必须多取几条并筛 completed：overview 端点在 status !== 'completed' 时
+       * 抛 StateError（life-simulation-viz.ts:50）。若只取最新 1 条，用户刚创建
+       * 模拟（pending/running）时本屏会退回「还没有模拟」空态 —— 明明有已完成的。
+       * 这是把「必 404」换成「经常空」，不算修好。 */
+      const raw = await apiFetch<unknown>('/api/v1/simulations?page=1&pageSize=20');
+      const list = (raw as { data?: SimulationListItem[] })?.data;
+      return Array.isArray(list) ? list : [];
+    },
   });
+
+  /* 列表已按 created_at DESC 排序（life-sim-executors.ts:52），故首个 completed 即最新完成。 */
+  const latestId = sims?.find(s => s.status === 'completed')?.simulationId;
+
+  const { data, isLoading: overviewLoading, error: overviewError } = useQuery({
+    queryKey: ['overview', latestId],
+    enabled: !!latestId,
+    queryFn: () => apiFetch<OverviewData>(
+      `/api/v1/simulations/${encodeURIComponent(latestId as string)}/visualization/overview`,
+    ),
+  });
+
+  const isLoading = simsLoading || (!!latestId && overviewLoading);
+  const error = simsError ?? overviewError;
 
   if (isLoading) {
     return (

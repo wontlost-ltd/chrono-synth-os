@@ -12,7 +12,13 @@ import {
 } from './knowledgeSources';
 
 const mockApiFetch = vi.fn();
-vi.mock('../client', () => ({ apiFetch: (...args: unknown[]) => mockApiFetch(...args) }));
+/* ⚠️ 必须一并提供真实的 `unwrapList`：这些 hook 现在链式调用它来解开
+ * 分页信封 {data,pagination}。整模块 mock 时若漏掉它，运行时会 undefined 报错，
+ * 表现为 isSuccess 恒 false（而不是断言值不符），很容易误判成别的问题。 */
+vi.mock('../client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../client')>();
+  return { apiFetch: (...args: unknown[]) => mockApiFetch(...args), unwrapList: actual.unwrapList };
+});
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -25,9 +31,13 @@ beforeEach(() => {
 });
 
 describe('useKnowledgeSources', () => {
-  it('fetches list', async () => {
+  it('fetches list（分页信封被解包 —— 修复前有数据也渲染空状态）', async () => {
+    /* ⚠️ 审计 P3：服务端返回 {data,pagination}，apiFetch 只对**单键** {data}
+     * 自动解包。此前 hook 直接把它当数组，导致 `rows.length` 为 undefined →
+     * DataTable 判 `!rows.length` 为真 → **有数据也显示「暂无来源」**。
+     * 故这里 mock **真实的信封形态**，断言 hook 返回的是解包后的数组。 */
     const data = [{ id: '1', name: 'RSS' }];
-    mockApiFetch.mockResolvedValue(data);
+    mockApiFetch.mockResolvedValue({ data, pagination: { page: 1, pageSize: 20, total: 1 } });
     const { result } = renderHook(() => useKnowledgeSources(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(data);
