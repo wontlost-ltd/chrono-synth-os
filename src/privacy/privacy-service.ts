@@ -890,10 +890,32 @@ export class PrivacyService {
     const introspectTable = (table: string): TableSchema => {
       const cached = schemaCache.get(table);
       if (cached) return cached;
-      /* 表名来自 TENANT_TABLE_SET 白名单（上游已校验），此处仍转义作纵深防御 */
-      const rows = db.prepare<{ name: string; pk: number }>(
-        `PRAGMA table_info(${quoteIdent(table)})`,
-      ).all();
+      /* ⚠️ 审计 P2：`PRAGMA table_info` 是 **SQLite 专属**，在 PG 下语法失败。
+       * 本文件 350 行的 `deferForeignKeys` 早已做了方言分支，这里是漏网 ——
+       * 后果：生产（k8s configmap `CHRONO_DB_DRIVER: postgres`）上
+       * `POST /api/v1/privacy/import/commit` 必然报错回滚，
+       * **GDPR Art.20 数据可携带性在生产驱动上完全不可用**。
+       * 该函数唯一的测试是 SQLite-only 的 portability-pack-roundtrip，故一直没暴露。
+       *
+       * 表名来自 TENANT_TABLE_SET 白名单（上游已校验），此处仍转义作纵深防御。 */
+      const rows = db.dialect === 'postgres'
+        ? db.prepare<{ name: string; pk: number }>(
+            /* information_schema 给列名；pg_index 给主键序号（1-based，与 PRAGMA 的 pk 对齐）。
+             * 非主键列 pk=0，与 SQLite 语义一致，故下游过滤/排序逻辑不用改。 */
+            `SELECT c.column_name AS name,
+                    COALESCE(array_position(i.indkey_arr, a.attnum), 0)::int AS pk
+               FROM information_schema.columns c
+               JOIN pg_class t ON t.relname = c.table_name
+               JOIN pg_attribute a ON a.attrelid = t.oid AND a.attname = c.column_name
+               LEFT JOIN (
+                 SELECT indrelid, string_to_array(indkey::text, ' ')::int[] AS indkey_arr
+                   FROM pg_index WHERE indisprimary
+               ) i ON i.indrelid = t.oid
+              WHERE c.table_name = $1 AND c.table_schema = current_schema()`,
+          ).all(table)
+        : db.prepare<{ name: string; pk: number }>(
+            `PRAGMA table_info(${quoteIdent(table)})`,
+          ).all();
       const pkColumns = rows
         .filter((r) => r.pk > 0)
         .sort((a, b) => a.pk - b.pk)
