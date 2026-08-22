@@ -46,8 +46,22 @@ const BASELINE = new Set([
   'src/server/routes/privacy.ts',
 ]);
 
-/** 真 SQL 的信号：`.prepare<` 是本仓库唯一的 SQL 入口写法。 */
-const SQL_MARKER = /\.prepare\s*</;
+/**
+ * 真 SQL 的信号。
+ *
+ * ⚠️ 审计 P3：原先只匹配 `.prepare<`（要求泛型参数），注释还声称那是
+ * 「本仓库唯一的 SQL 入口写法」—— **不成立**。`onboarding-v2.ts` 用的是**裸**
+ * `.prepare(` 加多行 `INSERT INTO persona_versions`，既不在 BASELINE 里，
+ * 本门却打印「无新增真 SQL」并 exit 0 —— 那条 INSERT 列名全错、端点必 500，
+ * 正是从这个缺口溜过去的。`db.exec('DELETE FROM ...')` 同样不可见。
+ *
+ * 现在覆盖：`.prepare<`、`.prepare(`，以及 **db 对象上**的 `.exec(`。
+ *
+ * ⚠️ 裸 `.exec(` 不能直接匹配 —— `RegExp.prototype.exec` 同名（实测把
+ * `scim.ts` 的 `/regex/.exec(raw)` 误报成 SQL）。故要求接收者是 db 形态的
+ * 标识符（db / tx / database / conn / resolver.dbForTenant(...) 等）。
+ */
+const SQL_MARKER = /\.prepare\s*[<(]|\b(?:db|tx|database|conn|connection|client)\w*\s*\.\s*exec\s*\(|\)\s*\.\s*exec\s*\(\s*['"`]/;
 
 function walk(dir, out = []) {
   let entries;
@@ -74,7 +88,9 @@ for (const govDir of GOVERNED_DIRS) {
     const rel = relative(ROOT, file).split(sep).join('/');
     const src = readFileSync(file, 'utf8');
     if (!SQL_MARKER.test(src)) continue;
-    const count = (src.match(/\.prepare\s*</g) ?? []).length;
+    /* 计数必须用**与检出同一个** marker：此前这里固定数 `.prepare<`，
+     * 于是裸 `.prepare(` 的违规被检出后却打印「0 处」，读者会以为是误报。 */
+    const count = (src.match(new RegExp(SQL_MARKER.source, 'g')) ?? []).length;
     offenders.push({ rel, count });
   }
 }
@@ -87,7 +103,7 @@ const stale = [...BASELINE].filter((f) => !current.has(f));
 if (added.length > 0) {
   console.error('✗ SQL 分层棘轮：以下文件在路由/插件层新引入了真 SQL\n');
   for (const o of added) {
-    console.error(`  ${o.rel}  （${o.count} 处 .prepare<）`);
+    console.error(`  ${o.rel}  （${o.count} 处真 SQL 入口）`);
   }
   console.error(
     '\n真 SQL 只允许在 src/storage/executors/。请改为 kernel 的 { kind, params } 描述符：\n' +
