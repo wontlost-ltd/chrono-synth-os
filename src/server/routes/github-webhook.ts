@@ -109,7 +109,8 @@ export function registerGithubWebhookRoutes(
    * 加密未启用时无凭据 store 可用——反查/验签路径会 fail-closed 拒。 */
   const credEncryption = config ? tryByokEncryption(config.encryption) : undefined;
 
-  /** 取指定租户的 OS（非-default 走 tenantFactory；无 factory / default → 基座 os）。 */
+  /** 取指定租户的 OS：有 tenantFactory 就一律走它（**含 default**，它也是普通租户，
+   *  绕开工厂会拿到未包装的裸库）；仅无 factory 时退回基座 os。 */
   function tenantOSFor(tenantId: string): ChronoSynthOS {
     if (tenantFactory && tenantId) return tenantFactory.getTenantOS(tenantId);
     return os;

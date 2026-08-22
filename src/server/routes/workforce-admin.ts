@@ -57,7 +57,9 @@ export function registerWorkforceAdminRoutes(app: FastifyInstance, db: IDatabase
 
   /**
    * 按请求租户取 tenant-scoped OS（关键：人格出生必须落**请求租户**的内核表，否则非-default 租户的出生会落
-   * default 租户=跨租户 bug；与 companion/value/memory 路由同款 getTenantOS 解析）。default 租户用 deps.os。
+   * default 租户=跨租户 bug；与 companion/value/memory 路由同款 getTenantOS 解析）。
+   * **default 同样走工厂** —— 它也是普通租户，绕开工厂会拿到未包装的裸库、看得到全租户数据；
+   * 仅在无 tenantFactory（单租户部署）时才退回 deps.os。
    */
   const osFor = (request: FastifyRequest): ChronoSynthOS => {
     const tid = request.tenantId;

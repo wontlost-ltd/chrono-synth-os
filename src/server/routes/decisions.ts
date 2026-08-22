@@ -78,7 +78,9 @@ export function registerDecisionRoutes(app: FastifyInstance, deps: DecisionRoute
   const billingOutbox = BillingOutbox.fromResolver(resolver, config);
 
   function getOS(tenantId: string): ChronoSynthOS {
-    if (tenantFactory) return tenantFactory.getTenantOS(tenantId);
+    /* `&& tenantId` 与其余 24 处解析点保持一致：空串/undefined 虽会被
+     * normalizeTenantId 兜成 'default'，但那是把异常输入静默正常化 —— 显式退回基座 os。 */
+    if (tenantFactory && tenantId) return tenantFactory.getTenantOS(tenantId);
     return os;
   }
 

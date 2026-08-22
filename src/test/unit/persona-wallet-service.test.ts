@@ -24,6 +24,7 @@ import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import {
   PersonaWalletService,
+  isUniqueViolation,
   type PersonaWalletContext,
 } from '../../persona-core/persona-wallet-service.js';
 
@@ -298,6 +299,43 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
     assert.equal(wallet?.balance, 90, '余额只扣一次（100 - 10），不得扣成 80');
   });
 
+  it('同一 idempotencyKey 用于**不同金额**必须拒绝（不得谎报成功）', () => {
+    /* ⚠️ 独立审查发现、我在领域层复现：修复前第二次调用返回 200 +
+     * `amountMinor: 10`（第一笔的金额）——调用方要提 50000，却被告知「成功了」。
+     * 钱没多扣（余额只减 10），故非 Critical；但这是**错误信号**，
+     * 比抛错更危险：调用方会以为大额提现已受理。
+     *
+     * 幂等的正确语义是「同一请求重放收敛」，不是「同一 key 无条件复用第一笔」。 */
+    const now = Date.now();
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET balance = ?, updated_at = ? WHERE id = ?`,
+    ).run(100, now, fx.walletId);
+
+    const base = {
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      walletId: fx.walletId, idempotencyKey: 'idem-payout-amount',
+    };
+
+    const first = fx.walletService.requestWalletPayout({ ...base, amountMinor: 1000 });
+    assert.equal(first?.amountMinor, 1000, '首次应按请求金额受理');
+
+    assert.throws(
+      () => fx.walletService.requestWalletPayout({ ...base, amountMinor: 5000 }),
+      (err: unknown) => err instanceof Error && /不能用于不同请求/.test(err.message),
+      '同 key 不同金额必须抛冲突错，而不是返回第一笔',
+    );
+
+    /* 对照：拒绝路径不得动账（既不多扣，也不回滚掉第一笔）。 */
+    assert.equal(fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId)?.balance, 90,
+      '拒绝路径不得影响余额（仍为 100 - 10）');
+
+    /* 对照：同 key + **相同**金额仍必须幂等成功——别把幂等一起修没了。 */
+    const replay = fx.walletService.requestWalletPayout({ ...base, amountMinor: 1000 });
+    assert.equal(replay?.id, first?.id, '同 key 同金额应收敛到同一笔');
+    assert.equal(fx.walletService.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId)?.balance, 90,
+      '幂等重放不得二次扣款');
+  });
+
   it('主键冲突不得被误判成幂等命中（isUniqueViolation 必须精确到该索引）', () => {
     /* ⚠️ 独立审查提出的风险，实测确认真实：两种方言的唯一冲突消息形态不同 ——
      *   PG    : `... violates unique constraint "uq_wallet_payout_idempotency"`（带索引名）
@@ -306,20 +344,23 @@ describe('PersonaWalletService (Step 16b extraction)', () => {
      * （`UNIQUE constraint failed: wallet_payout_requests.id`）会被当成幂等命中，
      * 于是去按 key 反查、返回一条**不相关**的既有记录 —— 把真错误伪装成幂等成功。
      *
-     * 这里用真实 SQLite 消息形态验证判别式：只有含 idempotency_key 的才算命中。 */
+     * 这里用真实 SQLite 消息形态验证判别式：只有含 idempotency_key 的才算命中。
+     *
+     * ⚠️ 必须断言**生产函数本身**。本用例初版在此复制了一份正则去断言，独立审查
+     * 用变异实测拆穿：把生产函数体改成 `return false`，该用例**仍然全绿** ——
+     * 它断言的是自己的副本，生产分支零覆盖。故 `isUniqueViolation` 现已导出。 */
     const idemMsg = 'UNIQUE constraint failed: wallet_payout_requests.tenant_id, wallet_payout_requests.idempotency_key';
     const pkMsg = 'UNIQUE constraint failed: wallet_payout_requests.id';
     const pgIdemMsg = 'duplicate key value violates unique constraint "uq_wallet_payout_idempotency"';
     const pgPkMsg = 'duplicate key value violates unique constraint "wallet_payout_requests_pkey"';
 
-    const hits = (m: string): boolean =>
-      /unique constraint "uq_wallet_payout_idempotency"/i.test(m)
-      || /UNIQUE constraint failed:[^\n]*\bidempotency_key\b/i.test(m);
-
-    assert.equal(hits(idemMsg), true, 'SQLite 幂等键冲突应命中');
-    assert.equal(hits(pgIdemMsg), true, 'PG 幂等键冲突应命中');
-    assert.equal(hits(pkMsg), false, 'SQLite 主键冲突**不得**命中');
-    assert.equal(hits(pgPkMsg), false, 'PG 主键冲突**不得**命中');
+    assert.equal(isUniqueViolation(new Error(idemMsg)), true, 'SQLite 幂等键冲突应命中');
+    assert.equal(isUniqueViolation(new Error(pgIdemMsg)), true, 'PG 幂等键冲突应命中');
+    assert.equal(isUniqueViolation(new Error(pkMsg)), false, 'SQLite 主键冲突**不得**命中');
+    assert.equal(isUniqueViolation(new Error(pgPkMsg)), false, 'PG 主键冲突**不得**命中');
+    /* 非 Error 入参（驱动有时抛字符串）也必须走同一判别，不得崩。 */
+    assert.equal(isUniqueViolation(pkMsg), false, '字符串形态的主键冲突同样不得命中');
+    assert.equal(isUniqueViolation(undefined), false, 'undefined 不得命中');
   });
 
   it('不传 idempotencyKey 时保持既有行为（向后兼容：仍可重复提交）', () => {

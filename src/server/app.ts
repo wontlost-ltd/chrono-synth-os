@@ -686,7 +686,9 @@ export async function createApp(deps: CreateAppDeps): Promise<FastifyInstance> {
    * learn-github 的 assembleReadPort），故注入按 ctx.tenantId 解析的 resolver。
    * 本组合根 + 这两个工具是 WritePort 的唯一持有者（Task 6 架构测试锁死）。 */
   const resolveGithubWritePort = (tenantId: string): GitHubWritePort => {
-    /* 与 companion 路由同款：'default' 或无租户工厂时用根 OS，否则取租户 OS。 */
+    /* 与 companion 路由同款：有租户工厂就一律走它取租户 OS（**含 default** ——
+     * default 也是普通租户，绕开工厂会拿到未包装的裸库、看得到全租户数据）；
+     * 仅在无工厂（单租户部署）时退回根 OS。 */
     const tenantOS = (tenantFactory && tenantId)
       ? tenantFactory.getTenantOS(tenantId)
       : deps.os;
