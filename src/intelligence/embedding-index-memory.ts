@@ -141,7 +141,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
     const norm = computeNorm(typed);
     if (norm > 0) {
       this.vectorCache.set(memoryId, { vector: typed, norm });
-      this.accessOrder.set(memoryId, Date.now());
+      this.accessOrder.set(memoryId, this.clock.now());
       this.evictIfNeeded();
       this.ivfBuilt = false;
     }
@@ -149,7 +149,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
   }
 
   private refreshCache(): void {
-    const now = Date.now();
+    const now = this.clock.now();
     if (this.cacheLoadedAt > 0 && now - this.cacheLoadedAt < CACHE_TTL_MS) return;
 
     const rows = this.tx.queryMany(embQueryByModel({ model: this.model }));
@@ -194,7 +194,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
         model: this.model,
         centroidsJson: JSON.stringify(centroids.map(c => Array.from(c))),
         numVectors: this.vectorCache.size,
-        builtAt: Date.now(),
+        builtAt: this.clock.now(),
       }));
     } catch { /* best-effort persistence; failure must not block search */ }
   }
@@ -222,7 +222,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
       && persisted[0].length === dim
       && persistedMeta !== null
       && Math.abs(persistedMeta.numVectors - entries.length) / Math.max(persistedMeta.numVectors, 1) < 0.5
-      && (Date.now() - persistedMeta.builtAt) < IVF_MAX_AGE_MS;
+      && (this.clock.now() - persistedMeta.builtAt) < IVF_MAX_AGE_MS;
     if (centroidsValid && persisted) {
       centroids = persisted;
     } else {
@@ -286,7 +286,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
   }
 
   private touchResults(results: EmbeddingMatch[]): void {
-    const now = Date.now();
+    const now = this.clock.now();
     for (const r of results) this.accessOrder.set(r.memoryId, now);
   }
 

@@ -108,4 +108,60 @@ describe('EmbeddingIndex', () => {
       assert.equal(results[0].memoryId, idA);
     });
   });
+
+  /* ── issue #376：TTL 判定必须走注入的时钟 ─────────────────────── */
+  describe('缓存 TTL 走注入时钟（issue #376）', () => {
+    /**
+     * 缺陷：构造器收了 `clock`，但五处**时间判定**（accessOrder / refreshCache 的
+     * CACHE_TTL_MS / IVF builtAt 与 IVF_MAX_AGE_MS / touchResults）全是裸 `Date.now()`。
+     *
+     * 后果：注入 `TestClock` 的测试**以为自己控制了时间，其实没有** ——
+     * 推进 TestClock 不会让缓存过期。这类「假测试」比没有测试更危险。
+     *
+     * ⚠️ 必须**绕过 `indexMemory` 直接写库**：`indexMemory` 会同步把向量塞进
+     * vectorCache（见其实现末尾），走它就永远看不到「缓存是否重建」这件事。
+     * 初版用例正是走了 indexMemory，导致两条用例都在测别的东西。
+     */
+    function insertRaw(memoryId: string, vector: number[]): void {
+      db.prepare<void>(
+        `INSERT INTO memory_embeddings (memory_id, tenant_id, model, embedding_json, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run(memoryId, 'default', 'mock-embed', JSON.stringify(vector), clock.now());
+    }
+
+    it('推进超过 CACHE_TTL_MS 后，search 能看到直接入库的新向量', async () => {
+      const idA = createMemory('第一条记忆');
+      assert.ok(await index.indexMemory(idA, '第一条记忆'));
+      const queryVec = (await llm.embed(['第一条记忆']))[0];
+      assert.equal(index.search(queryVec, 10).length, 1, '前置：首次可检索到 1 条');
+
+      /* 绕过 indexMemory 直接入库：只有缓存过期重建才看得到。 */
+      const idB = createMemory('第二条记忆');
+      insertRaw(idB, (await llm.embed(['第二条记忆']))[0]);
+      assert.equal(index.search(queryVec, 10).length, 1, 'TTL 内仍只看到 1 条（缓存未重建）');
+
+      clock.advance(10 * 60 * 1000); // > CACHE_TTL_MS (5min)
+      assert.equal(index.search(queryVec, 10).length, 2,
+        '推进注入时钟超过 TTL 后，缓存必须重建并看到两条');
+    });
+
+    it('⚠️ 对照：未超过 TTL 时不得重建（防「每次都重建」的假修复）', async () => {
+      const idA = createMemory('第一条记忆');
+      assert.ok(await index.indexMemory(idA, '第一条记忆'));
+      const queryVec = (await llm.embed(['第一条记忆']))[0];
+
+      /* ⚠️ 必须先触发一次 search 把 cacheLoadedAt 置上：它初值为 0，而 refreshCache 的
+       * 短路条件是 `cacheLoadedAt > 0 && ...`，故**首次** search 必然重建。
+       * 不先建立基线的话，下面的断言测的是「首次重建」而不是「TTL 内不重建」。 */
+      assert.equal(index.search(queryVec, 10).length, 1, '前置：建立缓存基线');
+
+      const idB = createMemory('第二条记忆');
+      insertRaw(idB, (await llm.embed(['第二条记忆']))[0]);
+
+      /* 只推进 1 分钟（< 5 分钟 TTL）：缓存仍有效，看不到直接入库的那条。
+       * 若把 TTL 判定改成恒过期，本条转红 —— 钉死时钟不能把被测行为一起钉没。 */
+      clock.advance(60 * 1000);
+      assert.equal(index.search(queryVec, 10).length, 1, 'TTL 内不得重建缓存（否则 TTL 形同虚设）');
+    });
+  });
 });
