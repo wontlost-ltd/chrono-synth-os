@@ -90,7 +90,12 @@ function countLedgerEntries(entries: Array<{ transactionType: string; amountMino
 
 function isLedgerConsistent(actual: readonly WalletTransactionRow[], settlement: SettlementRow): boolean {
   /* ⚠️ 条数按**期望集合**判，不能硬编码 3：零分成结算只写 1-2 条（见 buildExpectedLedger）。
-   * 原来的 `actual.length !== 3` 会把合法的零分成结算永久判为不一致。 */
+   * 原来的 `actual.length !== 3` 会把合法的零分成结算永久判为不一致。
+   *
+   * 注：这行在逻辑上**冗余** —— 下面的多重集计数相等已蕴含条数相等
+   * （各键计数相等 ⇒ 总数相等），故任何变异都无法让它单独转红（独立审查 High-2 实测：
+   * 删掉本行 10 条用例仍全绿）。保留它只为**早退**与可读性，不承担正确性职责。
+   * 真正的判据是下面的 `countLedgerEntries` 比较。 */
   const expected = buildExpectedLedger(settlement);
   if (actual.length !== expected.length) return false;
 

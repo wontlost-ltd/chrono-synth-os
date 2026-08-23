@@ -130,6 +130,26 @@ describe('SettlementReconciliationService', () => {
       assert.equal(run.mismatchedSettlements, 1, '金额被篡改必须仍被检出');
     });
 
+    it('⚠️ 对照：重复流水（多插一条）仍必须检出 —— 条数判据的真正用武之地', () => {
+      /* 独立审查 High-2：前两条对照（改金额 / 删流水）光靠 countLedgerEntries 的
+       * 多重集比较就能检出，**并不覆盖条数判据本身**。审查实测：把条数判据整行删掉，
+       * 9 条用例仍全绿。故补这条 —— 重复插一条合法流水时条数变多、多重集计数也变，
+       * 是唯一真正依赖「条数按期望集合判」的形态。 */
+      const db = createMemoryDatabase();
+      runDslSqliteMigrations(db);
+      const sid = seed(db, { total: 10_000, owner: 6_000, persona: 4_000, platform: 0 });
+      const now = Date.now();
+      db.prepare<void>(
+        `INSERT INTO wallet_transactions (id, tenant_id, wallet_id, transaction_type,
+           amount_minor, currency, reference_type, reference_id, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run('wtx_dup', 'tenant-z', 'wal_1', 'persona_reserve', -4_000, 'CRED',
+        'wallet_settlement', sid, now);
+
+      const run = new SettlementReconciliationService(db).reconcileTenant('tenant-z');
+      assert.equal(run.mismatchedSettlements, 1, '重复流水必须被检出（否则同一笔被记两次）');
+    });
+
     it('⚠️ 对照：分项非零却缺流水，仍必须检出', () => {
       const db = createMemoryDatabase();
       runDslSqliteMigrations(db);

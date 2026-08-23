@@ -337,6 +337,13 @@ export interface PersonaMarketplaceContext {
   governanceHook: MarketplaceGovernanceHook;
 }
 
+/**
+ * persona 钱包的唯一币种。`pcoreCmdCreateWallet` 的 INSERT 不写 currency 列，
+ * 取 schema 默认值 'CRED'，且全仓没有改钱包币种的接口 —— 故这是一个**不变量**，
+ * 而非可配置项。发布任务与结算两处都以它为准。
+ */
+const WALLET_CURRENCY = 'CRED';
+
 export class PersonaMarketplaceService {
   constructor(
     /* db 取源（双入口）：per-tenant public 方法经 source.forTenant 解析 + 开事务→InTx；
@@ -377,8 +384,22 @@ export class PersonaMarketplaceService {
      * 变成 `USD`、余额 160，而原有余额与历史流水仍是按 CRED 计价的。
      * 等于把两种货币的金额直接相加，账目从此不可信（且**没有任何报错**）。
      *
-     * 结算不是货币兑换：币种不一致时唯一正确的动作是**拒绝**，而不是改写钱包。 */
-    if (input.currency !== wallet.currency) return null;
+     * 结算不是货币兑换：币种不一致时唯一正确的动作是**拒绝**，而不是改写钱包。
+     *
+     * ⚠️ 为什么**抛错**而不是 `return null`（独立审查 High-1）：
+     *   1. 主防线已上移到 `publishTask`（非 CRED 任务发不出来），本处是纵深防御 ——
+     *      能走到这里说明是历史脏数据或内部装配错误，属于**异常**而非「查无此物」。
+     *   2. 路由把 null 映射成 404「任务、assignment 或钱包不存在」（persona-core.ts），
+     *      币种问题被伪装成不存在，调用方无从得知真因。
+     *   3. 同仓 `org-wallet-service.ts` 对**同一个关切**已经是抛错，措辞同款；
+     *      同一代码库里同类问题不该有两种约定。
+     * 抛错也让两阶段验收在结算失败时把事务掀掉，而不是静默留下未付款的 completed 任务。 */
+    if (input.currency !== wallet.currency) {
+      throw new ValidationError(
+        `钱包币种不符，禁结算：wallet=${wallet.currency} 结算=${input.currency}`,
+        ErrorCode.VALIDATION_RANGE,
+      );
+    }
 
     const totalAmountMinor = Math.round(input.totalAmountMinor);
     if (totalAmountMinor <= 0) return null;
@@ -435,7 +456,9 @@ export class PersonaMarketplaceService {
     /* ⚠️ 审计 Warning #11：**零金额分项不写流水**。
      *
      * `insertWalletTransaction` 的钱包写入门要求 amountMinor 为正整数（`assertWalletMutationAllowed`），
-     * 而零分成会送进 `-0` → 抛「amountMinor must be a positive integer」→ **整笔结算回滚**。
+     * 而零分成送进的 `-0` 被 `amountMinor <= 0` 拒掉（注意**不是**因为它不是整数：
+     * `Number.isInteger(-0)` 为 true、`-0 < 0` 为 false，方向仍判为 credit），
+     * 抛「amountMinor must be a positive integer」→ **整笔结算回滚**。
      * 实测两个合法输入都被打回、流水 0 条：
      *   - `platformPct: 0`（免平台抽成的推广活动/内部任务）
      *   - 1 分钱任务按 60/20/20 拆分（`Math.floor` 后 platform/persona 分项为 0）
@@ -1039,6 +1062,19 @@ export class PersonaMarketplaceService {
      * 历史零奖励任务的唯一出路是 `rejectSubmittedTask` 退回重开。 */
     if (totalAmountMinor <= 0) return null;
 
+    /* 同款纵深防御：**币种**也必须在任何写入之前判（审计 W#10 / 独立审查 Critical-1）。
+     *
+     * 主防线在 `publishTask`（非 CRED 任务发不出来），这里挡的是**历史脏数据** ——
+     * 源头校验上线前入库的非 CRED 任务。
+     *
+     * 为什么不能只靠结算处抛错：验收是两阶段时序，结算在**独立事务**里跑，
+     * 抛错时验收事务**已经提交**。实测：任务停在 completed、零结算记录、
+     * 钱包余额 0、重试被终态拒绝 —— 干了活没人付钱且无法补救。
+     * 与上面 reward<=0 完全同型，故用同款前置拒绝：任务保持 submitted，
+     * 出路是 `rejectSubmittedTask` 退回重开。 */
+    const payeeWallet = this.ctx.walletHook.getWalletByPersonaId(input.tenantId, assignment.personaId);
+    if (!payeeWallet || payeeWallet.currency !== task.currency) return null;
+
     const split = { ownerPct: 60, personaPct: 20, platformPct: 20 };
     const {
       ownerAmountMinor,
@@ -1390,6 +1426,27 @@ export class PersonaMarketplaceService {
     if (!Number.isFinite(input.reward) || input.reward <= 0) {
       throw new ValidationError('任务奖励必须为正数', ErrorCode.VALIDATION_RANGE);
     }
+    /* ⚠️ 审计 Warning #10（独立审查补漏）：**非 CRED 任务从源头拒绝**，与上面零奖励同款理由。
+     *
+     * 结算侧要求 `input.currency === wallet.currency`（币种不可变，见 settleTaskPaymentInTx），
+     * 而 persona 钱包**恒为 CRED**：`pcoreCmdCreateWallet` 的 INSERT 根本不写 currency 列，
+     * 取的是 schema 默认值，也没有任何改币种的接口。
+     * 于是「发一个 USD 任务」= 一个**永远结算不了**的任务。
+     *
+     * 为什么必须在这里拒、而不是只在结算处返回 null：验收是「先提交验收事务、
+     * 再另开事务结算」的两阶段时序（见 acceptSubmittedTask L1027 同款告警）。
+     * 结算处返回 null 时验收**已经落库**，任务永久停在 completed、零结算记录、
+     * 重试被终态拒绝 —— 实测复现：persona 干完活、task=completed、余额 0、无法补救。
+     * 那比原本的币种改写更糟：把「静默串币」换成了「静默不付钱且卡死」。
+     *
+     * 主防线放在源头 ⇒ 不存在非 CRED 任务 ⇒ 结算处那道校验退化为纵深防御（挡历史数据）。 */
+    const currency = input.currency ?? WALLET_CURRENCY;
+    if (currency !== WALLET_CURRENCY) {
+      throw new ValidationError(
+        `任务币种必须为 ${WALLET_CURRENCY}（persona 钱包不支持其它币种，结算会永久失败）`,
+        ErrorCode.VALIDATION_RANGE,
+      );
+    }
     const now = Date.now();
     const taskId = generatePrefixedId('mkt');
     this.source.forTenant(input.tenantId).execute(pcoreCmdPublishMarketplaceTask({
@@ -1400,7 +1457,7 @@ export class PersonaMarketplaceService {
       description: input.description,
       category: input.category ?? 'general',
       reward: input.reward,
-      currency: input.currency ?? 'CRED',
+      currency,
       now,
     }));
     return this.getMarketplaceTask(input.tenantId, taskId)!;
