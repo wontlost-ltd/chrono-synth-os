@@ -658,11 +658,31 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     /* 币种在**任何写入之前**被判掉 → 返回 null、任务保持 submitted，
      * 与同处的 reward<=0 前置拒绝同款语义（出路是 rejectSubmittedTask 退回重开）。
      * 关键不是「抛错还是 null」，而是**绝不允许**「验收落库、结算没落」的半成品状态。 */
-    const dirtyAccepted = fx.service.acceptSubmittedTask({
-      tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
-      taskId: dirtyId, clientRating: 5, qualityScore: 0.9,
-    });
-    assert.equal(dirtyAccepted, null, '历史脏数据（非 CRED）验收必须被拒');
+    /* ⚠️ 必须**包住**这次调用：若前置守卫失效，结算侧会抛错，未捕获的异常会让用例
+     * 死在这一行，**根本走不到下面的不变量断言** —— 那样最强的那条断言就成了摆设
+     * （复审的过程建议）。捕获后继续往下判「有没有留下 completed 孤儿」，
+     * 使不变量断言成为真正承重的那一条。 */
+    let dirtyAccepted: unknown = 'not-called';
+    let dirtyThrew: string | null = null;
+    try {
+      dirtyAccepted = fx.service.acceptSubmittedTask({
+        tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+        taskId: dirtyId, clientRating: 5, qualityScore: 0.9,
+      });
+    } catch (err) {
+      dirtyThrew = err instanceof Error ? err.message : String(err);
+    }
+    /* 先判**账目不变量**（最强、最该承重的一条），再判返回值语义：
+     * 回归的形态是「留下 completed 孤儿」，不是「返回值不对」。 */
+    const orphanedAfterDirty = fx.db.prepare<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM marketplace_tasks t
+        WHERE t.status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM wallet_settlements s WHERE s.task_id = t.id)`,
+    ).all();
+    assert.equal(orphanedAfterDirty[0]?.c, 0,
+      `脏数据被拒后不得留下「已完成但零结算」的任务（若抛错：${dirtyThrew ?? '无'}）`);
+    assert.equal(dirtyAccepted ?? null, null,
+      `历史脏数据（非 CRED）验收必须被拒（若抛错：${dirtyThrew ?? '无'}）`);
 
     const dirtyRow = fx.db.prepare<{ status: string }>(
       'SELECT status FROM marketplace_tasks WHERE id = ?',

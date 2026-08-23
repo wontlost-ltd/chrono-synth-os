@@ -130,11 +130,14 @@ describe('SettlementReconciliationService', () => {
       assert.equal(run.mismatchedSettlements, 1, '金额被篡改必须仍被检出');
     });
 
-    it('⚠️ 对照：重复流水（多插一条）仍必须检出 —— 条数判据的真正用武之地', () => {
-      /* 独立审查 High-2：前两条对照（改金额 / 删流水）光靠 countLedgerEntries 的
-       * 多重集比较就能检出，**并不覆盖条数判据本身**。审查实测：把条数判据整行删掉，
-       * 9 条用例仍全绿。故补这条 —— 重复插一条合法流水时条数变多、多重集计数也变，
-       * 是唯一真正依赖「条数按期望集合判」的形态。 */
+    it('⚠️ 对照：重复流水（多插一条）仍必须检出', () => {
+      /* 独立审查 High-2 起：此前对照只有「改金额 / 删流水」两种形态，
+       * **重复流水**（同一笔被记两次）这一真实篡改形态零覆盖，故补这条。
+       *
+       * ⚠️ 本用例**不覆盖**条数判据那一行 —— 实测把它整行删掉，本用例仍绿。
+       * 原因是多重集计数相等已蕴含条数相等，条数判据在逻辑上冗余
+       * （见 settlement-reconciliation-service.ts 中 isLedgerConsistent 的注释）。
+       * 真正检出这条的是 countLedgerEntries 比较。 */
       const db = createMemoryDatabase();
       runDslSqliteMigrations(db);
       const sid = seed(db, { total: 10_000, owner: 6_000, persona: 4_000, platform: 0 });

@@ -1072,8 +1072,12 @@ export class PersonaMarketplaceService {
      * 钱包余额 0、重试被终态拒绝 —— 干了活没人付钱且无法补救。
      * 与上面 reward<=0 完全同型，故用同款前置拒绝：任务保持 submitted，
      * 出路是 `rejectSubmittedTask` 退回重开。 */
+    /* ⚠️ 这里必须镜像 `settleTaskPaymentInTx` 的**全部**前置拒绝条件，漏一条就漏一种死局。
+     * 结算侧的拒绝条件共三条：钱包不存在 / status !== 'active' / 币种不符。
+     * 复审 Medium-1 实测：只镜像币种时，**冻结钱包**照样复现同款死局
+     * （accept=null、task=completed、孤儿=1）。故三条一并前置。 */
     const payeeWallet = this.ctx.walletHook.getWalletByPersonaId(input.tenantId, assignment.personaId);
-    if (!payeeWallet || payeeWallet.currency !== task.currency) return null;
+    if (!payeeWallet || payeeWallet.status !== 'active' || payeeWallet.currency !== task.currency) return null;
 
     const split = { ownerPct: 60, personaPct: 20, platformPct: 20 };
     const {
