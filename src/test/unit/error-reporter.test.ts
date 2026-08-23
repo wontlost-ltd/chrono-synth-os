@@ -77,17 +77,19 @@ describe('HttpErrorReporter — rate limiting', () => {
     /* Build a reporter pointed at a deliberately unreachable URL.
      * fetch will fail but we only care about the gating logic, not
      * the transport itself. */
-    /* ⚠️ 必须注入固定时钟：限流窗口是 1 秒**墙钟**，而 report() 内部要 await 真实网络尝试
-     * （endpoint 不可达，靠 timeoutMs 兜底）。5 次调用由 Promise.all 并发发起，但第 3-5 条
-     * 的限流判定发生在前面的 await 落定**之后** —— 一旦累计耗时跨过 1000ms，窗口翻转、
-     * eventsInWindow 归零，就会多放行一条，dropped 变成 2。
+    /* ⚠️ 必须注入固定时钟，否则本用例是 flake（test:golden 就红在这里）。
      *
-     * 实测同一用例连跑 4 次（真实时钟）：
-     *   469ms → dropped 3 ✓ | 974ms → 3 ✓ | **1139ms → 2 ✗** | 832ms → 3 ✓
-     * 耗时是否跨 1000ms 与成败**完全对应** —— 这是墙钟边界竞态，不是随机噪声，
-     * 机器负载高时必现（本轮 test:golden 就红在这里）。
+     * 机制是**首次 fetch 冷启动的队头阻塞**，不是「await 累积」：
+     * 5 次 report() 的限流判定全部**同步**完成（实测 beforeAwait === afterAwait === 3），
+     * 但第 1 条进入 fetch 后，undici/TLS 冷启动会**同步阻塞事件循环**（实测串行耗时
+     * [1215, 130, 1, 0, 0…]ms —— 只有第一次贵），第 2 条要等它结束才进入。
+     * 实测各条进入时刻 [0, 684, 685, 685, 685]ms —— 间隔全在 #1→#2 之间。
+     * 该间隔一旦跨过 1000ms，窗口在第 2 条处翻转、计数归零 → 多放行一条 → dropped 变 2。
      *
-     * 固定时钟让 now() 恒定 → 窗口永不翻转 → 断言只反映限流逻辑本身。 */
+     * 两个反证：预热 fetch 后连跑 10 轮 0 次失败；把首次 fetch 显式改成同步阻塞 1500ms，
+     * 真实时钟下 dropped 必为 2、注入时钟下必为 3（100% 确定性复现，非概率采样）。
+     *
+     * 固定时钟让窗口与真实耗时解耦 → 断言只反映限流逻辑本身。 */
     const r = new HttpErrorReporter({
       endpoint: 'https://127.0.0.1:1/store/', publicKey: 'pk',
       release: 'v1', environment: 'test',
