@@ -37,13 +37,18 @@ export class CircuitBreaker {
    * 而本类此前三处都传裸 `Date.now()`。测试只能用「设 `resetTimeoutMs: 10`
    * 再 `setTimeout(20)` 去跨窗口」这种墙钟手法，实测**隔离重跑 5 次红 1 次**。
    *
-   * ⚠️ 该 flake 的**确切机制我没查明**，不要在此处臆测：
-   * 我验过并**否掉**了三个假设 ——「setTimeout 提前触发」（200 次实测最小经过 20ms）、
-   * 「复刻用例裸跑会红」（400 轮 0 失败）、「CPU 负载下 elapsed 会 <10ms」
-   * （600 轮 0 失败、elapsed 最小 19ms）。
+   * 机制（已查明并确定性复现）：故障发生在 `setTimeout` **之前**，方向与直觉相反 ——
+   * 不是「等了 20ms 还没跃迁」，而是**提前**跃迁。
+   * `recordFailure(now)` 写下 lastFailureTime，紧随其后的 `getState()` 再取一次 now；
+   * 二者间隔正常为 0ms，但偶发调度/GC 停顿会拉大（实测 4000 次采样：
+   * p50=0、p99=0、max=373ms，`gap >= 10ms` 占 0.05%）。
+   * 一旦该停顿 ≥ `resetTimeoutMs`，`elapsed >= resetTimeoutMs` 当场成立，
+   * `getState()` 直接返回 half_open —— 于是**前置断言** `assert.equal(getState(), 'open')` 失败。
    *
-   * 注入时钟的价值恰恰在于**不需要先查明机制**：把窗口判定与真实耗时解耦后，
-   * 无论调度如何抖动，状态跃迁都由显式推进的时钟决定。
+   * 确定性复现（非概率采样）：`execute` 抛错后显式同步阻塞 12ms → `getState()` 必为
+   * half_open；不阻塞 → 必为 open。
+   *
+   * 注入时钟根治它：同一逻辑时刻内 gap 恒为 0，跃迁只由显式推进的时钟决定。
    */
   constructor(opts?: Partial<CircuitBreakerOptions>, clock: Clock = realClock) {
     this.opts = { ...DEFAULT_CIRCUIT_BREAKER_OPTIONS, ...opts };
