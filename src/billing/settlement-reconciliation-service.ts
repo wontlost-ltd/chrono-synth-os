@@ -42,24 +42,37 @@ function toIso(value: number): string {
 
 function buildExpectedLedger(settlement: SettlementRow): ExpectedLedgerEntry[] {
   /* 符号统一由 signedAmountForTransaction(方向矩阵)给出，不再硬编码正负——
-   * 与 PersonaWalletService 写入路径共用同一事实来源，杜绝对账期望与实际写入漂移。 */
-  return [
+   * 与 PersonaWalletService 写入路径共用同一事实来源，杜绝对账期望与实际写入漂移。
+   *
+   * ⚠️ 审计 Warning #11：**零金额分项不产生流水**，故期望集合也必须按非零分项生成。
+   * 写入侧（`settleTaskPaymentInTx`）对 platform/persona 金额为 0 时跳过插入
+   * —— 钱包写入门只接受正整数，写 `-0` 会抛错并回滚整笔结算（`platformPct: 0`
+   * 或 1 分钱按 60/20/20 拆分都会踩到）。两侧判据必须一致，否则合法的零分成结算
+   * 会被对账**永久判为不一致**。 */
+  const entries: ExpectedLedgerEntry[] = [
     {
       transactionType: 'task_payment',
       amountMinor: signedAmountForTransaction('task_payment', Number(settlement.total_amount_minor)),
       currency: settlement.currency,
     },
-    {
-      transactionType: 'platform_fee',
-      amountMinor: signedAmountForTransaction('platform_fee', Number(settlement.platform_amount_minor)),
-      currency: settlement.currency,
-    },
-    {
-      transactionType: 'persona_reserve',
-      amountMinor: signedAmountForTransaction('persona_reserve', Number(settlement.persona_amount_minor)),
-      currency: settlement.currency,
-    },
   ];
+  const platformAmount = Number(settlement.platform_amount_minor);
+  if (platformAmount > 0) {
+    entries.push({
+      transactionType: 'platform_fee',
+      amountMinor: signedAmountForTransaction('platform_fee', platformAmount),
+      currency: settlement.currency,
+    });
+  }
+  const personaAmount = Number(settlement.persona_amount_minor);
+  if (personaAmount > 0) {
+    entries.push({
+      transactionType: 'persona_reserve',
+      amountMinor: signedAmountForTransaction('persona_reserve', personaAmount),
+      currency: settlement.currency,
+    });
+  }
+  return entries;
 }
 
 function toLedgerKey(entry: { transactionType: string; amountMinor: number; currency: string }): string {
@@ -76,14 +89,17 @@ function countLedgerEntries(entries: Array<{ transactionType: string; amountMino
 }
 
 function isLedgerConsistent(actual: readonly WalletTransactionRow[], settlement: SettlementRow): boolean {
-  if (actual.length !== 3) return false;
+  /* ⚠️ 条数按**期望集合**判，不能硬编码 3：零分成结算只写 1-2 条（见 buildExpectedLedger）。
+   * 原来的 `actual.length !== 3` 会把合法的零分成结算永久判为不一致。 */
+  const expected = buildExpectedLedger(settlement);
+  if (actual.length !== expected.length) return false;
 
   const actualCounts = countLedgerEntries(actual.map((row) => ({
     transactionType: row.transaction_type,
     amountMinor: Number(row.amount_minor),
     currency: row.currency,
   })));
-  const expectedCounts = countLedgerEntries(buildExpectedLedger(settlement));
+  const expectedCounts = countLedgerEntries(expected);
 
   if (actualCounts.size !== expectedCounts.size) return false;
   for (const [key, value] of expectedCounts) {

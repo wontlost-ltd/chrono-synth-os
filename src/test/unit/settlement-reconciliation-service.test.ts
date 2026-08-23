@@ -54,6 +54,95 @@ describe('SettlementReconciliationService', () => {
     assert.deepEqual(runs[0].mismatchedSettlementIds, []);
   });
 
+  /* ── 审计 Warning #11：零分项结算的对账期望 ─────────────────── */
+  describe('审计 W#11：零分项结算不得被判为不一致', () => {
+    /** 直接造一笔结算 + 与之匹配的流水（绕开 marketplace，隔离被测命题）。 */
+    function seed(db: ReturnType<typeof createMemoryDatabase>, opts: {
+      total: number; owner: number; persona: number; platform: number;
+    }): string {
+      registerCoreSelfExecutors();
+      /* 与同文件「并发安全」组同款：本测只验对账的**条数/金额判据**，
+       * 与 wallet/task/assignment 的引用完整性无关，故关外键直插，
+       * 避免为此铺三层父行而模糊测试意图。 */
+      db.exec('PRAGMA foreign_keys = OFF');
+      const now = Date.now();
+      const sid = 'ws_zero_split';
+      db.prepare<void>(
+        `INSERT INTO wallet_settlements (id, tenant_id, wallet_id, task_id, assignment_id,
+           total_amount_minor, currency, owner_pct, persona_pct, platform_pct,
+           owner_amount_minor, persona_amount_minor, platform_amount_minor,
+           status, created_at, completed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(sid, 'tenant-z', 'wal_1', 'task_1', 'asg_1',
+        opts.total, 'CRED', 60, 40, 0,
+        opts.owner, opts.persona, opts.platform, 'completed', now, now);
+
+      /* 与写入侧一致：只为**非零**分项写流水。 */
+      const rows: Array<[string, number]> = [['task_payment', opts.total]];
+      if (opts.platform > 0) rows.push(['platform_fee', -opts.platform]);
+      if (opts.persona > 0) rows.push(['persona_reserve', -opts.persona]);
+      rows.forEach(([type, amount], i) => {
+        db.prepare<void>(
+          `INSERT INTO wallet_transactions (id, tenant_id, wallet_id, transaction_type,
+             amount_minor, currency, reference_type, reference_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+        ).run(`wtx_${i}`, 'tenant-z', 'wal_1', type, amount, 'CRED', 'wallet_settlement', sid, now);
+      });
+      return sid;
+    }
+
+    it('platform 分项为零 → 只有 2 条流水，仍判一致', () => {
+      /* ⚠️ 修复前 `isLedgerConsistent` 硬编码 `actual.length !== 3`，
+       * 会把合法的零分成结算**永久**判为不一致（并触发 delete/reinsert 修复）。 */
+      const db = createMemoryDatabase();
+      runDslSqliteMigrations(db);
+      seed(db, { total: 10_000, owner: 6_000, persona: 4_000, platform: 0 });
+
+      const run = new SettlementReconciliationService(db).reconcileTenant('tenant-z');
+      assert.equal(run.checkedSettlements, 1);
+      assert.equal(run.mismatchedSettlements, 0, '零分项结算必须判为一致');
+      assert.equal(run.deletedTransactions, 0, '不得触发「修复」把好数据删掉');
+      assert.equal(run.insertedTransactions, 0);
+    });
+
+    it('platform 与 persona 都为零 → 只有 1 条流水，仍判一致', () => {
+      const db = createMemoryDatabase();
+      runDslSqliteMigrations(db);
+      seed(db, { total: 10_000, owner: 10_000, persona: 0, platform: 0 });
+
+      const run = new SettlementReconciliationService(db).reconcileTenant('tenant-z');
+      assert.equal(run.mismatchedSettlements, 0);
+      assert.equal(run.deletedTransactions, 0);
+    });
+
+    it('⚠️ 对照：真被篡改时仍必须检出（放松条数判据不等于放松门）', () => {
+      /* 只断言「零分项判一致」是不够的——把门改成恒为一致，那条断言同样会过。
+       * 故必须同时钉死：金额被改后仍能检出不一致。 */
+      const db = createMemoryDatabase();
+      runDslSqliteMigrations(db);
+      const sid = seed(db, { total: 10_000, owner: 6_000, persona: 4_000, platform: 0 });
+      db.prepare<void>(
+        `UPDATE wallet_transactions SET amount_minor = -999
+         WHERE reference_id = ? AND transaction_type = 'persona_reserve'`,
+      ).run(sid);
+
+      const run = new SettlementReconciliationService(db).reconcileTenant('tenant-z');
+      assert.equal(run.mismatchedSettlements, 1, '金额被篡改必须仍被检出');
+    });
+
+    it('⚠️ 对照：分项非零却缺流水，仍必须检出', () => {
+      const db = createMemoryDatabase();
+      runDslSqliteMigrations(db);
+      const sid = seed(db, { total: 10_000, owner: 6_000, persona: 4_000, platform: 0 });
+      db.prepare<void>(
+        `DELETE FROM wallet_transactions WHERE reference_id = ? AND transaction_type = 'persona_reserve'`,
+      ).run(sid);
+
+      const run = new SettlementReconciliationService(db).reconcileTenant('tenant-z');
+      assert.equal(run.mismatchedSettlements, 1, '非零分项缺流水必须仍被检出');
+    });
+  });
+
   /* 审计 Warning B4-7：修复是「事务外判定不一致 → 事务内 delete/reinsert」。
    * 判定与修复之间没有复核，也没有租约：
    *   - 并发结算在此窗口补齐了流水 → 会被 delete 掉；

@@ -528,4 +528,101 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     const reread = fx.service.getMarketplaceTaskById(fx.tenantId, task.id);
     assert.deepEqual(reread, task);
   });
+
+  /* ── 审计 Warning #10 / #11：结算的币种与零分项 ────────────────── */
+
+  /** 建一条走到「已指派」的任务，供结算用例复用。 */
+  function assignedTask(): { taskId: string; assignmentId: string } {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Settle', description: 'settle target', category: 'operations', reward: 100,
+    });
+    assert.ok(fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    }));
+    const assignment = fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    });
+    assert.ok(assignment);
+    return { taskId: task.id, assignmentId: assignment!.id };
+  }
+
+  it('审计 W#10：结算币种与钱包不一致必须拒绝（不得改写钱包币种）', () => {
+    /* ⚠️ 修复前：`SET ... currency = ?` 无条件用入参覆盖钱包币种。实测 CRED 钱包收到
+     * 一笔 currency:'USD' 的结算后变成 USD、余额 160 —— 把两种货币的金额直接相加，
+     * 账目从此不可信，且**全程无报错**。结算不是货币兑换，唯一正确动作是拒绝。 */
+    const { taskId, assignmentId } = assignedTask();
+    const before = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(before?.currency, 'CRED', '前置：钱包默认 CRED');
+
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 10_000, currency: 'USD',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.equal(settled, null, '币种不一致必须拒绝');
+
+    const after = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(after?.currency, 'CRED', '钱包币种不可变');
+    assert.equal(after?.balance, before?.balance, '拒绝路径不得动账');
+    const rows = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_transactions WHERE wallet_id = ?',
+    ).all(after!.id);
+    assert.equal(rows[0]?.c, 0, '拒绝路径不得留下任何流水');
+  });
+
+  it('审计 W#10 对照：币种一致时结算照常成功（别把功能一起拒掉）', () => {
+    const { taskId, assignmentId } = assignedTask();
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 10_000, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.ok(settled, '币种一致必须成功');
+    const wallet = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.currency, 'CRED');
+    assert.ok((wallet?.balance ?? 0) > 0, '余额应已入账');
+  });
+
+  it('审计 W#11：零分成结算必须成功，且只写非零分项的流水', () => {
+    /* ⚠️ 修复前：钱包写入门只接受**正整数** amountMinor，零分项送进 `-0` 会抛
+     * 「amountMinor must be a positive integer」→ **整笔结算回滚**。
+     * 实测两个合法输入都被打回、流水 0 条：platformPct=0（免抽成活动）、
+     * 1 分钱按 60/20/20 拆分（floor 后分项为 0）。
+     * 零分项在账目上本就没有发生，跳过即可；分账守恒不受影响。 */
+    const { taskId, assignmentId } = assignedTask();
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 10_000, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 40, platformPct: 0 },
+    });
+    assert.ok(settled, 'platformPct=0 是合法输入，必须成功');
+    assert.equal(settled!.platformAmountMinor, 0);
+    assert.equal(
+      settled!.ownerAmountMinor + settled!.personaAmountMinor + settled!.platformAmountMinor,
+      settled!.totalAmountMinor,
+      '分账守恒：三项之和等于总额',
+    );
+
+    const rows = fx.db.prepare<{ transaction_type: string }>(
+      'SELECT transaction_type FROM wallet_transactions WHERE reference_id = ?',
+    ).all(settled!.id);
+    assert.equal(rows.length, 2, '只写 task_payment + persona_reserve 两条（platform_fee 为零，跳过）');
+    assert.ok(!rows.some((r) => r.transaction_type === 'platform_fee'), '不得写零金额的 platform_fee');
+  });
+
+  it('审计 W#11：1 分钱任务（floor 后出现零分项）同样必须成功', () => {
+    const { taskId, assignmentId } = assignedTask();
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 1, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.ok(settled, '1 分钱是合法金额，不得整单回滚');
+    /* floor 后 owner/persona 均为 0，余数归 platform —— 守恒仍成立。 */
+    assert.equal(
+      settled!.ownerAmountMinor + settled!.personaAmountMinor + settled!.platformAmountMinor,
+      1,
+    );
+  });
 });

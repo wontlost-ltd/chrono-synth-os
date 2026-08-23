@@ -370,6 +370,16 @@ export class PersonaMarketplaceService {
     const existing = this.ctx.walletHook.getWalletSettlementByAssignmentId(input.tenantId, input.assignmentId);
     if (existing) return existing;
 
+    /* ⚠️ 审计 Warning #10：**钱包币种不可变**。
+     *
+     * 此前 `pcoreCmdSettlePersonaWallet` 的 SQL 是 `SET balance = balance + ?, …, currency = ?`
+     * —— 无条件用**入参**币种覆盖钱包币种。实测：`CRED` 钱包收到一笔 `currency:'USD'` 的结算后
+     * 变成 `USD`、余额 160，而原有余额与历史流水仍是按 CRED 计价的。
+     * 等于把两种货币的金额直接相加，账目从此不可信（且**没有任何报错**）。
+     *
+     * 结算不是货币兑换：币种不一致时唯一正确的动作是**拒绝**，而不是改写钱包。 */
+    if (input.currency !== wallet.currency) return null;
+
     const totalAmountMinor = Math.round(input.totalAmountMinor);
     if (totalAmountMinor <= 0) return null;
 
@@ -422,24 +432,38 @@ export class PersonaMarketplaceService {
       referenceType: 'wallet_settlement',
       referenceId: settlementId,
     });
-    this.ctx.walletHook.insertWalletTransactionInTx(tx, {
-      tenantId: input.tenantId,
-      walletId: wallet.id,
-      transactionType: 'platform_fee',
-      amountMinor: -platformAmountMinor,
-      currency: input.currency,
-      referenceType: 'wallet_settlement',
-      referenceId: settlementId,
-    });
-    this.ctx.walletHook.insertWalletTransactionInTx(tx, {
-      tenantId: input.tenantId,
-      walletId: wallet.id,
-      transactionType: 'persona_reserve',
-      amountMinor: -personaAmountMinor,
-      currency: input.currency,
-      referenceType: 'wallet_settlement',
-      referenceId: settlementId,
-    });
+    /* ⚠️ 审计 Warning #11：**零金额分项不写流水**。
+     *
+     * `insertWalletTransaction` 的钱包写入门要求 amountMinor 为正整数（`assertWalletMutationAllowed`），
+     * 而零分成会送进 `-0` → 抛「amountMinor must be a positive integer」→ **整笔结算回滚**。
+     * 实测两个合法输入都被打回、流水 0 条：
+     *   - `platformPct: 0`（免平台抽成的推广活动/内部任务）
+     *   - 1 分钱任务按 60/20/20 拆分（`Math.floor` 后 platform/persona 分项为 0）
+     *
+     * 零分项在账目上本就**没有发生**，写一条 0 元流水既无信息量又违反写入门。
+     * 跳过它即可 —— 分账守恒不受影响：三项之和仍等于 totalAmountMinor（0 项贡献 0）。 */
+    if (platformAmountMinor > 0) {
+      this.ctx.walletHook.insertWalletTransactionInTx(tx, {
+        tenantId: input.tenantId,
+        walletId: wallet.id,
+        transactionType: 'platform_fee',
+        amountMinor: -platformAmountMinor,
+        currency: input.currency,
+        referenceType: 'wallet_settlement',
+        referenceId: settlementId,
+      });
+    }
+    if (personaAmountMinor > 0) {
+      this.ctx.walletHook.insertWalletTransactionInTx(tx, {
+        tenantId: input.tenantId,
+        walletId: wallet.id,
+        transactionType: 'persona_reserve',
+        amountMinor: -personaAmountMinor,
+        currency: input.currency,
+        referenceType: 'wallet_settlement',
+        referenceId: settlementId,
+      });
+    }
 
     publishObservabilityEvent(tx as SyncWriteUnitOfWork, {
       tenantId: input.tenantId,
