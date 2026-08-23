@@ -29,6 +29,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { redactPii } from '../conversation/pii-redactor.js';
+import { realClock, type Clock } from '../utils/clock.js';
 
 export interface ErrorEvent {
   /** Free-form error message; PII-scrubbed before transport. */
@@ -87,6 +88,21 @@ export interface HttpReporterOptions {
   maxEventsPerSecond: number;
   /** HTTP request timeout. */
   timeoutMs: number;
+  /**
+   * 限流窗口用的时钟（可选，默认真实时钟）。
+   *
+   * 存在的理由是**可测性**：限流窗口是 1 秒墙钟，而首次 `fetch()` 会在 undici/TLS 冷启动时
+   * **同步阻塞事件循环**（实测串行耗时 [1215, 130, 1, 0, 0…]ms —— 只有第一次贵）。
+   *
+   * 于是「并发发 N 条、断言丢弃 M 条」的用例会这样坏掉：5 次 `report()` 的限流判定本身
+   * 全部同步完成（实测 `beforeAwait === afterAwait === 3`，**不存在**「后几条在 await 之后才判定」），
+   * 但第 1 条进入 `fetch` 后把事件循环卡住，第 2 条要等冷启动结束才进入 —— 实测各条进入时刻
+   * `[0, 684, 685, 685, 685]`ms。一旦这个间隔跨过 1000ms，窗口在第 2 条处翻转、计数归零，
+   * 多放行一条，dropped 从 3 变 2。预热 fetch 后连跑 10 轮 0 次失败，可反证冷启动是唯一诱因。
+   *
+   * 注入固定时钟即可让窗口行为与真实耗时解耦。
+   */
+  clock?: Clock;
 }
 
 export class HttpErrorReporter implements ErrorReporter {
@@ -94,8 +110,11 @@ export class HttpErrorReporter implements ErrorReporter {
   private windowStartMs = 0;
   private eventsInWindow = 0;
   private dropped = 0;
+  /** 限流窗口时钟；未注入则用真实时钟（生产行为一字不变）。 */
+  private readonly clock: Clock;
 
   constructor(private readonly opts: HttpReporterOptions) {
+    this.clock = opts.clock ?? realClock;
     if (!opts.endpoint.startsWith('https://')) {
       throw new Error('error reporter endpoint must be HTTPS');
     }
@@ -104,7 +123,7 @@ export class HttpErrorReporter implements ErrorReporter {
 
   async report(event: ErrorEvent): Promise<boolean> {
     /* Rate limit: 1-second sliding window. */
-    const now = Date.now();
+    const now = this.clock.now();
     if (now - this.windowStartMs >= 1000) {
       this.windowStartMs = now;
       this.eventsInWindow = 0;
