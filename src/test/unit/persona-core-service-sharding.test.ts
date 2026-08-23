@@ -263,7 +263,9 @@ describe('PersonaCoreService 分片探针', () => {
       taskId: task.id,
       assignmentId: assignment!.id,
       totalAmountMinor: 10_000,
-      currency: 'USD',
+      /* 币种必须与 persona 钱包一致（恒为 CRED）——审计 W#10 起，非 CRED 结算会抛错。
+       * 本用例验的是 shard 路由，与币种无关，此前用 'USD' 纯属偶然（靠旧的币种改写 bug 才通过）。 */
+      currency: 'CRED',
       split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
     });
     assert.ok(settlement, 'marketplace.settleTaskPayment 经 walletHook.insertWalletTransactionInTx 落同一 tx');
@@ -436,7 +438,8 @@ describe('PersonaCoreService 分片探针', () => {
     const assignment = service.assignTask({ tenantId: 'tenant_a', actorUserId: 'tenant_a_owner', taskId: task.id, personaId: persona.id });
     const settlement = service.settleTaskPayment({
       tenantId: 'tenant_a', actorUserId: 'tenant_a_owner', taskId: task.id, assignmentId: assignment!.id,
-      totalAmountMinor: 5_000, currency: 'USD', split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+      /* 同上：币种须与钱包一致（CRED），本用例验的是单库零回归而非币种。 */
+      totalAmountMinor: 5_000, currency: 'CRED', split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
     });
     assert.ok(settlement, '单库模式下 marketplace→wallet hook 同样正常工作');
   });

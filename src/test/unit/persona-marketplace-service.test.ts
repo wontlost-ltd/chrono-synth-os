@@ -528,4 +528,254 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     const reread = fx.service.getMarketplaceTaskById(fx.tenantId, task.id);
     assert.deepEqual(reread, task);
   });
+
+  /* ── 审计 Warning #10 / #11：结算的币种与零分项 ────────────────── */
+
+  /** 建一条走到「已指派」的任务，供结算用例复用。 */
+  function assignedTask(): { taskId: string; assignmentId: string } {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Settle', description: 'settle target', category: 'operations', reward: 100,
+    });
+    assert.ok(fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    }));
+    const assignment = fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    });
+    assert.ok(assignment);
+    return { taskId: task.id, assignmentId: assignment!.id };
+  }
+
+  it('审计 W#10：结算币种与钱包不一致必须拒绝（不得改写钱包币种）', () => {
+    /* ⚠️ 修复前：`SET ... currency = ?` 无条件用入参覆盖钱包币种。实测 CRED 钱包收到
+     * 一笔 currency:'USD' 的结算后变成 USD、余额 160 —— 把两种货币的金额直接相加，
+     * 账目从此不可信，且**全程无报错**。结算不是货币兑换，唯一正确动作是拒绝。 */
+    const { taskId, assignmentId } = assignedTask();
+    const before = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(before?.currency, 'CRED', '前置：钱包默认 CRED');
+
+    /* 抛错而非返回 null（独立审查 High-1）：路由把 null 映射成 404「不存在」，
+     * 会把币种问题伪装成查无此物；同仓 org-wallet-service 对同一关切也是抛错。 */
+    assert.throws(
+      () => fx.service.settleTaskPayment({
+        tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+        totalAmountMinor: 10_000, currency: 'USD',
+        split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+      }),
+      (err: unknown) => err instanceof Error && /钱包币种不符/.test(err.message),
+      '币种不一致必须抛错',
+    );
+
+    const after = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(after?.currency, 'CRED', '钱包币种不可变');
+    assert.equal(after?.balance, before?.balance, '拒绝路径不得动账');
+    const rows = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_transactions WHERE wallet_id = ?',
+    ).all(after!.id);
+    assert.equal(rows[0]?.c, 0, '拒绝路径不得留下任何流水');
+  });
+
+  it('审计 W#10 对照：币种一致时结算照常成功（别把功能一起拒掉）', () => {
+    const { taskId, assignmentId } = assignedTask();
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 10_000, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.ok(settled, '币种一致必须成功');
+    const wallet = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.equal(wallet?.currency, 'CRED');
+    assert.ok((wallet?.balance ?? 0) > 0, '余额应已入账');
+  });
+
+  it('⚠️ 审计 W#10 Critical 端到端：验收链不得留下「已完成但没付钱」的任务', () => {
+    /* 这条用例存在的理由：我原来只测了 `settleTaskPayment` **直接调用**，
+     * 而真实回归发生在 `acceptSubmittedTask` 的**两阶段时序**上 ——
+     * 单元测直调结算全绿，真实路径却坏掉。审查正是这样抓到的。
+     * 故此处走完整验收链，并断言「不存在已完成却零结算的任务」这一账目不变量。 */
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'E2E', description: 'accept chain', category: 'operations', reward: 100,
+    });
+    assert.ok(fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    }));
+    const assignment = fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    });
+    assert.ok(assignment);
+    assert.ok(fx.service.submitTaskResult({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      taskId: task.id, assignmentId: assignment!.id, resultUri: 'https://example.com/r',
+    }));
+
+    const accepted = fx.service.acceptSubmittedTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+      taskId: task.id, clientRating: 5, qualityScore: 0.9,
+    });
+    assert.ok(accepted, '验收必须成功');
+
+    /* 账目不变量：completed 的任务必须有结算记录、且钱包真的收到了钱。 */
+    const taskRow = fx.db.prepare<{ status: string }>(
+      'SELECT status FROM marketplace_tasks WHERE id = ?',
+    ).all(task.id)[0];
+    assert.equal(taskRow?.status, 'completed');
+
+    const settlements = fx.db.prepare<{ c: number }>(
+      'SELECT COUNT(*) AS c FROM wallet_settlements WHERE assignment_id = ?',
+    ).all(assignment!.id);
+    assert.equal(settlements[0]?.c, 1, 'completed 的任务必须有且仅有一条结算记录（不得「完成却没付钱」）');
+
+    const wallet = fx.service.getWallet(fx.tenantId, fx.ownerUserId, fx.personaId);
+    assert.ok((wallet?.balance ?? 0) > 0, '钱包必须真的收到钱');
+    assert.equal(wallet?.currency, 'CRED', '钱包币种不得被结算改写');
+
+    /* ⚠️ 关键：还要走一遍**会触发结算失败**的路径，否则这条用例挡不住真正的回归。
+     * 我原来的坏版本正是「publishTask 放行非 CRED + 结算处 return null」——
+     * 若本用例只发 CRED 任务，就永远走不到那条路径（实测：变异后本用例仍全绿）。
+     * 故这里绕过 publishTask 的源头校验直接插一条 USD 任务（模拟**历史脏数据**，
+     * 这也是源头校验上线前就已入库的真实形态），再走完整验收链。 */
+    const dirtyId = 'mkt_legacy_usd';
+    const ts = Date.now();
+    fx.db.prepare<void>(
+      `INSERT INTO marketplace_tasks (id, tenant_id, publisher_user_id, title, description,
+         category, reward, currency, status, published_at, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(dirtyId, fx.tenantId, fx.ownerUserId, 'legacy USD', 'dirty', 'operations',
+      100, 'USD', 'open', ts, ts, ts);
+    assert.ok(fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: dirtyId, personaId: fx.personaId,
+    }));
+    const dirtyAsg = fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: dirtyId, personaId: fx.personaId,
+    });
+    assert.ok(dirtyAsg);
+    assert.ok(fx.service.submitTaskResult({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      taskId: dirtyId, assignmentId: dirtyAsg!.id, resultUri: 'https://example.com/r2',
+    }));
+    /* 币种在**任何写入之前**被判掉 → 返回 null、任务保持 submitted，
+     * 与同处的 reward<=0 前置拒绝同款语义（出路是 rejectSubmittedTask 退回重开）。
+     * 关键不是「抛错还是 null」，而是**绝不允许**「验收落库、结算没落」的半成品状态。 */
+    /* ⚠️ 必须**包住**这次调用：若前置守卫失效，结算侧会抛错，未捕获的异常会让用例
+     * 死在这一行，**根本走不到下面的不变量断言** —— 那样最强的那条断言就成了摆设
+     * （复审的过程建议）。捕获后继续往下判「有没有留下 completed 孤儿」，
+     * 使不变量断言成为真正承重的那一条。 */
+    let dirtyAccepted: unknown = 'not-called';
+    let dirtyThrew: string | null = null;
+    try {
+      dirtyAccepted = fx.service.acceptSubmittedTask({
+        tenantId: fx.tenantId, actorUserId: fx.ownerUserId,
+        taskId: dirtyId, clientRating: 5, qualityScore: 0.9,
+      });
+    } catch (err) {
+      dirtyThrew = err instanceof Error ? err.message : String(err);
+    }
+    /* 先判**账目不变量**（最强、最该承重的一条），再判返回值语义：
+     * 回归的形态是「留下 completed 孤儿」，不是「返回值不对」。 */
+    const orphanedAfterDirty = fx.db.prepare<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM marketplace_tasks t
+        WHERE t.status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM wallet_settlements s WHERE s.task_id = t.id)`,
+    ).all();
+    assert.equal(orphanedAfterDirty[0]?.c, 0,
+      `脏数据被拒后不得留下「已完成但零结算」的任务（若抛错：${dirtyThrew ?? '无'}）`);
+    assert.equal(dirtyAccepted ?? null, null,
+      `历史脏数据（非 CRED）验收必须被拒（若抛错：${dirtyThrew ?? '无'}）`);
+
+    const dirtyRow = fx.db.prepare<{ status: string }>(
+      'SELECT status FROM marketplace_tasks WHERE id = ?',
+    ).all(dirtyId)[0];
+    assert.notEqual(dirtyRow?.status, 'completed',
+      '被拒的任务不得被推进到 completed（否则就是「干了活没人付钱」且无法补救）');
+
+    /* ⚠️ 全局不变量（这一段才是真正能挡住「两阶段时序」类回归的断言）：
+     * 不允许存在**任何**已 completed 却没有结算记录的任务。 */
+    const orphaned = fx.db.prepare<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM marketplace_tasks t
+        WHERE t.status = 'completed'
+          AND NOT EXISTS (SELECT 1 FROM wallet_settlements s WHERE s.task_id = t.id)`,
+    ).all();
+    assert.equal(orphaned[0]?.c, 0, '不得存在「已完成但零结算」的任务（钱没付出去且无法补救）');
+  });
+
+  it('审计 W#11：零分成结算必须成功，且只写非零分项的流水', () => {
+    /* ⚠️ 修复前：钱包写入门只接受**正整数** amountMinor，零分项送进 `-0` 会抛
+     * 「amountMinor must be a positive integer」→ **整笔结算回滚**。
+     * 实测两个合法输入都被打回、流水 0 条：platformPct=0（免抽成活动）、
+     * 1 分钱按 60/20/20 拆分（floor 后分项为 0）。
+     * 零分项在账目上本就没有发生，跳过即可；分账守恒不受影响。 */
+    const { taskId, assignmentId } = assignedTask();
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 10_000, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 40, platformPct: 0 },
+    });
+    assert.ok(settled, 'platformPct=0 是合法输入，必须成功');
+    assert.equal(settled!.platformAmountMinor, 0);
+    assert.equal(
+      settled!.ownerAmountMinor + settled!.personaAmountMinor + settled!.platformAmountMinor,
+      settled!.totalAmountMinor,
+      '分账守恒：三项之和等于总额',
+    );
+
+    const rows = fx.db.prepare<{ transaction_type: string }>(
+      'SELECT transaction_type FROM wallet_transactions WHERE reference_id = ?',
+    ).all(settled!.id);
+    assert.equal(rows.length, 2, '只写 task_payment + persona_reserve 两条（platform_fee 为零，跳过）');
+    assert.ok(!rows.some((r) => r.transaction_type === 'platform_fee'), '不得写零金额的 platform_fee');
+  });
+
+  it('⚠️ 审计 W#10 Critical：非 CRED 任务必须在 publishTask 就被拒（否则验收后永久卡死）', () => {
+    /* 独立审查抓出的**我自己引入的 Critical**：
+     *
+     * 我第一版只在结算处 `return null`。但验收是「先提交验收事务、再另开事务结算」
+     * 的两阶段时序 —— 结算失败时验收**已经落库**。实测（修复前）：
+     *   task.status = completed / assignment = accepted / settlement 0 条 /
+     *   钱包余额 0 / 重试 accept 仍 null（终态拒绝，**永久卡死无法补救**）
+     * 即：persona 干完了活，任务标记完成，**没有人拿到钱**，且无法补救。
+     * 这比原本的「静默串币」更糟。
+     *
+     * 而 persona 钱包**恒为 CRED**（createWallet 的 INSERT 不写 currency 列），
+     * 所以「非 CRED 任务」= 永远结算不了的任务。故照 reward<=0 的既有先例
+     * （「逐个入口打补丁必然漏，故改在源头消灭这种任务」）在发布时就拒。 */
+    assert.throws(
+      () => fx.service.publishTask({
+        tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+        title: 'USD task', description: 'unsettleable', category: 'operations',
+        reward: 100, currency: 'USD',
+      }),
+      (err: unknown) => err instanceof Error && /任务币种必须为 CRED/.test(err.message),
+      '非 CRED 任务必须在发布时就被拒绝',
+    );
+
+    /* 对照：CRED（以及缺省）任务照常发布 —— 别把功能一起拒掉。 */
+    const explicit = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'CRED task', description: 'ok', category: 'operations',
+      reward: 100, currency: 'CRED',
+    });
+    assert.equal(explicit.currency, 'CRED');
+    const defaulted = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'default task', description: 'ok', category: 'operations', reward: 100,
+    });
+    assert.equal(defaulted.currency, 'CRED', '不传 currency 应默认 CRED');
+  });
+
+  it('审计 W#11：1 分钱任务（floor 后出现零分项）同样必须成功', () => {
+    const { taskId, assignmentId } = assignedTask();
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 1, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.ok(settled, '1 分钱是合法金额，不得整单回滚');
+    /* floor 后 owner/persona 均为 0，余数归 platform —— 守恒仍成立。 */
+    assert.equal(
+      settled!.ownerAmountMinor + settled!.personaAmountMinor + settled!.platformAmountMinor,
+      1,
+    );
+  });
 });
