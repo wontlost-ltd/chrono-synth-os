@@ -141,7 +141,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
     const norm = computeNorm(typed);
     if (norm > 0) {
       this.vectorCache.set(memoryId, { vector: typed, norm });
-      this.accessOrder.set(memoryId, Date.now());
+      this.accessOrder.set(memoryId, this.clock.now());
       this.evictIfNeeded();
       this.ivfBuilt = false;
     }
@@ -149,7 +149,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
   }
 
   private refreshCache(): void {
-    const now = Date.now();
+    const now = this.clock.now();
     if (this.cacheLoadedAt > 0 && now - this.cacheLoadedAt < CACHE_TTL_MS) return;
 
     const rows = this.tx.queryMany(embQueryByModel({ model: this.model }));
@@ -194,7 +194,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
         model: this.model,
         centroidsJson: JSON.stringify(centroids.map(c => Array.from(c))),
         numVectors: this.vectorCache.size,
-        builtAt: Date.now(),
+        builtAt: this.clock.now(),
       }));
     } catch { /* best-effort persistence; failure must not block search */ }
   }
@@ -213,6 +213,15 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
     const dim = entries[0].vector.length;
     const nPartitions = Math.min(MAX_PARTITIONS, Math.ceil(Math.sqrt(entries.length)));
 
+    /* ⚠️ `built_at` 是**跨进程持久化**的（ivf_centroids 表），而下面用 `this.clock.now()`
+     * 与它相减 —— 故「写时钟」与「读时钟」必须同源。今天恒成立：两个生产装配点
+     * （embedding-index-factory / app.ts）传的都是 `os.getClock()`，而 ChronoSynthOS
+     * 默认 `realClock`；测试全用内存库（每次全新），不跨进程。
+     *
+     * 若将来出现「注入 TestClock + 持久化文件库」的组合，会退化成**永不过期**：
+     * 实测 built_at=真实时钟、now=TestClock(1000) 时差值为负（-1.78e12），
+     * `< IVF_MAX_AGE_MS` 恒真 → 陈旧质心永远被判为有效。
+     * 真要支持那种组合，应改为存「逻辑时钟标识 + 时间戳」而非裸时间戳。 */
     const IVF_MAX_AGE_MS = 24 * 60 * 60 * 1000;
     let centroids: Float64Array[];
     const persisted = this.loadPersistedCentroids();
@@ -222,7 +231,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
       && persisted[0].length === dim
       && persistedMeta !== null
       && Math.abs(persistedMeta.numVectors - entries.length) / Math.max(persistedMeta.numVectors, 1) < 0.5
-      && (Date.now() - persistedMeta.builtAt) < IVF_MAX_AGE_MS;
+      && (this.clock.now() - persistedMeta.builtAt) < IVF_MAX_AGE_MS;
     if (centroidsValid && persisted) {
       centroids = persisted;
     } else {
@@ -286,7 +295,7 @@ export class InMemoryEmbeddingIndex implements EmbeddingIndex {
   }
 
   private touchResults(results: EmbeddingMatch[]): void {
-    const now = Date.now();
+    const now = this.clock.now();
     for (const r of results) this.accessOrder.set(r.memoryId, now);
   }
 
