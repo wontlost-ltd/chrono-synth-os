@@ -240,8 +240,11 @@ describe('ObservabilityWorker', () => {
        * 修复后：接口只收**时长**，调用方**没有任何入口**可以注入自己的时刻 ——
        * 故无论钟差多大，刚认领的事件都不会被回收。
        *
-       * 这条用例同时钉死了接口形状：若有人把参数改回「绝对截止点」，
-       * 下面这些调用会在类型层就失败（staleProcessingMs 是时长语义）。 */
+       * ⚠️ 不要指望类型层保护：`staleBefore`(绝对时刻) 与 `staleProcessingMs`(时长)
+       * **都是 `number`**，把某个调用点回退成 `Date.now() - staleProcessingMs`
+       * 照样编译通过（实测 BUILD_RC=0）。只有改**字段名**才会被 TS 抓到。
+       * 语义回退只能靠行为断言挡住 —— 故每个生产调用点都必须有 stale 回收用例
+       * （worker 侧见本文件既有用例；kafka 侧见 kafka-transport.test.ts）。 */
       const fresh = claimOne('fresh_2');
 
       /* 用远大于任何真实钟差的时长反复回收：结果必须恒定。 */

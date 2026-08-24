@@ -14,7 +14,7 @@ import type { IDatabase } from '../database.js';
  *
  * 方言差异（均已实测）：
  *   - PG    ：`now()` 在**事务内冻结**，正是我们要的语义（认领与回收各自单语句，互不干扰）；
- *             `EXTRACT(EPOCH FROM now())*1000` 得毫秒，`::bigint` 落 INTEGER 列。
+ *             `EXTRACT(EPOCH FROM now())*1000` 得毫秒，`::bigint` 与列类型一致（schema-dsl v038 里该列是 bigint）。
  *   - SQLite：`strftime('%s','now')` 只有**秒级**精度（实测与 Date.now() 差 <1s）。
  *             对 staleProcessingMs 最小 1000ms、默认 5min 的窗口无实质影响。
  *
