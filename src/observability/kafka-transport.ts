@@ -212,7 +212,8 @@ export class ObservabilityKafkaOutboxProducer {
   }
 
   private async flushInternal(batchSize: number): Promise<ObservabilityKafkaFlushResult> {
-    const recovered = requeueStaleObservabilityEvents(this.tx, Date.now() - this.config.worker.staleProcessingMs);
+    /* 传**时长**：截止点由数据库用自己的时钟算（issue #380）。 */
+    const recovered = requeueStaleObservabilityEvents(this.tx, this.config.worker.staleProcessingMs);
     const rows = listPendingObservabilityEvents(this.tx, batchSize);
     const claimed: ObservabilityOutboxRow[] = [];
 

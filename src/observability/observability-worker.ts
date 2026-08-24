@@ -108,7 +108,8 @@ export class ObservabilityWorker {
 
   private flushInternal(batchSize: number): ObservabilityFlushResult {
     const tx = this.db;
-    const recovered = requeueStaleObservabilityEvents(tx, Date.now() - this.options.staleProcessingMs);
+    /* 传**时长**：截止点由数据库用自己的时钟算（issue #380）。 */
+    const recovered = requeueStaleObservabilityEvents(tx, this.options.staleProcessingMs);
     const rows = listPendingObservabilityEvents(tx, batchSize);
 
     let processed = 0;

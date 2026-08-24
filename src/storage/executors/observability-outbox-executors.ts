@@ -3,6 +3,35 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import type { IDatabase } from '../database.js';
+
+/**
+ * 「数据库当前时刻」的毫秒 epoch 表达式（issue #380）。
+ *
+ * 为什么必须是 DB 侧时间：outbox 由**多个进程**共享（k8s 实测 API 2 副本 + worker 1 副本），
+ * 认领与回收若各用本机 `Date.now()`，机器钟差会直接平移 stale 判定。
+ * 让两侧都取同一个 DB 时钟，物理上消除多时钟 —— 这是注入 Clock 解决不了的一类问题。
+ *
+ * 方言差异（均已实测）：
+ *   - PG    ：`now()` 在**事务内冻结**，正是我们要的语义（认领与回收各自单语句，互不干扰）；
+ *             `EXTRACT(EPOCH FROM now())*1000` 得毫秒，`::bigint` 落 INTEGER 列。
+ *   - SQLite：`strftime('%s','now')` 只有**秒级**精度（实测与 Date.now() 差 <1s）。
+ *             对 staleProcessingMs 最小 1000ms、默认 5min 的窗口无实质影响。
+ *
+ * ⚠️ **PG 分支目前无自动化测试覆盖**：全仓没有跑 observability outbox 的 PG 集成测试
+ * （单测走 SQLite）。我在真实 PG 17 上手工对拍过本分支（fresh 保持 processing、
+ * stuck 被回收，与 SQLite 行为一致），但那不是可复现的门。
+ * 若后续给 outbox 补 PG 集成测试，请优先覆盖这两条 SQL。
+ *
+ * ⚠️ 返回的是 **SQL 片段**而非参数：时间必须由数据库求值，一旦变成占位符参数就又回到
+ * 「应用侧时钟」，缺陷原样复现。故此处刻意拼接常量片段（无外部输入，不构成注入面）。
+ */
+function dbNowMs(db: IDatabase): string {
+  return db.dialect === 'postgres'
+    ? '(EXTRACT(EPOCH FROM now()) * 1000)::bigint'
+    : "(CAST(strftime('%s','now') AS INTEGER) * 1000)";
+}
+
 import type {
   ObsOutboxRow, ObsRollupRow,
   ObsPublishEventParams, ObsRequeueStaleParams,
@@ -66,20 +95,32 @@ export function registerObservabilityOutboxExecutors(): void {
   });
 
   registerCommand<ObsRequeueStaleParams>(OBS_CMD_REQUEUE_STALE, (db, p) => {
+    /* 「现在」取自**数据库**而非调用方进程 —— 与 MARK_PROCESSING 同源（见下方注释）。
+     * 故这里收的是**时长**，截止点在 SQL 里用同一个 DB 时钟算出。 */
     const result = db.prepare<void>(
       `UPDATE observability_outbox
        SET status = 'pending', processed_at = NULL
-       WHERE status = 'processing' AND processed_at IS NOT NULL AND processed_at < ?`,
-    ).run(p.staleBefore);
+       WHERE status = 'processing' AND processed_at IS NOT NULL
+         AND processed_at < ${dbNowMs(db)} - ?`,
+    ).run(p.staleProcessingMs);
     return { rowsAffected: result.changes };
   });
 
   registerCommand<ObsMarkProcessingParams>(OBS_CMD_MARK_PROCESSING, (db, p) => {
+    /* ⚠️ `processed_at` 由**数据库**盖戳，不接受应用传入的时间（issue #380）。
+     *
+     * outbox 是跨进程共享的：k8s 实测 API 2 副本各自起 ObservabilityPipelineService、
+     * 外加 worker 1 副本 —— 三个进程、三台机器消费同一张表。
+     * 认领方写自己的 `Date.now()`、回收方用自己的 `Date.now()` 算截止点时，
+     * 两者钟差会直接平移 stale 判定：实测钟差 > staleProcessingMs（默认 5min）时，
+     * **正在处理中的事件被判为 stale 重新入队 → 重复投递**。
+     *
+     * 让 DB 当唯一时钟即可物理消除该问题（注入 Clock 治不了：跨机器的物理钟差依然存在）。 */
     const result = db.prepare<void>(
       `UPDATE observability_outbox
-       SET status = 'processing', processed_at = ?
+       SET status = 'processing', processed_at = ${dbNowMs(db)}
        WHERE id = ? AND status = 'pending'`,
-    ).run(p.now, p.id);
+    ).run(p.id);
     return { rowsAffected: result.changes };
   });
 
