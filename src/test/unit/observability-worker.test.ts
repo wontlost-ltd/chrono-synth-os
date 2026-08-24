@@ -8,6 +8,7 @@ import {
   getObservabilityRollup,
   markObservabilityEventProcessing,
   publishObservabilityEvent,
+  requeueStaleObservabilityEvents,
   resetObservabilityPipelineMetrics,
 } from '../../observability/observability-outbox.js';
 import { applyObservabilityStoredEvent } from '../../observability/observability-rollups.js';
@@ -177,5 +178,104 @@ describe('ObservabilityWorker', () => {
     assert.equal(appliedSecond, false);
     assert.equal(rollup.task_terminal_count, 1);
     assert.equal(rollup.task_success_count, 1);
+  });
+
+  /* ── issue #380：stale 判定必须由数据库单一时钟裁决 ────────────── */
+  describe('stale 回收的时钟来源（issue #380）', () => {
+    /**
+     * 缺陷：认领方写自己的 `Date.now()` 进 `processed_at`，回收方用自己的
+     * `Date.now() - staleProcessingMs` 算截止点 —— 而 outbox 是**跨进程**共享的
+     * （k8s 实测：API 2 副本各自起 ObservabilityPipelineService + worker 1 副本，
+     * 三进程一张表）。两侧机器钟差会直接平移判定：
+     * 实测钟差 > staleProcessingMs 时，**正在处理中的事件被回收 → 重复投递**。
+     *
+     * 修法：`processed_at` 由 DB 盖戳、截止点也由 DB 算，调用方只传**时长**。
+     * 于是「调用方的时钟」在结构上无法参与判定 —— 这是注入 Clock 治不了的一类问题
+     * （跨机器物理钟差依然存在）。
+     */
+    const STALE_MS = 5 * 60 * 1000;
+
+    /** 发一条事件并认领，返回其 id。 */
+    function claimOne(partitionKey: string): string {
+      publishObservabilityEvent(db, {
+        tenantId: 'tenant_stale',
+        topic: OBSERVABILITY_TOPIC,
+        eventType: 'runtime.completed',
+        partitionKey,
+        payload: { durationMs: 1, updatedAt: 1000 },
+      });
+      const row = db.prepare<{ id: string }>(
+        `SELECT id FROM observability_outbox WHERE partition_key = ?`,
+      ).all(partitionKey)[0];
+      assert.ok(row?.id, '前置：事件应已入库');
+      assert.ok(markObservabilityEventProcessing(db, row.id), '前置：应能认领');
+      return row.id;
+    }
+
+    const statusOf = (id: string): string | undefined =>
+      db.prepare<{ status: string }>(
+        `SELECT status FROM observability_outbox WHERE id = ?`,
+      ).all(id)[0]?.status;
+
+    it('刚认领的事件不得被回收；真正卡住的必须被回收', () => {
+      /* ⚠️ 两条一起断言：只测「不误收」会被「干脆不回收」蒙混过关，
+       * 只测「能回收」会被「全部回收」蒙混过关。 */
+      const fresh = claimOne('fresh_1');
+      const stuck = claimOne('stuck_1');
+      /* 把 stuck 的认领时刻改到 10 分钟前（模拟消费者崩溃后卡住）。 */
+      db.prepare<void>(
+        `UPDATE observability_outbox SET processed_at = ? WHERE id = ?`,
+      ).run(Date.now() - 10 * 60 * 1000, stuck);
+
+      const recovered = requeueStaleObservabilityEvents(db, STALE_MS);
+
+      assert.equal(recovered, 1, '应恰好回收 1 条');
+      assert.equal(statusOf(fresh), 'processing', '刚认领的不得被回收');
+      assert.equal(statusOf(stuck), 'pending', '卡住的必须被回收');
+    });
+
+    it('★核心★ 调用方的时钟无法影响判定（钟差不再改变结果）', () => {
+      /* 修复前：回收方传的是「本机 now - STALE_MS」，钟差直接平移截止点，
+       * 实测 B 比 A 快 6 分钟即可把 processing 中的事件误收成 pending。
+       * 修复后：接口只收**时长**，调用方**没有任何入口**可以注入自己的时刻 ——
+       * 故无论钟差多大，刚认领的事件都不会被回收。
+       *
+       * ⚠️ 不要指望类型层保护：`staleBefore`(绝对时刻) 与 `staleProcessingMs`(时长)
+       * **都是 `number`**，把某个调用点回退成 `Date.now() - staleProcessingMs`
+       * 照样编译通过（实测 BUILD_RC=0）。只有改**字段名**才会被 TS 抓到。
+       * 语义回退只能靠行为断言挡住 —— 故每个生产调用点都必须有 stale 回收用例
+       * （worker 侧见本文件既有用例；kafka 侧见 kafka-transport.test.ts）。 */
+      const fresh = claimOne('fresh_2');
+
+      /* 用远大于任何真实钟差的时长反复回收：结果必须恒定。 */
+      for (const ms of [STALE_MS, 60_000, 1_000]) {
+        requeueStaleObservabilityEvents(db, ms);
+        assert.equal(statusOf(fresh), 'processing',
+          `传入时长 ${ms}ms 时，刚认领的事件仍不得被回收`);
+      }
+    });
+
+    it('★核心★ processed_at 由数据库盖戳（不是应用进程的时钟）', () => {
+      /* ⚠️ 上一条只钉死了「回收侧不能注入时刻」，**没有**钉死「认领侧的时间戳来自 DB」。
+       * 变异实测证明了这个缺口：把认领侧改回应用时钟并注入 +6 分钟钟差，
+       * 上面所有用例**仍然全绿** —— 而那正是本 issue 的缺陷本体。
+       *
+       * 判据：认领写下的 processed_at 必须落在**数据库当下**的邻域内。
+       * SQLite 的 strftime 只有秒级精度（实测比 Date.now() 落后 0–999ms），
+       * 故容差取 2 秒；任何进程级钟差（分钟级）都会远超它。 */
+      const id = claimOne('dbstamp_1');
+      const stamped = db.prepare<{ p: number }>(
+        `SELECT processed_at AS p FROM observability_outbox WHERE id = ?`,
+      ).all(id)[0]?.p;
+      assert.ok(stamped, '认领应写下 processed_at');
+
+      const dbNow = db.prepare<{ ms: number }>(
+        `SELECT (CAST(strftime('%s','now') AS INTEGER) * 1000) AS ms`,
+      ).all()[0]!.ms;
+
+      assert.ok(Math.abs(Number(dbNow) - Number(stamped)) <= 2000,
+        `processed_at 应由 DB 盖戳（DB 当下 ${dbNow} vs 实际 ${stamped}，`
+        + '差值过大说明用的是应用进程时钟）');
+    });
   });
 });

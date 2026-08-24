@@ -129,9 +129,15 @@ export function listPendingObservabilityEvents(tx: SyncWriteUnitOfWork, limit: n
   return [...tx.queryMany(obsQueryPendingEvents(limit))] as ObservabilityOutboxRow[];
 }
 
-export function requeueStaleObservabilityEvents(tx: SyncWriteUnitOfWork, staleBefore: number): number {
+/**
+ * 回收卡在 processing 的事件（issue #380）。
+ *
+ * ⚠️ 收的是**时长**而非绝对截止点：截止点由数据库用自己的时钟算出。
+ * 详见 `obsCmdRequeueStale` 的契约注释与 executors 里的 `dbNowMs`。
+ */
+export function requeueStaleObservabilityEvents(tx: SyncWriteUnitOfWork, staleProcessingMs: number): number {
   registerCoreSelfExecutors();
-  const result = tx.execute(obsCmdRequeueStale({ staleBefore }));
+  const result = tx.execute(obsCmdRequeueStale({ staleProcessingMs }));
   const count = result.rowsAffected;
   if (count > 0) {
     observabilityPipelineMetrics.eventsRecovered += count;
@@ -141,7 +147,7 @@ export function requeueStaleObservabilityEvents(tx: SyncWriteUnitOfWork, staleBe
 
 export function markObservabilityEventProcessing(tx: SyncWriteUnitOfWork, id: string): boolean {
   registerCoreSelfExecutors();
-  const result = tx.execute(obsCmdMarkProcessing({ id, now: Date.now() }));
+  const result = tx.execute(obsCmdMarkProcessing({ id }));
   return result.rowsAffected > 0;
 }
 

@@ -71,12 +71,20 @@ export interface ObsPublishEventParams {
 }
 
 export interface ObsRequeueStaleParams {
-  staleBefore: number;
+  /**
+   * 认领超时**时长**（毫秒），不是绝对截止时刻。
+   *
+   * ⚠️ 刻意用「时长」而非「截止点」：截止点必须由**调用方的时钟**算出，而 outbox 是
+   * 跨进程共享的（k8s 实测：API 2 副本各自起 ObservabilityPipelineService + worker 1 副本
+   * = 三进程一个 outbox）。认领方 A 与回收方 B 在不同机器上，各自 `Date.now()` 的钟差
+   * 会直接平移判定 —— 实测钟差 > staleProcessingMs 时，**正在处理中的事件被回收 → 重复投递**。
+   * 传时长后，「现在」由数据库统一提供，物理上消除多时钟。
+   */
+  staleProcessingMs: number;
 }
 
 export interface ObsMarkProcessingParams {
   id: string;
-  now: number;
 }
 
 export interface ObsMarkSentParams {

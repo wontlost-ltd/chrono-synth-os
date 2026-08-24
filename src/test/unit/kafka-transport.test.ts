@@ -24,6 +24,7 @@ import {
 import {
   OBSERVABILITY_TOPIC,
   getObservabilityRollup,
+  markObservabilityEventProcessing,
   publishObservabilityEvent,
 } from '../../observability/observability-outbox.js';
 
@@ -246,5 +247,74 @@ describe('Kafka transport helpers', () => {
     });
     assert.equal(parseKafkaBrokerAddress('invalid-broker'), null);
     assert.equal(parseKafkaBrokerAddress('broker:not-a-port'), null);
+  });
+
+  /* ── issue #380：kafka 侧的 stale 回收调用点也必须有覆盖 ────────── */
+  it('★回归★ kafka producer 会回收卡在 processing 的陈旧事件（issue #380 调用点）', async () => {
+    /**
+     * ⚠️ 这条用例是独立审查逼出来的，缺口很具体：
+     *
+     * `requeueStaleObservabilityEvents` 的参数语义从「绝对截止时刻」改成了「时长」，
+     * **两者都是 `number`，TypeScript 拦不住**。我在本 PR 里已经漏改过一次调用点
+     * （observability-worker），靠一条**既有**用例才发现。
+     *
+     * 而 kafka-transport 这个调用点当时**零覆盖**：把它回退成
+     * `Date.now() - staleProcessingMs` 后编译通过、全套 13/13 全绿。
+     * 实测该回退的真实后果：实参 ≈1.787e12 被当成时长 → 截止点 ≈ epoch 1000 →
+     * **回收 0 条、卡住的事件永远停在 processing**（stale 回收彻底失效，且静默）。
+     *
+     * 故此处按真实路径（producer.flush）钉死：卡住的必须被回收、刚认领的不得被回收。
+     */
+    const eventId = publishObservabilityEvent(db, {
+      tenantId: 'tenant_kafka_stale',
+      topic: OBSERVABILITY_TOPIC,
+      eventType: 'runtime.completed',
+      partitionKey: 'runtime_stale',
+      payload: { durationMs: 42 },
+    });
+    assert.equal(markObservabilityEventProcessing(db, eventId), true, '前置：应能认领');
+    /* 认领时刻挪到 10 分钟前，模拟消费者崩溃后卡住。 */
+    db.prepare<void>(
+      'UPDATE observability_outbox SET processed_at = ? WHERE id = ?',
+    ).run(Date.now() - 10 * 60 * 1000, eventId);
+
+    /* 另有一条**刚认领**的：它绝不能被顺带回收（防「干脆全收」的假通过）。 */
+    const freshId = publishObservabilityEvent(db, {
+      tenantId: 'tenant_kafka_stale',
+      topic: OBSERVABILITY_TOPIC,
+      eventType: 'runtime.completed',
+      partitionKey: 'runtime_fresh',
+      payload: { durationMs: 7 },
+    });
+    assert.equal(markObservabilityEventProcessing(db, freshId), true);
+
+    const config = loadConfig({
+      observability: {
+        worker: {
+          enabled: true, pollIntervalMs: 1000, batchSize: 10,
+          maxAttempts: 5, staleProcessingMs: 5 * 60 * 1000,
+        },
+        kafka: {
+          enabled: true, brokers: ['kafka-native:9092'], clientId: 'test',
+          topic: OBSERVABILITY_TOPIC, consumerGroupId: 'test-group', ssl: false,
+        },
+      },
+    });
+    const producer = new ObservabilityKafkaOutboxProducer(db, new SilentLogger(), config.observability);
+    (producer as unknown as { producer: { connect: () => Promise<void>; disconnect: () => Promise<void>;
+      send: (p: { topic: string; messages: Array<{ value: string }> }) => Promise<void> } }).producer = {
+      connect: async () => {},
+      disconnect: async () => {},
+      send: async () => {},
+    };
+
+    const result = await producer.flush(10);
+
+    assert.equal(result.recovered, 1, '卡住 10 分钟的事件必须被回收（回退成绝对截止点时此处为 0）');
+
+    const freshStatus = db.prepare<{ status: string }>(
+      'SELECT status FROM observability_outbox WHERE id = ?',
+    ).all(freshId)[0]?.status;
+    assert.notEqual(freshStatus, 'pending', '刚认领的事件不得被回收成 pending');
   });
 });
