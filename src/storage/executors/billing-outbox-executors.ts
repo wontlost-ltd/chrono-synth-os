@@ -3,6 +3,7 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import { dbNowMs } from './db-now.js';
 import type {
   BillingOutboxRow, BoutboxEnqueueParams, BoutboxPendingParams,
   BoutboxRequeueStaleParams, BoutboxClaimParams, BoutboxMarkSentParams,
@@ -53,15 +54,22 @@ export function registerBillingOutboxExecutors(): void {
 
   registerCommand<BoutboxRequeueStaleParams>(BOUTBOX_CMD_REQUEUE_STALE, (db, p) => {
     const result = db.prepare<void>(
-      `UPDATE billing_outbox SET status = 'pending', processed_at = NULL WHERE status = 'processing' AND processed_at < ?`,
-    ).run(p.staleThreshold);
+      /* 截止点由**数据库**算（issue #393）：收的是时长，见 dbNowMs 的说明。 */
+      `UPDATE billing_outbox SET status = 'pending', processed_at = NULL
+       WHERE status = 'processing' AND processed_at IS NOT NULL
+         AND processed_at < ${dbNowMs(db)} - ?`,
+    ).run(p.staleProcessingMs);
     return { rowsAffected: result.changes };
   });
 
   registerCommand<BoutboxClaimParams>(BOUTBOX_CMD_CLAIM, (db, p) => {
     const result = db.prepare<void>(
-      `UPDATE billing_outbox SET status = 'processing', processed_at = ? WHERE id = ? AND status = 'pending'`,
-    ).run(p.now, p.id);
+      /* ⚠️ processed_at 由**数据库**盖戳，不接受应用传入（issue #393）。
+       * flush 定时器跑在 API 进程内而 API replicas:2 —— 两副本各自认领/回收同一张表，
+       * 各用本机 Date.now() 时钟差会平移 stale 判定（实测 >5min 钟差即误回收 → 重发 Stripe）。 */
+      `UPDATE billing_outbox SET status = 'processing', processed_at = ${dbNowMs(db)}
+       WHERE id = ? AND status = 'pending'`,
+    ).run(p.id);
     return { rowsAffected: result.changes };
   });
 

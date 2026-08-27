@@ -51,12 +51,23 @@ export interface BoutboxPendingParams {
 }
 
 export interface BoutboxRequeueStaleParams {
-  staleThreshold: number;
+  /**
+   * 认领超时**时长**（毫秒），不是绝对截止时刻（issue #393，与 observability outbox #380 同型）。
+   *
+   * ⚠️ 截止点必须由**数据库**算，不能由调用方时钟算：`billing_outbox` 的 flush 定时器跑在
+   * **API 进程内**（`app.ts` 的 60s setInterval），而 `k8s/deployment.yml` 是 `replicas: 2`
+   * —— 两个副本各自认领/回收同一张表。各用本机 `Date.now()` 时，钟差会平移 stale 判定：
+   * 实测钟差 > STALE_PROCESSING_MS（5min）时，**正在处理中的行被回收 → 重发 Stripe**。
+   *
+   * ⚠️ 字段名从 `staleThreshold` 改成 `staleProcessingMs` 是**刻意的**：语义从「绝对时刻」
+   * 翻转成「时长」而类型仍是 `number`，TS 拦不住同名回退（#381 实测：回退某个调用点后
+   * 全套测试仍全绿）。改名让漏改的调用点在**编译期**就暴露。
+   */
+  staleProcessingMs: number;
 }
 
 export interface BoutboxClaimParams {
   id: number;
-  now: number;
 }
 
 export interface BoutboxMarkSentParams {
@@ -90,12 +101,12 @@ export function boutboxCmdEnqueue(params: BoutboxEnqueueParams): Command<Boutbox
   return { kind: BOUTBOX_CMD_ENQUEUE, params };
 }
 
-export function boutboxCmdRequeueStale(staleThreshold: number): Command<BoutboxRequeueStaleParams> {
-  return { kind: BOUTBOX_CMD_REQUEUE_STALE, params: { staleThreshold } };
+export function boutboxCmdRequeueStale(staleProcessingMs: number): Command<BoutboxRequeueStaleParams> {
+  return { kind: BOUTBOX_CMD_REQUEUE_STALE, params: { staleProcessingMs } };
 }
 
-export function boutboxCmdClaim(id: number, now: number): Command<BoutboxClaimParams> {
-  return { kind: BOUTBOX_CMD_CLAIM, params: { id, now } };
+export function boutboxCmdClaim(id: number): Command<BoutboxClaimParams> {
+  return { kind: BOUTBOX_CMD_CLAIM, params: { id } };
 }
 
 export function boutboxCmdMarkSent(id: number, now: number): Command<BoutboxMarkSentParams> {

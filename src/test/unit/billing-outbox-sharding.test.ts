@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
+import { boutboxCmdClaim, boutboxCmdRequeueStale } from '@chrono/kernel';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
@@ -107,5 +108,71 @@ describe('BillingOutbox 分片探针', () => {
     const res = await ob.flush();
     assert.equal(res.failed, 1);
     assert.equal(res.shardErrors.length, 0);
+  });
+
+  /* ── issue #393：stale 判定必须由数据库单一时钟裁决 ─────────────── */
+
+  /**
+   * 缺陷（与 observability outbox #380 同型）：认领方写自己的 `Date.now()` 进 `processed_at`，
+   * 回收方用自己的 `Date.now() - STALE_PROCESSING_MS` 算截止点。
+   *
+   * 多进程前提**已核实成立**：`billing_outbox` 的 flush 定时器跑在 **API 进程内**
+   * （`app.ts` 的 60s setInterval，唯一 flush 调用点，无独立 billing worker），
+   * 而 `k8s/deployment.yml` 是 `replicas: 2` —— 两副本各自认领/回收同一张表。
+   *
+   * 实测（修复前）：B 比 A 快 0/4 分钟 → processing（正常）；快 6/10 分钟 → **pending**
+   * ＝ 正在处理中的行被回收 → 重发 Stripe。
+   * （Stripe 侧带 idempotency_key 会收敛，故严重度 Low，但键有 24h 有效期，是缓解不是免疫。）
+   *
+   * 修法：`processed_at` 由 DB 盖戳、截止点也由 DB 算，调用方只传时长。
+   */
+  it('★回归★ 刚认领的行不得被回收（调用方无入口注入自己的时刻）', () => {
+    const db = obxDb();
+    const ob = BillingOutbox.fromUnitOfWork(db, cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'm1');
+    const id = db.prepare<{ id: number }>('SELECT id FROM billing_outbox').all()[0]!.id;
+    db.prepare<void>(`UPDATE billing_outbox SET status='processing', processed_at=(CAST(strftime('%s','now') AS INTEGER)*1000) WHERE id=?`).run(id);
+
+    /* 反复以各种时长回收：刚认领的必须始终不被收。 */
+    for (const ms of [5 * 60 * 1000, 60_000, 1_000]) {
+      db.execute(boutboxCmdRequeueStale(ms));
+      const st = db.prepare<{ status: string }>('SELECT status FROM billing_outbox WHERE id=?').all(id)[0]?.status;
+      assert.equal(st, 'processing', `时长 ${ms}ms 时刚认领的行不得被回收`);
+    }
+  });
+
+  it('★回归★ 真正卡住的行仍必须被回收（不是把功能关掉）', () => {
+    /* ⚠️ 只断言「不误收」会被「干脆不回收」蒙混过关，故必须同时钉死这一条。 */
+    const db = obxDb();
+    const ob = BillingOutbox.fromUnitOfWork(db, cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'm2');
+    const id = db.prepare<{ id: number }>('SELECT id FROM billing_outbox').all()[0]!.id;
+    /* 认领于 10 分钟前（模拟消费者崩溃后卡住）。 */
+    db.prepare<void>('UPDATE billing_outbox SET status=?, processed_at=? WHERE id=?')
+      .run('processing', Date.now() - 10 * 60 * 1000, id);
+
+    db.execute(boutboxCmdRequeueStale(5 * 60 * 1000));
+
+    const st = db.prepare<{ status: string }>('SELECT status FROM billing_outbox WHERE id=?').all(id)[0]?.status;
+    assert.equal(st, 'pending', '卡住 10 分钟的行必须被回收');
+  });
+
+  it('★回归★ processed_at 由数据库盖戳（不是应用进程时钟）', () => {
+    /* ⚠️ 上面两条只钉死了回收侧。#381 的实测教训：把**认领侧**改回应用时钟并注入钟差，
+     * 那些用例仍会全绿 —— 而认领侧才是缺陷本体。故必须单独钉死盖戳来源。
+     * 容差 2s：SQLite strftime 只有秒级精度（比 Date.now() 落后 0–999ms）；
+     * 任何进程级钟差（分钟级）都会远超它。 */
+    const db = obxDb();
+    const ob = BillingOutbox.fromUnitOfWork(db, cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'm3');
+    const id = db.prepare<{ id: number }>('SELECT id FROM billing_outbox').all()[0]!.id;
+
+    db.execute(boutboxCmdClaim(id));
+
+    const stamped = db.prepare<{ p: number }>('SELECT processed_at AS p FROM billing_outbox WHERE id=?').all(id)[0]?.p;
+    assert.ok(stamped, '认领应写下 processed_at');
+    const dbNow = db.prepare<{ ms: number }>(`SELECT (CAST(strftime('%s','now') AS INTEGER)*1000) AS ms`).all()[0]!.ms;
+    assert.ok(Math.abs(Number(dbNow) - Number(stamped)) <= 2000,
+      `processed_at 应由 DB 盖戳（DB 当下 ${dbNow} vs 实际 ${stamped}）`);
   });
 });
