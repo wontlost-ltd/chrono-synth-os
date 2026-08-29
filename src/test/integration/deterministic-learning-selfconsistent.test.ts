@@ -73,4 +73,47 @@ describe('确定性进修生成器自洽性（零-LLM 闭环地基）', () => {
     const b = generateDeterministicLearning(input);
     assert.deepEqual(a, b, '纯函数确定性');
   });
+
+  /* ⚠️ 审计 #399：超长 capability 曾导致 `extractKeypoints` **死循环**。
+   *
+   * 占位串 `${capability}的要点${i}` 在 capability 够长时恒 >80 字符，
+   * 而 push 对超长串**静默 return** ⇒ out 永不增长 ⇒ while 无出口。
+   * 实测阈值：76 正常、**77 即挂死**，worker 线程 100% CPU 永不返回；
+   * 且该学习请求已被 CAS 置为 learning，重启后重新拾取 ⇒ 持续崩溃循环。
+   *
+   * capability 从 requiredCapabilities 一路无长度校验流入（全仓 Zod 无约束），
+   * 故这是**可达**缺陷而非理论风险。
+   *
+   * 注意：本用例若回归，表现是**测试挂死而非失败**（node --test 会超时杀掉），
+   * 这本身就是判据 —— 能跑完就说明没有死循环。 */
+  it('审计 #399：超长 capability 不得死循环（77+ 字符曾挂死 worker）', () => {
+    /* 76/77 是实测的临界点，两侧都覆盖；再加一个远超阈值的极端值。 */
+    for (const len of [76, 77, 78, 120, 500]) {
+      const capability = 'x'.repeat(len);
+      const { examSpec, candidate } = generateDeterministicLearning({
+        learningRequestId: `lr-long-${len}`, capability, evidence: '', now: 1000,
+      });
+      assert.ok(examSpec.keypoints.length >= 2, `len=${len} 应仍产出 ≥2 个要点`);
+      assert.equal(examSpec.capability, capability, `len=${len} capability 必须逐字保留`);
+      assert.ok(candidate, `len=${len} 应产出 candidate`);
+      /* 占位要点的 alias 必须满足 lint 的长度门（trim 后 ≤80），否则 lint 会拒。 */
+      for (const kp of examSpec.keypoints) {
+        for (const alias of kp.aliases) {
+          assert.ok(
+            alias.trim().length >= 2 && alias.trim().length <= 80,
+            `len=${len} alias 长度越界会被 lint 拒: ${alias.trim().length}`,
+          );
+        }
+      }
+    }
+  });
+
+  it('审计 #399：超长 capability 产出的 examSpec 仍过 lint（不得只是「不挂」）', () => {
+    const capability = 'y'.repeat(200);
+    const { examSpec } = generateDeterministicLearning({
+      learningRequestId: 'lr-long-lint', capability, evidence: '', now: 1000,
+    });
+    const lint = lintExamSpec(examSpec);
+    assert.equal(lint.ok, true, `超长 capability 的 examSpec 必须过 lint: ${JSON.stringify(lint)}`);
+  });
 });
