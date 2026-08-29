@@ -92,7 +92,7 @@ describe('数字员工组织可视化聚合 API', () => {
       createdAt: clock.now(), updatedAt: clock.now(),
     });
     lrStore.insert({ id: 'lr-degraded', orgId: 'org-1', personaId: 'p-ic', capability: 'audit', isUnknown: false, evidence: 'gap', priority: 'low', triggeredByTaskId: degradedTaskId, status: 'pending', createdAt: clock.now(), updatedAt: clock.now() });
-    store.transitionTaskExecutionIfStatus('org-1', degradedTaskId, 'delegated', 'blocked', '[降级] 缺能力：audit——已完成可做部分', clock.now());
+    store.transitionTaskExecutionIfStatus('org-1', degradedTaskId, 'delegated', 'blocked', '[降级] 缺能力：audit——已完成可做部分', clock.now(), undefined, 'capability_gap');
   });
   after(async () => { await app.close(); os.close(); });
 

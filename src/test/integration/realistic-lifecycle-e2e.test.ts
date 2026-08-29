@@ -336,7 +336,7 @@ describe('真实生命周期深度集成 E2E（HTTP + in-process 混合，四业
     });
     /* 登记 analysis 学习请求（关联任务）+ 挂起。 */
     t.learning.registerGap({ orgId: 'org-1', personaId, capability: 'analysis', evidence: 'E2E', priority: 'high', triggeredByTaskId: taskId });
-    t.store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '能力缺口待进修：analysis', clock.now());
+    t.store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '能力缺口待进修：analysis', clock.now(), undefined, 'capability_gap');
 
     /* 学会 analysis 但**不发事件**（丢投）。 */
     t.capIndex.upsert({ id: `ci-${++idCounter}`, personaId, capability: 'analysis', examScore: 0.97, learningRequestId: 'seed', capabilityVersion: 1, learnedAt: clock.now(), updatedAt: clock.now() });

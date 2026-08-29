@@ -9,7 +9,7 @@
 import type { IDatabase } from './database.js';
 import type {
   OrgPosition, DigitalWorker, ReportingEdge, OrgGoal, OrgTask, TaskReport,
-  Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, ReportType, RiskLevel,
+  Seniority, EmploymentStatus, ReportingEdgeType, GoalStatus, TaskStatus, TaskBlockedReason, ReportType, RiskLevel,
   OrgConversationThread, OrgMessage, ThreadType, ThreadStatus, MessageType,
   OrgHandoff, HandoffStatus,
   OrgApproval, ApprovalSubjectType, ApprovalStatus, RiskLevel as ApprovalRiskLevel,
@@ -265,10 +265,19 @@ export class OrgWorkforceStore {
     );
   }
 
-  updateTaskExecution(orgId: string, taskId: string, status: TaskStatus, resultSummary: string | null, now: number): void {
+  /**
+   * 改任务执行状态。
+   *
+   * `blockedReason`（审计 #408）：仅在 status='blocked' 时有意义，标注**本次**挂起原因
+   * （`capability_gap` = 能力缺口，L8c 对账器应纳入；`execution_failure` = 工具失败/执行异常，
+   * L8c **绝不**纳入）。非 blocked 状态一律写 NULL —— 否则陈旧原因会残留到下一次挂起，
+   * 正是本缺陷「历史 learning_request 让工具故障被误判为学习挂起」的同型陷阱。
+   */
+  updateTaskExecution(orgId: string, taskId: string, status: TaskStatus, resultSummary: string | null, now: number, blockedReason?: TaskBlockedReason): void {
+    const reason = status === 'blocked' ? (blockedReason ?? null) : null;
     this.db.prepare<void>(
-      `UPDATE org_tasks SET status = ?, result_summary = ?, updated_at = ? WHERE tenant_id = ? AND org_id = ? AND id = ?`,
-    ).run(status, resultSummary, now, this.tenantId, orgId, taskId);
+      `UPDATE org_tasks SET status = ?, result_summary = ?, blocked_reason = ?, updated_at = ? WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).run(status, resultSummary, reason, now, this.tenantId, orgId, taskId);
   }
 
   /**
@@ -282,15 +291,18 @@ export class OrgWorkforceStore {
    * reassign 改派（仍 delegated），旧 worker 会凭 status-only CAS 抢到执行、用旧 persona 内核执行（越权/内核串味，
    * 功能评审 Codex 确认的 High 竞态）。挂起/复位等非执行推进不需约束 assignee，省略即旧行为（向后兼容）。
    */
-  transitionTaskExecutionIfStatus(orgId: string, taskId: string, expectedStatus: TaskStatus, nextStatus: TaskStatus, resultSummary: string | null, now: number, expectedAssignee?: string): boolean {
+  transitionTaskExecutionIfStatus(orgId: string, taskId: string, expectedStatus: TaskStatus, nextStatus: TaskStatus, resultSummary: string | null, now: number, expectedAssignee?: string, blockedReason?: TaskBlockedReason): boolean {
     const assigneeClause = expectedAssignee !== undefined ? ' AND assigned_to_worker_id = ?' : '';
+    /* 审计 #408：同 updateTaskExecution —— 只有转入 blocked 才写原因，其余一律清空，
+     * 防陈旧原因残留到下一次挂起。 */
+    const reason = nextStatus === 'blocked' ? (blockedReason ?? null) : null;
     const stmt = this.db.prepare<void>(
-      `UPDATE org_tasks SET status = ?, result_summary = ?, updated_at = ?
+      `UPDATE org_tasks SET status = ?, result_summary = ?, blocked_reason = ?, updated_at = ?
        WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = ?${assigneeClause}`,
     );
     const r = expectedAssignee !== undefined
-      ? stmt.run(nextStatus, resultSummary, now, this.tenantId, orgId, taskId, expectedStatus, expectedAssignee)
-      : stmt.run(nextStatus, resultSummary, now, this.tenantId, orgId, taskId, expectedStatus);
+      ? stmt.run(nextStatus, resultSummary, reason, now, this.tenantId, orgId, taskId, expectedStatus, expectedAssignee)
+      : stmt.run(nextStatus, resultSummary, reason, now, this.tenantId, orgId, taskId, expectedStatus);
     return r.changes > 0;
   }
 
@@ -411,6 +423,47 @@ export class OrgWorkforceStore {
        WHERE t.tenant_id = ? AND t.org_id = ? AND t.status = 'blocked'
        ORDER BY t.created_at ASC, t.id ASC`,
     ).all(this.tenantId, orgId);
+    return rows.map((r) => this.toTask(r));
+  }
+
+  /**
+   * ADR-0057 L8c + **审计 #408**：对账器**唤醒候选集**——只取「本次因能力缺口挂起」的任务。
+   *
+   * 与上面 `listLearningBlockedTasks` 的区别（两者不可互换）：
+   *   - 那个是**展示**用（可视化「学习闭环」面板要看到全部与学习相关的挂起，含降级/超时）；
+   *   - 这个是**唤醒**用，必须收窄到 `blocked_reason='capability_gap'`。
+   *
+   * 为什么必须收窄：原判据「曾登记过 learning_request + status=blocked」在任务走完一轮
+   * 「缺能力→学会→唤醒→执行→工具失败→blocked」后**依然命中**（learning_request 行还在），
+   * 于是工具故障任务被当成学习挂起唤醒 —— 实测 `result_summary` 从
+   * 「执行被拦截/失败：upstream 500」被覆盖成「已学齐所需能力」，真实故障原因销毁；
+   * 且每学会一个无关能力就再唤醒一次，非幂等工具被额外真实执行。
+   *
+   * ⚠️ 既有行 `blocked_reason IS NULL` 会被排除 —— 这是**保守**方向：
+   * 宁可少唤醒（人工可介入），也不要误唤醒覆盖故障原因、重放副作用。
+   */
+  listCapabilityGapBlockedTasks(orgId: string): OrgTask[] {
+    const rows = this.db.prepare<RawTask>(
+      `SELECT DISTINCT t.id, t.org_id, t.goal_id, t.parent_task_id, t.assigned_to_worker_id, t.accountable_worker_id, t.title, t.task_type, t.status, t.risk_level, t.allows_tool_execution, t.acceptance_criteria, t.required_capabilities, t.result_summary, t.due_at, t.resume_attempt_count, t.last_wake_event_id, t.created_at, t.updated_at
+       FROM org_tasks t
+       JOIN learning_requests lr ON lr.tenant_id = t.tenant_id AND lr.org_id = t.org_id AND lr.triggered_by_task_id = t.id
+       WHERE t.tenant_id = ? AND t.org_id = ? AND t.status = 'blocked'
+         AND t.blocked_reason = 'capability_gap'
+       ORDER BY t.created_at ASC, t.id ASC`,
+    ).all(this.tenantId, orgId);
+    return rows.map((r) => this.toTask(r));
+  }
+
+  /** 同上，跨本租户全部 org（周期 worker 用）。见 listCapabilityGapBlockedTasks 的收窄理由。 */
+  listCapabilityGapBlockedTasksAllOrgs(): OrgTask[] {
+    const rows = this.db.prepare<RawTask>(
+      `SELECT DISTINCT t.id, t.org_id, t.goal_id, t.parent_task_id, t.assigned_to_worker_id, t.accountable_worker_id, t.title, t.task_type, t.status, t.risk_level, t.allows_tool_execution, t.acceptance_criteria, t.required_capabilities, t.result_summary, t.due_at, t.resume_attempt_count, t.last_wake_event_id, t.created_at, t.updated_at
+       FROM org_tasks t
+       JOIN learning_requests lr ON lr.tenant_id = t.tenant_id AND lr.org_id = t.org_id AND lr.triggered_by_task_id = t.id
+       WHERE t.tenant_id = ? AND t.status = 'blocked'
+         AND t.blocked_reason = 'capability_gap'
+       ORDER BY t.org_id ASC, t.created_at ASC, t.id ASC`,
+    ).all(this.tenantId);
     return rows.map((r) => this.toTask(r));
   }
 

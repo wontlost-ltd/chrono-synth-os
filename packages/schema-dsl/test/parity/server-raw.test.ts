@@ -50,7 +50,7 @@ describe('server-raw coverage', () => {
      * org_approvals 加可空 consumed_at + arguments_hash。此前审批是纯读校验、批准后
      * status 永远停在 approved，任务回到 delegated 后同一 approvalId 可无限复用，
      * 且不绑参数（批准 {amount:10} 可执行 {amount:999999}）；纯加列不重建表）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129', 'v130', 'v131']);
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129', 'v130', 'v131', 'v132']);
   });
 
   it('covers disabled raw migrations', () => {
