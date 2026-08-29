@@ -958,6 +958,15 @@ export interface PcoreUpdateGovernanceCaseActionParams {
   caseId: string;
   status: string;
   resolvedAt: number | null;
+  /**
+   * CAS 谓词（审计 #419）：只有当前状态**不是** resolved 时才允许迁移。
+   *
+   * 此前该 UPDATE 无任何状态谓词，而调用方的「已结案」判定发生在**事务之外** ——
+   * 两个并发的 applyGovernanceAction 都读到未结案、都通过判定，
+   * 于是 `reputation = reputation + ?` 这个**相对量**被执行两次
+   * （实测 50 → 34，应为 42）。加谓词后败者 rowsAffected=0，调用方据此中止。
+   */
+  requireNotResolved: true;
 }
 
 export interface PcoreApplyGovernanceActionToPersonaParams extends PcoreTenantPersonaParams {
