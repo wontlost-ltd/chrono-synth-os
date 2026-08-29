@@ -30,7 +30,11 @@ const ROOT = new URL('..', import.meta.url).pathname;
  * ⚠️ ALLOW 的 key 需带 app 前缀（`web:src/...` / `desktop:src/...`）——
  * 旧式无前缀 key 会静默失配（违规照报，不会有提示）。
  */
-const TARGETS = ['apps/web', 'apps/desktop'];
+/* ⚠️ 审计 #418：此前少扫 `apps/companion-web`（四类前端里漏一类）——
+ * 实测在其中放入 `text-gray-600` + `#ff0000` 两个显眼违规，门仍 RC=0
+ * 并报「无硬编码调色板色」。
+ * `apps/mobile` 被排除是**有意**的（RN 无类名无 token，由 lint:mobile-contrast 补位）。 */
+const TARGETS = ['apps/web', 'apps/desktop', 'apps/companion-web'];
 
 /** Tailwind 默认调色板色名——语义 token（surface/text/border/primary…）不在此列。 */
 const PALETTE = [
@@ -163,6 +167,19 @@ for (const [app, file] of allFiles) {
       const before = line.slice(0, markerAt);
       const odd = (q) => (before.split(q).length - 1) % 2 === 1;
       if (odd("'") || odd('"') || odd('`')) return; // 在字符串里，忽略
+      /* ⚠️ 审计 #418：只数引号奇偶**挡不住 JSX children 文本**——
+       * JSX 里的裸文字既不带引号也不是注释，能通过奇偶判据关掉下一行的门，
+       * **同时还会作为可见文字渲染到页面上**（本仓已记录过「JSX 注释渲染成
+       * 可见文字」这个坑，两者是同一个合体）。
+       * 实测：含该行时 RC=0（违规被吞）、删掉后 RC=1 并正确报出 #ff0000。
+       *
+       * 判据收紧为：标记之前**只允许**空白或 JSX 注释开括号 `{`。
+       * 真注释的三种合法写法都满足（`// lint-…`、块注释、以及 JSX 里唯一的
+       * 注释形式 `{` + 块注释），而 JSX **裸文本**前面必有标签/文字，故被挡住。
+       *
+       * ⚠️ 不能简单要求「trim 后行首」——那会把合法的 JSX 注释一并否掉
+       * （实测误伤 Sidebar.tsx 两处既有豁免，门当场从 0 变 2 处违规）。 */
+      if (!/^[\s{]*$/.test(before)) return; // 前面有实质内容 → 不是真指令
     }
     const mb = line.match(IGNORE_BLOCK);
     if (mb) {
