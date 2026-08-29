@@ -78,6 +78,16 @@ jobs:
         run: npm run test:packages
       - name: Contract tests
         run: npm run test:contract
+      # 审计 #410b：ripgrep 是内核纯度门的**外部依赖**，此前从未声明也从未安装 ——
+      # 而门用 `|| true` 把「rg: command not found」一并吞掉，于是**在没有扫描器的
+      # 情况下打印 ✓ 并退出 0**（本地 PATH 剥离实测复现：4 行 command not found + RC=0）。
+      # 门改成 fail-closed 后这条缺失立刻暴露，故这里把依赖显式装上。
+      - name: Install ripgrep (内核纯度门的显式依赖)
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          fi
+          rg --version
       - name: Kernel purity — forbidden imports
         run: npm run check:forbidden-imports
       - name: schema-dsl parity (simple migrations)
@@ -119,6 +129,14 @@ jobs:
         with:
           node-version-file: '.nvmrc'
       - run: npm ci
+      # 审计 #410b：ga:check 内部也跑内核纯度门（os.check-forbidden-imports），
+      # 同样需要 ripgrep 这个显式依赖。
+      - name: Install ripgrep (内核纯度门的显式依赖)
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          fi
+          rg --version
       - name: Build core packages
         run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - name: Build main source
@@ -138,13 +156,22 @@ jobs:
         # not appropriate here because OS-only checkouts don't fetch
         # the sibling repos.
         run: node dist/scripts/ga-check.js --out=ga-check.json
-      # These two are the tail of `npm run test:golden` but were never
-      # wired into CI (audit P3). Both pass today, so adding them is
+      # These are the tail of `npm run test:golden` but were never
+      # wired into CI (audit P3). All pass today, so adding them is
       # non-breaking; they exist to keep it that way.
       - name: check:db-access — DB sink classification ratchet
         run: npm run check:db-access
       - name: check:sql-layering — no raw SQL outside executors
         run: npm run check:sql-layering
+      # 审计 #413：check:licenses 在 test:golden 尾链里，但此前 CI 完全不跑
+      # （上面那条注释写"These two"就是漏了它）。ADR-0022 双轨许可
+      # （MIT 库 / AGPL 服务端）漂移是**法律面**错误，开源发布后不可逆。
+      - name: check:licenses — ADR-0022 dual-track license boundary
+        run: npm run check:licenses
+      # 审计 #410/#430：门禁自身必须有自测，否则门逻辑退化无人发现
+      # （本轮出缺陷的三个门恰好全部无自测，门永远打印 ✓）。
+      - name: 内核纯度门自测（门禁自身的回归保护）
+        run: bash scripts/check-forbidden-imports.selftest.sh
       - name: Upload ga:check report
         if: always()
         uses: actions/upload-artifact@v7
