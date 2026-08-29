@@ -172,6 +172,20 @@ export interface PersonaGovernanceContext {
   memoryHook: GovernanceMemoryHook;
 }
 
+/**
+ * CAS 抢占失败的哨兵异常（审计 #419）。
+ *
+ * 本仓 `transaction()` **只在抛异常时 ROLLBACK**，回调里 `return` 会照常 COMMIT。
+ * 治理动作在 CAS 之前已经写了 action 行，靠 return 退出会留下半提交。
+ * 与 marketplace 的 `LeaseLostError` / persona-core 的 `TransferClaimLostError` 同款。
+ */
+class GovernanceClaimLostError extends Error {
+  constructor() {
+    super('CAS_CLAIM_LOST');
+    this.name = 'GovernanceClaimLostError';
+  }
+}
+
 export class PersonaGovernanceService {
   constructor(
     /* db 取源（双入口）：public 方法经 source.forTenant 解析 + 开事务→InTx；InTx 收外层 tx。 */
@@ -300,7 +314,17 @@ export class PersonaGovernanceService {
     const reputationDelta = this.reputationDeltaForAction(input.actionType, severityLevel);
 
     const db = this.source.forTenant(input.tenantId);
-    db.transaction(() => {
+    /* ⚠️ 审计 #419：上面的 `governanceCase.status === 'resolved'` 判定发生在
+     * **事务之外**，两个并发调用都会读到未结案并双双通过。而下面的
+     * `pcoreCmdApplyGovernanceActionToPersona` 用的是**相对量**
+     * `reputation = reputation + ?` —— 执行两次就扣两次（实测 50→34，应为 42）。
+     *
+     * 真正的互斥点必须在 SQL 上：`UPDATE ... AND status <> 'resolved'`（已加）。
+     * 抢不到就**抛哨兵异常**整体回滚 —— 不能用 `return`，本仓 transaction()
+     * 只在抛异常时 ROLLBACK，用 return 会把已写入的 action 行留在库里。 */
+    let claimed = true;
+    try {
+      db.transaction(() => {
       db.execute(pcoreCmdCreateGovernanceAction({
         id: actionId,
         tenantId: input.tenantId,
@@ -312,12 +336,17 @@ export class PersonaGovernanceService {
         now,
       }));
 
-      db.execute(pcoreCmdUpdateGovernanceCaseAction({
+      const claim = db.execute(pcoreCmdUpdateGovernanceCaseAction({
         tenantId: input.tenantId,
         caseId: input.caseId,
         status: caseStatus,
         resolvedAt: caseStatus === 'resolved' ? now : null,
+        requireNotResolved: true,
       }));
+      if (claim.rowsAffected !== 1) {
+        claimed = false;
+        throw new GovernanceClaimLostError();
+      }
 
       db.execute(pcoreCmdApplyGovernanceActionToPersona({
         tenantId: input.tenantId,
@@ -412,7 +441,13 @@ export class PersonaGovernanceService {
           nextStatus,
         },
       });
-    });
+      });
+    } catch (err) {
+      /* CAS 抢占失败 → 事务已整体回滚（action 行、声誉扣减、事件全部不落库）。
+       * 对调用方表现为 null，与「case 不存在/已结案」的既有语义一致。 */
+      if (!claimed && err instanceof GovernanceClaimLostError) return null;
+      throw err;
+    }
 
     const nextCase = this.getGovernanceCaseById(input.tenantId, input.caseId);
     const nextAction = this.getGovernanceActionById(input.tenantId, actionId);

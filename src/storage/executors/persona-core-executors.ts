@@ -1258,10 +1258,14 @@ export function registerPersonaCoreExecutors(): void {
   });
 
   registerCommand<PcoreUpdateGovernanceCaseActionParams>(PCORE_CMD_UPDATE_GOVERNANCE_CASE_ACTION, (db, p) => {
+    /* ⚠️ 审计 #419：加 `AND status <> 'resolved'` 谓词，使本条成为并发的**互斥点**。
+     * 此前无谓词，而调用方的「已结案」判定在事务外 —— 两个并发动作双双通过，
+     * 相对量 `reputation = reputation + ?` 被执行两次（实测 50→34，应为 42）。
+     * 加谓词后败者 rowsAffected=0，调用方据此抛错回滚。 */
     const result = db.prepare<void>(
       `UPDATE governance_cases
        SET status = ?, resolved_at = ?
-       WHERE tenant_id = ? AND id = ?`,
+       WHERE tenant_id = ? AND id = ? AND status <> 'resolved'`,
     ).run(p.status, p.resolvedAt, p.tenantId, p.caseId);
     return { rowsAffected: result.changes };
   });

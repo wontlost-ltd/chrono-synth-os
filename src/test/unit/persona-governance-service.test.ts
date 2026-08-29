@@ -218,4 +218,90 @@ describe('PersonaGovernanceService (Step 16c extraction)', () => {
     assert.equal(found?.severity, 'medium');
     assert.deepEqual(found?.details, { delta: 1500 });
   });
+
+  /* ⚠️ 审计 #419：并发下声誉被**扣两次**。
+   *
+   * 「已结案」判定在事务**外**，两个并发动作双双通过；而
+   * `pcoreCmdApplyGovernanceActionToPersona` 用的是**相对量**
+   * `reputation = reputation + ?` —— 执行两次就扣两次（实测 50→34，应为 42）。
+   *
+   * ⚠️ 竞态窗口必须精确：上面那条 idempotency 用例走的是「先完整结案再调」，
+   * 会被**事务外**的 `status === 'resolved'` 判定先拦截，**测不到 CAS**。
+   * 真实交错是：本次**读到**未结案之后、UPDATE 之前，对手把 case 推到 resolved。
+   * 故在 governance_cases 被读到的瞬间让对手抢先，精确复刻该窗口。 */
+  it('审计 #419：CAS 抢占失败时声誉不得二次扣减', () => {
+    const gc = fx.service.openGovernanceCase({
+      tenantId: fx.tenantId,
+      actorUserId: fx.ownerUserId,
+      personaId: fx.personaId,
+      triggerType: 'policy_violation',
+      severity: 'high',
+    });
+    assert.ok(gc);
+
+    const repBefore = fx.db.prepare<{ reputation: number }>(
+      `SELECT reputation FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, fx.personaId)!.reputation;
+
+    /* ★竞态窗口★：对手在本次读到「未结案」之后抢先把 case 推到 resolved。 */
+    const realQueryOne = fx.db.queryOne.bind(fx.db);
+    let fired = false;
+    fx.db.queryOne = ((q: Parameters<typeof realQueryOne>[0]) => {
+      const row = realQueryOne(q) as { id?: string; status?: string } | null;
+      if (!fired && row?.id === gc!.id && row.status !== 'resolved') {
+        fired = true;
+        fx.db.prepare<void>(
+          `UPDATE governance_cases SET status = 'resolved', resolved_at = ? WHERE tenant_id = ? AND id = ?`,
+        ).run(Date.now(), fx.tenantId, gc!.id);
+      }
+      return row;
+    }) as typeof fx.db.queryOne;
+
+    const result = fx.service.applyGovernanceAction({
+      tenantId: fx.tenantId,
+      caseId: gc!.id,
+      actorUserId: fx.ownerUserId,
+      actionType: 'temporary_suspension',
+    });
+    assert.equal(result, null, 'CAS 抢占失败必须返回 null');
+
+    const repAfter = fx.db.prepare<{ reputation: number }>(
+      `SELECT reputation FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, fx.personaId)!.reputation;
+    /* 变异实测：去掉 CAS 谓词/不查 rowsAffected → 声誉被多扣一次。 */
+    assert.equal(repAfter, repBefore, 'CAS 失败方不得扣减声誉（相对量执行两次即回归）');
+
+    /* 事务须整体回滚：action 行也不得留下（否则是半提交）。 */
+    const actions = fx.db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM governance_actions WHERE tenant_id = ? AND case_id = ?`,
+    ).get(fx.tenantId, gc!.id)!.n;
+    assert.equal(actions, 0, 'CAS 失败必须整体回滚，不得留下 action 行');
+  });
+
+  it('对照：正常治理动作仍必须成功并扣减声誉', () => {
+    const gc = fx.service.openGovernanceCase({
+      tenantId: fx.tenantId,
+      actorUserId: fx.ownerUserId,
+      personaId: fx.personaId,
+      triggerType: 'policy_violation',
+      severity: 'high',
+    });
+    assert.ok(gc);
+    const repBefore = fx.db.prepare<{ reputation: number }>(
+      `SELECT reputation FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, fx.personaId)!.reputation;
+
+    const result = fx.service.applyGovernanceAction({
+      tenantId: fx.tenantId,
+      caseId: gc!.id,
+      actorUserId: fx.ownerUserId,
+      actionType: 'temporary_suspension',
+    });
+    assert.ok(result, '正常动作必须成功（别把功能一起拒掉）');
+
+    const repAfter = fx.db.prepare<{ reputation: number }>(
+      `SELECT reputation FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, fx.personaId)!.reputation;
+    assert.ok(repAfter < repBefore, `temporary_suspension 应扣声誉：${repBefore} → ${repAfter}`);
+  });
 });

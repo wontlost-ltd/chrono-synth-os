@@ -83,6 +83,43 @@ describe('双边市场 M3（org 接单执行 + 验收结算入金库）', () => 
     assert.equal(store.getMarketplaceTaskBrief('task-1')!.status, 'completed', '工单完工');
   });
 
+  /* ⚠️ 审计 #406：`markMarketplaceTaskCompleted` 的返回值此前被**丢弃**。
+   *
+   * 它的 SQL 带 `AND status = 'accepted'` 守卫，工单不在 accepted 时静默返回
+   * false，**而结算照常执行**。实测：工单被撤单流程改成 `cancelled` 后，
+   * 发布者仍能验收并付款 —— 一笔已取消的 500 CRED 工单向组织金库付了
+   * 40000 minor，且工单状态永远停在 cancelled（账上看不出这笔钱对应哪个已完成工单）。
+   *
+   * 同一函数另外两处状态迁移都检查了返回值并抛错，唯独这条没查。 */
+  it('★审计 #406：工单已 cancelled 时验收必须拒绝且不得付款★', () => {
+    seedOpenTask('task-1');
+    svc.applyAsOrg({ taskId: 'task-1', orgId: 'acme' });
+    svc.confirmAssignToOrg({ taskId: 'task-1', orgId: 'acme', actorUserId: PUBLISHER });
+    svc.startOrgTask({ taskId: 'task-1', orgId: 'acme', managerWorkerId: leadId, goalType: GOAL_TYPE_CONTENT_PIECE });
+    svc.submitOrgTask({ taskId: 'task-1', orgId: 'acme' });
+
+    /* ★竞态窗口★：撤单流程把工单推到 cancelled（指派仍是 submitted，
+     * 故事务外的 `assign.status !== 'submitted'` 前置判定**不会**拦截，
+     * 互斥只剩 markMarketplaceTaskCompleted 的 CAS）。 */
+    db.prepare<void>(`UPDATE marketplace_tasks SET status = 'cancelled' WHERE id = ?`).run('task-1');
+
+    const balanceBefore = store.getOrgWallet('acme')?.balance ?? 0;
+
+    assert.throws(
+      () => svc.acceptOrgTask({ taskId: 'task-1', actorUserId: PUBLISHER, platformPct: 20 }),
+      OrgAssignmentStateError,
+      '已取消工单不得验收成功',
+    );
+
+    /* 变异实测：丢弃 CAS 返回值 → 金库被打进 40000，而工单仍是 cancelled。 */
+    assert.equal(store.getOrgWallet('acme')?.balance ?? 0, balanceBefore, '拒绝路径不得动金库');
+    assert.equal(store.getMarketplaceTaskBrief('task-1')!.status, 'cancelled', '工单状态不变');
+    const settlements = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM org_wallet_settlements WHERE source_marketplace_task_id = ?`,
+    ).get('task-1')!.n;
+    assert.equal(settlements, 0, '不得留下结算行');
+  });
+
   it('★红线：非发布者验收 → 拒★', () => {
     seedOpenTask('task-1');
     svc.applyAsOrg({ taskId: 'task-1', orgId: 'acme' });

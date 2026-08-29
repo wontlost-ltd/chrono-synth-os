@@ -173,8 +173,21 @@ export class OrgBiddingService {
       if (!this.store.updateOrgTaskAssignmentStatus(assign.id, 'submitted', 'accepted', now)) {
         throw new OrgAssignmentStateError('指派状态并发改变，验收失败');
       }
-      /* 工单 accepted→completed。 */
-      this.store.markMarketplaceTaskCompleted(input.taskId, now);
+      /* 工单 accepted→completed。
+       *
+       * ⚠️ 审计 #406：此前**丢弃了返回值**。`markMarketplaceTaskCompleted` 的 SQL
+       * 带 `AND status = 'accepted'` 守卫（`org-workforce-store.ts:1047`），
+       * 工单不在 accepted 时静默返回 false，**而结算照常执行**。
+       *
+       * 实测：工单被撤单流程改成 `cancelled` 后，发布者仍能验收并付款 ——
+       * 一笔已取消的 500 CRED 工单向组织金库付了 40000 minor，
+       * 且工单状态永远停在 `cancelled`（账上看不出这笔钱对应哪个已完成工单）。
+       *
+       * 同一函数里另外两处状态迁移都检查了返回值并抛错，唯独这条没查 ——
+       * 现在对齐。在事务内抛错即整体回滚。 */
+      if (!this.store.markMarketplaceTaskCompleted(input.taskId, now)) {
+        throw new OrgAssignmentStateError('工单状态并发改变（非 accepted），验收失败');
+      }
       /* 结算入组织金库（reward 浮点 → minor；reward=0 跳过）。用 settleInTx——已在本事务内，
        * settleOrgTaskPayment 会自开事务导致 SQLite 嵌套事务报错。 */
       let settlement: OrgWalletSettlement | null = null;
