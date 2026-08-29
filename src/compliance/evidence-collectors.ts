@@ -98,17 +98,22 @@ export const keyRotationCollector: EvidenceCollector = {
   collect(tx, tenantIds) {
     const db = tx as unknown as IDatabase;
     return tenantIds.map(tenantId => {
-      const adminCount = db.prepare<{ n: number }>(
+      /* ⚠️ 审计 #425：`COUNT(*)` 在 PG 下是 bigint → node-pg 返回 **string**，
+       * SQLite 返回 number。这些值会进 evidence payload 并被规范化 JSON 序列化后
+       * SHA-256 作为**防篡改**证据 —— 不强转会让同样的数据在两种后端产生不同哈希，
+       * 后端迁移后 `verify` 路径会把历史证据判为「已篡改」（SOC2 证据链断裂）。
+       * 实测两侧 sha256 完全不同。故所有计数统一 Number() 强转。 */
+      const adminCount = Number(db.prepare<{ n: number | string }>(
         `SELECT COUNT(*) AS n FROM users WHERE tenant_id = ? AND role = 'admin'`,
-      ).get(tenantId)?.n ?? 0;
+      ).get(tenantId)?.n ?? 0);
       /* refresh_tokens.id pattern: rt_<uuid>; the number of recently issued
        * tokens gives a coarse rotation rate signal. */
-      const recentTokens = db.prepare<{ n: number }>(
+      const recentTokens = Number(db.prepare<{ n: number | string }>(
         `SELECT COUNT(*) AS n FROM refresh_tokens rt
            INNER JOIN users u ON u.id = rt.user_id
           WHERE u.tenant_id = ?
             AND rt.created_at >= ?`,
-      ).get(tenantId, Date.now() - 24 * 60 * 60 * 1000)?.n ?? 0;
+      ).get(tenantId, Date.now() - 24 * 60 * 60 * 1000)?.n ?? 0);
       return {
         tenantId,
         payload: {
@@ -138,13 +143,15 @@ export const auditChainHealthCollector: EvidenceCollector = {
           WHERE tenant_id = ? AND chain_seq IS NOT NULL
           ORDER BY chain_seq DESC LIMIT 1`,
       ).get(tenantId);
-      const totalRows = db.prepare<{ n: number }>(
+      /* 同 #425：计数必须强转，否则证据哈希在 PG/SQLite 间不一致。
+       * chain_seq 也是 bigint 候选（见下方 chainTailSeq）。 */
+      const totalRows = Number(db.prepare<{ n: number | string }>(
         `SELECT COUNT(*) AS n FROM audit_log WHERE tenant_id = ?`,
-      ).get(tenantId)?.n ?? 0;
+      ).get(tenantId)?.n ?? 0);
       return {
         tenantId,
         payload: {
-          chainTailSeq: tail?.chain_seq ?? 0,
+          chainTailSeq: Number(tail?.chain_seq ?? 0),
           chainTailHash: tail?.record_hash ?? null,
           totalAuditRows: totalRows,
           snapshotAtMs: Date.now(),
