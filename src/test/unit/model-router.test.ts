@@ -249,6 +249,47 @@ describe('ModelRouter (Mock Provider)', () => {
       assert.equal(res.content, 'OK');
     });
 
+    /* ⚠️ 审计 #420：ModelRouter 是「先扣后调」，整条 fallback 链失败时那笔预扣
+     * 此前**从不退还** —— 实测 provider 宕机重试 10 次 → 扣 40960 token、
+     * 成功响应 0，租户为零次成功调用付了配额，且当期窗口内后续正常请求
+     * 会被这笔幽灵用量挤掉。
+     *
+     * 这里用一个必然失败的 provider（未知 provider 名 → dispatch 抛错）验证：
+     * 调用失败后配额必须回到调用前的水平。 */
+    it('审计 #420：整条链失败必须退还预扣配额（不得为零次成功付费）', async () => {
+      const quotaManager = QuotaManager.fromUnitOfWork(db);
+      quotaManager.setLimit('tenant-1', 'llm_tokens', 10_000, 3_600_000);
+
+      const usedBefore = db.prepare<{ used: number }>(
+        `SELECT used FROM quota_usage WHERE tenant_id = ? AND resource = ?`,
+      ).get('tenant-1', 'llm_tokens')?.used ?? 0;
+
+      const r = new ModelRouter({
+        /* openai + 空 apiKey → dispatch 时必然失败（无可用凭据）。 */
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        embeddingModel: 'text-embedding-3-small',
+        apiKey: '',
+        quotaManager,
+        tenantId: 'tenant-1',
+      });
+
+      await assert.rejects(
+        () => r.chat([{ role: 'user', content: '这次一定失败' }]),
+        'provider 无凭据应抛错',
+      );
+
+      const usedAfter = db.prepare<{ used: number }>(
+        `SELECT used FROM quota_usage WHERE tenant_id = ? AND resource = ?`,
+      ).get('tenant-1', 'llm_tokens')?.used ?? 0;
+
+      /* 变异实测：去掉 refundQuota 调用 → usedAfter 停在预扣值不回落。 */
+      assert.equal(
+        usedAfter, usedBefore,
+        `失败调用不得留下配额消耗：调用前 ${usedBefore} → 调用后 ${usedAfter}`,
+      );
+    });
+
     /* 审计 Warning B1-6 的配额校验（拒绝非正整数）曾使空批次 embed 报错：
      * embed([]) 估算出 estimatedTokens=0 并原样传给 consumeQuota。零消费是无操作，
      * 不该进入计量层——否则「防负数绕过」的正确约束会误伤合法的空批次调用。 */
