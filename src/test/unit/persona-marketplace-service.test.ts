@@ -268,6 +268,110 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     assert.equal(n, 0, '拒绝路径不得留下任何流水');
   });
 
+  /* ⚠️ 审计 #405：accept/reject 竞态曾产生**撕裂状态** ——
+   * accept 先赢（付款 + completed），reject 的事务外判定是在那之前读的，
+   * 于是继续执行：两条带 CAS 谓词的命令空转，两条无谓词的照常提交，
+   * 得到「已付款 completed 任务，其 result/application 却是 rejected」。
+   *
+   * ⚠️ 构造竞态窗口必须精确：直接「先完整 accept 再 reject」**测不到 CAS** ——
+   * accept 会把 assignment 也推到 accepted，reject 在**事务外的前置判定**
+   * （`assignment.status !== 'submitted'`）就返回 null 了，根本进不到事务。
+   * （我第一版就是这么写的，变异后仍全绿 = 零覆盖。）
+   *
+   * 真实竞态里，reject 读到的是 accept 提交**之前**的 assignment 快照：
+   * task 已 completed、assignment 仍 submitted。故这里只推进 task 状态来
+   * 精确复刻那个窗口 —— 此时四个前置判定全部通过，互斥只能靠 reopen 的 CAS。
+   * 变异验证：丢弃 rowsAffected → result/assignment 双双变 rejected（撕裂）。 */
+  it('审计 #405：竞态窗口内 reject 必须整体回滚（不得撕裂）', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Race', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    });
+    const asgRow = fx.db.prepare<{ id: string }>(
+      `SELECT id FROM task_assignments WHERE tenant_id = ? AND task_id = ? ORDER BY assigned_at DESC LIMIT 1`,
+    ).get(fx.tenantId, task.id)!;
+    fx.service.submitTaskResult({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id,
+      assignmentId: asgRow.id, resultUri: 'https://example.com/r',
+    });
+    /* ★竞态窗口★：只推进 **task** 到 completed（accept 事务的关键一步），
+     * assignment 仍留 submitted —— 精确复刻 reject 读到的陈旧快照。
+     * 此时 reject 的四个事务外判定**全部通过**，互斥只剩 reopen 的 CAS。 */
+    fx.db.execute(pcoreCmdCompleteMarketplaceTask({
+      tenantId: fx.tenantId, taskId: task.id, qualityScore: 1, growthDelta: 1, now: Date.now(),
+    }));
+    assert.equal(
+      fx.db.prepare<{ status: string }>(
+        `SELECT status FROM task_assignments WHERE tenant_id = ? AND id = ?`).get(fx.tenantId, asgRow.id)!.status,
+      'submitted',
+      '窗口前提：assignment 必须仍是 submitted，否则前置判定会先拦截、测不到 CAS',
+    );
+
+    /* 快照：竞态回滚后这些必须逐字不变。 */
+    const before = {
+      task: fx.db.prepare<{ status: string }>(
+        `SELECT status FROM marketplace_tasks WHERE tenant_id = ? AND id = ?`).get(fx.tenantId, task.id)!.status,
+      assignment: fx.db.prepare<{ status: string }>(
+        `SELECT status FROM task_assignments WHERE tenant_id = ? AND task_id = ?`).get(fx.tenantId, task.id)!.status,
+      result: fx.db.prepare<{ status: string }>(
+        `SELECT status FROM task_results WHERE tenant_id = ? AND assignment_id = ?`).get(fx.tenantId, asgRow.id)!.status,
+    };
+
+    const rejected = fx.service.rejectSubmittedTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, reason: 'late race',
+    });
+    assert.equal(rejected, null, '竞态输方不得 reject 成功');
+
+    const after = {
+      task: fx.db.prepare<{ status: string }>(
+        `SELECT status FROM marketplace_tasks WHERE tenant_id = ? AND id = ?`).get(fx.tenantId, task.id)!.status,
+      assignment: fx.db.prepare<{ status: string }>(
+        `SELECT status FROM task_assignments WHERE tenant_id = ? AND task_id = ?`).get(fx.tenantId, task.id)!.status,
+      result: fx.db.prepare<{ status: string }>(
+        `SELECT status FROM task_results WHERE tenant_id = ? AND assignment_id = ?`).get(fx.tenantId, asgRow.id)!.status,
+    };
+    /* 变异实测：丢弃 reopen 的 rowsAffected → result 与 assignment 双双变
+     * `rejected`，而 task 仍是 `completed`（已付款）—— 正是审计复现的撕裂。 */
+    assert.deepEqual(after, before, '失败的 reject 不得改动任何状态（撕裂即回归）');
+  });
+
+  it('对照：正常 reject（未进终态）仍必须成功并把任务退回市场', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'NormalReject', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.applyToTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    fx.service.assignTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
+    });
+    const asgRow = fx.db.prepare<{ id: string }>(
+      `SELECT id FROM task_assignments WHERE tenant_id = ? AND task_id = ? ORDER BY assigned_at DESC LIMIT 1`,
+    ).get(fx.tenantId, task.id)!;
+    fx.service.submitTaskResult({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id,
+      assignmentId: asgRow.id, resultUri: 'https://example.com/r',
+    });
+
+    const rejected = fx.service.rejectSubmittedTask({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId: task.id, reason: 'not good',
+    });
+    assert.ok(rejected, '正常拒绝必须成功（别把功能一起拒掉）');
+    assert.equal(rejected!.result.status, 'rejected');
+    const status = fx.db.prepare<{ status: string }>(
+      `SELECT status FROM marketplace_tasks WHERE tenant_id = ? AND id = ?`).get(fx.tenantId, task.id)!.status;
+    assert.equal(status, 'open', '被拒绝的任务应退回市场');
+  });
+
   it('completeTask awards growth + drops task into completed state', () => {
     const task = fx.service.publishTask({
       tenantId: fx.tenantId,

@@ -533,4 +533,110 @@ describe('PersonaCoreService', () => {
     assert.ok(cognitiveRow);
     assert.notEqual(cognitiveRow?.content, 'Secret deployment note');
   });
+
+  /* ⚠️ 审计 #401：`approveTransfer` 的 CAS 返回值此前被丢弃。
+   *
+   * `pcoreCmdApproveTransfer` 的 SQL **带** `AND status = 'pending_review'` 谓词，
+   * 但调用方不查 rowsAffected，且后续两条写入（改所有者、完成转移）**无状态谓词**。
+   * 上面的 `transfer.status !== 'pending_review'` 判定发生在事务**之外** ——
+   * 两个并发审批双双通过，CAS 只有一方成功，**失败方照样改所有者**
+   * （实测：ownerC 的 CAS=0 却成为最终 owner）。
+   *
+   * ⚠️ 竞态窗口必须精确：预先把 transfer 改成 approved **测不到 CAS** ——
+   * 事务外的 `transfer.status !== 'pending_review'` 判定会先返回 null。
+   * （我第一版就是这么写的，变异后仍全绿 = 零覆盖。）
+   *
+   * 真实交错是：本次**读到** pending_review 之后、**UPDATE 之前**，对手提交。
+   * 故在 queryOne 返回 pending_review 的瞬间让对手抢先，精确复刻该窗口。
+   * 变异实测：丢弃 rowsAffected → owner 被改成 user_b（抢占失败方拿到所有权）。 */
+  it('审计 #401：CAS 抢占失败时不得改所有者（并发双审批）', () => {
+    const persona = service.createPersona({
+      tenantId: 'tenant_test',
+      ownerUserId: 'user_test_owner',
+      displayName: 'Transfer Target',
+      profile: {},
+    });
+    const now = Date.now();
+    for (const uid of ['user_b', 'user_c']) {
+      db.prepare<void>(
+        `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(uid, `${uid}@example.com`, 'hash', 'member', 'tenant_test', now, now);
+    }
+
+    const transfer = service.requestTransfer({
+      tenantId: 'tenant_test',
+      ownerUserId: 'user_test_owner',
+      personaId: persona.id,
+      toOwnerUserId: 'user_b',
+    });
+    assert.ok(transfer, '转移申请应创建成功');
+
+    /* ★竞态窗口★：在本次**读到** pending_review 的瞬间，让对手的审批抢先提交。
+     * 此时事务外判定已通过（读的是旧值），互斥只剩 SQL 上的 CAS 谓词。 */
+    const realQueryOne = db.queryOne.bind(db);
+    let fired = false;
+    db.queryOne = ((q: Parameters<typeof realQueryOne>[0]) => {
+      const row = realQueryOne(q) as { status?: string } | null;
+      if (!fired && row?.status === 'pending_review') {
+        fired = true;
+        db.prepare<void>(
+          `UPDATE persona_transfers SET status = 'approved' WHERE tenant_id = ? AND id = ?`,
+        ).run('tenant_test', transfer!.id);
+      }
+      return row;
+    }) as typeof db.queryOne;
+
+    const ownerBefore = db.prepare<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get('tenant_test', persona.id)!.owner_user_id;
+
+    const approved = service.approveTransfer({
+      tenantId: 'tenant_test',
+      personaId: persona.id,
+      transferId: transfer!.id,
+      approverUserId: 'user_b',
+    });
+    assert.equal(approved, null, 'CAS 抢占失败必须返回 null');
+
+    const ownerAfter = db.prepare<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get('tenant_test', persona.id)!.owner_user_id;
+    /* 变异实测：丢弃 rowsAffected → owner 被改成 user_b（抢占失败方拿到所有权）。 */
+    assert.equal(ownerAfter, ownerBefore, 'CAS 失败方不得改动 persona 所有者');
+  });
+
+  it('对照：正常审批仍必须成功并转移所有权', () => {
+    const persona = service.createPersona({
+      tenantId: 'tenant_test',
+      ownerUserId: 'user_test_owner',
+      displayName: 'Transfer OK',
+      profile: {},
+    });
+    const now = Date.now();
+    db.prepare<void>(
+      `INSERT INTO users (id, email, password_hash, role, tenant_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('user_d', 'user_d@example.com', 'hash', 'member', 'tenant_test', now, now);
+
+    const transfer = service.requestTransfer({
+      tenantId: 'tenant_test',
+      ownerUserId: 'user_test_owner',
+      personaId: persona.id,
+      toOwnerUserId: 'user_d',
+    });
+    assert.ok(transfer);
+
+    const approved = service.approveTransfer({
+      tenantId: 'tenant_test',
+      personaId: persona.id,
+      transferId: transfer!.id,
+      approverUserId: 'user_d',
+    });
+    assert.ok(approved, '正常审批必须成功（别把功能一起拒掉）');
+    const owner = db.prepare<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM persona_core WHERE tenant_id = ? AND id = ?`,
+    ).get('tenant_test', persona.id)!.owner_user_id;
+    assert.equal(owner, 'user_d', '所有权应已转移');
+  });
 });

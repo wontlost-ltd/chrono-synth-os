@@ -1266,7 +1266,27 @@ export class PersonaMarketplaceService {
 
     const now = Date.now();
     const db = this.source.forTenant(input.tenantId);
-    db.transaction(() => {
+    /* ⚠️ 审计 #405：四条状态迁移此前**全部丢弃 rowsAffected**，而上面的四个判定
+     * 都发生在**事务之外**。accept 与 reject 并发时：accept 先赢（付款 + 任务
+     * completed），reject 的前置检查是在那次提交**之前**读的，于是继续执行 ——
+     * 两条带 CAS 谓词的命令空转（rowsAffected=0），但两条**无谓词**的照常提交。
+     *
+     * 实测撕裂状态：
+     *   marketplace_tasks : completed   （已付款 5000）
+     *   task_assignments  : accepted
+     *   task_results      : rejected    ← 撕裂
+     *   task_applications : rejected    ← 撕裂
+     * 还会发出一条 `task.outcome / terminal:true / rejected` 的可观测性事件。
+     *
+     * `persona-core-executors.ts:1212` 明确写了契约 ——「completed 任务的 reopen
+     * rowsAffected=0，调用方据此中止」—— 此前调用方从不遵守。
+     *
+     * 把 reopen 当作**互斥点**：它带 `AND status='submitted'` 谓词，抢不到就说明
+     * 任务已被别的终态操作（accept/dispute）拿走，必须整体回滚。
+     * ⚠️ 必须抛异常而非 return —— transaction() 只在抛异常时 ROLLBACK。 */
+    let claimed = true;
+    try {
+      db.transaction(() => {
       db.execute(pcoreCmdRejectTaskResult({
         tenantId: input.tenantId,
         resultId: result.id,
@@ -1286,11 +1306,15 @@ export class PersonaMarketplaceService {
         now,
       }));
 
-      db.execute(pcoreCmdReopenMarketplaceTask({
+      const reopen = db.execute(pcoreCmdReopenMarketplaceTask({
         tenantId: input.tenantId,
         taskId: input.taskId,
         now,
       }));
+      if (reopen.rowsAffected !== 1) {
+        claimed = false;
+        throw new LeaseLostError();
+      }
 
       publishObservabilityEvent(db, {
         tenantId: input.tenantId,
@@ -1307,7 +1331,13 @@ export class PersonaMarketplaceService {
           updatedAt: now,
         },
       });
-    });
+      });
+    } catch (err) {
+      /* CAS 抢占失败 → 事务已整体回滚，不留撕裂状态、不发 terminal 事件。
+       * 对调用方表现为 null（路由映射 404「不存在或不可拒绝」）。 */
+      if (!claimed && err instanceof LeaseLostError) return null;
+      throw err;
+    }
 
     /* 零回归（调用矩阵 D8）：insertMemory 现状在事务【外】调用，保持位置不变。 */
     this.ctx.memoryHook.insertMemoryInTx(db, {
