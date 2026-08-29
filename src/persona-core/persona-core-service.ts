@@ -302,6 +302,20 @@ function reputationHistoryFromRow(row: ReputationHistoryRow): PersonaReputationH
  * is walletFromRow (above), called by listPersonas + getPersonaDetail
  * to synthesise a wallet snapshot from a joined query row. */
 
+/**
+ * CAS 抢占失败的哨兵异常（审计 #401）。
+ *
+ * 本仓 `transaction()` **只在抛异常时 ROLLBACK**，回调里 `return` 会照常 COMMIT。
+ * 故状态机迁移的 CAS 失败必须**抛**，否则已写入的行会留在库里造成半提交。
+ * 与 `persona-marketplace-service.ts` 的 `LeaseLostError` 同款约定。
+ */
+class TransferClaimLostError extends Error {
+  constructor() {
+    super('CAS_CLAIM_LOST');
+    this.name = 'TransferClaimLostError';
+  }
+}
+
 export class PersonaCoreService {
   private readonly encryption?: FieldEncryption;
   private readonly runtimeSessionTimeoutMs: number;
@@ -793,60 +807,85 @@ export class PersonaCoreService {
     }
 
     const now = this.clock.now();
-    db.transaction(() => {
-      db.execute(pcoreCmdApproveTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
+    /* ⚠️ 审计 #401：`pcoreCmdApproveTransfer` 的 SQL **带** CAS 谓词
+     * （`AND status = 'pending_review'`），但此前调用方**丢弃了 rowsAffected**，
+     * 后续两条写入（改所有者、完成转移）又都没有状态谓词。
+     *
+     * 上面的 `transfer.status !== 'pending_review'` 判定发生在**事务之外**，
+     * 两个并发审批都能读到 pending_review 并双双通过 ⇒ CAS 只有一方 rowsAffected=1，
+     * 但**失败方照样改所有者**（实测：ownerC 的 CAS=0 却成为最终 owner）。
+     *
+     * ⚠️ 必须**抛异常**而非 `return`：本仓 `transaction()` 只在抛异常时 ROLLBACK，
+     * 回调里 `return` 会照常 COMMIT —— 用 return 会留下「转移记录 approved 但
+     * 所有者没改」的半提交，比原缺陷更隐蔽。与 marketplace 的 LeaseLostError 同款。 */
+    let claimed = true;
+    try {
+      db.transaction(() => {
+        const claim = db.execute(pcoreCmdApproveTransfer({
+          tenantId: input.tenantId, transferId: input.transferId, now,
+        }));
+        if (claim.rowsAffected !== 1) {
+          claimed = false;
+          throw new TransferClaimLostError();
+        }
 
-      db.execute(pcoreCmdTransferPersonaOwner({
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        ownerUserId: input.approverUserId,
-        now,
-      }));
+        db.execute(pcoreCmdTransferPersonaOwner({
+          tenantId: input.tenantId,
+          personaId: input.personaId,
+          ownerUserId: input.approverUserId,
+          now,
+        }));
 
-      db.execute(pcoreCmdCompleteTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
+        db.execute(pcoreCmdCompleteTransfer({ tenantId: input.tenantId, transferId: input.transferId, now }));
 
-      this.governanceService.insertGovernanceEventInTx(db, {
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        eventType: 'transfer',
-        severity: 2,
-        summary: 'Persona ownership transferred',
-        payload: {
-          fromOwnerUserId: transfer.from_owner_user_id,
-          toOwnerUserId: transfer.to_owner_user_id,
-        },
-        actorUserId: input.approverUserId,
-      });
-
-      this.memoryService.insertMemoryInTx(db, {
-        tenantId: input.tenantId,
-        personaId: input.personaId,
-        kind: 'governance',
-        summary: 'Ownership transferred',
-        content: {
+        this.governanceService.insertGovernanceEventInTx(db, {
+          tenantId: input.tenantId,
+          personaId: input.personaId,
           eventType: 'transfer',
-          fromOwnerUserId: transfer.from_owner_user_id,
-          toOwnerUserId: transfer.to_owner_user_id,
-          status: 'completed',
-        },
-        importance: 0.8,
-      });
+          severity: 2,
+          summary: 'Persona ownership transferred',
+          payload: {
+            fromOwnerUserId: transfer.from_owner_user_id,
+            toOwnerUserId: transfer.to_owner_user_id,
+          },
+          actorUserId: input.approverUserId,
+        });
 
-      this.recordBusinessAuditInTx(db, {
-        tenantId: input.tenantId,
-        actorId: input.approverUserId,
-        actionType: 'persona.transfer',
-        targetType: 'persona',
-        targetId: input.personaId,
-        createdAt: now,
-        payload: {
-          transferId: input.transferId,
-          fromOwnerUserId: transfer.from_owner_user_id,
-          toOwnerUserId: transfer.to_owner_user_id,
-          status: 'completed',
-        },
+        this.memoryService.insertMemoryInTx(db, {
+          tenantId: input.tenantId,
+          personaId: input.personaId,
+          kind: 'governance',
+          summary: 'Ownership transferred',
+          content: {
+            eventType: 'transfer',
+            fromOwnerUserId: transfer.from_owner_user_id,
+            toOwnerUserId: transfer.to_owner_user_id,
+            status: 'completed',
+          },
+          importance: 0.8,
+        });
+
+        this.recordBusinessAuditInTx(db, {
+          tenantId: input.tenantId,
+          actorId: input.approverUserId,
+          actionType: 'persona.transfer',
+          targetType: 'persona',
+          targetId: input.personaId,
+          createdAt: now,
+          payload: {
+            transferId: input.transferId,
+            fromOwnerUserId: transfer.from_owner_user_id,
+            toOwnerUserId: transfer.to_owner_user_id,
+            status: 'completed',
+          },
+        });
       });
-    });
+    } catch (err) {
+      /* CAS 抢占失败 → 事务已回滚，对调用方表现为「审批未生效」（路由映射为 404/冲突）。
+       * 其它异常照常上抛，不吞。 */
+      if (!claimed && err instanceof TransferClaimLostError) return null;
+      throw err;
+    }
 
     const completedTransfer = db.queryOne(pcoreQueryTransferById({
       tenantId: input.tenantId,
