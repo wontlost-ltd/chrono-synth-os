@@ -644,6 +644,41 @@ export class OrgWorkforceStore {
     return r.changes > 0;
   }
 
+  /**
+   * **一次性消费**审批（审计 #407）。仅当当前是 approved 且**尚未被消费**才盖 consumed_at。
+   *
+   * 这是执行门的真正互斥点：此前 `isExecutionApprovalCleared` 是纯读校验，
+   * 批准后 status 永远停在 approved，任务一旦回到 delegated（pipeline
+   * pending_confirmation 退回 / L8a 唤醒 / 改派），同一 approvalId 就能再次放行 ——
+   * 实测一次人类批准放行了 **2 次**真实高风险工具调用。
+   *
+   * 返回是否真的抢到（changes>0）。并发下只有一次能成功。
+   * 同仓 `ConfirmationTokenStore` 早已是这个形状，审批层此前无对等保护。
+   */
+  consumeApprovalIfUnused(orgId: string, approvalId: string, now: number): boolean {
+    const r = this.db.prepare<void>(
+      `UPDATE org_approvals SET consumed_at = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'approved' AND consumed_at IS NULL`,
+    ).run(now, this.tenantId, orgId, approvalId);
+    return r.changes > 0;
+  }
+
+  /** 读审批绑定的参数指纹。NULL/undefined = 未绑定（既有行向后兼容，不校验）。 */
+  getApprovalArgumentsHash(orgId: string, approvalId: string): string | null | undefined {
+    const row = this.db.prepare<{ arguments_hash: string | null }>(
+      `SELECT arguments_hash FROM org_approvals WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).get(this.tenantId, orgId, approvalId);
+    return row?.arguments_hash ?? null;
+  }
+
+  /** 记录审批绑定的参数指纹（审批请求时写入；执行门据此拒绝「批准 A 参数、执行 B 参数」）。 */
+  setApprovalArgumentsHash(orgId: string, approvalId: string, argumentsHash: string): void {
+    this.db.prepare<void>(
+      `UPDATE org_approvals SET arguments_hash = ?
+       WHERE tenant_id = ? AND org_id = ? AND id = ?`,
+    ).run(argumentsHash, this.tenantId, orgId, approvalId);
+  }
+
   /** 把已过期的 pending 审批标记为 expired（changes 即过期数）。 */
   expireStaleApprovals(orgId: string, now: number): number {
     const r = this.db.prepare<void>(

@@ -46,7 +46,11 @@ describe('server-raw coverage', () => {
      * 此前提现只收 (walletId, amountMinor) 无幂等键，客户端重试或 HTTP 幂等键 TTL 过期后
      * 重放会各扣一次（实测余额 1000→800）；纯加列+建索引不重建表，NULL 行不参与唯一性
      * 故既有调用方行为不变）。 */
-    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129', 'v130']);
+    /* v131 = v129_approval_single_use（pg-aliased v131，执行审批一次性消费锚 + 参数绑定：
+     * org_approvals 加可空 consumed_at + arguments_hash。此前审批是纯读校验、批准后
+     * status 永远停在 approved，任务回到 delegated 后同一 approvalId 可无限复用，
+     * 且不绑参数（批准 {amount:10} 可执行 {amount:999999}）；纯加列不重建表）。 */
+    assert.deepEqual(rawVersions, ['v007', 'v027', 'v030', 'v034', 'v040', 'v041', 'v047', 'v052', 'v071', 'v090', 'v108', 'v109', 'v121', 'v122', 'v123', 'v124', 'v126', 'v127', 'v128', 'v129', 'v130', 'v131']);
   });
 
   it('covers disabled raw migrations', () => {

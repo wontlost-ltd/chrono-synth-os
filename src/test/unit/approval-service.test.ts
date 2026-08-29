@@ -196,6 +196,70 @@ describe('ApprovalService（D2 执行审批门）', () => {
     assert.throws(() => svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: 'ghost', risk: { taskRisk: 'high' }, allowWorkerApproval: true }), /不在组织/);
   });
 
+  /* ⚠️ 审计 #407：审批此前是**无状态可重复读的凭证** —— 批准后 status 永远停在
+   * approved，没有「已使用」标记、没有次数上限。只要任务回到 delegated
+   * （pipeline pending_confirmation 退回 / L8a 唤醒 / 改派），同一 approvalId
+   * 就能再次放行。实测：一次人类批准放行了 **2 次**真实高风险工具调用。
+   *
+   * 上面那条 `isExecutionApprovalCleared 绑定` 用例只覆盖了「匹配与否」，
+   * **复用**这一面零覆盖 —— 因为纯读校验本来就不改状态，读多少次都过。 */
+  it('★审计 #407★：一次批准只能放行一次执行（第二次必须拒绝）', () => {
+    const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'high' }, allowWorkerApproval: false });
+    if (r.kind !== 'pending') throw new Error('expected pending');
+    svc.approveByHuman('org-1', r.approval.id, 'human-alice');
+    const base = { orgId: 'org-1', approvalId: r.approval.id, subjectType: 'task_execution' as const, subjectId: 't1', requesterWorkerId: icId, effectiveRisk: 'high' as const };
+
+    assert.equal(svc.consumeExecutionApproval(base), true, '第一次执行应放行');
+    assert.equal(svc.consumeExecutionApproval(base), false, '第二次必须拒绝（审批已被消费）');
+    assert.equal(svc.consumeExecutionApproval(base), false, '之后每次都拒绝');
+  });
+
+  /* ⚠️ 顺序要紧：先校验、再消费。反过来会让「不匹配的请求」也把审批烧掉 ——
+   * 等于给了攻击者廉价的拒绝服务手段（拿别的任务 id 打一发就作废人家的审批）。 */
+  it('★审计 #407★：不匹配的请求不得消耗掉审批（防拒绝服务）', () => {
+    const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'high' }, allowWorkerApproval: false });
+    if (r.kind !== 'pending') throw new Error('expected pending');
+    svc.approveByHuman('org-1', r.approval.id, 'human-alice');
+    const base = { orgId: 'org-1', approvalId: r.approval.id, subjectType: 'task_execution' as const, subjectId: 't1', requesterWorkerId: icId, effectiveRisk: 'high' as const };
+
+    /* 一串不匹配的尝试 —— 都不得占用审批。 */
+    assert.equal(svc.consumeExecutionApproval({ ...base, subjectId: 't2' }), false);
+    assert.equal(svc.consumeExecutionApproval({ ...base, requesterWorkerId: mgrId }), false);
+    assert.equal(svc.consumeExecutionApproval({ ...base, subjectType: 'tool_invocation' }), false);
+
+    /* 合法请求仍必须能用 —— 否则「防复用」就变成了「谁都用不了」。 */
+    assert.equal(svc.consumeExecutionApproval(base), true, '不匹配尝试不得烧掉审批');
+  });
+
+  /* ⚠️ 参数绑定：人类看着 {amount:10} 点的批准，不得用来执行 {amount:999999}。 */
+  it('★审计 #407★：绑定了参数指纹的审批，参数不符必须拒绝', () => {
+    const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'high' }, allowWorkerApproval: false });
+    if (r.kind !== 'pending') throw new Error('expected pending');
+    svc.approveByHuman('org-1', r.approval.id, 'human-alice');
+    store.setApprovalArgumentsHash('org-1', r.approval.id, 'hash-of-amount-10');
+    const base = { orgId: 'org-1', approvalId: r.approval.id, subjectType: 'task_execution' as const, subjectId: 't1', requesterWorkerId: icId, effectiveRisk: 'high' as const };
+
+    assert.equal(
+      svc.consumeExecutionApproval({ ...base, argumentsHash: 'hash-of-amount-999999' }), false,
+      '参数指纹不符必须拒绝（批准 $10 不得执行 $999999）',
+    );
+    /* 且不得因失败尝试被烧掉。 */
+    assert.equal(
+      svc.consumeExecutionApproval({ ...base, argumentsHash: 'hash-of-amount-10' }), true,
+      '参数一致时应放行',
+    );
+  });
+
+  it('★审计 #407★：未绑定参数的既有审批保持向后兼容（不校验 hash）', () => {
+    const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'high' }, allowWorkerApproval: false });
+    if (r.kind !== 'pending') throw new Error('expected pending');
+    svc.approveByHuman('org-1', r.approval.id, 'human-alice');
+    /* 不调 setApprovalArgumentsHash —— 模拟迁移前就存在的审批行。 */
+    const base = { orgId: 'org-1', approvalId: r.approval.id, subjectType: 'task_execution' as const, subjectId: 't1', requesterWorkerId: icId, effectiveRisk: 'high' as const };
+
+    assert.equal(svc.consumeExecutionApproval({ ...base, argumentsHash: 'whatever' }), true, '未绑定 hash 的审批不校验参数');
+  });
+
   it('租户隔离：A 的审批 B 看不到', () => {
     const r = svc.request({ orgId: 'org-1', subjectType: 'task_execution', subjectId: 't1', requesterWorkerId: icId, risk: { taskRisk: 'high' }, allowWorkerApproval: true });
     if (r.kind !== 'pending') throw new Error('expected pending');

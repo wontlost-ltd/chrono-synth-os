@@ -189,6 +189,36 @@ export class ApprovalService {
     return RISK_ORDER[a.effectiveRisk] >= RISK_ORDER[check.effectiveRisk];
   }
 
+  /**
+   * **消费**执行审批（审计 #407）——校验通过后原子占用，使一次批准只能放行一次执行。
+   *
+   * 为什么必须有这一步：`isExecutionApprovalCleared` 是**纯读**校验，
+   * 批准后 status 永远停在 `approved`，没有「已使用」标记、没有次数上限。
+   * 只要任务回到 `delegated`（pipeline pending_confirmation 退回 /
+   * L8a 唤醒 / 改派），同一个 approvalId 就能**再次**放行 ——
+   * 实测一次人类批准放行了 2 次真实高风险工具调用。
+   *
+   * ⚠️ 顺序要紧：先做全部匹配校验（subject/发起者/风险），**再**消费。
+   * 反过来会让「不匹配的请求」也把审批烧掉，等于给了攻击者一个廉价的
+   * 拒绝服务手段（拿别的任务 id 打一发就作废人家的审批）。
+   *
+   * ⚠️ 参数绑定：审批记录了 `arguments_hash` 时，必须与本次执行的参数指纹一致。
+   * 否则「人类看着 {amount:10} 点的批准」可以用来执行 {amount:999999} ——
+   * 实测复现过。未记录 hash 的既有审批（NULL）保持向后兼容，不校验。
+   *
+   * @returns true = 校验通过且成功占用；false = 校验不过 / 已被消费 / 并发抢占失败。
+   */
+  consumeExecutionApproval(check: ExecutionApprovalCheck & { argumentsHash?: string }): boolean {
+    if (!this.isExecutionApprovalCleared(check)) return false;
+
+    /* 参数绑定校验（若该审批绑定了参数）。 */
+    const bound = this.store.getApprovalArgumentsHash(check.orgId, check.approvalId);
+    if (bound !== null && bound !== undefined && bound !== check.argumentsHash) return false;
+
+    /* 原子占用：并发下只有一次 changes>0。 */
+    return this.store.consumeApprovalIfUnused(check.orgId, check.approvalId, this.now());
+  }
+
   private requirePending(orgId: string, approvalId: string): OrgApproval {
     const a = this.store.getApproval(orgId, approvalId);
     if (!a) throw new InvalidApprovalError(`审批 ${approvalId} 不存在`);
