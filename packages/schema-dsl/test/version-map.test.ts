@@ -7,7 +7,7 @@ describe('VERSION_MAP', () => {
     assert.deepEqual(
       versionsFor('postgres'),
       /* v131 = v129_approval_single_use（执行审批一次性消费锚 + 参数绑定）。 */
-      range('v', 1, 131),
+      range('v', 1, 132),
     );
   });
 
@@ -15,7 +15,7 @@ describe('VERSION_MAP', () => {
     assert.deepEqual(
       versionsFor('sqlite-sql'),
       /* v129 = v129_approval_single_use（同上，SQLite alias）。 */
-      range('v', 1, 129),
+      range('v', 1, 130),
     );
   });
 

@@ -219,7 +219,7 @@ export class WorkerExecutionService {
          * 任务状态，若任务已被并发改走（状态变 / reassign 改派给别人）则不覆盖（Codex 复审）。CAS 同时约束
          * assigned_to_worker_id=input.workerId，避免任务在能力检测后被改派、本 worker 仍把别人的任务挂起。
          * 学习请求已登记不回滚（缺口客观存在）；CAS 没抢到说明状态/指派已变，按并发冲突抛错让调用方重试。 */
-        if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'blocked', `能力缺口待进修：${caps}`, this.now(), input.workerId)) {
+        if (!this.store.transitionTaskExecutionIfStatus(input.orgId, input.taskId, 'delegated', 'blocked', `能力缺口待进修：${caps}`, this.now(), input.workerId, 'capability_gap')) {
           throw new WorkerExecutionError(`任务 ${input.taskId} 非 delegated 或已被并发改动/改派，挂起失败（学习请求已登记，请重试）`);
         }
         return { kind: 'learning_required', gaps: outcomes, reason: `缺能力：${caps}（已登记学习请求，待进修后重跑）` };
@@ -304,7 +304,8 @@ export class WorkerExecutionService {
     } catch (err) {
       /* 执行抛错（管线异常）：退回 in_progress，标 blocked 留审计，不吞异常语义。 */
       const reason = err instanceof Error ? err.message : String(err);
-      this.store.updateTaskExecution(input.orgId, input.taskId, 'blocked', `执行异常：${reason}`, this.now());
+      /* 审计 #408：标注为**执行失败**——L8c 学习对账器绝不得唤醒它（否则覆盖故障原因 + 重放副作用）。 */
+      this.store.updateTaskExecution(input.orgId, input.taskId, 'blocked', `执行异常：${reason}`, this.now(), 'execution_failure');
       return { kind: 'failed', status: 'failed', reason };
     }
 
@@ -321,7 +322,8 @@ export class WorkerExecutionService {
       this.store.updateTaskExecution(input.orgId, input.taskId, 'delegated', `待管线二次确认（需人类显式提供 confirmation token 后重试）`, this.now());
       return { kind: 'needs_pipeline_confirmation', confirmationTokenId: token, reason: decision.reason };
     }
-    this.store.updateTaskExecution(input.orgId, input.taskId, 'blocked', `执行被拦截/失败：${decision.status}（${decision.reason}）`, this.now());
+    /* 审计 #408：同上，工具拦截/失败属 execution_failure，不是能力缺口。 */
+    this.store.updateTaskExecution(input.orgId, input.taskId, 'blocked', `执行被拦截/失败：${decision.status}（${decision.reason}）`, this.now(), 'execution_failure');
     return { kind: 'failed', status: decision.status, reason: decision.reason };
   }
 

@@ -22,6 +22,7 @@ import { v126_github_learn_state_org_rotation } from './v126.js';
 import { v127_github_installation_suspended } from './v127.js';
 import { v128_wallet_payout_idempotency } from './v128.js';
 import { v129_approval_single_use } from './v129.js';
+import { v130_task_blocked_reason } from './v130.js';
 
 export { v007_tenant_id } from './v007.js';
 export { v027_identities_avatars_backfill } from './v027.js';
@@ -68,6 +69,7 @@ export const RAW_MIGRATIONS: readonly RawMigration[] = [
   v127_github_installation_suspended,
   v128_wallet_payout_idempotency,
   v129_approval_single_use,
+  v130_task_blocked_reason,
 ];
 
 export const DISABLED_MIGRATIONS: readonly RawMigration[] = [

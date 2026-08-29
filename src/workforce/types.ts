@@ -191,6 +191,21 @@ export type TaskStatus =
   | 'rejected'     /* 上级退回 */
   | 'blocked';     /* 阻塞 */
 
+/**
+ * 任务**本次**挂起的原因（审计 #408）。
+ *
+ * 为什么必须显式记录：L8c 对账器此前的候选集判据是「这个任务**历史上曾经**登记过
+ * learning_request」，而不是「**这次** blocked 是学习缺口造成的」。任务走完一轮
+ * 「缺能力→学会→唤醒→执行→工具失败→blocked」之后，learning_request 行仍在，
+ * JOIN 依旧命中 ⇒ 工具故障任务被当成学习挂起唤醒，**真实故障原因被覆盖**，
+ * 且每学会一个无关能力就再唤醒一次（非幂等工具被额外真实执行）。
+ */
+export type TaskBlockedReason =
+  /** 能力缺口挂起：学完应由 L8a/L8c 唤醒重跑。 */
+  | 'capability_gap'
+  /** 工具失败/执行异常挂起：**绝不**由学习对账器唤醒（否则覆盖故障原因 + 重放副作用）。 */
+  | 'execution_failure';
+
 /** 一个任务（任务树节点）。parent 为 null = 顶层(manager 级)。 */
 export interface OrgTask {
   readonly id: string;

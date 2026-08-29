@@ -52,7 +52,7 @@ describe('TaskWakeReconcilerWorker（ADR-0057 L8c-wire 周期对账）', () => {
       createdAt: clock, updatedAt: clock,
     });
     learning.registerGap({ orgId, personaId, capability, evidence: 'e', priority: 'high', triggeredByTaskId: taskId });
-    store.transitionTaskExecutionIfStatus(orgId, taskId, 'delegated', 'blocked', `能力缺口待进修：${capability}`, clock);
+    store.transitionTaskExecutionIfStatus(orgId, taskId, 'delegated', 'blocked', `能力缺口待进修：${capability}`, clock, undefined, 'capability_gap');
     /* 学会但不发事件（模拟丢投）。 */
     capIndex.upsert({ id: `ci-${++counter}`, personaId, capability, examScore: 0.97, learningRequestId: 'seed', capabilityVersion: 1, learnedAt: clock, updatedAt: clock });
     return taskId;
@@ -95,7 +95,7 @@ describe('TaskWakeReconcilerWorker（ADR-0057 L8c-wire 周期对账）', () => {
     worker.flushOnce(clock);
     assert.equal(store.getTask('org-A', tA)!.resumeAttemptCount, 1);
     /* 复位回 blocked，已学状态不变 → 幂等跳过。 */
-    store.transitionTaskExecutionIfStatus('org-A', tA, 'delegated', 'blocked', '复位', clock);
+    store.transitionTaskExecutionIfStatus('org-A', tA, 'delegated', 'blocked', '复位', clock, undefined, 'capability_gap');
     const second = worker.flushOnce(clock);
     assert.equal(second.woke, 0, '同已学状态 → 幂等不重复唤醒');
     assert.equal(store.getTask('org-A', tA)!.resumeAttemptCount, 1, '尝试计数未被烧');
@@ -150,7 +150,7 @@ describe('TaskWakeReconcilerWorker（ADR-0057 L8c-wire 周期对账）', () => {
       createdAt: clock, updatedAt: clock,
     });
     learning.registerGap({ orgId, personaId: 'p-ic', capability: 'hard_skill', evidence: 'e', priority: 'high', triggeredByTaskId: taskId });
-    store.transitionTaskExecutionIfStatus(orgId, taskId, 'delegated', 'blocked', '能力缺口待进修：hard_skill', clock);
+    store.transitionTaskExecutionIfStatus(orgId, taskId, 'delegated', 'blocked', '能力缺口待进修：hard_skill', clock, undefined, 'capability_gap');
 
     clock = 1000 + 8 * 24 * 60 * 60 * 1000;  /* 8 天后仍没学会 */
     const stats = worker.flushOnce(clock);

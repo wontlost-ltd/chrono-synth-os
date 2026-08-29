@@ -70,7 +70,7 @@ export class TaskWakeReconciler {
   reconcileOnce(orgId: string, now = this.deps.now()): ReconcileStats {
     /* **只反扫因学习缺口挂起的任务**（有关联 learning_requests）——非学习 blocked（工具失败/权限/异常）
      * 绝不纳入，否则会被误唤醒/误标超时覆盖真实失败原因（Codex L8c 复审）。 */
-    return this.reconcileTasks(this.deps.store.listLearningBlockedTasks(orgId), now);
+    return this.reconcileTasks(this.deps.store.listCapabilityGapBlockedTasks(orgId), now);
   }
 
   /**
@@ -78,7 +78,7 @@ export class TaskWakeReconciler {
    * 按 tenant 整体反扫）。逐任务用其自身 task.orgId（跨 org 也正确）。复用 reconcileOnce 同一核心，不漂移。
    */
   reconcileTenant(now = this.deps.now()): ReconcileStats {
-    return this.reconcileTasks(this.deps.store.listLearningBlockedTasksAllOrgs(), now);
+    return this.reconcileTasks(this.deps.store.listCapabilityGapBlockedTasksAllOrgs(), now);
   }
 
   /**

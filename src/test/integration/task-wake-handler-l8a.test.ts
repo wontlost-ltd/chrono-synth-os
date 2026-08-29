@@ -167,7 +167,7 @@ describe('TaskWakeHandler（ADR-0057 L8a 学完唤醒重跑闭环）', () => {
     assert.equal(store.getTask('org-1', taskId)!.resumeAttemptCount, 1);
 
     /* 任务已 delegated，但即便它还 blocked，同事件 id 也应幂等跳过——这里把它人为改回 blocked 验证幂等。 */
-    store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '复位测试幂等', clock);
+    store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '复位测试幂等', clock, undefined, 'capability_gap');
     const second = wake.onLearned({ personaId: 'p-ic', capability: 'research', learningRequestId: lrId, examScore: 0.97, learnedAt: clock, tenantId: 'tenant-a' });
     assert.equal(second[0]!.kind, 'skipped_idempotent', '同事件 id → 幂等跳过');
     assert.equal(store.getTask('org-1', taskId)!.status, 'blocked', '幂等：未重复唤醒');
