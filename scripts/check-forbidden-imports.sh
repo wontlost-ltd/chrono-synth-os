@@ -27,17 +27,28 @@ check_matches() {
     return 0
   fi
 
-  local matches rc
-  # rg 退出码：0=有匹配、1=无匹配、≥2=真错误（坏正则/读不了文件等）。
-  # 只把 1 当作「无违规」，≥2 一律 fail-closed —— 不再用 `|| true` 无差别吞掉。
+  local matches rc stderr_file
+  # rg 退出码：0=有匹配、1=无匹配、2=出错。
+  #
+  # ⚠️ 但 2 是**多义**的：老版 ripgrep（<13）在「路径下所有文件都被 glob 过滤掉、
+  # 一个文件都没搜」时也返回 2，这不是错误。CI 实测正是这样红的 ——
+  # 11 条「应拦截」全过，3 条**对照**（无任何匹配）却报 RC=2。
+  # 若把它一律当致命错，门就会在干净代码上误报，反而逼人绕过它。
+  #
+  # 判据改为看 **stderr 是否有内容**：真错误（坏正则、读不了文件、权限）必然
+  # 打印诊断信息；「没文件可搜」不会。既保住 fail-closed，又不误伤。
+  stderr_file="$(mktemp)"
   set +e
-  matches="$(rg -n --glob '*.ts' --glob '!*.test.ts' "$@" "${target_dir}")"
+  matches="$(rg -n --glob '*.ts' --glob '!*.test.ts' "$@" "${target_dir}" 2>"${stderr_file}")"
   rc=$?
   set -e
-  if [[ ${rc} -ge 2 ]]; then
-    printf 'FATAL: rg 扫描 %s 时出错（退出码 %d），拒绝报告通过。\n' "${label}" "${rc}" >&2
+  if [[ ${rc} -ge 2 && -s "${stderr_file}" ]]; then
+    printf 'FATAL: rg 扫描 %s 时出错（退出码 %d），拒绝报告通过：\n' "${label}" "${rc}" >&2
+    cat "${stderr_file}" >&2
+    rm -f "${stderr_file}"
     exit 2
   fi
+  rm -f "${stderr_file}"
   if [[ -n "${matches}" ]]; then
     printf 'Forbidden import check failed for %s\n' "${label}" >&2
     printf '%s\n' "${matches}" >&2
