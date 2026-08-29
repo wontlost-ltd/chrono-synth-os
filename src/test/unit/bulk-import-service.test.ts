@@ -216,4 +216,49 @@ describe('BulkImportService', () => {
     assert.notEqual(a, c);
     assert.match(a, /^[0-9a-f]{16}$/);
   });
+
+  /* ⚠️ 审计 #421：`imported_count` 是**累加**列，而队列 `maxRetries: 1` 意味着
+   * processBatch 可能跑第二遍。此前用最终的 imported_count 作为计费 quantity，
+   * 重试后会把**含首轮成绩的累计值**再上报一次。
+   *
+   * 实测：5 条数据重试一次 → imported_count=10 / total_items=5（计数超过总量），
+   * Stripe 累计上报 15 单位、真实 5 条 —— **多计费 3 倍**。 */
+  it('审计 #421：重试 processBatch 只上报本轮增量（不得按累计值重复计费）', async () => {
+    const reported: number[] = [];
+    const billingService = new BulkImportService(
+      os.getDatabase(),
+      personaCoreService,
+      taskQueue,
+      new UrlContentFetcher({ skipDnsResolve: true }),
+      new SilentLogger(),
+      undefined,
+      /* usageTracker：捕获上报量 */
+      { record: (_t: string, _k: string, q: number) => { reported.push(q); } } as never,
+    );
+
+    const sources = makeSources(3, 'bill');
+    const submitted = await billingService.submit({
+      tenantId: TEST_TENANT_ID,
+      personaId,
+      ownerUserId: TEST_USER_ID,
+      sources,
+      deduplicateStrategy: 'skip',
+    });
+    const firstTotal = reported.reduce((a, b) => a + b, 0);
+    assert.equal(firstTotal, 3, `首轮应上报 3，实际 ${firstTotal}`);
+
+    /* 重跑同一个 job（模拟队列重试）。去重策略 skip ⇒ 本轮新增 0 条。 */
+    await billingService.processBatch({
+      jobId: submitted.jobId,
+      tenantId: TEST_TENANT_ID,
+      personaId,
+      ownerUserId: TEST_USER_ID,
+      sources,
+      deduplicateStrategy: 'skip',
+    });
+
+    const total = reported.reduce((a, b) => a + b, 0);
+    /* 变异实测：改回 `recordBillableUsage(tenant, importedCount)` → total 变 6（累计值再报一次）。 */
+    assert.equal(total, 3, `重试不得重复计费：累计上报 ${total}，应仍为 3`);
+  });
 });

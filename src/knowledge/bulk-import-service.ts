@@ -155,6 +155,18 @@ export class BulkImportService {
 
   async processBatch(input: BulkImportProcessInput): Promise<void> {
     try {
+      /* ⚠️ 审计 #421：计费必须上报**本轮增量**，不是累计值。
+       *
+       * `imported_count` 是**累加**列（processSingle 里逐条 incrementCounter），
+       * 而队列 `maxRetries: 1` 意味着 processBatch 可能跑第二遍。此前用最终的
+       * `imported_count` 作为 quantity，重试后会把**含首轮成绩的累计值**再上报一次。
+       *
+       * 实测：5 条数据的导入任务重试一次 → `imported_count=10 / total_items=5`
+       * （计数已超过总量），Stripe 累计上报 15 单位、真实 5 条 —— **多计费 3 倍**。
+       *
+       * 故在本轮开始前记下基线，结束时只上报差值。 */
+      const importedBefore = this.store.get(input.tenantId, input.jobId)?.importedCount ?? 0;
+
       this.store.markRunning(input.jobId);
 
       /* 模板联动：解析 requiredKnowledgeCategories（缺失或加载失败 → 跳过校验） */
@@ -195,11 +207,14 @@ export class BulkImportService {
         this.store.setMetadata(input.jobId, metadata);
       }
 
-      /* P1-D 计费上报：以最终 imported_count 作为 quantity */
+      /* P1-D 计费上报：只上报**本轮新增**的条目数（审计 #421）。
+       * 重试时 importedBefore 已含首轮成绩，差值即本轮真实新增；
+       * 若本轮一条都没新导入（例如全部命中去重）则不上报。 */
       const finalJob = this.store.get(input.tenantId, input.jobId);
       const importedCount = finalJob?.importedCount ?? 0;
-      if (importedCount > 0) {
-        this.recordBillableUsage(input.tenantId, importedCount);
+      const billableDelta = importedCount - importedBefore;
+      if (billableDelta > 0) {
+        this.recordBillableUsage(input.tenantId, billableDelta);
       }
 
       this.store.markCompleted(input.jobId);
