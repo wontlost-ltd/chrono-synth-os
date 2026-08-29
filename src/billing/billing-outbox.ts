@@ -115,7 +115,8 @@ export class BillingOutbox {
   /** 单-db flush（原 flush 逻辑，this.tx 换成参数 db）。内部逐行 try/catch 不变。 */
   private async flushOneDb(db: SyncWriteUnitOfWork, batchSize: number): Promise<{ processed: number; failed: number }> {
     /* 回收卡在 processing 超过阈值的行（崩溃恢复） */
-    db.execute(boutboxCmdRequeueStale(this.clock.now() - STALE_PROCESSING_MS));
+    /* 传**时长**：截止点由数据库用自己的时钟算（issue #393）。 */
+    db.execute(boutboxCmdRequeueStale(STALE_PROCESSING_MS));
 
     const rows = [...db.queryMany(boutboxQueryPending(MAX_ATTEMPTS, batchSize))];
 
@@ -124,7 +125,8 @@ export class BillingOutbox {
 
     for (const row of rows) {
       /* 乐观锁：标记为 processing 并记录认领时间 */
-      const result = db.execute(boutboxCmdClaim(row.id, this.clock.now()));
+      /* 认领时间由 DB 盖戳（issue #393），不再传应用时钟。 */
+      const result = db.execute(boutboxCmdClaim(row.id));
       if (result.rowsAffected === 0) continue;
 
       try {

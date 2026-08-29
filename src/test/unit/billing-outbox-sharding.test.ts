@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BillingOutbox } from '../../billing/billing-outbox.js';
+import { boutboxCmdClaim } from '@chrono/kernel';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
@@ -107,5 +108,80 @@ describe('BillingOutbox 分片探针', () => {
     const res = await ob.flush();
     assert.equal(res.failed, 1);
     assert.equal(res.shardErrors.length, 0);
+  });
+
+  /* ── issue #393：stale 判定必须由数据库单一时钟裁决 ─────────────── */
+
+  /**
+   * 缺陷（与 observability outbox #380 同型）：认领方写自己的 `Date.now()` 进 `processed_at`，
+   * 回收方用自己的 `Date.now() - STALE_PROCESSING_MS` 算截止点。
+   *
+   * 多进程前提**已核实成立**：`billing_outbox` 的 flush 定时器跑在 **API 进程内**
+   * （`app.ts:1013` 的 60s setInterval，全仓唯一 flush 调用点，无独立 billing worker），
+   * 而 `k8s/deployment.yml` replicas:2、`k8s/production/deployment.yml` replicas:3
+   * —— 多副本各自认领/回收同一张 Postgres 表。
+   *
+   * 实测（修复前）：B 比 A 快 0/4 分钟 → processing；快 6/10 分钟 → **pending**
+   * ＝ 正在处理中的行被回收 → 重发 Stripe。
+   * （严重度 Low：`idempotency_key` 是**持久化列**，enqueue 时写入、回收不重算，
+   * 故重发在 Stripe 侧收敛。注意依据是**列持久化**而非派生逻辑稳定 ——
+   * 无 sourceId 时走 `tenant:event:clock:seq` 派生，重算必然不同。）
+   *
+   * ⚠️ 本组用例必须走 **`ob.flush()` 真实生产路径**，不能直接调 kernel 命令。
+   * 初版就是直接调 `boutboxCmdRequeueStale`，结果把生产调用点
+   * （`billing-outbox.ts:119`）回退成旧语义后，**全套 2723 测试仍全绿** ——
+   * 那正是本 PR 声称要防的 #381 型回归，却留在零覆盖的调用点上（独立审查实测拆穿）。
+   */
+  it('★回归★ flush 会回收卡住的行（生产调用点，非直调 kernel 命令）', async () => {
+    const db = obxDb();
+    const ob = BillingOutbox.fromUnitOfWork(db, cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'src_stuck');
+    const id = db.prepare<{ id: number }>('SELECT id FROM billing_outbox').all()[0]!.id;
+    /* 模拟消费者崩溃：卡在 processing 10 分钟（> STALE_PROCESSING_MS 5min）。 */
+    db.prepare<void>("UPDATE billing_outbox SET status='processing', processed_at=? WHERE id=?")
+      .run(Date.now() - 10 * 60 * 1000, id);
+
+    await ob.flush();
+
+    /* cfg 无 stripe.secretKey → reportUsage 抛错 → markFailed；关键是它**被回收并重试过**，
+     * 而不是永远停在 processing。回退成绝对截止点时此处恒为 'processing'（实测）。 */
+    const st = db.prepare<{ status: string }>('SELECT status FROM billing_outbox WHERE id=?')
+      .all(id)[0]?.status;
+    assert.notEqual(st, 'processing',
+      '卡住的行必须被 flush 回收（回退成应用侧截止点时会永远停在 processing）');
+  });
+
+  it('★回归★ flush 不得回收刚认领的行', async () => {
+    /* ⚠️ 对照：只断言「能回收」会被「全部回收」蒙混过关。
+     * 这里让行处于 processing 且**刚刚**被 DB 盖戳，flush 不得把它收走。 */
+    const db = obxDb();
+    const ob = BillingOutbox.fromUnitOfWork(db, cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'src_fresh');
+    const id = db.prepare<{ id: number }>('SELECT id FROM billing_outbox').all()[0]!.id;
+    db.prepare<void>(
+      "UPDATE billing_outbox SET status='processing', processed_at=(CAST(strftime('%s','now') AS INTEGER)*1000) WHERE id=?",
+    ).run(id);
+
+    await ob.flush();
+
+    const st = db.prepare<{ status: string }>('SELECT status FROM billing_outbox WHERE id=?')
+      .all(id)[0]?.status;
+    assert.equal(st, 'processing', '刚认领的行不得被回收（否则 stale 窗口形同虚设）');
+  });
+
+  it('★回归★ 认领 API **在结构上**不接受调用方时间（不是靠数值容差）', () => {
+    /* ⚠️ 初版这条断言 `|dbNow - processed_at| <= 2000`，是**重言式**：
+     * 单机上应用 `Date.now()` 与 DB 时钟本就相差几十毫秒，把认领侧整个回退成
+     * 应用时钟后该断言照样通过（独立审查实测：|diff|=178ms，9/9 全绿）。
+     * 它测的是「本机两个时钟一致」——恒真，且**不是**被测性质。
+     *
+     * 正确的判据是**结构性**的：认领命令的 params 里根本没有时间字段，
+     * 调用方**没有任何入口**注入自己的时刻。一旦有人给 BoutboxClaimParams
+     * 加回 `now`（哪怕带默认值），本断言立刻转红。 */
+    const cmd = boutboxCmdClaim(1);
+    const keys = Object.keys(cmd.params).sort();
+    assert.deepEqual(keys, ['id'],
+      `认领命令不得携带任何时间参数（实际字段：${keys.join(', ')}）——`
+      + '时间必须由数据库盖戳，否则跨副本钟差会平移 stale 判定');
   });
 });
