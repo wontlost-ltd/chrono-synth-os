@@ -70,10 +70,23 @@ function extractKeypoints(capability: string, evidence: string): string[] {
     if (out.length >= MAX_KEYPOINTS) break;
     push(part);
   }
-  /* 不足最小要点数 → 用 capability 派生确定性占位（保证 lint 的 ≥2 等权要求）。 */
+  /* 不足最小要点数 → 用 capability 派生确定性占位（保证 lint 的 ≥2 等权要求）。
+   *
+   * ⚠️ 审计 #399：此前是无出口的 `while` —— `push` 对 trim 后长度 >80 的串
+   * **静默 return**，而占位串是 `${capability}的要点${i}`，capability 本身够长时
+   * 它恒 >80 ⇒ out 永不增长 ⇒ 死循环（`i` 自增只让串更长）。
+   * 实测阈值：capability 长度 76 正常、**77 即挂死**，worker 线程 100% CPU 永不返回。
+   * 更糟的是该学习请求已被 CAS 置为 `learning`，重启后会被再次拾取 ⇒ 持续崩溃循环。
+   * capability 从 `requiredCapabilities` 一路无长度校验流入，全仓 Zod 也没约束。
+   *
+   * 修法两条：
+   *   1) 占位串的**基名先截断**，保证它一定能通过 push 的长度门；
+   *   2) 循环加硬上限 —— 即便未来 push 增加新的拒绝理由（如新的字符集校验），
+   *      也只会退化成「要点不足」而不是挂死整个 worker。 */
+  const placeholderBase = capability.length > 60 ? capability.slice(0, 60) : capability;
   let i = 1;
-  while (out.length < MIN_KEYPOINTS) {
-    push(`${capability}的要点${i}`);
+  while (out.length < MIN_KEYPOINTS && i <= MIN_KEYPOINTS * 4) {
+    push(`${placeholderBase}的要点${i}`);
     i += 1;
   }
   return out.slice(0, MAX_KEYPOINTS);
