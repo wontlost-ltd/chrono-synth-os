@@ -128,20 +128,43 @@ export function resolveConflict(
   return result.changes > 0;
 }
 
+/**
+ * ⚠️ 审计 #404：`COUNT(*)` 在 PostgreSQL 下是 **bigint**，node-pg 把它映射成
+ * **JS string**（避免超出 Number.MAX_SAFE_INTEGER 时静默失真）；SQLite 则返回
+ * number。此前两个函数都把行声明为 `{ count: number }` 直接返回 —— 类型是**谎言**，
+ * 在 PG 上返回的是 `"1"` 而不是 `1`。
+ *
+ * 后果（实测真 PG 16）：路由把它喂给 `ConflictResolveResultV1Schema.parse()`，
+ * 那里是 `z.number().int().nonnegative()` → 抛错 → **500**。而此时 `UPDATE`
+ * **已经提交**；客户端重试撞 `WHERE resolved_at IS NULL` 不再匹配 → **409**。
+ * 净结果：冲突在库里已解决，用户**永远拿不到一次成功响应**。
+ *
+ * SQLite 返回 number 并通过，这正是现有测试全绿、缺陷长期不可见的原因
+ * （仓库默认测试路径是 SQLite）。
+ *
+ * 修法：统一 `Number(...)` 强转。计数值远小于 2^53，无精度风险。
+ */
+function countRow(db: IDatabase, sql: string, tenantId: string): number {
+  const row = db.prepare<{ count: number | string }>(sql).get(tenantId);
+  return Number(row?.count ?? 0);
+}
+
 export function countBlockingConflicts(db: IDatabase, tenantId: string): number {
-  const row = db.prepare<{ count: number }>(
+  return countRow(
+    db,
     `SELECT COUNT(*) AS count
      FROM conflict_inbox
      WHERE tenant_id = ? AND severity = 'blocking' AND resolved_at IS NULL`,
-  ).get(tenantId);
-  return row?.count ?? 0;
+    tenantId,
+  );
 }
 
 export function countPendingConflicts(db: IDatabase, tenantId: string): number {
-  const row = db.prepare<{ count: number }>(
+  return countRow(
+    db,
     `SELECT COUNT(*) AS count
      FROM conflict_inbox
      WHERE tenant_id = ? AND resolved_at IS NULL`,
-  ).get(tenantId);
-  return row?.count ?? 0;
+    tenantId,
+  );
 }
