@@ -31,19 +31,19 @@ const GOVERNED_DIRS = ['src/server/routes', 'src/server/plugins'];
  * ⚠️ 只减不增：迁移完一个文件就删掉对应行。**禁止**为新文件往这里加行——
  * 那正是本棘轮要挡的事。若确有不可迁移的基础设施例外，须在此注明理由。
  */
-const BASELINE = new Set([
-  'src/server/plugins/jwt-key-store.ts',
-  'src/server/plugins/websocket.ts',
-  'src/server/routes/admin-config.ts',
-  'src/server/routes/admin-deployment.ts',
-  'src/server/routes/analytics.ts',
-  'src/server/routes/companion/me.ts',
-  'src/server/routes/companion/recent-growth.ts',
-  'src/server/routes/dashboards.ts',
-  'src/server/routes/decisions.ts',
-  'src/server/routes/health.ts',
-  'src/server/routes/onboarding.ts',
-  'src/server/routes/privacy.ts',
+const BASELINE = new Map([
+  ['src/server/plugins/jwt-key-store.ts', 4],
+  ['src/server/plugins/websocket.ts', 5],
+  ['src/server/routes/admin-config.ts', 3],
+  ['src/server/routes/admin-deployment.ts', 5],
+  ['src/server/routes/analytics.ts', 1],
+  ['src/server/routes/companion/me.ts', 1],
+  ['src/server/routes/companion/recent-growth.ts', 1],
+  ['src/server/routes/dashboards.ts', 6],
+  ['src/server/routes/decisions.ts', 10],
+  ['src/server/routes/health.ts', 2],
+  ['src/server/routes/onboarding.ts', 4],
+  ['src/server/routes/privacy.ts', 1],
 ]);
 
 /**
@@ -96,14 +96,31 @@ for (const govDir of GOVERNED_DIRS) {
 }
 
 const current = new Set(offenders.map((o) => o.rel));
-const added = offenders.filter((o) => !BASELINE.has(o.rel));
+/* ⚠️ 审计 #411：此前只比较**文件名集合**（`!BASELINE.has(o.rel)`），
+ * `o.count` 被算出来却**只用于打印**，从不与任何 per-file 基线比较 ——
+ * 12 个 BASELINE 文件因此是**无限额度的白名单**。
+ *
+ * 实测：往 `admin-config.ts` 追加一条 `db.prepare("DROP TABLE users")`，
+ * 计数从 43→44（门看见了），却仍 exit 0 且打印「无新增真 SQL」这句
+ * **明确的假陈述**。而 BASELINE 里恰恰是 admin-config / privacy / analytics
+ * 这类高危路由。
+ *
+ * 改为 Map（文件→冻结处数）后：新文件**或**既有文件处数增加都算新增。 */
+const added = offenders.filter((o) => (BASELINE.get(o.rel) ?? 0) < o.count);
 /* 已迁移完但仍留在 BASELINE 的：提醒清理，避免棘轮松弛。 */
-const stale = [...BASELINE].filter((f) => !current.has(f));
+const stale = [...BASELINE.keys()].filter((f) => !current.has(f));
+/* 处数**减少**是好事（迁移进行中），提示收紧基线以锁住成果。 */
+const loosened = offenders.filter((o) => BASELINE.has(o.rel) && o.count < BASELINE.get(o.rel));
 
 if (added.length > 0) {
   console.error('✗ SQL 分层棘轮：以下文件在路由/插件层新引入了真 SQL\n');
   for (const o of added) {
-    console.error(`  ${o.rel}  （${o.count} 处真 SQL 入口）`);
+    const frozen = BASELINE.get(o.rel);
+    console.error(
+      frozen === undefined
+        ? `  ${o.rel}  （${o.count} 处真 SQL 入口，新文件）`
+        : `  ${o.rel}  （${o.count} 处，冻结基线 ${frozen} 处 → 新增 ${o.count - frozen} 处）`,
+    );
   }
   console.error(
     '\n真 SQL 只允许在 src/storage/executors/。请改为 kernel 的 { kind, params } 描述符：\n' +
@@ -118,6 +135,14 @@ if (added.length > 0) {
 if (stale.length > 0) {
   console.error('✗ SQL 分层棘轮：以下文件已无真 SQL，请从 BASELINE 删除（保持棘轮收紧）\n');
   for (const f of stale) console.error(`  ${f}`);
+  process.exit(1);
+}
+
+if (loosened.length > 0) {
+  console.error('✗ SQL 分层棘轮：以下文件的真 SQL 已减少，请把基线收紧到实际值（锁住迁移成果）\n');
+  for (const o of loosened) {
+    console.error(`  ${o.rel}  ${BASELINE.get(o.rel)} → ${o.count}`);
+  }
   process.exit(1);
 }
 

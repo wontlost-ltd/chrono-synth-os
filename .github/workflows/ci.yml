@@ -138,13 +138,22 @@ jobs:
         # not appropriate here because OS-only checkouts don't fetch
         # the sibling repos.
         run: node dist/scripts/ga-check.js --out=ga-check.json
-      # These two are the tail of `npm run test:golden` but were never
-      # wired into CI (audit P3). Both pass today, so adding them is
+      # These are the tail of `npm run test:golden` but were never
+      # wired into CI (audit P3). All pass today, so adding them is
       # non-breaking; they exist to keep it that way.
       - name: check:db-access — DB sink classification ratchet
         run: npm run check:db-access
       - name: check:sql-layering — no raw SQL outside executors
         run: npm run check:sql-layering
+      # 审计 #413：check:licenses 在 test:golden 尾链里，但此前 CI 完全不跑
+      # （上面那条注释写"These two"就是漏了它）。ADR-0022 双轨许可
+      # （MIT 库 / AGPL 服务端）漂移是**法律面**错误，开源发布后不可逆。
+      - name: check:licenses — ADR-0022 dual-track license boundary
+        run: npm run check:licenses
+      # 审计 #410/#430：门禁自身必须有自测，否则门逻辑退化无人发现
+      # （本轮出缺陷的三个门恰好全部无自测，门永远打印 ✓）。
+      - name: 内核纯度门自测（门禁自身的回归保护）
+        run: bash scripts/check-forbidden-imports.selftest.sh
       - name: Upload ga:check report
         if: always()
         uses: actions/upload-artifact@v7
