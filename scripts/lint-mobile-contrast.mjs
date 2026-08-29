@@ -40,8 +40,25 @@ function walk(dir, out = []) {
   return out;
 }
 
-const lum = (hex) => {
+/**
+ * 把 3/4/6/8 位 hex 归一化成 6 位 RGB（审计 #418）。
+ *
+ * ⚠️ 必须先展开再算亮度：`lum()` 原先按固定 6 位切片，喂 `#fff` 会得到
+ * `parseInt('ff'), parseInt('')` → **NaN**，比率算出来是 NaN、比较恒假 ⇒
+ * 静默放行。放宽正则却不改这里，等于把漏检换成假绿。
+ */
+const normalizeHex = (hex) => {
   const h = hex.replace('#', '');
+  if (h.length === 3 || h.length === 4) {
+    /* #rgb / #rgba → 每位翻倍；alpha 位丢弃（对比度只看 RGB）。 */
+    return h.slice(0, 3).split('').map((c) => c + c).join('');
+  }
+  /* #rrggbbaa → 丢弃 alpha。 */
+  return h.slice(0, 6);
+};
+
+const lum = (hex) => {
+  const h = normalizeHex(hex);
   const ch = [0, 2, 4].map((i) => {
     const c = parseInt(h.slice(i, i + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -93,7 +110,12 @@ for (const file of walk(TARGET)) {
     const size = block.match(/fontSize:\s*(\d+)/);
     /* 排除非文本色属性：backgroundColor / borderColor / tintColor /
      * shadowColor / placeholderTextColor 都不是正文前景色。 */
-    const color = block.match(/(?<!background)(?<!border)(?<!tint)(?<!shadow)(?<!placeholderText)[Cc]olor:\s*'(#[0-9a-fA-F]{6})'/);
+    /* ⚠️ 审计 #418：原先写死「单引号 + 恰好 6 位 hex」，于是 3 位/4 位/8 位 hex、
+     * **双引号**、`rgb()` 全部逃逸 —— 生产实例 `ConflictInboxScreen.tsx:243` 的
+     * `actionBtnText: { color: '#fff', fontSize: 13 }` 是真实正文样式，
+     * 门**从未评估过它**（等价改写 '#fff'→'#ffffff' 后计数 74→75，可见覆盖数一直是虚的）。
+     * RN 无类名无 token，这道门是移动端唯一防线。 */
+    const color = block.match(/(?<!background)(?<!border)(?<!tint)(?<!shadow)(?<!placeholderText)[Cc]olor:\s*['"](#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8}))['"]/);
     if (!size || !color) continue;
 
     const lineNo = text.slice(0, m.index).split('\n').length;

@@ -38,6 +38,26 @@ function runOn(files) {
 }
 
 const CASES = [
+  /* ⚠️ 审计 #418：原正则写死「单引号 + 恰好 6 位 hex」，3/4/8 位与双引号全部逃逸。
+   * 生产实例 ConflictInboxScreen.tsx 的 `color: '#fff'` 从未被评估过。 */
+  {
+    name: '审计 #418：3 位 hex 不达标 → 应报（曾完全逃逸）',
+    /* #999 在白底上约 2.85:1，远低于 4.5 阈值。 */
+    files: { 'a.tsx': "const s = { bad: { fontSize: 12, color: '#999' } };\n" },
+    expect: 1,
+  },
+  {
+    name: '审计 #418：双引号 hex 不达标 → 应报（曾完全逃逸）',
+    files: { 'a.tsx': 'const s = { bad: { fontSize: 12, color: "#CBD5E1" } };\n' },
+    expect: 1,
+  },
+  /* 对照：3 位 hex 达标的必须放行 —— 证明 lum() 的归一化是对的
+   * （不展开会算出 NaN，比较恒假 ⇒ 静默放行，那是把漏检换成假绿）。 */
+  {
+    name: '审计 #418 对照：3 位 hex 达标 → 放行（验证 lum 归一化非 NaN）',
+    files: { 'a.tsx': "const s = { ok: { fontSize: 12, color: '#000' } };\n" },
+    expect: 0,
+  },
   {
     name: '单行样式不达标 → 应报',
     files: { 'a.tsx': "const s = { container: { backgroundColor: '#F8FAFC' },\n  bad: { fontSize: 12, color: '#CBD5E1' } };\n" },

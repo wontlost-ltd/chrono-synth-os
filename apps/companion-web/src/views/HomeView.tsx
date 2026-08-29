@@ -24,6 +24,7 @@ export function HomeView(): JSX.Element {
           className="avatar"
           aria-hidden="true"
           /* 两个停靠点都留在暖区间：第二点向红偏 8°（更暖，不向黄绿漂）+ 更深，呈暖琥珀立体球。 */
+          // lint-raw-palette-ignore-next-line 头像光晕由运行时 hue 变量驱动（人格心情色），非硬编码调色板色；无法用静态 token 表达
           style={{ background: `radial-gradient(circle at 32% 28%, hsl(${hue} 72% 60%), hsl(${hue - 8} 66% 38%))` }}
         />
         <div className="hero__body">

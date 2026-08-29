@@ -35,6 +35,29 @@ function runOn(files) {
   return { code, out };
 }
 const CASES = [
+  /* ⚠️ 审计 #418：JSX **裸文本**冒充豁免指令 —— 既不带引号也不是注释，
+   * 能通过「引号奇偶」判据关掉**下一行**的门，同时作为可见文字渲染到页面上。
+   *
+   * ⚠️ 用例必须让假指令**恰好在违规行的上一行**（ignore-next-line 的语义），
+   * 否则根本不会触发豁免路径、两版行为相同（我第一版就隔了一行，变异存活）。
+   * 实测对照：缺陷版把这段 JSX 文本当成指令、转而抱怨「缺原因说明」，
+   * **真正的违规完全不报**；修复版正确报出 text-gray-600。 */
+  {
+    name: '审计 #418：JSX 裸文本冒充豁免指令 → 必须仍报下一行违规',
+    files: {
+      'a.tsx': 'export const A = (<div>\n  <p>随便一段可见文字 // lint-raw-palette-ignore-next-line 这是假指令不该生效</p>\n  <span className="text-gray-600" />\n</div>);\n',
+    },
+    expect: 1,
+  },
+  /* 对照：合法的 JSX 注释形式必须仍能豁免 —— 否则把功能一起关掉
+   * （实测误伤过 Sidebar.tsx 两处既有豁免）。 */
+  {
+    name: '审计 #418 对照：JSX 注释形式的豁免 → 仍放行',
+    files: {
+      'a.tsx': 'export const A = (<div>\n  {/* lint-raw-palette-ignore-next-line 装饰性叠加层，不承载文本 */}\n  <span style={{ color: "#ff0000" }} />\n</div>);\n',
+    },
+    expect: 0,
+  },
   {
     name: '裸调色板类名 → 应报',
     files: { 'a.tsx': 'export const A = <div className="text-gray-600" />;\n' },
