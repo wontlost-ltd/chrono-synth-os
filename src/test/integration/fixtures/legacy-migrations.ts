@@ -1367,6 +1367,14 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "ALTER TABLE wallet_payout_requests ADD COLUMN idempotency_key TEXT",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_payout_idempotency\n       ON wallet_payout_requests (tenant_id, idempotency_key)\n       WHERE idempotency_key IS NOT NULL"
     ]
+  },
+  {
+    "version": "v129",
+    "description": "Execution approval: org_approvals adds consumed_at + arguments_hash (single-use + parameter binding)",
+    "sql": [
+      "ALTER TABLE org_approvals ADD COLUMN consumed_at INTEGER",
+      "ALTER TABLE org_approvals ADD COLUMN arguments_hash TEXT"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2695,6 +2703,14 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "ALTER TABLE wallet_payout_requests ADD COLUMN IF NOT EXISTS idempotency_key TEXT",
       "CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_payout_idempotency\n       ON wallet_payout_requests (tenant_id, idempotency_key)\n       WHERE idempotency_key IS NOT NULL"
+    ]
+  },
+  {
+    "version": "v131",
+    "description": "Execution approval: org_approvals adds consumed_at + arguments_hash (single-use + parameter binding)",
+    "sql": [
+      "ALTER TABLE org_approvals ADD COLUMN IF NOT EXISTS consumed_at BIGINT",
+      "ALTER TABLE org_approvals ADD COLUMN IF NOT EXISTS arguments_hash TEXT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
