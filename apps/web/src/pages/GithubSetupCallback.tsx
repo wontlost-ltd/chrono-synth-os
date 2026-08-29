@@ -29,28 +29,45 @@ export function GithubSetupCallback() {
 
   const [state, setState] = useState<'pending' | 'done' | 'error'>('pending');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  /* StrictMode 下 effect 会跑两次——用 ref 防重复提交（upsert 幂等，但没必要多发一次）。 */
-  const submitted = useRef(false);
+  /* ⚠️ 审计 #416：此前是**布尔** ref，置 true 后永不重置。
+   *
+   * 但依赖列表 `[installationId, ...]` 表明设计意图是随新 installation 重跑 ——
+   * 查询串变化而组件未 remount 时（用户给 org A 装完紧接着装 org B），
+   * effect 重跑却撞守卫 `return`，**后端只记录了 A**；而下方成功横幅用的是
+   * **新的** installationId ⇒ 页面显示「installation #B 已绑定」，
+   * 实际 org B 的仓库**永远不同步，全程无任何报错**。
+   * 守卫和渲染读的是两个不同的事实源。
+   *
+   * 改为**按值记**：只有「同一个 installationId 已提交过」才跳过。
+   * StrictMode 双跑仍被挡住（同值），换了 id 则正常重跑。 */
+  const submittedId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (submitted.current) return;
-    submitted.current = true;
-
     if (!installationId) {
       setState('error');
       setErrorMsg(t('githubSetup.missingParam'));
       return;
     }
+    if (submittedId.current === installationId) return;
+    submittedId.current = installationId;
+    /* 换了新 installation ⇒ 回到 pending，别让上一次的 done/error 残留在界面上。 */
+    setState('pending');
+    setErrorMsg(null);
+
     const qs = new URLSearchParams({ installation_id: installationId });
     const setupAction = params.get('setup_action');
     if (setupAction) qs.set('setup_action', setupAction);
 
+    /* 卸载/换 id 后到达的响应不得再 setState（此前无条件 setState，卸载后会告警）。 */
+    let cancelled = false;
     apiFetch<unknown>(`/api/v1/integrations/github/setup?${qs.toString()}`)
-      .then(() => setState('done'))
+      .then(() => { if (!cancelled) setState('done'); })
       .catch((err: Error) => {
+        if (cancelled) return;
         setState('error');
         setErrorMsg(err.message);
       });
+    return () => { cancelled = true; };
   }, [installationId, params, t]);
 
   if (state === 'pending') {
