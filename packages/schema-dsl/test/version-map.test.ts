@@ -6,16 +6,16 @@ describe('VERSION_MAP', () => {
   it('covers every postgres migration version', () => {
     assert.deepEqual(
       versionsFor('postgres'),
-      /* v130 = v128_wallet_payout_idempotency（钱包提现领域幂等锚）。 */
-      range('v', 1, 130),
+      /* v131 = v129_approval_single_use（执行审批一次性消费锚 + 参数绑定）。 */
+      range('v', 1, 131),
     );
   });
 
   it('covers every sqlite SQL migration version', () => {
     assert.deepEqual(
       versionsFor('sqlite-sql'),
-      /* v128 = v128_wallet_payout_idempotency（同上，SQLite alias）。 */
-      range('v', 1, 128),
+      /* v129 = v129_approval_single_use（同上，SQLite alias）。 */
+      range('v', 1, 129),
     );
   });
 

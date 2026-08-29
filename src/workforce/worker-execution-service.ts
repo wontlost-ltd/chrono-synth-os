@@ -256,13 +256,24 @@ export class WorkerExecutionService {
       if (!input.approvalId) {
         return { kind: 'needs_approval', effectiveRisk: assessment.effectiveRisk, reason: assessment.rationale };
       }
-      const cleared = this.approvals.isExecutionApprovalCleared({
+      /* ⚠️ 审计 #407：改为**消费**而非纯读校验。
+       *
+       * 此前用 `isExecutionApprovalCleared`（只读），批准后 status 永远停在
+       * approved，任务一旦回到 delegated（pipeline pending_confirmation 退回 /
+       * L8a 唤醒 / 改派），同一 approvalId 就能再次放行 —— 实测一次人类批准
+       * 放行了 **2 次**真实高风险工具调用，且第二次参数完全不同。
+       *
+       * `consumeExecutionApproval` 先做全部匹配校验、再原子占用（CAS
+       * `WHERE status='approved' AND consumed_at IS NULL`），故：
+       *   - 复用 → 第二次 changes=0 → 拒绝；
+       *   - 并发 → 只有一次能抢到。 */
+      const cleared = this.approvals.consumeExecutionApproval({
         orgId: input.orgId, approvalId: input.approvalId,
         subjectType: 'task_execution', subjectId: input.taskId,
         requesterWorkerId: input.workerId, effectiveRisk: assessment.effectiveRisk,
       });
       if (!cleared) {
-        return { kind: 'needs_approval', effectiveRisk: assessment.effectiveRisk, reason: '审批未放行/已过期/与本次执行不匹配（任务/发起者/风险等级）' };
+        return { kind: 'needs_approval', effectiveRisk: assessment.effectiveRisk, reason: '审批未放行/已过期/已被使用/与本次执行不匹配（任务/发起者/风险等级/参数）' };
       }
     }
 
