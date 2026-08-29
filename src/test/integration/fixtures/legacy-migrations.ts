@@ -1375,6 +1375,13 @@ export const LEGACY_SQLITE_MIGRATIONS = [
       "ALTER TABLE org_approvals ADD COLUMN consumed_at INTEGER",
       "ALTER TABLE org_approvals ADD COLUMN arguments_hash TEXT"
     ]
+  },
+  {
+    "version": "v130",
+    "description": "Org tasks: add blocked_reason so the L8c reconciler can tell capability gaps from tool failures",
+    "sql": [
+      "ALTER TABLE org_tasks ADD COLUMN blocked_reason TEXT"
+    ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
 
@@ -2711,6 +2718,13 @@ export const LEGACY_POSTGRES_MIGRATIONS = [
     "sql": [
       "ALTER TABLE org_approvals ADD COLUMN IF NOT EXISTS consumed_at BIGINT",
       "ALTER TABLE org_approvals ADD COLUMN IF NOT EXISTS arguments_hash TEXT"
+    ]
+  },
+  {
+    "version": "v132",
+    "description": "Org tasks: add blocked_reason so the L8c reconciler can tell capability gaps from tool failures",
+    "sql": [
+      "ALTER TABLE org_tasks ADD COLUMN IF NOT EXISTS blocked_reason TEXT"
     ]
   }
 ] as const satisfies readonly LegacySqlMigration[];
