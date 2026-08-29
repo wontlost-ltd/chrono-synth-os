@@ -78,6 +78,16 @@ jobs:
         run: npm run test:packages
       - name: Contract tests
         run: npm run test:contract
+      # 审计 #410b：ripgrep 是内核纯度门的**外部依赖**，此前从未声明也从未安装 ——
+      # 而门用 `|| true` 把「rg: command not found」一并吞掉，于是**在没有扫描器的
+      # 情况下打印 ✓ 并退出 0**（本地 PATH 剥离实测复现：4 行 command not found + RC=0）。
+      # 门改成 fail-closed 后这条缺失立刻暴露，故这里把依赖显式装上。
+      - name: Install ripgrep (内核纯度门的显式依赖)
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          fi
+          rg --version
       - name: Kernel purity — forbidden imports
         run: npm run check:forbidden-imports
       - name: schema-dsl parity (simple migrations)
@@ -119,6 +129,14 @@ jobs:
         with:
           node-version-file: '.nvmrc'
       - run: npm ci
+      # 审计 #410b：ga:check 内部也跑内核纯度门（os.check-forbidden-imports），
+      # 同样需要 ripgrep 这个显式依赖。
+      - name: Install ripgrep (内核纯度门的显式依赖)
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          fi
+          rg --version
       - name: Build core packages
         run: npx tsc -b packages/contracts/tsconfig.json packages/kernel/tsconfig.json packages/data-plane/tsconfig.json packages/sync-engine/tsconfig.json packages/design-tokens/tsconfig.json packages/schema-dsl/tsconfig.json packages/adapter-web/tsconfig.json packages/adapter-tauri/tsconfig.json packages/adapter-react-native/tsconfig.json
       - name: Build main source

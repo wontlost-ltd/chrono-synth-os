@@ -24,7 +24,14 @@ run_case() {
   bash "${GATE}" >/dev/null 2>&1
   local rc=$?
   rm -rf "${PROBE_DIR}"
-  if [[ "${expect}" == "block" && ${rc} -eq 0 ]]; then
+  # ⚠️ RC=2 是**基础设施错误**（缺 rg / 坏正则），不是「检出违规」。
+  # 若把它当作 block 成功，自测会在扫描器根本没跑的情况下报绿 ——
+  # CI 实测正是如此：11 条 block「全过」而 3 条对照暴露真因（RC 全是 2）。
+  # 故 block 只接受 RC=1（真检出），RC=2 一律判失败并点名。
+  if [[ ${rc} -ge 2 ]]; then
+    printf '  ✗ %s：门以基础设施错误退出（RC=%d，非「检出违规」）——扫描器可能未安装\n' "${name}" "${rc}" >&2
+    FAILURES=$((FAILURES + 1))
+  elif [[ "${expect}" == "block" && ${rc} -eq 0 ]]; then
     printf '  ✗ %s：应被拦截，实际放行（RC=0）\n' "${name}" >&2
     FAILURES=$((FAILURES + 1))
   elif [[ "${expect}" == "pass" && ${rc} -ne 0 ]]; then
