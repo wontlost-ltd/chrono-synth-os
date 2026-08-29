@@ -46,6 +46,42 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
 
+      # ⚠️ 审计 #412：tag push **绕过全部质量门**。
+      #
+      # ci.yml 与 security.yml 的 push 触发都是 `branches: [main]` ——
+      # **tag ref 不匹配 branches 过滤器**，两个 workflow 均不运行；
+      # 而本 workflow 此前只跑 `typecheck / build / test`（test 仅 unit+integration，
+      # 不含 contract/packages/ops/GA 门），也没有 `needs:` 依赖 CI。
+      #
+      # 后果：`git tag v2.1.0 && git push --tags` 打在**任意 commit**上
+      # （包括从未上过 main、从未开过 PR 的分支），即可构建 → 推 ghcr.io →
+      # cosign 签名 → SLSA provenance → 自动 dispatch 下游部署。
+      # 全套供应链证明**为一个从未通过 GA 门的产物背书**，反而使其更可信。
+      #
+      # 故在发布前补齐 test:golden 尾链里 `npm run test` 之外的门。
+      # 不直接跑 test:golden：它会重跑 typecheck+build（上面已跑），
+      # 在 60min 预算的多架构发布里是纯浪费。
+      - name: Install ripgrep（内核纯度门的显式依赖，见审计 #410）
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+          fi
+          rg --version
+      - name: Contract tests（发布门）
+        run: npm run test:contract
+      - name: Package tests（发布门）
+        run: npm run test:packages
+      - name: Ops scripts（发布门）
+        run: npm run test:ops
+      - name: ga:check — GA 聚合门（§8 #1-28 + 跨切面 lint）
+        run: npm run ga:check
+      - name: check:licenses — ADR-0022 双轨许可边界
+        run: npm run check:licenses
+      - name: check:db-access — DB sink 分类棘轮
+        run: npm run check:db-access
+      - name: check:sql-layering — 路由层禁裸 SQL
+        run: npm run check:sql-layering
+
       # 多架构构建：amd64（生产/CI 原生）+ arm64（Apple Silicon 开发机 / AWS Graviton 等 ARM 云）。
       # amd64 runner 交叉构建 arm64 层需 QEMU 模拟器（setup-qemu 注册 binfmt handler）。
       - uses: docker/setup-qemu-action@v4
