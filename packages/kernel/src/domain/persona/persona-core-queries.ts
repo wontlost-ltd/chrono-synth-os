@@ -775,7 +775,13 @@ export interface PcoreCreateTaskApplicationParams extends PcoreTaskApplicationPa
 
 export interface PcoreCreateTaskAssignmentParams extends PcoreTaskApplicationParams {
   id: string;
-  applicationId: string;
+  /**
+   * 申请单 ID。**可空**：legacy 直接接单路径（`acceptTask`）没有申请单，
+   * 但仍必须产生 assignment 行 —— 否则 `completeTask` 的结算/账本无锚可依
+   * （`wallet_settlements.assignment_id` 是 NOT NULL + UNIQUE）。
+   * DB 列 `task_assignments.application_id` 本就可空，此处与之对齐。
+   */
+  applicationId: string | null;
   now: number;
 }
 

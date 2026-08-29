@@ -1484,6 +1484,7 @@ export class PersonaMarketplaceService {
     if (!task || task.status !== 'open') return null;
 
     const now = Date.now();
+    const assignmentId = generatePrefixedId('tas');
     const db = this.source.forTenant(input.tenantId);
     db.transaction(() => {
       db.execute(pcoreCmdAcceptMarketplaceTaskLegacy({
@@ -1491,6 +1492,25 @@ export class PersonaMarketplaceService {
         taskId: input.taskId,
         personaId: input.personaId,
         forkId: input.forkId ?? null,
+        now,
+      }));
+
+      /* ⚠️ 审计 #397：**直接接单也必须产生 assignment 行**。
+       *
+       * 此前只有 `applyToTask` + `assignTask` 这条路径建 assignment，直接接单不建。
+       * 于是 `completeTask` 在直接接单的任务上**无锚可依** —— `wallet_settlements`
+       * 的 `assignment_id` 是 NOT NULL + UNIQUE，没有 assignment 就写不出结算行，
+       * 付款只能退化成裸改余额（实测该路径不变量破坏：余额 9000 vs 流水 0）。
+       *
+       * 与其在 completeTask 里为「有/无 assignment」分两种付款写法（特殊情况），
+       * 不如消灭这个特殊情况：两条接单路径都产出 assignment，付款逻辑就只剩一种。
+       * `application_id` 留空 —— 直接接单本就没有申请单，DB 列本就可空。 */
+      db.execute(pcoreCmdCreateTaskAssignment({
+        id: assignmentId,
+        tenantId: input.tenantId,
+        taskId: input.taskId,
+        personaId: input.personaId,
+        applicationId: null,
         now,
       }));
 
@@ -1524,6 +1544,58 @@ export class PersonaMarketplaceService {
     const payout = round(task.reward * Math.max(qualityScore, 0.2), 2);
     const tokenReward = round(growthDelta * 8, 2);
 
+    /* ⚠️ 审计 #397：本方法是**第二条付款路径**，此前完全绕开资金防护 ——
+     * 直接 `balance = balance + payout`，不写 `wallet_transactions` 账本、
+     * 不写 `wallet_settlements`、不校验钱包 status/币种。实测后果：
+     *   - 不变量「余额 == 流水净和」破坏（9000 vs 0）；
+     *   - 提现后账本净和变成 -9000（账面显示钱包欠钱）；
+     *   - 平台收入报表 grossRevenue=0 而 ownerPayouts=9000；
+     *   - **冻结钱包照样付款**、**CRED 金额被塞进 USD 钱包**（结算路径两者都会拒）；
+     *   - 对账器期望集只从 `wallet_settlements` 派生 ⇒ 这类账实不符**对它完全不可见**。
+     *
+     * 修法遵循同仓 `acceptSubmittedTask` 已验证的形状：把结算侧的**全部**前置拒绝
+     * 条件镜像到任何写入之前（钱包不存在 / status !== 'active' / 币种不符），
+     * 漏一条就漏一种死局（复审 Medium-1 实测：只镜像币种时冻结钱包仍复现）。
+     *
+     * ⚠️ 为什么必须**前置**而不是写在事务里：本方法的 CAS 一旦成功，任务就落到
+     * `completed` 终态；若把拒绝放在其后，会得到「任务 completed、零结算、余额 0、
+     * 重试被终态拒绝」的死局 —— 比原缺陷更糟（干了活没人付钱且无法补救）。 */
+    const payeeWallet = this.ctx.walletHook.getWalletByPersonaId(input.tenantId, personaId);
+    if (!payeeWallet || payeeWallet.status !== 'active' || payeeWallet.currency !== task.currency) return null;
+
+    /* ⚠️ 审计 #398：统一幂等锚。此前两条付款路径的锚**互不相交** ——
+     * settlement 锚在 `wallet_settlements.assignment_id`，completeTask 锚在
+     * `marketplace_tasks.status` 的 CAS。completeTask 不写 settlement 行，
+     * 故 `settleTaskPayment` 的幂等短路查不到东西、照常再付一次。
+     * 实测：reward=100 的工单经两条路径实付 160。
+     *
+     * 修法：completeTask 也写 settlement 行（下方），并在此复用**同一个锚**做
+     * 幂等短路。锚落到同一张表后，两条路径互相可见。 */
+    const assignmentForAnchor = this.getLatestTaskAssignmentByTask(input.tenantId, input.taskId);
+    /* 两条接单路径现在都产出 assignment（见 acceptTask），故无 assignment =
+     * 数据异常而非正常分支。此时**拒绝付款**而不是退化成无账本的裸转账 ——
+     * 后者正是本次修复要消灭的东西。 */
+    if (!assignmentForAnchor) return null;
+
+    /* ⚠️ 纵深防御，非主防线（如实标注）：走公开 API 时，重复调用会先被上面的
+     * `task.status !== 'accepted'` 判定挡住（任务已落 completed），本检查够不到 ——
+     * 变异验证实测：把这行改成恒假，25 个用例仍全绿。
+     * 保留它是为了挡「任务被 reopen 回 accepted 但结算行仍在」这类状态组合。
+     * #398 的真实方向（completeTask → settleTaskPayment）由结算侧的幂等短路
+     * 兜住，那条**有**覆盖（变异实测转红）。 */
+    const existingSettlement = this.ctx.walletHook.getWalletSettlementByAssignmentId(
+      input.tenantId,
+      assignmentForAnchor.id,
+    );
+    if (existingSettlement) return null;
+
+    /* 分账口径：**保持本路径原有的付款金额语义不变**（payout = reward × max(quality,0.2)
+     * 全额进 owner），只把账目补完整。故 ownerPct=100 / persona=0 / platform=0，
+     * 且 settlement 的 total 记的是**实付额** payout 而非 task.reward ——
+     * 这样「结算行金额 == 钱包实际增量 == 流水净和」三者自洽。
+     * （若未来要对本路径抽成，改这三个百分比即可，无需再动账本逻辑。） */
+    const payoutMinor = toMinor(payout);
+
     const db = this.source.forTenant(input.tenantId);
     let claimed = true;
     try {
@@ -1552,6 +1624,42 @@ export class PersonaMarketplaceService {
         tokenReward,
         now,
       }));
+
+      /* 审计 #397/#398：与钱包增量**同事务**补齐结算行 + 账本分录。
+       *
+       * 顺序与 `settleTaskPaymentInTx` 一致：先 settlement 行（作为 journal 的
+       * referenceId），再 journal。零金额分项不写流水（审计 W#11：
+       * `assertWalletMutationAllowed` 拒 amountMinor <= 0，写 0 会整笔回滚）；
+       * 本路径 persona/platform 分项恒为 0，故只写 owner 一条 credit。 */
+      if (payoutMinor > 0) {
+        const settlementId = generatePrefixedId('ws');
+        db.execute(pcoreCmdCreateWalletSettlement({
+          id: settlementId,
+          tenantId: input.tenantId,
+          walletId: payeeWallet.id,
+          taskId: input.taskId,
+          assignmentId: assignmentForAnchor.id,
+          totalAmountMinor: payoutMinor,
+          currency: payeeWallet.currency,
+          ownerPct: 100,
+          personaPct: 0,
+          platformPct: 0,
+          ownerAmountMinor: payoutMinor,
+          personaAmountMinor: 0,
+          platformAmountMinor: 0,
+          now,
+        }));
+
+        this.ctx.walletHook.insertWalletTransactionInTx(db, {
+          tenantId: input.tenantId,
+          walletId: payeeWallet.id,
+          transactionType: 'task_payment',
+          amountMinor: payoutMinor,
+          currency: payeeWallet.currency,
+          referenceType: 'wallet_settlement',
+          referenceId: settlementId,
+        });
+      }
 
       db.execute(pcoreCmdCompleteTaskPersonaUpdate({
         tenantId: input.tenantId,
