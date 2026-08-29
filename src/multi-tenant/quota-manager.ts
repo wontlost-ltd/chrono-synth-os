@@ -12,7 +12,8 @@
 import type { SyncWriteUnitOfWork } from '@chrono/kernel';
 import {
   quotaQueryLimit, quotaQueryUsage,
-  quotaCmdSetLimit, quotaCmdClearLimit, quotaCmdConsume, quotaCmdRecordUsage, quotaCmdPruneUsage,
+  quotaCmdSetLimit, quotaCmdClearLimit, quotaCmdConsume,
+  quotaCmdRefund, quotaCmdRecordUsage, quotaCmdPruneUsage,
 } from '@chrono/kernel';
 import { registerCoreSelfExecutors } from '../storage/executors/index.js';
 import type { TenantDbResolver } from '../storage/tenant-db-resolver.js';
@@ -107,6 +108,33 @@ export class QuotaManager {
       tenantId, resource, quantity, windowStart, maxPerWindow: limit.max_per_window,
     }));
     return result.rowsAffected > 0;
+  }
+
+  /**
+   * 退还已预扣的配额（审计 #420）。
+   *
+   * 用于「先扣后调」的调用方在**整体失败**时归还预扣额度 ——
+   * ModelRouter 预扣 estimatedTokens 后若整条 fallback 链全败，
+   * 那笔配额此前从不退还（实测：provider 宕机重试 10 次 → 扣 40960 token、
+   * 成功响应 0，租户为零次成功调用付了配额）。
+   *
+   * ⚠️ 幂等性由调用方负责：本方法是无条件减法（在 0 处夹紧）。
+   * 调用方必须保证「一次预扣最多退一次」——ModelRouter 用 try/catch
+   * 的单一失败出口保证这点。
+   *
+   * ⚠️ 必须与预扣落在**同一个窗口**才有意义。跨窗口的退还会减错行，
+   * 故这里用与 consumeQuota 完全相同的窗口算法，并只更新已存在的行。
+   */
+  refundQuota(tenantId: string, resource: string, quantity: number, now?: number): void {
+    if (!Number.isFinite(quantity) || quantity <= 0) return;
+    const tx = this.source.forTenant(tenantId);
+    const ts = now ?? Date.now();
+    const limit = tx.queryOne(quotaQueryLimit(tenantId, resource));
+    /* 无 limit 的资源走 recordUsage 记账，窗口起点即写入时刻 —— 无法可靠定位
+     * 当初那一行，故不退（保守：宁可不退也不减错行）。 */
+    if (!limit) return;
+    const windowStart = ts - (ts % limit.window_ms);
+    tx.execute(quotaCmdRefund({ tenantId, resource, quantity, windowStart }));
   }
 
   recordUsage(tenantId: string, resource: string, quantity = 1, now?: number): void {

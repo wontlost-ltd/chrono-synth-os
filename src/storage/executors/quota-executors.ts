@@ -7,12 +7,13 @@ import type {
   QuotaLimitRow, QuotaUsageRow,
   QuotaLimitLookupParams, QuotaUsageLookupParams,
   QuotaSetLimitParams, QuotaClearLimitParams,
-  QuotaConsumeParams, QuotaRecordUsageParams, QuotaPruneUsageParams,
+  QuotaConsumeParams,
+  QuotaRefundParams, QuotaRecordUsageParams, QuotaPruneUsageParams,
 } from '@chrono/kernel';
 import {
   QUOTA_QUERY_LIMIT, QUOTA_QUERY_USAGE,
   QUOTA_CMD_SET_LIMIT, QUOTA_CMD_CLEAR_LIMIT,
-  QUOTA_CMD_CONSUME, QUOTA_CMD_RECORD_USAGE, QUOTA_CMD_PRUNE_USAGE,
+  QUOTA_CMD_CONSUME, QUOTA_CMD_RECORD_USAGE, QUOTA_CMD_PRUNE_USAGE, QUOTA_CMD_REFUND,
 } from '@chrono/kernel';
 
 export function registerQuotaExecutors(): void {
@@ -54,6 +55,21 @@ export function registerQuotaExecutors(): void {
        VALUES (?, ?, ?, ?)
        ON CONFLICT(tenant_id, resource, window_start) DO UPDATE SET used = quota_usage.used + ? WHERE quota_usage.used + ? <= ?`,
     ).run(p.tenantId, p.resource, p.quantity, p.windowStart, p.quantity, p.quantity, p.maxPerWindow);
+    return { rowsAffected: result.changes };
+  });
+
+  /* 审计 #420：退还预扣配额。
+   *
+   * ⚠️ 必须在 0 处**夹紧**：退还额大于当期已用量时若允许变负，
+   * 后续 consume 的 `used + q <= max` 判定就会凭空多出额度 —— 那是配额绕过，
+   * 比「不退还」严重得多。故用 MAX(0, used - q)。
+   * ⚠️ 只更新**已存在**的当期行：没有行说明没扣过，退还无意义（不 INSERT 负数）。 */
+  registerCommand<QuotaRefundParams>(QUOTA_CMD_REFUND, (db, p) => {
+    const result = db.prepare<void>(
+      `UPDATE quota_usage
+          SET used = MAX(0, used - ?)
+        WHERE tenant_id = ? AND resource = ? AND window_start = ?`,
+    ).run(p.quantity, p.tenantId, p.resource, p.windowStart);
     return { rowsAffected: result.changes };
   });
 

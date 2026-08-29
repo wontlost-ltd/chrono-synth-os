@@ -134,6 +134,56 @@ describe('QuotaManager', () => {
       assert.equal(qm.checkQuota('tenant-a', 'llm_tokens', 3_001, now), false);
     });
   });
+  /* ⚠️ 审计 #420：ModelRouter 是「先扣后调」，整条 fallback 链失败时那笔预扣
+   * 此前从不退还，而 QuotaManager **没有退还 API**。
+   * 实测：provider 宕机重试 10 次 → 扣 40960 token、成功响应 0。 */
+  it('审计 #420：refundQuota 退还预扣额度，额度可被后续请求重新使用', () => {
+    const now = 100_000;
+    qm.setLimit('tenant-a', 'llm_tokens', 1000, 60_000);
+
+    assert.equal(qm.consumeQuota('tenant-a', 'llm_tokens', 800, now), true, '预扣 800 应成功');
+    assert.equal(qm.checkQuota('tenant-a', 'llm_tokens', 300, now), false, '预扣后余额不足 300');
+
+    qm.refundQuota('tenant-a', 'llm_tokens', 800, now);
+
+    assert.equal(qm.checkQuota('tenant-a', 'llm_tokens', 300, now), true, '退还后额度应可再用');
+    assert.equal(qm.consumeQuota('tenant-a', 'llm_tokens', 1000, now), true, '退还后满额仍可用');
+  });
+
+  /* ⚠️ 退还必须在 0 处**夹紧**：允许变负 = 凭空多出额度 = 配额绕过，
+   * 比「不退还」严重得多。 */
+  it('审计 #420：退还额超过已用量时必须夹紧到 0（不得凭空造额度）', () => {
+    const now = 100_000;
+    qm.setLimit('tenant-a', 'llm_tokens', 1000, 60_000);
+    assert.equal(qm.consumeQuota('tenant-a', 'llm_tokens', 100, now), true);
+
+    /* 退还 5000 远超已用的 100。 */
+    qm.refundQuota('tenant-a', 'llm_tokens', 5000, now);
+
+    const row = db.prepare<{ used: number }>(
+      `SELECT used FROM quota_usage WHERE tenant_id = ? AND resource = ?`,
+    ).get('tenant-a', 'llm_tokens');
+    assert.ok(row, '用量行应存在');
+    assert.equal(row!.used, 0, `已用量必须夹紧到 0，实际 ${row!.used}`);
+
+    /* 关键不变量：夹紧后仍只能用满额，不能超。 */
+    assert.equal(qm.checkQuota('tenant-a', 'llm_tokens', 1000, now), true, '满额可用');
+    assert.equal(qm.checkQuota('tenant-a', 'llm_tokens', 1001, now), false, '超额仍必须拒绝');
+  });
+
+  it('审计 #420：非法退还额（0/负数/NaN）静默忽略，不得改动用量', () => {
+    const now = 100_000;
+    qm.setLimit('tenant-a', 'llm_tokens', 1000, 60_000);
+    qm.consumeQuota('tenant-a', 'llm_tokens', 500, now);
+
+    for (const bad of [0, -100, Number.NaN, Number.POSITIVE_INFINITY]) {
+      qm.refundQuota('tenant-a', 'llm_tokens', bad, now);
+    }
+    const row = db.prepare<{ used: number }>(
+      `SELECT used FROM quota_usage WHERE tenant_id = ? AND resource = ?`,
+    ).get('tenant-a', 'llm_tokens')!;
+    assert.equal(row.used, 500, '非法退还额不得改动用量');
+  });
 });
 
 describe('QuotaManager 双入口', () => {
@@ -175,4 +225,5 @@ describe('QuotaManager 双入口', () => {
     assert.equal(typeof r.totalDeleted, 'number');
     assert.equal(typeof r.mayHaveMore, 'boolean');
   });
+
 });

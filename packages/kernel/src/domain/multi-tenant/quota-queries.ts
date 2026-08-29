@@ -16,6 +16,15 @@ export const QUOTA_CMD_CLEAR_LIMIT = 'quota.clearLimit' as const;
 export const QUOTA_CMD_CONSUME = 'quota.consume' as const;
 export const QUOTA_CMD_RECORD_USAGE = 'quota.recordUsage' as const;
 export const QUOTA_CMD_PRUNE_USAGE = 'quota.pruneUsage' as const;
+/**
+ * 退还已预扣的配额（审计 #420）。
+ *
+ * ModelRouter 是**先扣后调**：预扣 estimatedTokens 再发请求。整条 fallback 链
+ * 全部失败时那笔预扣从不退还，而 QuotaManager 此前**没有退还 API** ——
+ * 实测 provider 宕机重试 10 次 → 扣 40960 token、成功响应 0，
+ * 租户为零次成功调用付了配额。
+ */
+export const QUOTA_CMD_REFUND = 'quota.refund' as const;
 
 /* ── 行类型 ── */
 
@@ -43,6 +52,14 @@ export interface QuotaLimitLookupParams {
 export interface QuotaUsageLookupParams {
   tenantId: string;
   resource: string;
+  windowStart: number;
+}
+
+/** 退还参数（审计 #420）。quantity 为**正数**，执行器负责做减法并在 0 处夹紧。 */
+export interface QuotaRefundParams {
+  tenantId: string;
+  resource: string;
+  quantity: number;
   windowStart: number;
 }
 
@@ -109,6 +126,11 @@ export function quotaCmdConsume(params: QuotaConsumeParams): Command<QuotaConsum
 
 export function quotaCmdRecordUsage(params: QuotaRecordUsageParams): Command<QuotaRecordUsageParams> {
   return { kind: QUOTA_CMD_RECORD_USAGE, params };
+}
+
+/** 退还预扣配额（审计 #420）。见 QUOTA_CMD_REFUND 说明。 */
+export function quotaCmdRefund(params: QuotaRefundParams): Command<QuotaRefundParams> {
+  return { kind: QUOTA_CMD_REFUND, params };
 }
 
 export function quotaCmdPruneUsage(params: QuotaPruneUsageParams): Command<QuotaPruneUsageParams> {

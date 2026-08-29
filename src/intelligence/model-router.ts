@@ -235,6 +235,23 @@ export class ModelRouter implements LLMProvider {
     } catch (err) {
       llmMetrics.chatErrors++;
       recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
+      /* ⚠️ 审计 #420：整条 fallback 链失败 → **退还上面预扣的配额**。
+       *
+       * 此前预扣后从不退还：实测 provider 宕机、沿链重试 10 次 →
+       * 扣 40960 token、成功响应 0 —— 租户为零次成功调用付了配额，
+       * 且当期窗口内后续正常请求会被这笔幽灵用量挤掉。
+       *
+       * 这里是本方法**唯一的失败出口**（dispatchWithFallback 要么返回结果、
+       * 要么抛出），故「一次预扣最多退一次」由控制流保证，无需额外幂等标记。
+       * 退还本身在 0 处夹紧，不会凭空造出额度。 */
+      if (this.quotaManager && estimatedTokens > 0) {
+        try {
+          this.quotaManager.refundQuota(this.tenantId, 'llm_tokens', estimatedTokens);
+        } catch {
+          /* 退还失败不得掩盖原始错误——原错误才是调用方需要看到的。
+           * 退不掉的后果是「多扣一次配额」，比丢失真因轻。 */
+        }
+      }
       throw err;
     }
     recordLlmLatency(llmMetrics.chatLatencyMs, performance.now() - chatStart);
