@@ -7,6 +7,7 @@ import type { CognitiveMemoryGraph } from '../core/memory-graph.js';
 import type { EmbeddingIndex } from '../intelligence/embedding-index.js';
 import type { Logger } from '../utils/logger.js';
 import type { EventBus } from '../events/event-bus.js';
+import type { KnowledgeItem } from '../types/avatar-autorun.js';
 import type { KnowledgeSourceStore } from '../storage/knowledge-source-store.js';
 import type { KnowledgeSourceRegistry } from './knowledge-source-registry.js';
 import { realClock, type Clock } from '../utils/clock.js';
@@ -21,6 +22,36 @@ export interface IngestionResult {
    * 调用方据此告警/人工介入；空数组表示本轮游标全部正常推进。
    */
   readonly cursorAdvanceFailures: string[];
+}
+
+/**
+ * 截断时的**部分游标**（审计 #423）：按本批**实际导入**到的位置推进，
+ * 使下一轮从它之后继续 —— 既不重复也不跳过。
+ *
+ * 为什么不能直接用 source 返回的 `nextState`：它是对**全部拉取项**算的
+ * （rss-source.ts:97 的 newestTs 覆盖所有 item），截断时用它会**跳过**
+ * 尚未处理的条目。而完全不推进又会让超量 feed **永远卡在前 N 条**
+ * （实测 3 轮写入 30 个节点 / 25 条 feed）。
+ *
+ * @returns 新的 stateJson；若本批没有可用时间戳（源不提供 publishedAt）
+ *   则返回 null 表示**不推进** —— 保守方向，宁可重复也不跳过。
+ */
+function partialCursor(batch: readonly KnowledgeItem[], currentStateJson: string | null): string | null {
+  let maxTs = 0;
+  for (const item of batch) {
+    if (typeof item.publishedAt === 'number' && item.publishedAt > maxTs) maxTs = item.publishedAt;
+  }
+  if (maxTs <= 0) return null;
+
+  /* 保留既有 state 的其它字段，只推进时间游标。 */
+  let base: Record<string, unknown> = {};
+  if (currentStateJson) {
+    try { base = JSON.parse(currentStateJson) as Record<string, unknown>; } catch { base = {}; }
+  }
+  /* 游标只进不退：并发/乱序下不得把已推进的游标拉回去（否则又会重复摄入）。 */
+  const prev = typeof base.lastBuildTs === 'number' ? base.lastBuildTs : 0;
+  if (maxTs <= prev) return null;
+  return JSON.stringify({ ...base, lastBuildTs: maxTs });
 }
 
 export class KnowledgeIngestionService {
@@ -108,19 +139,33 @@ export class KnowledgeIngestionService {
         memoryIds.push(...sourceMemoryIds);
         skipped += Math.max(0, items.length - batch.length);
 
-        /* 仅在未截断时推进游标，避免跳过未处理的条目。
-         *
-         * 游标推进失败是**静默重复摄入**的根因（审计 Warning B4-12）：记忆已写入，
+        /* 游标推进失败是**静默重复摄入**的根因（审计 Warning B4-12）：记忆已写入，
          * 但游标停在旧位置 → 下一轮重新拉同一批内容。而 fingerprint 去重只是本次
-         * 运行内的内存 Set（第 47 行），跨运行完全不设防，于是同一内容被重复灌进记忆图。
+         * 运行内的内存 Set，跨运行完全不设防，于是同一内容被重复灌进记忆图。
          * 记忆节点没有持久化 fingerprint 列，真正的跨运行去重需要加表 + 迁移，
-         * 超出本次范围；此处至少把该失败**显式暴露**，不让它混在通用 warn 里被忽略。 */
-        if (!truncated) {
+         * 超出本次范围；此处至少把该失败**显式暴露**，不让它混在通用 warn 里被忽略。
+         *
+         * ⚠️ 审计 #423：此前**只有 `!truncated` 才推进游标**，于是当 feed 条数
+         * 长期超过 `maxItemsPerRun` 时，游标**永不推进** —— 每轮都重新拉同一批、
+         * 只处理前 N 条，**超出部分永远读不到**（实测 3 轮写入 30 个节点 / 25 条 feed）。
+         *
+         * 不能简单地在截断时也用 `nextState`：它是对**全部拉取项**算的
+         * （见 rss-source.ts:97 的 newestTs 覆盖所有 item），直接用会**跳过**
+         * 未处理的条目 —— 那正是原来那道守卫要防的事，方向相反但同样丢数据。
+         *
+         * 正解是**按实际处理到的位置**推进：截断时用**本批最后一条已导入项**的
+         * publishedAt 作为游标，使下一轮从它之后继续。既不重复也不跳过。
+         * 拿不到 publishedAt（源不提供时间戳）时保持原样不推进 —— 保守方向。 */
+        const advanceState = truncated
+          ? partialCursor(batch, source.stateJson)
+          : (nextState ? JSON.stringify(nextState) : source.stateJson);
+
+        if (advanceState !== null) {
           try {
             this.store.updateState(
               source.id,
               tenantId,
-              nextState ? JSON.stringify(nextState) : source.stateJson,
+              advanceState,
               this.clock.now(),
             );
           } catch (err) {

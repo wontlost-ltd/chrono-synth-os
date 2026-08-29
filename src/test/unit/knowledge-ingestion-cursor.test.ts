@@ -23,15 +23,25 @@ interface Harness {
   service: KnowledgeIngestionService;
   addedMemories: string[];
   updateStateCalls: number;
+  /** 捕获写入的 stateJson —— 断言游标**推进到了哪里**，而不只是「推进过」。 */
+  writtenStates: string[];
   errorLogs: string[];
   /** 捕获 knowledge:ingested 事件——不捕获就无法发现「事件被吞」这类回退。 */
   emitted: Array<{ sourceId: string }>;
 }
 
 /** 造一个只含所需能力的最小 service；updateStateFails 控制游标推进是否抛错。 */
-function makeHarness(opts: { updateStateFails?: boolean; items?: Array<{ content: string; fingerprint?: string }> } = {}): Harness {
+function makeHarness(opts: {
+  updateStateFails?: boolean;
+  items?: Array<{ content: string; fingerprint?: string; publishedAt?: number }>;
+  /** 单轮上限；小于 items 长度即触发截断路径（审计 #423）。 */
+  maxItemsPerRun?: number;
+  /** source 的初始 stateJson。 */
+  stateJson?: string | null;
+} = {}): Harness {
   const addedMemories: string[] = [];
   const errorLogs: string[] = [];
+  const writtenStates: string[] = [];
   let updateStateCalls = 0;
   let memSeq = 0;
 
@@ -46,10 +56,11 @@ function makeHarness(opts: { updateStateFails?: boolean; items?: Array<{ content
 
   const store = {
     listEnabledByIds: () => [
-      { id: 'src_1', type: 'rss', configJson: '{}', stateJson: '{"cursor":"old"}' },
+      { id: 'src_1', type: 'rss', configJson: '{}', stateJson: opts.stateJson ?? '{"cursor":"old"}' },
     ],
-    updateState: (): void => {
+    updateState: (_id: string, _tenant: string, stateJson: string): void => {
       updateStateCalls += 1;
+      writtenStates.push(stateJson);
       if (opts.updateStateFails) throw new Error('游标写入失败（模拟）');
     },
   } as unknown as KnowledgeSourceStore;
@@ -72,11 +83,11 @@ function makeHarness(opts: { updateStateFails?: boolean; items?: Array<{ content
   } as unknown as Logger;
 
   const service = new KnowledgeIngestionService(
-    registry, store, memoryGraph, undefined, bus, logger,
+    registry, store, memoryGraph, undefined, bus, logger, opts.maxItemsPerRun ?? 100,
   );
 
   return {
-    service, addedMemories, errorLogs, emitted,
+    service, addedMemories, errorLogs, emitted, writtenStates,
     get updateStateCalls() { return updateStateCalls; },
   } as Harness;
 }
@@ -133,5 +144,60 @@ describe('KnowledgeIngestionService — 游标推进', () => {
     const result = await h.service.ingest(TENANT, ['src_1'], signal);
     assert.equal(result.imported, 2, '同 fingerprint 只摄入一次');
     assert.equal(result.skipped, 1);
+  });
+
+  /* ⚠️ 审计 #423：此前**只有 `!truncated` 才推进游标**，于是当 feed 条数长期
+   * 超过 maxItemsPerRun 时，游标**永不推进** —— 每轮重新拉同一批、只处理前 N 条，
+   * **超出部分永远读不到**（实测 3 轮写入 30 个节点 / 25 条 feed）。 */
+  it('审计 #423：截断时必须按已处理位置推进游标（不得永不推进）', async () => {
+    const h = makeHarness({
+      items: [
+        { content: 'a', publishedAt: 1000 },
+        { content: 'b', publishedAt: 2000 },
+        { content: 'c', publishedAt: 3000 },
+      ],
+      maxItemsPerRun: 2,          /* 只处理前 2 条 → 触发截断 */
+      stateJson: '{"lastBuildTs":0}',
+    });
+    const result = await h.service.ingest(TENANT, ['src_1'], signal);
+
+    assert.equal(result.imported, 2, '本轮只导入 2 条');
+    /* 变异实测：改回 `if (!truncated)` → updateStateCalls=0，本断言转红。 */
+    assert.equal(h.updateStateCalls, 1, '截断时也必须推进游标');
+
+    const written = JSON.parse(h.writtenStates[0]!) as { lastBuildTs: number };
+    /* 推进到**已处理的最后一条**（2000），而不是全部项的最大值（3000）——
+     * 后者会跳过第 3 条，那是原守卫要防的事，方向相反但同样丢数据。 */
+    assert.equal(written.lastBuildTs, 2000, '游标应停在已处理位置，不得跳过未处理项');
+  });
+
+  it('审计 #423：游标只进不退（乱序/并发下不得把已推进的游标拉回）', async () => {
+    const h = makeHarness({
+      items: [{ content: 'old', publishedAt: 500 }, { content: 'old2', publishedAt: 600 }],
+      maxItemsPerRun: 1,
+      stateJson: '{"lastBuildTs":9000}',   /* 游标已远超本批 */
+    });
+    await h.service.ingest(TENANT, ['src_1'], signal);
+    assert.equal(h.updateStateCalls, 0, '本批时间戳更旧 → 不得回退游标');
+  });
+
+  it('审计 #423：源不提供 publishedAt 时保持不推进（保守，宁可重复不跳过）', async () => {
+    const h = makeHarness({
+      items: [{ content: 'x' }, { content: 'y' }, { content: 'z' }],
+      maxItemsPerRun: 2,
+    });
+    await h.service.ingest(TENANT, ['src_1'], signal);
+    assert.equal(h.updateStateCalls, 0, '无时间戳无法定位处理位置 → 不推进');
+  });
+
+  it('对照：未截断时仍用 source 的 nextState（不得被部分游标顶替）', async () => {
+    const h = makeHarness({
+      items: [{ content: 'a', publishedAt: 1000 }],
+      maxItemsPerRun: 10,        /* 不截断 */
+    });
+    await h.service.ingest(TENANT, ['src_1'], signal);
+    assert.equal(h.updateStateCalls, 1);
+    const written = JSON.parse(h.writtenStates[0]!) as { cursor?: string };
+    assert.equal(written.cursor, 'next', '未截断路径应写 source 返回的 nextState');
   });
 });
