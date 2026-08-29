@@ -53,6 +53,41 @@ describe('TypedEventEmitter', () => {
     assert.equal(emitter.listenerCount('pong'), 1);
   });
 
+  /* ⚠️ 审计 #422：**无参**调用此前被转发成 `removeAllListeners(undefined)`。
+   * Node 靠 `arguments.length` 区分「删全部」与「删某事件」，显式传 undefined
+   * 走后者分支 → **一个都不删**；而 registry 已被 clear，`off()` 再也找不到
+   * wrapper ⇒ 泄漏不可回收。
+   *
+   * 上面那条既有用例只测了**传事件名**的分支（能正常工作的那条），
+   * 无参路径零覆盖 —— 而 `chrono-synth-os.ts:793` 的 stop() 走的正是无参。 */
+  it('审计 #422：removeAllListeners() 无参必须清除全部事件的监听器', () => {
+    const emitter = new TypedEventEmitter<TestEvents>();
+    emitter.on('ping', () => {});
+    emitter.on('ping', () => {});
+    emitter.on('pong', () => {});
+    assert.equal(emitter.listenerCount('ping'), 2, '前提：应有 2 个 ping 监听器');
+    assert.equal(emitter.listenerCount('pong'), 1, '前提：应有 1 个 pong 监听器');
+
+    emitter.removeAllListeners();
+
+    assert.equal(emitter.listenerCount('ping'), 0, '无参调用必须清除 ping 监听器');
+    assert.equal(emitter.listenerCount('pong'), 0, '无参调用必须清除 pong 监听器');
+  });
+
+  /* 复刻生产形态：反复 start/stop（stop 走无参 removeAllListeners）。
+   * 修复前实测 5 轮后 listenerCount = 5（每轮泄漏 1 个）。 */
+  it('审计 #422：反复注册+无参清除不得累积泄漏', () => {
+    const emitter = new TypedEventEmitter<TestEvents>();
+    for (let i = 0; i < 5; i++) {
+      emitter.on('ping', () => {});
+      emitter.removeAllListeners();
+    }
+    assert.equal(
+      emitter.listenerCount('ping'), 0,
+      `5 轮 注册/清除 后不得残留监听器，实际 ${emitter.listenerCount('ping')}`,
+    );
+  });
+
   it('监听器异常被隔离：不冒泡出 emit，不影响其它监听器', () => {
     const errors: Array<{ event: string; err: unknown }> = [];
     const emitter = new TypedEventEmitter<TestEvents>((event, err) => errors.push({ event, err }));

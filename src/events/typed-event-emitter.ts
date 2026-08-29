@@ -119,13 +119,29 @@ export class TypedEventEmitter<TMap extends { [K in keyof TMap]: unknown }> {
     return this.emitter.listenerCount(event);
   }
 
+  /**
+   * ⚠️ 审计 #422：无参调用此前被转发成 `removeAllListeners(undefined)`。
+   *
+   * Node 的 EventEmitter 靠 **`arguments.length`** 区分「删全部」与「删某个事件」，
+   * 显式传 `undefined` 走的是后者分支 —— 于是**一个监听器都不会被删**。
+   * 而上面的 `registry.clear()` 照常执行，导致 `off()` 再也找不到 wrapper，
+   * 泄漏的监听器**不可回收**。
+   *
+   * 生产影响：`chrono-synth-os.ts:793` 的 `stop()` 走的正是无参路径 ——
+   * 实测 5 轮 start/stop 后 `listenerCount = 5`（每轮泄漏 1 个，stop 完全无效）。
+   * 反复 start/stop 的场景（测试夹具、desktop sidecar 重启、多租户 OS 工厂）
+   * 会持续累积。
+   *
+   * 修法：按 arity 分派，不把 `undefined` 传下去。
+   */
   removeAllListeners<K extends keyof TMap & string>(event?: K): this {
     if (event === undefined) {
       this.registry.clear();
+      this.emitter.removeAllListeners();
     } else {
       this.registry.delete(event);
+      this.emitter.removeAllListeners(event);
     }
-    this.emitter.removeAllListeners(event);
     return this;
   }
 }
