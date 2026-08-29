@@ -22,6 +22,13 @@ export class TaskWorker {
   private reaperTimer: ReturnType<typeof setInterval> | undefined;
   private purgeTimer: ReturnType<typeof setInterval> | undefined;
   private running = 0;
+  /**
+   * 连续「槽位全满且一个任务都没能启动」的轮询次数（审计 #400 的停摆探测）。
+   * 任何一次成功出队都会清零。
+   */
+  private saturatedTicks = 0;
+  /** 超过这么多个连续饱和轮询即判为停摆（默认 1s 轮询 ⇒ 约 30s）。 */
+  private static readonly STALL_TICKS_THRESHOLD = 30;
 
   constructor(
     private readonly queue: TaskQueue,
@@ -68,9 +75,22 @@ export class TaskWorker {
     this.logger.info(LAYER, `工作者已启动（间隔=${this.pollIntervalMs}ms, 并发=${this.maxConcurrent}）`);
   }
 
-  /** 当前是否健康：轮询已启动且无积压失败 */
+  /**
+   * 当前是否健康。
+   *
+   * ⚠️ 审计 #400：此前只看 `this.timer !== undefined` —— 定时器还在转就算健康。
+   * 但槽位泄漏导致的死锁**恰好保留定时器**（tick 照常触发，只是永远进不去
+   * `while (running < maxConcurrent)`），于是完全停摆的 worker 一直报绿，
+   * 对监控完全不可见。
+   *
+   * 补一条判据：**槽位全满**且**连续 `STALL_TICKS_THRESHOLD` 个轮询周期
+   * 没有成功出队过任何任务** ⇒ 判为不健康。正常高负载下每轮都有任务完成、
+   * 计数器会被重置，故不会误报。
+   */
   isHealthy(): boolean {
-    return this.timer !== undefined;
+    if (this.timer === undefined) return false;
+    if (this.running < this.maxConcurrent) return true;
+    return this.saturatedTicks < TaskWorker.STALL_TICKS_THRESHOLD;
   }
 
   /** 当前正在执行的任务数 */
@@ -107,12 +127,22 @@ export class TaskWorker {
 
   /** 单次轮询：出队并执行任务 */
   private async tick(): Promise<void> {
+    let started = 0;
     while (this.running < this.maxConcurrent) {
       const task = this.queue.dequeue();
       if (!task) break;
 
+      started++;
       this.running++;
       void this.handleTask(task).finally(() => { this.running--; });
+    }
+
+    /* 审计 #400：停摆探测。只有「槽位全满 + 本轮一个都没启动」才累加 ——
+     * 队列空闲（槽位有余但无任务）是正常状态，不能计入。 */
+    if (started === 0 && this.running >= this.maxConcurrent) {
+      this.saturatedTicks++;
+    } else {
+      this.saturatedTicks = 0;
     }
   }
 
@@ -162,7 +192,36 @@ export class TaskWorker {
     try {
       await runWithTenant(task.tenantId, async () => {
         try {
-          const result = await handler(task, controller.signal);
+          /* ⚠️ 审计 #400：超时必须**不等 handler 返回**就放弃等待。
+           *
+           * 此前是 `await handler(...)` 然后才判 `signal.aborted` —— 对**不查
+           * signal 的 handler**（生产里 `life_simulation` 的形参就叫 `_signal`，
+           * 其 executeTask 是纯同步 CPU 循环）这行判定永远不会被求值：
+           * handler 不返回 ⇒ await 永不 settle ⇒ tick() 的 `.finally(running--)`
+           * 永不执行 ⇒ **槽位永久泄漏**。maxConcurrent（生产默认 2）个这样的
+           * 任务就让整个 worker 永久停摆，且 reaper 只能改 DB 行、改不了内存
+           * 计数器，进程级死锁无法自愈。
+           *
+           * 实测（修复前）：2 个挂起 handler 超时后 inflight 仍为 2，
+           * 后续 5 个健康任务全部饿死，而 isHealthy() 仍返回 true。
+           *
+           * 用 race：abort 一触发就立刻走失败/重试分支并释放槽位。
+           * handler 本身可能仍在后台跑（Node 无法强杀 Promise），但它不再
+           * 占用并发槽 —— 这正是「泄漏」与「跑得慢」的区别。 */
+          const result = await Promise.race([
+            handler(task, controller.signal),
+            new Promise<never>((_, reject) => {
+              if (controller.signal.aborted) {
+                reject(new Error(`任务执行超时 (${timeoutMs}ms)`));
+                return;
+              }
+              controller.signal.addEventListener(
+                'abort',
+                () => reject(new Error(`任务执行超时 (${timeoutMs}ms)`)),
+                { once: true },
+              );
+            }),
+          ]);
           if (controller.signal.aborted) {
             throw new Error(`任务执行超时 (${timeoutMs}ms)`);
           }
