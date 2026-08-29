@@ -113,7 +113,7 @@ describe('TaskWakeReconciler（ADR-0057 L8c 反扫补唤醒 + 学习超时）', 
     assert.equal(store.getTask('org-1', taskId)!.resumeAttemptCount, 1);
 
     /* 复位回 blocked（模拟又被挂起），已学状态不变 → 同合成 id → 幂等跳过。 */
-    store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '复位', clock);
+    store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '复位', clock, undefined, 'capability_gap');
     const second = reconciler.reconcileOnce('org-1', clock);
     assert.equal(second.woke, 0, '同已学状态 → 幂等不重复唤醒');
     assert.equal(store.getTask('org-1', taskId)!.resumeAttemptCount, 1, '尝试计数未被烧');
@@ -191,5 +191,65 @@ describe('TaskWakeReconciler（ADR-0057 L8c 反扫补唤醒 + 学习超时）', 
     const task = store.getTask('org-1', taskId)!;
     assert.equal(task.status, 'blocked', '状态未被改');
     assert.match(task.resultSummary!, /工具执行失败/, '真实失败原因未被覆盖');
+  });
+
+  /* ⚠️ 审计 #408：上面那条只覆盖了「**从未**有过 learning_request」这一半。
+   *
+   * 真正的缺陷在另一半：任务走过一轮完整生命周期后 ——
+   *   缺能力 → blocked（写 learning_request）→ 学会 → 唤醒 delegated
+   *   → 执行 → 工具失败 → blocked
+   * `learning_request` 行**仍在**，JOIN 依旧命中 ⇒ 对账器把**工具故障**任务
+   * 当成学习挂起处理。
+   *
+   * 实测（修复前）：`scanned=1, woke=1`，`result_summary` 从
+   * 「执行被拦截/失败：failed（upstream 500）」被覆盖成「已学齐所需能力，唤醒重跑」
+   * —— 真实故障诊断信息被销毁；且此后每学会一个**无关**能力就再唤醒一次
+   * （幂等指纹随 learned 集合变化），触顶 resumeAttemptCount(3) 前
+   * **非幂等工具会被额外真实执行 2 次**。 */
+  it('★审计 #408★：曾有学习请求、但本次因工具失败 blocked → 对账器绝不纳入', () => {
+    const taskId = seedTask(['research']);
+    /* ① 先制造真实的学习挂起（写入 learning_request 关联）。 */
+    learning.registerGap({
+      orgId: 'org-1', personaId: 'p-ic', capability: 'research',
+      evidence: '执行前缺口检测', priority: 'medium', triggeredByTaskId: taskId,
+    });
+    store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '能力缺口待进修：research', clock, undefined, 'capability_gap');
+    /* ② 学会该能力（此时它确实应该被唤醒）。 */
+    learnSilently('p-ic', 'research');
+    /* ③ 唤醒后执行，工具失败 → 再次 blocked。**learning_request 行仍在**。 */
+    store.updateTaskExecution('org-1', taskId, 'delegated', null, clock);
+    store.updateTaskExecution('org-1', taskId, 'blocked', '执行被拦截/失败：failed（upstream 500）', clock, 'execution_failure');
+
+    /* 前提确认：关联的 learning_request 确实还在（否则本用例测的就不是目标场景）。 */
+    const lrCount = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM learning_requests WHERE triggered_by_task_id = ?`,
+    ).get(taskId)!.n;
+    assert.ok(lrCount > 0, `前提：learning_request 关联必须仍在，实际 ${lrCount} 条`);
+
+    clock = 1000 + 8 * DAY_MS;
+    const stats = reconciler.reconcileOnce('org-1', clock);
+
+    /* 变异实测：去掉 blocked_reason 过滤 → scanned=1, woke=1，故障原因被覆盖。 */
+    assert.equal(stats.scanned, 0, '工具故障挂起不得进入学习对账候选集');
+    assert.equal(stats.woke, 0, '不得误唤醒（会重放非幂等工具副作用）');
+    const task = store.getTask('org-1', taskId)!;
+    assert.equal(task.status, 'blocked', '状态不得被改');
+    assert.match(task.resultSummary!, /upstream 500/, '真实故障原因不得被「已学齐所需能力」覆盖');
+  });
+
+  /* 对照：真正的能力缺口挂起仍必须被唤醒 —— 别把功能一起关掉。 */
+  it('★审计 #408 对照★：capability_gap 挂起 + 能力已学齐 → 仍正常唤醒', () => {
+    const taskId = seedTask(['research']);
+    learning.registerGap({
+      orgId: 'org-1', personaId: 'p-ic', capability: 'research',
+      evidence: '执行前缺口检测', priority: 'medium', triggeredByTaskId: taskId,
+    });
+    store.transitionTaskExecutionIfStatus('org-1', taskId, 'delegated', 'blocked', '能力缺口待进修：research', clock, undefined, 'capability_gap');
+    learnSilently('p-ic', 'research');
+
+    const stats = reconciler.reconcileOnce('org-1', clock);
+    assert.equal(stats.scanned, 1, '学习挂起必须仍在候选集');
+    assert.equal(stats.woke, 1, '能力已学齐必须唤醒');
+    assert.equal(store.getTask('org-1', taskId)!.status, 'delegated', '应被唤醒回 delegated');
   });
 });
