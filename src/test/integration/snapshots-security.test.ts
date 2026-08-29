@@ -114,4 +114,57 @@ describe('GET /api/v1/snapshots/:id 安全契约', () => {
     const res = await app.inject({ method: 'GET', url: `/api/v1/snapshots/${idB}`, headers: headersA });
     assert.equal(res.statusCode, 404, `A 不应读到 B 的快照，got ${res.statusCode}: ${res.body}`);
   });
+
+  /* ⚠️ 审计 #402：restore 与 create 此前**完全没有守卫**。
+   *
+   * 只有 GET 挂了 requireRole('admin')，而 restore 是本文件里破坏性最大的操作 ——
+   * 把整个租户 OS 回滚到任意早期快照、永久销毁此后写入的全部数据。
+   * 实测（修复前）：viewer 拿到 200 且 "AFTER" 数据真的消失了。
+   *
+   * ⚠️ 判据必须是 403 而非「非 200」：404 只说明路由没注册/资源不存在，
+   * 会把「压根没挂守卫」伪装成「已拒绝」。故断言精确到 403 + 错误码。 */
+  it('审计 #402：viewer 不得 restore（403，且必须是角色拒绝而非 404）', async () => {
+    const auth = await registerAndGetAuth(app, 'snap-viewer-restore@test.com');
+    const adminH = adminHeaders(app, auth.userId, auth.tenantId);
+    const id = await createSnapshot(app, adminH);
+
+    const viewerToken = signToken(app, { sub: auth.userId, tenantId: auth.tenantId, role: 'viewer' });
+    const viewerH = { authorization: `Bearer ${viewerToken}`, 'x-tenant-id': auth.tenantId };
+
+    const res = await app.inject({ method: 'POST', url: `/api/v1/snapshots/${id}/restore`, headers: viewerH });
+    assert.equal(res.statusCode, 403, `viewer 不得恢复快照，got ${res.statusCode}: ${res.body}`);
+    assert.equal(JSON.parse(res.body).code, 'AUTH_INSUFFICIENT_ROLE', res.body);
+  });
+
+  it('审计 #402：member 不得 restore（403）', async () => {
+    const auth = await registerAndGetAuth(app, 'snap-member-restore@test.com');
+    const adminH = adminHeaders(app, auth.userId, auth.tenantId);
+    const id = await createSnapshot(app, adminH);
+
+    const memberH = memberHeaders(app, auth.userId, auth.tenantId);
+    const res = await app.inject({ method: 'POST', url: `/api/v1/snapshots/${id}/restore`, headers: memberH });
+    assert.equal(res.statusCode, 403, `member 不得恢复快照，got ${res.statusCode}: ${res.body}`);
+  });
+
+  it('审计 #402：viewer 不得 create（403）', async () => {
+    const auth = await registerAndGetAuth(app, 'snap-viewer-create@test.com');
+    const viewerToken = signToken(app, { sub: auth.userId, tenantId: auth.tenantId, role: 'viewer' });
+    const viewerH = { authorization: `Bearer ${viewerToken}`, 'x-tenant-id': auth.tenantId };
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/snapshots', headers: viewerH, payload: { reason: 'manual' },
+    });
+    assert.equal(res.statusCode, 403, `viewer 不得创建快照，got ${res.statusCode}: ${res.body}`);
+  });
+
+  /* 对照组：别把功能一起拒掉 —— admin 必须仍能 restore 成功。 */
+  it('对照：admin 仍可正常 restore（200）', async () => {
+    const auth = await registerAndGetAuth(app, 'snap-admin-restore@test.com');
+    const headers = adminHeaders(app, auth.userId, auth.tenantId);
+    const id = await createSnapshot(app, headers);
+
+    const res = await app.inject({ method: 'POST', url: `/api/v1/snapshots/${id}/restore`, headers });
+    assert.equal(res.statusCode, 200, `admin 应能恢复快照，got ${res.statusCode}: ${res.body}`);
+    assert.equal(JSON.parse(res.body).data.restored, true, res.body);
+  });
 });

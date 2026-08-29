@@ -17,8 +17,11 @@ export function registerSnapshotRoutes(app: FastifyInstance, os: ChronoSynthOS, 
     return os;
   }
 
-  /* POST /api/v1/snapshots — 创建快照 */
-  app.post('/api/v1/snapshots', async (request, reply) => {
+  /* POST /api/v1/snapshots — 创建快照。
+   *
+   * ⚠️ 审计 #402：与下面的 restore 同为**写动词**（rbac-matrix.ts:17 明确如此归类），
+   * 必须 admin。此前无守卫，viewer（定义为只读角色）也能创建快照。 */
+  app.post('/api/v1/snapshots', { preHandler: requireRole('admin') }, async (request, reply) => {
     const body = CreateSnapshotSchema.parse(request.body ?? {});
     const tenantOS = getOS(request);
     const snapshot = tenantOS.createSnapshot(body.reason);
@@ -53,14 +56,30 @@ export function registerSnapshotRoutes(app: FastifyInstance, os: ChronoSynthOS, 
     },
   );
 
-  /* POST /api/v1/snapshots/:id/restore — 从快照恢复 */
-  app.post<{ Params: { id: string } }>('/api/v1/snapshots/:id/restore', async (request) => {
-    const { id } = request.params;
-    const tenantOS = getOS(request);
-    const ok = tenantOS.restoreFromSnapshot(id);
-    if (!ok) {
-      throw new NotFoundError(`快照 ${id} 不存在或恢复失败`, ErrorCode.NOT_FOUND_SNAPSHOT);
-    }
-    return { data: { restored: true, snapshotId: id } };
-  });
+  /* POST /api/v1/snapshots/:id/restore — 从快照恢复。
+   *
+   * ⚠️ 审计 #402（纵向越权）：此前**完全没有守卫**，而它是本文件里破坏性最大的
+   * 操作 —— 把整个租户 OS 状态回滚到任意早期快照，**永久销毁**此后写入的全部
+   * 数据（values / 人格核心状态 / 记忆）。
+   *
+   * 荒谬的不对称：viewer 不能**读**快照（上面的 GET 有 admin 守卫 → 403），
+   * 却能**应用**快照（实测返回 200 并真的销毁了数据）。
+   * 且经 SSO/OIDC 开通的第二个及以后用户默认就是 member
+   * （sso-user-service.ts:205），故租户内**每一个非首用户**都可达。
+   *
+   * `rbac-matrix.ts:17` 明确把 restore 归类为写动词、viewer 定义为只读 ——
+   * 所以这是漏挂守卫，不是有意设计。 */
+  app.post<{ Params: { id: string } }>(
+    '/api/v1/snapshots/:id/restore',
+    { preHandler: requireRole('admin') },
+    async (request) => {
+      const { id } = request.params;
+      const tenantOS = getOS(request);
+      const ok = tenantOS.restoreFromSnapshot(id);
+      if (!ok) {
+        throw new NotFoundError(`快照 ${id} 不存在或恢复失败`, ErrorCode.NOT_FOUND_SNAPSHOT);
+      }
+      return { data: { restored: true, snapshotId: id } };
+    },
+  );
 }
