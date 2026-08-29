@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import type { KnowledgeItem } from '../../types/avatar-autorun.js';
 import type { KnowledgeSource, KnowledgeSourceFetchResult } from '../knowledge-source.js';
+import { UrlContentFetcher } from '../url-content-fetcher.js';
 
 /** 简易 XML 文本提取（不引入外部依赖） */
 function extractTag(xml: string, tag: string): string {
@@ -41,10 +42,13 @@ function parseDate(raw: string): number | null {
 export class RssKnowledgeSource implements KnowledgeSource {
   readonly type = 'rss' as const;
 
+  /** SSRF 安全的出站抓取器（审计 #403）。见下方 fetch 中的说明。 */
+  private readonly fetcher = new UrlContentFetcher();
+
   async fetch(
     config: Record<string, unknown>,
     state: Record<string, unknown> | null,
-    signal: AbortSignal,
+    _signal: AbortSignal,
   ): Promise<KnowledgeSourceFetchResult> {
     const url = config.url as string | undefined;
     if (!url) return { items: [] };
@@ -56,10 +60,10 @@ export class RssKnowledgeSource implements KnowledgeSource {
         ? parseDate(state.lastBuildDate as string) ?? 0
         : 0;
 
-    const response = await fetch(url, { signal, headers: { 'User-Agent': 'ChronoSynthOS/2.0' } });
-    if (!response.ok) throw new Error(`RSS 抓取失败: ${response.status}`);
-
-    const xml = await response.text();
+    /* ⚠️ 审计 #403（SSRF）：`config.url` 由租户用户提交，此前直接进裸 `fetch()`。
+     * 与 api-source 同型，改走 `UrlContentFetcher`（协议白名单 + 私有段拒绝 +
+     * 全部 A 记录校验 + 连接 pin 到已验证 IP 防 DNS rebinding）。 */
+    const { content: xml } = await this.fetcher.fetch(url);
     const rawItems = extractItems(xml);
 
     const items: KnowledgeItem[] = [];
