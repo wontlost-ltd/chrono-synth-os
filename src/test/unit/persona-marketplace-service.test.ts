@@ -144,6 +144,130 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     assert.equal(detail.wallet?.balance, balanceAfterFirst, '余额不得因二次调用增加');
   });
 
+  /* ⚠️ 审计 #397：`completeTask` 曾是绕开全部资金防护的**第二条付款路径** ——
+   * 直接改 balance，不写 `wallet_transactions`、不写 `wallet_settlements`。
+   * 现有 3 个 completeTask 用例**无一断言账本**，故该缺陷零覆盖（变异验证：
+   * 把账本写入整段删掉，旧用例全绿）。
+   *
+   * 判据用**全表不变量**而非单条断言：钱包余额（minor）必须恒等于该钱包
+   * 全部流水的净和。这条不变量对「漏写分录」「多写分录」「金额不符」三类
+   * 缺陷同时敏感，且不依赖具体分账口径。 */
+  it('completeTask 写入账本：余额(minor) == 流水净和（全表不变量）', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Ledger', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.acceptTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    const completed = fx.service.completeTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, qualityScore: 0.9,
+    });
+    assert.ok(completed, '完成应成功');
+
+    const walletRow = fx.db.prepare<{ id: string; balance: number }>(
+      `SELECT id, balance FROM persona_wallets WHERE tenant_id = ? AND persona_id = ?`,
+    ).get(fx.tenantId, fx.personaId);
+    assert.ok(walletRow, '钱包应存在');
+
+    const journal = fx.db.prepare<{ n: number; net: number | null }>(
+      `SELECT COUNT(*) AS n, SUM(amount_minor) AS net
+         FROM wallet_transactions WHERE tenant_id = ? AND wallet_id = ?`,
+    ).get(fx.tenantId, walletRow!.id)!;
+
+    /* 先断言「有流水」——否则下面的净和比较在 0 == 0 时会变成重言式恒过。 */
+    assert.ok(journal.n > 0, `completeTask 必须写账本分录，实际 ${journal.n} 条`);
+
+    const balanceMinor = Math.round(walletRow!.balance * 100);
+    assert.equal(journal.net ?? 0, balanceMinor, '余额(minor) 必须等于流水净和');
+
+    /* 结算行是两条付款路径的**共同幂等锚**（#398），必须落库。 */
+    const settlements = fx.db.prepare<{ n: number; total: number | null }>(
+      `SELECT COUNT(*) AS n, SUM(total_amount_minor) AS total
+         FROM wallet_settlements WHERE tenant_id = ? AND task_id = ?`,
+    ).get(fx.tenantId, task.id)!;
+    assert.equal(settlements.n, 1, 'completeTask 必须写且只写一条结算行');
+    assert.equal(settlements.total, balanceMinor, '结算行金额必须等于实际入账额');
+  });
+
+  /* ⚠️ 审计 #398：两条付款路径的幂等锚此前互不相交，
+   * 实测 reward=100 的工单经 completeTask + settleTaskPayment 实付 160。
+   * 锚统一到 `wallet_settlements` 后，先跑的一方会让另一方短路。 */
+  it('completeTask 之后 settleTaskPayment 不得二次付款（幂等锚统一）', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'DoublePay', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.acceptTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    const completed = fx.service.completeTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, qualityScore: 1.0,
+    });
+    assert.ok(completed, '完成应成功');
+    const balanceAfterComplete = completed!.wallet.balance;
+
+    const assignment = fx.db.prepare<{ id: string }>(
+      `SELECT id FROM task_assignments WHERE tenant_id = ? AND task_id = ? ORDER BY assigned_at DESC LIMIT 1`,
+    ).get(fx.tenantId, task.id);
+    assert.ok(assignment, 'assignment 应存在');
+
+    const second = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId,
+      actorUserId: fx.ownerUserId,
+      taskId: task.id,
+      assignmentId: assignment!.id,
+      totalAmountMinor: 10000,
+      currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+
+    const detail = fx.service.getPersonaDetail(fx.tenantId, fx.ownerUserId, fx.personaId)!;
+    assert.equal(
+      detail.wallet?.balance,
+      balanceAfterComplete,
+      `第二条路径不得再次付款（实付 ${detail.wallet?.balance}，应为 ${balanceAfterComplete}）`,
+    );
+    /* 幂等短路应返回既有结算而非新建；无论返回既有还是 null，都不得新增结算行。 */
+    const n = fx.db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM wallet_settlements WHERE tenant_id = ? AND task_id = ?`,
+    ).get(fx.tenantId, task.id)!.n;
+    assert.equal(n, 1, `结算行必须恰好 1 条，实际 ${n} 条（second=${second ? 'settlement' : 'null'}）`);
+  });
+
+  /* ⚠️ 审计 #397：冻结钱包 / 币种不符必须在**任何写入之前**拒绝。
+   * 若放到 CAS 之后，会留下「任务 completed、零结算、余额 0、重试被终态拒绝」的死局。 */
+  it('completeTask 对冻结钱包前置拒绝，且任务保持可重试（不落终态）', () => {
+    const task = fx.service.publishTask({
+      tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
+      title: 'Frozen', description: 'd', category: 'general', reward: 100,
+    });
+    fx.service.acceptTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId,
+      personaId: fx.personaId, taskId: task.id,
+    });
+    fx.db.prepare<void>(
+      `UPDATE persona_wallets SET status = 'frozen' WHERE tenant_id = ? AND persona_id = ?`,
+    ).run(fx.tenantId, fx.personaId);
+
+    const result = fx.service.completeTask({
+      tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, qualityScore: 0.9,
+    });
+    assert.equal(result, null, '冻结钱包必须拒绝付款');
+
+    const row = fx.db.prepare<{ status: string }>(
+      `SELECT status FROM marketplace_tasks WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, task.id)!;
+    assert.notEqual(row.status, 'completed', '拒绝后任务不得停在终态（否则无法补救）');
+
+    const n = fx.db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM wallet_transactions WHERE tenant_id = ?`,
+    ).get(fx.tenantId)!.n;
+    assert.equal(n, 0, '拒绝路径不得留下任何流水');
+  });
+
   it('completeTask awards growth + drops task into completed state', () => {
     const task = fx.service.publishTask({
       tenantId: fx.tenantId,
