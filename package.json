@@ -41,7 +41,7 @@
     "check:licenses": "node scripts/check-license-boundary.mjs",
     "check:db-access": "node scripts/check-db-access-ratchet.mjs",
     "test": "npm run test:unit && npm run test:integration",
-    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run ga:check && npm run check:licenses && npm run check:db-access && npm run check:sql-layering",
+    "test:golden": "npm run typecheck && npm run build && npm run test && npm run test:contract && npm run test:packages && npm run test:ops && npm run ga:check && npm run check:licenses && npm run check:db-access && npm run check:sql-layering && npm run check:tx-widening",
     "start": "node dist/main.js",
     "start:desktop": "node dist/main-desktop.js",
     "build:sidecar": "npm run build && node scripts/build-sidecar.mjs",
@@ -52,7 +52,8 @@
     "dev:observability-worker": "npm run build && node dist/main-observability-worker.js",
     "demo:java21": "node scripts/teach-java21-demo.mjs",
     "test:integration:schema-dsl": "env -u NODE_USE_SYSTEM_CA tsc -p tsconfig.integration.json && env -u NODE_USE_SYSTEM_CA node --test --test-force-exit dist/src/test/integration/schema-dsl-*.test.js",
-    "check:sql-layering": "node scripts/check-sql-layering-ratchet.selftest.mjs && node scripts/check-sql-layering-ratchet.mjs"
+    "check:sql-layering": "node scripts/check-sql-layering-ratchet.selftest.mjs && node scripts/check-sql-layering-ratchet.mjs",
+    "check:tx-widening": "node scripts/check-tx-widening-safety.selftest.mjs && node scripts/check-tx-widening-safety.mjs"
   },
   "keywords": [
     "digital-persona",
