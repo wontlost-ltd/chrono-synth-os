@@ -259,9 +259,15 @@ export class TenantIdentityDirectory {
     this.resolver.coordinatorDb().execute(dirCmdDeleteByLookup(lookupKind, lookupValue));
   }
 
-  /** 列 updated_at < cutoff 的 PENDING 工单（恢复 worker 用，Task 8）。 */
-  listPending(cutoff: number): PendingEntry[] {
-    const rows = this.resolver.coordinatorDb().queryMany(dirQueryPendingBefore(cutoff));
+  /**
+   * 列出「已 PENDING 超过 graceMs」的工单（恢复 worker 用，Task 8）。
+   *
+   * ⚠️ issue #395：收的是**宽限时长**而非截止时刻。截止点由数据库算——
+   * `updated_at` 由发起预留的副本写、判定跑在 worker 副本上，两端时钟不同源
+   * 时 worker 钟快就会把刚发起的预留当成过期工单回滚。
+   */
+  listPending(graceMs: number): PendingEntry[] {
+    const rows = this.resolver.coordinatorDb().queryMany(dirQueryPendingBefore(graceMs));
     return rows.map((r) => ({
       tenantId: r.tenant_id,
       userId: r.user_id,

@@ -426,7 +426,9 @@ describe('TenantIdentityDirectory 协调库门面', () => {
       assert.equal(dir.resolveByRefreshTokenHash('rt_rm'), null, 'removeLookup 后不命中');
     });
 
-    it('listPending(cutoff) 返 updated_at < cutoff 的 PENDING 工单（含 operationKind/previous/lookup）', () => {
+    /* ⚠️ issue #395：`updated_at` 由 DB 盖戳、判定用 DB 时钟，
+     * 传 `NOW + 1_000` 已不起作用。改为把行挪老再用宽限时长判定。 */
+    it('listPending(graceMs) 返超过宽限期的 PENDING 工单（含 operationKind/previous/lookup）', () => {
       /* 手插一条老 PENDING（updated_at 早于 cutoff）。 */
       coordinator.execute(dirCmdReserve({
         tenantId: 'tenant_a', userId: 'user_stale', operationId: 'ec:stale', operationKind: 'EMAIL_CHANGE',
@@ -434,7 +436,11 @@ describe('TenantIdentityDirectory 协调库门面', () => {
         lookupKind: 'email', lookupValue: 'stale@example.com', status: 'PENDING', now: NOW,
       }));
 
-      const pending = dir.listPending(NOW + 1_000);
+      coordinator.prepare<void>(
+        `UPDATE tenant_identity_directory SET updated_at = updated_at - 3600000
+         WHERE operation_id = 'ec:stale'`,
+      ).run();
+      const pending = dir.listPending(60_000);
       assert.equal(pending.length, 1);
       assert.equal(pending[0].tenantId, 'tenant_a');
       assert.equal(pending[0].userId, 'user_stale');

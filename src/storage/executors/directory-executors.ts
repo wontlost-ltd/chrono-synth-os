@@ -10,6 +10,7 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import { dbNowMs } from './db-now.js';
 import {
   DIR_QUERY_BY_LOOKUP, DIR_QUERY_PENDING_BEFORE,
   DIR_CMD_RESERVE, DIR_CMD_ACTIVATE, DIR_CMD_DELETE_BY_LOOKUP, DIR_CMD_DELETE_BY_LOOKUP_OP,
@@ -31,12 +32,21 @@ export function registerDirectoryExecutors(): void {
     ).get(p.lookupKind, p.lookupValue) ?? null;
   });
 
-  registerQuery<readonly DirectoryPendingRow[], number>(DIR_QUERY_PENDING_BEFORE, (db, cutoff) => {
+  /* issue #395：收**宽限时长**而非截止时刻，截止点由数据库算。
+   * `updated_at` 由发起预留的副本写、这里的判定跑在恢复 worker 副本上，
+   * 两端不同源时钟差会平移判定——worker 钟快就会把**刚发起**的预留
+   * 当成过期工单去回滚。
+   *
+   * ⚠️ 判据用 `<=` 而非 `<`：SQLite 的 `strftime('%s')` 只有**秒级**精度
+   * （实测比 Date.now() 落后 0~999ms），同一秒内写入与判定拿到的是同一个值，
+   * 严格小于恒不成立 —— `graceMs: 0`（「不留宽限」）会变成**永远扫不到**。
+   * 实测：改 `<=` 前 auth-mixed-scope 的两条 graceMs=0 用例直接红。 */
+  registerQuery<readonly DirectoryPendingRow[], number>(DIR_QUERY_PENDING_BEFORE, (db, graceMs) => {
     return db.prepare<DirectoryPendingRow>(
       `SELECT tenant_id, user_id, operation_id, operation_kind, previous_lookup_value, lookup_kind, lookup_value
        FROM tenant_identity_directory
-       WHERE status = 'PENDING' AND updated_at < ?`,
-    ).all(cutoff);
+       WHERE status = 'PENDING' AND updated_at <= ${dbNowMs(db)} - ?`,
+    ).all(graceMs);
   });
 
   /* ── Commands ── */
@@ -47,11 +57,11 @@ export function registerDirectoryExecutors(): void {
       `INSERT INTO tenant_identity_directory (
         tenant_id, user_id, operation_id, operation_kind, previous_lookup_value,
         pending_password_hash, lookup_kind, lookup_value, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${dbNowMs(db)})
       ON CONFLICT(lookup_kind, lookup_value) DO NOTHING`,
     ).run(
       p.tenantId, p.userId, p.operationId, p.operationKind, p.previousLookupValue,
-      p.pendingPasswordHash, p.lookupKind, p.lookupValue, p.status, p.now, p.now,
+      p.pendingPasswordHash, p.lookupKind, p.lookupValue, p.status, p.now,
     );
     return { rowsAffected: result.changes };
   });
@@ -60,9 +70,9 @@ export function registerDirectoryExecutors(): void {
   registerCommand<DirActivateParams>(DIR_CMD_ACTIVATE, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE tenant_identity_directory
-       SET status = 'ACTIVE', updated_at = ?
+       SET status = 'ACTIVE', updated_at = ${dbNowMs(db)}
        WHERE lookup_kind = ? AND lookup_value = ? AND operation_id = ? AND status = 'PENDING'`,
-    ).run(p.now, p.lookupKind, p.lookupValue, p.operationId);
+    ).run(p.lookupKind, p.lookupValue, p.operationId);
     return { rowsAffected: result.changes };
   });
 
