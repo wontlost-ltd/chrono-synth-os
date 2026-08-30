@@ -20,7 +20,23 @@ export interface AgencyAuthorization {
   readonly id: string;
   readonly tenantId: string;
   readonly personaId: string;
-  /** 授权人 user id */
+  /**
+   * 授权人 user id —— **同时**承担两个角色（审计 #440-2），二者并不冲突：
+   *
+   *   - **审计字段**：永远记录「这份授权书是谁签发的」，是法律责任的落点，
+   *     `listByPrincipal` / `getById` 照常可查（取证用）；
+   *   - **授权键**：当本次调用**有人类主体**时，只有该主体自己签发的授权书
+   *     才对它生效。
+   *
+   * ⚠️ 此前只落实了前者：判定不看 principal，于是同一 persona 上任一委托人的
+   * 宽泛授权会替**所有人**放行（`idx_agency_authorizations_persona` 是非唯一
+   * 索引，多份授权书本就能并存）。实测 bob 的全权委托让 alice 用上了
+   * `wire_money`，而「Alice 只授权了只读」这条约束在系统里根本无法表达。
+   *
+   * ⚠️ 自主路径（`invokerUserId: null`，如 earning cycle）**不按 principal
+   * 过滤** —— 它没有人类主体，拿谁去比都不对；其约束来自 allowedTools /
+   * deniedTools 与叠加的 ToolPermission 层。详见 `coversPrincipal`。
+   */
   readonly principalUserId: string;
   /** 授权范围 */
   readonly scope: AgencyScope;

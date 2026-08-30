@@ -91,8 +91,16 @@ export class ToolInvocationPipeline {
 
     /* 1. AgencyAuthorization */
     const now = Date.now();
-    const authorized = this.deps.authorizations.isToolAllowed(
-      request.tenantId, request.personaId, request.toolId, now,
+    /* ⚠️ 审计 #440-2：必须把**执行主体**传下去。此前不传，判定退化成
+     * 「该 persona 上任意一份授权书覆盖了该工具即放行」——别人签发的宽泛
+     * 授权会替本次调用者放行（实测 bob 的授权让 alice 用上了 wire_money）。
+     *
+     * `invokerUserId` 为空即「数字人自主行动」（earning cycle / 内部动作），
+     * 不是「未知用户」——这两者在授权语义上完全不同，故显式归一成 null
+     * 而不是任其 undefined 混入。 */
+    const executingPrincipalUserId = request.invokerUserId ?? null;
+    const authorized = this.deps.authorizations.isToolAllowedForPrincipal(
+      request.tenantId, request.personaId, request.toolId, executingPrincipalUserId, now,
     );
     if (!authorized) {
       const id = this.recordDenied(request, 'denied_permission', 'no active agency authorization covers this tool');
