@@ -13,6 +13,7 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import { dbNowMs } from './db-now.js';
 import type {
   PersonaLeaseRow,
   PersonaLeaseGetParams,
@@ -40,16 +41,22 @@ export function registerPersonaLeaseExecutors(): void {
 
   /* 原子获取/抢占：仅当无现有行（INSERT）或现有行已过期（DO UPDATE WHERE expires_at <= now）
    * 才成功。rowsAffected===1 表示拿到锁；0 表示被未过期的他人持有。 */
+  /* issue #395：到期时刻与抢占判定**都**由数据库求值。
+   *
+   * 租约是跨副本互斥原语：持有者在副本 A、抢占者在副本 B。原来 `expires_at`
+   * 由持有者的 Date.now() 算、判定用抢占者的 Date.now() 比——**抢占者钟快
+   * 就能抢走仍然有效的租约**，互斥当场失效。让 DB 同时盖戳与判定是唯一
+   * 能让两端同源的办法。 */
   registerCommand<PersonaLeaseAcquireParams>(PERSONA_LEASE_CMD_ACQUIRE, (db, p) => {
     const result = db.prepare<void>(
       `INSERT INTO persona_leases (tenant_id, persona_id, purpose, holder_token, acquired_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ${dbNowMs(db)} + ?)
        ON CONFLICT(tenant_id, persona_id, purpose) DO UPDATE SET
          holder_token = excluded.holder_token,
          acquired_at = excluded.acquired_at,
          expires_at = excluded.expires_at
-       WHERE persona_leases.expires_at <= ?`,
-    ).run(p.tenantId, p.personaId, p.purpose, p.holderToken, p.acquiredAt, p.expiresAt, p.now);
+       WHERE persona_leases.expires_at <= ${dbNowMs(db)}`,
+    ).run(p.tenantId, p.personaId, p.purpose, p.holderToken, p.acquiredAt, p.ttlMs);
     return { rowsAffected: result.changes };
   });
 
@@ -66,9 +73,10 @@ export function registerPersonaLeaseExecutors(): void {
   registerCommand<PersonaLeaseRefreshParams>(PERSONA_LEASE_CMD_REFRESH, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE persona_leases
-       SET expires_at = ?
-       WHERE tenant_id = ? AND persona_id = ? AND purpose = ? AND holder_token = ? AND expires_at > ?`,
-    ).run(p.expiresAt, p.tenantId, p.personaId, p.purpose, p.holderToken, p.now);
+       SET expires_at = ${dbNowMs(db)} + ?
+       WHERE tenant_id = ? AND persona_id = ? AND purpose = ? AND holder_token = ?
+         AND expires_at > ${dbNowMs(db)}`,
+    ).run(p.ttlMs, p.tenantId, p.personaId, p.purpose, p.holderToken);
     return { rowsAffected: result.changes };
   });
 }

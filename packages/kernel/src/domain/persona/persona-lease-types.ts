@@ -169,9 +169,20 @@ export interface PersonaLeaseAcquireParams {
   purpose: string;
   holderToken: string;
   acquiredAt: number;
-  expiresAt: number;
-  /** 抢占判定基准时刻（epoch ms）：仅当现有锁 expires_at <= now 才允许抢占。 */
-  now: number;
+  /**
+   * 租约时长（毫秒），不是绝对到期时刻（issue #395）。
+   *
+   * ⚠️ 这张表**最反直觉**：租约本身就是**跨副本互斥原语**——持有者在副本 A、
+   * 抢占者在副本 B，「写读同源」按定义不可能靠调用方保证。原实现里
+   * `expires_at` 由持有者的 Date.now() 算出、抢占判定用抢占者的 Date.now()
+   * 比较：**抢占者钟快就能抢走仍然有效的租约**，互斥当场失效——而互斥正是
+   * 这张表存在的唯一理由。
+   *
+   * 让数据库同时负责盖戳与判定，是这里唯一能让两端同源的办法。
+   *
+   * ⚠️ 特意改名 + 删掉 `now`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  ttlMs: number;
 }
 
 export interface PersonaLeaseReleaseParams {
@@ -187,9 +198,10 @@ export interface PersonaLeaseRefreshParams {
   personaId: string;
   purpose: string;
   holderToken: string;
-  expiresAt: number;
+  /** 续租时长（毫秒），由数据库算新的到期时刻（issue #395）。 */
+  ttlMs: number;
   /** 仅当锁仍由本持有者持有且未过期才续租。 */
-  now: number;
+
 }
 
 /* ── Query / Command 工厂 ── */

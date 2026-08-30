@@ -284,13 +284,21 @@ describe('PersonaLease CAS atomicity under two real DB connections (SQLite file)
     const storeB = new PersonaLeaseStore(connB, TENANT);
 
     /* 先由 A 放一把会过期的锁 */
-    const t0 = 1_000_000;
+    const t0 = Date.now();
     assert.ok(storeA.acquire(PERSONA, 'earning', t0, 10_000));
 
-    /* 过期后，A 和 B 在同一时刻各自尝试抢占 */
-    const now = t0 + 20_000;
-    const a = storeA.acquire(PERSONA, 'earning', now, 60_000);
-    const b = storeB.acquire(PERSONA, 'earning', now, 60_000);
+    /* ⚠️ issue #395 起 expires_at 与抢占判定都由 DB 时钟裁决，
+     * 调用方**不能再靠传 `t0 + 20_000` 把时钟推快**（那个参数已不参与判定）。
+     * 改为把行里的到期时刻直接挪早 20 秒——等价的"已过期"状态，
+     * 而且更贴近真实（真实里没人能调快别的副本的钟，这正是本次修复的要点）。 */
+    connA.prepare<void>(
+      `UPDATE persona_leases SET expires_at = expires_at - 20000
+       WHERE tenant_id = ? AND persona_id = ? AND purpose = ?`,
+    ).run(TENANT, PERSONA, 'earning');
+
+    /* 过期后，A 和 B 各自尝试抢占 */
+    const a = storeA.acquire(PERSONA, 'earning', t0, 60_000);
+    const b = storeB.acquire(PERSONA, 'earning', t0, 60_000);
 
     /* 恰好一个拿到（另一个 CAS 的 WHERE expires_at<=now 在第一个已写入后不再命中） */
     const winners = [a, b].filter((h) => h !== null);
