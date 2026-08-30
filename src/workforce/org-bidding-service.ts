@@ -127,14 +127,45 @@ export class OrgBiddingService {
     if (!task) throw new TaskNotAvailableError(`工单不存在：${input.taskId}`);
 
     const planning = new OrgPlanningService(this.store, new OrgChartService(this.store, this.now), this.now, this.idgen);
-    const goal = planning.runGoal(
-      input.orgId, input.managerWorkerId,
-      { title: task.title, description: task.description, goalType: input.goalType, sourceMarketplaceTaskId: input.taskId },
-      this.store.workerIdByRole(input.orgId),
-    );
-    /* 回填 org_goal_id + 指派进 in_progress。 */
-    if (!this.store.updateOrgTaskAssignmentStatus(assign.id, 'assigned', 'in_progress', this.now(), goal.goalId)) {
+
+    /* ⚠️ 审计 #440-1：此前 `runGoal` 排在 CAS **之前**。
+     *
+     * `runGoal` 落库一整棵目标树（org_goals + 全部 org_tasks + 委派边）。
+     * 一旦随后的 CAS 失败（并发下另一方先把 assigned 推走），这里抛 409，
+     * 但**那棵树已经提交**——成为孤儿：goal 挂在 org 上、其下任务处于
+     * `delegated` 状态可被正常领取执行，而它并不对应任何有效指派。
+     * 没有任何东西会回收它。
+     *
+     * 正解是把 CAS 提到**任何写入之前**（同文件 `confirmAssignToOrg` 的形状）：
+     * 先抢到 assigned→in_progress 的所有权，抢不到就直接 409，此时一行未写。
+     *
+     * ⚠️ 不能简单地把两者裹进一个 `store.transaction`：`runGoal` 内部
+     * 自己开事务（org-planning-service.ts:110），而本仓的 SQLite 驱动
+     * **不支持嵌套事务**（实测 `cannot start a transaction within a transaction`，
+     * 8 条用例里 6 条当场变红）。故分两段，用下面的补偿回滚兜住中间态。 */
+    if (!this.store.updateOrgTaskAssignmentStatus(assign.id, 'assigned', 'in_progress', this.now(), undefined)) {
       throw new OrgAssignmentStateError('指派状态并发改变，启动失败，请重试');
+    }
+
+    let goal: RunGoalResult;
+    try {
+      goal = planning.runGoal(
+        input.orgId, input.managerWorkerId,
+        { title: task.title, description: task.description, goalType: input.goalType, sourceMarketplaceTaskId: input.taskId },
+        this.store.workerIdByRole(input.orgId),
+      );
+    } catch (err) {
+      /* 建树失败：把刚抢下的 in_progress 退回 assigned，否则这条指派会
+       * **永久卡在 in_progress**——既没有 goal 可执行，也因状态不符
+       * 无法重新 start（终态死局，比原缺陷更难恢复）。
+       * runGoal 自己的事务已回滚掉它的部分写入，这里只需还原状态列。 */
+      this.store.updateOrgTaskAssignmentStatus(assign.id, 'in_progress', 'assigned', this.now(), undefined);
+      throw err;
+    }
+
+    /* 回填 org_goal_id。此时状态已是 in_progress，故 CAS 谓词用 in_progress→in_progress。 */
+    if (!this.store.updateOrgTaskAssignmentStatus(assign.id, 'in_progress', 'in_progress', this.now(), goal.goalId)) {
+      throw new OrgAssignmentStateError('指派状态并发改变，回填 goal 失败');
     }
     const updated = this.store.getLatestOrgTaskAssignment(input.taskId)!;
     return { assignment: updated, goal };
