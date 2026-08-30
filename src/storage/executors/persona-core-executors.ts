@@ -976,11 +976,31 @@ export function registerPersonaCoreExecutors(): void {
   });
 
   registerCommand<PcoreSettlePersonaWalletParams>(PCORE_CMD_SETTLE_PERSONA_WALLET, (db, p) => {
+    /* ⚠️ 审计 #427：币种从 SET 移到 WHERE —— **不再改写**，改为**校验**。
+     *
+     * 此前是 `SET ... currency = ?`：无条件用入参币种覆盖钱包币种。
+     * 审计 W#10 只在应用层（persona-marketplace-service.ts:397）加了守卫，
+     * **SQL 层的改写能力原样保留** —— 任何绕过该服务方法的调用点都会重蹈覆辙。
+     * #397 已证实存在这样的调用点：`completeTask` 实测把 CRED 金额写进了 USD 钱包。
+     *
+     * 纵深防御要落到**唯一能兜底的那一层**。放进 WHERE 后币种不符 →
+     * rowsAffected=0，调用方据此判失败（与同文件 DEBIT 命令把余额守卫
+     * 写进 WHERE 的做法一致）。
+     *
+     * ⚠️ 审计 #438：credit 侧补定点收敛，与 debit 侧对称。
+     * 此前是裸浮点 `balance + ?`，200 轮 0.07 结算后 balance = 8.000000000000005
+     * （balance*100 = 800.0000000000006）。当前 toMinor / ROUND(balance*100)
+     * 能吸收该漂移，**未观察到实际钱错**，但漂移随笔数单调累积而无上界保证，
+     * 而提现门 `ROUND(balance*100) >= amountMinor` 直接依赖这个值。
+     * CAST(... AS numeric) 不可省，理由同 DEBIT 命令上方注释（PG 无
+     * round(double precision, int) 重载）。 */
     const result = db.prepare<void>(
       `UPDATE persona_wallets
-       SET balance = balance + ?, token_balance = token_balance + ?, currency = ?, last_settled_at = ?, updated_at = ?
-       WHERE tenant_id = ? AND id = ?`,
-    ).run(p.ownerAmount, p.personaAmount, p.currency, p.now, p.now, p.tenantId, p.walletId);
+       SET balance = ROUND((ROUND(CAST(balance AS numeric) * 100) + ROUND(CAST(? AS numeric) * 100)) / 100.0, 4),
+           token_balance = token_balance + ?,
+           last_settled_at = ?, updated_at = ?
+       WHERE tenant_id = ? AND id = ? AND currency = ?`,
+    ).run(p.ownerAmount, p.personaAmount, p.now, p.now, p.tenantId, p.walletId, p.currency);
     return { rowsAffected: result.changes };
   });
 
