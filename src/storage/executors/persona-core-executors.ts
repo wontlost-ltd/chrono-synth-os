@@ -1306,9 +1306,18 @@ export function registerPersonaCoreExecutors(): void {
 
   registerCommand<PcoreAppealGovernanceCaseParams>(PCORE_CMD_APPEAL_GOVERNANCE_CASE, (db, p) => {
     const result = db.prepare<void>(
+      /* ⚠️ 审计 #436：加状态谓词 + 清 resolved_at。
+       *
+       * 此前无任何状态校验：已 `resolved` 的 case 可被拉回 `appealed`，
+       * 而 `resolved_at` **残留**指向旧的结案时刻 —— 状态与时间戳自相矛盾，
+       * 下游按 resolved_at 过滤的报表会错算。
+       *
+       * 只允许从**未结案**状态进入 appealed（open / action_applied）；
+       * 已 resolved 的须先走正常流程重开，不能靠申诉倒回。
+       * 进入 appealed 时把 resolved_at 清空，杜绝陈旧时间戳。 */
       `UPDATE governance_cases
-       SET status = 'appealed', appeal_json = ?, appealed_at = ?
-       WHERE tenant_id = ? AND id = ?`,
+       SET status = 'appealed', appeal_json = ?, appealed_at = ?, resolved_at = NULL
+       WHERE tenant_id = ? AND id = ? AND status <> 'resolved' AND status <> 'appealed'`,
     ).run(p.appealJson, p.now, p.tenantId, p.caseId);
     return { rowsAffected: result.changes };
   });

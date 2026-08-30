@@ -108,7 +108,13 @@ describe('LifeSimulationEngine', () => {
   it('回顾评估包含所有路径', () => {
     const result = engine.simulate(makeConfig(), makeState());
     assert.ok(result.retrospective.summary.length > 0);
-    assert.ok(result.retrospective.confidence >= 0 && result.retrospective.confidence <= 1);
+    /* ⚠️ 审计 #433：原断言 `0 <= confidence <= 1` 是**重言式** ——
+     * clamp01 已保证它恒真，公式换成常量 0.5 照样全绿（审计变异实测）。
+     * 改为断言**语义**：多路径且最优分不低时，信心不得为 0。 */
+    assert.ok(
+      result.retrospective.confidence > 0,
+      `多路径推荐的信心度不得为 0（实际 ${result.retrospective.confidence}）`,
+    );
     for (const path of result.paths) {
       assert.ok(path.pathId in result.retrospective.regretByPath);
     }
@@ -175,5 +181,33 @@ describe('LifeSimulationEngine', () => {
     const highRegret = rHigh.paths[0].regretProbability;
     assert.ok(highRegret >= lowRegret,
       `highSens regret=${highRegret} should >= lowSens=${lowRegret}`);
+  });
+
+  /* ⚠️ 审计 #433：`confidence = clamp01((max-min)*2)` 度量的是**路径间离散度**，
+   * 不是推荐可信度：单路径 max===min → 恒 0；所有路径同样优秀/同样糟糕也恒 0，
+   * 与「无法评估」不可区分。实测：`1 path score=0.95 → 0`、`3 paths all 0.01 → 0`。 */
+  it('审计 #433：单路径高分不得报「信心度 0」', () => {
+    const cfg = makeConfig();
+    /* 只留一条路径 —— 没有可比对象时，信心应取决于该路径自身水平。 */
+    const single = { ...cfg, paths: cfg.paths.slice(0, 1) };
+    const result = engine.simulate(single, makeState());
+    assert.equal(result.paths.length, 1, '前提：只有一条路径');
+
+    /* 变异实测：公式改回 (max-min)*2 → 单路径恒 0，本断言转红。 */
+    assert.ok(
+      result.retrospective.confidence > 0,
+      `单路径也应有非零信心（实际 ${result.retrospective.confidence}）`,
+    );
+  });
+
+  it('审计 #433：confidence 随最优分单调（不只看离散度）', () => {
+    /* 同一套路径配置下，最优分越高信心应越高 —— 离散度公式做不到这点。 */
+    const result = engine.simulate(makeConfig(), makeState());
+    const best = Math.max(...result.paths.map(p => p.compositeScore));
+    /* 信心不应超过最优分本身（超过意味着凭空自信）。 */
+    assert.ok(
+      result.retrospective.confidence <= best + 1e-9,
+      `信心度 ${result.retrospective.confidence} 不得超过最优分 ${best}`,
+    );
   });
 });

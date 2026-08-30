@@ -64,6 +64,7 @@ import { generatePrefixedId } from '../utils/id-generator.js';
 import { OBSERVABILITY_TOPIC, publishObservabilityEvent } from '../observability/observability-outbox.js';
 import { recordBusinessAuditLog } from '../audit/audit-log-store.js';
 import { clamp, round, safeJsonParse } from './persona-core-utils.js';
+import { realClock, type Clock } from '../utils/clock.js';
 import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import type {
   AppealGovernanceCaseInput,
@@ -191,6 +192,17 @@ export class PersonaGovernanceService {
     /* db 取源（双入口）：public 方法经 source.forTenant 解析 + 开事务→InTx；InTx 收外层 tx。 */
     private readonly source: PersonaCoreSource,
     private readonly ctx: PersonaGovernanceContext,
+    /**
+     * ⚠️ 审计 #435：时钟必须可注入。
+     *
+     * `persona-core-service.ts:380` 给 PersonaMemoryService 传了 clock，
+     * `:425` 给本服务**没传**，于是这里用裸 `Date.now()` —— 同一事务内
+     * 记忆行走注入时钟、治理事件走墙钟，两套时间源。
+     * 这正是本仓反复出现的模式（#376 embedding TTL / #378 circuit-breaker）：
+     * **构造器收了 clock 却用裸 Date.now()**，导致注入 TestClock 的测试
+     * 实际控制不了时间。默认 realClock 保持向后兼容。
+     */
+    private readonly clock: Clock = realClock,
   ) {}
 
   /* ── Public API ─────────────────────────────────────────────── */
@@ -221,7 +233,7 @@ export class PersonaGovernanceService {
     const persona = this.ctx.getPersonaById(input.tenantId, input.personaId);
     if (!persona) return null;
 
-    const now = Date.now();
+    const now = this.clock.now();
     const caseId = generatePrefixedId('gcase');
     const details = input.details ?? {};
 
@@ -306,7 +318,7 @@ export class PersonaGovernanceService {
     const persona = this.ctx.getPersonaById(input.tenantId, governanceCase.personaId);
     if (!persona) return null;
 
-    const now = Date.now();
+    const now = this.clock.now();
     const actionId = generatePrefixedId('gact');
     const nextStatus = this.resolvePersonaStatusForAction(persona.status, input.actionType);
     const caseStatus: GovernanceCase['status'] = input.actionType === 'reinstate' ? 'resolved' : 'action_applied';
@@ -467,15 +479,27 @@ export class PersonaGovernanceService {
     const persona = this.ctx.getPersonaById(input.tenantId, governanceCase.personaId);
     if (!persona || persona.ownerUserId !== input.actorUserId) return null;
 
-    const now = Date.now();
+    /* ⚠️ 审计 #436：已结案 / 已申诉的 case 不得再申诉。
+     * 事务外先快速拒绝（给调用方明确的 null），真正的互斥点在 SQL 谓词上。 */
+    if (governanceCase.status === 'resolved' || governanceCase.status === 'appealed') return null;
+
+    const now = this.clock.now();
     const db = this.source.forTenant(input.tenantId);
-    db.transaction(() => {
-      db.execute(pcoreCmdAppealGovernanceCase({
+    let claimed = true;
+    try {
+      db.transaction(() => {
+      const claim = db.execute(pcoreCmdAppealGovernanceCase({
         tenantId: input.tenantId,
         caseId: input.caseId,
         appealJson: JSON.stringify(input.details ?? {}),
         now,
       }));
+      if (claim.rowsAffected !== 1) {
+        /* 并发下 case 被结案/已被申诉 → 整体回滚，不留孤立的 review 事件。
+         * ⚠️ 必须抛：transaction() 只在抛异常时 ROLLBACK。 */
+        claimed = false;
+        throw new GovernanceClaimLostError();
+      }
 
       this.insertGovernanceEventInTx(db, {
         tenantId: input.tenantId,
@@ -489,7 +513,11 @@ export class PersonaGovernanceService {
         },
         actorUserId: input.actorUserId,
       });
-    });
+      });
+    } catch (err) {
+      if (!claimed && err instanceof GovernanceClaimLostError) return null;
+      throw err;
+    }
 
     return this.getGovernanceCaseById(input.tenantId, input.caseId);
   }
@@ -511,7 +539,7 @@ export class PersonaGovernanceService {
     payload: Record<string, unknown>;
     actorUserId: string | null;
   }): void {
-    const now = Date.now();
+    const now = this.clock.now();
     tx.execute(pcoreCmdInsertGovernanceEvent({
       id: generatePrefixedId('pgov'),
       tenantId: input.tenantId,

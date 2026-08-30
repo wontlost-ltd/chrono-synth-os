@@ -437,10 +437,26 @@ export function retrospectiveScore(
   }
   const bestFulfillment = bestPath.timeline[bestPath.timeline.length - 1]?.emotionalState.fulfillment ?? 0;
 
+  /* ⚠️ 审计 #433：此前 `confidence = clamp01((max - min) * 2)` 度量的是
+   * **路径间离散度**，不是推荐可信度：
+   *   - 只有一条路径时 max === min → 恒 **0**（单路径综合分 0.95 也报「信心度 0%」）；
+   *   - 所有路径同样优秀或同样糟糕时也恒 0，与「无法评估」不可区分。
+   * 实测：`1 path score=0.95 → 0`、`3 paths all 0.01 → 0`。
+   *
+   * 正确语义应同时纳入**最优分的绝对水平**与**与次优的区分度**：
+   *   - 只有一条路径 ⇒ 没有可比对象，信心完全取决于该路径自身分数；
+   *   - 多条路径 ⇒ 最优分越高、与次优拉开越大，越可信。
+   * separation 仍用 (max-min)*2 但作为**加成**而非全部，且给一个基线权重，
+   * 使「单路径高分」与「多路径均劣」可区分。 */
   const scores = paths.map(p => p.compositeScore);
   const maxScore = Math.max(...scores);
   const minScore = Math.min(...scores);
-  const confidence = clamp01((maxScore - minScore) * 2);
+  const separation = clamp01((maxScore - minScore) * 2);
+  const confidence = paths.length <= 1
+    /* 单路径：无可比对象，信心 = 该路径自身水平。 */
+    ? clamp01(maxScore)
+    /* 多路径：以最优分为底，用区分度加成（最多再拉高一半的剩余空间）。 */
+    : clamp01(maxScore * (0.5 + 0.5 * separation));
 
   const regretSensitivity = persona.L2.regretSensitivity;
   const topRegret = regretByPath[bestPath.pathId] ?? 0;

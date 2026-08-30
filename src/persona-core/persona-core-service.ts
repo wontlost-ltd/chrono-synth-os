@@ -422,7 +422,8 @@ export class PersonaCoreService {
         this.insertReputationHistoryInTx(tx, t, p, from, to, reason),
       memoryHook: this.memoryService,
     };
-    this.governanceService = new PersonaGovernanceService(this.source, governanceContext);
+    /* 审计 #435：传 clock —— 否则治理事件走墙钟，与同事务的记忆行时间源不一致。 */
+    this.governanceService = new PersonaGovernanceService(this.source, governanceContext, this.clock);
     /* Marketplace sub-service context. The marketplace cluster
      * reaches into wallet (settlement + journal), memory (audit
      * trail), and governance (reward events on high-quality
