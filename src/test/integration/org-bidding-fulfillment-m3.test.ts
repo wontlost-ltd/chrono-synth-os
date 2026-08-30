@@ -120,6 +120,95 @@ describe('双边市场 M3（org 接单执行 + 验收结算入金库）', () => 
     assert.equal(settlements, 0, '不得留下结算行');
   });
 
+  /* ⚠️ 审计 #440-1：`startOrgTask` 此前把 `runGoal`（落库一整棵目标树：
+   * org_goals + 全部 org_tasks + 委派边）放在事务外、且排在 CAS **之前**。
+   * CAS 失败时抛 409，但那棵树**已经提交**——成为孤儿：goal 挂在 org 上、
+   * 其下任务处于 delegated 可被正常领取执行，而它并不对应任何有效指派。
+   *
+   * ★竞态窗口★：只推进 CAS 谓词读的那一列（assignment.status），其余留在
+   * 能通过**事务外前置判定**的旧值上。若把状态推成终态，`:123` 的
+   * `assign.status !== 'assigned'` 会先拦下，根本进不到 CAS——那就测不到东西了。
+   * （同文件 #406 用的是同一手法。） */
+  it('★审计 #440-1：CAS 失败时不得留下孤儿目标树★', () => {
+    seedOpenTask('task-1');
+    svc.applyAsOrg({ taskId: 'task-1', orgId: 'acme' });
+    svc.confirmAssignToOrg({ taskId: 'task-1', orgId: 'acme', actorUserId: PUBLISHER });
+
+    const assign = store.getLatestOrgTaskAssignment('task-1')!;
+    const goalsBefore = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM org_goals WHERE tenant_id = ? AND org_id = ?`,
+    ).get('t1', 'acme')!.n;
+    const tasksBefore = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM org_tasks WHERE tenant_id = ? AND org_id = ?`,
+    ).get('t1', 'acme')!.n;
+
+    /* ★竞态窗口的构造★
+     *
+     * 前置判定（`:124` 的 `assign.status !== 'assigned'`）与 CAS 读的是**同一行**，
+     * 所以先把状态推走会被前置判定当场拦下，根本走不到建树/CAS —— 实测抛的是
+     * 「指派状态 in_progress，不能启动」，跟本用例要测的东西无关。
+     *
+     * 真实并发里，另一方是在「本方通过前置判定之后、CAS 之前」抢走状态的。
+     * 单进程复现就必须在这两点之间插入交错：包一层 store，让
+     * `getMarketplaceTaskBrief`（前置判定的最后一步）**返回之后**把状态推走。
+     * 这样前置判定拿到的是 assigned（通过），而 CAS 面对的已是 in_progress（失败）。 */
+    let raced = false;
+    const racingStore = new Proxy(store, {
+      get(target, prop, recv) {
+        const v = Reflect.get(target, prop, recv);
+        if (prop !== 'getMarketplaceTaskBrief' || typeof v !== 'function') return v;
+        return (...args: unknown[]) => {
+          const out = (v as (...a: unknown[]) => unknown).apply(target, args);
+          if (!raced) {
+            raced = true;
+            db.prepare<void>(
+              `UPDATE task_org_assignments SET status = 'in_progress' WHERE tenant_id = ? AND id = ?`,
+            ).run('t1', assign.id);
+          }
+          return out;
+        };
+      },
+    });
+    const racingSvc = new OrgBiddingService(racingStore, () => clock, () => `race-${++counter}`);
+
+    assert.throws(
+      () => racingSvc.startOrgTask({
+        taskId: 'task-1', orgId: 'acme',
+        managerWorkerId: leadId, goalType: GOAL_TYPE_CONTENT_PIECE,
+      }),
+      OrgAssignmentStateError,
+      'CAS 失败必须抛错',
+    );
+    assert.ok(raced, '窗口必须真的被注入过（否则本用例什么都没测）');
+
+    /* 核心断言：抛错之后**一条都不能留**。
+     * 变异实测：把 runGoal 移回事务外/CAS 之前 → 这两条转红
+     * （org_goals +1、org_tasks +4，全是无人回收的孤儿）。 */
+    const goalsAfter = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM org_goals WHERE tenant_id = ? AND org_id = ?`,
+    ).get('t1', 'acme')!.n;
+    const tasksAfter = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM org_tasks WHERE tenant_id = ? AND org_id = ?`,
+    ).get('t1', 'acme')!.n;
+    assert.equal(goalsAfter, goalsBefore, 'CAS 失败不得留下孤儿 goal');
+    assert.equal(tasksAfter, tasksBefore, 'CAS 失败不得留下孤儿 org_tasks');
+  });
+
+  /* 对照：正常路径仍能启动（别把功能一起关掉）。 */
+  it('对照：#440-1 修复后正常启动仍建树并回填 goalId', () => {
+    seedOpenTask('task-2');
+    svc.applyAsOrg({ taskId: 'task-2', orgId: 'acme' });
+    svc.confirmAssignToOrg({ taskId: 'task-2', orgId: 'acme', actorUserId: PUBLISHER });
+
+    const started = svc.startOrgTask({
+      taskId: 'task-2', orgId: 'acme',
+      managerWorkerId: leadId, goalType: GOAL_TYPE_CONTENT_PIECE,
+    });
+    assert.equal(started.assignment.status, 'in_progress');
+    assert.ok(started.assignment.orgGoalId, '必须回填 org_goal_id（CAS 前置后仍要回填）');
+    assert.equal(started.goal.taskCount, 4);
+  });
+
   it('★红线：非发布者验收 → 拒★', () => {
     seedOpenTask('task-1');
     svc.applyAsOrg({ taskId: 'task-1', orgId: 'acme' });

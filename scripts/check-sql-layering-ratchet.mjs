@@ -3,7 +3,7 @@
  * SQL 分层棘轮（审计 Warning B2-1）。
  *
  * 铁律：真 SQL 只允许出现在 `src/storage/executors/`（以及 storage 基础设施），
- * 路由/插件层应经 kernel 的 `{kind, params}` 描述符访问数据。
+ * `src/` 其余各层应经 kernel 的 `{kind, params}` 描述符访问数据。
  * 违反的后果不是风格问题——分片重写、方言适配（PG 无 round(double precision,int)）、
  * 租户谓词注入、审计埋点这些统一实施都发生在 executor 边界；绕过它，
  * 这些保障就对该条 SQL 全部失效，且不会有任何报错。
@@ -22,8 +22,31 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 受管辖的目录：这些层**不该**出现真 SQL。 */
-const GOVERNED_DIRS = ['src/server/routes', 'src/server/plugins'];
+/**
+ * 受管辖的范围：**整个 `src/`**，除下方豁免层外都不该出现真 SQL。
+ *
+ * ⚠️ 审计 #428：此前只管辖 `src/server/routes` + `src/server/plugins` 两个目录，
+ * 于是本门（连同 #411 修好的 per-file 计数）**存在一个纯机械的逃逸口**——
+ * 把 SQL 从 `routes/` 挪进其余任意业务目录，就**静默退出了本门的管辖**，
+ * 没有任何报错。实测未受管辖的 25 个文件里有 119 处真 SQL，
+ * 且集中在最不该失去 executor 保障的层：`src/privacy/`（38 处，GDPR 导出/擦除）、
+ * `src/data-plane/`（28 处，租户密钥库/事件账本）。
+ *
+ * 用**白名单式**（管辖 src/ 全部 + 列出豁免）而非枚举 13 个业务目录：
+ * 枚举是黑名单，新增业务目录时又会重开同一个盲区。
+ */
+const GOVERNED_DIRS = ['src'];
+
+/**
+ * 豁免层：这些地方**本就该**写真 SQL。
+ *
+ * - `src/storage/`：executor 边界本身，真 SQL 的唯一合法归宿。
+ * - `src/test/`：测试夹具需要直接建表/塞数据来构造场景。
+ *
+ * 匹配按路径前缀（`src/storage` 或 `src/storage/...`），不做子串匹配，
+ * 以免 `src/storage-foo/` 被误豁免。
+ */
+const EXEMPT_PREFIXES = ['src/storage', 'src/test'];
 
 /**
  * 既有违规文件（审计时的现状快照）。
@@ -32,6 +55,34 @@ const GOVERNED_DIRS = ['src/server/routes', 'src/server/plugins'];
  * 那正是本棘轮要挡的事。若确有不可迁移的基础设施例外，须在此注明理由。
  */
 const BASELINE = new Map([
+  /* ── 业务层（审计 #428 扩管辖时冻结的现状）──
+   * 这些是**扩范围前就已存在**的债务，不是新引入的。逐个迁移到描述符后删行。 */
+  ['src/audit/audit-anchor-verifier.ts', 2],
+  ['src/audit/audit-chain-anchor-service.ts', 9],
+  ['src/billing/settlement-reconciliation-service.ts', 1],
+  ['src/compliance/evidence-collectors.ts', 5],
+  ['src/core/memory-facade.ts', 3],
+  ['src/data-plane/audit-router.ts', 2],
+  ['src/data-plane/persona-core-dual-write.ts', 5],
+  ['src/data-plane/platform-key-resolver.ts', 3],
+  ['src/data-plane/sqlite-event-ledger.ts', 9],
+  ['src/data-plane/sqlite-projection-store.ts', 4],
+  ['src/data-plane/storage-provider-resolver.ts', 1],
+  ['src/data-plane/tenant-vault.ts', 4],
+  ['src/enterprise/kms-key-audit.ts', 1],
+  ['src/multi-tenant/tenant-database.ts', 7],
+  ['src/observability/observability-outbox.ts', 1],
+  ['src/observability/observability-worker-monitor.ts', 2],
+  ['src/onboarding/onboarding-v2-service.ts', 14],
+  ['src/privacy/conflict-inbox-store.ts', 5],
+  ['src/privacy/export-job-store.ts', 4],
+  ['src/privacy/import-token-store.ts', 9],
+  ['src/privacy/legal-hold-service.ts', 7],
+  ['src/privacy/privacy-service.ts', 13],
+  ['src/queue/task-queue.ts', 1],
+  ['src/safety/persona-drift-analyzer.ts', 4],
+  ['src/server/app.ts', 3],
+  /* ── 路由/插件层（原始基线）── */
   ['src/server/plugins/jwt-key-store.ts', 4],
   ['src/server/plugins/websocket.ts', 5],
   ['src/server/routes/admin-config.ts', 3],
@@ -82,10 +133,16 @@ function walk(dir, out = []) {
   return out;
 }
 
+/** 路径是否落在豁免层（按 `/` 边界比较，避免 src/storage-foo 被误豁免）。 */
+function isExempt(rel) {
+  return EXEMPT_PREFIXES.some((p) => rel === p || rel.startsWith(p + '/'));
+}
+
 const offenders = [];
 for (const govDir of GOVERNED_DIRS) {
   for (const file of walk(join(ROOT, govDir))) {
     const rel = relative(ROOT, file).split(sep).join('/');
+    if (isExempt(rel)) continue;
     const src = readFileSync(file, 'utf8');
     if (!SQL_MARKER.test(src)) continue;
     /* 计数必须用**与检出同一个** marker：此前这里固定数 `.prepare<`，
@@ -113,7 +170,7 @@ const stale = [...BASELINE.keys()].filter((f) => !current.has(f));
 const loosened = offenders.filter((o) => BASELINE.has(o.rel) && o.count < BASELINE.get(o.rel));
 
 if (added.length > 0) {
-  console.error('✗ SQL 分层棘轮：以下文件在路由/插件层新引入了真 SQL\n');
+  console.error('✗ SQL 分层棘轮：以下文件新引入了真 SQL\n');
   for (const o of added) {
     const frozen = BASELINE.get(o.rel);
     console.error(
@@ -148,5 +205,6 @@ if (loosened.length > 0) {
 
 const total = offenders.reduce((n, o) => n + o.count, 0);
 console.log(
-  `✓ SQL 分层棘轮：路由/插件层无新增真 SQL（既有 ${offenders.length} 文件 / ${total} 处，已冻结待迁移）。`,
+  `✓ SQL 分层棘轮：src/（豁免 ${EXEMPT_PREFIXES.join('、')}）无新增真 SQL` +
+  `（既有 ${offenders.length} 文件 / ${total} 处，已冻结待迁移）。`,
 );

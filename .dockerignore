@@ -9,6 +9,21 @@
 # ── 前端/桌面/移动应用（backend 镜像完全不引用；apps/desktop 含 Tauri Rust target 数 GB，主因）──
 apps/
 
+# ⚠️ 审计 #466：上面这条 `apps/` 把 **apps/web/Dockerfile 自己需要的输入**也排掉了，
+# 该镜像因此**从来就构建不了**（实测 `COPY apps/web/package.json` 报
+# 「no items matching glob … 1 filtered out using .dockerignore」）。
+# 之所以一直没人发现：没有任何 workflow 构建过这个 Dockerfile。
+#
+# .dockerignore 是**两个镜像共用**的（根 Dockerfile = backend，apps/web/Dockerfile = 前端），
+# 所以不能简单删掉 `apps/`——那会把 apps/desktop 的数 GB Tauri target 拉回 backend 上下文。
+# 改为**定向放回** web 镜像真正需要的那几项，其余（尤其 apps/desktop/src-tauri）仍排除。
+!apps/web
+apps/web/node_modules
+apps/web/dist
+# workspace 安装需要同 workspaces 列表里其余包的 package.json（否则 npm ci 对不上 lockfile）
+!apps/desktop/package.json
+!apps/companion-web/package.json
+
 # ── 依赖（builder 自己 npm ci 装）──
 node_modules
 **/node_modules

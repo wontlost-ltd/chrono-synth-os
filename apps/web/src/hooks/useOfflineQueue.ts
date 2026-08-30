@@ -5,7 +5,7 @@
  * 每个 QueuedAction 以 OutboxEntry 格式存储，entityRef 为 "offline-action/<id>"。
  */
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useOnlineStatus } from './useOnlineStatus';
 import {
   enqueueOutbox,
@@ -132,12 +132,38 @@ export function useReconnectFlush(
 ): void {
   const isOnline = useOnlineStatus();
 
+  /* ⚠️ 审计 #439：`flushFn` 此前直接进依赖数组。调用方几乎必然传内联箭头
+   * （`useReconnectFlush((a) => post(a))`），其引用**每次 render 都变**，
+   * 于是每次父组件重渲染都重跑一遍 flush —— 对非幂等 mutation 就是重复提交。
+   *
+   * 实测（1 次挂载 + 3 次 rerender，flush 保持 pending）：
+   *   内联箭头 → 4 次调用；稳定引用 → 1 次。唯一变量是引用稳定性。
+   *
+   * 用 ref 存最新实现、依赖数组只留 `isOnline`：既不因引用变化重跑，
+   * 又总是调到最新的 flushFn（不会闭包捕获陈旧版本）。 */
+  const flushRef = useRef(flushFn);
+  useEffect(() => { flushRef.current = flushFn; });
+
+  /* 正在冲洗中的 action id。
+   *
+   * ⚠️ 光稳定引用**不够**：`isOnline` 真实翻转（掉线→重连→再掉线→再重连）
+   * 时 effect 会正常重跑，此时上一轮的 flush 可能仍在途——它成功后才
+   * `dequeueOfflineAction`，所以队列里那条还在，会被**再发一次**。
+   * 用 ref 而非 state：置位不该触发 render，且必须对同一 effect 周期内的
+   * 后续读取立即可见。 */
+  const inFlightRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!isOnline) return;
 
     const snapshot = [...cachedQueue];
     for (const action of snapshot) {
-      void flushFn(action).then(() => dequeueOfflineAction(action.id)).catch(() => {});
+      if (inFlightRef.current.has(action.id)) continue;
+      inFlightRef.current.add(action.id);
+      void flushRef.current(action)
+        .then(() => dequeueOfflineAction(action.id))
+        .catch(() => { /* 失败留在队列里，下次重连再试 */ })
+        .finally(() => { inFlightRef.current.delete(action.id); });
     }
-  }, [isOnline, flushFn]);
+  }, [isOnline]);
 }

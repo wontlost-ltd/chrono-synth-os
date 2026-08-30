@@ -102,6 +102,62 @@ const CASES = [
     files: { 'a.tsx': '/* 迁移说明：原为 #64748B，已换语义 token。 */\nexport const A = 1;\n' },
     expect: 0,
   },
+  /* ── 审计 #439：ignore-block 的终点判定 ──
+   * 此前覆盖「到下一个空行为止」，把豁免边界绑在**代码格式**上：块尾紧贴
+   * 追加的无关声明会被静默豁免（实测唯一变量就是有没有那个空行）。
+   * 改为必须写显式终点标记。下面三条锁住新语义的三个方向。 */
+  {
+    name: '#439：ignore-block 有终点标记 → 范围内豁免',
+    files: {
+      'a.tsx':
+        '/* lint-raw-palette-ignore-block 编码色表需固定色相区分类别 */\n'
+        + 'const A = { c: "#ff0000" };\n'
+        + '/* lint-raw-palette-ignore-block-end */\n',
+    },
+    expect: 0,
+  },
+  {
+    name: '#439：终点标记之后紧贴的无关声明**不得**被豁免（原缺陷）',
+    files: {
+      'a.tsx':
+        '/* lint-raw-palette-ignore-block 编码色表需固定色相区分类别 */\n'
+        + 'const A = { c: "#ff0000" };\n'
+        + '/* lint-raw-palette-ignore-block-end */\n'
+        + 'const LEAK = { c: "#00ff00" };\n',
+    },
+    expect: 1,
+  },
+  {
+    name: '#439：ignore-block 缺终点标记 → 报错（不再按空行隐式推断）',
+    files: {
+      'a.tsx':
+        '/* lint-raw-palette-ignore-block 编码色表需固定色相区分类别 */\n'
+        + 'const A = { c: "#ff0000" };\n',
+    },
+    expect: 1,
+  },
+  {
+    name: '#439：缺终点时块内行**不得**被豁免（报错同时不能漏放）',
+    files: {
+      'a.tsx':
+        '/* lint-raw-palette-ignore-block 编码色表需固定色相区分类别 */\n'
+        + 'const A = { c: "#ff0000" };\n'
+        + '\n'
+        + 'const B = { c: "#00ff00" };\n',
+    },
+    expect: 1,
+  },
+  {
+    name: '#439：终点标记本身不得被当成新块起点（\\b 在 -end 前也成立）',
+    files: {
+      'a.tsx':
+        '/* lint-raw-palette-ignore-block 编码色表需固定色相区分类别 */\n'
+        + 'const A = { c: "#ff0000" };\n'
+        + '/* lint-raw-palette-ignore-block-end */\n'
+        + 'export const OK = 1;\n',
+    },
+    expect: 0,
+  },
   {
     name: 'var(--token, #fallback) → 不报',
     files: { 'a.tsx': 'export const A = { c: "var(--color-primary, #3b82f6)" };\n' },

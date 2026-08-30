@@ -27,11 +27,16 @@ COPY apps/companion-web/package.json apps/companion-web/package.json
 # 本镜像的构建产物是纯静态资源，依赖全为纯 JS，无需任何安装脚本产出。
 RUN npm ci --ignore-scripts
 
-# web 的 @chrono/* 依赖解析到 packages/*/dist，需先构建这些内部包（web devDeps：contracts/
-# design-tokens/sync-engine/kernel-testkit；依赖图闭合，sync-engine/kernel-testkit 引用 contracts）。
+# web 的 @chrono/* 依赖解析到 packages/*/dist，需先构建这些内部包。
 # packages/ 源码已随上面 COPY 带入；tsconfig.json 是根项目引用图入口。
+#
+# ⚠️ 审计 #466：这里**不能**构建 kernel-testkit。它 `import '../../../dist/index.js'`
+# ——指向**根** dist/，那是后端的构建产物，既被 .dockerignore 排除、本镜像也
+# 从不构建它（实测 TS2307 Cannot find module '../../../dist/index.js'）。
+# kernel-testkit 在 apps/web 里是 devDependency 且 apps/web/src 零引用，
+# 只有测试用得上，生产构建不需要。
 COPY tsconfig.json ./
-RUN npx tsc -b packages/contracts packages/design-tokens packages/sync-engine packages/kernel-testkit
+RUN npx tsc -b packages/contracts packages/design-tokens packages/sync-engine
 
 # 再拷 web 源码并构建（vite → apps/web/dist）。
 COPY apps/web/ apps/web/

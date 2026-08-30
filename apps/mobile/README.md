@@ -76,6 +76,23 @@ These are GA bundle ids and **cannot change** without app-id migration
 through App Store / Play Store. Set in `app.json` before first TestFlight
 build.
 
+## 测试（jest 配置说明）
+
+`package.json` 的 `jest` 段有两处非显然的配置，理由记在这里 —— 之前它们写成
+`"//moduleNameMapper": "…"` 这样的**注释键**，但 jest 不认识以 `//` 开头的键，
+每次运行都会刷两条 `Validation Warning: Unknown option "//moduleNameMapper"`，
+把真正的失败信息淹掉。
+
+- **`moduleNameMapper: {"^(\\.{1,2}/.*)\\.js$": "$1"}`** —— 去掉相对 import 的
+  `.js` 后缀，让 jest 的 CJS 解析器能加载 `@chrono/contracts` 的 NodeNext `.ts`
+  源（该包的 import 用 `.js` specifier）。仓库内无同名 `foo.ts` / `foo.js` 冲突，
+  故这个映射是安全的。
+
+- **`testTimeout: 30000`** —— jest 默认 5s 在 CI 上不够。GitHub 双核 runner 上
+  ts 转译 + RN harness 让首个套件远慢于开发机：`CompanionPerceiveScreen.test.tsx`
+  实测 CI 8.0s 而本地 0.6s（约 13×），默认值下会随机超时。这**不是**被测代码慢，
+  所以正确的处理是给足预算而不是去改产品代码。
+
 ## Files
 
 | Path | Role |
