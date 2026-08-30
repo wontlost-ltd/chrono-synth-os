@@ -92,7 +92,21 @@ export interface ExecuteTaskInput {
   readonly taskId: string;
   /** 执行者数字员工（必须是任务当前执行者）。 */
   readonly workerId: string;
-  /** 人类法律 principal（org owner / 授权管理员；绝不为空——org_worker 不得无 principal 执行）。 */
+  /**
+   * 人类法律 principal（org owner / 授权管理员；绝不为空——org_worker 不得无 principal 执行）。
+   *
+   * ★该字段**同时是审计字段与授权键**（产品定调，审计 #440-2）：
+   *   · 审计：留痕"这次工具调用由哪个自然人承担法律责任"；
+   *   · 授权：`AgencyAuthorizationService.isToolAllowedForPrincipal` 会拿它与
+   *     授权书的 `principalUserId` **逐一匹配**——Alice 签发的授权书**不为**
+   *     Bob 的执行放行。故"Alice 只授权了只读"这条约束在系统里是可表达的。
+   *
+   * 此前只写了前半句，读起来像纯审计字段，与实际的授权语义相悖。
+   * 两种读法会导致完全不同的安全结论，故在此写全。
+   *
+   * 注：`executingPrincipalUserId === null`（数字人自主执行、无人类发起者）
+   * 时匹配放行——否则 earning cycle 这类自主闭环会全挂。见 `coversPrincipal`。
+   */
   readonly principalUserId: string;
   /** 要调用的工具 id。 */
   readonly toolId: string;

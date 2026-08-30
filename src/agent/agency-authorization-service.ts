@@ -188,6 +188,12 @@ export class AgencyAuthorizationService {
  * ⚠️ 这条规则**改变了产品语义**：此前靠「别人的宽泛授权顺带放行」而工作的
  * **有人类主体**的调用会开始被拒。这是有意为之 —— 那正是缺陷本身。
  * 自主路径的行为不变（本就没有「借用别人授权」这一说）。
+ *
+ * ★产品定调（审计 #440-2，已由产品侧明确）：`principal_user_id`
+ * **既是审计字段、也是授权键**——两个角色同时成立，不是二选一：
+ *   · 作为审计字段：留痕哪个自然人为该次调用承担法律责任；
+ *   · 作为授权键：本函数据它逐一匹配，故「Alice 只授权了只读」是可表达的约束。
+ * 因此本函数的匹配**不是可选的加固**，而是授权模型的组成部分，不得退化为恒真。
  */
 function coversPrincipal(auth: AgencyAuthorization, executingPrincipalUserId: string | null): boolean {
   if (executingPrincipalUserId === null) return true;
