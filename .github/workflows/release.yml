@@ -25,9 +25,9 @@ jobs:
       image-tag: ${{ steps.meta.outputs.version }}
       image-digest: ${{ steps.build.outputs.digest }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
 
@@ -84,10 +84,10 @@ jobs:
 
       # 多架构构建：amd64（生产/CI 原生）+ arm64（Apple Silicon 开发机 / AWS Graviton 等 ARM 云）。
       # amd64 runner 交叉构建 arm64 层需 QEMU 模拟器（setup-qemu 注册 binfmt handler）。
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -99,7 +99,7 @@ jobs:
       # pre-release semantics when given `enable=false` on the major.minor
       # alias for pre-releases.
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/wontlost-ltd/chrono-synth-os
           flavor: |
@@ -110,7 +110,7 @@ jobs:
             type=sha,prefix=sha-
 
       - id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           push: true
@@ -137,7 +137,7 @@ jobs:
       # artifact 漏过发布 gate（Codex 交叉审查）。故 amd64 与 arm64 各扫一遍，同样 blocking。
       # TRIVY_PLATFORM 在 manifest list tag 上钉具体平台（trivy-action 把 TRIVY_* env 透传给 trivy 本体）。
       - name: Trivy image scan (amd64)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/amd64
         with:
@@ -147,7 +147,7 @@ jobs:
           severity: ${{ contains(github.ref_name, '-') && 'CRITICAL' || 'CRITICAL,HIGH' }}
 
       - name: Trivy image scan (arm64)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/arm64
         with:
@@ -165,7 +165,7 @@ jobs:
       # `subjectRegExp`. If we ever switch to keyed mode we'd add the public
       # key as a ConfigMap and update Kyverno accordingly.
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign image with cosign (keyless)
         env:
@@ -184,7 +184,7 @@ jobs:
       # verifiers can run `cosign verify-attestation --type spdxjson ...`
       # to retrieve and pin the SBOM that was current at release time.
       - name: Generate SBOM (SPDX-JSON)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ghcr.io/wontlost-ltd/chrono-synth-os@${{ steps.build.outputs.digest }}
           format: spdx-json
@@ -206,14 +206,14 @@ jobs:
       # *this* workflow run, signed by Fulcio under the GH identity. Verifiable
       # with `gh attestation verify` or `cosign verify-attestation`.
       - name: Attest build provenance (SLSA)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ghcr.io/wontlost-ltd/chrono-synth-os
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Upload SBOM as workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: chrono-synth-os-sbom-${{ github.sha }}
           path: sbom.spdx.json
@@ -227,7 +227,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     steps:
-      - uses: actions/github-script@v9
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           github-token: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
           script: |
