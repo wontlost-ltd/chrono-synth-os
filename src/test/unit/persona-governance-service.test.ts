@@ -304,4 +304,71 @@ describe('PersonaGovernanceService (Step 16c extraction)', () => {
     ).get(fx.tenantId, fx.personaId)!.reputation;
     assert.ok(repAfter < repBefore, `temporary_suspension 应扣声誉：${repBefore} → ${repAfter}`);
   });
+
+  /* ⚠️ 审计 #436：`appealGovernanceCase` 此前**无任何状态校验** ——
+   * 已 resolved 的 case 可被拉回 appealed，且 `resolved_at` **残留**指向旧的
+   * 结案时刻，状态与时间戳自相矛盾，下游按 resolved_at 过滤的报表会错算。 */
+  it('审计 #436：已结案的 case 不得再申诉（且不得留下矛盾时间戳）', () => {
+    const gc = fx.service.openGovernanceCase({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, personaId: fx.personaId,
+      triggerType: 'policy_violation', severity: 'low',
+    });
+    assert.ok(gc);
+    /* reinstate 会把 case 推到 resolved。 */
+    const resolved = fx.service.applyGovernanceAction({
+      tenantId: fx.tenantId, caseId: gc!.id, actorUserId: fx.ownerUserId, actionType: 'reinstate',
+    });
+    assert.equal(resolved?.governanceCase.status, 'resolved', '前提：已结案');
+    const resolvedAtBefore = fx.db.prepare<{ resolved_at: number | null }>(
+      `SELECT resolved_at FROM governance_cases WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, gc!.id)!.resolved_at;
+    assert.ok(resolvedAtBefore !== null, '前提：resolved_at 已写入');
+
+    const appealed = fx.service.appealGovernanceCase({
+      tenantId: fx.tenantId, caseId: gc!.id, actorUserId: fx.ownerUserId, details: { reason: '不服' },
+    });
+
+    /* 变异实测：去掉状态守卫 → 返回非 null 且 status 变 appealed、resolved_at 残留。 */
+    assert.equal(appealed, null, '已结案不得再申诉');
+    const row = fx.db.prepare<{ status: string; resolved_at: number | null }>(
+      `SELECT status, resolved_at FROM governance_cases WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, gc!.id)!;
+    assert.equal(row.status, 'resolved', '状态不得被拉回 appealed');
+    assert.equal(row.resolved_at, resolvedAtBefore, 'resolved_at 不得被改动');
+  });
+
+  it('审计 #436：重复申诉同一 case 必须拒绝（幂等，不产生第二条 review 事件）', () => {
+    const gc = fx.service.openGovernanceCase({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, personaId: fx.personaId,
+      triggerType: 'task_dispute', severity: 'medium',
+    });
+    assert.ok(gc);
+    const first = fx.service.appealGovernanceCase({
+      tenantId: fx.tenantId, caseId: gc!.id, actorUserId: fx.ownerUserId, details: { reason: 'a' },
+    });
+    assert.ok(first, '首次申诉应成功');
+
+    const second = fx.service.appealGovernanceCase({
+      tenantId: fx.tenantId, caseId: gc!.id, actorUserId: fx.ownerUserId, details: { reason: 'b' },
+    });
+    assert.equal(second, null, '重复申诉必须拒绝');
+    /* 申诉理由不得被第二次覆盖。 */
+    const row = fx.db.prepare<{ appeal_json: string }>(
+      `SELECT appeal_json FROM governance_cases WHERE tenant_id = ? AND id = ?`,
+    ).get(fx.tenantId, gc!.id)!;
+    assert.match(row.appeal_json, /"a"/, '首次申诉内容不得被覆盖');
+  });
+
+  it('对照：未结案的 case 仍可正常申诉（别把功能一起拒掉）', () => {
+    const gc = fx.service.openGovernanceCase({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, personaId: fx.personaId,
+      triggerType: 'task_dispute', severity: 'low',
+    });
+    assert.ok(gc);
+    const appealed = fx.service.appealGovernanceCase({
+      tenantId: fx.tenantId, caseId: gc!.id, actorUserId: fx.ownerUserId, details: { reason: 'ok' },
+    });
+    assert.ok(appealed, '未结案应可申诉');
+    assert.notEqual(appealed!.appealedAt, null);
+  });
 });

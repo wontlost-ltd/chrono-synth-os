@@ -76,9 +76,19 @@ export class CostTracker {
     totalOutputTokens: number;
     estimatedCostUsd: number;
   } {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
+    /* ⚠️ 审计 #434：月度边界必须用 **UTC**，与 token-budget 保持一致。
+     *
+     * 此前用 `setDate(1) + setHours(0,0,0,0)` 是**本机时区**的月初，而
+     * `token-budget.ts` 的 `getMonth()` 用 `toISOString().slice(0,7)` 是 **UTC**。
+     * 两者读同一张 `llm_usage` 表：UTC+14 主机上相差 **14 小时**。
+     * 跨月边界时预算门认为已进新月（额度重置）而成本统计仍算上月 —— 或反之：
+     * 租户可能在边界窗口内拿到双倍额度，或被错误拒绝。
+     *
+     * 统一到 UTC（而非本地时区）的理由：token-budget 的 key 是字符串
+     * `YYYY-MM`，改它要动持久化的 usage key 语义；改本处只是查询边界，
+     * 影响面最小且方向正确（服务端计量本就该用 UTC）。 */
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
     const row = this.source.forTenant(tenantId).queryOne(llmQueryMonthlySummary({ tenantId, monthStartMs: monthStart.getTime() }));
     return {
       totalCalls: row?.total_calls ?? 0,

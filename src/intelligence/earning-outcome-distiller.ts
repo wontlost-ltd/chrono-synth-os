@@ -64,7 +64,13 @@ export class EarningOutcomeDistiller {
     const evidence: ArtifactEvidence[] = [
       /* 任务完成本身是一条经历记忆；质量分作为统计 pattern 信号 */
       { type: 'memory', id: `task:${input.taskId}`, score: quality },
-      { type: 'pattern', id: `earning:${input.category}`, score: Math.min(1, input.payout / 100) },
+      /* ⚠️ 审计 #437：`Math.min(1, payout/100)` **缺下界**。
+       * 负 payout（退款/冲正）会产生负 evidence 分，被 kernel 的 validateArtifact
+       * 拒收，而拒收会**连带毁掉同批无关的候选**，且返回值形状仍报成功
+       * （`candidatesIngested: 2`），属**静默失败** —— 本仓已有先例：
+       * EarningOutcomeDistiller 误标 source 曾导致自演化静默停止。
+       * 夹到 [0,1]。 */
+      { type: 'pattern', id: `earning:${input.category}`, score: Math.max(0, Math.min(1, input.payout / 100)) },
     ];
     const patternAgrees = quality >= STRONG_SIGNAL_QUALITY; /* 强信号(≥0.8)→ 可自动编译 */
     const confidence = patternAgrees ? 0.85 : 0.7;
