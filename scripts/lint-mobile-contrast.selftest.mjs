@@ -38,6 +38,37 @@ function runOn(files) {
 }
 
 const CASES = [
+  /* ── 审计 #439：含嵌套花括号的样式项整条从检查里消失 ──
+   * 原实现 `matchAll(/\{[^{}]*\}/gs)` 的 `[^{}]` 只能匹配最内层花括号。
+   * 下面三条用**同一个必不达标的颜色**，唯一变量是嵌套属性——三条必须同结论，
+   * 否则就是「加个阴影就退出检查」的原缺陷。 */
+  {
+    name: '#439：无嵌套花括号的不达标色 → 应报（基准）',
+    files: { 'a.tsx': "const s = { bad: { fontSize: 13, color: '#F1F5F9' } };\n" },
+    expect: 1,
+  },
+  {
+    name: '#439：含 shadowOffset 嵌套对象，同一不达标色 → 仍应报',
+    files: {
+      'a.tsx': "const s = { bad: { fontSize: 13, shadowOffset: { width: 0, height: 1 }, color: '#F1F5F9' } };\n",
+    },
+    expect: 1,
+  },
+  {
+    name: '#439：含 transform 数组嵌套，同一不达标色 → 仍应报',
+    files: {
+      'a.tsx': "const s = { bad: { fontSize: 13, transform: [{ scale: 1.1 }], color: '#F1F5F9' } };\n",
+    },
+    expect: 1,
+  },
+  {
+    name: '#439：含嵌套且**达标**的色 → 不报（别把功能一起关掉）',
+    files: {
+      'a.tsx': "const s = { ok: { fontSize: 13, shadowOffset: { width: 0, height: 1 }, color: '#1F2937' } };\n",
+    },
+    expect: 0,
+  },
+
   /* ⚠️ 审计 #418：原正则写死「单引号 + 恰好 6 位 hex」，3/4/8 位与双引号全部逃逸。
    * 生产实例 ConflictInboxScreen.tsx 的 `color: '#fff'` 从未被评估过。 */
   {

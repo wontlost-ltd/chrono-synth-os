@@ -98,6 +98,82 @@ for (const file of walk(TARGET)) {
   const cm = text.match(/(?:container|screen|root|wrapper):\s*\{[^}]*backgroundColor:\s*'(#[0-9a-fA-F]{6})'/s);
   const fileBg = cm ? cm[1] : DEFAULT_BG;
 
+/**
+ * 枚举样式项的花括号块，返回 `{ 0: 块文本, index: 起始下标 }`（与 matchAll 同形状）。
+ *
+ * ⚠️ 审计 #439：原实现是 `text.matchAll(/\{[^{}]*\}/gs)`。`[^{}]` 决定它
+ * **只能匹配最内层**花括号，于是任何含嵌套 `{}` 的样式项整条从检查里消失——
+ * 而 `shadowOffset: { width: 0, height: 1 }` 和 `transform: [{ scale: 1.1 }]`
+ * 都是 RN 的惯用写法。
+ *
+ * 实测（同一个必不达标的 `color: '#F1F5F9'`，1.05 对比度）：
+ *   - 无嵌套 → 报违规，checked 75→76
+ *   - 加 shadowOffset → 「全部达标」，checked 回到 75
+ *   - 加 transform   → 「全部达标」，checked 回到 75
+ * 注意 checked **分母**也跟着缩水——门不会以任何形式提示「我跳过了一条」，
+ * 这正是它比漏报更危险的地方：绿勾看起来覆盖了 75 处，实际分母是虚的。
+ *
+ * 改为花括号配平扫描：从每个 `{` 出发找到配平的 `}`，块内允许任意层嵌套。
+ * 为保持「按样式项」的粒度（而非把整个 StyleSheet.create 当一块），
+ * 只收**深度 1 的直接子块**——即样式项本身，其内部的 shadowOffset 等
+ * 嵌套对象作为文本留在块里参与 fontSize/color 匹配。
+ *
+ * 不上 AST：为一个 155 行的门引入 parser 依赖，复杂度与问题严重度不匹配。
+ * 字符串里的花括号理论上会干扰配平，但 RN 样式值是颜色/数字/枚举字符串，
+ * 实测全仓无一例含花括号的样式字符串（回归判据：既有 75 处结论不变）。
+ */
+function styleBlocks(text) {
+  const out = [];
+  let depth = 0;
+  /** 深度→该层最近一个 `{` 的下标 */
+  const opens = [];
+  /** 深度→该层在闭合前是否出现过子块（用于识别「样式项」这一层） */
+  const hadChild = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') {
+      if (depth > 0) hadChild[depth - 1] = true;
+      opens[depth] = i;
+      hadChild[depth] = false;
+      depth += 1;
+      continue;
+    }
+    if (ch !== '}') continue;
+    depth -= 1;
+    if (depth < 0) { depth = 0; continue; }   // 花括号不配平（模板字符串等）→ 容错
+    const start = opens[depth];
+    if (start === undefined) continue;
+    const block = text.slice(start, i + 1);
+    /* 只收**样式项**这一层：它自己带 fontSize/color 这类叶子属性。
+     *
+     * ⚠️ 不能无条件收所有配平块——那会把外层容器 `{ container: {…}, ok: {…} }`
+     * 也当成一条样式，于是 `ok` 的 fontSize/color 会跟 `container` 的
+     * backgroundColor 凑成一条假记录（实测打破了「样式块自带 backgroundColor
+     * → 以它为底判定」这条既有用例）。
+     *
+     * 判据：块内**直接**出现 fontSize 才算样式项。外层容器的 fontSize 只
+     * 存在于其子块里，而样式项自己的嵌套子块（shadowOffset / transform）
+     * 不含 fontSize，故两者可分。 */
+    if (/fontSize:\s*\d+/.test(stripNested(block))) {
+      out.push({ 0: block, index: start });
+    }
+  }
+  return out;
+}
+
+/** 去掉块内的嵌套子块，只留本层的直接属性文本。 */
+function stripNested(block) {
+  let out = '';
+  let depth = 0;
+  for (let i = 1; i < block.length - 1; i++) {
+    const ch = block[i];
+    if (ch === '{' || ch === '[') { depth += 1; continue; }
+    if (ch === '}' || ch === ']') { depth -= 1; continue; }
+    if (depth === 0) out += ch;
+  }
+  return out;
+}
+
   /* 按**样式块**（最内层 `{ … }`）解析，而不是按行——RN 的 StyleSheet 既有
    * 单行写法 `meta: { fontSize: 12, color: '#94A3B8' }`，也有跨行写法：
    *     meta: {
@@ -105,7 +181,7 @@ for (const file of walk(TARGET)) {
    *       color: '#94A3B8',
    *     }
    * 只按行匹配会**静默漏掉后者**（本仓实测 15 处），漏报比误报更危险。 */
-  for (const m of text.matchAll(/\{[^{}]*\}/gs)) {
+  for (const m of styleBlocks(text)) {
     const block = m[0];
     const size = block.match(/fontSize:\s*(\d+)/);
     /* 排除非文本色属性：backgroundColor / borderColor / tintColor /

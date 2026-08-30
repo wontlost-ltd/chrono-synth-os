@@ -33,6 +33,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 /* 处置 → 徽章配色。 */
 const DISPOSITION_COLOR: Record<string, string> = { gap: '#fb923c', degraded: '#fbbf24', timeout: '#f87171' };
+/* lint-raw-palette-ignore-block-end */
 
 export default function WorkforceVisualization() {
   const { t } = useTranslation();

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { useOnlineStatus } from './useOnlineStatus';
 import type { OutboxEntry } from '../sync/replica-store';
+import type { QueuedAction } from './useOfflineQueue';
 import {
   useOfflineQueue,
   useReconnectFlush,
@@ -136,5 +138,90 @@ describe('useReconnectFlush', () => {
 
     await waitFor(() => expect(flushFn).toHaveBeenCalled());
     expect(result.current.count).toBe(1);
+  });
+
+  /* ⚠️ 审计 #439：`flushFn` 曾直接进依赖数组，而调用方几乎必然传内联箭头，
+   * 其引用每次 render 都变 → 每次父组件重渲染都重发一遍，对非幂等 mutation
+   * 就是重复提交。
+   *
+   * ⚠️ 本用例有一个**必须保持**的前提：flush 要停在 pending。
+   * 若让它立即 resolve，成功路径会 dequeue 清空队列，下次 effect 读到空快照，
+   * **缺陷版与修复版都只发 1 次**——用例恒绿、什么也测不到。
+   * （这正是本仓记录过的假绿模式，改动此用例时先想清楚再动。） */
+  it('审计 #439：父组件重渲染不得重发——内联 flushFn 的引用变化不算新一轮', async () => {
+    await enqueueOfflineAction('flush-once');
+
+    /* 永不 settle：模拟「请求在途期间父组件重渲染」这一真实条件。 */
+    const spy = vi.fn((_a: QueuedAction) => new Promise<void>(() => {}));
+    const { rerender } = renderHook(() => useReconnectFlush((a) => spy(a)));
+
+    rerender();
+    rerender();
+    rerender();
+
+    /* 变异实测：把依赖数组改回 `[isOnline, flushFn]` → 此处收到 4 次。 */
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  /* ⚠️ 上一条只覆盖了「引用变化」这一半。`isOnline` **真实翻转**
+   * （掉线→重连→再掉线→再重连）时 effect 本来就该重跑，稳定引用拦不住它；
+   * 而上一轮 flush 若仍在途，它成功后才 dequeue，队列里那条还在 → 会被再发。
+   * 这一半由 inFlight 去重负责，必须单独立一条，否则退掉它照样全绿。
+   *
+   * 变异实测：删掉 inFlight 判据 → 此处收到 2 次。 */
+  it('审计 #439：重连翻转时在途的 action 不得重复冲洗', async () => {
+    const online = vi.mocked(useOnlineStatus);
+    await enqueueOfflineAction('inflight');
+
+    const spy = vi.fn((_a: QueuedAction) => new Promise<void>(() => {}));   // 永不 settle：保持在途
+    const { rerender } = renderHook(() => useReconnectFlush((a) => spy(a)));
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    /* 掉线 → 重连：effect 真正重跑一轮（isOnline 变了，不是引用变化）。 */
+    online.mockReturnValue(false);
+    rerender();
+    online.mockReturnValue(true);
+    rerender();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  /* ⚠️ 第三条覆盖 ref 稳定化**独有**的那部分。
+   * inFlight 去重只在 flush **仍在途**时挡得住；一旦 flush 已 settle
+   * （这里用 reject——失败的 action 按设计留在队列里等下次重试），
+   * inFlight 已清空，此时引用变化就会**再发一次**。
+   *
+   * 变异实测：把依赖数组改回 `[isOnline, flushFn]` → 此处收到 2 次。
+   * 这也是为什么两个机制都得留：它们挡的不是同一段窗口。 */
+  it('审计 #439：flush 失败后重渲染不得重发（inFlight 已清空，靠稳定引用兜）', async () => {
+    await enqueueOfflineAction('failed-then-rerender');
+
+    const spy = vi.fn((_a: QueuedAction) => Promise.reject(new Error('network error')));
+    const { rerender } = renderHook(() => useReconnectFlush((a) => spy(a)));
+
+    /* 等 reject 走完 .catch/.finally，inFlight 清空。 */
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    rerender();
+    rerender();
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  /* 对照：修复不能是「把功能关掉」——真正的新一轮（重新挂载）仍须冲洗。 */
+  it('对照：重新挂载仍会冲洗队列（没把功能一起关掉）', async () => {
+    await enqueueOfflineAction('flush-again');
+
+    const spy = vi.fn((_a: QueuedAction) => new Promise<void>(() => {}));
+    const first = renderHook(() => useReconnectFlush((a) => spy(a)));
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    first.unmount();
+    renderHook(() => useReconnectFlush((a) => spy(a)));
+
+    /* 新实例有自己的 inFlight 集合，队列里那条仍在 → 应再冲一次。 */
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 });

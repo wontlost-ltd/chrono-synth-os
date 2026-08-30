@@ -110,6 +110,7 @@ function MetricTile({
     violet: { from: '#A855F7', to: '#C084FC', dot: '#A855F7' },
     amber:  { from: '#F59E0B', to: '#FBBF24', dot: '#F59E0B' },
   }[accent];
+  /* lint-raw-palette-ignore-block-end */
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-border bg-surface-elevated p-4">

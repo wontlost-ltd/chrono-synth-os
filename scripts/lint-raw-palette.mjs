@@ -133,7 +133,36 @@ function hasRealReason(raw) {
 }
 
 const IGNORE_LINE = /\/\/\s*lint-raw-palette-ignore-next-line\b(.*)$|\/\*\s*lint-raw-palette-ignore-next-line\b([^*]*)\*\//;
-const IGNORE_BLOCK = /\/\/\s*lint-raw-palette-ignore-block\b(.*)$|\/\*\s*lint-raw-palette-ignore-block\b([^*]*)\*\//;
+/* ⚠️ `(?!-end)`：`\b` 在 `ignore-block-end` 的 `k` 与 `-` 之间同样成立，
+ * 不排除的话终点标记会被当成**新的**块起点（实测：加了 2 个终点标记后，
+ * 门报「4 处豁免标记未写原因」——多出来的正是那两个终点）。 */
+const IGNORE_BLOCK = /\/\/\s*lint-raw-palette-ignore-block(?!-end)\b(.*)$|\/\*\s*lint-raw-palette-ignore-block(?!-end)\b([^*]*)\*\//;
+/**
+ * 显式终点标记（审计 #439）。写了它，豁免范围就**精确**到这一行为止，
+ * 不再依赖「下一个空行」这种与代码格式耦合的隐式边界。
+ */
+const IGNORE_BLOCK_END = /\/\/\s*lint-raw-palette-ignore-block-end\b|\/\*\s*lint-raw-palette-ignore-block-end\b[^*]*\*\//;
+
+/**
+ * 一行代码里的全部违规命中（已剥注释的 `code`）。
+ *
+ * ⚠️ 抽出来是为了让**豁免范围判定**与**违规报告**用同一判据。若在别处
+ * 另写一个「像是调色板色」的正则，两边就会漂移——本仓已记录过「断言的是
+ * 自己的副本」这类陷阱。任何检出规则的增删只需改这一处。
+ *
+ * @param isComponent 组件文件才检裸色值/颜色函数（配置文件里定义色板是合法的）
+ */
+function paletteHits(code, isComponent) {
+  const hits = [];
+  for (const h of code.match(RE) ?? []) hits.push(h);
+  for (const h of code.match(ARBITRARY_RE) ?? []) hits.push(h);
+  if (isComponent) {
+    const stripped = code.replace(VAR_FALLBACK_RE, ' ');
+    for (const h of stripped.match(HEX_RE) ?? []) hits.push(h);
+    for (const h of stripped.match(COLOR_FN_RE) ?? []) hits.push(h.replace(/\s*\d$/, ''));
+  }
+  return hits;
+}
 
 let violations = 0;
 let scanned = 0;
@@ -187,25 +216,43 @@ for (const [app, file] of allFiles) {
         missingReason += 1;
         console.error(`  ✖ ${rel}:${i + 1}  ignore-block 缺原因说明（需 ≥6 个非标点字符）`);
       }
-      /* 覆盖到下一个空行为止——正好对应「一个声明块」。
+      /* 覆盖范围**必须**由显式终点标记划定：`lint-raw-palette-ignore-block-end`。
        *
-       * ⚠️ 上限 BLOCK_MAX 行：没有空行的长文件（压缩代码、超大对象）会让
-       * 「到下一个空行」一路吞到文件尾，把无关声明也豁免掉——那比整文件豁免
-       * 更隐蔽。实测无上限时一个 60 行对象后面紧跟的独立声明也被吞掉。
-       * 超限即报错，逼使用者改用逐行标记或把块拆开。 */
+       * ⚠️ 审计 #439：此前是「覆盖到下一个空行为止」，把豁免边界绑在了
+       * **代码格式**上。真实现场 WorkforceVisualization.tsx:26 的块连续 10 行
+       * 无空行（3 个独立声明），10 < BLOCK_MAX 不触发上限；于是在色表下方
+       * **紧接着**加任何一行代码，都自动获得豁免且**无任何提示**。
+       * 实测：在 DISPOSITION_COLOR 后紧贴加一条 `#ff0000` → RC=0 静默吞掉，
+       * 中间隔一个空行 → RC=1 正确报出。唯一变量就是那个空行——豁免范围
+       * 取决于有没有人按回车，这不是能靠调参数救回来的判据。
+       *
+       * 试过的两条死路，记下来免得再走：
+       *  1. 「只豁免一个声明」——现场的块本就跨 3 个声明，当场误伤。
+       *  2. 「只豁免真正含调色板色的行」——**方向反了**：偷偷塞进来的
+       *     `const X = '#ff0000'` 恰恰含色，照样被豁免（实测仍 RC=0）。
+       *  3. 花括号配平——三个声明与注入行同在 depth 0，结构上不可区分。
+       *
+       * 隐式边界救不回来，所以取消隐式边界：没写终点标记就直接报错，
+       * 指明要补什么。这会让豁免范围成为一个**显式的、写在代码里的决定**，
+       * 而不是格式的副作用。 */
       let covered = 0;
       let j = i + 1;
-      for (; j < lines.length && lines[j].trim() !== ''; j++) {
-        if (covered >= BLOCK_MAX) {
-          missingReason += 1;
-          console.error(
-            `  ✖ ${rel}:${i + 1}  ignore-block 覆盖超过 ${BLOCK_MAX} 行仍未遇空行——` +
-            '范围过大，请改用逐行标记或在块后补空行',
-          );
-          break;
-        }
+      let sawEnd = false;
+      for (; j < lines.length; j++) {
+        if (IGNORE_BLOCK_END.test(lines[j])) { sawEnd = true; break; }
+        if (covered >= BLOCK_MAX) break;
         exempt.add(j);
         covered += 1;
+      }
+      if (!sawEnd) {
+        /* 未收尾：把已加的豁免**全部撤回**，否则报错的同时还漏放了一批行。 */
+        for (let k = i + 1; k < j; k++) exempt.delete(k);
+        missingReason += 1;
+        console.error(
+          `  ✖ ${rel}:${i + 1}  ignore-block 未在 ${BLOCK_MAX} 行内遇到 ` +
+          'lint-raw-palette-ignore-block-end——请在块尾补终点标记明确划定豁免范围' +
+          '（此前按「到下一个空行为止」推断，会把块后紧贴的无关代码一并豁免）',
+        );
       }
       return;
     }
@@ -243,14 +290,7 @@ for (const [app, file] of allFiles) {
       console.error(`  ✖ ${rel}:${i + 1}  ${hit}`);
     };
 
-    for (const hit of code.match(RE) ?? []) report(hit);
-    for (const hit of code.match(ARBITRARY_RE) ?? []) report(hit);
-    if (isComponent) {
-      /* 先挖掉 var(--token, <fallback>) 整体，再找剩下的裸色值 */
-      const stripped = code.replace(VAR_FALLBACK_RE, ' ');
-      for (const hit of stripped.match(HEX_RE) ?? []) report(hit);
-      for (const hit of stripped.match(COLOR_FN_RE) ?? []) report(hit.replace(/\s*\d$/, ''));
-    }
+    for (const hit of paletteHits(code, isComponent)) report(hit);
   });
 }
 
@@ -262,7 +302,8 @@ if (violations > 0 || missingReason > 0) {
     console.error('它们随主题切换且已被 lint:contrast 覆盖。');
     console.error('确有例外请在该行上方加：');
     console.error('  // lint-raw-palette-ignore-next-line <原因>');
-    console.error('整块声明（如图表系列色）可用 ignore-block，覆盖到下一个空行。');
+    console.error('整块声明（如图表系列色）可用 ignore-block，并在块尾补');
+    console.error('  /* lint-raw-palette-ignore-block-end */  明确划定豁免范围。');
   }
   if (missingReason > 0) {
     console.error(`\n另有 ${missingReason} 处豁免标记**未写原因**——`);
