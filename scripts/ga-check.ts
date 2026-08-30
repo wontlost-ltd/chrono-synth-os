@@ -85,6 +85,12 @@ interface StepResult {
  * deploy 仍是独立仓，按原 sibling 约定解析（可 env 覆盖），保持 optional。 */
 const WEB = resolve(OS_ROOT, 'apps/web');
 const DESKTOP = resolve(OS_ROOT, 'apps/desktop');
+/* ⚠️ 审计 #431：mobile 与 companion-web 的 14 个测试文件此前**任何地方都不运行** ——
+ * ga-check 的 STEPS 只覆盖 web/desktop，CI 也没有独立 job。
+ * 其中 `companionCacheIsolation.test.tsx` 名字直指**跨租户数据泄漏**，
+ * mobile 侧覆盖同步冲突收件箱与推送同步 —— 全是死代码，改坏无门可拦。 */
+const MOBILE = resolve(OS_ROOT, 'apps/mobile');
+const COMPANION_WEB = resolve(OS_ROOT, 'apps/companion-web');
 const DEPLOY = process.env.CHRONO_DEPLOY_REPO ?? resolve(REPOS_ROOT, 'chrono-synth-deploy');
 
 const STEPS: readonly StepDecl[] = [
@@ -204,6 +210,40 @@ const STEPS: readonly StepDecl[] = [
     command: 'npm',
     args: ['run', 'test', '--silent'],
     desc: 'apps/desktop vitest 单元测试',
+  },
+  {
+    id: 'mobile.typecheck',
+    repo: 'os',
+    repoPath: MOBILE,
+    command: 'npm',
+    args: ['run', 'typecheck', '--silent'],
+    desc: 'apps/mobile typecheck（审计 #431：此前零覆盖）',
+  },
+  {
+    id: 'mobile.test',
+    repo: 'os',
+    repoPath: MOBILE,
+    command: 'npm',
+    args: ['run', 'test', '--silent'],
+    /* RN 侧覆盖同步冲突收件箱 + 推送同步；此前 8 个测试文件从不运行。 */
+    desc: 'apps/mobile jest 单元测试（审计 #431：此前零覆盖）',
+  },
+  {
+    id: 'companion-web.typecheck',
+    repo: 'os',
+    repoPath: COMPANION_WEB,
+    command: 'npm',
+    args: ['run', 'typecheck', '--silent'],
+    desc: 'apps/companion-web typecheck（审计 #431：此前零覆盖）',
+  },
+  {
+    id: 'companion-web.test',
+    repo: 'os',
+    repoPath: COMPANION_WEB,
+    command: 'npm',
+    args: ['run', 'test', '--silent'],
+    /* 含 companionCacheIsolation —— 名字直指跨租户数据泄漏，此前从不运行。 */
+    desc: 'apps/companion-web 单元测试（审计 #431：此前零覆盖）',
   },
   {
     id: 'desktop.lint-updater-pubkey',

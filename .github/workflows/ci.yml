@@ -351,6 +351,34 @@ jobs:
         working-directory: apps/web
         timeout-minutes: 8
         run: npx playwright test --project=chromium e2e/axe-a11y.spec.ts e2e/accessibility/
+      # ⚠️ 审计 #432：16 个 E2E 套件此前 CI 只跑 4 个（axe + accessibility/），
+      # auth / billing / onboarding / workforce-console / feature-flag-kill-switch
+      # 等 **12 个功能回归全部不跑**。这与「CI 无任何 job 跑 Playwright」的历史
+      # 缺口同型 —— 现在有了 Playwright job，反而更容易让人误以为 E2E 已被覆盖。
+      #
+      # 本地逐个实跑确认全绿（共 64 条）：a11y 7 / auth 7 / billing 7 /
+      # feature-flag-kill-switch 1 / forms-interaction 18 / i18n 3 /
+      # navigation 7 / onboarding 4 / simulation 11 / workforce-console 6。
+      # 它们都用 mock 数据，不需要后端。
+      #
+      # 明确排除两个（实测在此环境必红，不是本次要修的东西）：
+      #   - e2e/podman/  ：需要 podman 起真实容器；
+      #   - e2e/visual-regression/：需要预先生成的基线快照。
+      - name: Run functional e2e suites（审计 #432：此前 12 个套件从不运行）
+        working-directory: apps/web
+        timeout-minutes: 10
+        run: |
+          npx playwright test --project=chromium \
+            e2e/a11y.spec.ts \
+            e2e/auth.spec.ts \
+            e2e/billing.spec.ts \
+            e2e/feature-flag-kill-switch.spec.ts \
+            e2e/forms-interaction.spec.ts \
+            e2e/i18n.spec.ts \
+            e2e/navigation.spec.ts \
+            e2e/onboarding.spec.ts \
+            e2e/simulation.spec.ts \
+            e2e/workforce-console.spec.ts
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@v7
