@@ -404,6 +404,23 @@ export class PersonaMarketplaceService {
     const totalAmountMinor = Math.round(input.totalAmountMinor);
     if (totalAmountMinor <= 0) return null;
 
+    /* ⚠️ 审计 #426：结算额必须与**工单报酬**一致，不能由请求体任意指定。
+     *
+     * 此前 `totalAmountMinor` 与 `currency` 完全由调用方给，服务端**从不与
+     * task.reward / task.currency 比对**（schema 只约束 `int().min(1)`）。
+     * 实测：`task.reward = 1.00 CRED`（=100 minor），提交 999999 →
+     * 结算 total=999999、钱包余额 9999.99。
+     *
+     * 虽然调用方必须是 `task.publisherUserId`（花自己的钱），但它破坏
+     * 「结算额 == 工单报酬」这一**对账基础不变量**，且**平台抽成基数可被
+     * 任意压低**（把 total 报小、私下补差）—— 计费口径可被绕过。
+     *
+     * 以 task.reward 为准：不符即拒绝（返回 null，与本方法其它前置拒绝一致）。
+     * ⚠️ 用 toMinor 而非裸乘 100 —— reward 是浮点，裸乘会引入 0.1*100=10.000000000000002
+     * 这类残渣，导致合法请求被误拒。 */
+    const expectedMinor = toMinor(task.reward);
+    if (totalAmountMinor !== expectedMinor) return null;
+
     const ownerPct = Math.round(input.split.ownerPct);
     const personaPct = Math.round(input.split.personaPct);
     const platformPct = Math.round(input.split.platformPct);

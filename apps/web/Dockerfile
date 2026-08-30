@@ -19,7 +19,13 @@ COPY packages/ packages/
 COPY apps/web/package.json apps/web/package.json
 COPY apps/desktop/package.json apps/desktop/package.json
 COPY apps/companion-web/package.json apps/companion-web/package.json
-RUN npm ci
+# ⚠️ 审计 #429：`--ignore-scripts` —— 四处 npm ci 加固此前**漏了这一处**
+# （根 Dockerfile 两处、deploy/synology 两处都已加固）。
+# 任一 devDependency 的恶意/被投毒 postinstall（或未声明 install 脚本但带
+# binding.gyp 触发隐式 gyp 推导，见根 Dockerfile 的详细说明）会在构建企业前端
+# 镜像时执行，可读取 build context 全量源码与 package-lock.json。
+# 本镜像的构建产物是纯静态资源，依赖全为纯 JS，无需任何安装脚本产出。
+RUN npm ci --ignore-scripts
 
 # web 的 @chrono/* 依赖解析到 packages/*/dist，需先构建这些内部包（web devDeps：contracts/
 # design-tokens/sync-engine/kernel-testkit；依赖图闭合，sync-engine/kernel-testkit 引用 contracts）。
