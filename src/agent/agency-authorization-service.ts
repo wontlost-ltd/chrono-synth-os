@@ -97,6 +97,10 @@ export class AgencyAuthorizationService {
     const auths = this.listByPersona(tenantId, personaId);
     return auths.some((auth) => {
       if (auth.status !== 'active') return false;
+      /* ⚠️ 审计 #424：工具清单损坏 ⇒ **fail-closed**。
+       * 空数组在下面恰是「放宽」语义（空白名单=按 scope 放行、空拒绝清单=不拒），
+       * 若把损坏静默当空，授权书会从「限制性」变成**完全放行**。 */
+      if (auth.toolListCorrupted) return false;
       if (auth.expiresAt !== null && auth.expiresAt < now) return false;
       if (auth.deniedTools.includes(toolId)) return false;
       if (auth.allowedTools.length === 0) return true; // 空白名单 = 按 scope 默认放行
@@ -126,11 +130,39 @@ export class AgencyAuthorizationService {
   }
 }
 
+/**
+ * 工具清单 JSON 解析（审计 #424）。
+ *
+ * ⚠️ 此前是 `catch { /* 空 *\/ }` —— 解析失败静默退化成空数组，而空数组在
+ * `isToolAllowed` 里恰恰是**放宽**语义：
+ *   - `deniedTools` 损坏 → `[]` → `includes(toolId)` 恒假 → 拒绝清单变成**死代码**；
+ *   - `allowedTools` 损坏 → `[]` → 命中「空白名单 = 按 scope 默认放行」→ 从
+ *     「仅 3 个工具」变成**全部工具**。
+ *
+ * 实测：把 `denied_tools_json` 写坏后，被明确拒绝的 `wire_money` 变成 allowed。
+ * 且 GET 授权书详情看到的仍是 `[]`，**从外部看不出损坏**。
+ *
+ * 任何写入路径 bug、迁移截断、字符集问题都会触发 —— 而后果是授权书静默变成
+ * 完全放行。故改为 **fail-closed**：解析失败返回 null，调用方据此整条作废。
+ */
+function parseToolList(json: string): string[] | null {
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    /* 非数组同样视为损坏（如被写成 `{}` 或 `"abc"`）—— 否则 includes 会抛或恒假。 */
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((x): x is string => typeof x === 'string');
+  } catch {
+    return null;
+  }
+}
+
 function rowToAuth(row: AgencyAuthorizationRow): AgencyAuthorization {
-  let allowedTools: string[] = [];
-  let deniedTools: string[] = [];
-  try { allowedTools = JSON.parse(row.allowed_tools_json) as string[]; } catch { /* 空 */ }
-  try { deniedTools = JSON.parse(row.denied_tools_json) as string[]; } catch { /* 空 */ }
+  const allowedParsed = parseToolList(row.allowed_tools_json);
+  const deniedParsed = parseToolList(row.denied_tools_json);
+  /* 任一清单损坏 ⇒ 整条授权书不可信，标记为 corrupted（isToolAllowed 一律拒绝）。 */
+  const toolListCorrupted = allowedParsed === null || deniedParsed === null;
+  const allowedTools = allowedParsed ?? [];
+  const deniedTools = deniedParsed ?? [];
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -140,6 +172,7 @@ function rowToAuth(row: AgencyAuthorizationRow): AgencyAuthorization {
     scopeDescription: row.scope_description,
     allowedTools,
     deniedTools,
+    toolListCorrupted,
     status: row.status as AgencyStatus,
     grantedAt: row.granted_at,
     expiresAt: row.expires_at,

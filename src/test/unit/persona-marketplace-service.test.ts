@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { createMemoryDatabase, runDslSqliteMigrations } from '../../storage/index.js';
 import type { IDatabase } from '../../storage/database.js';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
-import { pcoreCmdCompleteMarketplaceTask, pcoreCmdReopenMarketplaceTask } from '@chrono/kernel';
+import { pcoreCmdCompleteMarketplaceTask, pcoreCmdReopenMarketplaceTask, pcoreCmdSettlePersonaWallet } from '@chrono/kernel';
 
 interface Fixture {
   db: IDatabase;
@@ -1005,5 +1005,68 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
       settled!.ownerAmountMinor + settled!.personaAmountMinor + settled!.platformAmountMinor,
       1,
     );
+  });
+
+  /* ⚠️ 审计 #427：`PCORE_CMD_SETTLE_PERSONA_WALLET` 的 SQL 曾是
+   * `SET ... currency = ?` —— **无条件用入参币种覆盖钱包币种**。
+   * 审计 W#10 只在应用层加了守卫，SQL 层的改写能力原样保留；
+   * #397 已证实存在绕过该服务方法的调用点（completeTask 实测把 CRED 写进 USD 钱包）。
+   * 纵深防御必须落到唯一能兜底的那一层：币种进 WHERE，不符即 rowsAffected=0。 */
+  it('审计 #427：结算币种不符时 SQL 层必须拒绝（不得改写钱包币种）', () => {
+    const wallet = fx.db.prepare<{ id: string; currency: string }>(
+      `SELECT id, currency FROM persona_wallets WHERE tenant_id = ? AND persona_id = ?`,
+    ).get(fx.tenantId, fx.personaId)!;
+    assert.equal(wallet.currency, 'CRED', '前提：persona 钱包恒为 CRED');
+
+    const r = fx.db.execute(pcoreCmdSettlePersonaWallet({
+      tenantId: fx.tenantId, walletId: wallet.id,
+      ownerAmount: 100, personaAmount: 0, currency: 'USD', now: Date.now(),
+    }));
+
+    /* 变异实测：把 currency 挪回 SET → rowsAffected=1 且币种被改成 USD。 */
+    assert.equal(r.rowsAffected, 0, '币种不符必须 rowsAffected=0');
+    const after = fx.db.prepare<{ balance: number; currency: string }>(
+      `SELECT balance, currency FROM persona_wallets WHERE id = ?`).get(wallet.id)!;
+    assert.equal(after.currency, 'CRED', '币种不得被改写');
+    assert.equal(after.balance, 0, '拒绝路径不得入账');
+  });
+
+  it('对照：币种一致时结算正常入账（别把功能一起拒掉）', () => {
+    const wallet = fx.db.prepare<{ id: string }>(
+      `SELECT id FROM persona_wallets WHERE tenant_id = ? AND persona_id = ?`,
+    ).get(fx.tenantId, fx.personaId)!;
+
+    const r = fx.db.execute(pcoreCmdSettlePersonaWallet({
+      tenantId: fx.tenantId, walletId: wallet.id,
+      ownerAmount: 100, personaAmount: 5, currency: 'CRED', now: Date.now(),
+    }));
+    assert.equal(r.rowsAffected, 1);
+    const after = fx.db.prepare<{ balance: number; token_balance: number }>(
+      `SELECT balance, token_balance FROM persona_wallets WHERE id = ?`).get(wallet.id)!;
+    assert.equal(after.balance, 100);
+    assert.equal(after.token_balance, 5);
+  });
+
+  /* ⚠️ 审计 #438：credit 侧此前是裸浮点 `balance + ?`，与 debit 侧的定点收敛不对称。
+   * 200 轮 0.07 后 balance = 8.000000000000005（*100 = 800.0000000000006）。
+   * 当前 toMinor / ROUND(balance*100) 能吸收，未观察到实际钱错，但漂移随笔数
+   * 单调累积而无上界保证，而提现门 `ROUND(balance*100) >= amountMinor` 直接依赖它。 */
+  it('审计 #438：credit 侧定点收敛（200 轮 0.07 不得留浮点残渣）', () => {
+    const wallet = fx.db.prepare<{ id: string }>(
+      `SELECT id FROM persona_wallets WHERE tenant_id = ? AND persona_id = ?`,
+    ).get(fx.tenantId, fx.personaId)!;
+    const now = Date.now();
+    for (let i = 0; i < 200; i++) {
+      fx.db.execute(pcoreCmdSettlePersonaWallet({
+        tenantId: fx.tenantId, walletId: wallet.id,
+        ownerAmount: 0.07, personaAmount: 0, currency: 'CRED', now,
+      }));
+    }
+    const balance = fx.db.prepare<{ balance: number }>(
+      `SELECT balance FROM persona_wallets WHERE id = ?`).get(wallet.id)!.balance;
+
+    /* 变异实测：改回 `balance = balance + ?` → 14.000000000000009，本断言转红。 */
+    assert.equal(balance, 14, `200×0.07 应恰为 14，实际 ${balance}`);
+    assert.equal(Math.round(balance * 100), 1400, '提现门依赖的 minor 值必须精确');
   });
 });

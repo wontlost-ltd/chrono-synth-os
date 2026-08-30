@@ -30,6 +30,18 @@ export interface AgencyAuthorization {
   readonly allowedTools: readonly string[];
   /** 拒绝的工具黑名单 */
   readonly deniedTools: readonly string[];
+  /**
+   * 工具清单 JSON 解析失败（审计 #424）。true ⇒ 本授权书**一律不放行**。
+   *
+   * 为什么必须显式标记而不是退化成空数组：空数组在 `isToolAllowed` 里恰是
+   * **放宽**语义 —— 空白名单 = 按 scope 默认放行、空拒绝清单 = 不拒任何工具。
+   * 静默当空会让损坏的授权书从「仅 3 个工具」变成**全部工具**（实测：
+   * 写坏 denied_tools_json 后，被明确拒绝的 wire_money 变成 allowed），
+   * 且 GET 详情看到的仍是 `[]`，从外部看不出损坏。
+   *
+   * 可选字段：既有构造点（create/update 路径）不传即 undefined = 未损坏。
+   */
+  readonly toolListCorrupted?: boolean;
   readonly status: AgencyStatus;
   readonly grantedAt: number;
   readonly expiresAt: number | null;
