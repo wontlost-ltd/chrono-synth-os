@@ -106,7 +106,11 @@ export class TaskQueue {
       const claimed = this.tx.execute(taskCmdClaim({ taskId: row.id, workerId: this.workerId, now: ts }));
       if (claimed.rowsAffected === 0) return undefined;
 
-      return rowToRecord({ ...row, status: 'running', claimed_by: this.workerId, claimed_at: ts, updated_at: ts });
+      /* issue #395：`claimed_at` / `updated_at` 现由**数据库**盖戳，不能再拿
+       * 应用侧 `ts` 拼返回值——那会让调用方读到一个与库里不一致的时刻
+       * （多副本下正是钟差本身）。回读实际落库的行。 */
+      const persisted = this.tx.queryOne(taskQueryById(row.id));
+      return persisted ? rowToRecord(persisted) : undefined;
     });
   }
 
@@ -161,11 +165,14 @@ export class TaskQueue {
    * @returns 回收的任务数
    */
   reapStaleTasks(staleThresholdMs = 300_000): number {
-    const now = Date.now();
-    const cutoff = now - staleThresholdMs;
-
-    const requeued = this.tx.execute(taskCmdReapRetryable({ now, cutoff }));
-    const failed = this.tx.execute(taskCmdReapExhausted({ now, cutoff, errorMessage: '任务超时且已达到最大重试次数' }));
+    /* issue #395：只传**时长**，截止点与盖戳都交给数据库算。
+     * 这里若再算一次 `Date.now() - threshold` 并传下去，就又把应用侧时钟
+     * 塞回了判定链——多副本下钟差会误回收别的副本正在执行的任务。 */
+    const requeued = this.tx.execute(taskCmdReapRetryable({ staleAfterMs: staleThresholdMs }));
+    const failed = this.tx.execute(taskCmdReapExhausted({
+      staleAfterMs: staleThresholdMs,
+      errorMessage: '任务超时且已达到最大重试次数',
+    }));
 
     return requeued.rowsAffected + failed.rowsAffected;
   }

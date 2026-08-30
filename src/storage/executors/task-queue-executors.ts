@@ -3,6 +3,7 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import { dbNowMs } from './db-now.js';
 import type {
   TaskRow, TaskEnqueueParams, TaskClaimParams, TaskCompleteParams,
   TaskFailParams, TaskRescheduleParams, TaskDeleteBatchParams,
@@ -58,10 +59,15 @@ export function registerTaskQueueExecutors(): void {
     return { rowsAffected: result.changes };
   });
 
+  /* issue #395：`claimed_at` 是 reaper 的判定依据，必须由**数据库**盖戳。
+   * 认领在副本 A、回收在副本 B 时，应用侧时钟的钟差会直接平移 stale 判定。
+   * `p.now` 仍保留在参数里供其他字段/调用方使用，但这两列不再用它。 */
   registerCommand<TaskClaimParams>(TASK_CMD_CLAIM, (db, p) => {
     const result = db.prepare<void>(
-      `UPDATE tasks SET status = 'running', claimed_by = ?, claimed_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
-    ).run(p.workerId, p.now, p.now, p.taskId);
+      `UPDATE tasks SET status = 'running', claimed_by = ?,
+              claimed_at = ${dbNowMs(db)}, updated_at = ${dbNowMs(db)}
+       WHERE id = ? AND status = 'pending'`,
+    ).run(p.workerId, p.taskId);
     return { rowsAffected: result.changes };
   });
 
@@ -95,21 +101,33 @@ export function registerTaskQueueExecutors(): void {
     return { rowsAffected: result.changes };
   });
 
+  /* issue #395：截止点与写入时刻**都**由数据库求值，物理上消除多时钟。
+   * 收的是时长（staleAfterMs）而非时刻，见 dbNowMs 与 TaskReapParams 的说明。
+   *
+   * `available_at` / `updated_at` 也改用 DB 时钟：若这里仍写应用侧 now，
+   * 下一轮 reap 拿 DB 时钟去比一个应用侧写入的 `updated_at`，钟差原样回来。
+   * 判据是「写入端与比较端同源」，不是「只把比较端换掉」。 */
   registerCommand<TaskReapParams>(TASK_CMD_REAP_RETRYABLE, (db, p) => {
-    const staleCondition = `status = 'running' AND ((claimed_at IS NOT NULL AND claimed_at < ?) OR (claimed_at IS NULL AND updated_at < ?))`;
+    const staleCondition =
+      `status = 'running' AND ((claimed_at IS NOT NULL AND claimed_at < ${dbNowMs(db)} - ?)`
+      + ` OR (claimed_at IS NULL AND updated_at < ${dbNowMs(db)} - ?))`;
     const result = db.prepare<void>(
-      `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL, available_at = ?, updated_at = ?, retry_count = retry_count + 1
+      `UPDATE tasks SET status = 'pending', claimed_by = NULL, claimed_at = NULL,
+              available_at = ${dbNowMs(db)}, updated_at = ${dbNowMs(db)}, retry_count = retry_count + 1
        WHERE ${staleCondition} AND retry_count < max_retries`,
-    ).run(p.now, p.now, p.cutoff, p.cutoff);
+    ).run(p.staleAfterMs, p.staleAfterMs);
     return { rowsAffected: result.changes };
   });
 
   registerCommand<TaskReapParams>(TASK_CMD_REAP_EXHAUSTED, (db, p) => {
-    const staleCondition = `status = 'running' AND ((claimed_at IS NOT NULL AND claimed_at < ?) OR (claimed_at IS NULL AND updated_at < ?))`;
+    const staleCondition =
+      `status = 'running' AND ((claimed_at IS NOT NULL AND claimed_at < ${dbNowMs(db)} - ?)`
+      + ` OR (claimed_at IS NULL AND updated_at < ${dbNowMs(db)} - ?))`;
     const result = db.prepare<void>(
-      `UPDATE tasks SET status = 'failed', error = ?, claimed_by = NULL, claimed_at = NULL, updated_at = ?
+      `UPDATE tasks SET status = 'failed', error = ?, claimed_by = NULL, claimed_at = NULL,
+              updated_at = ${dbNowMs(db)}
        WHERE ${staleCondition} AND retry_count >= max_retries`,
-    ).run(p.errorMessage ?? '任务超时且已达到最大重试次数', p.now, p.cutoff, p.cutoff);
+    ).run(p.errorMessage ?? '任务超时且已达到最大重试次数', p.staleAfterMs, p.staleAfterMs);
     return { rowsAffected: result.changes };
   });
 }
