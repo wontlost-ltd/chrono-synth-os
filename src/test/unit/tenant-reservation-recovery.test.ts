@@ -51,8 +51,9 @@ function migrateToV124(db: IDatabase): void {
 
 /** reserve 时刻（远早于 cutoff，保证被 listPending 扫到）。 */
 const RESERVED_AT = 1_700_000_000_000;
-/** reconcile 传入的 now：RESERVED_AT + 1 天，减 GRACE 后仍 > RESERVED_AT，故过期 PENDING 入扫。 */
-const NOW = RESERVED_AT + 24 * 60 * 60 * 1000;
+/* ⚠️ issue #395：reconcile 不再收 now——过期判定的截止点由数据库算。
+ * RESERVED_AT 是 2023 年的时刻，相对真实 DB 时钟早已超出任何 grace，
+ * 故被 listPending 扫到。 */
 
 describe('TenantReservationRecovery 恢复 worker', () => {
   let coordinator: IDatabase;
@@ -88,6 +89,13 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       pendingPasswordHash: null, lookupKind: 'email', lookupValue: canonicalizeEmail(input.email),
       status: 'PENDING', now: RESERVED_AT,
     }));
+    /* ⚠️ issue #395 起 `updated_at` 由**数据库**盖戳，`now: RESERVED_AT`
+     * 只写 created_at。要让这条 PENDING 看起来"已过期"，必须把 updated_at
+     * 直接改老——调用方已无法通过传 now 把时钟推快，这正是本次修复的要点。 */
+    coordinator.prepare<void>(
+      `UPDATE tenant_identity_directory SET updated_at = ?
+       WHERE lookup_kind = 'email' AND lookup_value = ?`,
+    ).run(RESERVED_AT, canonicalizeEmail(input.email));
   }
 
   /** 手插一条 shard 用户行（供 EMAIL_CHANGE 读 canonical email / REGISTER per-op 锚的 user 行）。 */
@@ -110,7 +118,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
         operationKind: 'REGISTER', previousLookupValue: null, email: 'b@example.com' });
       insertShardUser({ userId: 'u_b', email: 'b@example.com', tenantId: 'tenant_b' });
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.activated, 1, 'A 补 ACTIVE');
       assert.equal(out.retained, 1, 'B 保留');
@@ -135,7 +143,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
         operationKind: 'REGISTER', previousLookupValue: null, email: 'sso@example.com' });
       shard.execute(bootCmdMarkComplete({ tenantId: 'tenant_a', operationId: 'sso:X', now: RESERVED_AT }));
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.activated, 1, '清扫器补 ACTIVE');
       assert.equal(dir.resolveByEmail('sso@example.com')!.status, 'ACTIVE', '账号可用，未永久卡死');
@@ -147,7 +155,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       /* 同租户存在**别 operationId** 的旧 COMPLETE（旧 register），本次 operationId 无标记。 */
       shard.execute(bootCmdMarkComplete({ tenantId: 'tenant_a', operationId: 'reg:OLD', now: RESERVED_AT }));
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.activated, 0, '别 operationId 的旧 COMPLETE 不误证本次 operation');
       assert.equal(out.retained, 1, '按 opId 匹配 → 未命中 → retained');
@@ -172,7 +180,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       /* shard 权威 email 已改到 new（应用改了 shard，coordinator complete 前崩）。 */
       insertShardUser({ userId: 'u_c', email: 'c-new@example.com', tenantId: 'tenant_c' });
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.changesCompleted, 1, 'C 完成改名');
       assert.equal(out.changesRolledBack, 0);
@@ -194,7 +202,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       /* shard 权威 email 仍是 old（reserve 了新 PENDING，但 shard 改 email 前崩）。 */
       insertShardUser({ userId: 'u_d', email: 'd-old@example.com', tenantId: 'tenant_d' });
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.changesRolledBack, 1, 'D 回滚改名');
       assert.equal(out.changesCompleted, 0);
@@ -216,7 +224,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       /* shard email 是第三个值（诡异态）→ 不猜测。 */
       insertShardUser({ userId: 'u_c', email: 'e-weird@example.com', tenantId: 'tenant_c' });
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.retained, 1, '无法判定 → retained');
       assert.equal(out.changesCompleted, 0);
@@ -238,7 +246,7 @@ describe('TenantReservationRecovery 恢复 worker', () => {
         operationKind: 'REGISTER', previousLookupValue: null, email: 'a2@example.com' });
       shard.execute(bootCmdMarkComplete({ tenantId: 'tenant_a', operationId: 'reg:A2', now: RESERVED_AT }));
 
-      const out = recovery.reconcile(NOW);
+      const out = recovery.reconcile();
 
       assert.equal(out.activated, 1, 'A 仍被激活（F 抛错未阻塞）');
       assert.equal(out.retained, 1, 'F 项因抛错记 retained');
@@ -246,5 +254,35 @@ describe('TenantReservationRecovery 恢复 worker', () => {
       /* F 的 PENDING 未删（处理失败保留）。 */
       assert.equal(dir.resolveByEmail('f@example.com')!.status, 'PENDING', 'F PENDING 保留');
     });
+  });
+
+  /* ── issue #395 条目 4：PENDING 过期判定须由数据库单一时钟裁决 ──
+   *
+   * 缺陷：`updated_at` 由发起预留的副本写，而过期判定跑在恢复 worker 副本上
+   * 并传自己算的 `now - graceMs`。两端不同源，worker 钟快就会把**刚发起**的
+   * 预留当成过期工单去回滚（EMAIL_CHANGE 会删掉用户刚申请的新 email 目录项）。
+   *
+   * 判据是结构性的：SQL 里不得把截止时刻当参数传。 */
+  it('审计 #395：过期扫描只传宽限时长，不传截止时刻', () => {
+    const seen: Array<{ sql: string; params: unknown[] }> = [];
+    const orig = coordinator.prepare.bind(coordinator);
+    (coordinator as unknown as { prepare: typeof coordinator.prepare }).prepare = ((sql: string) => {
+      const st = orig(sql);
+      const origAll = st.all.bind(st);
+      st.all = ((...params: unknown[]) => { seen.push({ sql, params }); return origAll(...params as never[]); }) as typeof st.all;
+      return st;
+    }) as typeof coordinator.prepare;
+
+    dir.listPending(60_000);
+    (coordinator as unknown as { prepare: typeof coordinator.prepare }).prepare = orig;
+
+    const scan = seen.find((e) => /FROM tenant_identity_directory/.test(e.sql) && /PENDING/.test(e.sql));
+    assert.ok(scan, '必须执行了过期扫描（否则本用例是空转）');
+
+    /* 变异实测：判据改回 `updated_at < ?` + 调用方算的 cutoff →
+     * 参数变成 1.7e12 量级的 epoch 时刻，下面转红。 */
+    assert.deepEqual(scan.params, [60_000],
+      `扫描只应传宽限时长（实际参数：${JSON.stringify(scan.params)}）`);
+    assert.ok(/updated_at <= \(/.test(scan.sql), '截止点必须由 SQL 内的 DB 时钟算出');
   });
 });

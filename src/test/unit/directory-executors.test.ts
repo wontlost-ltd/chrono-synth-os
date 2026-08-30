@@ -182,7 +182,10 @@ describe('directory / bootstrap SQL 执行器', () => {
   });
 
   describe('目录 pendingBefore / delete', () => {
-    it('pendingBefore(cutoff) 只返 updated_at < cutoff 的 PENDING 项，含 operation_kind/previous/user', () => {
+    /* ⚠️ issue #395：`updated_at` 现由**数据库**盖戳，`now:` 只写 created_at。
+     * 故不能再靠传不同的 `now` 区分新旧项——两条都会拿到同一个 DB 时刻。
+     * 改为把其中一条的 updated_at 直接改老。 */
+    it('pendingBefore(graceMs) 只返已超过宽限期的 PENDING 项，含 operation_kind/previous/user', () => {
       runCommand(db, dirCmdReserve({
         tenantId: 'tenant_a', userId: 'user_old', operationId: 'op_old', operationKind: 'EMAIL_CHANGE',
         previousLookupValue: 'old@example.com', pendingPasswordHash: null,
@@ -194,8 +197,15 @@ describe('directory / bootstrap SQL 执行器', () => {
         lookupKind: 'email', lookupValue: 'fresh@example.com', status: 'PENDING', now: NOW + 10_000,
       }));
 
-      const stale = runQueryMany<DirectoryPendingRow, number>(db, dirQueryPendingBefore(NOW + 5_000));
-      assert.equal(stale.length, 1, '只有 updated_at < cutoff 的一条');
+      /* 把 op_old 那条挪老 1 小时；op_fresh 保持刚写入。 */
+      db.prepare<void>(
+        `UPDATE tenant_identity_directory SET updated_at = updated_at - 3600000
+         WHERE operation_id = 'op_old'`,
+      ).run();
+
+      /* 宽限 60s：只有被挪老的那条超期。 */
+      const stale = runQueryMany<DirectoryPendingRow, number>(db, dirQueryPendingBefore(60_000));
+      assert.equal(stale.length, 1, '只有超过宽限期的一条');
       assert.equal(stale[0].operation_id, 'op_old');
       assert.equal(stale[0].operation_kind, 'EMAIL_CHANGE', 'operation_kind 返回（worker 分支）');
       assert.equal(stale[0].previous_lookup_value, 'old@example.com', 'previous_lookup_value 返回');

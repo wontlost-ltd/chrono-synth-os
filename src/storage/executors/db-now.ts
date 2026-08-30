@@ -18,11 +18,20 @@ import type { IDatabase } from '../database.js';
  *   - `billing_outbox`（issue #393）：flush 定时器跑在 **API 进程内**（`app.ts` 60s setInterval），
  *     多副本各自认领/回收同一张表。
  *
- * 独立审查扫出**同型但尚未修**的表（见 issue，勿把本清单当作「其余都安全」）：
- *   `tasks`（reaper 误回收会 retry_count+1，重跑别的副本正在执行的任务）、
- *   `runtime_sessions.timeout_at`、`persona_leases.expires_at`（跨副本互斥原语，
- *   「同源」在此处按定义不成立）、`tenant_identity_directory`、
- *   `bulk_knowledge_import_jobs`（潜伏：reapStuck 暂无生产调用方）。
+ *   - `tasks`（issue #395）：reapStale 定时器由 app.ts 在**每个 API 副本**启动。
+ *     误回收会 `retry_count + 1` 重跑别的副本正在执行的任务，且**无下游幂等兜底**。
+ *   - `runtime_sessions.timeout_at`（#395）：RuntimeRecoveryWorker 每副本启动 + 跨 shard fan-out。
+ *   - `persona_leases.expires_at`（#395）：租约**本身就是跨副本互斥原语**，
+ *     「写读同源」按定义不可能靠调用方保证——抢占者钟快就能抢走仍有效的租约。
+ *   - `tenant_identity_directory`（#395）：worker 钟快会把刚发起的预留当过期工单回滚。
+ *   - `bulk_knowledge_import_jobs`（#395）：reapStuck 当时无生产调用方（潜伏），
+ *     一并修好免得日后接线的人踩同一个坑。
+ *
+ * ⚠️ 上面是**已修清单**，不是「受影响表的完整清单」。新增「一处写时间戳、
+ * 另一处比较时间戳」的表时，先问一句：这两处会不会跑在不同进程上？
+ *
+ * ⚠️ 判据用 `<` 还是 `<=` 要当心：SQLite 只有秒级精度，同一秒内
+ * `x < x - 0` 恒不成立，「零宽限」会退化成**永远扫不到**（#395 条目 4 实测）。
  *
  * ## 方言差异（均已实测）
  *

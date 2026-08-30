@@ -82,7 +82,7 @@ export class BulkImportStore {
   }
 
   markRunning(jobId: string): void {
-    this.tx.execute(bimpCmdMarkRunning({ jobId, now: Date.now() }));
+    this.tx.execute(bimpCmdMarkRunning({ jobId }));
   }
 
   incrementCounter(
@@ -152,12 +152,16 @@ export class BulkImportStore {
     return rows.map(rowToRecord);
   }
 
-  /** worker 启动期回收：所有处于 running 但 started_at 老于 cutoff 的 job 标记 failed */
-  reapStuck(cutoffMs: number): number {
-    const cutoff = Date.now() - cutoffMs;
-    const stuck = this.tx.queryMany(bimpQueryStuck({ cutoff }));
+  /**
+   * worker 启动期回收：running 且已跑超过 `stuckAfterMs` 的 job 标记 failed。
+   *
+   * ⚠️ issue #395：只传**时长**，截止点由数据库算。这里若再算一次
+   * `Date.now() - stuckAfterMs`，就把应用侧时钟塞回了跨副本判定链。
+   */
+  reapStuck(stuckAfterMs: number): number {
+    const stuck = this.tx.queryMany(bimpQueryStuck({ stuckAfterMs }));
     for (const row of stuck) {
-      this.markFailed(row.id, `worker timeout (>${cutoffMs}ms running)`);
+      this.markFailed(row.id, `worker timeout (>${stuckAfterMs}ms running)`);
     }
     return stuck.length;
   }

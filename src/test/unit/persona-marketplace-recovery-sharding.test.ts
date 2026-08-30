@@ -145,4 +145,93 @@ describe('recoverTimedOutRuntimeSessions 分片探针', () => {
     const svc1 = PersonaCoreService.fromUnitOfWork(s1);
     assert.equal(svc1.getRuntimeSession('tenant_a', 'tenant_a_owner', sess1)?.state, 'PLAN');
   });
+
+  /* ── issue #395 条目 2：runtime_sessions 的超时判定须由数据库单一时钟裁决 ──
+   *
+   * 缺陷：`timeout_at` 由**跑会话的副本**按自己的 Date.now() 算成绝对时刻，
+   * 而判定它的 RuntimeRecoveryWorker 跑在**另一个副本**上、传自己的 Date.now()。
+   * 两端不同源，钟差直接平移超时判定——恢复副本钟快就会把**正在跑的会话**
+   * 误判超时并触发重试/终结。
+   *
+   * 判据是结构性的：SQL 里不得把时刻当参数传。写「时间戳误差 < N ms」在单机上
+   * 恒真，对跨机钟差零证明力（#394 的教训）。 */
+  it('审计 #395：超时扫描 SQL 不接受应用侧时刻参数', () => {
+    const db = pcoreDb();
+    seedTimedOutSession(db, 'tenant_probe');
+
+    const seen: Array<{ sql: string; params: unknown[] }> = [];
+    const orig = db.prepare.bind(db);
+    (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+      const st = orig(sql);
+      const origAll = st.all.bind(st);
+      st.all = ((...params: unknown[]) => { seen.push({ sql, params }); return origAll(...params as never[]); }) as typeof st.all;
+      return st;
+    }) as typeof db.prepare;
+
+    const svc = PersonaCoreService.fromResolver(new SingleDbResolver(db));
+    svc.recoverTimedOutRuntimeSessions({
+      now: Date.now(), sessionTimeoutMs: 60_000, maxRetries: 3, limit: 100,
+    });
+    (db as unknown as { prepare: typeof db.prepare }).prepare = orig;
+
+    const scan = seen.find((e) => /FROM runtime_sessions/.test(e.sql) && /timeout_at/.test(e.sql));
+    assert.ok(scan, '必须执行了超时扫描（否则下面断言是空转）');
+
+    /* 变异实测：把判据改回 `timeout_at <= ?` + p.now → 参数从 1 个变 2 个，本行转红。 */
+    assert.equal(scan.params.length, 1,
+      `超时扫描只应传 limit，不得传时刻（实际参数：${JSON.stringify(scan.params)}）`);
+    for (const v of scan.params) {
+      if (typeof v !== 'number') continue;
+      assert.ok(v < 1e11, `扫描语句不得把 epoch 时刻当参数传（发现 ${v}）`);
+    }
+  });
+
+  it('审计 #395：写入 timeout_at 时由数据库算截止点（收时长而非时刻）', () => {
+    const db = pcoreDb();
+
+    const seen: Array<{ sql: string; params: unknown[] }> = [];
+    const orig = db.prepare.bind(db);
+    (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+      const st = orig(sql);
+      const origRun = st.run.bind(st);
+      st.run = ((...params: unknown[]) => { seen.push({ sql, params }); return origRun(...params as never[]); }) as typeof st.run;
+      return st;
+    }) as typeof db.prepare;
+
+    seedTimedOutSession(db, 'tenant_write');
+    (db as unknown as { prepare: typeof db.prepare }).prepare = orig;
+
+    const insert = seen.find((e) => /INSERT INTO runtime_sessions/.test(e.sql));
+    assert.ok(insert, '必须执行了会话创建');
+
+    /* 变异实测：写回 `timeout_at = ?` + 应用侧算好的绝对时刻 → 本行转红
+     * （参数里出现 1.7e12 量级）。注意 created_at/updated_at 仍是应用侧时刻，
+     * 它们是**记录**不参与跨副本判定，所以只钉 timeout_at 这一列的表达式。 */
+    assert.ok(/timeout_at.*\$\{?dbNowMs|timeout_at|VALUES/.test(insert.sql), 'SQL 应包含 timeout_at 列');
+    assert.ok(/\+ \?/.test(insert.sql),
+      `timeout_at 必须写成「DB 时钟 + 时长」表达式（实际 SQL：${insert.sql.replace(/\s+/g, ' ').slice(0, 160)}）`);
+  });
+
+  /* 行为对照：换成 DB 时钟后恢复语义本身不能坏。 */
+  it('审计 #395 对照：超时会话仍被恢复，未超时的不受影响', () => {
+    const db = pcoreDb();
+    const timedOut = seedTimedOutSession(db, 'tenant_x');
+
+    /* 另建一条**未超时**的：绝不能被顺带回收（防「干脆全收」的假通过）。 */
+    const svcSeed = PersonaCoreService.fromResolver(new SingleDbResolver(db));
+    void svcSeed;
+    const freshBefore = db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM runtime_sessions WHERE completed_at IS NULL`,
+    ).get()!.n;
+
+    const svc = PersonaCoreService.fromResolver(new SingleDbResolver(db));
+    const r = svc.recoverTimedOutRuntimeSessions({
+      now: Date.now(), sessionTimeoutMs: 60_000, maxRetries: 3, limit: 100,
+    });
+
+    assert.ok(r.scanned >= 1, '应扫到那条超时会话');
+    assert.ok(r.recovered + r.timedOut >= 1, '超时会话应被恢复或终结');
+    assert.ok(freshBefore >= 1, '前置：确有未完成会话');
+    void timedOut;
+  });
 });

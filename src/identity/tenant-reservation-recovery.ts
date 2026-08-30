@@ -106,7 +106,7 @@ export class TenantReservationRecovery {
   /** 单飞 flush：定时器与外部触发共享同一 in-flight run，避免并发重入。 */
   flush(): Promise<TenantReservationRecoveryRun> {
     if (this.currentRun) return this.currentRun;
-    const run = Promise.resolve(this.reconcile(Date.now())).finally(() => {
+    const run = Promise.resolve(this.reconcile()).finally(() => {
       if (this.currentRun === run) {
         this.currentRun = undefined;
       }
@@ -116,16 +116,20 @@ export class TenantReservationRecovery {
   }
 
   /**
-   * 扫过期 email PENDING，按 operation_kind 收敛。纯同步、可注入 now（供测试与 flush 共用）。
+   * 扫过期 email PENDING，按 operation_kind 收敛。纯同步。
+   *
+   * ⚠️ issue #395：**不再收 `now`**。过期判定的截止点由数据库算（见
+   * `listPending`），传入本副本的时钟只会把钟差带回判定链。参数直接删掉
+   * 而非留空——同为 number 时 TS 一个错都不报（#381 教训）。
    *
    * 逐项 try/catch：单项失败记 retained + 告警，绝不中断循环。绝不写取消/删 PENDING 分支
    * （EMAIL_CHANGE 的 rollback 删的是自己未竟的新 PENDING，非取消原租户）。
    */
-  reconcile(now: number): TenantReservationRecoveryRun {
+  reconcile(): TenantReservationRecoveryRun {
     const run: TenantReservationRecoveryRun = {
       activated: 0, retained: 0, changesCompleted: 0, changesRolledBack: 0,
     };
-    for (const pending of this.directory.listPending(now - this.options.graceMs)) {
+    for (const pending of this.directory.listPending(this.options.graceMs)) {
       try {
         this.reconcileOne(pending, run);
       } catch (err) {

@@ -86,8 +86,24 @@ export interface TaskDeleteBatchParams {
 }
 
 export interface TaskReapParams {
-  now: number;
-  cutoff: number;
+  /**
+   * 判定「卡死」的**时长**（毫秒），不是截止时刻。
+   *
+   * ⚠️ issue #395：此前是 `{ now, cutoff }` 两个**应用侧时刻**——写 `claimed_at`
+   * 用副本 A 的 `Date.now()`，比较 `cutoff` 用副本 B 的 `Date.now()`，
+   * 两台机器的钟差直接平移 stale 判定。钟差 > 阈值时，**别的副本正在执行的任务**
+   * 会被误判为卡死并 `retry_count + 1` 重新入队（或耗尽重试后误标 failed）。
+   *
+   * 与 outbox 那两张表不同，这里**没有下游幂等兜底**（Stripe/Kafka 侧那种），
+   * 误回收就是真的重跑一遍业务任务。
+   *
+   * 改收**时长**、由数据库算截止点（见 `dbNowMs`）：时间戳的写入端与比较端
+   * 物理上同源，钟差不再参与判定。
+   *
+   * ⚠️ 字段特意从 `cutoff` 改名而非沿用——同为 number 时 TS 一个错都不报，
+   * #381 就是这样漏改了两个调用点（同类型语义翻转）。
+   */
+  staleAfterMs: number;
   errorMessage?: string;
 }
 

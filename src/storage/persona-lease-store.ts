@@ -61,23 +61,28 @@ export class PersonaLeaseStore {
    */
   acquire(personaId: string, purpose: PersonaLeasePurpose, now: number, ttlMs: number): LeaseHandle | null {
     const holderToken = randomUUID();
-    const expiresAt = leaseExpiry(now, ttlMs);
     const intent = { tenantId: this.tenantId, personaId, purpose, holderToken, now, ttlMs };
     const errors = validateAcquireIntent(intent);
     if (errors.length > 0) {
       throw new Error(`PersonaLease acquire 非法输入: ${errors.join('; ')}`);
     }
+    /* issue #395：到期时刻由数据库算，只传时长。 */
     const result = this.tx.execute(personaLeaseCmdAcquire({
       tenantId: this.tenantId,
       personaId,
       purpose,
       holderToken,
       acquiredAt: now,
-      expiresAt,
-      now,
+      ttlMs,
     }));
     if (result.rowsAffected <= 0) return null;
-    return { tenantId: this.tenantId, personaId, purpose, holderToken, expiresAt };
+    /* 句柄里的 expiresAt 必须是**库里实际的值**：调用方拿它判断何时该续租，
+     * 返回一个应用侧算的近似值等于把钟差又带回上层。 */
+    const persisted = this.get(personaId, purpose);
+    return {
+      tenantId: this.tenantId, personaId, purpose, holderToken,
+      expiresAt: persisted?.expiresAt ?? leaseExpiry(now, ttlMs),
+    };
   }
 
   /** 释放本持有者的锁。返回是否真的释放了（false = 锁已不归本持有者）。 */
@@ -98,17 +103,16 @@ export class PersonaLeaseStore {
     if (errors.length > 0) {
       throw new Error(`PersonaLease refresh 非法输入: ${errors.join('; ')}`);
     }
-    const expiresAt = leaseExpiry(now, ttlMs);
     const result = this.tx.execute(personaLeaseCmdRefresh({
       tenantId: handle.tenantId,
       personaId: handle.personaId,
       purpose: handle.purpose,
       holderToken: handle.holderToken,
-      expiresAt,
-      now,
+      ttlMs,
     }));
     if (result.rowsAffected <= 0) return null;
-    return { ...handle, expiresAt };
+    const persisted = this.get(handle.personaId, handle.purpose);
+    return { ...handle, expiresAt: persisted?.expiresAt ?? leaseExpiry(now, ttlMs) };
   }
 
   /** 读取当前租约（用于诊断/巡检）。 */

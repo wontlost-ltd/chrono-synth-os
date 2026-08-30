@@ -1120,7 +1120,7 @@ describe('UserEmailDirectoryService 混合 scope 分片（updateEmail 跨库可�
 
     /* Task 8 恢复 worker：凭 shard 权威 email（==新）收敛 → completeEmailChange（新 ACTIVE + 旧删）。 */
     const recovery = new TenantReservationRecovery(resolverFor({ tenant_c: 'A' }), new SilentLogger(), { graceMs: 0 });
-    const run = recovery.reconcile(Date.now() + 1);
+    const run = recovery.reconcile();
     assert.equal(run.changesCompleted, 1, '恢复 worker 收敛改名到新（不依赖用户再调）');
     assert.equal(dirRow('crash-new@example.com')!.status, 'ACTIVE', '恢复后新 email ACTIVE');
     assert.equal(dirRow('crash-old@example.com'), undefined, '恢复后旧 email 目录项已删');
@@ -1152,7 +1152,7 @@ describe('UserEmailDirectoryService 混合 scope 分片（updateEmail 跨库可�
 
     /* Task 8 恢复：shard email==旧 → rollbackEmailChange（删新 PENDING，旧仍权威 ACTIVE）。 */
     const recovery = new TenantReservationRecovery(resolverFor({ tenant_rb: 'A' }), new SilentLogger(), { graceMs: 0 });
-    const run = recovery.reconcile(Date.now() + 1);
+    const run = recovery.reconcile();
     assert.equal(run.changesRolledBack, 1, '恢复回滚未竟改名');
     assert.equal(dirRow('r-new@example.com'), undefined, '新 PENDING 已删');
     assert.equal(dirRow('r-old@example.com')!.status, 'ACTIVE', '旧 email 仍权威 ACTIVE');
