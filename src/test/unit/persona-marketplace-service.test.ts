@@ -760,10 +760,12 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
   /* ── 审计 Warning #10 / #11：结算的币种与零分项 ────────────────── */
 
   /** 建一条走到「已指派」的任务，供结算用例复用。 */
-  function assignedTask(): { taskId: string; assignmentId: string } {
+  /* reward 可参数化：审计 #426 之后结算额必须等于 toMinor(task.reward)，
+   * 故测「1 分钱结算」要发一个 reward=0.01 的真实工单，而非给任意 totalAmountMinor。 */
+  function assignedTask(reward = 100): { taskId: string; assignmentId: string } {
     const task = fx.service.publishTask({
       tenantId: fx.tenantId, publisherUserId: fx.ownerUserId,
-      title: 'Settle', description: 'settle target', category: 'operations', reward: 100,
+      title: 'Settle', description: 'settle target', category: 'operations', reward,
     });
     assert.ok(fx.service.applyToTask({
       tenantId: fx.tenantId, ownerUserId: fx.ownerUserId, taskId: task.id, personaId: fx.personaId,
@@ -993,7 +995,8 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
   });
 
   it('审计 W#11：1 分钱任务（floor 后出现零分项）同样必须成功', () => {
-    const { taskId, assignmentId } = assignedTask();
+    /* 发一个真实的 0.01 CRED 工单 —— 审计 #426 起结算额须等于工单报酬。 */
+    const { taskId, assignmentId } = assignedTask(0.01);
     const settled = fx.service.settleTaskPayment({
       tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
       totalAmountMinor: 1, currency: 'CRED',
@@ -1068,5 +1071,61 @@ describe('PersonaMarketplaceService (Step 16d extraction)', () => {
     /* 变异实测：改回 `balance = balance + ?` → 14.000000000000009，本断言转红。 */
     assert.equal(balance, 14, `200×0.07 应恰为 14，实际 ${balance}`);
     assert.equal(Math.round(balance * 100), 1400, '提现门依赖的 minor 值必须精确');
+  });
+
+  /* ⚠️ 审计 #426：结算额与币种此前**完全由请求体给**，服务端从不与
+   * task.reward / task.currency 比对（schema 只 `int().min(1)`）。
+   * 实测：task.reward = 1.00 CRED（=100 minor），提交 999999 →
+   * 结算 total=999999、钱包余额 9999.99。
+   *
+   * 虽然调用方必须是 publisher（花自己的钱），但它破坏「结算额==工单报酬」
+   * 这一**对账基础不变量**，且平台抽成基数可被任意压低（total 报小、私下补差）。 */
+  it('审计 #426：结算额与工单报酬不符必须拒绝（对账基础不变量）', () => {
+    const { taskId, assignmentId } = assignedTask(1);   /* reward=1 → 100 minor */
+
+    const inflated = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 999999, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    /* 变异实测：去掉 `totalAmountMinor !== expectedMinor` 判据 → 结算成功、
+     * 钱包余额 9999.99，本断言转红。 */
+    assert.equal(inflated, null, '虚高结算额必须拒绝');
+
+    const understated = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 1, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.equal(understated, null, '压低结算额同样拒绝（否则平台抽成基数可被绕过）');
+
+    /* 拒绝路径不得留下任何结算行/流水。 */
+    const n = fx.db.prepare<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM wallet_settlements WHERE tenant_id = ? AND task_id = ?`,
+    ).get(fx.tenantId, taskId)!.n;
+    assert.equal(n, 0, '被拒结算不得落库');
+  });
+
+  it('对照：结算额等于工单报酬时正常结算（别把功能一起拒掉）', () => {
+    const { taskId, assignmentId } = assignedTask(1);   /* reward=1 → 100 minor */
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 100, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.ok(settled, '金额一致必须成功');
+    assert.equal(settled!.totalAmountMinor, 100);
+  });
+
+  /* 浮点残渣守卫：reward=0.1 时 toMinor 必须给 10，而非 10.000000000000002 —— 
+   * 否则合法请求会被误拒（这正是我用 toMinor 而非裸乘 100 的原因）。 */
+  it('审计 #426：浮点 reward（0.1）的合法结算不得被误拒', () => {
+    const { taskId, assignmentId } = assignedTask(0.1);
+    const settled = fx.service.settleTaskPayment({
+      tenantId: fx.tenantId, actorUserId: fx.ownerUserId, taskId, assignmentId,
+      totalAmountMinor: 10, currency: 'CRED',
+      split: { ownerPct: 60, personaPct: 20, platformPct: 20 },
+    });
+    assert.ok(settled, 'reward=0.1 → 10 minor，合法结算不得被浮点残渣误拒');
   });
 });
