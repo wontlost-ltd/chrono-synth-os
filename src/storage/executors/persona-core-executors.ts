@@ -3,6 +3,7 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import { dbNowMs } from './db-now.js';
 import {
   PCORE_QUERY_SUMMARIES_BY_OWNER,
   PCORE_QUERY_SUMMARY_BY_OWNER,
@@ -747,14 +748,17 @@ export function registerPersonaCoreExecutors(): void {
   });
 
   registerQuery<readonly PcoreRuntimeSessionRow[], PcoreTimedOutRuntimeSessionsParams>(PCORE_QUERY_TIMED_OUT_RUNTIME_SESSIONS, (db, p) => {
+    /* issue #395：基准时刻由**数据库**给，不收恢复副本的 Date.now()。
+     * `timeout_at` 是跑会话的那个副本写的，两端钟差会平移超时判定——
+     * 恢复副本钟快就误判正在跑的会话超时并触发重试/终结。 */
     return db.prepare<PcoreRuntimeSessionRow>(
       `SELECT * FROM runtime_sessions
        WHERE timeout_at IS NOT NULL
-         AND timeout_at <= ?
+         AND timeout_at <= ${dbNowMs(db)}
          AND completed_at IS NULL
        ORDER BY timeout_at ASC
        LIMIT ?`,
-    ).all(p.now, p.limit);
+    ).all(p.limit);
   });
 
   registerQuery<readonly PcoreGovernanceCaseRow[], PcoreTenantPersonaParams>(PCORE_QUERY_GOVERNANCE_CASES_BY_PERSONA, (db, p) => {
@@ -1048,8 +1052,8 @@ export function registerPersonaCoreExecutors(): void {
         id, tenant_id, persona_id, task_id, assignment_id, state, retry_count, timeout_at,
         plan_json, artifacts_json, evaluation_json, result_summary_json, error_json,
         created_at, updated_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, 'PLAN', 0, ?, NULL, '[]', NULL, NULL, NULL, ?, ?, NULL)`,
-    ).run(p.id, p.tenantId, p.personaId, p.taskId, p.assignmentId, p.timeoutAt, p.now, p.now);
+      ) VALUES (?, ?, ?, ?, ?, 'PLAN', 0, ${dbNowMs(db)} + ?, NULL, '[]', NULL, NULL, NULL, ?, ?, NULL)`,
+    ).run(p.id, p.tenantId, p.personaId, p.taskId, p.assignmentId, p.timeoutAfterMs, p.now, p.now);
     return { rowsAffected: result.changes };
   });
 
@@ -1065,18 +1069,18 @@ export function registerPersonaCoreExecutors(): void {
   registerCommand<PcorePlanRuntimeSessionParams>(PCORE_CMD_PLAN_RUNTIME_SESSION, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE runtime_sessions
-       SET state = 'EXECUTE', plan_json = ?, updated_at = ?, timeout_at = ?
+       SET state = 'EXECUTE', plan_json = ?, updated_at = ?, timeout_at = ${dbNowMs(db)} + ?
        WHERE tenant_id = ? AND id = ?`,
-    ).run(p.planJson, p.now, p.timeoutAt, p.tenantId, p.sessionId);
+    ).run(p.planJson, p.now, p.timeoutAfterMs, p.tenantId, p.sessionId);
     return { rowsAffected: result.changes };
   });
 
   registerCommand<PcoreExecuteRuntimeSessionParams>(PCORE_CMD_EXECUTE_RUNTIME_SESSION, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE runtime_sessions
-       SET state = 'EVALUATE', artifacts_json = ?, updated_at = ?, timeout_at = ?
+       SET state = 'EVALUATE', artifacts_json = ?, updated_at = ?, timeout_at = ${dbNowMs(db)} + ?
        WHERE tenant_id = ? AND id = ?`,
-    ).run(p.artifactsJson, p.now, p.timeoutAt, p.tenantId, p.sessionId);
+    ).run(p.artifactsJson, p.now, p.timeoutAfterMs, p.tenantId, p.sessionId);
     return { rowsAffected: result.changes };
   });
 
@@ -1093,9 +1097,9 @@ export function registerPersonaCoreExecutors(): void {
   registerCommand<PcoreEvaluateRuntimeSessionParams>(PCORE_CMD_EVALUATE_RUNTIME_SESSION, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE runtime_sessions
-       SET state = 'MEMORY_UPDATE', evaluation_json = ?, updated_at = ?, timeout_at = ?
+       SET state = 'MEMORY_UPDATE', evaluation_json = ?, updated_at = ?, timeout_at = ${dbNowMs(db)} + ?
        WHERE tenant_id = ? AND id = ?`,
-    ).run(p.evaluationJson, p.now, p.timeoutAt, p.tenantId, p.sessionId);
+    ).run(p.evaluationJson, p.now, p.timeoutAfterMs, p.tenantId, p.sessionId);
     return { rowsAffected: result.changes };
   });
 
@@ -1111,9 +1115,9 @@ export function registerPersonaCoreExecutors(): void {
   registerCommand<PcoreRetryRuntimeSessionParams>(PCORE_CMD_RETRY_RUNTIME_SESSION, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE runtime_sessions
-       SET state = ?, retry_count = retry_count + 1, timeout_at = ?, updated_at = ?, error_json = ?
+       SET state = ?, retry_count = retry_count + 1, timeout_at = ${dbNowMs(db)} + ?, updated_at = ?, error_json = ?
        WHERE tenant_id = ? AND id = ?`,
-    ).run(p.state, p.timeoutAt, p.now, p.errorJson, p.tenantId, p.sessionId);
+    ).run(p.state, p.timeoutAfterMs, p.now, p.errorJson, p.tenantId, p.sessionId);
     return { rowsAffected: result.changes };
   });
 

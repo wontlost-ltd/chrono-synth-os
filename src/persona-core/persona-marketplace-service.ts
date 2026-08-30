@@ -98,7 +98,6 @@ import { clamp, fromMinor, round, safeJsonParse, toMinor } from './persona-core-
 import type { PersonaCoreSource, TransactionContext } from './persona-core-source.js';
 import {
   ACTIVE_RUNTIME_STATES,
-  computeRuntimeTimeoutAt,
   isRuntimeTerminalState,
   nextRuntimeRetryState,
   shouldRetryRuntimeSession,
@@ -702,7 +701,6 @@ export class PersonaMarketplaceService {
 
     const now = Date.now();
     const sessionId = generatePrefixedId('rs');
-    const timeoutAt = computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs);
 
     const db = this.source.forTenant(input.tenantId);
     db.transaction(() => {
@@ -712,7 +710,7 @@ export class PersonaMarketplaceService {
         personaId: input.personaId,
         taskId: input.taskId,
         assignmentId: assignment.id,
-        timeoutAt,
+        timeoutAfterMs: this.runtimeSessionTimeoutMs,
         now,
       }));
 
@@ -754,7 +752,7 @@ export class PersonaMarketplaceService {
       sessionId,
       planJson: JSON.stringify(plan),
       now,
-      timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
+      timeoutAfterMs: this.runtimeSessionTimeoutMs,
     }));
 
     return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
@@ -779,7 +777,7 @@ export class PersonaMarketplaceService {
         sessionId,
         artifactsJson: JSON.stringify(artifacts),
         now,
-        timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
+        timeoutAfterMs: this.runtimeSessionTimeoutMs,
       }));
 
       if (session.assignmentId) {
@@ -825,7 +823,7 @@ export class PersonaMarketplaceService {
       sessionId,
       evaluationJson: JSON.stringify(evaluation),
       now,
-      timeoutAt: computeRuntimeTimeoutAt(now, this.runtimeSessionTimeoutMs),
+      timeoutAfterMs: this.runtimeSessionTimeoutMs,
     }));
 
     return this.getRuntimeSession(tenantId, ownerUserId, sessionId);
@@ -923,8 +921,10 @@ export class PersonaMarketplaceService {
     db: SyncWriteUnitOfWork,
     input: { now: number; sessionTimeoutMs: number; maxRetries: number; limit?: number },
   ): { scanned: number; recovered: number; timedOut: number } {
+    /* issue #395：超时判定的基准时刻由数据库给，不再传本副本的 now。
+     * `input.now` 仍用于写入侧（errorPayload.detectedAt / 重试的新 timeout_at），
+     * 那些是**记录**而非判定，不参与跨副本比较。 */
     const rows = db.queryMany(pcoreQueryTimedOutRuntimeSessions({
-      now: input.now,
       limit: input.limit ?? 100,
     }));
 
@@ -947,7 +947,7 @@ export class PersonaMarketplaceService {
           tenantId: row.tenant_id,
           sessionId: row.id,
           state: nextRuntimeRetryState(state),
-          timeoutAt: computeRuntimeTimeoutAt(input.now, input.sessionTimeoutMs),
+          timeoutAfterMs: input.sessionTimeoutMs,
           now: input.now,
           errorJson: JSON.stringify(errorPayload),
         }));

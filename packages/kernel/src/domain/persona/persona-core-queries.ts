@@ -803,7 +803,17 @@ export interface PcoreCreateRuntimeSessionParams extends PcoreTenantPersonaParam
   id: string;
   taskId: string;
   assignmentId: string;
-  timeoutAt: number;
+  /**
+   * 会话超时的**时长**（毫秒），不是绝对时刻（issue #395）。
+   *
+   * ⚠️ 原来是应用侧算好的绝对 `timeout_at`，而判定它的
+   * `RuntimeRecoveryWorker` 跑在**别的副本**上。写入端与比较端不同源，
+   * 两台机器的钟差直接平移超时判定——恢复副本钟快就误判正在跑的会话超时。
+   * 改收时长、由 SQL 内的 DB 时钟算出截止点，两端物理同源。
+   *
+   * ⚠️ 特意改名而非沿用 `timeoutAt`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  timeoutAfterMs: number;
   now: number;
 }
 
@@ -821,13 +831,33 @@ export interface PcoreRuntimeSessionParams {
 export interface PcorePlanRuntimeSessionParams extends PcoreRuntimeSessionParams {
   planJson: string;
   now: number;
-  timeoutAt: number;
+  /**
+   * 会话超时的**时长**（毫秒），不是绝对时刻（issue #395）。
+   *
+   * ⚠️ 原来是应用侧算好的绝对 `timeout_at`，而判定它的
+   * `RuntimeRecoveryWorker` 跑在**别的副本**上。写入端与比较端不同源，
+   * 两台机器的钟差直接平移超时判定——恢复副本钟快就误判正在跑的会话超时。
+   * 改收时长、由 SQL 内的 DB 时钟算出截止点，两端物理同源。
+   *
+   * ⚠️ 特意改名而非沿用 `timeoutAt`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  timeoutAfterMs: number;
 }
 
 export interface PcoreExecuteRuntimeSessionParams extends PcoreRuntimeSessionParams {
   artifactsJson: string;
   now: number;
-  timeoutAt: number;
+  /**
+   * 会话超时的**时长**（毫秒），不是绝对时刻（issue #395）。
+   *
+   * ⚠️ 原来是应用侧算好的绝对 `timeout_at`，而判定它的
+   * `RuntimeRecoveryWorker` 跑在**别的副本**上。写入端与比较端不同源，
+   * 两台机器的钟差直接平移超时判定——恢复副本钟快就误判正在跑的会话超时。
+   * 改收时长、由 SQL 内的 DB 时钟算出截止点，两端物理同源。
+   *
+   * ⚠️ 特意改名而非沿用 `timeoutAt`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  timeoutAfterMs: number;
 }
 
 export interface PcoreStartTaskAssignmentParams {
@@ -839,7 +869,17 @@ export interface PcoreStartTaskAssignmentParams {
 export interface PcoreEvaluateRuntimeSessionParams extends PcoreRuntimeSessionParams {
   evaluationJson: string;
   now: number;
-  timeoutAt: number;
+  /**
+   * 会话超时的**时长**（毫秒），不是绝对时刻（issue #395）。
+   *
+   * ⚠️ 原来是应用侧算好的绝对 `timeout_at`，而判定它的
+   * `RuntimeRecoveryWorker` 跑在**别的副本**上。写入端与比较端不同源，
+   * 两台机器的钟差直接平移超时判定——恢复副本钟快就误判正在跑的会话超时。
+   * 改收时长、由 SQL 内的 DB 时钟算出截止点，两端物理同源。
+   *
+   * ⚠️ 特意改名而非沿用 `timeoutAt`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  timeoutAfterMs: number;
 }
 
 export interface PcoreCompleteRuntimeSessionParams extends PcoreRuntimeSessionParams {
@@ -848,13 +888,31 @@ export interface PcoreCompleteRuntimeSessionParams extends PcoreRuntimeSessionPa
 }
 
 export interface PcoreTimedOutRuntimeSessionsParams {
-  now: number;
+  /**
+   * 判定超时的**基准时刻由数据库给**，此处不再收 `now`（issue #395）。
+   *
+   * ⚠️ 原来收的是恢复副本的 `Date.now()`，而 `timeout_at` 是**另一个**副本
+   * 在跑会话时按自己的 `Date.now()` 算出来的绝对时刻。两台机器的钟差直接
+   * 平移超时判定：恢复副本钟快就会**误判正在跑的会话超时**并触发重试/终结。
+   *
+   * 字段特意删掉而非留空——同为 number 时 TS 一个错都不报（#381 教训）。
+   */
   limit: number;
 }
 
 export interface PcoreRetryRuntimeSessionParams extends PcoreRuntimeSessionParams {
   state: string;
-  timeoutAt: number;
+  /**
+   * 会话超时的**时长**（毫秒），不是绝对时刻（issue #395）。
+   *
+   * ⚠️ 原来是应用侧算好的绝对 `timeout_at`，而判定它的
+   * `RuntimeRecoveryWorker` 跑在**别的副本**上。写入端与比较端不同源，
+   * 两台机器的钟差直接平移超时判定——恢复副本钟快就误判正在跑的会话超时。
+   * 改收时长、由 SQL 内的 DB 时钟算出截止点，两端物理同源。
+   *
+   * ⚠️ 特意改名而非沿用 `timeoutAt`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  timeoutAfterMs: number;
   now: number;
   errorJson: string;
 }
