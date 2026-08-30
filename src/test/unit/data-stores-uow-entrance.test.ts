@@ -92,6 +92,64 @@ describe('Phase 2 批次 4：data stores 双入口', () => {
     } finally { db.close(); }
   });
 
+  /* ── issue #395 条目 5：bulk_knowledge_import_jobs 的卡死回收 ──
+   *
+   * `started_at` 由跑 import 的副本写、回收判定跑在 worker 副本上，两端时钟
+   * 不同源时钟差直接平移判定——worker 钟快就把**正在跑**的 job 标成 failed。
+   *
+   * 该路径当前无生产调用方（潜伏），此前也**零覆盖**：把判定改回应用侧
+   * cutoff 后编译通过、全套照样绿。故一并补上。 */
+  it('审计 #395：reapStuck 只传时长，截止点由数据库算', () => {
+    const db = createMemoryDatabase();
+    runDslSqliteMigrations(db);
+    try {
+      const store = new BulkImportStore(db);
+      store.create({
+        id: 'job_stuck', tenantId: 'default', personaId: 'p1', ownerUserId: 'u1',
+        totalItems: 10, deduplicateStrategy: 'skip',
+      });
+      store.markRunning('job_stuck');
+
+      /* 把 started_at 挪早 10 分钟 —— 调用方已无法通过传 now 把时钟推快。 */
+      db.prepare<void>(
+        `UPDATE bulk_knowledge_import_jobs SET started_at = started_at - 600000 WHERE id = ?`,
+      ).run('job_stuck');
+
+      /* 另有一条**刚开始**的：绝不能被顺带回收（防「干脆全收」的假通过）。 */
+      store.create({
+        id: 'job_fresh', tenantId: 'default', personaId: 'p1', ownerUserId: 'u1',
+        totalItems: 10, deduplicateStrategy: 'skip',
+      });
+      store.markRunning('job_fresh');
+
+      const seen: Array<{ sql: string; params: unknown[] }> = [];
+      const orig = db.prepare.bind(db);
+      (db as unknown as { prepare: typeof db.prepare }).prepare = ((sql: string) => {
+        const st = orig(sql);
+        const origAll = st.all.bind(st);
+        st.all = ((...params: unknown[]) => { seen.push({ sql, params }); return origAll(...params as never[]); }) as typeof st.all;
+        return st;
+      }) as typeof db.prepare;
+
+      const reaped = store.reapStuck(5 * 60 * 1000);
+      (db as unknown as { prepare: typeof db.prepare }).prepare = orig;
+
+      /* 行为：只回收卡死那条。 */
+      assert.equal(reaped, 1, '只该回收卡死的那一条');
+      assert.equal(store.get('default', 'job_stuck')?.state, 'failed');
+      assert.equal(store.get('default', 'job_fresh')?.state, 'running', '刚开始的不得被顺带回收');
+
+      /* 结构：SQL 不得把截止时刻当参数传。
+       * 变异实测：判定改回 `started_at < ?` + Date.now()-stuckAfterMs →
+       * 参数变成 1.7e12 量级，下面转红。 */
+      const scan = seen.find((e) => /bulk_knowledge_import_jobs/.test(e.sql) && /started_at </.test(e.sql));
+      assert.ok(scan, '必须执行了卡死扫描');
+      assert.deepEqual(scan.params, [5 * 60 * 1000],
+        `扫描只应传时长（实际参数：${JSON.stringify(scan.params)}）`);
+      assert.ok(/started_at < \(/.test(scan.sql), '截止点必须由 SQL 内的 DB 时钟算出');
+    } finally { db.close(); }
+  });
+
   it('ConversationAuditPublisher 双入口：UoW 模式下静默跳过', () => {
     const db = createMemoryDatabase();
     runDslSqliteMigrations(db);

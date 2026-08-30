@@ -75,7 +75,19 @@ export interface BimpListByPersonaParams {
 }
 
 export interface BimpStuckParams {
-  cutoff: number;
+  /**
+   * 判定「卡死」的**时长**（毫秒），不是截止时刻（issue #395）。
+   *
+   * ⚠️ `started_at` 由跑 import 的副本写、回收判定跑在 worker 副本上，
+   * 两端时钟不同源时钟差直接平移判定——worker 钟快就会把**正在跑**的
+   * import job 标成 failed。
+   *
+   * 该回收路径当前**无生产调用方**（属潜伏），但接线时缺陷就会生效，
+   * 故一并按同一形状修好，免得日后接线的人踩同一个坑。
+   *
+   * ⚠️ 特意改名而非沿用 `cutoff`：同为 number 时 TS 一个错都不报（#381）。
+   */
+  stuckAfterMs: number;
 }
 
 export interface BimpCreateParams {
@@ -90,7 +102,8 @@ export interface BimpCreateParams {
 
 export interface BimpMarkRunningParams {
   jobId: string;
-  now: number;
+  /* ⚠️ issue #395：`started_at` 改由数据库盖戳（它是 reapStuck 的判定依据，
+   * 必须与判定端同源），故此处不再收 `now`。 */
 }
 
 export interface BimpIncrementCounterParams {

@@ -3,6 +3,7 @@
  */
 
 import { registerQuery, registerCommand } from '../legacy-sync-bridge.js';
+import { dbNowMs } from './db-now.js';
 import {
   BIMP_QUERY_BY_ID, BIMP_QUERY_BY_TENANT_AND_ID, BIMP_QUERY_LIST_BY_PERSONA,
   BIMP_QUERY_FAILURES, BIMP_QUERY_STUCK,
@@ -54,8 +55,8 @@ export function registerBulkImportExecutors(): void {
   registerQuery<readonly BimpStuckRow[], BimpStuckParams>(BIMP_QUERY_STUCK, (db, p) => {
     return db.prepare<BimpStuckRow>(
       `SELECT id FROM bulk_knowledge_import_jobs
-        WHERE state = 'running' AND started_at < ?`,
-    ).all(p.cutoff);
+        WHERE state = 'running' AND started_at < ${dbNowMs(db)} - ?`,
+    ).all(p.stuckAfterMs);
   });
 
   registerCommand<BimpCreateParams>(BIMP_CMD_CREATE, (db, p) => {
@@ -75,9 +76,9 @@ export function registerBulkImportExecutors(): void {
   registerCommand<BimpMarkRunningParams>(BIMP_CMD_MARK_RUNNING, (db, p) => {
     const result = db.prepare<void>(
       `UPDATE bulk_knowledge_import_jobs
-          SET state = 'running', started_at = COALESCE(started_at, ?)
+          SET state = 'running', started_at = COALESCE(started_at, ${dbNowMs(db)})
         WHERE id = ?`,
-    ).run(p.now, p.jobId);
+    ).run(p.jobId);
     return { rowsAffected: result.changes };
   });
 
