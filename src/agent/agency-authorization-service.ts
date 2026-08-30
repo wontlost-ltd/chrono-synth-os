@@ -92,8 +92,38 @@ export class AgencyAuthorizationService {
     return result.rowsAffected > 0;
   }
 
-  /** 检查该 persona 的工具调用是否有 active 授权书允许 */
-  isToolAllowed(tenantId: string, personaId: string, toolId: string, now = Date.now()): boolean {
+  /**
+   * 检查某次工具调用是否被 active 授权书覆盖。
+   *
+   * @param executingPrincipalUserId 本次调用**代表谁**行动。
+   *   - 具体 userId：人类操作者路径（worker-execution / companion）；
+   *   - `null`：数字人**自主**行动（earning cycle / 内部动作），无人类主体。
+   *
+   * ⚠️ 审计 #440-2：此前签名里**没有执行主体**，判定是
+   * 「该 persona 上任意一份 active 授权书覆盖了该工具即放行」。
+   * 由于 `idx_agency_authorizations_persona` 是**非唯一**索引，同一 persona 上
+   * 可以并存多份授权书，于是：
+   *
+   *   alice 授权（只读）→ read_email 放行 / wire_money 拒绝
+   *   bob 另签一份宽泛授权 → **wire_money 对 alice 也放行了**
+   *
+   * 后果是「Alice 只授权了只读」这条约束在系统里**根本无法表达** —— 任何
+   * 其他委托人的宽泛授权都会替她放行。
+   *
+   * ⚠️ 但不能简单要求「principal 必须等于执行者」：`persona-earning-service`
+   * 与 `draft-github-reply` 等**自主路径**明确传 `invokerUserId: null`
+   * （数字人自己在跑 earning cycle，本就没有人类发起者）。一刀切匹配会让
+   * 自主赚钱闭环全挂 —— 那比原缺陷更糟。
+   *
+   * 故按「有没有人类主体」分流（见 `coversPrincipal`）。
+   */
+  isToolAllowedForPrincipal(
+    tenantId: string,
+    personaId: string,
+    toolId: string,
+    executingPrincipalUserId: string | null,
+    now = Date.now(),
+  ): boolean {
     const auths = this.listByPersona(tenantId, personaId);
     return auths.some((auth) => {
       if (auth.status !== 'active') return false;
@@ -102,6 +132,7 @@ export class AgencyAuthorizationService {
        * 若把损坏静默当空，授权书会从「限制性」变成**完全放行**。 */
       if (auth.toolListCorrupted) return false;
       if (auth.expiresAt !== null && auth.expiresAt < now) return false;
+      if (!coversPrincipal(auth, executingPrincipalUserId)) return false;
       if (auth.deniedTools.includes(toolId)) return false;
       if (auth.allowedTools.length === 0) return true; // 空白名单 = 按 scope 默认放行
       return auth.allowedTools.includes(toolId);
@@ -128,6 +159,39 @@ export class AgencyAuthorizationService {
     const row = this.tx.queryOne(agauthQueryByRevocationKey({ tenantId, revocationKey: key }));
     return row ? rowToAuth(row) : null;
   }
+}
+
+/**
+ * 该授权书是否覆盖本次调用的**执行主体**（审计 #440-2）。
+ *
+ * `principal_user_id` 同时承担两个角色，二者并不冲突：
+ *   - **审计字段**：永远记录「这份授权书是谁签发的」，出事可追责；
+ *   - **授权键**：当本次调用有人类主体时，决定它能否用这份授权。
+ *
+ * 分流规则：
+ *
+ * | 执行主体 | 判据 |
+ * |---|---|
+ * | 某个 userId | 只认**该 userId 自己签发**的授权书 |
+ * | null（自主） | 任一委托人签发的授权书都可用，工具边界仍由 allowed/denied 把关 |
+ *
+ * 为什么自主路径不按 principal 过滤：自主行动**没有**人类主体，拿谁去比都不对。
+ * 它的约束来自别处 —— `allowedTools`/`deniedTools` 已经限定了工具边界，
+ * 叠加的 ToolPermission 层还有 scope/constraints，自主路径并非无人看管。
+ *
+ * ⚠️ 我先试过用 `scope === 'all'` 当自主许可，**是错的**：
+ * `autonomous-earning-e2e` 的真实夹具用 `scope: 'research'` +
+ * `allowedTools: ['marketplace.act']` 授权自主接活 —— 窄 scope + 精确工具清单
+ * 恰恰是更好的安全实践。按 `scope='all'` 判会把它拒掉（实测 2 条 E2E 转红），
+ * 反而逼用户去申请全权委托才能保住自主运行，比现状更糟。
+ *
+ * ⚠️ 这条规则**改变了产品语义**：此前靠「别人的宽泛授权顺带放行」而工作的
+ * **有人类主体**的调用会开始被拒。这是有意为之 —— 那正是缺陷本身。
+ * 自主路径的行为不变（本就没有「借用别人授权」这一说）。
+ */
+function coversPrincipal(auth: AgencyAuthorization, executingPrincipalUserId: string | null): boolean {
+  if (executingPrincipalUserId === null) return true;
+  return auth.principalUserId === executingPrincipalUserId;
 }
 
 /**
