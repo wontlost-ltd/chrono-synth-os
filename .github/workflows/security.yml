@@ -211,13 +211,10 @@ jobs:
   # macOS runner uses podman without a `docker` CLI shim. Same rationale
   # as the existing docker-build / secrets-scan jobs.
   #
-  # Why fail_action: false (this PR): the first ZAP run will surface a
-  # backlog of missing security headers (CSP, X-Frame-Options, HSTS).
-  # Treating those as hard-fail today would block the very PR that
-  # reveals them. The artifact is uploaded so we can read it, prioritise
-  # fixes, then flip to fail_action: true in a follow-up PR once the
-  # baseline is clean. See `docs/operations/security-ci-runbook.md`
-  # → "DAST baseline" section.
+  # fail_action 已于审计 #440-4c 翻为 true：原定的解除条件（修掉首轮暴露的
+  # CSP / X-Frame-Options / HSTS 缺失）已由 helmet 插件满足，实测
+  # `FAIL-NEW: 0  WARN-NEW: 1  PASS: 66`。详见下方 `fail_action` 处的说明。
+  # See `docs/operations/security-ci-runbook.md` → "DAST baseline" section.
   dast-baseline:
     name: DAST baseline (OWASP ZAP)
     if: github.event_name == 'pull_request'
@@ -291,11 +288,21 @@ jobs:
           # Don't auto-file a GitHub issue for findings. Triage happens
           # against the uploaded artifact instead. Default is `true`.
           allow_issue_writing: false
-          # Don't fail the PR on findings yet. The first run will surface
-          # missing security headers (CSP, X-Frame-Options, HSTS); we read
-          # the report, fix critical alerts in a follow-up PR, then flip
-          # this to true so future regressions hard-fail. Default is `false`.
-          fail_action: false
+          # 硬失败已开启（审计 #440-4c）。
+          #
+          # 原注释写的解除条件是「先修掉首轮暴露的安全头缺失（CSP /
+          # X-Frame-Options / HSTS），再翻 true」——该条件**已满足**：
+          # `src/server/plugins/helmet.ts` 已注册 @fastify/helmet 并显式设置
+          # 这三个头。最近一次 PR 扫描实测 `FAIL-NEW: 0  WARN-NEW: 1  PASS: 66`。
+          #
+          # 仅剩的那条 WARN 是 `Storable and Cacheable Content [10049]`，命中
+          # 三个 **404** 响应（`/`、`/robots.txt`、`/sitemap.xml`）——API 服务
+          # 上可缓存的 404 不构成风险；且 `cmd_options` 里的 `-I` 本就只忽略
+          # info 级，WARN 不会让 baseline 退非零，故翻 true 不会因它变红。
+          #
+          # 翻 true 之后：`FAIL-NEW > 0` 即阻断 PR，安全回归不再只是产出物里
+          # 一行没人看的记录。
+          fail_action: true
           # Custom name to make the artifact discoverable per-SHA.
           artifact_name: zap-baseline-${{ github.sha }}
 
