@@ -172,4 +172,49 @@ describe('T5 ADR-0060 工具自动授权桥（真实 SQLite）', () => {
     assert.equal(requestStore.decide(pending[0].id, 'rejected', 'admin', NOW + 2), false, '已决议不可再决议（防重复）');
     assert.equal(requestStore.listPending(PERSONA).length, 0, 'approved 后不再 pending');
   });
+
+  /* ── 审计 #440-4d：computeGrantExpiry 「无 now 下界」被记为潜伏风险 ──
+   *
+   * 担心的是：若 `eligibilityExpiresAt` 已在过去，`Math.min(now + cap, 它)`
+   * 会算出一个**已经过期**的 expiresAt，等于授予了一条立刻失效（或更糟，
+   * 被别处当成永久）的权限。
+   *
+   * 复核结论：**不可达**。授权前置的
+   * `CapabilityToolEligibilityStore.listValidForAuthorization` 里有一句
+   * `if (e.expiresAt === null || now >= e.expiresAt) return false;`
+   * —— 已过期的建议在进入 computeGrantExpiry **之前**就被 fail-closed 掉了。
+   *
+   * 故这不是「潜伏缺陷」而是**误报**。但「靠上游过滤保证」的不变量值得钉住，
+   * 免得日后有人放宽那道过滤时无声破坏这里。 */
+  it('审计 #440-4d：授予的 expiresAt 恒 > now（过期建议在上游已被 fail-closed）', () => {
+    learnAndProject('tool.low', 'low');
+    whitelist({ 'tool.low': { scope: 'read', maxExpiryMs: 50_000 } });
+
+    /* 把建议有效期直接改到**过去**，模拟陈旧 eligibility。 */
+    db.prepare<void>(
+      `UPDATE capability_tool_eligibility SET expires_at = ?
+       WHERE tenant_id = ? AND persona_id = ? AND tool_id = ?`,
+    ).run(NOW - 1, TENANT, PERSONA, 'tool.low');
+
+    const res = bridge.run(PERSONA, 'owner');
+
+    /* 变异实测：把 listValidForAuthorization 的 `now >= e.expiresAt` 判据
+     * 去掉 → 这里会授予一条 expiresAt = NOW-1 的权限，下面两行转红。 */
+    assert.equal(res.granted.length, 0, '过期建议不得进入授予路径');
+    for (const g of res.granted) {
+      assert.ok(g.expiresAt > NOW, `授予的 expiresAt 必须晚于 now（实际 ${g.expiresAt}）`);
+    }
+  });
+
+  /* 对照：未过期的建议照常授予 —— 防止「把功能一起关掉」也算绿。
+   * ⚠️ 必须复用已注册的 `tool.low`：注册表里只有 tool.low / tool.high，
+   * 用别的 id 会命中「工具已下线 fail-closed」而非本用例要测的过期逻辑
+   * （我第一版用 tool.low2，红在这里，与 expiresAt 无关）。 */
+  it('对照：#440-4d 未过期建议仍正常授予', () => {
+    learnAndProject('tool.low', 'low');
+    whitelist({ 'tool.low': { scope: 'read', maxExpiryMs: 50_000 } });
+    const res = bridge.run(PERSONA, 'owner');
+    assert.equal(res.granted.length, 1, '未过期建议应授予');
+    assert.ok(res.granted[0].expiresAt > NOW, 'expiresAt 恒 > now');
+  });
 });
