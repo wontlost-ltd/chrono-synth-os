@@ -173,6 +173,12 @@ jobs:
         run: npm run check:db-access
       - name: check:sql-layering — no raw SQL outside executors
         run: npm run check:sql-layering
+      # 审计 #440-4f：`tx as SyncWriteUnitOfWork` 会撤掉「禁止嵌套事务」这道
+      # 编译期保护，而本仓 SQLite 不支持嵌套事务（#440-1 实测直接抛
+      # cannot start a transaction within a transaction）。本门冻结当前已知
+      # 安全的 cast 目标与例外，新增一律拒绝。
+      - name: check:tx-widening — tx 放宽后的嵌套事务守卫
+        run: npm run check:tx-widening
       # 审计 #413：check:licenses 在 test:golden 尾链里，但此前 CI 完全不跑
       # （上面那条注释写"These two"就是漏了它）。ADR-0022 双轨许可
       # （MIT 库 / AGPL 服务端）漂移是**法律面**错误，开源发布后不可逆。
