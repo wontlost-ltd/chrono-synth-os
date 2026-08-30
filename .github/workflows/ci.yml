@@ -29,8 +29,8 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
           # No `cache: npm` — see commit fadcec4: setup-node npm caching is
@@ -59,8 +59,8 @@ jobs:
     timeout-minutes: 30
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
           # No `cache: npm` — same rationale as build-and-test (see commit fadcec4).
@@ -124,8 +124,8 @@ jobs:
     timeout-minutes: 15
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
       - run: npm ci
@@ -184,7 +184,7 @@ jobs:
         run: bash scripts/check-forbidden-imports.selftest.sh
       - name: Upload ga:check report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ga-check-report
           path: ga-check.json
@@ -198,9 +198,9 @@ jobs:
     timeout-minutes: 20
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           load: true
@@ -237,7 +237,7 @@ jobs:
           exit 1
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: chrono-synth-os:${{ github.sha }}
           format: table
@@ -280,8 +280,8 @@ jobs:
       CHRONO_DB_DRIVER: postgres
       CHRONO_DB_CONNECTION_STRING: postgres://test:test@localhost:5432/chrono_test
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
           cache: npm
@@ -326,8 +326,8 @@ jobs:
     timeout-minutes: 15
     needs: build-and-test
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
           cache: npm
@@ -346,7 +346,7 @@ jobs:
       - name: Resolve Playwright version
         id: pw
         run: echo "v=$(node -p "require('./apps/web/package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g,'')")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         id: pw-cache
         with:
           path: ~/.cache/ms-playwright
@@ -391,7 +391,7 @@ jobs:
             e2e/workforce-console.spec.ts
       - name: Upload report on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: a11y-playwright-report
           path: apps/web/playwright-report/

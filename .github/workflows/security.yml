@@ -30,8 +30,8 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: github/codeql-action/init@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
           languages: javascript-typescript
           # Use security-and-quality query suite to gate HIGH+ findings
@@ -42,7 +42,7 @@ jobs:
               - dist-test
               - '**/*.test.ts'
               - '**/*.test.tsx'
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         id: analyze
         with:
           category: '/language:javascript-typescript'
@@ -115,7 +115,7 @@ jobs:
           fi
       - name: Upload CodeQL severity gate output
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: codeql-high-plus-${{ github.sha }}
           path: codeql-high-plus.json
@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload SARIF as artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: codeql-sarif-${{ github.sha }}
           path: sarif-results/
@@ -144,11 +144,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: TruffleHog filesystem scan
-        uses: trufflesecurity/trufflehog@v3.97.0
+        uses: trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318 # v3.97.0
         with:
           path: ./
           extra_args: --results=verified,unknown
@@ -158,8 +158,8 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
       - run: npm ci --ignore-scripts
@@ -179,17 +179,17 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_LABELS && fromJSON(vars.CI_RUNNER_LABELS) || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: '.nvmrc'
       - run: npm ci --ignore-scripts
-      - uses: anchore/sbom-action@v0
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           format: spdx-json
           artifact-name: chrono-synth-os-sbom-${{ github.sha }}.spdx.json
           output-file: sbom.spdx.json
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: chrono-synth-os-sbom-${{ github.sha }}
           path: sbom.spdx.json
@@ -226,14 +226,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       # Build the production image on this job. The docker-build job in
       # ci.yml has already populated the GHA cache; this layer hits it.
       - name: Build chrono-synth-os image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           load: true
@@ -281,7 +281,7 @@ jobs:
           exit 1
 
       - name: ZAP baseline scan
-        uses: zaproxy/action-baseline@v0.15.0
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
         with:
           target: 'http://127.0.0.1:3000'
           # `-I` = ignore info-level findings; `-T 10` = 10-min timeout.
@@ -307,7 +307,7 @@ jobs:
 
       - name: Upload backend log
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: chrono-os-dast-backend-log-${{ github.sha }}
           path: zap-backend.log
