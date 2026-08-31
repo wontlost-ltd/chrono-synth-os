@@ -86,7 +86,7 @@
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "dotenv": "^17.3.1",
     "fastify": "^5.12.1",
-    "ioredis": "^5.9.3",
+    "ioredis": "^6.0.0",
     "kafkajs": "2.2.4",
     "pg": "^8.21.0",
     "pino": "^10.3.1",
