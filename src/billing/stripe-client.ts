@@ -16,10 +16,14 @@ export function getStripe(config: AppConfig): Stripe {
     }
     /* Pinned to the SDK v22 default — the version the TypeScript types
      * reflect. Bumping to a newer date string requires a coordinated
-     * SDK upgrade so the response shapes stay in sync. stripe 22.5.0
-     * advanced the pinned default to 2026-07-29.dahlia. */
+     * SDK upgrade so the response shapes stay in sync. stripe 22.6.0
+     * advanced the pinned default to 2026-08-26.dahlia.
+     *
+     * ⚠️ 这是 stripe 升级的**必然连带改动**，不是可选项：SDK 把
+     * `apiVersion` 的类型收窄成当前默认那一个字面量，沿用旧串会直接
+     * TS2322 编译失败（本次 #483 的 CI 就是这么红的）。 */
     stripeInstance = new Stripe(config.stripe.secretKey, {
-      apiVersion: '2026-07-29.dahlia',
+      apiVersion: '2026-08-26.dahlia',
     });
   }
   return stripeInstance;
