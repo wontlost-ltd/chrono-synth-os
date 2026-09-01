@@ -21,19 +21,20 @@ export function getRedis(config: AppConfig): Redis {
       },
       maxRetriesPerRequest: 3,
       lazyConnect: true,
-      /* ⚠️ ioredis 6.0.0 起**默认改用 RESP3**（唯一的 BREAKING CHANGE，
-       * 另一条 Node ≥20 我们已满足）。RESP3 会改变部分回复的形状，其中
-       * pub/sub 从「`message` 事件」变成协议级 push —— 而
-       * `server/plugins/websocket.ts` 的跨副本事件背板正是靠
-       * `redisSub.on('message', …)` 收消息的。
+      /* ioredis 6.0.0 起默认改用 RESP3（唯一的 BREAKING CHANGE；另一条
+       * Node ≥20 我们已满足）。#491 升级时本仓 **Redis 零覆盖**，无法验证
+       * RESP3 下 `server/plugins/websocket.ts` 的跨副本背板
+       * （`redisSub.on('message', …)`）是否还工作，故保守钉了 `protocol: 2`。
        *
-       * 本仓 **Redis 零覆盖**：CI 没有 redis service，测试里也没有任何
-       * ioredis 用例。也就是说 CI 全绿**证明不了** RESP3 下 pub/sub 仍然工作。
-       * 在没有验证手段的前提下跟着默认走等于拿生产赌运气。
+       * ⚠️ 现已用真 Redis 容器实测（`src/test/integration/redis-pubsub-backplane.test.ts`）：
+       * **RESP3 下 `on('message', …)` 与 RESP2 行为一致**，两种协议下发一条
+       * publish 都恰好收到 1 次 message 事件 —— ioredis 把协议级 push 归一
+       * 回了同一套事件 API。当时「pub/sub 会变成 push 而收不到」的担心不成立。
        *
-       * 故显式钉 `protocol: 2` 保持 v5 线协议（官方 release note 明确给出
-       * 的退路），先拿到 6.x 的连接韧性与安全修复；等补上真 Redis 的
-       * pub/sub 集成测试后，再单独一个 PR 切 RESP3 并用那条测试验证。 */
+       * 那为什么仍然保留这行？因为**钉版本身是有价值的显式契约**：
+       * 生产用的线协议不该随依赖升级被静默切换（RESP3 还会改 map/set 等
+       * 回复的形状，本仓今天没用到，不代表将来不会）。上面那条测试同时覆盖
+       * RESP2 与 RESP3，所以哪天想切只需改这一个数字，且**改完立刻有测试作证**。 */
       protocol: 2,
     });
   }
