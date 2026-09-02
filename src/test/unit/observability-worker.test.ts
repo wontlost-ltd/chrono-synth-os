@@ -278,4 +278,51 @@ describe('ObservabilityWorker', () => {
         + '差值过大说明用的是应用进程时钟）');
     });
   });
+
+  /* ── 认领 CAS：多副本重复聚合的唯一防线 ──
+   *
+   * `obsCmdMarkProcessing` 的 `AND status = 'pending'` 是**唯一**阻止两个副本
+   * 同时认领同一条观测事件的东西。重复认领 ⇒ 同一事件被聚合两次 ⇒ rollup
+   * 指标虚高（对外报表/计费依据失真）。
+   *
+   * k8s replicas:2（生产 3）且 app.ts **无 leader election**，worker 在每个
+   * 副本里都跑 —— 这是实况不是假设。
+   *
+   * ⚠️ 此前**零覆盖**：把 `AND status = 'pending'` 去掉后全量 4113 条测试全绿。
+   * 既有用例（含 kafka-transport）只断言「第一次认领返回 true」，
+   * 从不验证第二次必须 false —— 而**失败那一侧才是防线本身**，
+   * `observability-worker.ts:119` 的 `if (!mark…) continue` 在测试下是死代码。 */
+  it('★认领 CAS：同一事件只能被认领一次（防多副本重复聚合）★', () => {
+    const id = publishObservabilityEvent(db, {
+      tenantId: 'tenant_cas',
+      topic: OBSERVABILITY_TOPIC,
+      eventType: 'runtime.completed',
+      partitionKey: 'rs_cas',
+      payload: { durationMs: 100, updatedAt: 1000 },
+    });
+
+    /* 副本 1 认领 —— 成功。 */
+    assert.equal(markObservabilityEventProcessing(db, id), true, '第一次认领必须成功');
+
+    /* 副本 2 认领**同一条** —— 必须失败。
+     * 变异实测：去掉 `AND status = 'pending'` → 本行变 true，转红。 */
+    assert.equal(
+      markObservabilityEventProcessing(db, id), false,
+      '第二次认领必须失败，否则两副本会把同一事件各聚合一次',
+    );
+  });
+
+  /* 对照：另一条**未被占用**的事件仍可认领 —— 防止「把认领整个关掉」也算绿。 */
+  it('对照：不同事件各自可被认领（修复不是把认领关掉）', () => {
+    const a = publishObservabilityEvent(db, {
+      tenantId: 'tenant_cas', topic: OBSERVABILITY_TOPIC, eventType: 'runtime.completed',
+      partitionKey: 'rs_a', payload: { durationMs: 1, updatedAt: 1000 },
+    });
+    const b = publishObservabilityEvent(db, {
+      tenantId: 'tenant_cas', topic: OBSERVABILITY_TOPIC, eventType: 'runtime.completed',
+      partitionKey: 'rs_b', payload: { durationMs: 2, updatedAt: 1000 },
+    });
+    assert.equal(markObservabilityEventProcessing(db, a), true);
+    assert.equal(markObservabilityEventProcessing(db, b), true, '另一条不受影响');
+  });
 });

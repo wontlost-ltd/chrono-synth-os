@@ -184,4 +184,62 @@ describe('BillingOutbox 分片探针', () => {
       `认领命令不得携带任何时间参数（实际字段：${keys.join(', ')}）——`
       + '时间必须由数据库盖戳，否则跨副本钟差会平移 stale 判定');
   });
+
+  /* ── 认领 CAS：多副本重复计费的唯一防线 ──
+   *
+   * `boutboxCmdClaim` 的 `AND status = 'pending'` 是**唯一**阻止两个 API 副本
+   * 同时认领同一行的东西。认领重复 ⇒ 两副本各自 `reportUsage` ⇒ **重复的
+   * Stripe 计量事件 = 真实多收客户钱**。
+   *
+   * k8s/deployment.yml 是 `replicas: 2`（生产 3），且 app.ts **无 leader
+   * election** —— flush 定时器在每个副本里都跑，所以这是实况不是假设
+   * （executor 里的注释也写着「API replicas:2 两副本各自认领同一张表」）。
+   *
+   * ⚠️ 此前**零覆盖**：把 `AND status = 'pending'` 去掉后，全量 4113 条测试
+   * （2795 单元 + 1318 集成）**全绿**。既有用例只断言「第一次认领成功」，
+   * 从不验证第二次必须失败 —— 而失败那一侧才是防线本身。 */
+  it('★认领 CAS：同一行只能被认领一次（防多副本重复计费）★', () => {
+    const db = obxDb();
+    const ob = BillingOutbox.fromResolver(new SingleDbResolver(db), cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'idem-A');
+
+    /* ⚠️ 别按 'idem-A' 查：enqueue 的第 5 参是 **sourceId**，实际落库的
+     * idempotency_key 是 `${tenantId}:${eventName}:${sourceId}`。
+     * 直接取唯一那一行，避免复刻拼 key 的规则（复刻= 断言自己的副本）。 */
+    const row = db.prepare<{ id: number }>(
+      `SELECT id FROM billing_outbox ORDER BY id LIMIT 1`,
+    ).get();
+    assert.ok(row, '前置：入队应落库');
+
+    /* 副本 1 认领 —— 应成功。 */
+    const first = db.execute(boutboxCmdClaim(row.id));
+    assert.equal(first.rowsAffected, 1, '第一次认领必须成功');
+
+    /* 副本 2 认领**同一行** —— 必须失败（status 已是 processing）。
+     * 变异实测：把 `AND status = 'pending'` 去掉 → 本行变 1，转红。 */
+    const second = db.execute(boutboxCmdClaim(row.id));
+    assert.equal(second.rowsAffected, 0, '第二次认领必须失败，否则两副本会各报一次 Stripe 计量');
+
+    /* 状态没被第二次认领改坏（processed_at 不应被重新盖戳）。 */
+    const after = db.prepare<{ status: string }>(
+      `SELECT status FROM billing_outbox WHERE id = ?`,
+    ).get(row.id);
+    assert.equal(after?.status, 'processing');
+  });
+
+  /* 对照：认领**未被占用**的行仍应成功 —— 防止「把认领整个关掉」也算绿。 */
+  it('对照：不同行各自可被认领（修复不是把认领关掉）', () => {
+    const db = obxDb();
+    const ob = BillingOutbox.fromResolver(new SingleDbResolver(db), cfg);
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 10, 'idem-1');
+    ob.enqueue('tA', 'cus_A', 'llm_tokens', 20, 'idem-2');
+
+    const rows = db.prepare<{ id: number }>(
+      `SELECT id FROM billing_outbox ORDER BY id`,
+    ).all();
+    assert.equal(rows.length, 2, '前置：两条待处理');
+
+    assert.equal(db.execute(boutboxCmdClaim(rows[0].id)).rowsAffected, 1);
+    assert.equal(db.execute(boutboxCmdClaim(rows[1].id)).rowsAffected, 1, '另一行不受影响');
+  });
 });
