@@ -903,6 +903,19 @@ export interface PcoreTimedOutRuntimeSessionsParams {
 export interface PcoreRetryRuntimeSessionParams extends PcoreRuntimeSessionParams {
   state: string;
   /**
+   * 期望的当前状态（CAS 谓词）——只有会话仍处于**恢复决策时观察到的那个状态**
+   * 才允许改写（审计 P2）。
+   *
+   * ⚠️ 此前无谓词：`retry_count = retry_count + 1` 会无条件执行。而
+   * `RuntimeRecoveryWorker` 由 app.ts 在**每个副本**启动（k8s replicas:2，
+   * 生产 3，且无 leader election），两副本扫到同一条超时会话就各自 +1 ——
+   * **retry 预算按副本数倍速烧尽**，会话被提前判死。
+   *
+   * 加谓词后第二个副本的 rowsAffected=0，调用方据此不再计数。
+   */
+  expectedState: string;
+
+  /**
    * 会话超时的**时长**（毫秒），不是绝对时刻（issue #395）。
    *
    * ⚠️ 原来是应用侧算好的绝对 `timeout_at`，而判定它的
@@ -920,6 +933,18 @@ export interface PcoreRetryRuntimeSessionParams extends PcoreRuntimeSessionParam
 export interface PcoreTimeoutRuntimeSessionParams extends PcoreRuntimeSessionParams {
   now: number;
   errorJson: string;
+  /**
+   * 期望的当前状态（CAS 谓词）——只有会话仍处于**恢复决策时观察到的那个状态**
+   * 才允许改写（审计 P2）。
+   *
+   * ⚠️ 此前无谓词：`retry_count = retry_count + 1` 会无条件执行。而
+   * `RuntimeRecoveryWorker` 由 app.ts 在**每个副本**启动（k8s replicas:2，
+   * 生产 3，且无 leader election），两副本扫到同一条超时会话就各自 +1 ——
+   * **retry 预算按副本数倍速烧尽**，会话被提前判死。
+   *
+   * 加谓词后第二个副本的 rowsAffected=0，调用方据此不再计数。
+   */
+  expectedState: string;
 }
 
 export interface PcoreCreateTaskResultParams {

@@ -1116,8 +1116,8 @@ export function registerPersonaCoreExecutors(): void {
     const result = db.prepare<void>(
       `UPDATE runtime_sessions
        SET state = ?, retry_count = retry_count + 1, timeout_at = ${dbNowMs(db)} + ?, updated_at = ?, error_json = ?
-       WHERE tenant_id = ? AND id = ?`,
-    ).run(p.state, p.timeoutAfterMs, p.now, p.errorJson, p.tenantId, p.sessionId);
+       WHERE tenant_id = ? AND id = ? AND state = ?`,
+    ).run(p.state, p.timeoutAfterMs, p.now, p.errorJson, p.tenantId, p.sessionId, p.expectedState);
     return { rowsAffected: result.changes };
   });
 
@@ -1125,8 +1125,8 @@ export function registerPersonaCoreExecutors(): void {
     const result = db.prepare<void>(
       `UPDATE runtime_sessions
        SET state = 'TIMEOUT', timeout_at = NULL, updated_at = ?, completed_at = ?, error_json = ?
-       WHERE tenant_id = ? AND id = ?`,
-    ).run(p.now, p.now, p.errorJson, p.tenantId, p.sessionId);
+       WHERE tenant_id = ? AND id = ? AND state = ?`,
+    ).run(p.now, p.now, p.errorJson, p.tenantId, p.sessionId, p.expectedState);
     return { rowsAffected: result.changes };
   });
 
