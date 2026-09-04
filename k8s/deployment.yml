@@ -42,6 +42,14 @@ spec:
             - configMapRef:
                 name: chrono-synth-config
           env:
+            # ⚠️ 审计 P2：`REPLICA_COUNT` 被两处安全守卫读取
+            #   - app.ts:221        SQLite 多写入器阻断
+            #   - rate-limit.ts:91  多副本必须配 Redis 分布式限流
+            # 但它此前**在任何 k8s manifest / configmap / Dockerfile / compose
+            # 里都没有设置** —— 两道守卫在部署下完全失效（恒不触发）。
+            # 必须与上面的 `replicas: 2` 保持一致；改副本数时一并改这里。
+            - name: REPLICA_COUNT
+              value: "2"
             - name: CHRONO_OBSERVABILITY_WORKER_ENABLED
               value: "false"
           volumeMounts:
