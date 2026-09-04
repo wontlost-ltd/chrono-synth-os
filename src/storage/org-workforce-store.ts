@@ -333,21 +333,40 @@ export class OrgWorkforceStore {
       `UPDATE org_tasks
        SET status = 'delegated', result_summary = ?, resume_attempt_count = resume_attempt_count + 1,
            last_wake_event_id = ?, updated_at = ?
-       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'`,
-    ).run(resultSummary, wakeEventId, now, this.tenantId, orgId, taskId);
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'
+         AND (last_wake_event_id IS NULL OR last_wake_event_id <> ?)`,
+    ).run(resultSummary, wakeEventId, now, this.tenantId, orgId, taskId, wakeEventId);
     return r.changes > 0;
   }
 
   /**
    * ADR-0057 L8a：复检仍缺口 / 超尝试上限——只推进尝试计数 + 记事件 id，**不改状态**（保持 blocked，fail-closed）。
    * 仅当仍 blocked 才推进（CAS）。返回是否推进。用于「唤醒了但复检仍缺/超限」的可审计记账（防死循环计数）。
+   *
+   * ⚠️ 审计 P2：CAS 谓词里**必须**含 `last_wake_event_id` —— 幂等键此前只在
+   * 应用层判（`task-wake-handler.ts:123` 的 `task.lastWakeEventId === wakeEventId`），
+   * 而那次读在事务外，是典型 TOCTOU。
+   *
+   * 而 `wakeEventId` 是**确定性合成**的（`task-wake-reconciler.ts:102`：
+   * `reconcile:${personaId}:${JSON.stringify(learned)}`），两个副本算出的字符串
+   * 完全相同 —— 于是 3 个副本（k8s production replicas:3，共享同一 PG，
+   * 且无 leader election）会各自读到同一个旧值、各自通过应用层幂等门、
+   * 各自 `resume_attempt_count + 1`。
+   *
+   * 后果：`DEFAULT_MAX_RESUME_ATTEMPTS = 3` 的预算**一到两轮就被烧光**，
+   * 任务提前进 attempts_exhausted 永久停在 blocked ——「防永久挂起」这个
+   * reconciler 的存在目的被它自己的多副本行为击穿。
+   *
+   * 下沉进 WHERE 后，输掉的副本 changes=0，调用方走已有的 lost_race 分支，
+   * 不需要引入任何新原语。
    */
   recordWakeAttemptOnBlocked(orgId: string, taskId: string, resultSummary: string, wakeEventId: string, now: number): boolean {
     const r = this.db.prepare<void>(
       `UPDATE org_tasks
        SET result_summary = ?, resume_attempt_count = resume_attempt_count + 1, last_wake_event_id = ?, updated_at = ?
-       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'`,
-    ).run(resultSummary, wakeEventId, now, this.tenantId, orgId, taskId);
+       WHERE tenant_id = ? AND org_id = ? AND id = ? AND status = 'blocked'
+         AND (last_wake_event_id IS NULL OR last_wake_event_id <> ?)`,
+    ).run(resultSummary, wakeEventId, now, this.tenantId, orgId, taskId, wakeEventId);
     return r.changes > 0;
   }
 
