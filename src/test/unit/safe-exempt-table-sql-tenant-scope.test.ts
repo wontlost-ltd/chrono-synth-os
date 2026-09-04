@@ -47,6 +47,11 @@ const SAFE_EXEMPT_TABLES: readonly string[] = [
   'decision_cases', 'decision_runs', 'decision_feedbacks',
   'onboarding_sessions', 'idempotency_keys',
   'tasks', 'subscriptions', 'life_simulations',
+  /* ⚠️ 审计 P1：conversation_messages 此前**不在管辖内** —— 它含 tenant_id 列，
+   * 但 retention 清理的 DELETE 没有 tenant 谓词，而本门根本没扫它，
+   * 所以那条 SQL 从来不会被这道防线看见。纳入管辖后，任何**新增**的
+   * 无 tenant 谓词写操作都必须在下方 allowlist 显式登记并说明理由。 */
+  'conversation_messages',
 ];
 
 /**
@@ -94,6 +99,30 @@ const ALLOWED_GLOBAL_SQL: readonly AllowedGlobalSql[] = [
   { table: 'subscriptions', globalKind: 'resolved_tenant_row_id',
     fingerprint: "update subscriptions set plan_id = ?, status = 'active', current_period_start = ?, current_period_end = ?, updated_at = ? where id = ?",
     reason: 'billing-service subscribeTenant 在 getLatestSubscription(tenantId) 验证归属后按已验证 row id 改套餐' },
+
+  /* ── conversation_messages：retention 保留期清理（审计 P1）──
+   *
+   * ⚠️ 这条是**有意登记的现状冻结，不是「已经安全」的结论**。
+   *
+   * 现状：本仓分片是 **fail-closed 禁用**的（config/schema.ts:20——任何非空
+   * shards 都会被 createDatabase 拒绝启动，等全 inventory 访问点接线完成才
+   * 激活）。所以今天所有租户共享同一个库，「按保留期删过期数据」删到多个
+   * 租户的行是该语义本身，不构成越权。
+   *
+   * ⚠️ 但**分片激活时这条必须一起接线**：届时同一个 DELETE 会在某个 shard 上
+   * 删掉本不该由它处理的租户数据。db-access-inventory 已把整个
+   * conversation/* 标为 wiringStatus:'planned'（Plan 1：经
+   * resolver.dbForTenant 解析），本条是那批工作的一部分。
+   *
+   * 为什么现在不直接加 tenant 谓词：那会制造「一部分访问点按租户解析、
+   * 一部分不」的**半截接线**状态——而 schema.ts:21 的 fail-closed 注释
+   * 写明了要防的正是这个（「防单/多 shard 半截启用致静默错-shard」）。
+   *
+   * 解除条件：分片激活子片把 conversation/* 整体接上 resolver 时，
+   * 本条应连同 SQL 一起改掉并从 allowlist 删除。 */
+  { table: 'conversation_messages', globalKind: 'expired_cleanup',
+    fingerprint: "delete from conversation_messages where (retention_class = 'standard' and created_at < ?) or (retention_class = 'extended' and created_at < ?)",
+    reason: 'retention 保留期清理，按时间删；分片 fail-closed 禁用期间全租户同库故不构成越权，**激活分片时必须随 conversation/* 一起接线**（见上方说明）' },
 
   /* ── idempotency_keys：TTL 清理 ── */
   { table: 'idempotency_keys', globalKind: 'expired_cleanup',

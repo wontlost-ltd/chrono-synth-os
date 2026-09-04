@@ -943,25 +943,32 @@ export class PersonaMarketplaceService {
       };
 
       if (shouldRetryRuntimeSession(Number(row.retry_count), input.maxRetries)) {
-        db.execute(pcoreCmdRetryRuntimeSession({
+        const retryRes = db.execute(pcoreCmdRetryRuntimeSession({
           tenantId: row.tenant_id,
           sessionId: row.id,
           state: nextRuntimeRetryState(state),
+          /* CAS 谓词：只有仍处于**决策时观察到的**状态才允许改写。
+           * 多副本下另一个副本可能已经先重试过这条会话，此时应放弃而非再 +1。 */
+          expectedState: state,
           timeoutAfterMs: input.sessionTimeoutMs,
           now: input.now,
           errorJson: JSON.stringify(errorPayload),
         }));
-        recovered++;
+        /* ⚠️ 必须查 rowsAffected：只加谓词不够——CAS 失败时若照样 recovered++，
+         * 输掉的副本会**报告自己没做的工作**（运维据此以为恢复生效）。
+         * 本仓在金融状态机上记过同一条教训：加谓词与查返回值是一对。 */
+        if (retryRes.rowsAffected > 0) recovered++;
         continue;
       }
 
-      db.execute(pcoreCmdTimeoutRuntimeSession({
+      const timeoutRes = db.execute(pcoreCmdTimeoutRuntimeSession({
         tenantId: row.tenant_id,
         sessionId: row.id,
+        expectedState: state,
         now: input.now,
         errorJson: JSON.stringify(errorPayload),
       }));
-      timedOut++;
+      if (timeoutRes.rowsAffected > 0) timedOut++;
     }
 
     return {

@@ -174,6 +174,65 @@ describe('TaskWakeHandler（ADR-0057 L8a 学完唤醒重跑闭环）', () => {
     assert.equal(store.getTask('org-1', taskId)!.resumeAttemptCount, 1, '计数未重复推进');
   });
 
+  /* ── 审计 P2：多副本下 resume_attempt_count 被重复推进 ──
+   *
+   * k8s production `replicas: 3` 且 `CHRONO_DB_DRIVER: postgres`（三副本共享
+   * 同一个 PG），app.ts **无 leader election** —— 三个 reconciler 同时跑。
+   *
+   * `wakeEventId` 是**确定性合成**的（task-wake-reconciler.ts:102：
+   * `reconcile:${personaId}:${JSON.stringify(learned)}`），各副本算出的字符串
+   * 完全相同。而幂等判定此前只在**应用层**（task-wake-handler.ts:123 的
+   * `task.lastWakeEventId === wakeEventId`），那次读在事务外 —— 三副本各自
+   * 读到同一个旧值、各自通过幂等门、各自 `resume_attempt_count + 1`。
+   *
+   * 后果：`maxResumeAttempts` 预算一到两轮就被烧光，任务提前进
+   * attempts_exhausted 永久停在 blocked ——「防永久挂起」这个 reconciler
+   * 的存在目的被它自己的多副本行为击穿。
+   *
+   * ⚠️ 既有 25 条用例**测不出**这个：它们都走 `wakeOneTask`，在应用层就被
+   * `skipped_idempotent` 挡下、根本到不了 SQL（实测把 CAS 条件去掉后
+   * 三个套件仍 0 fail）。故必须**直接打 store 层**，复刻「副本 2 拿着同一份
+   * 陈旧观察落库」这一步。 */
+  it('★审计 P2：同一 wakeEventId 被两副本落库时计数只 +1★', async () => {
+    const taskId = seedTask(['research']);
+    await svc().execute(execInput(taskId));
+    assert.equal(store.getTask('org-1', taskId)!.status, 'blocked', '前置：任务应 blocked');
+
+    const before = store.getTask('org-1', taskId)!.resumeAttemptCount;
+    /* 两副本算出的是**同一个**确定性事件 id。 */
+    const sameEventId = 'reconcile:p-ic:["research"]';
+
+    /* 副本 1 记账 —— 成功。 */
+    const first = store.recordWakeAttemptOnBlocked('org-1', taskId, '仍缺能力', sameEventId, clock);
+    assert.equal(first, true, '副本 1 记账必须成功');
+    assert.equal(store.getTask('org-1', taskId)!.lastWakeEventId, sameEventId,
+      `前置：eventId 必须真的落库（实际 ${JSON.stringify(store.getTask('org-1', taskId)!.lastWakeEventId)}）`);
+    assert.equal(store.getTask('org-1', taskId)!.resumeAttemptCount, before + 1);
+
+    /* ★副本 2 拿同一个 eventId 再记一次 —— 必须被 CAS 拒绝★
+     * 变异实测：去掉 `AND (last_wake_event_id IS NULL OR last_wake_event_id <> ?)`
+     * → 返回 true 且计数变 +2，本行转红。 */
+    const second = store.recordWakeAttemptOnBlocked('org-1', taskId, '仍缺能力', sameEventId, clock);
+    assert.equal(second, false, '同一 wakeEventId 的第二次记账必须被 CAS 拒绝');
+
+    const after = store.getTask('org-1', taskId)!.resumeAttemptCount;
+    assert.equal(after, before + 1,
+      `计数只应 +1，实际 +${after - before}（>1 = 多副本烧光唤醒预算）`);
+  });
+
+  /* 对照：**不同** wakeEventId（真的是新一轮唤醒）仍应正常记账 ——
+   * 防止「把记账整个关掉」也算绿。 */
+  it('对照：不同 wakeEventId 仍正常推进计数', async () => {
+    const taskId = seedTask(['research']);
+    await svc().execute(execInput(taskId));
+    const before = store.getTask('org-1', taskId)!.resumeAttemptCount;
+
+    assert.equal(store.recordWakeAttemptOnBlocked('org-1', taskId, 'r1', 'evt-A', clock), true);
+    assert.equal(store.recordWakeAttemptOnBlocked('org-1', taskId, 'r2', 'evt-B', clock), true,
+      '不同事件 id = 真的新一轮，必须能记账');
+    assert.equal(store.getTask('org-1', taskId)!.resumeAttemptCount, before + 2);
+  });
+
   it('★防死循环：超尝试上限 → 停在 blocked（attempts_exhausted）★', async () => {
     const handler = new TaskWakeHandler({ bus, store, learning, logger: new SilentLogger(), now: () => clock, tenantId: 'tenant-a', maxResumeAttempts: 2 });
     const taskId = seedTask(['review', 'compliance']);

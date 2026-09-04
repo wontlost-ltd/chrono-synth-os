@@ -429,6 +429,23 @@ export class ChronoSynthOS {
    * 循环。默认开启对现有部署构成行为突变与非预期成本，故必须由组合根显式打开。
    *
    * 须在 start() 之前调用（start 时 worker 才读 enabled 起定时器）。
+   *
+   * ⚠️ **启用前置条件（审计 P2）：必须先加跨副本原语。**
+   *
+   * 本方法目前**全仓零生产调用方**（只有测试断言「未注入 → 默认关闭」），
+   * 所以 GithubSyncWorker 在生产恒不跑 —— 这也是它至今没有跨副本保护却
+   * 不构成缺陷的唯一原因。
+   *
+   * 但 k8s production 是 `replicas: 3` 且共享同一个 PG
+   * （`CHRONO_DB_DRIVER: postgres`），app.ts **无 leader election**。
+   * 而 driver 内部会**真发 GitHub 出站请求 + 对每条新内容调 LLM 老师**
+   * （见 github-learning-service.ts 文件头）。一旦有人给本方法接上第一个
+   * 生产调用方，三副本 = **3 倍出站配额 + 3 倍 LLM 计费**，且没有任何
+   * 东西会拦住。
+   *
+   * 接线时必须同时具备下列之一：
+   *   - 在 driver 处理的行上加 claim CAS（同 billing/observability outbox）；
+   *   - 或用 PersonaLeaseStore 取一把租户级 lease 再跑。
    */
   setGithubOrgSyncDriver(driver: () => Promise<void>, intervalMs?: number): void {
     this.githubOrgSyncDriver = driver;

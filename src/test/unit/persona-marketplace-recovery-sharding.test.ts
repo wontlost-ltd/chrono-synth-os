@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { pcoreCmdRetryRuntimeSession } from '@chrono/kernel';
 import { PersonaCoreService } from '../../persona-core/persona-core-service.js';
 import { FakeMultiShardResolver } from '../support/fake-multi-shard-resolver.js';
 import { SingleDbResolver } from '../../storage/tenant-db-resolver.js';
@@ -233,5 +234,75 @@ describe('recoverTimedOutRuntimeSessions 分片探针', () => {
     assert.ok(r.recovered + r.timedOut >= 1, '超时会话应被恢复或终结');
     assert.ok(freshBefore >= 1, '前置：确有未完成会话');
     void timedOut;
+  });
+
+  /* ── 审计 P2：RuntimeRecovery 的 retry_count 无 CAS 谓词 ──
+   *
+   * `RuntimeRecoveryWorker` 由 app.ts 在**每个副本**启动（k8s replicas:2，
+   * 生产 3，且**无 leader election**）。两副本会扫到同一条超时会话，
+   * 而 retry/timeout 两条 UPDATE 此前**没有状态谓词** —— 各自
+   * `retry_count = retry_count + 1` ⇒ **retry 预算按副本数倍速烧尽**，
+   * 会话被提前判死。
+   *
+   * 加 `AND state = ?` 后，输掉的副本 rowsAffected=0；调用方据此不再计数。 */
+  it('★审计 P2：同一会话被两副本恢复时 retry_count 只 +1★', () => {
+    const db = pcoreDb();
+    const sessionId = seedTimedOutSession(db, 'tenant_race');
+
+    const before = db.prepare<{ retry_count: number; state: string }>(
+      `SELECT retry_count, state FROM runtime_sessions WHERE id = ?`,
+    ).get(sessionId)!;
+
+    /* 副本 1 恢复 —— 成功，retry_count +1 且 state 迁走。 */
+    const svc1 = PersonaCoreService.fromResolver(new SingleDbResolver(db));
+    const r1 = svc1.recoverTimedOutRuntimeSessions({
+      now: Date.now(), sessionTimeoutMs: 60_000, maxRetries: 3, limit: 100,
+    });
+    assert.equal(r1.recovered + r1.timedOut, 1, '副本 1 应恢复 1 条');
+
+    const mid = db.prepare<{ retry_count: number }>(
+      `SELECT retry_count FROM runtime_sessions WHERE id = ?`,
+    ).get(sessionId)!;
+    assert.equal(mid.retry_count, before.retry_count + 1, '副本 1 使 retry_count +1');
+
+    /* ★副本 2 用**同一份陈旧观察**再恢复一次★
+     * 直接调 kernel 命令并传恢复决策时的旧 state —— 这正是副本 2 手里的值。
+     * 变异实测：去掉 `AND state = ?` → rowsAffected 变 1，retry_count 变 +2，本行转红。 */
+    const stale = db.execute(pcoreCmdRetryRuntimeSession({
+      tenantId: 'tenant_race',
+      sessionId,
+      state: 'PLAN',
+      expectedState: before.state,      // 副本 2 观察到的是**旧**状态
+      timeoutAfterMs: 60_000,
+      now: Date.now(),
+      errorJson: '{}',
+    }));
+    assert.equal(stale.rowsAffected, 0, '陈旧观察的第二次重试必须被 CAS 拒绝');
+
+    const after = db.prepare<{ retry_count: number }>(
+      `SELECT retry_count FROM runtime_sessions WHERE id = ?`,
+    ).get(sessionId)!;
+    assert.equal(after.retry_count, before.retry_count + 1,
+      `retry_count 只应 +1，实际 +${after.retry_count - before.retry_count}（>1 = 多副本倍速烧预算）`);
+  });
+
+  /* 对照：状态匹配时重试仍然生效 —— 防止「把重试整个关掉」也算绿。 */
+  it('对照：expectedState 匹配时重试正常生效', () => {
+    const db = pcoreDb();
+    const sessionId = seedTimedOutSession(db, 'tenant_ok');
+    const cur = db.prepare<{ state: string; retry_count: number }>(
+      `SELECT state, retry_count FROM runtime_sessions WHERE id = ?`,
+    ).get(sessionId)!;
+
+    const res = db.execute(pcoreCmdRetryRuntimeSession({
+      tenantId: 'tenant_ok', sessionId, state: 'PLAN',
+      expectedState: cur.state, timeoutAfterMs: 60_000, now: Date.now(), errorJson: '{}',
+    }));
+    assert.equal(res.rowsAffected, 1, '状态匹配时必须成功');
+
+    const after = db.prepare<{ retry_count: number }>(
+      `SELECT retry_count FROM runtime_sessions WHERE id = ?`,
+    ).get(sessionId)!;
+    assert.equal(after.retry_count, cur.retry_count + 1);
   });
 });
